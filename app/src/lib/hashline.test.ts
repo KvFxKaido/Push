@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateLineHash, applyHashlineEdits } from './hashline';
+import { adaptiveHashDisplayLength, calculateLineHash, applyHashlineEdits } from './hashline';
 
 describe('calculateLineHash', () => {
   it('returns 7 chars by default', async () => {
@@ -23,6 +23,18 @@ describe('calculateLineHash', () => {
     const hLong = await calculateLineHash('hello', 20);
     expect(hShort).toHaveLength(7);
     expect(hLong).toHaveLength(12);
+  });
+});
+
+describe('adaptiveHashDisplayLength', () => {
+  it('keeps the default display length for small files', () => {
+    const hashes = Array.from({ length: 10 }, (_, idx) => `abcdef${idx.toString(16)}1234`);
+    expect(adaptiveHashDisplayLength(hashes)).toBe(7);
+  });
+
+  it('extends the display length when 7-char prefixes are too ambiguous', () => {
+    const hashes = Array.from({ length: 11 }, (_, idx) => `abcdefg${idx.toString(16)}123`);
+    expect(adaptiveHashDisplayLength(hashes)).toBe(8);
   });
 });
 
@@ -307,5 +319,21 @@ describe('batched edits: same-line replace + insert_after', () => {
     expect(result.failed).toBe(1);
     expect(result.errors[0]).toContain('already deleted');
     expect(result.content).toBe('A\nC');
+  });
+
+  it('warns when replace_line targets the same original line twice', async () => {
+    const content = 'A\nB\nC';
+    const ref = '2:' + await calculateLineHash('B', 7);
+
+    const result = await applyHashlineEdits(content, [
+      { op: 'replace_line', ref, content: 'B1' },
+      { op: 'replace_line', ref, content: 'B2' },
+    ]);
+
+    expect(result.applied).toBe(2);
+    expect(result.failed).toBe(0);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('already replaced by a prior op');
+    expect(result.content).toBe('A\nB2\nC');
   });
 });

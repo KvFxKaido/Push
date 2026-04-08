@@ -1,16 +1,17 @@
 /**
- * CLI hashline adapter — sync Node.js wrappers over the shared hashline types.
+ * CLI hashline adapter — sync Node.js wrappers over the shared hashline engine.
  *
- * The shared lib/hashline.ts is the canonical implementation (async, universal
- * runtime). This file re-implements the two-phase edit algorithm with sync
- * Node.js crypto so the CLI can call it without async boundaries.
- *
- * Previously this was a standalone copy using SHA-1 with sequential application.
- * Now unified on SHA-256 + two-phase batch resolution matching the shared lib.
+ * Crypto: sync Node.js `createHash` (no async boundary).
+ * Resolution + application: delegates to the shared `resolveHashlineRefs` and
+ * `applyResolvedHashlineEdits` exported from lib/hashline.ts — one
+ * implementation, zero duplication.
  */
 import { createHash } from 'node:crypto';
 import {
   type HashlineOp,
+  adaptiveHashDisplayLength,
+  resolveHashlineRefs,
+  applyResolvedHashlineEdits,
 } from '../lib/hashline.ts';
 
 export type { HashlineOp };
@@ -19,8 +20,8 @@ export type { HashlineOp };
 // Sync hashing (CLI-specific convenience)
 // ---------------------------------------------------------------------------
 
-export function calculateLineHash(line: unknown): string {
-  return createHash('sha256').update(String(line).trim()).digest('hex').slice(0, 7);
+export function calculateLineHash(line: unknown, length: number = 7): string {
+  return createHash('sha256').update(String(line).trim()).digest('hex').slice(0, Math.min(Math.max(length, 7), 12));
 }
 
 export function calculateContentVersion(content: unknown): string {
@@ -47,11 +48,13 @@ export function renderAnchoredRange(
   const totalLines = lines.length || 1;
   const start = Math.max(1, Math.min(Number(startLine) || 1, totalLines));
   const end = Math.max(start, Math.min(Number(endLine) || totalLines, totalLines));
-  const hashes = lines.map((l) => calculateLineHash(l));
+  const fullHashes = lines.map((l) => calculateLineHash(l, 12));
+  const rangeHashes = fullHashes.slice(start - 1, end);
+  const displayLen = adaptiveHashDisplayLength(rangeHashes);
 
   const out: string[] = [];
   for (let i = start - 1; i < end; i++) {
-    out.push(`${i + 1}:${hashes[i]}\t${lines[i]}`);
+    out.push(`${i + 1}:${fullHashes[i].slice(0, displayLen)}\t${lines[i]}`);
   }
 
   return {
@@ -77,6 +80,7 @@ export interface AppliedEdit {
 export interface CliHashlineEditResult {
   content: string;
   applied: AppliedEdit[];
+  warnings: string[];
 }
 
 /**
@@ -111,127 +115,34 @@ export function applyHashlineEdits(content: unknown, edits: unknown): CliHashlin
     throw new Error(`unsupported edit op: ${op}`);
   });
 
-  // Use a synchronous approach: replicate the shared lib's two-phase logic
-  // using sync crypto. This avoids the async/sync boundary issue.
+  // Sync crypto, shared resolution + application engine
   const resultLines = String(content).split('\n');
   const hashCache = resultLines.map((l) => createHash('sha256').update(l.trim()).digest('hex').slice(0, 12));
 
-  // --- Phase 1: Resolve all refs against the original content ---
-  type ResolvedEdit = { index: number; edit: HashlineOp } | { error: string };
-  const resolved: ResolvedEdit[] = [];
+  const resolved = resolveHashlineRefs(hashCache, resultLines, validated);
 
-  for (const edit of validated) {
-    const raw = edit.ref.trim();
-    const m = raw.match(/^(?:(\d+)[:|])?([a-f0-9]{7,12})$/i);
-    if (!m) {
-      resolved.push({ error: `invalid ref format: ${raw}` });
-      continue;
-    }
-    const lineNo = m[1] ? Number(m[1]) : null;
-    const hash = m[2].toLowerCase();
-
-    if (lineNo !== null) {
-      const idx = lineNo - 1;
-      if (idx < 0 || idx >= resultLines.length) {
-        throw new Error(`stale ref: line ${lineNo} is out of range`);
-      }
-      if (!hashCache[idx].startsWith(hash)) {
-        throw new Error(`stale ref at line ${lineNo}: expected ${hash}, found ${hashCache[idx].slice(0, 7)}`);
-      }
-      resolved.push({ index: idx, edit });
-      continue;
-    }
-
-    const matches: number[] = [];
-    for (let i = 0; i < hashCache.length; i++) {
-      if (hashCache[i].startsWith(hash)) matches.push(i);
-    }
-    if (matches.length === 0) {
-      throw new Error(`stale ref: ${hash} not found`);
-    }
-    if (matches.length > 1) {
-      // Try to disambiguate with longer hashes
-      if (hash.length < 12) {
-        const distinctGroups = new Map<string, number[]>();
-        for (const idx of matches) {
-          const lh = hashCache[idx];
-          const group = distinctGroups.get(lh) ?? [];
-          group.push(idx);
-          distinctGroups.set(lh, group);
-        }
-        const candidateGroups = [...distinctGroups.entries()].filter(([lh]) => lh.startsWith(hash));
-        if (candidateGroups.length === 1 && candidateGroups[0][1].length === 1) {
-          resolved.push({ index: candidateGroups[0][1][0], edit });
-          continue;
-        }
-      }
-      throw new Error(`ambiguous ref: ${hash} matched ${matches.length} lines; use line-qualified ref like "${matches[0] + 1}:${hash}"`);
-    }
-    resolved.push({ index: matches[0], edit });
-  }
-
-  // --- Phase 2: Apply resolved edits with offset tracking ---
-  const applied: AppliedEdit[] = [];
-  const appliedMeta: { originalIndex: number; op: string; linesAdded: number }[] = [];
-  const deletedOriginalIndices = new Set<number>();
-
+  // CLI policy: throw on first resolution error (strict mode)
   for (const r of resolved) {
     if ('error' in r) throw new Error(r.error);
-
-    if (deletedOriginalIndices.has(r.index)) {
-      throw new Error(`Target line ${r.index + 1} was already deleted by a prior op in this batch.`);
-    }
-
-    let adjustedIdx = r.index;
-    for (const prior of appliedMeta) {
-      if (prior.op === 'insert_after') {
-        if (r.index > prior.originalIndex) adjustedIdx += prior.linesAdded;
-        else if (r.index === prior.originalIndex && r.edit.op === 'insert_after') adjustedIdx += prior.linesAdded;
-      } else if (prior.op === 'insert_before' && r.index >= prior.originalIndex) {
-        adjustedIdx += prior.linesAdded;
-      } else if (prior.op === 'replace_line') {
-        if (r.index > prior.originalIndex) {
-          adjustedIdx += prior.linesAdded - 1;
-        } else if (r.index === prior.originalIndex && r.edit.op === 'insert_after') {
-          adjustedIdx += prior.linesAdded - 1;
-        }
-      } else if (prior.op === 'delete_line' && r.index > prior.originalIndex) {
-        adjustedIdx--;
-      }
-    }
-
-    const edit = r.edit;
-    let linesAdded = 0;
-    switch (edit.op) {
-      case 'replace_line': {
-        const newLines = edit.content.split('\n');
-        resultLines.splice(adjustedIdx, 1, ...newLines);
-        linesAdded = newLines.length;
-        applied.push({ op: edit.op, line: adjustedIdx + 1, linesInserted: newLines.length });
-        break;
-      }
-      case 'insert_after': {
-        const newLines = edit.content.split('\n');
-        resultLines.splice(adjustedIdx + 1, 0, ...newLines);
-        linesAdded = newLines.length;
-        applied.push({ op: edit.op, line: adjustedIdx + 2, linesInserted: newLines.length });
-        break;
-      }
-      case 'insert_before': {
-        const newLines = edit.content.split('\n');
-        resultLines.splice(adjustedIdx, 0, ...newLines);
-        linesAdded = newLines.length;
-        applied.push({ op: edit.op, line: adjustedIdx + 1, linesInserted: newLines.length });
-        break;
-      }
-      case 'delete_line':
-        resultLines.splice(adjustedIdx, 1);
-        applied.push({ op: edit.op, line: adjustedIdx + 1 });
-        break;
-    }
-    if (edit.op === 'delete_line') deletedOriginalIndices.add(r.index);
-    appliedMeta.push({ originalIndex: r.index, op: edit.op, linesAdded });
   }
 
-  return { content: resultLines.join('\n'), applied };
+  const result = applyResolvedHashlineEdits(resultLines, resolved);
+
+  // CLI policy: throw on any application error
+  if (result.failed > 0) {
+    throw new Error(result.errors[0]);
+  }
+
+  // Transform to CLI-specific shape
+  const applied: AppliedEdit[] = result.appliedDetails.map((d) => {
+    const base: AppliedEdit = { op: d.op, line: d.adjustedLine };
+    if (d.op === 'insert_after') {
+      // CLI convention: insert_after reports the line *after* the anchor
+      base.line = d.adjustedLine + 1;
+    }
+    if (d.linesAdded > 0) base.linesInserted = d.linesAdded;
+    return base;
+  });
+
+  return { content: result.content, applied, warnings: result.warnings };
 }

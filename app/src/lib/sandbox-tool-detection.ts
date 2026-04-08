@@ -24,6 +24,10 @@ export interface SandboxExecutionOptions {
   auditorModelOverride?: string | null;
 }
 
+export type SandboxPatchsetEdit =
+  | { path: string; ops: HashlineOp[] }
+  | { path: string; start_line: number; end_line: number; content: string };
+
 export type SandboxToolCall =
   | { tool: 'sandbox_exec'; args: { command: string; workdir?: string; allowDirectGit?: boolean } }
   | { tool: 'sandbox_read_file'; args: { path: string; start_line?: number; end_line?: number } }
@@ -47,7 +51,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_apply_patchset'; args: {
       dryRun?: boolean;
       diagnostics?: boolean;
-      edits: Array<{ path: string; ops: HashlineOp[] }>;
+      edits: SandboxPatchsetEdit[];
       checks?: Array<{ command: string; exitCode?: number; timeoutMs?: number }>;
       rollbackOnFailure?: boolean;
     } }
@@ -69,6 +73,32 @@ function parsePositiveIntegerArg(value: unknown): number | undefined | null {
 
   if (!Number.isInteger(numeric) || numeric < 1) return null;
   return numeric;
+}
+
+function parsePatchsetEdit(value: unknown): SandboxPatchsetEdit | null {
+  const rec = asRecord(value);
+  if (!rec || typeof rec.path !== 'string') return null;
+  const path = normalizeSandboxPath(rec.path);
+
+  if (Array.isArray(rec.ops)) {
+    return { path, ops: rec.ops as HashlineOp[] };
+  }
+
+  if (typeof rec.content === 'string') {
+    const startLine = parsePositiveIntegerArg(rec.start_line);
+    const endLine = parsePositiveIntegerArg(rec.end_line);
+    if (startLine === null || endLine === null) return null;
+    if (startLine === undefined || endLine === undefined) return null;
+    if (startLine > endLine) return null;
+    return {
+      path,
+      start_line: startLine,
+      end_line: endLine,
+      content: rec.content,
+    };
+  }
+
+  return null;
 }
 
 export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null {
@@ -193,14 +223,8 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
   }
   if (tool === 'sandbox_apply_patchset' && Array.isArray(args.edits)) {
     const validEdits = (args.edits as unknown[])
-      .filter((edit): edit is { path: string; ops: HashlineOp[] } => {
-        const rec = asRecord(edit);
-        return rec !== null && typeof rec.path === 'string' && Array.isArray(rec.ops);
-      })
-      .map(edit => ({
-        ...edit,
-        path: normalizeSandboxPath(edit.path),
-      }));
+      .map((edit) => parsePatchsetEdit(edit))
+      .filter((edit): edit is SandboxPatchsetEdit => edit !== null);
     if (validEdits.length === 0) return null;
     // Parse checks array
     let validChecks: Array<{ command: string; exitCode?: number; timeoutMs?: number }> | undefined;
@@ -323,7 +347,7 @@ Additional tools available when sandbox is active:
 - ${DOWNLOAD_TOOL}(path?) — Download workspace files as a compressed archive (tar.gz). Path defaults to /workspace. Returns a download card the user can save.
 - ${READ_SYMBOLS_TOOL}(path) — Extract a symbol index from a source file (functions, classes, interfaces, types, imports with line numbers). Works on .py (via ast), .ts/.tsx/.js/.jsx (via regex). Use this to understand file structure before editing — cheaper than reading the whole file.
 - ${REFS_TOOL}(symbol, scope?) — Find all references to a symbol name (imports, call sites). Returns file, line, context, and classification (import/call). Scope defaults to /workspace/. Use after ${READ_SYMBOLS_TOOL} to understand what depends on a symbol.
-- ${APPLY_PATCHSET_TOOL}(edits, dryRun?, diagnostics?, checks?, rollbackOnFailure?) — Apply hashline edits to multiple files with all-or-nothing validation. edits is an array of { path, ops: HashlineOp[] } (each path must appear once). Phase 1 reads all files and validates all ops — if any fail, nothing is written. Phase 2 writes all files. On success, runs a full project typecheck and appends [DIAGNOSTICS] with errors for changed files only. Pass diagnostics=false to skip. Use dryRun=true to validate without writing. Prefer this over multiple ${EDIT_TOOL} calls when editing 2+ files together.
+- ${APPLY_PATCHSET_TOOL}(edits, dryRun?, diagnostics?, checks?, rollbackOnFailure?) — Apply multi-file edits with all-or-nothing validation. Each entry in edits must be unique by path and can be either { path, ops: HashlineOp[] } for anchored edits or { path, start_line, end_line, content } for one contiguous line-range replacement. Phase 1 reads all files and validates/compiles every entry — if any fail, nothing is written. Phase 2 writes all files. On success, runs a full project typecheck and appends [DIAGNOSTICS] with errors for changed files only. Pass diagnostics=false to skip. Use dryRun=true to validate without writing. Prefer the line-range form for contiguous block replacements inside a patchset.
 - ${PROMOTE_TOOL}(repo_name, description?, private?) — Create a new GitHub repo under the authenticated user, set the sandbox git remote, and push current branch. Defaults to private=true.
 
 Legacy long names still work for compatibility, but prefer the short names above.

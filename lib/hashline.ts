@@ -17,6 +17,7 @@ export interface HashlineEditResult {
   applied: number;
   failed: number;
   errors: string[];
+  warnings: string[];
   /** 1-indexed line numbers of successfully resolved edit targets (against the original content). */
   resolvedLines: number[];
 }
@@ -96,6 +97,22 @@ export function calculateLineHashSync(line: string, length: number = 7): string 
 }
 
 /**
+ * Choose hash display length to minimize ambiguity in rendered output.
+ *
+ * Given an array of full-length (12-char) hashes, returns the shortest
+ * length (7–10) where ≥95% of hashes are unique.  Files with ≤10 lines
+ * always return the default (ambiguity is unlikely and cheap to resolve).
+ */
+export function adaptiveHashDisplayLength(fullHashes: string[], minLength: number = 7): number {
+  if (fullHashes.length <= 10) return minLength;
+  for (let len = minLength; len <= 10; len++) {
+    const sliced = fullHashes.map(h => h.slice(0, len));
+    if (new Set(sliced).size / sliced.length >= 0.95) return len;
+  }
+  return 10;
+}
+
+/**
  * Calculate a content version hash (used for file versioning).
  * Universal implementation using Web Crypto or Node.js fallback.
  */
@@ -131,24 +148,31 @@ async function batchHashLines(lines: string[]): Promise<string[]> {
   return Promise.all(lines.map(l => calculateLineHash(l, 12)));
 }
 
+// ---------------------------------------------------------------------------
+// Shared two-phase edit engine (sync, crypto-agnostic)
+//
+// Both the async Web Crypto path and the sync CLI Node.js path delegate here
+// after computing 12-char hashes with their respective crypto backends.
+// ---------------------------------------------------------------------------
+
+export type ResolvedEdit = { index: number; edit: HashlineOp } | { error: string };
+
 /**
- * Apply a set of hashline edits to file content.
+ * Phase 1 — Resolve all hashline refs against pre-computed 12-char hashes.
+ *
+ * Pure sync function. Returns one ResolvedEdit per input edit, in the same
+ * order. Errors are collected, never thrown — the caller decides policy.
  */
-export async function applyHashlineEdits(originalContent: string, edits: HashlineOp[]): Promise<HashlineEditResult> {
-  const resultLines = originalContent.split('\n');
-  let appliedCount = 0;
-  let failedCount = 0;
-  const errors: string[] = [];
-
-  const hashCache = await batchHashLines(resultLines);
-
-  /** Format a line snippet for diagnostic output (truncated at 60 chars with ellipsis). */
+export function resolveHashlineRefs(
+  hashCache: string[],
+  lines: string[],
+  edits: HashlineOp[],
+): ResolvedEdit[] {
   function snippetOf(idx: number): string {
-    const trimmed = resultLines[idx]?.trim() ?? '';
+    const trimmed = lines[idx]?.trim() ?? '';
     return trimmed.length > 60 ? trimmed.slice(0, 60) + '…' : trimmed;
   }
 
-  type ResolvedEdit = { index: number; edit: HashlineOp } | { error: string };
   const resolved: ResolvedEdit[] = [];
 
   for (const edit of edits) {
@@ -162,8 +186,8 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
 
     if (parsed.lineNo !== null) {
       const idx = parsed.lineNo - 1;
-      if (idx < 0 || idx >= resultLines.length) {
-        resolved.push({ error: `Line-qualified ref "${edit.ref}": line ${parsed.lineNo} is out of range (file has ${resultLines.length} lines).` });
+      if (idx < 0 || idx >= lines.length) {
+        resolved.push({ error: `Line-qualified ref "${edit.ref}": line ${parsed.lineNo} is out of range (file has ${lines.length} lines).` });
         continue;
       }
       if (!hashCache[idx].startsWith(parsed.hash)) {
@@ -235,8 +259,34 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
     resolved.push({ index: matches[0], edit });
   }
 
-  const applied: { originalIndex: number; op: HashlineOp['op']; edit: HashlineOp; linesAdded: number }[] = [];
+  return resolved;
+}
+
+/** Per-edit metadata exposed to callers that need adjusted line positions. */
+export interface AppliedEditDetail {
+  originalIndex: number;
+  op: HashlineOp['op'];
+  adjustedLine: number;
+  linesAdded: number;
+}
+
+/**
+ * Phase 2 — Apply resolved edits to a mutable lines array with offset tracking.
+ *
+ * Pure sync function. Mutates `resultLines` in place and returns the combined
+ * result. Resolution errors from Phase 1 are carried through as failures.
+ */
+export function applyResolvedHashlineEdits(
+  resultLines: string[],
+  resolved: ResolvedEdit[],
+): HashlineEditResult & { appliedDetails: AppliedEditDetail[] } {
+  let appliedCount = 0;
+  let failedCount = 0;
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const applied: (AppliedEditDetail & { edit: HashlineOp })[] = [];
   const deletedOriginalIndices = new Set<number>();
+  const replacedOriginalIndices = new Set<number>();
 
   for (const r of resolved) {
     if ('error' in r) {
@@ -249,6 +299,10 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
       failedCount++;
       errors.push(`Target line ${r.index + 1} was already deleted by a prior op in this batch.`);
       continue;
+    }
+
+    if (replacedOriginalIndices.has(r.index) && r.edit.op === 'replace_line') {
+      warnings.push(`Line ${r.index + 1} was already replaced by a prior op in this batch — the second replace targets the mutated content, which is usually unintended.`);
     }
 
     // Offset adjustment logic (honors array order for same-line inserts/deletes).
@@ -300,10 +354,32 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
     }
     appliedCount++;
     if (edit.op === 'delete_line') deletedOriginalIndices.add(r.index);
-    applied.push({ originalIndex: r.index, op: edit.op, edit, linesAdded });
+    if (edit.op === 'replace_line') replacedOriginalIndices.add(r.index);
+    applied.push({ originalIndex: r.index, op: edit.op, edit, linesAdded, adjustedLine: adjustedIdx + 1 });
   }
 
-  return { content: resultLines.join('\n'), applied: appliedCount, failed: failedCount, errors, resolvedLines: applied.map(a => a.originalIndex + 1) };
+  return {
+    content: resultLines.join('\n'),
+    applied: appliedCount,
+    failed: failedCount,
+    errors,
+    warnings,
+    resolvedLines: applied.map(a => a.originalIndex + 1),
+    appliedDetails: applied.map(({ originalIndex, op, adjustedLine, linesAdded }) => ({ originalIndex, op, adjustedLine, linesAdded })),
+  };
+}
+
+/**
+ * Apply a set of hashline edits to file content.
+ *
+ * Thin async wrapper: hashes lines via the runtime crypto backend,
+ * then delegates to the shared sync resolve → apply pipeline.
+ */
+export async function applyHashlineEdits(originalContent: string, edits: HashlineOp[]): Promise<HashlineEditResult> {
+  const resultLines = originalContent.split('\n');
+  const hashCache = await batchHashLines(resultLines);
+  const resolved = resolveHashlineRefs(hashCache, resultLines, edits);
+  return applyResolvedHashlineEdits(resultLines, resolved);
 }
 
 /**
@@ -319,10 +395,12 @@ export async function renderAnchoredRange(
   const start = Math.max(1, Math.min(Number(startLine) || 1, totalLines));
   const end = Math.max(start, Math.min(Number(endLine) || totalLines, totalLines));
   const hashes = await batchHashLines(lines);
+  const rangeHashes = hashes.slice(start - 1, end);
+  const displayLen = adaptiveHashDisplayLength(rangeHashes);
 
   const out = [];
   for (let i = start - 1; i < end; i++) {
-    out.push(`${i + 1}:${hashes[i]}\t${lines[i]}`);
+    out.push(`${i + 1}:${hashes[i].slice(0, displayLen)}\t${lines[i]}`);
   }
 
   return { text: out.join('\n') || '<empty file>', startLine: start, endLine: end, totalLines };

@@ -1627,15 +1627,19 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           return afterLines.slice(start, end).map((l, i) => `${start + i + 1}| ${l}`).join('\n');
         });
         const previewText = previews.length > 0 ? `\n\nContext after edits:\n${previews.join('\n---\n')}` : '';
+        const warningText = applied.warnings.length > 0
+          ? `\n\nWarnings:\n${applied.warnings.map((warning) => `- ${warning}`).join('\n')}`
+          : '';
 
         return {
           ok: true,
-          text: `Applied ${applied.applied.length} hashline edits to ${path.relative(workspaceRoot, filePath) || '.'}${previewText}`,
+          text: `Applied ${applied.applied.length} hashline edits to ${path.relative(workspaceRoot, filePath) || '.'}${warningText}${previewText}`,
           meta: {
             path: filePath,
             edits: applied.applied.length,
             version_before: versionBefore,
             version_after: versionAfter,
+            warnings: applied.warnings.length,
           },
         };
       }

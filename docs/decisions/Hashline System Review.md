@@ -1,7 +1,7 @@
 # Hashline System Review
 
 **Date:** 2026-04-08
-**Status:** Active — recommendation A implemented on 2026-04-08; remaining recommendations pending
+**Status:** Active — recommendations A, C, D, and E shipped on 2026-04-08; recommendation B implemented as a tool-level patchset range form instead of a low-level `HashlineOp`
 
 ## Overview
 
@@ -14,7 +14,7 @@ The hashline system is Push's content-addressed editing mechanism. It assigns a 
 | File | Role |
 |------|------|
 | `lib/hashline.ts` | Canonical implementation (async, Web Crypto + fallback) |
-| `cli/hashline.ts` | CLI sync reimplementation (Node.js `createHash`) |
+| `cli/hashline.ts` | CLI sync adapter over the shared resolution/apply engine (Node.js `createHash`) |
 | `app/src/lib/hashline.ts` | Thin re-export for web imports |
 | `app/src/lib/sandbox-edit-ops.ts` | Auto-recovery, retry hints, range-to-hashline compilation |
 | `app/src/lib/sandbox-tools.ts` | Read rendering, edit orchestration, truncation guards |
@@ -69,18 +69,18 @@ The display/ref mismatch has now been fixed: reads render as `42:a1b2c3d\tconten
 
 The error diagnostics are excellent (suggest line-qualified refs), but each failure costs a round trip.
 
-### 2. Complex contiguous edits decompose awkwardly
+### 2. Complex contiguous edits still need the right tool surface
 
 Replacing lines 10-15 via `sandbox_edit_file` requires:
 - 5 `delete_line` ops (lines 15 down to 11)
 - 1 `replace_line` for line 10
 - N `insert_after` ops for additional replacement lines
 
-`edit_range` handles this cleanly at the tool level, but there's no equivalent at the `HashlineOp` level for use in `sandbox_apply_patchset` or mixed edit batches.
+`edit_range` handles this cleanly for one file, and `sandbox_apply_patchset` now has a matching tool-level form for contiguous replacements: `{ path, start_line, end_line, content }`. That covers the practical product need without adding a new low-level `HashlineOp`. The remaining limitation is that `sandbox_edit_file` itself still uses the line-anchored edit vocabulary.
 
 ### 3. CLI reimplements the core algorithm
 
-`cli/hashline.ts` duplicates ~170 lines of resolution + offset logic from `lib/hashline.ts`. The algorithms are intended to behave identically but diverge in error handling (CLI throws, lib collects). Changes to one must be manually mirrored.
+This was true before the current extraction pass. `cli/hashline.ts` now delegates to the shared resolution + apply engine in `lib/hashline.ts`, keeping only the sync crypto layer and CLI-shaped result formatting local.
 
 ### 4. Offset tracking is O(n^2) and relies on careful case analysis
 
@@ -107,15 +107,17 @@ to:
 
 **Status:** Implemented in the current hashline renderers and sandbox read output on 2026-04-08.
 
-### B. Add `replace_range` HashlineOp (Priority: Medium)
+### B. Add contiguous range replacement to patchsets (Priority: Medium, shipped via tool-level form)
 
 ```typescript
-| { op: 'replace_range'; start_ref: string; end_ref: string; content: string }
+{ path: string; start_line: number; end_line: number; content: string }
 ```
 
-**Why:** Lets `sandbox_edit_file` and `sandbox_apply_patchset` express contiguous replacements in a single op instead of decomposing into delete + replace + insert sequences.
+**Why:** Lets `sandbox_apply_patchset` express contiguous replacements in a single entry instead of decomposing them into delete + replace + insert sequences. This captures the main ergonomics win without expanding the low-level hashline op surface.
 
-**Risk:** Moderate — requires changes to both lib and CLI resolution logic, plus offset tracking for range deletions.
+**Risk:** Moderate if added at the low-level op layer. The shipped approach keeps the risk lower by compiling the range entry down to ordinary hashline ops inside the tool, so the shared engine stays simpler.
+
+**Status:** Implemented in `sandbox_apply_patchset` as a tool-level range form on 2026-04-08. The original low-level `replace_range` `HashlineOp` idea is intentionally deferred.
 
 ### C. Adaptive hash length for high-collision files (Priority: Medium)
 
@@ -125,6 +127,8 @@ When rendering read output, detect collision rate among displayed lines. If >5% 
 
 **Risk:** Low. Longer hashes are already supported everywhere (7-12 range).
 
+**Status:** Implemented in the shared and CLI renderers on 2026-04-08.
+
 ### D. Consolidate CLI onto shared lib (Priority: Medium)
 
 Extract the pure resolution + offset logic into sync helpers that both lib and CLI share. Keep only the crypto layer different (Web Crypto vs. Node `createHash`).
@@ -133,11 +137,15 @@ Extract the pure resolution + offset logic into sync helpers that both lib and C
 
 **Risk:** Low. Internal refactor with no behavioral change.
 
+**Status:** Implemented on 2026-04-08.
+
 ### E. Double-replace guard (Priority: Low)
 
 Warn when two `replace_line` ops target the same original line in a batch. Currently the second silently applies to already-mutated content. (Duplicate `delete_line` is already caught.)
 
 **Why:** Prevents surprising behavior where the model may not realize it's overwriting its own prior edit within the same batch.
+
+**Status:** Implemented on 2026-04-08. The shared engine emits an explicit warning, and app/CLI success paths now surface it.
 
 ## Priority order
 
@@ -146,8 +154,18 @@ Ranked by impact on model edit success rate per token:
 1. **A — Align display with ref format** (highest leverage, lowest risk)
 2. **C — Adaptive hash length** (low effort, reduces round trips)
 3. **D — CLI consolidation** (maintenance win, no model-facing change)
-4. **B — `replace_range` op** (nice but `edit_range` tool already exists)
-5. **E — Double-replace guard** (edge case, low urgency)
+4. **B — tool-level patchset range replacement** (useful for mixed multi-file edits)
+5. **E — Double-replace guard** (edge case, but now surfaced)
+
+## Current scorecard
+
+| Rec | Description | Status |
+|-----|-------------|--------|
+| A | Align display ↔ ref format | Shipped |
+| B | Contiguous range replacement in patchsets | Shipped at the tool level; low-level `replace_range` op deferred |
+| C | Adaptive hash length | Shipped |
+| D | CLI consolidation onto shared engine | Shipped |
+| E | Double-replace guard | Shipped |
 
 ## Design question
 

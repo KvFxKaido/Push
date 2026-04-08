@@ -856,6 +856,28 @@ describe('sandbox path normalization', () => {
     expect(result.args.edits[0].path).toBe('/workspace/app/worker.ts');
   });
 
+  it('accepts line-range entries in sandbox_apply_patchset edits', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_apply_patchset',
+      args: {
+        edits: [
+          { path: 'app/worker.ts', start_line: 10, end_line: 12, content: 'replacement block' },
+        ],
+      },
+    });
+    expect(result).not.toBeNull();
+    expect(result?.tool).toBe('sandbox_apply_patchset');
+    if (!result || result.tool !== 'sandbox_apply_patchset') {
+      throw new Error('Expected sandbox_apply_patchset tool result');
+    }
+    expect(result.args.edits[0]).toEqual({
+      path: '/workspace/app/worker.ts',
+      start_line: 10,
+      end_line: 12,
+      content: 'replacement block',
+    });
+  });
+
   it('filters invalid entries from sandbox_apply_patchset edits', () => {
     const result = validateSandboxToolCall({
       tool: 'sandbox_apply_patchset',
@@ -1771,6 +1793,48 @@ describe('sandbox_edit_file symbolic guard', () => {
     expect(result.text).toContain('sandbox_edit_range');
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
+
+  it('surfaces double-replace warnings for successful hashline edits', async () => {
+    const path = '/workspace/src/double-replace.ts';
+    const fileContent = 'const value = 1;\n';
+
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({ content: fileContent, truncated: false, version: 'v1' })
+      .mockResolvedValueOnce({ content: fileContent, truncated: false, version: 'v1' })
+      .mockResolvedValueOnce({ content: 'const value = 3;\n', truncated: false, version: 'v2' });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 17 });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path } },
+      'sb-123',
+    );
+
+    const ref = await calculateLineHash('const value = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_edit_file',
+        args: {
+          path,
+          edits: [
+            { op: 'replace_line', ref: `1:${ref}`, content: 'const value = 2;' },
+            { op: 'replace_line', ref: `1:${ref}`, content: 'const value = 3;' },
+          ],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Hashline warnings:');
+    expect(result.text).toContain('already replaced by a prior op');
+    expect(result.text).toContain('guard warnings: 1');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      'const value = 3;\n',
+      'v1',
+    );
+  });
 });
 
 describe('sandbox_edit_file truncation-hashline sync guard', () => {
@@ -1942,6 +2006,81 @@ describe('sandbox_apply_patchset symbolic guard', () => {
     );
 
     expect(result.text).toContain('patched successfully');
+  });
+
+  it('applies line-range patchset edits after compiling them to hashline ops', async () => {
+    const path = '/workspace/src/a.ts';
+    const fileContent = 'line 1\nline 2\nline 3\nline 4\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.batchWriteToSandbox).mockResolvedValue({
+      ok: true,
+      results: [{ path, ok: true, new_version: 'v2', bytes_written: 27 }],
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_apply_patchset',
+        args: {
+          edits: [{
+            path,
+            start_line: 2,
+            end_line: 3,
+            content: 'dos\ntres',
+          }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('patched successfully');
+    expect(vi.mocked(sandboxClient.batchWriteToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      [{
+        path,
+        content: 'line 1\ndos\ntres\nline 4\n',
+        expected_version: 'v1',
+      }],
+    );
+  });
+
+  it('surfaces double-replace warnings for successful patchsets', async () => {
+    const path = '/workspace/src/a.ts';
+    const fileContent = 'const value = 1;\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.batchWriteToSandbox).mockResolvedValue({
+      ok: true,
+      results: [{ path, ok: true, new_version: 'v2', bytes_written: 17 }],
+    });
+
+    const ref = await calculateLineHash('const value = 1;');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_apply_patchset',
+        args: {
+          edits: [{
+            path,
+            ops: [
+              { op: 'replace_line', ref, content: 'const value = 2;' },
+              { op: 'replace_line', ref, content: 'const value = 3;' },
+            ],
+          }],
+        },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('patched successfully');
+    expect(result.text).toContain('Guard warnings:');
+    expect(result.text).toContain('already replaced by a prior op');
+    expect(result.text).toContain('guard warnings: 1');
   });
 
   it('surfaces validation mismatch after auto-expand full read when refs are invalid', async () => {

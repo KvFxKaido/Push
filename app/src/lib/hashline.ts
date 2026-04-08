@@ -8,8 +8,13 @@
 export {
   calculateLineHash,
   calculateContentVersion,
+  adaptiveHashDisplayLength,
+  resolveHashlineRefs,
+  applyResolvedHashlineEdits,
   applyHashlineEdits,
   renderAnchoredRange,
   type HashlineOp,
   type HashlineEditResult,
+  type ResolvedEdit,
+  type AppliedEditDetail,
 } from '@push/lib/hashline';

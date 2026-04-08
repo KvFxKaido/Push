@@ -430,8 +430,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     readOnly: false,
     statusLabel: 'Sandbox operation...',
     protocolSignature: 'patch(edits, dryRun?, diagnostics?, checks?, rollbackOnFailure?)',
-    protocolDescription: 'Apply a multi-file hashline patchset transactionally',
-    exampleJson: '{"tool": "patch", "args": {"edits": [{"path": "/workspace/src/app.ts", "ops": [{"op": "replace_line", "ref": "abc1234", "content": "replacement"}]}]}}',
+    protocolDescription: 'Apply a multi-file hashline or line-range patchset transactionally',
+    exampleJson: '{"tool": "patch", "args": {"edits": [{"path": "/workspace/src/app.ts", "start_line": 10, "end_line": 12, "content": "replacement"}]}}',
   },
   {
     canonicalName: 'set_scratchpad',

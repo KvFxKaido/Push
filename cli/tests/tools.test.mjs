@@ -376,6 +376,43 @@ describe('edit_file hashline flow', () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+
+  it('surfaces warnings when replace_line targets the same line twice', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-tools-'));
+    try {
+      const rel = 'double-replace.txt';
+      const abs = path.join(root, rel);
+      await fs.writeFile(abs, 'alpha\nbeta\ngamma\n', 'utf8');
+
+      const read = await executeToolCall({ tool: 'read_file', args: { path: rel } }, root);
+      assert.equal(read.ok, true);
+
+      const secondLine = read.text.split('\n')[1];
+      const match = secondLine.match(/^(\d+):([a-f0-9]{7})\t/i);
+      assert.ok(match);
+      const ref = `${match[1]}:${match[2]}`;
+
+      const edit = await executeToolCall({
+        tool: 'edit_file',
+        args: {
+          path: rel,
+          edits: [
+            { op: 'replace_line', ref, content: 'BETA-1' },
+            { op: 'replace_line', ref, content: 'BETA-2' },
+          ],
+        },
+      }, root);
+
+      assert.equal(edit.ok, true);
+      assert.equal(edit.meta.warnings, 1);
+      assert.ok(edit.text.includes('Warnings:'), edit.text);
+      assert.ok(edit.text.includes('already replaced by a prior op'), edit.text);
+      const updated = await fs.readFile(abs, 'utf8');
+      assert.equal(updated, 'alpha\nBETA-2\ngamma\n');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── exec headless hardening ────────────────────────────────────

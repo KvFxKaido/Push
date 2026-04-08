@@ -46,7 +46,7 @@ import { parseDiffStats } from './diff-utils';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger, extractSignatures, extractSignaturesWithLines, type SymbolRead, type SymbolKind } from './file-awareness-ledger';
 import { symbolLedger } from './symbol-persistence-ledger';
-import { applyHashlineEdits, calculateLineHash, type HashlineOp } from './hashline';
+import { adaptiveHashDisplayLength, applyHashlineEdits, calculateLineHash, type HashlineOp } from './hashline';
 import {
   filterSensitiveDirectoryEntries,
   formatSensitivePathToolError,
@@ -89,7 +89,7 @@ import {
   createGitHubRepo,
 } from './sandbox-tool-utils';
 
-import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
+import type { SandboxPatchsetEdit, SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
 
 import {
   setPrefetchedEditFile,
@@ -221,6 +221,24 @@ function buildLineRanges(lineNumbers: readonly number[]): Array<{ startLine: num
 
   ranges.push({ startLine, endLine });
   return ranges;
+}
+
+function isPatchsetRangeEdit(edit: SandboxPatchsetEdit): edit is Extract<SandboxPatchsetEdit, { start_line: number; end_line: number; content: string }> {
+  return 'start_line' in edit;
+}
+
+function getPatchsetEditContent(edit: SandboxPatchsetEdit): string {
+  if (isPatchsetRangeEdit(edit)) return edit.content;
+  return edit.ops
+    .filter((op): op is Extract<HashlineOp, { content: string }> => 'content' in op)
+    .map((op) => op.content)
+    .join('\n');
+}
+
+async function compilePatchsetEditOps(content: string, edit: SandboxPatchsetEdit): Promise<HashlineOp[]> {
+  if (!isPatchsetRangeEdit(edit)) return edit.ops;
+  const { ops } = await buildRangeReplaceHashlineOps(content, edit.start_line, edit.end_line, edit.content);
+  return ops;
 }
 
 function buildHashlineChangedSpans(
@@ -574,8 +592,10 @@ export async function executeSandboxToolCall(
           const maxLineNum = Math.max(rangeStart, rangeStart + linesToNumber.length - 1);
           const padWidth = String(maxLineNum).length;
 
-          const hashPromises = linesToNumber.map(line => calculateLineHash(line));
-          const lineHashes = await Promise.all(hashPromises);
+          const fullHashPromises = linesToNumber.map(line => calculateLineHash(line, 12));
+          const fullHashes = await Promise.all(fullHashPromises);
+          const hashDisplayLen = adaptiveHashDisplayLength(fullHashes);
+          const lineHashes = fullHashes.map(h => h.slice(0, hashDisplayLen));
 
           toolResultContent = linesToNumber
             .map((line, idx) => `${String(rangeStart + idx).padStart(padWidth)}:${lineHashes[idx]}\t${line}`)
@@ -1222,6 +1242,10 @@ export async function executeSandboxToolCall(
         if (autoRetryNote) {
           editLines.push(`Auto-retry: ${autoRetryNote}`);
         }
+        if (editResult.warnings.length > 0) {
+          editLines.push('Hashline warnings:');
+          editLines.push(...editResult.warnings.map((warning) => `  ⚠ ${warning}`));
+        }
         if (diffHunks) {
           // Limit diff output to prevent context bloat
           const maxDiffLen = 3000;
@@ -1236,7 +1260,7 @@ export async function executeSandboxToolCall(
         if (diagnostics) {
           editLines.push('', '[DIAGNOSTICS]', diagnostics);
         }
-        const postconditionWarnings = [symbolicWarning, autoRetryNote, writeVerified ? null : verifyWarning]
+        const postconditionWarnings = [...editResult.warnings, symbolicWarning, autoRetryNote, writeVerified ? null : verifyWarning]
           .filter((warning): warning is string => Boolean(warning));
         const editPostconditions: ToolMutationPostconditions = {
           touchedFiles: [{
@@ -2800,10 +2824,7 @@ export async function executeSandboxToolCall(
         const guardBlocked: string[] = [];
         const guardWarnings: string[] = [];
         const guardChecks = edits.map(async (edit) => {
-          const patchEditContent = edit.ops
-            .filter((op): op is Extract<HashlineOp, { content: string }> => 'content' in op)
-            .map((op) => op.content)
-            .join('\n');
+          const patchEditContent = getPatchsetEditContent(edit);
           const patchVerdict = fileLedger.checkSymbolicEditAllowed(edit.path, patchEditContent);
           if (!patchVerdict.allowed) {
             // Auto-expand: try reading the file to populate ledger
@@ -3001,14 +3022,25 @@ export async function executeSandboxToolCall(
           const fileData = fileContents.get(edit.path);
           if (!fileData) continue; // shouldn't happen given the check above
 
-          const editResult = await applyHashlineEdits(fileData.content, edit.ops);
+          let compiledOps: HashlineOp[];
+          try {
+            compiledOps = await compilePatchsetEditOps(fileData.content, edit);
+          } catch (compileErr) {
+            validationErrors.push(`${edit.path}: ${compileErr instanceof Error ? compileErr.message : String(compileErr)}`);
+            continue;
+          }
+
+          const editResult = await applyHashlineEdits(fileData.content, compiledOps);
           if (editResult.failed > 0) {
-            const retryHints = await buildHashlineRetryHints(fileData.content, edit.ops, edit.path);
+            const retryHints = await buildHashlineRetryHints(fileData.content, compiledOps, edit.path);
             validationErrors.push([
               `${edit.path}: ${editResult.errors.join('; ')}`,
               ...(retryHints.length > 0 ? [`retry hints: ${retryHints.join(' ')}`] : []),
             ].join(' '));
           } else {
+            if (editResult.warnings.length > 0) {
+              guardWarnings.push(...editResult.warnings.map((warning) => `${edit.path}: ${warning}`));
+            }
             // Truncation-hashline sync: verify resolved lines fall within read ranges
             if (editResult.resolvedLines.length > 0) {
               const coverageVerdict = fileLedger.checkLinesCovered(edit.path, editResult.resolvedLines);
@@ -3024,7 +3056,7 @@ export async function executeSandboxToolCall(
               version: fileData.version,
               workspaceRevision: fileData.workspaceRevision,
               resolvedLines: [...editResult.resolvedLines],
-              ops: [...edit.ops],
+              ops: [...compiledOps],
             });
           }
         }
