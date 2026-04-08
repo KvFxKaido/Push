@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import type { ApprovalMode } from '@/lib/approval-mode';
 import { Toaster } from '@/components/ui/sonner';
 import { formatSnapshotAge, isSnapshotStale } from '@/hooks/useSnapshotManager';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
@@ -29,7 +30,6 @@ const MergeFlowSheet = lazy(() => import('@/components/chat/MergeFlowSheet').the
 const NewChatWorkspaceSheet = lazy(() => import('@/components/chat/NewChatWorkspaceSheet').then((module) => ({ default: module.NewChatWorkspaceSheet })));
 const WorkspaceHubSheet = lazy(() => import('@/components/chat/WorkspaceHubSheet').then((module) => ({ default: module.WorkspaceHubSheet })));
 const RepoLauncherSheet = lazy(() => import('@/components/launcher/RepoLauncherSheet').then((module) => ({ default: module.RepoLauncherSheet })));
-const SettingsSheet = lazy(() => import('@/components/SettingsSheet').then((module) => ({ default: module.SettingsSheet })));
 
 export function WorkspaceChatRoute(props: ChatRouteProps) {
   const {
@@ -104,7 +104,16 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     setCurrentBranch,
     onSandboxBranchSwitch,
     ensureSandbox,
+    approvalMode,
+    updateApprovalMode,
   } = props;
+
+  const cycleApprovalMode = useCallback(() => {
+    const modes: ApprovalMode[] = ['supervised', 'autonomous', 'full-auto'];
+    const next = modes[(modes.indexOf(approvalMode) + 1) % modes.length];
+    updateApprovalMode(next);
+    toast.success(`Switched to ${next === 'full-auto' ? 'Full Auto' : next.charAt(0).toUpperCase() + next.slice(1)} mode`);
+  }, [approvalMode, updateApprovalMode]);
 
   const isScratch = workspaceSession?.kind === 'scratch';
   const activeRepoAppearance = activeRepo && !isScratch
@@ -162,9 +171,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   const [launcherSheetMounted, setLauncherSheetMounted] = useState(false);
   const [branchCreateMounted, setBranchCreateMounted] = useState(false);
   const [mergeFlowMounted, setMergeFlowMounted] = useState(false);
-  const [settingsMounted, setSettingsMounted] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'you' | 'workspace' | 'ai'>('workspace');
 
   const { markSnapshotActivity } = snapshots;
 
@@ -325,13 +331,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     }
     setShowMergeFlow(open);
   }, [setShowMergeFlow]);
-
-  const setShowSettingsWithMount = useCallback((open: boolean) => {
-    if (open) {
-      setSettingsMounted(true);
-    }
-    setShowSettings(open);
-  }, []);
 
   const handlePublishToGitHub = useCallback(async (args: {
     repoName: string;
@@ -558,7 +557,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
         shell={chatScreenShell}
         chat={chatScreenChat}
         banners={chatScreenBanners}
-        onOpenSettings={setShowSettingsWithMount}
+        approvalMode={approvalMode}
+        onCycleApprovalMode={cycleApprovalMode}
       />
 
       {workspaceHubMounted && (
@@ -662,22 +662,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             setCurrentBranch={setCurrentBranch}
             lockedProvider={lockedProvider}
             lockedModel={lockedModel}
-          />
-        </Suspense>
-      )}
-
-      {settingsMounted && (
-        <Suspense fallback={null}>
-          <SettingsSheet
-            open={showSettings}
-            onOpenChange={setShowSettingsWithMount}
-            auth={settingsAuth}
-            profile={settingsProfile}
-            workspace={settingsWorkspace}
-            ai={settingsAI}
-            data={settingsData}
-            settingsTab={settingsTab}
-            setSettingsTab={setSettingsTab}
           />
         </Suspense>
       )}
