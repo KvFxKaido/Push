@@ -164,6 +164,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   const [mergeFlowMounted, setMergeFlowMounted] = useState(false);
   const [settingsMounted, setSettingsMounted] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'you' | 'workspace' | 'ai'>('workspace');
 
   const { markSnapshotActivity } = snapshots;
 
@@ -675,6 +676,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             workspace={settingsWorkspace}
             ai={settingsAI}
             data={settingsData}
+            settingsTab={settingsTab}
+            setSettingsTab={setSettingsTab}
           />
         </Suspense>
       )}
