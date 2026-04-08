@@ -1,5 +1,6 @@
 import type { ComponentProps } from 'react';
-import { Loader2, Download, Save, RotateCcw } from 'lucide-react';
+import { Loader2, Download, Save, RotateCcw, Shield, ShieldOff, Zap } from 'lucide-react';
+import type { ApprovalMode } from '@/lib/approval-mode';
 import { LauncherGridIcon, WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
 import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
 import { ChatContainer } from '@/components/chat/ChatContainer';
@@ -62,6 +63,8 @@ interface ChatScreenProps {
   shell: ChatScreenShellProps;
   chat: ChatScreenChatProps;
   banners: ChatScreenBannerProps;
+  approvalMode?: ApprovalMode;
+  onCycleApprovalMode?: () => void;
 }
 
 const HEADER_PLAIN_INTERACTIVE_CLASS =
@@ -71,7 +74,13 @@ const HEADER_ROUND_BUTTON_CLASS =
 const HEADER_PILL_BUTTON_CLASS =
   `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
 
-export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps) {
+const APPROVAL_MODE_CONFIG: Record<ApprovalMode, { icon: typeof Shield; label: string; color: string }> = {
+  supervised: { icon: Shield, label: 'Supervised', color: 'text-emerald-400' },
+  autonomous: { icon: ShieldOff, label: 'Autonomous', color: 'text-sky-400' },
+  'full-auto': { icon: Zap, label: 'Full Auto', color: 'text-amber-400' },
+};
+
+export function ChatScreen({ workspace, shell, chat, banners, approvalMode, onCycleApprovalMode }: ChatScreenProps) {
   usePerfMark('workspace-chat:painted', 'surface:workspace');
   const {
     activeRepo,
@@ -204,6 +213,20 @@ export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps)
           )}
 
           <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
+            {approvalMode && onCycleApprovalMode && (() => {
+              const cfg = APPROVAL_MODE_CONFIG[approvalMode];
+              const Icon = cfg.icon;
+              return (
+                <button
+                  onClick={onCycleApprovalMode}
+                  className={`${HEADER_ROUND_BUTTON_CLASS} ${cfg.color}`}
+                  aria-label={`Approval mode: ${cfg.label}. Click to cycle.`}
+                  title={`${cfg.label} mode — click to switch`}
+                >
+                  <Icon className="relative z-10 h-3.5 w-3.5" />
+                </button>
+              );
+            })()}
             {(activeRepo || isScratch) && (
               <button
                 onClick={onOpenWorkspaceHub}

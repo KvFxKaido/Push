@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import type { ApprovalMode } from '@/lib/approval-mode';
 import { Toaster } from '@/components/ui/sonner';
 import { formatSnapshotAge, isSnapshotStale } from '@/hooks/useSnapshotManager';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
@@ -103,7 +104,16 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     setCurrentBranch,
     onSandboxBranchSwitch,
     ensureSandbox,
+    approvalMode,
+    updateApprovalMode,
   } = props;
+
+  const cycleApprovalMode = useCallback(() => {
+    const modes: ApprovalMode[] = ['supervised', 'autonomous', 'full-auto'];
+    const next = modes[(modes.indexOf(approvalMode) + 1) % modes.length];
+    updateApprovalMode(next);
+    toast.success(`Switched to ${next === 'full-auto' ? 'Full Auto' : next.charAt(0).toUpperCase() + next.slice(1)} mode`);
+  }, [approvalMode, updateApprovalMode]);
 
   const isScratch = workspaceSession?.kind === 'scratch';
   const activeRepoAppearance = activeRepo && !isScratch
@@ -547,6 +557,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
         shell={chatScreenShell}
         chat={chatScreenChat}
         banners={chatScreenBanners}
+        approvalMode={approvalMode}
+        onCycleApprovalMode={cycleApprovalMode}
       />
 
       {workspaceHubMounted && (
