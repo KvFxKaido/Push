@@ -36,6 +36,8 @@ interface ChatMessage {
 
 interface StreamCompletionOptions {
   onThinkingToken?: ((token: string | null) => void) | null;
+  /** OpenRouter session_id for grouping related requests. */
+  sessionId?: string;
 }
 
 interface ReasoningTokenParser {
@@ -289,12 +291,24 @@ export async function streamCompletion(
       headers['X-Title'] = 'Push CLI';
     }
 
-    const requestBody: { model: string; messages: ChatMessage[]; stream: boolean; temperature: number } = {
+    const requestBody: Record<string, unknown> = {
       model,
       messages,
       stream: true,
       temperature: 0.1,
     };
+
+    // OpenRouter session tracking & trace metadata
+    // See: https://openrouter.ai/docs/guides/features/broadcast/overview
+    if (config.id === 'openrouter') {
+      if (options?.sessionId) {
+        requestBody.session_id = options.sessionId.slice(0, 256);
+      }
+      requestBody.trace = {
+        generation_name: 'push-cli-chat',
+        trace_name: 'push-cli',
+      };
+    }
 
     let response: Response | undefined;
     try {

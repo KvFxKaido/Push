@@ -502,7 +502,7 @@ export async function runAssistantLoop(
       });
     }
 
-    const streamOptions: { onThinkingToken?: (token: string | null) => void } = {
+    const streamOptions: { onThinkingToken?: (token: string | null) => void; sessionId?: string } = {
       onThinkingToken: emit ? (token: string | null): void => {
         if (token === null) {
           dispatchEvent('assistant_thinking_done', {});
@@ -510,6 +510,7 @@ export async function runAssistantLoop(
         }
         dispatchEvent('assistant_thinking_token', { text: token });
       } : undefined,
+      sessionId: state.sessionId,
     };
 
     let assistantText: string;

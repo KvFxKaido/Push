@@ -1,6 +1,7 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PreCompactEvent } from '@/types';
 import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
+import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-session';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
@@ -187,6 +188,8 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       const supportsReasoning = openRouterModelSupportsReasoning(model);
       const effort = getReasoningEffort('openrouter');
       const useReasoning = supportsReasoning && effort !== 'off';
+      const sessionId = getOpenRouterSessionId();
+      const trace = buildOpenRouterTrace();
       return {
         name: 'OpenRouter',
         apiUrl: PROVIDER_URLS.openrouter.chat,
@@ -198,9 +201,12 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
         checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
         providerType: 'openrouter',
         shouldResetStallOnReasoning: useReasoning,
-        bodyTransform: useReasoning
-          ? (body) => ({ ...body, reasoning: { effort } })
-          : undefined,
+        bodyTransform: (body) => ({
+          ...body,
+          ...(useReasoning ? { reasoning: { effort } } : {}),
+          ...(sessionId ? { session_id: sessionId } : {}),
+          trace,
+        }),
       };
     },
   },
