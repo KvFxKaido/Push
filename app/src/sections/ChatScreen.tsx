@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react';
-import { Loader2, Download, Save, RotateCcw } from 'lucide-react';
+import { Loader2, Download, Save, RotateCcw, Settings } from 'lucide-react';
 import { LauncherGridIcon, WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
 import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
 import { ChatContainer } from '@/components/chat/ChatContainer';
@@ -62,6 +62,7 @@ interface ChatScreenProps {
   shell: ChatScreenShellProps;
   chat: ChatScreenChatProps;
   banners: ChatScreenBannerProps;
+  onOpenSettings?: (open: boolean) => void;
 }
 
 const HEADER_PLAIN_INTERACTIVE_CLASS =
@@ -71,7 +72,7 @@ const HEADER_ROUND_BUTTON_CLASS =
 const HEADER_PILL_BUTTON_CLASS =
   `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
 
-export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps) {
+export function ChatScreen({ workspace, shell, chat, banners, onOpenSettings }: ChatScreenProps) {
   usePerfMark('workspace-chat:painted', 'surface:workspace');
   const {
     activeRepo,
@@ -219,6 +220,16 @@ export function ChatScreen({ workspace, shell, chat, banners }: ChatScreenProps)
                     }`}
                   />
                 )}
+              </button>
+            )}
+            {onOpenSettings && (
+              <button
+                onClick={() => onOpenSettings(true)}
+                className={HEADER_ROUND_BUTTON_CLASS}
+                aria-label="Open settings"
+                title="Settings"
+              >
+                <Settings className="relative z-10 h-3.5 w-3.5" />
               </button>
             )}
           </div>

@@ -29,6 +29,7 @@ const MergeFlowSheet = lazy(() => import('@/components/chat/MergeFlowSheet').the
 const NewChatWorkspaceSheet = lazy(() => import('@/components/chat/NewChatWorkspaceSheet').then((module) => ({ default: module.NewChatWorkspaceSheet })));
 const WorkspaceHubSheet = lazy(() => import('@/components/chat/WorkspaceHubSheet').then((module) => ({ default: module.WorkspaceHubSheet })));
 const RepoLauncherSheet = lazy(() => import('@/components/launcher/RepoLauncherSheet').then((module) => ({ default: module.RepoLauncherSheet })));
+const SettingsSheet = lazy(() => import('@/components/SettingsSheet').then((module) => ({ default: module.SettingsSheet })));
 
 export function WorkspaceChatRoute(props: ChatRouteProps) {
   const {
@@ -161,6 +162,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   const [launcherSheetMounted, setLauncherSheetMounted] = useState(false);
   const [branchCreateMounted, setBranchCreateMounted] = useState(false);
   const [mergeFlowMounted, setMergeFlowMounted] = useState(false);
+  const [settingsMounted, setSettingsMounted] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const { markSnapshotActivity } = snapshots;
 
@@ -321,6 +324,13 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     }
     setShowMergeFlow(open);
   }, [setShowMergeFlow]);
+
+  const setShowSettingsWithMount = useCallback((open: boolean) => {
+    if (open) {
+      setSettingsMounted(true);
+    }
+    setShowSettings(open);
+  }, []);
 
   const handlePublishToGitHub = useCallback(async (args: {
     repoName: string;
@@ -547,6 +557,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
         shell={chatScreenShell}
         chat={chatScreenChat}
         banners={chatScreenBanners}
+        onOpenSettings={setShowSettingsWithMount}
       />
 
       {workspaceHubMounted && (
@@ -650,6 +661,20 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             setCurrentBranch={setCurrentBranch}
             lockedProvider={lockedProvider}
             lockedModel={lockedModel}
+          />
+        </Suspense>
+      )}
+
+      {settingsMounted && (
+        <Suspense fallback={null}>
+          <SettingsSheet
+            open={showSettings}
+            onOpenChange={setShowSettingsWithMount}
+            auth={settingsAuth}
+            profile={settingsProfile}
+            workspace={settingsWorkspace}
+            ai={settingsAI}
+            data={settingsData}
           />
         </Suspense>
       )}
