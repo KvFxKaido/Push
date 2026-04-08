@@ -16,7 +16,7 @@ import type {
   WorkspaceSession,
 } from '@/types';
 import './App.css';
-import { createIndexedDbStore, setDefaultMemoryStore } from '@/lib/context-memory-store';
+import { createIndexedDbStore, setDefaultMemoryStore, getDefaultMemoryStore } from '@/lib/context-memory-store';
 import { createPolicyEnforcedStore } from '@push/lib/context-memory-policy-store';
 
 setDefaultMemoryStore(createPolicyEnforcedStore(createIndexedDbStore()));
@@ -123,6 +123,13 @@ function App() {
   useEffect(() => {
     perfMark('app:first-render');
     perfMeasure('app:boot', 'app:first-render');
+  }, []);
+
+  useEffect(() => {
+    void getDefaultMemoryStore().pruneExpired().catch((e) => {
+      // Fail-open: log cleanup errors without crashing app boot
+      console.warn('Memory pruning failed on boot:', e);
+    });
   }, []);
 
   useEffect(() => {
