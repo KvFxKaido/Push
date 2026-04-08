@@ -51,7 +51,7 @@ export function renderAnchoredRange(
 
   const out: string[] = [];
   for (let i = start - 1; i < end; i++) {
-    out.push(`${i + 1}|${hashes[i]}| ${lines[i]}`);
+    out.push(`${i + 1}:${hashes[i]}\t${lines[i]}`);
   }
 
   return {

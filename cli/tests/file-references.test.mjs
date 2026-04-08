@@ -75,10 +75,10 @@ describe('buildFileReferenceContextMessage', () => {
     assert.equal(result.errorCount, 0);
     assert.ok(result.message.includes('[REFERENCED_FILES]'));
     assert.ok(result.message.includes('"path":"src/demo.ts"'));
-    assert.ok(result.message.includes('2|'));
-    assert.ok(result.message.includes('| beta'));
-    assert.ok(result.message.includes('3|'));
-    assert.ok(result.message.includes('| gamma'));
+    assert.ok(result.message.includes('2:'));
+    assert.ok(result.message.includes('\tbeta'));
+    assert.ok(result.message.includes('3:'));
+    assert.ok(result.message.includes('\tgamma'));
   });
 
   it('reports missing files and invalid ranges', async () => {
@@ -121,4 +121,3 @@ describe('appendUserMessageWithFileReferences', () => {
     assert.ok(state.messages[1].content.includes('"path":"src/x.ts"'));
   });
 });
-

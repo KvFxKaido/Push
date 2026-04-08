@@ -328,7 +328,7 @@ describe('edit_file hashline flow', () => {
       assert.ok(read.meta.version);
 
       const firstLine = read.text.split('\n')[0];
-      const match = firstLine.match(/^(\d+)\|([a-f0-9]{7})\|/i);
+      const match = firstLine.match(/^(\d+):([a-f0-9]{7})\t/i);
       assert.ok(match);
 
       const ref = `${match[1]}:${match[2]}`;

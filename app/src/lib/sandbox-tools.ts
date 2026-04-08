@@ -578,7 +578,7 @@ export async function executeSandboxToolCall(
           const lineHashes = await Promise.all(hashPromises);
 
           toolResultContent = linesToNumber
-            .map((line, idx) => `[${lineHashes[idx]}] ${String(rangeStart + idx).padStart(padWidth)}\t${line}`)
+            .map((line, idx) => `${String(rangeStart + idx).padStart(padWidth)}:${lineHashes[idx]}\t${line}`)
             .join('\n');
         }
 

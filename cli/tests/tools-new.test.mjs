@@ -467,7 +467,7 @@ describe('edit_file context preview', () => {
 
     // Get hash for line 5
     const anchorLine = read.text.split('\n')[4]; // 0-indexed, line 5
-    const match = anchorLine.match(/^(\d+)\|([a-f0-9]{7})\|/i);
+    const match = anchorLine.match(/^(\d+):([a-f0-9]{7})\t/i);
     assert.ok(match, 'should parse anchor line');
     const ref = `${match[1]}:${match[2]}`;
 
@@ -500,7 +500,7 @@ describe('edit_file context preview', () => {
       tmpDir,
     );
     const anchorLine = read.text.split('\n')[0];
-    const match = anchorLine.match(/^(\d+)\|([a-f0-9]{7})\|/i);
+    const match = anchorLine.match(/^(\d+):([a-f0-9]{7})\t/i);
     const ref = `${match[1]}:${match[2]}`;
 
     await executeToolCall(

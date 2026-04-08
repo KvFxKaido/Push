@@ -207,10 +207,10 @@ Available tools:
 `edit_file` uses content-hash anchored references instead of raw line numbers. When the agent reads a file, each line is displayed as:
 
 ```
-12|a3b8c1f| const x = 42;
+12:a3b8c1f	const x = 42;
 ```
 
-The `a3b8c1f` is a 7-char SHA-1 hash of the line content. Edits reference lines by `lineNo:hash` (e.g. `"12:a3b8c1f"`), so stale edits are caught immediately if the file changed. Operations: `replace_line`, `insert_after`, `insert_before`, `delete_line`. All content-bearing ops support multi-line content (split on `\n`). After edits, the result includes a context window around each edit site so the agent can verify correctness without a re-read.
+The `a3b8c1f` is a 7-char prefix of a SHA-256 hash of the line content. Edits reference lines by `lineNo:hash` (e.g. `"12:a3b8c1f"`), so every displayed line now includes a copy-pasteable ref and stale edits are caught immediately if the file changed. Operations: `replace_line`, `insert_after`, `insert_before`, `delete_line`. All content-bearing ops support multi-line content (split on `\n`). After edits, the result includes a context window around each edit site so the agent can verify correctness without a re-read.
 
 ## Sessions
 

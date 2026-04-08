@@ -322,7 +322,7 @@ export async function renderAnchoredRange(
 
   const out = [];
   for (let i = start - 1; i < end; i++) {
-    out.push(`${i + 1}|${hashes[i]}| ${lines[i]}`);
+    out.push(`${i + 1}:${hashes[i]}\t${lines[i]}`);
   }
 
   return { text: out.join('\n') || '<empty file>', startLine: start, endLine: end, totalLines };
