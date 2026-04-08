@@ -6,6 +6,8 @@ export interface PersistencePolicy {
   truncateDetail?: boolean;
 }
 
+export const PERSISTED_DETAIL_MAX_CHARS = 800;
+
 export const MEMORY_PERSISTENCE_POLICY: Record<MemoryRecordKind, PersistencePolicy> = {
   finding: { persist: true, ttlDays: 30, truncateDetail: true },
   fact: { persist: true, ttlDays: 30, truncateDetail: true },
@@ -32,4 +34,36 @@ export function isExpired(record: MemoryRecord, now = Date.now()): boolean {
 export function shouldPersist(record: MemoryRecord): boolean {
   const policy = getRecordPolicy(record.kind);
   return policy.persist && !isExpired(record);
+}
+
+function truncatePersistedDetail(detail: string | undefined): string | undefined {
+  if (detail === undefined) return undefined;
+  const trimmed = detail.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length <= PERSISTED_DETAIL_MAX_CHARS) return trimmed;
+  return `${trimmed.slice(0, Math.max(0, PERSISTED_DETAIL_MAX_CHARS - 1)).trimEnd()}…`;
+}
+
+export function normalizeRecordForPersistence(
+  record: MemoryRecord,
+  now = Date.now(),
+): MemoryRecord | null {
+  const policy = getRecordPolicy(record.kind);
+  if (!policy.persist || isExpired(record, now)) return null;
+
+  let changed = false;
+  let nextDetail = record.detail;
+  if (policy.truncateDetail) {
+    const truncatedDetail = truncatePersistedDetail(record.detail);
+    if (truncatedDetail !== record.detail) {
+      nextDetail = truncatedDetail;
+      changed = true;
+    }
+  }
+
+  if (!changed) return record;
+  return {
+    ...record,
+    detail: nextDetail,
+  };
 }

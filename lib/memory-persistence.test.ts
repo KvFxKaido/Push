@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { createInMemoryStore } from './context-memory-store';
 import { createPolicyEnforcedStore } from './context-memory-policy-store';
+import { PERSISTED_DETAIL_MAX_CHARS } from './memory-persistence-policy';
 import type { MemoryRecord } from './runtime-contract';
 
 describe('PolicyEnforcedStore', () => {
@@ -27,10 +28,11 @@ describe('PolicyEnforcedStore', () => {
     await store.write(persistent);
     await store.write(nonPersistent);
 
-    expect(await store.size()).toBe(2); // In-memory store still holds both
+    expect(await store.size()).toBe(1);
     const listed = await store.list();
     expect(listed.find(r => r.id === '1')).toBeDefined();
-    expect(listed.find(r => r.id === '2')).toBeUndefined(); // Policy filter applied during write/list
+    expect(listed.find(r => r.id === '2')).toBeUndefined();
+    expect(await inner.get('2')).toBeUndefined();
   });
 
   it('should hide expired records', async () => {
@@ -78,5 +80,30 @@ describe('PolicyEnforcedStore', () => {
 
     await store.clearByRepo(repo);
     expect(await store.size()).toBe(0);
+  });
+
+  it('should purge legacy non-persistent records during reads', async () => {
+    const inner = createInMemoryStore();
+    const store = createPolicyEnforcedStore(inner);
+
+    await inner.write(createRecord('legacy-file-change', 'file_change', Date.now()));
+
+    expect(await store.get('legacy-file-change')).toBeUndefined();
+    expect(await inner.get('legacy-file-change')).toBeUndefined();
+  });
+
+  it('should truncate persisted detail payloads', async () => {
+    const inner = createInMemoryStore();
+    const store = createPolicyEnforcedStore(inner);
+    const longDetail = 'x'.repeat(PERSISTED_DETAIL_MAX_CHARS + 250);
+
+    await store.write({
+      ...createRecord('finding-with-detail', 'finding', Date.now()),
+      detail: longDetail,
+    });
+
+    const persisted = await inner.get('finding-with-detail');
+    expect(persisted?.detail?.length).toBeLessThanOrEqual(PERSISTED_DETAIL_MAX_CHARS);
+    expect(persisted?.detail?.endsWith('…')).toBe(true);
   });
 });
