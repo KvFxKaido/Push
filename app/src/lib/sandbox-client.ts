@@ -410,6 +410,27 @@ export function getSandboxEnvironment(sandboxId?: string): SandboxEnvironment | 
   const targetId = sandboxId ?? activeSandboxEnvironmentId;
   if (!targetId) return null;
   return sandboxEnvironmentsById.get(targetId) || null;
+
+export interface SandboxLifecycleEvent {
+  timestamp: number;
+  message: string;
+}
+
+const sandboxLifecycleEventsById = new Map<string, SandboxLifecycleEvent[]>();
+
+export function recordSandboxLifecycleEvent(sandboxId: string, message: string): void {
+  const events = sandboxLifecycleEventsById.get(sandboxId) || [];
+  events.push({ timestamp: Date.now(), message });
+  if (events.length > 20) events.shift();
+  sandboxLifecycleEventsById.set(sandboxId, events);
+}
+
+export function getSandboxLifecycleEvents(sandboxId?: string): SandboxLifecycleEvent[] {
+  const targetId = sandboxId ?? activeSandboxEnvironmentId;
+  if (!targetId) return [];
+  return sandboxLifecycleEventsById.get(targetId) || [];
+}
+
 }
 
 export function setSandboxEnvironment(sandboxId: string, env: SandboxEnvironment | null): void {
@@ -422,6 +443,7 @@ export function setActiveSandboxEnvironment(sandboxId: string | null): void {
 }
 
 export function clearSandboxEnvironment(sandboxId?: string): void {
+  sandboxLifecycleEventsById.delete(sandboxId);
   if (sandboxId) {
     sandboxEnvironmentsById.delete(sandboxId);
     if (activeSandboxEnvironmentId === sandboxId) {
@@ -432,6 +454,7 @@ export function clearSandboxEnvironment(sandboxId?: string): void {
 
   if (activeSandboxEnvironmentId) {
     sandboxEnvironmentsById.delete(activeSandboxEnvironmentId);
+    sandboxLifecycleEventsById.delete(activeSandboxEnvironmentId);
     activeSandboxEnvironmentId = null;
   }
 }
@@ -837,6 +860,11 @@ export async function createSandbox(
   const environment = data.environment || undefined;
   if (environment) setSandboxEnvironment(data.sandbox_id, environment);
 
+  
+  if (!environment?.readiness?.dependencies) {
+    recordSandboxLifecycleEvent(data.sandbox_id, "Workspace created");
+  }
+
   return { sandboxId: data.sandbox_id, ownerToken: data.owner_token, status: 'ready', workspaceRevision: data.workspace_revision, environment };
 }
 
@@ -1211,6 +1239,10 @@ export async function downloadFromSandbox(
     format: 'tar.gz',
   }, ARCHIVE_TIMEOUT_MS);
 
+  if (raw.ok) {
+    recordSandboxLifecycleEvent(sandboxId, `Workspace tar.gz archive exported`);
+  }
+
   return {
     ok: raw.ok,
     archiveBase64: raw.archive_base64,
@@ -1238,6 +1270,10 @@ export async function downloadFileFromSandbox(
     path,
     format: 'raw',
   }, ARCHIVE_TIMEOUT_MS);
+
+  if (raw.ok) {
+    recordSandboxLifecycleEvent(sandboxId, `File ${path} downloaded`);
+  }
 
   return {
     ok: raw.ok,
@@ -1276,6 +1312,10 @@ export async function hydrateSnapshotInSandbox(
   }, RESTORE_TIMEOUT_MS);
   if (typeof raw.workspace_revision === 'number') {
     setSandboxWorkspaceRevision(sandboxId, raw.workspace_revision);
+  }
+
+  if (raw.ok) {
+    recordSandboxLifecycleEvent(sandboxId, `Workspace state restored from snapshot`);
   }
 
   return {

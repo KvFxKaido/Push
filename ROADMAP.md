@@ -34,7 +34,7 @@ Current cycle emphasis: transcript-first CLI ergonomics, selective CLI adoption 
 | CLI Protocol/Schema Hardening | planned | Harden protocol envelopes and optional schema validation for daemon/client interoperability | Schema validation mode exists for core events; protocol regressions fail tests before release |
 | Chat Surface Evolution | planned | Make chat a first-class surface with cleaner chat-first launcher framing, explicit context escalation, and mode-specific restore behavior | Chat can be described as its own surface instead of a workspace flag, while runtime/storage/auth remain shared |
 | Workspace Publish Follow-through | planned | Polish the post-publish repo-backed handoff and decide the optional empty-repo path after the first publish flow shipped | Publishing a workspace to GitHub feels explicit and understandable end-to-end, and the next empty-repo path is either shipped or clearly scoped |
-| Sandbox Telemetry | blocked | Track creation, expiration, download, and promotion events | Analytics provider selected; sandbox lifecycle events visible in dashboard/logs |
+| Sandbox Awareness Matrix | in_progress | Expose sandbox lifecycle (TTL, downloads, creation) directly to the agent via context blocks instead of an external dashboard | System prompt includes rich lifetime and event history so models can proactively suggest saves/downloads before expiry |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
 
 ## Recently Completed
@@ -60,6 +60,7 @@ Current cycle emphasis: transcript-first CLI ergonomics, selective CLI adoption 
 
 | Date | Decision | Source |
 |---|---|---|
+| 2026-04-09 | Pivoted Sandbox Telemetry from external analytics to an internal Sandbox Awareness Matrix. Models will get TTL and lifecycle events directly in prompts instead of building operator dashboards. | Chat decision |
 | 2026-04-05 | Shared runtime convergence tranche shipped: task-graph runtime, typed memory, delegation briefs, run-event vocabulary, and role-context semantics now live in shared `lib/`; further CLI work should be selective product adoption, not blanket parity extraction | Implementation session + `docs/runbooks/Shared Runtime Convergence Plan.md` |
 | 2026-04-05 | Task graph orchestration, graph memory, typed context-memory retrieval/invalidation/packing, and task-level trace events shipped as the new orchestration baseline | Implementation session + `docs/runbooks/Task Graph Orchestration Plan.md` + `docs/decisions/Context Memory and Retrieval Architecture.md` |
 | 2026-04-05 | In-app repo creation should be treated as "publish workspace to GitHub" first; Phase 1 publish UI/workspace handoff shipped | Implementation session + `docs/runbooks/Workspace Publish to GitHub Plan.md` |

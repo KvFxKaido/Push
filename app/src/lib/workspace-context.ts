@@ -1,5 +1,5 @@
 import type { RepoWithActivity, ActiveRepo, WorkspaceContext } from '@/types';
-import { getSandboxEnvironment } from './sandbox-client';
+import { getSandboxEnvironment, getSandboxLifecycleEvents } from './sandbox-client';
 
 export { sanitizeProjectInstructions } from '@push/lib/project-instructions';
 
@@ -116,6 +116,18 @@ export function buildSessionCapabilityBlock(
 ): string {
   const sandboxEnv = hasSandbox ? getSandboxEnvironment() : null;
   const payload = {
+  const lifecycleEvents = hasSandbox ? getSandboxLifecycleEvents() : [];
+  const creationEvent = lifecycleEvents.find(e => e.message.includes('Workspace created'));
+  const ageMs = creationEvent ? Date.now() - creationEvent.timestamp : 0;
+  const maxTtlMs = 30 * 60 * 1000;
+  const remainingMs = Math.max(0, maxTtlMs - ageMs);
+  const remainingMinutes = Math.floor(remainingMs / 60_000);
+  
+  const formattedEvents = lifecycleEvents.map(e => {
+    const d = new Date(e.timestamp);
+    return `[${d.toISOString()}] ${e.message}`;
+  });
+
     workspaceMode: workspaceContext.mode,
     githubTools: workspaceContext.includeGitHubTools,
     sandbox: {
@@ -123,6 +135,8 @@ export function buildSessionCapabilityBlock(
       writableRoot: sandboxEnv?.writable_root ?? (hasSandbox ? '/workspace' : null),
       gitAvailable: sandboxEnv?.git_available ?? null,
       containerTtl: sandboxEnv?.container_ttl ?? null,
+      containerTtlRemaining: sandboxEnv && creationEvent ? `${remainingMinutes}m` : null,
+      lifecycleEvents: formattedEvents,
       toolVersions: sandboxEnv?.tools ?? {},
       projectMarkers: sandboxEnv?.project_markers?.slice(0, 8) ?? [],
       scripts: sandboxEnv?.scripts ? Object.keys(sandboxEnv.scripts).sort() : [],
