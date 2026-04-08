@@ -6,6 +6,7 @@ import {
   OLLAMA_DEFAULT_MODEL,
   OPENADAPTER_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
+  OPENROUTER_MAX_SESSION_ID_LENGTH,
   ZEN_DEFAULT_MODEL,
 } from '../lib/provider-models.ts';
 
@@ -291,7 +292,7 @@ export async function streamCompletion(
       headers['X-Title'] = 'Push CLI';
     }
 
-    const requestBody: Record<string, unknown> = {
+    const baseBody: { model: string; messages: ChatMessage[]; stream: boolean; temperature: number } = {
       model,
       messages,
       stream: true,
@@ -300,15 +301,15 @@ export async function streamCompletion(
 
     // OpenRouter session tracking & trace metadata
     // See: https://openrouter.ai/docs/guides/features/broadcast/overview
-    if (config.id === 'openrouter') {
-      if (options?.sessionId) {
-        requestBody.session_id = options.sessionId.slice(0, 256);
+    const requestBody: Record<string, unknown> = config.id === 'openrouter'
+      ? {
+        ...baseBody,
+        ...(options?.sessionId
+          ? { session_id: options.sessionId.slice(0, OPENROUTER_MAX_SESSION_ID_LENGTH) }
+          : {}),
+        trace: { generation_name: 'push-cli-chat', trace_name: 'push-cli' },
       }
-      requestBody.trace = {
-        generation_name: 'push-cli-chat',
-        trace_name: 'push-cli',
-      };
-    }
+      : baseBody;
 
     let response: Response | undefined;
     try {

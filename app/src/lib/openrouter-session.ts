@@ -2,23 +2,33 @@
 // See: https://openrouter.ai/docs/guides/features/broadcast/overview#optional-trace-data
 //
 // session_id groups related requests (e.g. a conversation) so OpenRouter
-// broadcast destinations can correlate them. Max 256 characters.
+// broadcast destinations can correlate them.
 
-const MAX_SESSION_ID_LENGTH = 256;
+import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '@push/lib/provider-models';
 
 let currentSessionId: string | null = null;
 
-/**
- * Set the OpenRouter session_id for subsequent requests.
- * Typically called with the chat conversation ID before streaming.
- */
-export function setOpenRouterSessionId(id: string | null): void {
-  currentSessionId = id ? id.slice(0, MAX_SESSION_ID_LENGTH) : null;
+function normalizeSessionId(id: string | null): string | null {
+  return id ? id.slice(0, OPENROUTER_MAX_SESSION_ID_LENGTH) : null;
 }
 
-/** Get the current OpenRouter session_id, if any. */
+/**
+ * Set the OpenRouter session_id for the next request.
+ * Typically called with the chat conversation ID immediately before streaming.
+ */
+export function setOpenRouterSessionId(id: string | null): void {
+  currentSessionId = normalizeSessionId(id);
+}
+
+/**
+ * Get and clear the current OpenRouter session_id, if any.
+ * Consumes the value so it cannot leak into unrelated later requests
+ * (e.g. reviewer-agent or auditor-agent flows that bypass chat-send).
+ */
 export function getOpenRouterSessionId(): string | null {
-  return currentSessionId;
+  const sessionId = currentSessionId;
+  currentSessionId = null;
+  return sessionId;
 }
 
 /**

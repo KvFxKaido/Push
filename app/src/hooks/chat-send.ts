@@ -301,9 +301,10 @@ export async function streamAssistantRound(
   const hasSandboxThisRound = Boolean(sandboxIdRef.current);
 
   // Set OpenRouter session_id so all requests in this conversation are grouped.
-  if (lockedProvider === 'openrouter') {
-    setOpenRouterSessionId(chatId);
-  }
+  // Set unconditionally: the orchestrator may resolve to OpenRouter even when
+  // lockedProvider is something else, and the getter is consume-and-clear so
+  // it won't leak into non-OpenRouter requests.
+  setOpenRouterSessionId(chatId);
 
   const error = await new Promise<Error | null>((resolve) => {
     streamChat(
