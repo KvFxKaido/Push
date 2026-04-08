@@ -37,8 +37,9 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 - **Delegation and orchestration** — direct Explorer/Coder delegation plus dependency-aware task graphs via `plan_tasks`
 - **Context and memory** — staged compaction, Coder working memory, graph-scoped task memory, typed retrieval/invalidation, and sectioned prompt packing
 - **Shared runtime contract** — canonical task-graph, memory, delegation-brief, role-context, and run-event semantics live in root `lib/` and are consumed by both web and CLI
+- **Sandbox awareness** — session capability blocks expose container lifetime, creation/download events, and recent workspace lifecycle state directly to the agent
 - **Review sources** — Branch diff, Last commit, Working tree
-- **Harness reliability** — hashline edits, resumable sessions, active branch handling
+- **Harness reliability** — adaptive hashline edits, patchset transactions, resumable sessions, and active branch handling
 - **GitHub flow** — PR merge flow, branch-scoped chats, commit/push, and workspace publish-to-GitHub
 - **Project instructions** — loading order: `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md`
 
