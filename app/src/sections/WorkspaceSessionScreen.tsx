@@ -217,14 +217,14 @@ export function WorkspaceSessionScreen({
   });
 
   const clearMemoryByRepo = useCallback(() => {
-    if (!activeRepo?.full_name) return;
-    void getDefaultMemoryStore().clearByRepo(activeRepo.full_name).catch(e => console.warn('[Settings] Failed to clear memory by repo', e));
-  }, [activeRepo]);
+    if (!workspaceRepo?.full_name) return;
+    void Promise.resolve(getDefaultMemoryStore().clearByRepo(workspaceRepo.full_name)).catch((e: unknown) => console.warn('[Settings] Failed to clear memory by repo', e));
+  }, [workspaceRepo]);
 
   const clearMemoryByBranch = useCallback(() => {
-    if (!activeRepo?.full_name || !activeRepo.current_branch) return;
-    void getDefaultMemoryStore().clearByBranch(activeRepo.full_name, activeRepo.current_branch).catch(e => console.warn('[Settings] Failed to clear memory by branch', e));
-  }, [activeRepo]);
+    if (!workspaceRepo?.full_name || !workspaceRepo.current_branch) return;
+    void Promise.resolve(getDefaultMemoryStore().clearByBranch(workspaceRepo.full_name, workspaceRepo.current_branch)).catch((e: unknown) => console.warn('[Settings] Failed to clear memory by branch', e));
+  }, [workspaceRepo]);
   const {
     selectedChatProvider,
     selectedChatModels,
