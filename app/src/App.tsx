@@ -126,7 +126,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    void getDefaultMemoryStore().pruneExpired().catch((e) => {
+    void Promise.resolve(getDefaultMemoryStore().pruneExpired()).catch((e: unknown) => {
       // Fail-open: log cleanup errors without crashing app boot
       console.warn('Memory pruning failed on boot:', e);
     });
