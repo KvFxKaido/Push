@@ -189,8 +189,10 @@ export function useProjectInstructions(
       return;
     }
     if (workspaceSession.kind === 'chat') {
-      // Chat mode — plain conversation, no tools, no sandbox
-      const description = 'You are in chat mode — a plain conversation with no repository context, no sandbox, and no tools.'
+      // Chat mode — plain conversation. No repo or sandbox, but web_search is
+      // available so the assistant can ground answers on fresh information.
+      const description = 'You are in chat mode — a plain conversation with no repository context and no sandbox.'
+        + ' You have one tool: web_search, for looking up current information when the user asks about fresh topics, recent releases, or real-time facts.'
         + ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.';
       setWorkspaceContext({ description, includeGitHubTools: false, mode: 'chat' });
       return;
