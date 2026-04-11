@@ -52,6 +52,35 @@ describe('shouldSkipReport', () => {
     expect(shouldSkipReport({ source: 'unhandled-rejection', error: abort })).toBe(true);
   });
 
+  it('drops "ResizeObserver loop limit exceeded" window events', () => {
+    expect(
+      shouldSkipReport({
+        source: 'window-error',
+        error: new Error('ResizeObserver loop limit exceeded'),
+      }),
+    ).toBe(true);
+  });
+
+  it('drops "ResizeObserver loop completed with undelivered notifications." window events', () => {
+    expect(
+      shouldSkipReport({
+        source: 'window-error',
+        error: new Error('ResizeObserver loop completed with undelivered notifications.'),
+      }),
+    ).toBe(true);
+  });
+
+  it('keeps ResizeObserver messages from non-window sources', () => {
+    // A React render crash that happens to mention ResizeObserver isn't the
+    // benign browser warning — it's an actual render failure.
+    expect(
+      shouldSkipReport({
+        source: 'react-render',
+        error: new Error('ResizeObserver loop limit exceeded'),
+      }),
+    ).toBe(false);
+  });
+
   it('keeps regular errors', () => {
     expect(
       shouldSkipReport({

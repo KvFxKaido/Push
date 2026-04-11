@@ -15,9 +15,14 @@ if (!rootElement) {
 }
 
 const tracingConfig = initPushTracing();
-// Global error capture is gated on tracing being enabled — when there's no
-// exporter configured, there's nowhere for crash events to go.
-if (tracingConfig.enabled) {
+// Global error capture is gated on tracing being enabled AND at least one
+// exporter being configured. `initPushTracing` returns `enabled: true` as
+// long as the user explicitly opted in, but it skips SDK bootstrap when no
+// endpoint or console exporter is set — in that case the tracer stays a
+// no-op and `reportError` spans would be silently dropped. Match the same
+// bootstrap guard here so handlers are only installed when crash events can
+// actually be exported.
+if (tracingConfig.enabled && (tracingConfig.endpoint || tracingConfig.consoleExporter)) {
   installGlobalErrorHandlers();
 }
 

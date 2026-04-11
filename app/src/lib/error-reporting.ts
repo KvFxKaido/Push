@@ -10,6 +10,9 @@
  *   - AbortError is filtered upstream by `recordSpanError` in tracing.ts.
  *   - Cross-origin "Script error." events from foreign scripts are dropped
  *     because they carry no actionable stack information.
+ *   - "ResizeObserver loop limit exceeded" / "ResizeObserver loop completed
+ *     with undelivered notifications." are benign browser noise from nested
+ *     resize notifications; not real crashes.
  */
 
 import { SpanKind, getPushTracer, recordSpanError } from './tracing';
@@ -21,6 +24,14 @@ export interface CapturedError {
   error: unknown;
   attributes?: Record<string, string | number | boolean>;
 }
+
+/**
+ * Maximum number of characters of a React component stack to attach as a span
+ * attribute. Component stacks can be very large on deep trees, and most OTLP
+ * backends apply their own size limits. Shared between RootErrorBoundary and
+ * CardErrorBoundary so both sites record stacks consistently.
+ */
+export const MAX_COMPONENT_STACK_CHARS = 4000;
 
 const INSTALLED_FLAG = Symbol.for('push.errorHandlersInstalled');
 
@@ -35,15 +46,25 @@ interface InstallableTarget extends EventTarget {
 export function shouldSkipReport(captured: CapturedError): boolean {
   const { source, error } = captured;
 
-  // Cross-origin scripts surface as a generic "Script error." with no stack —
-  // there's nothing actionable to capture, and it's a well-known noise source.
-  if (source === 'window-error' && error instanceof Error && error.message === 'Script error.') {
-    return true;
-  }
-
   // AbortError represents intentional cancellation, not a crash.
   if (error instanceof DOMException && error.name === 'AbortError') {
     return true;
+  }
+
+  if (source === 'window-error' && error instanceof Error) {
+    // Cross-origin scripts surface as a generic "Script error." with no stack —
+    // there's nothing actionable to capture.
+    if (error.message === 'Script error.') return true;
+
+    // ResizeObserver notifications that trigger another resize in the same
+    // frame produce a benign browser warning. It's a well-known noise source
+    // in React apps and not an actual crash.
+    if (
+      error.message.includes('ResizeObserver loop limit exceeded') ||
+      error.message.includes('ResizeObserver loop completed with undelivered notifications')
+    ) {
+      return true;
+    }
   }
 
   return false;

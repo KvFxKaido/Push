@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { reportError } from '@/lib/error-reporting';
+import { MAX_COMPONENT_STACK_CHARS, reportError } from '@/lib/error-reporting';
 
 interface RootErrorBoundaryProps {
   children: ReactNode;
@@ -35,8 +35,9 @@ export class RootErrorBoundary extends Component<RootErrorBoundaryProps, RootErr
     reportError({
       source: 'react-render',
       error,
-      // React component stacks can be huge; cap to keep span attributes small.
-      attributes: stack ? { 'push.error.component_stack': stack.slice(0, 4000) } : undefined,
+      attributes: stack
+        ? { 'push.error.component_stack': stack.slice(0, MAX_COMPONENT_STACK_CHARS) }
+        : undefined,
     });
   }
 

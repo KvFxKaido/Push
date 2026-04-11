@@ -2,7 +2,7 @@ import { Component, Suspense, type ComponentType, type ErrorInfo, type ReactNode
 import type { ChatCard, CardAction } from '@/types';
 import { CARD_PANEL_CLASS } from '@/lib/utils';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
-import { reportError } from '@/lib/error-reporting';
+import { MAX_COMPONENT_STACK_CHARS, reportError } from '@/lib/error-reporting';
 import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
 
@@ -169,7 +169,9 @@ class CardErrorBoundary extends Component<CardErrorBoundaryProps, CardErrorBound
     reportError({
       source: 'card-render',
       error,
-      attributes: stack ? { 'push.error.component_stack': stack.slice(0, 4000) } : undefined,
+      attributes: stack
+        ? { 'push.error.component_stack': stack.slice(0, MAX_COMPONENT_STACK_CHARS) }
+        : undefined,
     });
   }
 
