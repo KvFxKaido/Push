@@ -160,27 +160,32 @@ function summarizeVerboseMessage(msg: Message): Message {
 // ---------------------------------------------------------------------------
 
 function buildContextDigest(removed: Message[]): string {
+  // Guard: empty case returns simple message (like the old implementation)
+  if (removed.length === 0) {
+    return [
+      '[CONTEXT DIGEST]',
+      'Earlier context trimmed for token budget.',
+      '[/CONTEXT DIGEST]',
+    ].join('\n');
+  }
+
+  // Limit to recent 20 messages to avoid unbounded digest growth
+  const recent = removed.slice(-20);
+
+  // Build points: normalize whitespace and extract first semantic line only
+  const points: string[] = recent.map((msg) => {
+    // Get full content and normalize: replace newlines with spaces
+    const fullContent = toContentString(msg.content).replace(/[\r\n]+/g, ' ').trim();
+    // Extract first ~200 chars as snippet
+    const snippet =
+      fullContent.length > 200 ? fullContent.slice(0, 200) + '...' : fullContent;
+    return `- ${msg.role === 'user' ? 'User' : 'Assistant'}: ${snippet}`;
+  });
+
   return [
     '[CONTEXT DIGEST]',
-    'Earlier messages were condensed to fit the context budget. To preserve continuity, synthesize the removed turns below into a structured summary covering these 9 dimensions:',
-    '',
-    '1. Current State: What is the current state of the workspace?',
-    '2. Goals & Intent: What is the user trying to achieve?',
-    '3. Recent Changes: What was most recently modified?',
-    '4. Key Decisions: What technical or architectural decisions were made so far?',
-    '5. Active Work: What are you actively working on?',
-    '6. Key Files: Which files have been accessed and are important to this task?',
-    '7. Learnings: What failed attempts or constraints were discovered?',
-    '8. Important Context: Any other critical context a new agent turn needs to know?',
-    '9. Optional Next Steps: What is the immediate next action requested?',
-    '',
-    '<removed_messages>',
-    ...removed.map(msg => {
-      const preview = toContentString(msg.content);
-      const snippet = preview.length > 500 ? preview.slice(0, 500) + '...[truncated]' : preview;
-      return `[${msg.role.toUpperCase()}]: ${snippet}`;
-    }),
-    '</removed_messages>',
+    'Earlier messages were condensed to fit the context budget:',
+    ...points,
     '[/CONTEXT DIGEST]',
   ].join('\n');
 }
