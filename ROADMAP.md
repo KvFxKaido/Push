@@ -36,7 +36,10 @@ Current cycle emphasis: transcript-first CLI ergonomics, selective CLI adoption 
 | Workspace Publish Follow-through | planned | Polish the post-publish repo-backed handoff and decide the optional empty-repo path after the first publish flow shipped | Publishing a workspace to GitHub feels explicit and understandable end-to-end, and the next empty-repo path is either shipped or clearly scoped |
 | Sandbox Awareness Matrix | in_progress | Expose sandbox lifecycle (TTL, downloads, creation) directly to the agent via context blocks instead of an external dashboard | System prompt includes rich lifetime and event history so models can proactively suggest saves/downloads before expiry |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
-
+|
+| UX: Preserving Context on Branch Creation | planned | Add "Fork Workspace" flow so when a user switches branches from the UI, the active chat session (and uncommitted sandbox state) carries over instead of being wiped | A new branch can be created from an active chat without dropping the conversation context or destroying uncommitted work |
+| GitHub Tools: Fetch inline PR Review Comments | planned | Update `pr` tool to fetch `pull_request_review_comments` and issue comments alongside the diff so the agent can see review feedback | Agent can directly read reviewer feedback on a PR without the user copy-pasting it |
+| UX: Multi-image Upload | planned | Update web/mobile chat UI to allow batch selection/upload of multiple images per turn | User can upload 5 screenshots at once and the agent processes them in a single vision-block payload |
 ## Recently Completed
 
 | Item | Status | Scope | Acceptance Criteria |
