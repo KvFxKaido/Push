@@ -26,7 +26,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     readOnly: true,
     statusLabel: 'Fetching from GitHub...',
     protocolSignature: 'pr(repo, pr)',
-    protocolDescription: 'Fetch full PR details with diff',
+    protocolDescription:
+      'Fetch full PR details with diff, review comments, and top-level conversation comments',
     exampleJson: '{"tool": "pr", "args": {"repo": "owner/repo", "pr": 42}}',
   },
   {

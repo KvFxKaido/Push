@@ -156,6 +156,19 @@ export interface GitHubCoreWorkflowLogsCardData {
   repo: string;
 }
 
+export interface GitHubCorePRReviewComment {
+  author: string;
+  path?: string;
+  line?: number;
+  body: string;
+}
+
+export interface GitHubCorePRIssueComment {
+  author: string;
+  body: string;
+  createdAt: string;
+}
+
 export interface GitHubCorePRCardData {
   number: number;
   title: string;
@@ -169,6 +182,8 @@ export interface GitHubCorePRCardData {
   createdAt: string;
   description?: string;
   files?: GitHubCorePRFile[];
+  reviewComments?: GitHubCorePRReviewComment[];
+  issueComments?: GitHubCorePRIssueComment[];
 }
 
 export interface GitHubCoreBranchListCardData {
@@ -709,63 +724,131 @@ export async function executeFetchPRTool(
     }
   }
 
-  let branchCommits: Array<{ sha: string; message: string; author: string }> = [];
-  try {
+  // All remaining enrichments (commits, diff, files, inline review comments,
+  // top-level conversation comments) depend only on prData, so fetch them in
+  // parallel with Promise.allSettled and merge whatever succeeds. Each branch
+  // returns a stable fallback so one failing endpoint cannot mask the others.
+  const commitsPromise = (async (): Promise<
+    Array<{ sha: string; message: string; author: string }>
+  > => {
     const commitsRes = await runtime.githubFetch(
       buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/commits`),
       { headers },
     );
-    if (commitsRes.ok) {
-      const commitsData = (await commitsRes.json()) as Array<{
-        sha: string;
-        commit?: { message?: string; author?: { name?: string } };
-        author?: { login?: string };
-      }>;
-      branchCommits = commitsData.slice(0, 5).map((commit) => ({
-        sha: (commit.sha || '').slice(0, 7),
-        message: (commit.commit?.message || '').split('\n')[0].slice(0, 60),
-        author: commit.commit?.author?.name || commit.author?.login || 'unknown',
-      }));
-    }
-  } catch {
-    // Best-effort enrichment only.
-  }
+    if (!commitsRes.ok) return [];
+    const commitsData = (await commitsRes.json()) as Array<{
+      sha: string;
+      commit?: { message?: string; author?: { name?: string } };
+      author?: { login?: string };
+    }>;
+    return commitsData.slice(0, 5).map((commit) => ({
+      sha: (commit.sha || '').slice(0, 7),
+      message: (commit.commit?.message || '').split('\n')[0].slice(0, 60),
+      author: commit.commit?.author?.name || commit.author?.login || 'unknown',
+    }));
+  })();
 
-  const diffRes = await runtime.githubFetch(
-    buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}`),
-    {
-      headers: runtime.buildHeaders(DIFF_ACCEPT),
-    },
-  );
-  let diff = '';
-  if (diffRes.ok) {
-    diff = await diffRes.text();
-    if (diff.length > 10_000) {
-      diff = `${diff.slice(0, 10_000)}\n\n[...diff truncated at 10K chars]`;
+  const diffPromise = (async (): Promise<string> => {
+    const diffRes = await runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}`),
+      { headers: runtime.buildHeaders(DIFF_ACCEPT) },
+    );
+    if (!diffRes.ok) return '';
+    const text = await diffRes.text();
+    if (text.length > 10_000) {
+      return `${text.slice(0, 10_000)}\n\n[...diff truncated at 10K chars]`;
     }
-  }
+    return text;
+  })();
 
-  const filesRes = await runtime.githubFetch(
-    buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/files`),
-    { headers },
-  );
-  let filesData: GitHubCorePRFile[] = [];
-  let filesSummary = '';
-  if (filesRes.ok) {
+  const filesPromise = (async (): Promise<{ data: GitHubCorePRFile[]; summary: string }> => {
+    const filesRes = await runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/files`),
+      { headers },
+    );
+    if (!filesRes.ok) return { data: [], summary: '' };
     const files = (await filesRes.json()) as GitHubCorePRFile[];
-    filesData = files.slice(0, 20).map((file) => ({
+    const data = files.slice(0, 20).map((file) => ({
       filename: file.filename,
       status: file.status,
       additions: file.additions,
       deletions: file.deletions,
     }));
-    filesSummary = filesData
+    let summary = data
       .map((file) => `  ${file.status} ${file.filename} (+${file.additions} -${file.deletions})`)
       .join('\n');
     if (files.length > 20) {
-      filesSummary += `\n  ...and ${files.length - 20} more files`;
+      summary += `\n  ...and ${files.length - 20} more files`;
     }
-  }
+    return { data, summary };
+  })();
+
+  // Inline review comments (left on specific lines during a PR review).
+  // Fetch newest-first so that when a PR has more than 20 inline comments we
+  // surface the most recent reviewer feedback, then reverse the slice so the
+  // displayed order stays chronological (oldest -> newest).
+  const reviewCommentsPromise = (async (): Promise<GitHubCorePRReviewComment[]> => {
+    const reviewCommentsRes = await runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/comments?per_page=20&direction=desc`),
+      { headers },
+    );
+    if (!reviewCommentsRes.ok) return [];
+    const raw = (await reviewCommentsRes.json()) as Array<{
+      user?: { login?: string };
+      path?: string;
+      line?: number | null;
+      original_line?: number | null;
+      body?: string;
+    }>;
+    return raw
+      .slice(0, 20)
+      .map((comment) => ({
+        author: comment.user?.login || 'unknown',
+        path: comment.path,
+        line: comment.line ?? comment.original_line ?? undefined,
+        body: truncateCommentBody(comment.body || ''),
+      }))
+      .reverse();
+  })();
+
+  // Top-level PR conversation comments (use the issues endpoint per GitHub API).
+  // The /issues/{num}/comments endpoint does not support a direction parameter,
+  // so this returns the oldest comments first; per_page is matched to the slice
+  // limit to avoid over-fetching.
+  const issueCommentsPromise = (async (): Promise<GitHubCorePRIssueComment[]> => {
+    const issueCommentsRes = await runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/issues/${pr}/comments?per_page=10`),
+      { headers },
+    );
+    if (!issueCommentsRes.ok) return [];
+    const raw = (await issueCommentsRes.json()) as Array<{
+      user?: { login?: string };
+      body?: string;
+      created_at?: string;
+    }>;
+    return raw.slice(0, 10).map((comment) => ({
+      author: comment.user?.login || 'unknown',
+      body: truncateCommentBody(comment.body || ''),
+      createdAt: comment.created_at || '',
+    }));
+  })();
+
+  const [commitsResult, diffResult, filesResult, reviewCommentsResult, issueCommentsResult] =
+    await Promise.allSettled([
+      commitsPromise,
+      diffPromise,
+      filesPromise,
+      reviewCommentsPromise,
+      issueCommentsPromise,
+    ]);
+
+  const branchCommits = commitsResult.status === 'fulfilled' ? commitsResult.value : [];
+  const diff = diffResult.status === 'fulfilled' ? diffResult.value : '';
+  const filesData = filesResult.status === 'fulfilled' ? filesResult.value.data : [];
+  const filesSummary = filesResult.status === 'fulfilled' ? filesResult.value.summary : '';
+  const reviewComments =
+    reviewCommentsResult.status === 'fulfilled' ? reviewCommentsResult.value : [];
+  const issueComments = issueCommentsResult.status === 'fulfilled' ? issueCommentsResult.value : [];
 
   const prState: 'open' | 'closed' | 'merged' = prData.merged ? 'merged' : prData.state;
   const lines: string[] = [
@@ -799,6 +882,26 @@ export async function executeFetchPRTool(
     lines.push(`\nFiles:\n${filesSummary}`);
   }
 
+  if (issueComments.length > 0) {
+    const formatted = issueComments
+      .map((comment) => `  @${comment.author}: ${comment.body}`)
+      .join('\n');
+    lines.push(`\nConversation (${issueComments.length}):\n${formatted}`);
+  }
+
+  if (reviewComments.length > 0) {
+    const formatted = reviewComments
+      .map((comment) => {
+        const location =
+          comment.path && comment.line
+            ? `${comment.path}:${comment.line}`
+            : comment.path || '(general)';
+        return `  @${comment.author} on ${location}: ${comment.body}`;
+      })
+      .join('\n');
+    lines.push(`\nInline Review Comments (${reviewComments.length}):\n${formatted}`);
+  }
+
   if (diff) {
     lines.push(`\n--- Diff ---\n${diff}`);
   }
@@ -820,9 +923,23 @@ export async function executeFetchPRTool(
         : prData.body
       : undefined,
     files: filesData.length > 0 ? filesData : undefined,
+    reviewComments: reviewComments.length > 0 ? reviewComments : undefined,
+    issueComments: issueComments.length > 0 ? issueComments : undefined,
   };
 
   return { text: lines.join('\n'), card: { type: 'pr', data: card } };
+}
+
+function truncateCommentBody(body: string): string {
+  // Comment sections render `  @author: ${body}` one per line, so collapse any
+  // internal newlines (and surrounding whitespace) to a single space before
+  // truncating to keep the layout stable.
+  const normalized = body
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]*\n+[ \t]*/g, ' ')
+    .trim();
+  if (normalized.length <= 300) return normalized;
+  return `${normalized.slice(0, 300)}...`;
 }
 
 export async function executeListPRsTool(

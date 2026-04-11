@@ -61,7 +61,7 @@ describe('github-tool-core shared core', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('formats a PR result with card metadata', async () => {
+  it('formats a PR result with card metadata and review comments', async () => {
     const runtime = createRuntime(async (url, options) => {
       if (
         url.endsWith('/pulls/42') &&
@@ -105,6 +105,45 @@ describe('github-tool-core shared core', () => {
           { filename: 'app/worker.ts', status: 'modified', additions: 10, deletions: 2 },
         ]);
       }
+      if (url.includes('/pulls/42/comments')) {
+        expect(url).toContain('direction=desc');
+        expect(url).toContain('per_page=20');
+        // Simulate GitHub returning newest-first; the tool should reverse so
+        // the display order stays chronological (oldest -> newest).
+        return Response.json([
+          {
+            user: { login: 'reviewer' },
+            path: 'app/worker.ts',
+            line: 17,
+            body: 'third (newest) comment',
+          },
+          {
+            user: { login: 'reviewer' },
+            path: 'app/worker.ts',
+            line: 12,
+            body: 'second comment',
+          },
+          {
+            user: { login: 'reviewer' },
+            path: 'app/worker.ts',
+            line: 9,
+            body: 'first (oldest) comment',
+          },
+        ]);
+      }
+      if (url.includes('/issues/42/comments')) {
+        expect(url).toContain('per_page=10');
+        return Response.json([
+          {
+            user: { login: 'pm' },
+            // Multi-line body exercises the newline-collapsing path in
+            // truncateCommentBody so the one-comment-per-line layout stays
+            // stable in the rendered tool output.
+            body: 'Looks good,\nship it!\r\n\r\nthanks',
+            created_at: '2026-03-28T13:00:00.000Z',
+          },
+        ]);
+      }
       throw new Error(`unexpected url: ${url}`);
     });
 
@@ -119,6 +158,83 @@ describe('github-tool-core shared core', () => {
     }
     expect(result.card.data.title).toBe('Add worker bridge');
     expect(result.text).toContain('Linked Issues');
+    expect(result.text).toContain('Inline Review Comments (3)');
+    expect(result.text).toContain('@reviewer on app/worker.ts:17');
+    expect(result.text).toContain('Conversation (1)');
+    // Newlines in the original body are collapsed to single spaces so the
+    // `@author: body` line formatting stays on one physical line.
+    expect(result.text).toContain('@pm: Looks good, ship it! thanks');
+    expect(result.text).not.toContain('@pm: Looks good,\nship it!');
+    expect(result.card.data.issueComments?.[0].body).toBe('Looks good, ship it! thanks');
+    expect(result.card.data.reviewComments).toHaveLength(3);
+    // Desc fetch is reversed so display stays chronological (oldest -> newest).
+    expect(result.card.data.reviewComments?.map((c) => c.body)).toEqual([
+      'first (oldest) comment',
+      'second comment',
+      'third (newest) comment',
+    ]);
+    const oldestIdx = result.text.indexOf('first (oldest) comment');
+    const newestIdx = result.text.indexOf('third (newest) comment');
+    expect(oldestIdx).toBeGreaterThan(-1);
+    expect(newestIdx).toBeGreaterThan(oldestIdx);
+    expect(result.card.data.issueComments).toHaveLength(1);
+  });
+
+  it('formats a PR result gracefully when review comments are absent', async () => {
+    const runtime = createRuntime(async (url, options) => {
+      if (
+        url.endsWith('/pulls/7') &&
+        options?.headers &&
+        (options.headers as Record<string, string>).Accept === 'application/vnd.github.v3+json'
+      ) {
+        return Response.json({
+          title: 'Tiny fix',
+          additions: 1,
+          deletions: 1,
+          changed_files: 1,
+          created_at: '2026-03-28T12:00:00.000Z',
+          merged: false,
+          state: 'open',
+          user: { login: 'ishaw' },
+          head: { ref: 'fix/tiny' },
+          base: { ref: 'main' },
+        });
+      }
+      if (url.endsWith('/pulls/7/commits')) {
+        return Response.json([]);
+      }
+      if (
+        url.endsWith('/pulls/7') &&
+        options?.headers &&
+        (options.headers as Record<string, string>).Accept === 'application/vnd.github.v3.diff'
+      ) {
+        return new Response('');
+      }
+      if (url.endsWith('/pulls/7/files')) {
+        return Response.json([]);
+      }
+      if (url.includes('/pulls/7/comments')) {
+        return Response.json([]);
+      }
+      if (url.includes('/issues/7/comments')) {
+        return Response.json([]);
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    const result = await executeGitHubCoreTool(runtime, {
+      tool: 'fetch_pr',
+      args: { repo: 'owner/repo', pr: 7 },
+    });
+
+    expect(result.card?.type).toBe('pr');
+    if (!result.card || result.card.type !== 'pr') {
+      throw new Error('expected PR card');
+    }
+    expect(result.card.data.reviewComments).toBeUndefined();
+    expect(result.card.data.issueComments).toBeUndefined();
+    expect(result.text).not.toContain('Inline Review Comments');
+    expect(result.text).not.toContain('Conversation (');
   });
 
   it('formats a PR list result with list card metadata', async () => {

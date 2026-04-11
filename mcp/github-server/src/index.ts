@@ -175,7 +175,7 @@ const githubTools = [
   {
     name: TOOL_FETCH_PR,
     description:
-      'Fetch a pull request summary with linked issues, recent commits, changed files, and a truncated diff.',
+      'Fetch a pull request summary with linked issues, recent commits, changed files, inline review comments, conversation comments, and a truncated diff.',
     inputSchema: {
       type: 'object',
       properties: {
