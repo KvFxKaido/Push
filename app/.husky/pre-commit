@@ -1,10 +1,9 @@
 #!/bin/sh
-# The hook runs from the repo root (husky default cwd). Biome and ESLint
-# both live in app/node_modules under the canonical setup (`cd app &&
-# npm install`, which also runs husky's `prepare` script). Biome also
-# exists at the repo root for anyone who runs `npm install` there, so we
-# prefer the root copy when present and fall back to the app copy
-# otherwise. This keeps the hook compatible with both install flows.
+# The hook runs from the repo root (husky default cwd). Biome lives at
+# the repo root (install with `npm install`). ESLint lives in app/ because
+# its config depends on app-only plugins (install with `cd app && npm install`).
+# We prefer the root Biome copy when present and fall back to the app copy
+# for legacy setups where only `cd app && npm install` was run.
 
 if [ -x ./node_modules/.bin/biome ]; then
   BIOME=./node_modules/.bin/biome
@@ -12,18 +11,18 @@ elif [ -x ./app/node_modules/.bin/biome ]; then
   BIOME=./app/node_modules/.bin/biome
 else
   echo "[pre-commit] @biomejs/biome is not installed." >&2
-  echo "[pre-commit] Run 'cd app && npm install' before committing." >&2
+  echo "[pre-commit] Run 'npm install' at the repo root before committing." >&2
   exit 1
 fi
 
 "$BIOME" check --staged --no-errors-on-unmatched || exit 1
 
-# ESLint lives only in app/node_modules because its config depends on
-# app-only plugins. Guard explicitly so contributors who skipped the
-# app install get an actionable error instead of a cryptic npm failure.
+# ESLint still lives in app/ because its config depends on app-only plugins.
+# Guard explicitly so contributors get actionable setup guidance instead of a
+# generic npm script failure when app dependencies have not been installed.
 if [ ! -x ./app/node_modules/.bin/eslint ]; then
   echo "[pre-commit] ESLint is not installed in app/node_modules." >&2
-  echo "[pre-commit] Run 'cd app && npm install' before committing." >&2
+  echo "[pre-commit] Run 'npm install' at the repo root and 'cd app && npm install' before committing." >&2
   exit 1
 fi
 
