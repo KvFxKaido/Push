@@ -156,6 +156,19 @@ export interface GitHubCoreWorkflowLogsCardData {
   repo: string;
 }
 
+export interface GitHubCorePRReviewComment {
+  author: string;
+  path?: string;
+  line?: number;
+  body: string;
+}
+
+export interface GitHubCorePRIssueComment {
+  author: string;
+  body: string;
+  createdAt: string;
+}
+
 export interface GitHubCorePRCardData {
   number: number;
   title: string;
@@ -169,6 +182,8 @@ export interface GitHubCorePRCardData {
   createdAt: string;
   description?: string;
   files?: GitHubCorePRFile[];
+  reviewComments?: GitHubCorePRReviewComment[];
+  issueComments?: GitHubCorePRIssueComment[];
 }
 
 export interface GitHubCoreBranchListCardData {
@@ -767,6 +782,55 @@ export async function executeFetchPRTool(
     }
   }
 
+  // Inline review comments (left on specific lines during a PR review).
+  let reviewComments: GitHubCorePRReviewComment[] = [];
+  try {
+    const reviewCommentsRes = await runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/comments?per_page=50`),
+      { headers },
+    );
+    if (reviewCommentsRes.ok) {
+      const raw = (await reviewCommentsRes.json()) as Array<{
+        user?: { login?: string };
+        path?: string;
+        line?: number | null;
+        original_line?: number | null;
+        body?: string;
+      }>;
+      reviewComments = raw.slice(0, 20).map((comment) => ({
+        author: comment.user?.login || 'unknown',
+        path: comment.path,
+        line: comment.line ?? comment.original_line ?? undefined,
+        body: truncateCommentBody(comment.body || ''),
+      }));
+    }
+  } catch {
+    // Best-effort enrichment only.
+  }
+
+  // Top-level PR conversation comments (use the issues endpoint per GitHub API).
+  let issueComments: GitHubCorePRIssueComment[] = [];
+  try {
+    const issueCommentsRes = await runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/issues/${pr}/comments?per_page=20`),
+      { headers },
+    );
+    if (issueCommentsRes.ok) {
+      const raw = (await issueCommentsRes.json()) as Array<{
+        user?: { login?: string };
+        body?: string;
+        created_at?: string;
+      }>;
+      issueComments = raw.slice(0, 10).map((comment) => ({
+        author: comment.user?.login || 'unknown',
+        body: truncateCommentBody(comment.body || ''),
+        createdAt: comment.created_at || '',
+      }));
+    }
+  } catch {
+    // Best-effort enrichment only.
+  }
+
   const prState: 'open' | 'closed' | 'merged' = prData.merged ? 'merged' : prData.state;
   const lines: string[] = [
     `[Tool Result — fetch_pr]`,
@@ -799,6 +863,26 @@ export async function executeFetchPRTool(
     lines.push(`\nFiles:\n${filesSummary}`);
   }
 
+  if (issueComments.length > 0) {
+    const formatted = issueComments
+      .map((comment) => `  @${comment.author}: ${comment.body}`)
+      .join('\n');
+    lines.push(`\nConversation (${issueComments.length}):\n${formatted}`);
+  }
+
+  if (reviewComments.length > 0) {
+    const formatted = reviewComments
+      .map((comment) => {
+        const location =
+          comment.path && comment.line
+            ? `${comment.path}:${comment.line}`
+            : comment.path || '(general)';
+        return `  @${comment.author} on ${location}: ${comment.body}`;
+      })
+      .join('\n');
+    lines.push(`\nInline Review Comments (${reviewComments.length}):\n${formatted}`);
+  }
+
   if (diff) {
     lines.push(`\n--- Diff ---\n${diff}`);
   }
@@ -820,9 +904,17 @@ export async function executeFetchPRTool(
         : prData.body
       : undefined,
     files: filesData.length > 0 ? filesData : undefined,
+    reviewComments: reviewComments.length > 0 ? reviewComments : undefined,
+    issueComments: issueComments.length > 0 ? issueComments : undefined,
   };
 
   return { text: lines.join('\n'), card: { type: 'pr', data: card } };
+}
+
+function truncateCommentBody(body: string): string {
+  const normalized = body.replace(/\r\n/g, '\n').trim();
+  if (normalized.length <= 300) return normalized;
+  return `${normalized.slice(0, 300)}...`;
 }
 
 export async function executeListPRsTool(
