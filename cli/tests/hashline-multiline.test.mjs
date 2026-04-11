@@ -1,9 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  applyHashlineEdits,
-  calculateLineHash,
-} from '../hashline.ts';
+import { applyHashlineEdits, calculateLineHash } from '../hashline.ts';
 
 function makeRef(line, lineNo) {
   return `${lineNo}:${calculateLineHash(line)}`;
@@ -25,9 +22,7 @@ describe('multi-line replace_line', () => {
   it('single-line replace still works (backward compat)', () => {
     const content = 'alpha\nbeta\ngamma';
     const ref = makeRef('beta', 2);
-    const result = applyHashlineEdits(content, [
-      { op: 'replace_line', ref, content: 'BETA' },
-    ]);
+    const result = applyHashlineEdits(content, [{ op: 'replace_line', ref, content: 'BETA' }]);
     assert.equal(result.content, 'alpha\nBETA\ngamma');
     assert.equal(result.applied[0].linesInserted, 1);
   });
@@ -49,9 +44,7 @@ describe('multi-line insert_after', () => {
   it('single-line insert_after still works', () => {
     const content = 'alpha\nbeta';
     const ref = makeRef('alpha', 1);
-    const result = applyHashlineEdits(content, [
-      { op: 'insert_after', ref, content: 'middle' },
-    ]);
+    const result = applyHashlineEdits(content, [{ op: 'insert_after', ref, content: 'middle' }]);
     assert.equal(result.content, 'alpha\nmiddle\nbeta');
     assert.equal(result.applied[0].linesInserted, 1);
   });
@@ -73,9 +66,7 @@ describe('multi-line insert_before', () => {
   it('single-line insert_before still works', () => {
     const content = 'alpha\nbeta';
     const ref = makeRef('beta', 2);
-    const result = applyHashlineEdits(content, [
-      { op: 'insert_before', ref, content: 'middle' },
-    ]);
+    const result = applyHashlineEdits(content, [{ op: 'insert_before', ref, content: 'middle' }]);
     assert.equal(result.content, 'alpha\nmiddle\nbeta');
     assert.equal(result.applied[0].linesInserted, 1);
   });
@@ -85,9 +76,7 @@ describe('delete_line (unchanged)', () => {
   it('still deletes a single line', () => {
     const content = 'alpha\nbeta\ngamma';
     const ref = makeRef('beta', 2);
-    const result = applyHashlineEdits(content, [
-      { op: 'delete_line', ref },
-    ]);
+    const result = applyHashlineEdits(content, [{ op: 'delete_line', ref }]);
     assert.equal(result.content, 'alpha\ngamma');
     assert.equal(result.applied[0].op, 'delete_line');
     assert.equal(result.applied[0].line, 2);

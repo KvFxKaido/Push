@@ -16,17 +16,53 @@ import { createTheme } from './tui-theme.js';
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
 import { filterSessions } from './tui-fuzzy.js';
-import { applySingleLineEditKey, getListNavigationAction, moveCursorCircular } from './tui-modal-input.js';
-import { drawModalBoxAt, getCenteredModalRect, getWindowedListRange, renderCenteredModalBox } from './tui-widgets.js';
-import { parseKey, splitRawInputChunk, createKeybindMap, createComposer, createInputHistory } from './tui-input.js';
 import {
-  ESC, getTermSize, visibleWidth, truncate, wordWrap, padTo,
-  drawDivider, createScreenBuffer, createRenderScheduler, computeLayout,
+  applySingleLineEditKey,
+  getListNavigationAction,
+  moveCursorCircular,
+} from './tui-modal-input.js';
+import {
+  drawModalBoxAt,
+  getCenteredModalRect,
+  getWindowedListRange,
+  renderCenteredModalBox,
+} from './tui-widgets.js';
+import {
+  parseKey,
+  splitRawInputChunk,
+  createKeybindMap,
+  createComposer,
+  createInputHistory,
+} from './tui-input.js';
+import {
+  ESC,
+  getTermSize,
+  visibleWidth,
+  truncate,
+  wordWrap,
+  padTo,
+  drawDivider,
+  createScreenBuffer,
+  createRenderScheduler,
+  computeLayout,
 } from './tui-renderer.js';
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
 import { getCuratedModels, fetchModels } from './model-catalog.js';
-import { makeSessionId, saveSessionState, appendSessionEvent, loadSessionState, listSessions, deleteSession, getSessionRoot } from './session-store.js';
-import { buildSystemPromptBase, ensureSystemPromptReady, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.js';
+import {
+  makeSessionId,
+  saveSessionState,
+  appendSessionEvent,
+  loadSessionState,
+  listSessions,
+  deleteSession,
+  getSessionRoot,
+} from './session-store.js';
+import {
+  buildSystemPromptBase,
+  ensureSystemPromptReady,
+  runAssistantLoop,
+  DEFAULT_MAX_ROUNDS,
+} from './engine.js';
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.js';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.js';
 import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
@@ -37,8 +73,8 @@ import { compactContext } from './context-manager.js';
 
 // ── TUI state ───────────────────────────────────────────────────────
 
-const MAX_TRANSCRIPT = 2000;   // max lines in transcript buffer
-const MAX_TOOL_FEED = 200;     // max items in tool feed
+const MAX_TRANSCRIPT = 2000; // max lines in transcript buffer
+const MAX_TOOL_FEED = 200; // max items in tool feed
 
 function safeRealpath(targetPath) {
   try {
@@ -52,8 +88,7 @@ function isPathWithin(root, candidate) {
   const resolvedRoot = path.resolve(root);
   const resolvedCandidate = path.resolve(candidate);
   return (
-    resolvedCandidate === resolvedRoot ||
-    resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`)
+    resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`)
   );
 }
 
@@ -74,7 +109,7 @@ function findContainingPushRepoRoot(startDir) {
   }
 }
 
-  function getRuntimeOriginWarning(workspaceCwd) {
+function getRuntimeOriginWarning(workspaceCwd) {
   const repoRoot = findContainingPushRepoRoot(workspaceCwd);
   if (!repoRoot) return null;
 
@@ -122,9 +157,9 @@ function createTUIState() {
     // Tool feed: array of { type: 'call'|'result', name, args?, duration?, error?, preview?, timestamp }
     toolFeed: [],
     // Approval prompt (when awaiting_approval)
-    approval: null,    // { kind, summary, details }
+    approval: null, // { kind, summary, details }
     // User question prompt (when awaiting_user_question)
-    userQuestion: null,  // { question: string, choices?: string[] }
+    userQuestion: null, // { question: string, choices?: string[] }
     // UI toggles
     toolPaneOpen: false,
     toolJsonPayloadsExpanded: false,
@@ -139,19 +174,19 @@ function createTUIState() {
     providerModalOpen: false,
     providerModalCursor: 0,
     resumeModalOpen: false,
-    resumeModalState: null,  // { loading, rows[], cursor, error, confirmDeleteId, mode, renameTargetId, renameBuf, renameCursor }
+    resumeModalState: null, // { loading, rows[], cursor, error, confirmDeleteId, mode, renameTargetId, renameBuf, renameCursor }
     modelModalOpen: false,
-    modelModalState: null,   // { providerId, models[], cursor, loading, source, error }
+    modelModalState: null, // { providerId, models[], cursor, loading, source, error }
     configModalOpen: false,
-    configModalState: null,  // { mode: 'list'|'edit', cursor: 0, editTarget: '', editBuf: '', editCursor: 0 }
+    configModalState: null, // { mode: 'list'|'edit', cursor: 0, editTarget: '', editBuf: '', editCursor: 0 }
     // Scrollback offset (0 = pinned to bottom, positive = scrolled up by N lines)
     scrollOffset: 0,
     // Dirty flags for selective re-render
     dirty: new Set(['all']),
     // Git status for status bar
-    gitStatus: null,  // { branch, dirty, ahead, behind }
+    gitStatus: null, // { branch, dirty, ahead, behind }
     // File awareness ledger (accumulated from engine tool_result events)
-    fileAwareness: null,  // { total, files: [{ path, status, reads, writes }] }
+    fileAwareness: null, // { total, files: [{ path, status, reads, writes }] }
   };
 }
 
@@ -220,7 +255,12 @@ function summarizeToolArgs(args, maxWidth) {
 function parseJsonToolCalls(text) {
   try {
     const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof parsed.tool === 'string') {
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      typeof parsed.tool === 'string'
+    ) {
       return [{ tool: parsed.tool, args: parsed.args ?? null }];
     }
     if (Array.isArray(parsed)) {
@@ -235,11 +275,12 @@ function parseJsonToolCalls(text) {
   return null;
 }
 
-function pushWrappedLines(out, text, width, {
-  firstPrefix = '',
-  nextPrefix = firstPrefix,
-  styleFn = (s) => s,
-} = {}) {
+function pushWrappedLines(
+  out,
+  text,
+  width,
+  { firstPrefix = '', nextPrefix = firstPrefix, styleFn = (s) => s } = {},
+) {
   const raw = String(text ?? '');
   const rawLines = raw.split('\n');
   let firstRendered = false;
@@ -260,13 +301,22 @@ function pushWrappedLines(out, text, width, {
   }
 }
 
-function renderAssistantEntryLines(out, text, width, theme, {
-  streaming = false,
-  expandToolJsonPayloads = false,
-  entryKey = null,
-  payloadUI = null, // { blocks, cursorId, expandedIds, inspectorOpen }
-} = {}) {
-  const badge = makeBadge(theme, streaming ? 'AI *' : 'AI', { fg: 'bg.base', bg: 'accent.primary' });
+function renderAssistantEntryLines(
+  out,
+  text,
+  width,
+  theme,
+  {
+    streaming = false,
+    expandToolJsonPayloads = false,
+    entryKey = null,
+    payloadUI = null, // { blocks, cursorId, expandedIds, inspectorOpen }
+  } = {},
+) {
+  const badge = makeBadge(theme, streaming ? 'AI *' : 'AI', {
+    fg: 'bg.base',
+    bg: 'accent.primary',
+  });
   const firstPrefix = `${badge} `;
   const nextPrefix = ' '.repeat(Math.max(2, visibleWidth(firstPrefix)));
   let canUseFirstPrefix = true;
@@ -297,9 +347,8 @@ function renderAssistantEntryLines(out, text, width, theme, {
     const body = fenceBuf.join('\n').trim();
     const lang = (fenceLang || '').toLowerCase();
     const jsonFenceIndex = lang === 'json' ? jsonFenceOrdinal++ : null;
-    const payloadId = (lang === 'json' && entryKey != null)
-      ? `${entryKey}:json:${jsonFenceIndex}`
-      : null;
+    const payloadId =
+      lang === 'json' && entryKey != null ? `${entryKey}:json:${jsonFenceIndex}` : null;
     const selected = Boolean(payloadId && payloadUI?.cursorId === payloadId);
     const expandedByBlock = Boolean(payloadId && payloadUI?.expandedIds?.has(payloadId));
     const expanded = expandToolJsonPayloads || expandedByBlock;
@@ -308,8 +357,9 @@ function renderAssistantEntryLines(out, text, width, theme, {
       const toolCalls = parseJsonToolCalls(body);
       if (toolCalls) {
         const blockStart = out.length;
-        const marker = expanded ? (theme.unicode ? '▾' : 'v') : (theme.unicode ? '▸' : '>');
-        const countLabel = toolCalls.length === 1 ? '1 tool call' : `${toolCalls.length} tool calls`;
+        const marker = expanded ? (theme.unicode ? '▾' : 'v') : theme.unicode ? '▸' : '>';
+        const countLabel =
+          toolCalls.length === 1 ? '1 tool call' : `${toolCalls.length} tool calls`;
         const modeHint = expanded ? 'expanded' : 'collapsed';
         const headerText = `${marker} JSON payload · ${countLabel} · ${modeHint}`;
         pushAssistant(headerText, (s) => {
@@ -385,7 +435,7 @@ function renderAssistantEntryLines(out, text, width, theme, {
     if (/^\s*([-*_])\1{2,}\s*$/.test(line)) {
       pushAssistant(
         theme.glyphs.horizontal.repeat(Math.max(6, Math.min(width - visibleWidth(nextPrefix), 24))),
-        (s) => theme.style('fg.dim', s)
+        (s) => theme.style('fg.dim', s),
       );
       continue;
     }
@@ -414,16 +464,22 @@ function renderAssistantEntryLines(out, text, width, theme, {
   if (fenceLang != null) flushFence();
 }
 
-function renderHeader(buf, layout, theme, { provider, model, session, sessionName, cwd, runState, branch }) {
+function renderHeader(
+  buf,
+  layout,
+  theme,
+  { provider, model, session, sessionName, cwd, runState, branch },
+) {
   const { glyphs } = theme;
   const { top, left, width } = layout.header;
 
   // Status dot
-  const stateDot = runState === 'running'
-    ? theme.style('state.warn', glyphs.statusDot)
-    : runState === 'awaiting_approval'
-      ? theme.style('state.error', glyphs.statusDot)
-      : theme.style('state.success', glyphs.statusDot);
+  const stateDot =
+    runState === 'running'
+      ? theme.style('state.warn', glyphs.statusDot)
+      : runState === 'awaiting_approval'
+        ? theme.style('state.error', glyphs.statusDot)
+        : theme.style('state.success', glyphs.statusDot);
 
   // ── Top border: ┌─ ⬡ Push ──...──┐ ────────────────────────────
   // Fixed chars: ┌─ (2) + space (1) + ⬡ (1) + space (1) + Push (4) + space (1) + fill + ┐ (1) = 11 + fill = width
@@ -446,7 +502,8 @@ function renderHeader(buf, layout, theme, { provider, model, session, sessionNam
   const homeDir = process.env.HOME || '';
   const shortCwd = homeDir && cwd.startsWith(homeDir) ? '~' + cwd.slice(homeDir.length) : cwd;
   const branchPart = branch ? ` ${sep} ${theme.style('accent.link', branch)}` : '';
-  const rightInner = theme.style('fg.secondary', truncate(shortCwd, Math.floor(width * 0.35))) + branchPart;
+  const rightInner =
+    theme.style('fg.secondary', truncate(shortCwd, Math.floor(width * 0.35))) + branchPart;
 
   // │  leftInner[gap]rightInner  │  — inner content width = width - 6
   const gapLen = Math.max(1, width - 6 - visibleWidth(leftInner) - visibleWidth(rightInner));
@@ -457,8 +514,9 @@ function renderHeader(buf, layout, theme, { provider, model, session, sessionNam
   buf.writeLine(top + 1, left, contentRow);
 
   // ── Bottom border: └──...──┘ ─────────────────────────────────
-  const bottomBorder = theme.style('fg.dim',
-    `${glyphs.bottomLeft}${glyphs.horizontal.repeat(width - 2)}${glyphs.bottomRight}`
+  const bottomBorder = theme.style(
+    'fg.dim',
+    `${glyphs.bottomLeft}${glyphs.horizontal.repeat(width - 2)}${glyphs.bottomRight}`,
   );
   buf.writeLine(top + 2, left, bottomBorder);
 
@@ -530,9 +588,11 @@ function renderTranscript(buf, layout, theme, tuiState) {
         const nextPrefix = ' '.repeat(Math.max(2, visibleWidth(prefix)));
         const wrapped = wordWrap(entry.text, Math.max(1, width - visibleWidth(prefix)));
         for (let i = 0; i < wrapped.length; i++) {
-          entryLines.push(i === 0
-            ? prefix + theme.style('fg.primary', wrapped[i])
-            : nextPrefix + theme.style('fg.primary', wrapped[i]));
+          entryLines.push(
+            i === 0
+              ? prefix + theme.style('fg.primary', wrapped[i])
+              : nextPrefix + theme.style('fg.primary', wrapped[i]),
+          );
         }
       } else if (entry.role === 'assistant') {
         renderAssistantEntryLines(entryLines, entry.text, width, theme, {
@@ -564,7 +624,10 @@ function renderTranscript(buf, layout, theme, tuiState) {
           const nextPad = ' '.repeat(Math.max(2, visibleWidth(prefix)));
           const previewLine = entry.resultPreview.split('\n')[0].trim();
           if (previewLine) {
-            const previewStr = truncate(previewLine, Math.max(10, width - visibleWidth(nextPad) - 4));
+            const previewStr = truncate(
+              previewLine,
+              Math.max(10, width - visibleWidth(nextPad) - 4),
+            );
             pushWrappedLines(entryLines, previewStr, width, {
               firstPrefix: nextPad,
               nextPrefix: nextPad,
@@ -573,7 +636,11 @@ function renderTranscript(buf, layout, theme, tuiState) {
           }
         }
       } else if (entry.role === 'status') {
-        const badge = makeBadge(theme, 'INFO', { fg: 'bg.base', bg: 'border.default', bold: false });
+        const badge = makeBadge(theme, 'INFO', {
+          fg: 'bg.base',
+          bg: 'border.default',
+          bold: false,
+        });
         const prefix = `${badge} `;
         pushWrappedLines(entryLines, entry.text, width, {
           firstPrefix: prefix,
@@ -599,9 +666,8 @@ function renderTranscript(buf, layout, theme, tuiState) {
       } else if (entry.role === 'reasoning') {
         entryLines.push(
           `${makeBadge(theme, 'THINK', { fg: 'bg.base', bg: 'border.default', bold: false })} ` +
-          theme.style('fg.dim', 'thinking')
+            theme.style('fg.dim', 'thinking'),
         );
-
       } else if (entry.role === 'verdict') {
         const isApproved = entry.verdict === 'APPROVED';
         const icon = isApproved ? glyphs.check : glyphs.cross_mark;
@@ -613,7 +679,6 @@ function renderTranscript(buf, layout, theme, tuiState) {
           ? theme.style('fg.muted', '  ' + truncate(entry.summary, width - 20))
           : '';
         entryLines.push(`  ${label}${kindStr}${summaryStr}`);
-
       } else if (entry.role === 'divider') {
         entryLines.push(theme.style('fg.dim', glyphs.horizontal.repeat(Math.min(width, 40))));
       }
@@ -656,12 +721,15 @@ function renderTranscript(buf, layout, theme, tuiState) {
   const payloadBlocks = [];
   const entryBlocks = cached.entryBlocks || [];
   const startBlockIdx = findFirstIntersectingTranscriptBlock(entryBlocks, startIdx);
-  const endBlockIdxExclusive = findFirstTranscriptBlockStartingAtOrAfter(entryBlocks, endIdxExclusive);
+  const endBlockIdxExclusive = findFirstTranscriptBlockStartingAtOrAfter(
+    entryBlocks,
+    endIdxExclusive,
+  );
 
   for (let bi = startBlockIdx; bi < endBlockIdxExclusive; bi++) {
     const block = entryBlocks[bi];
     const blockStart = block.startLine ?? 0;
-    const blockEnd = block.endLine ?? (blockStart + block.lineCount);
+    const blockEnd = block.endLine ?? blockStart + block.lineCount;
 
     if (block.lineCount === 0) continue;
     if (blockEnd <= startIdx || blockStart >= endIdxExclusive) continue;
@@ -739,16 +807,19 @@ function renderToolPane(buf, layout, theme, tuiState) {
     if (entry.type === 'call') {
       const argsPreview = summarizeToolArgs(entry.args, Math.max(8, width - entry.name.length - 8));
       lines.push(
-        theme.style('accent.secondary', glyphs.arrow || glyphs.prompt) + ' ' +
-        theme.style('fg.primary', entry.name) +
-        (argsPreview ? ' ' + theme.style('fg.dim', argsPreview) : '')
+        theme.style('accent.secondary', glyphs.arrow || glyphs.prompt) +
+          ' ' +
+          theme.style('fg.primary', entry.name) +
+          (argsPreview ? ' ' + theme.style('fg.dim', argsPreview) : ''),
       );
     } else if (entry.type === 'result') {
       const ok = !entry.error;
       const status = ok
         ? theme.style('state.success', glyphs.check || 'OK')
         : theme.style('state.error', glyphs.cross_mark || 'ERR');
-      const dur = entry.duration ? theme.style('fg.dim', `${entry.duration}ms`) : theme.style('fg.dim', 'done');
+      const dur = entry.duration
+        ? theme.style('fg.dim', `${entry.duration}ms`)
+        : theme.style('fg.dim', 'done');
       const preview = entry.preview
         ? ' ' + theme.style('fg.dim', truncate(entry.preview, width - 20))
         : '';
@@ -770,23 +841,23 @@ function renderComposer(buf, layout, theme, composer, tuiState, tabState) {
   const { glyphs } = theme;
 
   // Top border with label
-  const stateLabel = tuiState.runState === 'running'
-    ? theme.style('state.warn', ' streaming... ')
-    : tuiState.runState === 'awaiting_approval'
-      ? theme.style('state.error', ' approval required ')
-      : tuiState.runState === 'awaiting_user_question'
-        ? theme.style('accent.primary', ' ? question ')
-        : theme.style('fg.muted', ' message ');
+  const stateLabel =
+    tuiState.runState === 'running'
+      ? theme.style('state.warn', ' streaming... ')
+      : tuiState.runState === 'awaiting_approval'
+        ? theme.style('state.error', ' approval required ')
+        : tuiState.runState === 'awaiting_user_question'
+          ? theme.style('accent.primary', ' ? question ')
+          : theme.style('fg.muted', ' message ');
   const tabHint = tabState ? tabState.hint : null;
-  const label = tabHint
-    ? stateLabel + theme.style('accent.primary', ` ${tabHint} `)
-    : stateLabel;
+  const label = tabHint ? stateLabel + theme.style('accent.primary', ` ${tabHint} `) : stateLabel;
 
   const borderChar = glyphs.horizontal;
   const labelWidth = visibleWidth(label);
   const borderLeft = borderChar.repeat(2);
   const borderRight = borderChar.repeat(Math.max(0, width - 2 - labelWidth - 2));
-  const topBorder = theme.style('border.default', borderLeft) + label + theme.style('border.default', borderRight);
+  const topBorder =
+    theme.style('border.default', borderLeft) + label + theme.style('border.default', borderRight);
   buf.writeLine(top, left, topBorder);
 
   // Candidates bar (when tab completion is active — preview or cycling)
@@ -805,9 +876,8 @@ function renderComposer(buf, layout, theme, composer, tuiState, tabState) {
       if (previewing) {
         candidateLine += theme.style('fg.secondary', label);
       } else {
-        candidateLine += i === index
-          ? theme.style('accent.primary', label)
-          : theme.style('fg.dim', label);
+        candidateLine +=
+          i === index ? theme.style('accent.primary', label) : theme.style('fg.dim', label);
       }
       lineWidth += needed;
     }
@@ -823,7 +893,11 @@ function renderComposer(buf, layout, theme, composer, tuiState, tabState) {
     if (r < lines.length) {
       const prefix = r === 0 ? theme.style('accent.primary', glyphs.prompt + ' ') : '  ';
       const content = lines[r];
-      buf.writeLine(contentTop + r, left, padTo(prefix + theme.style('fg.primary', content), width));
+      buf.writeLine(
+        contentTop + r,
+        left,
+        padTo(prefix + theme.style('fg.primary', content), width),
+      );
     } else {
       buf.writeLine(contentTop + r, left, ' '.repeat(width));
     }
@@ -850,16 +924,18 @@ function renderApprovalModal(buf, theme, rows, cols, approval) {
 
   if (approval.suggestedPrefix) {
     lines.push('');
-    lines.push(`  ${theme.style('fg.secondary', 'prefix:')} ${theme.style('fg.primary', approval.suggestedPrefix)}`);
+    lines.push(
+      `  ${theme.style('fg.secondary', 'prefix:')} ${theme.style('fg.primary', approval.suggestedPrefix)}`,
+    );
   }
 
   lines.push('');
   lines.push(
     `  ${theme.style('accent.link', 'Ctrl+Y / y')} approve  ` +
-    `${theme.style('accent.link', 'a')} always  ` +
-    `${theme.style('accent.link', 'p')} save-prefix  ` +
-    `${theme.style('accent.link', 'Ctrl+N / n')} deny  ` +
-    `${theme.style('accent.link', 'Esc')} close`
+      `${theme.style('accent.link', 'a')} always  ` +
+      `${theme.style('accent.link', 'p')} save-prefix  ` +
+      `${theme.style('accent.link', 'Ctrl+N / n')} deny  ` +
+      `${theme.style('accent.link', 'Esc')} close`,
   );
   renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
 }
@@ -868,10 +944,7 @@ function renderQuestionModal(buf, theme, rows, cols, userQuestion, inputBuf) {
   if (!userQuestion) return;
 
   const modalWidth = Math.min(64, cols - 8);
-  const lines = [
-    theme.bold(theme.style('accent.primary', '  Question')),
-    '',
-  ];
+  const lines = [theme.bold(theme.style('accent.primary', '  Question')), ''];
 
   // Wrap the question text
   const questionLines = wordWrap(userQuestion.question || '', modalWidth - 6);
@@ -882,7 +955,9 @@ function renderQuestionModal(buf, theme, rows, cols, userQuestion, inputBuf) {
   // Choices (if provided)
   if (userQuestion.choices?.length) {
     lines.push('');
-    lines.push(`  ${theme.style('fg.secondary', 'Choices:')} ${userQuestion.choices.map((c) => theme.style('accent.link', c)).join('  ')}`);
+    lines.push(
+      `  ${theme.style('fg.secondary', 'Choices:')} ${userQuestion.choices.map((c) => theme.style('accent.link', c)).join('  ')}`,
+    );
   }
 
   lines.push('');
@@ -890,7 +965,9 @@ function renderQuestionModal(buf, theme, rows, cols, userQuestion, inputBuf) {
   const inputDisplay = inputBuf + theme.style('fg.primary', '█');
   lines.push(`  ${theme.style('fg.dim', '›')} ${inputDisplay}`);
   lines.push('');
-  lines.push(`  ${theme.style('accent.link', 'Enter')} ${theme.style('fg.dim', 'submit')}  ${theme.style('accent.link', 'Esc')} ${theme.style('fg.dim', 'skip')}`);
+  lines.push(
+    `  ${theme.style('accent.link', 'Enter')} ${theme.style('fg.dim', 'submit')}  ${theme.style('accent.link', 'Esc')} ${theme.style('fg.dim', 'skip')}`,
+  );
   renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
 }
 
@@ -904,10 +981,7 @@ function renderReasoningModal(buf, theme, rows, cols, tuiState) {
 
   const live = tuiState.reasoningStreaming;
   const text = tuiState.reasoningBuf || tuiState.lastReasoning || '';
-  const lines = [
-    theme.bold(theme.style('fg.primary', `  Reasoning ${live ? '(live)' : ''}`)),
-    '',
-  ];
+  const lines = [theme.bold(theme.style('fg.primary', `  Reasoning ${live ? '(live)' : ''}`)), ''];
 
   if (!text.trim()) {
     lines.push(`  ${theme.style('fg.dim', 'No reasoning captured yet in this TUI session.')}`);
@@ -930,7 +1004,9 @@ function renderReasoningModal(buf, theme, rows, cols, tuiState) {
   }
 
   lines.push('');
-  lines.push(`  ${theme.style('accent.link', 'Ctrl+G')} toggle  ${theme.style('accent.link', 'Esc')} close`);
+  lines.push(
+    `  ${theme.style('accent.link', 'Ctrl+G')} toggle  ${theme.style('accent.link', 'Esc')} close`,
+  );
   drawModalBoxAt(buf, theme, modalTop, modalLeft, modalWidth, lines);
 }
 
@@ -939,16 +1015,15 @@ function renderProviderModal(buf, theme, rows, cols, currentProvider, currentMod
   const providers = getProviderList();
   const modalWidth = Math.min(56, cols - 8);
 
-  const lines = [
-    theme.bold(theme.style('fg.primary', '  Provider / Model')),
-    '',
-  ];
+  const lines = [theme.bold(theme.style('fg.primary', '  Provider / Model')), ''];
 
   for (let i = 0; i < providers.length; i++) {
     const p = providers[i];
     const isCurrent = p.id === currentProvider;
     const isCursor = i === cursor;
-    const hasKey = p.hasKey ? theme.style('state.success', glyphs.check) : theme.style('fg.dim', '-');
+    const hasKey = p.hasKey
+      ? theme.style('state.success', glyphs.check)
+      : theme.style('fg.dim', '-');
     const marker = isCursor ? theme.style('accent.primary', glyphs.prompt) : ' ';
     let name = theme.style('fg.secondary', p.id);
     if (isCurrent) name = theme.style('fg.primary', p.id);
@@ -963,12 +1038,17 @@ function renderProviderModal(buf, theme, rows, cols, currentProvider, currentMod
   const models = getCuratedModels(currentProvider);
   lines.push(`  ${theme.style('fg.muted', 'model:')} ${theme.style('fg.primary', currentModel)}`);
   if (models.length > 0) {
-    const modelPreview = models.slice(0, 4).map(m => truncate(m, 30)).join(', ');
+    const modelPreview = models
+      .slice(0, 4)
+      .map((m) => truncate(m, 30))
+      .join(', ');
     lines.push(`  ${theme.style('fg.dim', modelPreview)}`);
   }
 
   lines.push('');
-  lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter switch  Esc close  1-9 quick pick')}`);
+  lines.push(
+    `  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter switch  Esc close  1-9 quick pick')}`,
+  );
   renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
 }
 
@@ -986,7 +1066,9 @@ function renderModelModal(buf, theme, rows, cols, modalState, currentModel) {
   ];
 
   if (modalState.models.length === 0) {
-    lines.push(`  ${theme.style('fg.dim', 'No models found. Use /model <name> for custom values.')}`);
+    lines.push(
+      `  ${theme.style('fg.dim', 'No models found. Use /model <name> for custom values.')}`,
+    );
   } else {
     const count = modalState.models.length;
     const { start, end } = getWindowedListRange(count, modalState.cursor, listHeight);
@@ -999,9 +1081,8 @@ function renderModelModal(buf, theme, rows, cols, modalState, currentModel) {
       const model = isCursor
         ? theme.style('accent.primary', modelText)
         : theme.style('fg.secondary', modelText);
-      const currentMark = modalState.models[i] === currentModel
-        ? theme.style('fg.dim', ' (current)')
-        : '';
+      const currentMark =
+        modalState.models[i] === currentModel ? theme.style('fg.dim', ' (current)') : '';
       lines.push(`  ${marker} ${num} ${model}${currentMark}`);
     }
 
@@ -1014,13 +1095,17 @@ function renderModelModal(buf, theme, rows, cols, modalState, currentModel) {
   if (modalState.loading) {
     lines.push(`  ${theme.style('fg.dim', 'Fetching live model list...')}`);
   } else if (modalState.error) {
-    lines.push(`  ${theme.style('fg.dim', `Live fetch failed (${modalState.error}); showing curated list`)}`);
+    lines.push(
+      `  ${theme.style('fg.dim', `Live fetch failed (${modalState.error}); showing curated list`)}`,
+    );
   } else if (modalState.source === 'live') {
     lines.push(`  ${theme.style('fg.dim', `${modalState.models.length} models from provider`)}`);
   } else {
     lines.push(`  ${theme.style('fg.dim', `${modalState.models.length} curated models`)}`);
   }
-  lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter select  Esc close  1-9 quick pick')}`);
+  lines.push(
+    `  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter select  Esc close  1-9 quick pick')}`,
+  );
   renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
 }
 
@@ -1041,46 +1126,54 @@ function formatRelativeTime(ts) {
 
 function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId) {
   const { glyphs } = theme;
-  
+
   // Two-column layout: sessions list + preview
   const totalWidth = Math.min(140, cols - 4);
   const listWidth = Math.floor(totalWidth * 0.55);
   const previewWidth = totalWidth - listWidth - 1; // -1 for divider
   const listHeight = Math.max(8, Math.min(16, rows - 12));
   const totalHeight = listHeight + 8; // + header + filter + hints + borders
-  
-  const { top: modalTop, left: modalLeft } = getCenteredModalRect(rows, cols, totalWidth, totalHeight, { minTop: 2 });
-  
+
+  const { top: modalTop, left: modalLeft } = getCenteredModalRect(
+    rows,
+    cols,
+    totalWidth,
+    totalHeight,
+    { minTop: 2 },
+  );
+
   const isRenameMode = modalState?.mode === 'rename';
   const isFilterMode = modalState?.mode === 'filter';
-  
+
   // Helper to draw the list side
   function renderList() {
     const lines = [theme.bold(theme.style('fg.primary', '  Resume Session'))];
-    
+
     // Filter bar
     if (isFilterMode) {
       const filterText = modalState.filterBuf || '';
       const filterDisplay = filterText || theme.style('fg.dim', 'type to filter...');
       lines.push(`  ${theme.style('accent.primary', '/')} ${filterDisplay}`);
     } else {
-      const filterHint = modalState?.filterBuf 
+      const filterHint = modalState?.filterBuf
         ? `${theme.style('accent.primary', 'filter:')} ${truncate(modalState.filterBuf, listWidth - 20)}`
         : theme.style('fg.dim', '  Press / to filter');
       lines.push(filterHint);
     }
     lines.push(theme.style('fg.dim', glyphs.horizontal.repeat(listWidth - 4)));
-    
+
     if (!modalState || modalState.loading) {
       lines.push(`  ${theme.style('fg.dim', 'Loading...')}`);
     } else if (modalState.error) {
       lines.push(`  ${theme.style('state.error', modalState.error)}`);
     } else if (!Array.isArray(modalState.filteredRows) || modalState.filteredRows.length === 0) {
-      lines.push(`  ${theme.style('fg.dim', modalState.filterBuf ? 'No matching sessions.' : 'No resumable sessions.')}`);
+      lines.push(
+        `  ${theme.style('fg.dim', modalState.filterBuf ? 'No matching sessions.' : 'No resumable sessions.')}`,
+      );
     } else {
       const count = modalState.filteredRows.length;
       const { start, end } = getWindowedListRange(count, modalState.cursor, listHeight - 3);
-      
+
       for (let i = start; i < end; i++) {
         const row = modalState.filteredRows[i].item;
         const isCursor = i === modalState.cursor;
@@ -1093,14 +1186,14 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
           ? theme.style('accent.primary', primaryText)
           : theme.style('fg.primary', primaryText);
         const currentTag = isCurrent ? theme.style('state.success', ' ●') : '';
-        const deleteTag = modalState.confirmDeleteId === row.sessionId
-          ? theme.style('state.warn', ' [del?]')
-          : '';
-        const renameTag = isRenameMode && modalState.renameTargetId === row.sessionId
-          ? theme.style('accent.secondary', ' [ren]')
-          : '';
+        const deleteTag =
+          modalState.confirmDeleteId === row.sessionId ? theme.style('state.warn', ' [del?]') : '';
+        const renameTag =
+          isRenameMode && modalState.renameTargetId === row.sessionId
+            ? theme.style('accent.secondary', ' [ren]')
+            : '';
         lines.push(` ${marker} ${num}${primary}${currentTag}${deleteTag}${renameTag}`);
-        
+
         const meta = truncate(
           `${row.provider}/${row.model} · ${formatRelativeTime(row.updatedAt)}`,
           listWidth - 10,
@@ -1111,22 +1204,22 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
         lines.push(`  ${theme.style('fg.dim', `... ${count - end} more`)}`);
       }
     }
-    
+
     // Fill remaining space
     while (lines.length < listHeight + 3) {
       lines.push('');
     }
-    
+
     return lines;
   }
-  
+
   // Helper to draw the preview side
   function renderPreview() {
     const lines = [theme.bold(theme.style('fg.primary', '  Preview'))];
     lines.push(theme.style('fg.dim', glyphs.horizontal.repeat(previewWidth - 4)));
-    
+
     const selected = modalState?.filteredRows?.[modalState?.cursor]?.item;
-    
+
     if (!selected) {
       lines.push(`  ${theme.style('fg.dim', 'Select a session to preview')}`);
     } else if (modalState?.preview?.loading) {
@@ -1138,53 +1231,73 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
     } else {
       const msgs = modalState.preview.messages.slice(-4);
       for (const msg of msgs) {
-        const role = msg.role === 'user' ? theme.style('accent.secondary', 'You:') : theme.style('accent.primary', 'AI:');
+        const role =
+          msg.role === 'user'
+            ? theme.style('accent.secondary', 'You:')
+            : theme.style('accent.primary', 'AI:');
         const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
         const preview = truncate(content.replace(/\n/g, ' '), previewWidth - 10);
         lines.push(`  ${role} ${theme.style('fg.secondary', preview)}`);
       }
     }
-    
+
     // Session details section
     if (selected) {
       lines.push('');
       lines.push(theme.style('fg.dim', glyphs.horizontal.repeat(previewWidth - 4)));
-      lines.push(`  ${theme.style('fg.muted', 'ID:')} ${theme.style('fg.secondary', selected.sessionId)}`);
+      lines.push(
+        `  ${theme.style('fg.muted', 'ID:')} ${theme.style('fg.secondary', selected.sessionId)}`,
+      );
       if (selected.sessionName) {
-        lines.push(`  ${theme.style('fg.muted', 'Name:')} ${theme.style('fg.primary', selected.sessionName)}`);
+        lines.push(
+          `  ${theme.style('fg.muted', 'Name:')} ${theme.style('fg.primary', selected.sessionName)}`,
+        );
       }
-      lines.push(`  ${theme.style('fg.muted', 'Path:')} ${theme.style('fg.secondary', truncate(selected.cwd || '.', previewWidth - 12))}`);
-      lines.push(`  ${theme.style('fg.muted', 'Model:')} ${theme.style('fg.secondary', `${selected.provider}/${selected.model}`)}`);
+      lines.push(
+        `  ${theme.style('fg.muted', 'Path:')} ${theme.style('fg.secondary', truncate(selected.cwd || '.', previewWidth - 12))}`,
+      );
+      lines.push(
+        `  ${theme.style('fg.muted', 'Model:')} ${theme.style('fg.secondary', `${selected.provider}/${selected.model}`)}`,
+      );
     }
-    
+
     // Fill remaining space
     while (lines.length < listHeight + 3) {
       lines.push('');
     }
-    
+
     return lines;
   }
-  
+
   // Draw both sides
   const listLines = renderList();
   const previewLines = renderPreview();
-  
+
   const combinedLines = [];
   for (let i = 0; i < Math.max(listLines.length, previewLines.length); i++) {
     const left = padTo(listLines[i] || '', listWidth);
-    const divider = theme.style('fg.dim', i === 0 ? '┬' : i === Math.max(listLines.length, previewLines.length) - 1 ? '┴' : '│');
+    const divider = theme.style(
+      'fg.dim',
+      i === 0 ? '┬' : i === Math.max(listLines.length, previewLines.length) - 1 ? '┴' : '│',
+    );
     const right = previewLines[i] || '';
     combinedLines.push(left + divider + right);
   }
-  
+
   // Add hints at the bottom
   combinedLines.push(theme.style('fg.dim', glyphs.horizontal.repeat(totalWidth)));
   if (isRenameMode) {
-    combinedLines.push(`  ${theme.style('accent.primary', 'Enter')} save  ${theme.style('accent.primary', 'Esc')} cancel  ${theme.style('fg.dim', 'Type to rename')}`);
+    combinedLines.push(
+      `  ${theme.style('accent.primary', 'Enter')} save  ${theme.style('accent.primary', 'Esc')} cancel  ${theme.style('fg.dim', 'Type to rename')}`,
+    );
   } else if (isFilterMode) {
-    combinedLines.push(`  ${theme.style('accent.primary', 'Enter')} apply filter  ${theme.style('accent.primary', 'Esc')} clear  ${theme.style('fg.dim', 'Type to search')}`);
+    combinedLines.push(
+      `  ${theme.style('accent.primary', 'Enter')} apply filter  ${theme.style('accent.primary', 'Esc')} clear  ${theme.style('fg.dim', 'Type to search')}`,
+    );
   } else if (modalState?.confirmDeleteId) {
-    combinedLines.push(`  ${theme.style('state.warn', 'Enter/D to confirm delete · Esc to cancel')}`);
+    combinedLines.push(
+      `  ${theme.style('state.warn', 'Enter/D to confirm delete · Esc to cancel')}`,
+    );
   } else {
     const hints = [
       theme.style('accent.link', '↑↓') + theme.style('fg.dim', ' nav '),
@@ -1196,7 +1309,7 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
     ].join(' ');
     combinedLines.push(`  ${hints}`);
   }
-  
+
   // Draw the box
   drawModalBoxAt(buf, theme, modalTop, modalLeft, totalWidth, combinedLines);
 }
@@ -1222,7 +1335,9 @@ function getConfigItems(providerList, config) {
     try {
       const k = resolveApiKey(cfg);
       if (k) keyStatus = true;
-    } catch { /* no key */ }
+    } catch {
+      /* no key */
+    }
     items.push({
       type: 'provider',
       id: p.id,
@@ -1234,7 +1349,9 @@ function getConfigItems(providerList, config) {
   const tavilyKey = process.env.PUSH_TAVILY_API_KEY || config.tavilyApiKey || '';
   items.push({ type: 'tavily', id: 'tavily', hasKey: Boolean(tavilyKey) });
   // Sandbox
-  const sandbox = process.env.PUSH_LOCAL_SANDBOX || (config.localSandbox !== undefined ? String(config.localSandbox) : 'off');
+  const sandbox =
+    process.env.PUSH_LOCAL_SANDBOX ||
+    (config.localSandbox !== undefined ? String(config.localSandbox) : 'off');
   const sandboxOn = sandbox === 'true' || sandbox === '1';
   items.push({ type: 'sandbox', id: 'sandbox', sandboxOn });
   // ExecMode
@@ -1254,10 +1371,7 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
 
   if (modalState.mode === 'list') {
     // ── List mode ──
-    const lines = [
-      theme.bold(theme.style('fg.primary', '  Config')),
-      '',
-    ];
+    const lines = [theme.bold(theme.style('fg.primary', '  Config')), ''];
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -1292,7 +1406,12 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
           : theme.style('fg.secondary', 'sandbox');
         lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${status}`);
       } else if (item.type === 'execMode') {
-        const modeColor = item.execMode === 'yolo' ? 'state.warning' : item.execMode === 'auto' ? 'state.success' : 'fg.secondary';
+        const modeColor =
+          item.execMode === 'yolo'
+            ? 'state.warning'
+            : item.execMode === 'auto'
+              ? 'state.success'
+              : 'fg.secondary';
         const modeStr = theme.style(modeColor, item.execMode);
         const name = isCursor
           ? theme.style('accent.primary', 'execMode')
@@ -1313,18 +1432,13 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
     }
 
     lines.push('');
-    lines.push(
-      `  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter edit  Esc close')}`
-    );
+    lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter edit  Esc close')}`);
 
     renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
   } else if (modalState.mode === 'edit') {
     // ── Edit mode ──
     const targetLabel = modalState.editTarget;
-    const lines = [
-      theme.bold(theme.style('fg.primary', `  API key for ${targetLabel}`)),
-      '',
-    ];
+    const lines = [theme.bold(theme.style('fg.primary', `  API key for ${targetLabel}`)), ''];
 
     // Show current key (masked)
     let currentDisplay = '(not set)';
@@ -1337,16 +1451,18 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
         try {
           const k = resolveApiKey(cfg);
           if (k) currentDisplay = maskSecret(k);
-        } catch { /* no key */ }
+        } catch {
+          /* no key */
+        }
       }
     }
-    lines.push(`  ${theme.style('fg.muted', 'Current:')} ${theme.style('fg.secondary', currentDisplay)}`);
+    lines.push(
+      `  ${theme.style('fg.muted', 'Current:')} ${theme.style('fg.secondary', currentDisplay)}`,
+    );
     lines.push('');
 
     // Input line with masked display
-    const inputDisplay = modalState.editBuf
-      ? maskInput(modalState.editBuf)
-      : '';
+    const inputDisplay = modalState.editBuf ? maskInput(modalState.editBuf) : '';
     const inputWidth = modalWidth - 8;
     const inputPad = inputDisplay
       ? truncate(inputDisplay, inputWidth)
@@ -1360,18 +1476,17 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
     // ── Pick mode (exec mode selection) ──
     const EXEC_MODES = [
       { id: 'strict', desc: 'prompt before every exec command' },
-      { id: 'auto',   desc: 'prompt only for high-risk commands' },
-      { id: 'yolo',   desc: 'no exec prompts' },
+      { id: 'auto', desc: 'prompt only for high-risk commands' },
+      { id: 'yolo', desc: 'no exec prompts' },
     ];
-    const lines = [
-      theme.bold(theme.style('fg.primary', '  Exec mode')),
-      '',
-    ];
+    const lines = [theme.bold(theme.style('fg.primary', '  Exec mode')), ''];
     for (let i = 0; i < EXEC_MODES.length; i++) {
       const m = EXEC_MODES[i];
       const isCursor = i === modalState.pickCursor;
       const marker = isCursor ? theme.style('accent.primary', '\u203A') : ' ';
-      const label = isCursor ? theme.style('accent.primary', m.id) : theme.style('fg.secondary', m.id);
+      const label = isCursor
+        ? theme.style('accent.primary', m.id)
+        : theme.style('fg.secondary', m.id);
       lines.push(`  ${marker} ${padTo(label, 8)}  ${theme.style('fg.dim', m.desc)}`);
     }
     lines.push('');
@@ -1474,7 +1589,12 @@ export async function runTUI(options = {}) {
       await saveSessionState(state);
     }
   } else {
-    const providerName = (options.provider || process.env.PUSH_PROVIDER || config.provider || 'ollama').toLowerCase();
+    const providerName = (
+      options.provider ||
+      process.env.PUSH_PROVIDER ||
+      config.provider ||
+      'ollama'
+    ).toLowerCase();
     const cwd = path.resolve(options.cwd || process.cwd());
     const providerConfig = PROVIDER_CONFIGS[providerName];
     if (!providerConfig) throw new Error(`Unknown provider: ${providerName}`);
@@ -1531,15 +1651,19 @@ export async function runTUI(options = {}) {
       const { execFile } = await import('node:child_process');
       const { promisify } = await import('node:util');
       const execAsync = promisify(execFile);
-      const { stdout } = await execAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: state.cwd });
+      const { stdout } = await execAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd: state.cwd,
+      });
       branch = stdout.trim();
-    } catch { /* not a git repo */ }
+    } catch {
+      /* not a git repo */
+    }
   }
   await refreshBranchLabel();
-  
+
   // ── Git status (for status bar) ───────────────────────────────────
   let scheduler = null;
-  
+
   async function refreshGitStatus() {
     const status = await getCompactGitStatus(state.cwd);
     if (JSON.stringify(status) !== JSON.stringify(tuiState.gitStatus)) {
@@ -1548,7 +1672,7 @@ export async function runTUI(options = {}) {
       scheduler?.schedule();
     }
   }
-  
+
   // Initial git status
   await refreshGitStatus();
 
@@ -1567,7 +1691,10 @@ export async function runTUI(options = {}) {
 
       // Verify protocol with hello
       const hello = await client.request('hello', {}, null, 500);
-      if (!hello.ok) { client.close(); return false; }
+      if (!hello.ok) {
+        client.close();
+        return false;
+      }
 
       daemonClient = client;
 
@@ -1581,7 +1708,11 @@ export async function runTUI(options = {}) {
       client._socket.on('close', () => {
         if (daemonClient === client) {
           daemonClient = null;
-          addTranscriptEntry(tuiState, 'warning', 'Daemon disconnected. Falling back to inline mode.');
+          addTranscriptEntry(
+            tuiState,
+            'warning',
+            'Daemon disconnected. Falling back to inline mode.',
+          );
           tuiState.dirty.add('all');
           scheduler?.schedule();
         }
@@ -1605,7 +1736,11 @@ export async function runTUI(options = {}) {
       daemonSessionId = res.payload.sessionId;
       daemonAttachToken = res.payload.attachToken;
     } catch (err) {
-      addTranscriptEntry(tuiState, 'warning', `Daemon session failed: ${err.message}. Using inline mode.`);
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Daemon session failed: ${err.message}. Using inline mode.`,
+      );
       daemonClient.close();
       daemonClient = null;
     }
@@ -1614,19 +1749,23 @@ export async function runTUI(options = {}) {
   // Try daemon on startup (fast probe — 500ms connect + 500ms hello max)
   const daemonConnected = await tryDaemonConnect();
   if (daemonConnected) {
-    addTranscriptEntry(tuiState, 'status', 'Connected to pushd daemon. Sessions persist in background.');
+    addTranscriptEntry(
+      tuiState,
+      'status',
+      'Connected to pushd daemon. Sessions persist in background.',
+    );
   }
 
   const runtimeOriginWarning = getRuntimeOriginWarning(state.cwd);
   if (runtimeOriginWarning) {
     addTranscriptEntry(tuiState, 'warning', runtimeOriginWarning);
   }
-  
+
   // Periodic git status refresh (every 5 seconds)
   let gitStatusInterval = setInterval(() => {
     void refreshGitStatus();
   }, 5000);
-  
+
   // Git status will be refreshed periodically and after certain events
 
   // ── File awareness tracking ─────────────────────────────────────
@@ -1700,7 +1839,14 @@ export async function runTUI(options = {}) {
       const msgCol = Math.max(1, Math.floor((cols - msg.length) / 2) + 1);
       screenBuf.writeLine(msgRow, msgCol, msg);
       screenBuf.flush();
-      renderFrameMeta = { rows, cols, layoutKey: '', hadOverlay: false, tooSmall: true, initialized: true };
+      renderFrameMeta = {
+        rows,
+        cols,
+        layoutKey: '',
+        hadOverlay: false,
+        tooSmall: true,
+        initialized: true,
+      };
       return;
     }
 
@@ -1747,7 +1893,7 @@ export async function runTUI(options = {}) {
       screenBuf.writeLine(
         layout.header.top + layout.header.height,
         layout.innerLeft,
-        drawDivider(layout.innerWidth, theme.glyphs, theme)
+        drawDivider(layout.innerWidth, theme.glyphs, theme),
       );
     };
 
@@ -1808,11 +1954,26 @@ export async function runTUI(options = {}) {
         renderReasoningModal(screenBuf, theme, rows, cols, tuiState);
         break;
       case 'provider':
-        renderProviderModal(screenBuf, theme, rows, cols, state.provider, state.model, tuiState.providerModalCursor);
+        renderProviderModal(
+          screenBuf,
+          theme,
+          rows,
+          cols,
+          state.provider,
+          state.model,
+          tuiState.providerModalCursor,
+        );
         break;
       case 'resume':
         if (tuiState.resumeModalState) {
-          renderResumeModal(screenBuf, theme, rows, cols, tuiState.resumeModalState, state.sessionId);
+          renderResumeModal(
+            screenBuf,
+            theme,
+            rows,
+            cols,
+            tuiState.resumeModalState,
+            state.sessionId,
+          );
         }
         break;
       case 'model':
@@ -1958,17 +2119,16 @@ export async function runTUI(options = {}) {
         // Track file awareness — shift args from the per-tool queue (parallel-safe)
         const resultArgsQueue = pendingToolArgs.get(event.payload.toolName);
         const matchedArgs = resultArgsQueue?.shift() ?? null;
-        if (resultArgsQueue && resultArgsQueue.length === 0) pendingToolArgs.delete(event.payload.toolName);
-        updateFileAwarenessFromToolEvent(
-          event.payload.toolName,
-          matchedArgs,
-          true,
-          isError,
-        );
+        if (resultArgsQueue && resultArgsQueue.length === 0)
+          pendingToolArgs.delete(event.payload.toolName);
+        updateFileAwarenessFromToolEvent(event.payload.toolName, matchedArgs, true, isError);
         // Update the last tool_call transcript entry with result info and preview
         let updatedTranscriptToolCall = false;
         for (let i = tuiState.transcript.length - 1; i >= 0; i--) {
-          if (tuiState.transcript[i].role === 'tool_call' && tuiState.transcript[i].text === event.payload.toolName) {
+          if (
+            tuiState.transcript[i].role === 'tool_call' &&
+            tuiState.transcript[i].text === event.payload.toolName
+          ) {
             tuiState.transcript[i].error = isError;
             tuiState.transcript[i].duration = event.payload.durationMs;
             tuiState.transcript[i].resultPreview = text.slice(0, 200);
@@ -1982,7 +2142,10 @@ export async function runTUI(options = {}) {
         }
         scheduler.schedule();
         // Refresh git status after file-modifying operations
-        if (!isError && ['write_file', 'edit_file', 'git_commit', 'exec'].includes(event.payload.toolName)) {
+        if (
+          !isError &&
+          ['write_file', 'edit_file', 'git_commit', 'exec'].includes(event.payload.toolName)
+        ) {
           setTimeout(() => refreshGitStatus(), 300);
         }
         break;
@@ -2024,11 +2187,17 @@ export async function runTUI(options = {}) {
             daemonApprovalId: approvalId,
           };
           approvalResolve = (approved) => {
-            daemonClient?.request('submit_approval', {
-              sessionId: daemonSessionId,
-              approvalId,
-              decision: approved ? 'approve' : 'deny',
-            }, daemonSessionId).catch(() => {});
+            daemonClient
+              ?.request(
+                'submit_approval',
+                {
+                  sessionId: daemonSessionId,
+                  approvalId,
+                  decision: approved ? 'approve' : 'deny',
+                },
+                daemonSessionId,
+              )
+              .catch(() => {});
           };
           tuiState.dirty.add('all');
           scheduler.flush();
@@ -2074,14 +2243,15 @@ export async function runTUI(options = {}) {
   let questionInputBuf = '';
 
   function makeAskUserFn() {
-    return (question, choices) => new Promise((resolve) => {
-      questionInputBuf = '';
-      questionResolve = resolve;
-      tuiState.runState = 'awaiting_user_question';
-      tuiState.userQuestion = { question, choices: choices ?? null };
-      tuiState.dirty.add('all');
-      scheduler.flush();
-    });
+    return (question, choices) =>
+      new Promise((resolve) => {
+        questionInputBuf = '';
+        questionResolve = resolve;
+        tuiState.runState = 'awaiting_user_question';
+        tuiState.userQuestion = { question, choices: choices ?? null };
+        tuiState.dirty.add('all');
+        scheduler.flush();
+      });
   }
 
   function submitQuestionAnswer() {
@@ -2128,7 +2298,13 @@ export async function runTUI(options = {}) {
       return;
     }
     // Printable character
-    if (key.sequence && !key.ctrl && !key.meta && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
+    if (
+      key.sequence &&
+      !key.ctrl &&
+      !key.meta &&
+      key.sequence.length === 1 &&
+      key.sequence.charCodeAt(0) >= 32
+    ) {
       questionInputBuf += key.sequence;
       tuiState.dirty.add('all');
       scheduler.schedule();
@@ -2173,7 +2349,10 @@ export async function runTUI(options = {}) {
 
   function createCurrentTabCompleter() {
     return createTabCompleter({
-      ctx, skills, getCuratedModels, getProviderList,
+      ctx,
+      skills,
+      getCuratedModels,
+      getProviderList,
       workspaceRoot: state.cwd,
       extraCommands: ['resume', 'compact', 'debug'],
     });
@@ -2237,23 +2416,37 @@ export async function runTUI(options = {}) {
             });
             // On user-initiated abort (Ctrl+C), cancel the daemon run.
             // On TUI exit/teardown, just detach — let the run continue.
-            runAbort.signal.addEventListener('abort', () => {
-              if (runAbort?._userInitiated) {
-                daemonClient?.request('cancel_run', {
-                  sessionId: daemonSessionId,
-                  runId,
-                }, daemonSessionId).catch(() => {});
-              }
-              unsub();
-              resolve();
-            }, { once: true });
+            runAbort.signal.addEventListener(
+              'abort',
+              () => {
+                if (runAbort?._userInitiated) {
+                  daemonClient
+                    ?.request(
+                      'cancel_run',
+                      {
+                        sessionId: daemonSessionId,
+                        runId,
+                      },
+                      daemonSessionId,
+                    )
+                    .catch(() => {});
+                }
+                unsub();
+                resolve();
+              },
+              { once: true },
+            );
           });
 
-          const res = await daemonClient.request('send_user_message', {
-            sessionId: daemonSessionId,
-            text,
-            attachToken: daemonAttachToken,
-          }, daemonSessionId);
+          const res = await daemonClient.request(
+            'send_user_message',
+            {
+              sessionId: daemonSessionId,
+              text,
+              attachToken: daemonAttachToken,
+            },
+            daemonSessionId,
+          );
           if (!res.ok) {
             addTranscriptEntry(tuiState, 'error', res.error?.message || 'Daemon rejected message');
           } else {
@@ -2281,7 +2474,10 @@ export async function runTUI(options = {}) {
     await appendUserMessageWithFileReferences(state, text, state.cwd, {
       referenceSourceText: options.referenceSourceText,
     });
-    await appendSessionEvent(state, 'user_message', { chars: text.length, preview: text.slice(0, 280) });
+    await appendSessionEvent(state, 'user_message', {
+      chars: text.length,
+      preview: text.slice(0, 280),
+    });
 
     runAbort = new AbortController();
 
@@ -2353,7 +2549,11 @@ export async function runTUI(options = {}) {
   async function renameCurrentSession(rawName) {
     const trimmed = typeof rawName === 'string' ? rawName.trim() : '';
     if (!trimmed) {
-      addTranscriptEntry(tuiState, 'warning', 'Usage: /session rename <name> | /session rename --clear');
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        'Usage: /session rename <name> | /session rename --clear',
+      );
       scheduler.flush();
       return;
     }
@@ -2407,7 +2607,11 @@ export async function runTUI(options = {}) {
   async function switchToSessionById(targetSessionId, { closePicker = true } = {}) {
     if (!targetSessionId) return false;
     if (tuiState.runState !== 'idle') {
-      addTranscriptEntry(tuiState, 'warning', 'Cannot resume another session while a run is active.');
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        'Cannot resume another session while a run is active.',
+      );
       scheduler.flush();
       return false;
     }
@@ -2426,14 +2630,22 @@ export async function runTUI(options = {}) {
     try {
       nextState = await loadSessionState(targetSessionId);
     } catch (err) {
-      addTranscriptEntry(tuiState, 'error', `Failed to load session ${targetSessionId}: ${formatError(err)}`);
+      addTranscriptEntry(
+        tuiState,
+        'error',
+        `Failed to load session ${targetSessionId}: ${formatError(err)}`,
+      );
       scheduler.flush();
       return false;
     }
 
     const nextProviderConfig = PROVIDER_CONFIGS[nextState.provider];
     if (!nextProviderConfig) {
-      addTranscriptEntry(tuiState, 'error', `Cannot resume ${targetSessionId}: unknown provider "${nextState.provider}".`);
+      addTranscriptEntry(
+        tuiState,
+        'error',
+        `Cannot resume ${targetSessionId}: unknown provider "${nextState.provider}".`,
+      );
       scheduler.flush();
       return false;
     }
@@ -2490,13 +2702,13 @@ export async function runTUI(options = {}) {
       cursor: 0,
       error: null,
       confirmDeleteId: null,
-      mode: 'list',  // 'list', 'rename', 'filter'
+      mode: 'list', // 'list', 'rename', 'filter'
       renameTargetId: null,
       renameBuf: '',
       renameCursor: 0,
       filterBuf: '',
       filterCursor: 0,
-      preview: null,  // { messages: [], loading }
+      preview: null, // { messages: [], loading }
     };
     tuiState.dirty.add('all');
     scheduler.flush();
@@ -2507,7 +2719,7 @@ export async function runTUI(options = {}) {
       const ms = {
         loading: false,
         rows,
-        filteredRows: rows.map(r => ({ item: r, score: 1 })),
+        filteredRows: rows.map((r) => ({ item: r, score: 1 })),
         cursor: currentIndex >= 0 ? currentIndex : 0,
         error: null,
         confirmDeleteId: null,
@@ -2543,7 +2755,7 @@ export async function runTUI(options = {}) {
     tuiState.dirty.add('all');
     scheduler.flush();
   }
-  
+
   async function loadSessionPreview(ms) {
     if (!ms) return;
     const selected = ms.filteredRows[ms.cursor]?.item;
@@ -2551,16 +2763,16 @@ export async function runTUI(options = {}) {
       ms.preview = null;
       return;
     }
-    
+
     ms.preview = { loading: true, messages: [] };
     tuiState.dirty.add('all');
     scheduler.schedule();
-    
+
     try {
       const sessionState = await loadSessionState(selected.sessionId);
       // Get last 5 user/assistant message pairs
       const messages = (sessionState.messages || [])
-        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
         .slice(-6);
       ms.preview = { loading: false, messages };
     } catch {
@@ -2569,10 +2781,10 @@ export async function runTUI(options = {}) {
     tuiState.dirty.add('all');
     scheduler.schedule();
   }
-  
+
   function updateFilteredRows(ms) {
     if (!ms.filterBuf) {
-      ms.filteredRows = ms.rows.map(r => ({ item: r, score: 1 }));
+      ms.filteredRows = ms.rows.map((r) => ({ item: r, score: 1 }));
     } else {
       ms.filteredRows = filterSessions(ms.rows, ms.filterBuf);
     }
@@ -2584,13 +2796,17 @@ export async function runTUI(options = {}) {
     const ms = tuiState.resumeModalState;
     if (!ms) return;
 
-    const renameRequested = ms.mode === 'list'
-      && key.ch && !key.ctrl && !key.meta
-      && String(key.ch).toLowerCase() === 'r';
-    const deleteRequested = (ms.mode !== 'rename' && ms.mode !== 'filter') && (
-      key.name === 'delete'
-      || (key.ch && !key.ctrl && !key.meta && ['d', 'x'].includes(String(key.ch).toLowerCase()))
-    );
+    const renameRequested =
+      ms.mode === 'list' &&
+      key.ch &&
+      !key.ctrl &&
+      !key.meta &&
+      String(key.ch).toLowerCase() === 'r';
+    const deleteRequested =
+      ms.mode !== 'rename' &&
+      ms.mode !== 'filter' &&
+      (key.name === 'delete' ||
+        (key.ch && !key.ctrl && !key.meta && ['d', 'x'].includes(String(key.ch).toLowerCase())));
     const filterRequested = ms.mode === 'list' && key.ch === '/' && !key.ctrl && !key.meta;
 
     const markDirty = (flush = false) => {
@@ -2619,7 +2835,9 @@ export async function runTUI(options = {}) {
         if (deleted === 0) {
           ms.error = `Session not found: ${row.sessionId}`;
         } else {
-          const displayName = row.sessionName ? `${JSON.stringify(row.sessionName)} (${row.sessionId})` : row.sessionId;
+          const displayName = row.sessionName
+            ? `${JSON.stringify(row.sessionName)} (${row.sessionId})`
+            : row.sessionId;
           addTranscriptEntry(tuiState, 'status', `Deleted session: ${displayName}`);
           const nextRows = await listSessions();
           ms.rows = nextRows;
@@ -2661,12 +2879,17 @@ export async function runTUI(options = {}) {
         ms.rows = nextRows;
         updateFilteredRows(ms);
         const nextIndex = ms.filteredRows.findIndex((r) => r.item.sessionId === targetId);
-        ms.cursor = nextIndex >= 0 ? nextIndex : Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
+        ms.cursor =
+          nextIndex >= 0 ? nextIndex : Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
         ms.error = null;
         exitRenameMode();
 
         if (trimmed) {
-          addTranscriptEntry(tuiState, 'status', `Session renamed: ${JSON.stringify(trimmed)} (${targetId})`);
+          addTranscriptEntry(
+            tuiState,
+            'status',
+            `Session renamed: ${JSON.stringify(trimmed)} (${targetId})`,
+          );
         } else {
           addTranscriptEntry(tuiState, 'status', `Session name cleared: ${targetId}`);
         }
@@ -2703,7 +2926,9 @@ export async function runTUI(options = {}) {
     }
 
     if (ms.mode === 'filter') {
-      const edit = applySingleLineEditKey(ms.filterBuf, ms.filterCursor, key, { submitOnReturn: true });
+      const edit = applySingleLineEditKey(ms.filterBuf, ms.filterCursor, key, {
+        submitOnReturn: true,
+      });
       if (!edit.handled) return;
       if (edit.submitted) {
         exitFilterMode();
@@ -2722,7 +2947,9 @@ export async function runTUI(options = {}) {
     }
 
     if (ms.mode === 'rename') {
-      const edit = applySingleLineEditKey(ms.renameBuf, ms.renameCursor, key, { submitOnReturn: true });
+      const edit = applySingleLineEditKey(ms.renameBuf, ms.renameCursor, key, {
+        submitOnReturn: true,
+      });
       if (!edit.handled) return;
       if (edit.submitted) {
         await saveRename();
@@ -2974,9 +3201,9 @@ export async function runTUI(options = {}) {
     let target;
     if (/^\d+$/.test(arg)) {
       const num = parseInt(arg, 10);
-      target = (num >= 1 && num <= providers.length) ? providers[num - 1] : null;
+      target = num >= 1 && num <= providers.length ? providers[num - 1] : null;
     } else {
-      target = providers.find(p => p.id === arg.toLowerCase());
+      target = providers.find((p) => p.id === arg.toLowerCase());
     }
 
     if (!target) {
@@ -3000,7 +3227,11 @@ export async function runTUI(options = {}) {
 
     if (sub === 'key') {
       if (parts.length < 2) {
-        addTranscriptEntry(tuiState, 'warning', 'Usage: /config key <secret> or /config key <provider> <secret>');
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          'Usage: /config key <secret> or /config key <provider> <secret>',
+        );
         scheduler.flush();
         return;
       }
@@ -3036,7 +3267,11 @@ export async function runTUI(options = {}) {
         ctx.apiKey = secret;
       }
 
-      addTranscriptEntry(tuiState, 'status', `API key saved for ${targetId} (${maskSecret(secret)})`);
+      addTranscriptEntry(
+        tuiState,
+        'status',
+        `API key saved for ${targetId} (${maskSecret(secret)})`,
+      );
       scheduler.flush();
       return;
     }
@@ -3115,7 +3350,11 @@ export async function runTUI(options = {}) {
       return;
     }
 
-    addTranscriptEntry(tuiState, 'warning', `Unknown config subcommand: ${sub}. Try: key, url, tavily, sandbox, explain`);
+    addTranscriptEntry(
+      tuiState,
+      'warning',
+      `Unknown config subcommand: ${sub}. Try: key, url, tavily, sandbox, explain`,
+    );
     scheduler.flush();
   }
 
@@ -3138,7 +3377,9 @@ export async function runTUI(options = {}) {
     const runtimeEntry = process.argv[1] ? safeRealpath(process.argv[1]) : '(unknown)';
     const runtimeDir = process.argv[1] ? path.dirname(runtimeEntry) : '(unknown)';
     const repoRoot = mismatch?.repoRoot || '(not detected)';
-    const expectedLauncher = mismatch?.repoRoot ? path.join(mismatch.repoRoot, 'push') : '(not detected)';
+    const expectedLauncher = mismatch?.repoRoot
+      ? path.join(mismatch.repoRoot, 'push')
+      : '(not detected)';
 
     const lines = [
       'Runtime Debug:',
@@ -3186,53 +3427,57 @@ export async function runTUI(options = {}) {
         return true;
 
       case 'help':
-        addTranscriptEntry(tuiState, 'status', [
-          'Commands:',
-          '  /new                 Start a new session (same provider/model/cwd)',
-          '  /model               Open navigable model picker',
-          '  /model <name|#>      Switch model',
-          '  /provider            Open navigable provider picker',
-          '  /provider <name|#>   Switch provider',
-          '  /config              Show config overview (keys masked)',
-          '  /config key <secret> Set API key for current provider',
-          '  /config url <url>    Set endpoint URL for current provider',
-          '  /config tavily <key> Set Tavily web search API key',
-          '  /config sandbox on|off  Toggle local Docker sandbox',
-          '  /config explain on|off  Toggle pattern explanations',
-          '  /debug runtime       Show runtime path/provider/session diagnostics',
-          '  /skills              List available skills',
-          '  /skills reload       Reload workspace + Claude skills',
-          `  /compact [turns]      Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)`,
-          '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
-          '  /resume              Open resumable session picker',
-          '  /resume <session-id> Switch to a saved session',
-          '  @path[:line[-end]]   Preload file refs into context',
-          '  /session             Print session id',
-          '  /session rename <name>  Rename current session (--clear to unset)',
-          '  /exit                Exit TUI',
-          '',
-          'Keybinds:',
-          '  Enter         Send message',
-          '  Alt+Enter     New line in composer',
-          '  Up/Down       Input history (single-line)',
-          '  Ctrl+A/E      Start/end of line',
-          '  Ctrl+U        Kill to line start',
-          '  Ctrl+K        Kill to line end',
-          '  Ctrl+W        Kill word backward',
-          '  Ctrl+D        Delete forward / exit when empty',
-          '  Ctrl+Left/Right  Word navigation',
-          '  PageUp/Down   Scroll transcript',
-          '  Ctrl+L        Clear viewport (preserves history)',
-          '  Ctrl+T        Toggle tool pane',
-          '  Ctrl+O        Payload inspector mode (per-block expand/collapse)',
-          '  Ctrl+G        Toggle reasoning pane',
-          '  Ctrl+C        Cancel run / exit',
-          '  Ctrl+R        Session picker (resume/switch)',
-          '  Ctrl+Y        Approve',
-          '  Ctrl+N        Deny',
-          '  Ctrl+P        Provider switcher',
-          '  Payload inspector: j/k or arrows move, Enter toggles block, a toggles all',
-        ].join('\n'));
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          [
+            'Commands:',
+            '  /new                 Start a new session (same provider/model/cwd)',
+            '  /model               Open navigable model picker',
+            '  /model <name|#>      Switch model',
+            '  /provider            Open navigable provider picker',
+            '  /provider <name|#>   Switch provider',
+            '  /config              Show config overview (keys masked)',
+            '  /config key <secret> Set API key for current provider',
+            '  /config url <url>    Set endpoint URL for current provider',
+            '  /config tavily <key> Set Tavily web search API key',
+            '  /config sandbox on|off  Toggle local Docker sandbox',
+            '  /config explain on|off  Toggle pattern explanations',
+            '  /debug runtime       Show runtime path/provider/session diagnostics',
+            '  /skills              List available skills',
+            '  /skills reload       Reload workspace + Claude skills',
+            `  /compact [turns]      Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)`,
+            '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
+            '  /resume              Open resumable session picker',
+            '  /resume <session-id> Switch to a saved session',
+            '  @path[:line[-end]]   Preload file refs into context',
+            '  /session             Print session id',
+            '  /session rename <name>  Rename current session (--clear to unset)',
+            '  /exit                Exit TUI',
+            '',
+            'Keybinds:',
+            '  Enter         Send message',
+            '  Alt+Enter     New line in composer',
+            '  Up/Down       Input history (single-line)',
+            '  Ctrl+A/E      Start/end of line',
+            '  Ctrl+U        Kill to line start',
+            '  Ctrl+K        Kill to line end',
+            '  Ctrl+W        Kill word backward',
+            '  Ctrl+D        Delete forward / exit when empty',
+            '  Ctrl+Left/Right  Word navigation',
+            '  PageUp/Down   Scroll transcript',
+            '  Ctrl+L        Clear viewport (preserves history)',
+            '  Ctrl+T        Toggle tool pane',
+            '  Ctrl+O        Payload inspector mode (per-block expand/collapse)',
+            '  Ctrl+G        Toggle reasoning pane',
+            '  Ctrl+C        Cancel run / exit',
+            '  Ctrl+R        Session picker (resume/switch)',
+            '  Ctrl+Y        Approve',
+            '  Ctrl+N        Deny',
+            '  Ctrl+P        Provider switcher',
+            '  Payload inspector: j/k or arrows move, Enter toggles block, a toggles all',
+          ].join('\n'),
+        );
         scheduler.flush();
         return true;
 
@@ -3251,7 +3496,11 @@ export async function runTUI(options = {}) {
           await renameCurrentSession(arg.slice('rename'.length));
           return true;
         }
-        addTranscriptEntry(tuiState, 'warning', 'Usage: /session | /session rename <name> | /session rename --clear');
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          'Usage: /session | /session rename <name> | /session rename --clear',
+        );
         scheduler.flush();
         return true;
 
@@ -3293,11 +3542,12 @@ export async function runTUI(options = {}) {
         } else {
           const lines = [];
           for (const [name, skill] of skills) {
-            const tag = skill.source === 'workspace'
-              ? ' (workspace)'
-              : skill.source === 'claude'
-                ? ' (claude)'
-                : '';
+            const tag =
+              skill.source === 'workspace'
+                ? ' (workspace)'
+                : skill.source === 'claude'
+                  ? ' (claude)'
+                  : '';
             lines.push(`  /${name}  ${skill.description}${tag}`);
           }
           addTranscriptEntry(tuiState, 'status', lines.join('\n'));
@@ -3322,12 +3572,20 @@ export async function runTUI(options = {}) {
           composer.clear();
           tuiState.dirty.add('all');
           await ensureSessionPersisted();
-          await appendSessionEvent(state, 'user_message', { chars: prompt.length, preview: prompt.slice(0, 280), skill: cmd });
+          await appendSessionEvent(state, 'user_message', {
+            chars: prompt.length,
+            preview: prompt.slice(0, 280),
+            skill: cmd,
+          });
           await runPrompt(prompt, { referenceSourceText: arg });
           return true;
         }
 
-        addTranscriptEntry(tuiState, 'warning', `Unknown command: /${cmd}. Type /help for commands.`);
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          `Unknown command: /${cmd}. Type /help for commands.`,
+        );
         scheduler.flush();
         return true;
       }
@@ -3369,7 +3627,13 @@ export async function runTUI(options = {}) {
   function approveAction() {
     if (approvalResolve) {
       if (tuiState.approval) {
-        pushTranscriptEntry(tuiState, { role: 'verdict', verdict: 'APPROVED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, timestamp: Date.now() });
+        pushTranscriptEntry(tuiState, {
+          role: 'verdict',
+          verdict: 'APPROVED',
+          kind: tuiState.approval.kind,
+          summary: tuiState.approval.summary,
+          timestamp: Date.now(),
+        });
       }
       approvalResolve(true);
       approvalResolve = null;
@@ -3387,7 +3651,14 @@ export async function runTUI(options = {}) {
         trustedPatterns.add(patIdx);
       }
       if (tuiState.approval) {
-        pushTranscriptEntry(tuiState, { role: 'verdict', verdict: 'APPROVED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, trusted: true, timestamp: Date.now() });
+        pushTranscriptEntry(tuiState, {
+          role: 'verdict',
+          verdict: 'APPROVED',
+          kind: tuiState.approval.kind,
+          summary: tuiState.approval.summary,
+          trusted: true,
+          timestamp: Date.now(),
+        });
       }
       approvalResolve(true);
       approvalResolve = null;
@@ -3401,9 +3672,10 @@ export async function runTUI(options = {}) {
   async function persistPrefixApprovalAction() {
     if (!approvalResolve) return;
 
-    const suggestedPrefix = typeof tuiState.approval?.suggestedPrefix === 'string'
-      ? tuiState.approval.suggestedPrefix
-      : '';
+    const suggestedPrefix =
+      typeof tuiState.approval?.suggestedPrefix === 'string'
+        ? tuiState.approval.suggestedPrefix
+        : '';
 
     if (suggestedPrefix) {
       if (!safeExecPatterns.includes(suggestedPrefix)) {
@@ -3413,7 +3685,11 @@ export async function runTUI(options = {}) {
           await saveConfig(config);
           addTranscriptEntry(tuiState, 'status', `[saved prefix] ${suggestedPrefix}`);
         } catch (err) {
-          addTranscriptEntry(tuiState, 'warning', `Failed to persist trusted prefix: ${err.message || String(err)}`);
+          addTranscriptEntry(
+            tuiState,
+            'warning',
+            `Failed to persist trusted prefix: ${err.message || String(err)}`,
+          );
         }
       } else {
         addTranscriptEntry(tuiState, 'status', `[prefix already trusted] ${suggestedPrefix}`);
@@ -3423,17 +3699,14 @@ export async function runTUI(options = {}) {
     }
 
     if (tuiState.approval) {
-      pushTranscriptEntry(
-        tuiState,
-        {
-          role: 'verdict',
-          verdict: 'APPROVED',
-          kind: tuiState.approval.kind,
-          summary: tuiState.approval.summary,
-          trustedPrefix: suggestedPrefix || null,
-          timestamp: Date.now(),
-        },
-      );
+      pushTranscriptEntry(tuiState, {
+        role: 'verdict',
+        verdict: 'APPROVED',
+        kind: tuiState.approval.kind,
+        summary: tuiState.approval.summary,
+        trustedPrefix: suggestedPrefix || null,
+        timestamp: Date.now(),
+      });
     }
 
     approvalResolve(true);
@@ -3447,7 +3720,13 @@ export async function runTUI(options = {}) {
   function denyAction() {
     if (approvalResolve) {
       if (tuiState.approval) {
-        pushTranscriptEntry(tuiState, { role: 'verdict', verdict: 'DENIED', kind: tuiState.approval.kind, summary: tuiState.approval.summary, timestamp: Date.now() });
+        pushTranscriptEntry(tuiState, {
+          role: 'verdict',
+          verdict: 'DENIED',
+          kind: tuiState.approval.kind,
+          summary: tuiState.approval.summary,
+          timestamp: Date.now(),
+        });
       }
       approvalResolve(false);
       approvalResolve = null;
@@ -3527,15 +3806,18 @@ export async function runTUI(options = {}) {
 
   function openPayloadInspector() {
     const visibleBlocks = getVisiblePayloadBlocks();
-    const fallback = visibleBlocks[visibleBlocks.length - 1]
-      || tuiState.payloadBlocks[tuiState.payloadBlocks.length - 1]
-      || null;
+    const fallback =
+      visibleBlocks[visibleBlocks.length - 1] ||
+      tuiState.payloadBlocks[tuiState.payloadBlocks.length - 1] ||
+      null;
     if (!fallback) {
       process.stdout.write('\x07');
       return;
     }
     setActiveOverlayModal('payload_inspector');
-    const cursorExists = tuiState.payloadCursorId && tuiState.payloadBlocks.some((b) => b.id === tuiState.payloadCursorId);
+    const cursorExists =
+      tuiState.payloadCursorId &&
+      tuiState.payloadBlocks.some((b) => b.id === tuiState.payloadCursorId);
     if (!cursorExists) {
       tuiState.payloadCursorId = fallback.id;
     }
@@ -3561,9 +3843,12 @@ export async function runTUI(options = {}) {
     const visibleBlocks = getVisiblePayloadBlocks();
     if (visibleBlocks.length === 0) return;
     const currentIdx = visibleBlocks.findIndex((b) => b.id === tuiState.payloadCursorId);
-    const nextIdx = currentIdx >= 0
-      ? (currentIdx + delta + visibleBlocks.length) % visibleBlocks.length
-      : (delta >= 0 ? 0 : visibleBlocks.length - 1);
+    const nextIdx =
+      currentIdx >= 0
+        ? (currentIdx + delta + visibleBlocks.length) % visibleBlocks.length
+        : delta >= 0
+          ? 0
+          : visibleBlocks.length - 1;
     tuiState.payloadCursorId = visibleBlocks[nextIdx].id;
     tuiState.dirty.add('transcript');
     scheduler.schedule();
@@ -3571,9 +3856,8 @@ export async function runTUI(options = {}) {
 
   function toggleFocusedPayloadBlock() {
     const visibleBlocks = getVisiblePayloadBlocks();
-    const block = visibleBlocks.find((b) => b.id === tuiState.payloadCursorId)
-      || visibleBlocks[0]
-      || null;
+    const block =
+      visibleBlocks.find((b) => b.id === tuiState.payloadCursorId) || visibleBlocks[0] || null;
     if (!block) return;
     tuiState.payloadCursorId = block.id;
     if (tuiState.expandedToolJsonPayloadIds.has(block.id)) {
@@ -3645,7 +3929,10 @@ export async function runTUI(options = {}) {
     }
     if (key.name === 'pagedown') {
       const { rows } = getTermSize();
-      tuiState.scrollOffset = Math.max(0, tuiState.scrollOffset - Math.max(1, Math.floor(rows / 3)));
+      tuiState.scrollOffset = Math.max(
+        0,
+        tuiState.scrollOffset - Math.max(1, Math.floor(rows / 3)),
+      );
       tuiState.dirty.add('transcript');
       scheduler.schedule();
     }
@@ -3747,7 +4034,11 @@ export async function runTUI(options = {}) {
       return;
     }
     if (action.type === 'move') {
-      tuiState.providerModalCursor = moveCursorCircular(tuiState.providerModalCursor, providers.length, action.delta);
+      tuiState.providerModalCursor = moveCursorCircular(
+        tuiState.providerModalCursor,
+        providers.length,
+        action.delta,
+      );
       tuiState.dirty.add('all');
       scheduler.schedule();
       return;
@@ -3767,7 +4058,14 @@ export async function runTUI(options = {}) {
 
   function openConfigModal() {
     setActiveOverlayModal('config');
-    tuiState.configModalState = { mode: 'list', cursor: 0, editTarget: '', editBuf: '', editCursor: 0, pickCursor: 0 };
+    tuiState.configModalState = {
+      mode: 'list',
+      cursor: 0,
+      editTarget: '',
+      editBuf: '',
+      editCursor: 0,
+      pickCursor: 0,
+    };
     tuiState.dirty.add('all');
     scheduler.flush();
   }
@@ -3895,7 +4193,9 @@ export async function runTUI(options = {}) {
       ms.editCursor = 0;
     } else if (index === providers.length + 1) {
       // Sandbox → toggle directly
-      const current = process.env.PUSH_LOCAL_SANDBOX || (config.localSandbox !== undefined ? String(config.localSandbox) : 'off');
+      const current =
+        process.env.PUSH_LOCAL_SANDBOX ||
+        (config.localSandbox !== undefined ? String(config.localSandbox) : 'off');
       const isOn = current === 'true' || current === '1';
       config.localSandbox = !isOn;
       await saveConfig(config);
@@ -3944,12 +4244,14 @@ export async function runTUI(options = {}) {
   // ── Exit promise ─────────────────────────────────────────────────
 
   let exitResolve;
-  const exitPromise = new Promise((resolve) => { exitResolve = resolve; });
+  const exitPromise = new Promise((resolve) => {
+    exitResolve = resolve;
+  });
 
   // ── Bracketed paste state ────────────────────────────────────────
 
   const PASTE_START = '\x1b[200~';
-  const PASTE_END   = '\x1b[201~';
+  const PASTE_END = '\x1b[201~';
   let pasteMode = false;
   let pasteBuf = '';
 
@@ -3983,7 +4285,8 @@ export async function runTUI(options = {}) {
       const ms = tuiState.configModalState;
       const normalized = text.replace(/\r\n/g, '\n').replace(/[\r\n]/g, '');
       if (!normalized) return;
-      ms.editBuf = ms.editBuf.slice(0, ms.editCursor) + normalized + ms.editBuf.slice(ms.editCursor);
+      ms.editBuf =
+        ms.editBuf.slice(0, ms.editCursor) + normalized + ms.editBuf.slice(ms.editCursor);
       ms.editCursor += normalized.length;
       tuiState.dirty.add('all');
       scheduler.schedule();
@@ -3995,7 +4298,8 @@ export async function runTUI(options = {}) {
       const ms = tuiState.resumeModalState;
       const normalized = text.replace(/\r\n/g, '\n').replace(/[\r\n]/g, '');
       if (!normalized) return;
-      ms.renameBuf = ms.renameBuf.slice(0, ms.renameCursor) + normalized + ms.renameBuf.slice(ms.renameCursor);
+      ms.renameBuf =
+        ms.renameBuf.slice(0, ms.renameCursor) + normalized + ms.renameBuf.slice(ms.renameCursor);
       ms.renameCursor += normalized.length;
       tuiState.dirty.add('all');
       scheduler.schedule();
@@ -4003,7 +4307,10 @@ export async function runTUI(options = {}) {
     }
 
     // For non-text modals, ignore paste rather than mutating the hidden composer.
-    if (getActiveOverlayModal() || (tuiState.runState === 'awaiting_approval' && tuiState.approval)) {
+    if (
+      getActiveOverlayModal() ||
+      (tuiState.runState === 'awaiting_approval' && tuiState.approval)
+    ) {
       return;
     }
 
@@ -4337,24 +4644,28 @@ export async function runTUI(options = {}) {
         } else if (msg.role === 'assistant') {
           const raw = typeof msg.content === 'string' ? msg.content : '';
           // Strip JSON tool call fences, keeping only prose
-          const cleaned = raw
-            .replace(/```(?:json)?\s*\n?\{[\s\S]*?\}\s*\n?```/g, '')
-            .trim();
+          const cleaned = raw.replace(/```(?:json)?\s*\n?\{[\s\S]*?\}\s*\n?```/g, '').trim();
           if (cleaned) process.stdout.write(`${cleaned.slice(0, 800)}\n\n`);
         }
       }
       process.stdout.write('─────────────────────────\n\n');
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   function emergencyCleanup() {
     try {
       if (sessionPersisted) dumpSessionTranscript(state);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
     try {
       process.stdout.write(ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset);
       if (process.stdin.isTTY) process.stdin.setRawMode(false);
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   function onSignal(sig) {
@@ -4393,7 +4704,9 @@ export async function runTUI(options = {}) {
       if (existingSessions.length > 0) {
         await openResumeModal();
       }
-    } catch { /* best-effort — just start fresh if listing fails */ }
+    } catch {
+      /* best-effort — just start fresh if listing fails */
+    }
   }
 
   // ── Wait for exit ────────────────────────────────────────────────

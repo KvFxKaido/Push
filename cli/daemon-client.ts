@@ -95,7 +95,11 @@ export function connect(socketPath: string): Promise<DaemonClient> {
         return;
       }
 
-      if (msg.kind === 'response' && (msg as ResponseEnvelope).requestId && pendingRequests.has((msg as ResponseEnvelope).requestId)) {
+      if (
+        msg.kind === 'response' &&
+        (msg as ResponseEnvelope).requestId &&
+        pendingRequests.has((msg as ResponseEnvelope).requestId)
+      ) {
         const responseMsg = msg as ResponseEnvelope;
         const pending = pendingRequests.get(responseMsg.requestId)!;
         pendingRequests.delete(responseMsg.requestId);
@@ -110,7 +114,11 @@ export function connect(socketPath: string): Promise<DaemonClient> {
         }
       } else if (msg.kind === 'event') {
         for (const listener of eventListeners) {
-          try { listener(msg as EventEnvelope); } catch { /* consumer error */ }
+          try {
+            listener(msg as EventEnvelope);
+          } catch {
+            /* consumer error */
+          }
         }
       }
     }
@@ -146,7 +154,9 @@ export function connect(socketPath: string): Promise<DaemonClient> {
 
     socket.on('connect', () => {
       const client: DaemonClient = {
-        get connected() { return connected; },
+        get connected() {
+          return connected;
+        },
 
         request(
           type: string,
@@ -180,7 +190,9 @@ export function connect(socketPath: string): Promise<DaemonClient> {
 
         onEvent(callback: EventCallback): () => void {
           eventListeners.add(callback);
-          return () => { eventListeners.delete(callback); };
+          return () => {
+            eventListeners.delete(callback);
+          };
         },
 
         close(): void {
@@ -201,7 +213,10 @@ export function connect(socketPath: string): Promise<DaemonClient> {
  * Try to connect to pushd with a short timeout.
  * Returns the client or null if connection fails.
  */
-export async function tryConnect(socketPath: string, timeoutMs: number = 2000): Promise<DaemonClient | null> {
+export async function tryConnect(
+  socketPath: string,
+  timeoutMs: number = 2000,
+): Promise<DaemonClient | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let connectPromise: Promise<DaemonClient> | undefined;
   try {

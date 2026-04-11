@@ -103,9 +103,18 @@ export function parseKey(buf: Buffer): ParsedKey {
 
     // Tab, Enter, Return — these are in the ctrl range (0x09, 0x0a, 0x0d)
     // but are functionally their own keys, not ctrl combos.
-    if (code === 0x09) { key.name = 'tab'; return key; }
-    if (code === 0x0a) { key.name = 'return'; return key; }
-    if (code === 0x0d) { key.name = 'return'; return key; }
+    if (code === 0x09) {
+      key.name = 'tab';
+      return key;
+    }
+    if (code === 0x0a) {
+      key.name = 'return';
+      return key;
+    }
+    if (code === 0x0d) {
+      key.name = 'return';
+      return key;
+    }
 
     // Ctrl+A through Ctrl+Z (0x01–0x1a), excluding tab/enter above
     if (code >= 0x01 && code <= 0x1a) {
@@ -159,44 +168,120 @@ export function parseKey(buf: Buffer): ParsedKey {
     const body = seq.slice(2);
 
     // Arrow keys
-    if (body === 'A') { key.name = 'up'; return key; }
-    if (body === 'B') { key.name = 'down'; return key; }
-    if (body === 'C') { key.name = 'right'; return key; }
-    if (body === 'D') { key.name = 'left'; return key; }
+    if (body === 'A') {
+      key.name = 'up';
+      return key;
+    }
+    if (body === 'B') {
+      key.name = 'down';
+      return key;
+    }
+    if (body === 'C') {
+      key.name = 'right';
+      return key;
+    }
+    if (body === 'D') {
+      key.name = 'left';
+      return key;
+    }
 
     // Home / End
-    if (body === 'H') { key.name = 'home'; return key; }
-    if (body === 'F') { key.name = 'end'; return key; }
-    if (body === '1~') { key.name = 'home'; return key; }
-    if (body === '4~') { key.name = 'end'; return key; }
+    if (body === 'H') {
+      key.name = 'home';
+      return key;
+    }
+    if (body === 'F') {
+      key.name = 'end';
+      return key;
+    }
+    if (body === '1~') {
+      key.name = 'home';
+      return key;
+    }
+    if (body === '4~') {
+      key.name = 'end';
+      return key;
+    }
 
     // Page Up / Down
-    if (body === '5~') { key.name = 'pageup'; return key; }
-    if (body === '6~') { key.name = 'pagedown'; return key; }
+    if (body === '5~') {
+      key.name = 'pageup';
+      return key;
+    }
+    if (body === '6~') {
+      key.name = 'pagedown';
+      return key;
+    }
 
     // Delete
-    if (body === '3~') { key.name = 'delete'; return key; }
+    if (body === '3~') {
+      key.name = 'delete';
+      return key;
+    }
 
     // Insert
-    if (body === '2~') { key.name = 'insert'; return key; }
+    if (body === '2~') {
+      key.name = 'insert';
+      return key;
+    }
 
     // Shift+Arrow
-    if (body === '1;2A') { key.name = 'up'; key.shift = true; return key; }
-    if (body === '1;2B') { key.name = 'down'; key.shift = true; return key; }
-    if (body === '1;2C') { key.name = 'right'; key.shift = true; return key; }
-    if (body === '1;2D') { key.name = 'left'; key.shift = true; return key; }
+    if (body === '1;2A') {
+      key.name = 'up';
+      key.shift = true;
+      return key;
+    }
+    if (body === '1;2B') {
+      key.name = 'down';
+      key.shift = true;
+      return key;
+    }
+    if (body === '1;2C') {
+      key.name = 'right';
+      key.shift = true;
+      return key;
+    }
+    if (body === '1;2D') {
+      key.name = 'left';
+      key.shift = true;
+      return key;
+    }
 
     // Ctrl+Arrow
-    if (body === '1;5A') { key.name = 'up'; key.ctrl = true; return key; }
-    if (body === '1;5B') { key.name = 'down'; key.ctrl = true; return key; }
-    if (body === '1;5C') { key.name = 'right'; key.ctrl = true; return key; }
-    if (body === '1;5D') { key.name = 'left'; key.ctrl = true; return key; }
+    if (body === '1;5A') {
+      key.name = 'up';
+      key.ctrl = true;
+      return key;
+    }
+    if (body === '1;5B') {
+      key.name = 'down';
+      key.ctrl = true;
+      return key;
+    }
+    if (body === '1;5C') {
+      key.name = 'right';
+      key.ctrl = true;
+      return key;
+    }
+    if (body === '1;5D') {
+      key.name = 'left';
+      key.ctrl = true;
+      return key;
+    }
 
     // Shift+Tab (backtab): ESC[Z
-    if (body === 'Z') { key.name = 'tab'; key.shift = true; return key; }
+    if (body === 'Z') {
+      key.name = 'tab';
+      key.shift = true;
+      return key;
+    }
 
     // Kitty keyboard protocol: Shift+Enter = ESC[13;2u
-    if (body === '13;2u') { key.name = 'return'; key.shift = true; return key; }
+    if (body === '13;2u') {
+      key.name = 'return';
+      key.shift = true;
+      return key;
+    }
 
     key.name = 'unknown';
     return key;
@@ -205,12 +290,30 @@ export function parseKey(buf: Buffer): ParsedKey {
   // SS3 sequences: ESC O ...  (some terminals use this for arrows)
   if (seq.startsWith('\x1bO')) {
     const ch = seq[2];
-    if (ch === 'A') { key.name = 'up'; return key; }
-    if (ch === 'B') { key.name = 'down'; return key; }
-    if (ch === 'C') { key.name = 'right'; return key; }
-    if (ch === 'D') { key.name = 'left'; return key; }
-    if (ch === 'H') { key.name = 'home'; return key; }
-    if (ch === 'F') { key.name = 'end'; return key; }
+    if (ch === 'A') {
+      key.name = 'up';
+      return key;
+    }
+    if (ch === 'B') {
+      key.name = 'down';
+      return key;
+    }
+    if (ch === 'C') {
+      key.name = 'right';
+      return key;
+    }
+    if (ch === 'D') {
+      key.name = 'left';
+      return key;
+    }
+    if (ch === 'H') {
+      key.name = 'home';
+      return key;
+    }
+    if (ch === 'F') {
+      key.name = 'end';
+      return key;
+    }
   }
 
   // Multi-byte UTF-8 character
@@ -257,35 +360,35 @@ export function createKeybindMap(): KeybindMap {
   }
 
   // Phase 1 default bindings
-  bind('return',       'send');
-  bind('S-return',     'newline');         // Shift+Enter (kitty protocol)
-  bind('M-return',     'newline');         // Alt+Enter (universal fallback)
-  bind('C-c',          'cancel_or_exit');
-  bind('C-t',          'toggle_tools');
-  bind('C-o',          'toggle_tool_json_payloads');
-  bind('C-g',          'toggle_reasoning');
-  bind('C-l',          'clear_viewport');
-  bind('C-r',          'reattach');
-  bind('C-y',          'approve');
-  bind('C-n',          'deny');
-  bind('C-p',          'provider_switcher');
-  bind('escape',       'close_modal');
+  bind('return', 'send');
+  bind('S-return', 'newline'); // Shift+Enter (kitty protocol)
+  bind('M-return', 'newline'); // Alt+Enter (universal fallback)
+  bind('C-c', 'cancel_or_exit');
+  bind('C-t', 'toggle_tools');
+  bind('C-o', 'toggle_tool_json_payloads');
+  bind('C-g', 'toggle_reasoning');
+  bind('C-l', 'clear_viewport');
+  bind('C-r', 'reattach');
+  bind('C-y', 'approve');
+  bind('C-n', 'deny');
+  bind('C-p', 'provider_switcher');
+  bind('escape', 'close_modal');
 
   // Composer editing (Emacs-style)
-  bind('C-a',          'line_start');
-  bind('C-e',          'line_end');
-  bind('C-u',          'kill_line_backward');
-  bind('C-k',          'kill_line_forward');
-  bind('C-w',          'kill_word_backward');
-  bind('C-d',          'delete_or_exit');
+  bind('C-a', 'line_start');
+  bind('C-e', 'line_end');
+  bind('C-u', 'kill_line_backward');
+  bind('C-k', 'kill_line_forward');
+  bind('C-w', 'kill_word_backward');
+  bind('C-d', 'delete_or_exit');
 
   // Word navigation
-  bind('C-left',       'word_left');
-  bind('C-right',      'word_right');
+  bind('C-left', 'word_left');
+  bind('C-right', 'word_right');
 
   // Scrollback
-  bind('pageup',       'scroll_up');
-  bind('pagedown',     'scroll_down');
+  bind('pageup', 'scroll_up');
+  bind('pagedown', 'scroll_down');
 
   return { bind, lookup, serializeKey };
 }
@@ -306,7 +409,7 @@ export interface InputHistory {
  */
 export function createInputHistory(maxSize: number = 100): InputHistory {
   const entries: string[] = [];
-  let index = -1;       // -1 = not navigating
+  let index = -1; // -1 = not navigating
   let stashedText = ''; // current text saved on first Up
 
   /** Add an entry (dedup consecutive, cap at maxSize). */

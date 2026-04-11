@@ -125,7 +125,7 @@ function summarizeToolResult(msg: Message): Message {
   const lines: string[] = toContentString(msg.content).split('\n');
 
   // Keep [TOOL_RESULT] header + first 2 non-empty content lines
-  const headerLine: string = lines.find(l => l.includes('[TOOL_RESULT]')) || lines[0] || '';
+  const headerLine: string = lines.find((l) => l.includes('[TOOL_RESULT]')) || lines[0] || '';
   const statLines: string[] = [];
   for (const line of lines.slice(1)) {
     if (statLines.length >= 2) break;
@@ -135,7 +135,9 @@ function summarizeToolResult(msg: Message): Message {
     }
   }
 
-  const summary: string = [headerLine, ...statLines, '[...summarized]', '[/TOOL_RESULT]'].join('\n');
+  const summary: string = [headerLine, ...statLines, '[...summarized]', '[/TOOL_RESULT]'].join(
+    '\n',
+  );
   return { ...msg, content: summary };
 }
 
@@ -143,8 +145,13 @@ function summarizeVerboseMessage(msg: Message): Message {
   const content: string = toContentString(msg.content);
   if (content.length < 800) return msg;
 
-  const lines: string[] = content.split('\n').map(l => l.trim()).filter(Boolean);
-  const preview: string[] = lines.slice(0, 2).map(l => (l.length > 180 ? l.slice(0, 180) + '...' : l));
+  const lines: string[] = content
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const preview: string[] = lines
+    .slice(0, 2)
+    .map((l) => (l.length > 180 ? l.slice(0, 180) + '...' : l));
   const summary: string = [...preview, '[...summarized]'].join('\n');
   return { ...msg, content: summary };
 }
@@ -161,7 +168,9 @@ function buildContextDigest(removed: Message[]): string {
 
     if (isToolResultMessage(msg)) {
       // Extract tool name from JSON payload if possible
-      const toolMatch: RegExpMatchArray | null = toContentString(msg.content).match(/"tool"\s*:\s*"([^"]+)"/);
+      const toolMatch: RegExpMatchArray | null = toContentString(msg.content).match(
+        /"tool"\s*:\s*"([^"]+)"/,
+      );
       const toolName: string = toolMatch ? toolMatch[1] : 'unknown';
       points.push(`- Tool result: ${toolName}`);
       continue;
@@ -172,7 +181,11 @@ function buildContextDigest(removed: Message[]): string {
       continue;
     }
 
-    const firstLine: string = toContentString(msg.content).split('\n').map(l => l.trim()).find(Boolean) || '';
+    const firstLine: string =
+      toContentString(msg.content)
+        .split('\n')
+        .map((l) => l.trim())
+        .find(Boolean) || '';
     if (!firstLine) continue;
     const snippet: string = firstLine.length > 200 ? firstLine.slice(0, 200) + '...' : firstLine;
     points.push(`- ${msg.role === 'user' ? 'User' : 'Assistant'}: ${snippet}`);
@@ -208,7 +221,10 @@ const HARD_FALLBACK_MIN_MESSAGES: number = 2;
 
 function applyHardFallback(messages: Message[], maxTokens: number): Message[] {
   const hardResult: Message[] = [...messages];
-  while (estimateContextTokens(hardResult) > maxTokens && hardResult.length > HARD_FALLBACK_MIN_MESSAGES) {
+  while (
+    estimateContextTokens(hardResult) > maxTokens &&
+    hardResult.length > HARD_FALLBACK_MIN_MESSAGES
+  ) {
     hardResult.splice(1, 1);
   }
   return hardResult;
@@ -228,7 +244,10 @@ function normalizeMessages(messages: Message[]): Message[] {
  *
  * Returns a CompactResult with messages, stats, and metadata.
  */
-export function compactContext(messages: Message[], options: { preserveTurns?: number } = {}): CompactResult {
+export function compactContext(
+  messages: Message[],
+  options: { preserveTurns?: number } = {},
+): CompactResult {
   if (!messages || messages.length === 0) {
     return {
       messages: [],
@@ -337,7 +356,10 @@ export function compactContext(messages: Message[], options: { preserveTurns?: n
  * Surgical contextual filtering for agent handoffs.
  * Preserves system prompt, first user message, latest working memory, and tail context.
  */
-export function distillContext(messages: Message[], options: { tailSize?: number } = {}): Message[] {
+export function distillContext(
+  messages: Message[],
+  options: { tailSize?: number } = {},
+): Message[] {
   if (!messages || messages.length === 0) return [];
 
   const tailSize: number = typeof options.tailSize === 'number' ? options.tailSize : 10;
@@ -398,7 +420,13 @@ export function trimContext(messages: Message[], providerId: string, model: stri
 
   // Under target — return a shallow copy, no trimming needed
   if (beforeTokens <= budget.targetTokens) {
-    return { messages: [...normalizedMessages], trimmed: false, beforeTokens, afterTokens: beforeTokens, removedCount: 0 };
+    return {
+      messages: [...normalizedMessages],
+      trimmed: false,
+      beforeTokens,
+      afterTokens: beforeTokens,
+      removedCount: 0,
+    };
   }
 
   // Find first real user message (not a tool result or parse error)
@@ -418,10 +446,12 @@ export function trimContext(messages: Message[], providerId: string, model: stri
 
     const msg: Message = result[i];
     const before: number = estimateMessageTokens(msg);
-    const summarized: Message = isToolResultMessage(msg) ? summarizeToolResult(msg) : summarizeVerboseMessage(msg);
+    const summarized: Message = isToolResultMessage(msg)
+      ? summarizeToolResult(msg)
+      : summarizeVerboseMessage(msg);
     const after: number = estimateMessageTokens(summarized);
     result[i] = summarized;
-    currentTokens -= (before - after);
+    currentTokens -= before - after;
   }
 
   if (currentTokens <= budget.targetTokens) {

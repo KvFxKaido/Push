@@ -82,10 +82,7 @@ function uniqueStrings(values: unknown[]): string[] {
   return result;
 }
 
-function arraysChanged(
-  current: string[] | undefined,
-  previous: string[] | undefined,
-): boolean {
+function arraysChanged(current: string[] | undefined, previous: string[] | undefined): boolean {
   if (!current?.length && !previous?.length) return false;
   if (current?.length !== previous?.length) return true;
   return current!.some((value, index) => value !== previous![index]);
@@ -105,9 +102,11 @@ export function applyWorkingMemoryUpdate(
   if (Array.isArray(update.openTasks)) mem.openTasks = uniqueStrings(update.openTasks);
   if (Array.isArray(update.filesTouched)) mem.filesTouched = uniqueStrings(update.filesTouched);
   if (Array.isArray(update.assumptions)) mem.assumptions = uniqueStrings(update.assumptions);
-  if (Array.isArray(update.errorsEncountered)) mem.errorsEncountered = uniqueStrings(update.errorsEncountered);
+  if (Array.isArray(update.errorsEncountered))
+    mem.errorsEncountered = uniqueStrings(update.errorsEncountered);
   if (typeof update.currentPhase === 'string') mem.currentPhase = update.currentPhase;
-  if (Array.isArray(update.completedPhases)) mem.completedPhases = uniqueStrings(update.completedPhases);
+  if (Array.isArray(update.completedPhases))
+    mem.completedPhases = uniqueStrings(update.completedPhases);
   if (update.observations) {
     mem.observations = applyObservationUpdates(mem.observations, update.observations, round);
   }
@@ -182,13 +181,18 @@ export function invalidateObservationDependencies(
   let changed = false;
   const next = observations.map((observation) => {
     if (!observation.dependsOn?.length) return observation;
-    const hit = observation.dependsOn.some(dep => normalizedPaths.has(normalizeObservationPath(dep)));
+    const hit = observation.dependsOn.some((dep) =>
+      normalizedPaths.has(normalizeObservationPath(dep)),
+    );
     if (!hit) return observation;
     if (observation.stale && observation.staleAtRound === round) return observation;
     changed = true;
-    const matchedPath = paths.find(p =>
-      observation.dependsOn!.some(dep => normalizeObservationPath(dep) === normalizeObservationPath(p)),
-    ) || paths[0];
+    const matchedPath =
+      paths.find((p) =>
+        observation.dependsOn!.some(
+          (dep) => normalizeObservationPath(dep) === normalizeObservationPath(p),
+        ),
+      ) || paths[0];
     return {
       ...observation,
       stale: true,
@@ -231,7 +235,9 @@ function observationsChanged(
 ): boolean {
   if (!current?.length && !previous?.length) return false;
   if (current?.length !== previous?.length) return true;
-  return current!.some((observation, index) => JSON.stringify(observation) !== JSON.stringify(previous![index]));
+  return current!.some(
+    (observation, index) => JSON.stringify(observation) !== JSON.stringify(previous![index]),
+  );
 }
 
 function collectCoderStateDeltaLines(
@@ -280,14 +286,14 @@ function collectCoderStateDeltaLines(
 /** Check whether working memory has any non-empty fields. */
 export function hasCoderState(mem: CoderWorkingMemory, currentRound: number): boolean {
   return Boolean(
-    mem.plan
-      || mem.openTasks?.length
-      || mem.filesTouched?.length
-      || mem.assumptions?.length
-      || mem.errorsEncountered?.length
-      || mem.currentPhase
-      || mem.completedPhases?.length
-      || getVisibleObservations(mem.observations, currentRound).length,
+    mem.plan ||
+      mem.openTasks?.length ||
+      mem.filesTouched?.length ||
+      mem.assumptions?.length ||
+      mem.errorsEncountered?.length ||
+      mem.currentPhase ||
+      mem.completedPhases?.length ||
+      getVisibleObservations(mem.observations, currentRound).length,
   );
 }
 
@@ -352,9 +358,8 @@ export function shouldInjectCoderStateOnToolResult(
   if (!previous) return true;
   if (collectCoderStateDeltaLines(current, previous, currentRound).length > 0) return true;
 
-  const pressurePct = maxContextChars > 0
-    ? Math.max(0, Math.round((contextChars / maxContextChars) * 100))
-    : 0;
+  const pressurePct =
+    maxContextChars > 0 ? Math.max(0, Math.round((contextChars / maxContextChars) * 100)) : 0;
   if (pressurePct >= pressurePctThreshold) return true;
   if (lastInjectionRound === null) return true;
 
@@ -376,12 +381,27 @@ export function detectUpdateStateCall(text: string): CoderWorkingMemoryUpdate | 
       const args = asRecord(obj.args) || obj;
       const state: CoderWorkingMemoryUpdate = {};
       if (typeof args.plan === 'string') state.plan = args.plan;
-      if (Array.isArray(args.openTasks)) state.openTasks = (args.openTasks as unknown[]).filter((v): v is string => typeof v === 'string');
-      if (Array.isArray(args.filesTouched)) state.filesTouched = (args.filesTouched as unknown[]).filter((v): v is string => typeof v === 'string');
-      if (Array.isArray(args.assumptions)) state.assumptions = (args.assumptions as unknown[]).filter((v): v is string => typeof v === 'string');
-      if (Array.isArray(args.errorsEncountered)) state.errorsEncountered = (args.errorsEncountered as unknown[]).filter((v): v is string => typeof v === 'string');
+      if (Array.isArray(args.openTasks))
+        state.openTasks = (args.openTasks as unknown[]).filter(
+          (v): v is string => typeof v === 'string',
+        );
+      if (Array.isArray(args.filesTouched))
+        state.filesTouched = (args.filesTouched as unknown[]).filter(
+          (v): v is string => typeof v === 'string',
+        );
+      if (Array.isArray(args.assumptions))
+        state.assumptions = (args.assumptions as unknown[]).filter(
+          (v): v is string => typeof v === 'string',
+        );
+      if (Array.isArray(args.errorsEncountered))
+        state.errorsEncountered = (args.errorsEncountered as unknown[]).filter(
+          (v): v is string => typeof v === 'string',
+        );
       if (typeof args.currentPhase === 'string') state.currentPhase = args.currentPhase;
-      if (Array.isArray(args.completedPhases)) state.completedPhases = (args.completedPhases as unknown[]).filter((v): v is string => typeof v === 'string');
+      if (Array.isArray(args.completedPhases))
+        state.completedPhases = (args.completedPhases as unknown[]).filter(
+          (v): v is string => typeof v === 'string',
+        );
       if (Array.isArray(args.observations)) {
         const observations: CoderObservationUpdate[] = [];
         for (const entry of args.observations as unknown[]) {
@@ -395,7 +415,9 @@ export function detectUpdateStateCall(text: string): CoderWorkingMemoryUpdate | 
           }
           if (typeof obs.text !== 'string') continue;
           const dependsOn = Array.isArray(obs.dependsOn)
-            ? (obs.dependsOn as unknown[]).filter((value): value is string => typeof value === 'string')
+            ? (obs.dependsOn as unknown[]).filter(
+                (value): value is string => typeof value === 'string',
+              )
             : undefined;
           observations.push({ id, text: obs.text, dependsOn });
         }

@@ -39,7 +39,7 @@ async function fetchWithRetry(url: string, options?: RequestInit): Promise<Respo
       if (!response.ok && isRetryableError(null, response.status)) {
         if (attempt < MAX_RETRIES) {
           const delay = getRetryDelay(response, attempt + 1);
-          await new Promise(resolve => setTimeout(resolve, delay));
+          await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }
       }
@@ -49,13 +49,15 @@ async function fetchWithRetry(url: string, options?: RequestInit): Promise<Respo
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
       const errorMsg = isTimeout
         ? `GitHub API timed out after ${GITHUB_TIMEOUT_MS / 1000}s`
-        : err instanceof Error ? err.message : String(err);
+        : err instanceof Error
+          ? err.message
+          : String(err);
 
       lastError = new Error(errorMsg);
 
       if (attempt < MAX_RETRIES && isRetryableError(err)) {
         const delay = BASE_DELAY_MS * Math.pow(2, attempt);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }
 

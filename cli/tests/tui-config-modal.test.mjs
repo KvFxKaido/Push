@@ -1,10 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  applySingleLineEditKey,
-  getListNavigationAction,
-} from '../tui-modal-input.ts';
+import { applySingleLineEditKey, getListNavigationAction } from '../tui-modal-input.ts';
 
 /**
  * Simulate the config modal state machine to verify edit mode works correctly.
@@ -75,12 +72,7 @@ function mockHandleConfigModalInput(ms, key, providers) {
 }
 
 describe('config modal state machine', () => {
-  const providers = [
-    { id: 'ollama' },
-    { id: 'openrouter' },
-    { id: 'zen' },
-    { id: 'nvidia' },
-  ];
+  const providers = [{ id: 'ollama' }, { id: 'openrouter' }, { id: 'zen' }, { id: 'nvidia' }];
 
   it('navigates to nvidia and enters edit mode', () => {
     const ms = createMockConfigModalState();
@@ -109,7 +101,11 @@ describe('config modal state machine', () => {
 
     // Type 'abc123'
     for (const ch of 'abc123') {
-      const result = mockHandleConfigModalInput(ms, { ch, name: ch, ctrl: false, meta: false }, providers);
+      const result = mockHandleConfigModalInput(
+        ms,
+        { ch, name: ch, ctrl: false, meta: false },
+        providers,
+      );
       assert.equal(result.handled, true, `Should handle '${ch}'`);
       assert.equal(result.changed, true, `Should change on '${ch}'`);
     }

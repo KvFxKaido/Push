@@ -5,8 +5,8 @@
 
 import process from 'node:process';
 
-const hasColor = !process.env.NO_COLOR &&
-  (!!process.env.FORCE_COLOR || (process.stdout?.isTTY ?? false));
+const hasColor =
+  !process.env.NO_COLOR && (!!process.env.FORCE_COLOR || (process.stdout?.isTTY ?? false));
 
 type StyleFn = (text: string) => string;
 
@@ -32,12 +32,12 @@ export function createFormatter(colorEnabled: boolean): Formatter {
       ? (text: string) => `\x1b[${open}m${text}\x1b[${close}m`
       : (text: string) => String(text);
 
-  const bold   = wrap('1', '22');
-  const dim    = wrap('2', '22');
-  const red    = wrap('31', '39');
-  const green  = wrap('32', '39');
+  const bold = wrap('1', '22');
+  const dim = wrap('2', '22');
+  const red = wrap('31', '39');
+  const green = wrap('32', '39');
   const yellow = wrap('33', '39');
-  const cyan   = wrap('36', '39');
+  const cyan = wrap('36', '39');
 
   return {
     bold,

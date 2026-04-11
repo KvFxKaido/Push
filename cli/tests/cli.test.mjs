@@ -251,7 +251,13 @@ describe('non-TTY stdin guard', () => {
 
 describe('--cwd validation', () => {
   it('rejects nonexistent path', async () => {
-    const { code, stderr } = await runCli(['--cwd', '/definitely/not/a/real/path', 'run', '--task', 'hi']);
+    const { code, stderr } = await runCli([
+      '--cwd',
+      '/definitely/not/a/real/path',
+      'run',
+      '--task',
+      'hi',
+    ]);
     assert.equal(code, 1);
     assert.ok(stderr.includes('does not exist'));
   });
@@ -303,20 +309,27 @@ describe('interactive REPL /compact', () => {
     }
 
     const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-cli-pty-'));
-    const configPath = path.join(os.tmpdir(), `push-test-cli-config-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
+    const configPath = path.join(
+      os.tmpdir(),
+      `push-test-cli-config-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
+    );
     const sessionId = 'sess_compact1_abcdef';
     const sessionDir = path.join(sessionRoot, sessionId);
     const statePath = path.join(sessionDir, 'state.json');
     const eventsPath = path.join(sessionDir, 'events.jsonl');
     const now = Date.now();
 
-    const toolPayload = JSON.stringify({
-      tool: 'read_file',
-      ok: true,
-      output: 'x'.repeat(400),
-      meta: null,
-      structuredError: null,
-    }, null, 2);
+    const toolPayload = JSON.stringify(
+      {
+        tool: 'read_file',
+        ok: true,
+        output: 'x'.repeat(400),
+        meta: null,
+        structuredError: null,
+      },
+      null,
+      2,
+    );
 
     const seededState = {
       sessionId,
@@ -372,13 +385,22 @@ describe('interactive REPL /compact', () => {
     const savedRaw = await fs.readFile(statePath, 'utf8');
     const saved = JSON.parse(savedRaw);
     const contents = saved.messages.map((m) => String(m.content));
-    assert.ok(contents.some((c) => c.includes('[CONTEXT DIGEST]')), 'should persist context digest');
-    assert.ok(contents.some((c) => c === 'Turn 3 user'), 'should preserve latest turn');
+    assert.ok(
+      contents.some((c) => c.includes('[CONTEXT DIGEST]')),
+      'should persist context digest',
+    );
+    assert.ok(
+      contents.some((c) => c === 'Turn 3 user'),
+      'should preserve latest turn',
+    );
     assert.ok(!contents.some((c) => c === 'Turn 2 user'), 'should compact older middle turn');
 
     const eventLines = (await fs.readFile(eventsPath, 'utf8')).trim().split('\n').filter(Boolean);
     const parsedEvents = eventLines.map((line) => JSON.parse(line));
-    assert.ok(parsedEvents.some((e) => e.type === 'context_compacted'), 'should append context_compacted event');
+    assert.ok(
+      parsedEvents.some((e) => e.type === 'context_compacted'),
+      'should append context_compacted event',
+    );
   });
 });
 
@@ -395,10 +417,7 @@ describe('deprecated provider migration', () => {
         stderr.includes(`provider "${deprecated}" has been removed`),
         `should warn about removed provider "${deprecated}": ${stderr}`,
       );
-      assert.ok(
-        stderr.includes('openrouter'),
-        `should mention openrouter as fallback: ${stderr}`,
-      );
+      assert.ok(stderr.includes('openrouter'), `should mention openrouter as fallback: ${stderr}`);
     });
   }
 

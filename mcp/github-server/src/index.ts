@@ -20,10 +20,7 @@ import {
   type GitHubCoreToolResult,
   type GitHubCoreRuntime,
 } from '../../../lib/github-tool-core.js';
-import {
-  asRecord,
-  parseGitHubCoreToolCall,
-} from '../../../lib/github-tool-parser.js';
+import { asRecord, parseGitHubCoreToolCall } from '../../../lib/github-tool-parser.js';
 
 const SERVER_NAME = 'push-github-mcp';
 const SERVER_VERSION = '0.1.0';
@@ -57,7 +54,9 @@ function getGitHubApiUrl(): string {
   return process.env.GITHUB_API_URL || DEFAULT_GITHUB_API_URL;
 }
 
-function buildGitHubHeaders(accept: string = 'application/vnd.github.v3+json'): Record<string, string> {
+function buildGitHubHeaders(
+  accept: string = 'application/vnd.github.v3+json',
+): Record<string, string> {
   const headers = buildHeaders(getGitHubToken());
   headers.Accept = accept;
   return headers;
@@ -172,7 +171,6 @@ async function getGitHubProbeText(): Promise<string> {
   );
 }
 
-
 const githubTools = [
   {
     name: TOOL_FETCH_PR,
@@ -190,8 +188,7 @@ const githubTools = [
   },
   {
     name: TOOL_LIST_PRS,
-    description:
-      'List recent pull requests for a repository, optionally filtered by state.',
+    description: 'List recent pull requests for a repository, optionally filtered by state.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -204,8 +201,7 @@ const githubTools = [
   },
   {
     name: TOOL_LIST_COMMITS,
-    description:
-      'List recent commits for a repository with commit authors and dates.',
+    description: 'List recent commits for a repository with commit authors and dates.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -235,8 +231,7 @@ const githubTools = [
   },
   {
     name: TOOL_GREP_FILE,
-    description:
-      'Search within a single repository file with line-numbered context.',
+    description: 'Search within a single repository file with line-numbered context.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -251,8 +246,7 @@ const githubTools = [
   },
   {
     name: TOOL_LIST_DIRECTORY,
-    description:
-      'List files and directories for a repository path with sensitive entries hidden.',
+    description: 'List files and directories for a repository path with sensitive entries hidden.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -266,8 +260,7 @@ const githubTools = [
   },
   {
     name: TOOL_LIST_BRANCHES,
-    description:
-      'List repository branches, marking the default branch and protected branches.',
+    description: 'List repository branches, marking the default branch and protected branches.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -310,8 +303,7 @@ const githubTools = [
   },
   {
     name: TOOL_LIST_COMMIT_FILES,
-    description:
-      'List the files changed by a commit, including per-file and total change counts.',
+    description: 'List the files changed by a commit, including per-file and total change counts.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -330,7 +322,10 @@ const githubTools = [
       type: 'object',
       properties: {
         repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
-        workflow: { type: 'string', description: 'Workflow filename, ID, or name accepted by GitHub.' },
+        workflow: {
+          type: 'string',
+          description: 'Workflow filename, ID, or name accepted by GitHub.',
+        },
         ref: { type: 'string', description: 'Optional branch or ref to dispatch on.' },
         inputs: { type: 'object', description: 'Optional workflow_dispatch input values.' },
       },
@@ -357,8 +352,7 @@ const githubTools = [
   },
   {
     name: TOOL_GET_WORKFLOW_LOGS,
-    description:
-      'Fetch workflow job and step status details for a specific workflow run.',
+    description: 'Fetch workflow job and step status details for a specific workflow run.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -371,8 +365,7 @@ const githubTools = [
   },
   {
     name: TOOL_CREATE_PR,
-    description:
-      'Create a pull request for a branch pair on the active repository.',
+    description: 'Create a pull request for a branch pair on the active repository.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -388,14 +381,16 @@ const githubTools = [
   },
   {
     name: TOOL_MERGE_PR,
-    description:
-      'Merge a pull request using GitHub merge, squash, or rebase methods.',
+    description: 'Merge a pull request using GitHub merge, squash, or rebase methods.',
     inputSchema: {
       type: 'object',
       properties: {
         repo: { type: 'string', description: 'GitHub repository in owner/repo form.' },
         pr_number: { type: 'number', description: 'Pull request number.' },
-        merge_method: { type: 'string', description: 'Optional merge method: merge, squash, or rebase.' },
+        merge_method: {
+          type: 'string',
+          description: 'Optional merge method: merge, squash, or rebase.',
+        },
       },
       required: ['repo', 'pr_number'],
       additionalProperties: false,
@@ -403,8 +398,7 @@ const githubTools = [
   },
   {
     name: TOOL_DELETE_BRANCH,
-    description:
-      'Delete a branch ref from the active repository.',
+    description: 'Delete a branch ref from the active repository.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -417,8 +411,7 @@ const githubTools = [
   },
   {
     name: TOOL_CHECK_PR_MERGEABLE,
-    description:
-      'Check whether a pull request is currently mergeable and summarize CI status.',
+    description: 'Check whether a pull request is currently mergeable and summarize CI status.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -431,8 +424,7 @@ const githubTools = [
   },
   {
     name: TOOL_FIND_EXISTING_PR,
-    description:
-      'Find an existing open pull request for a head branch and optional base branch.',
+    description: 'Find an existing open pull request for a head branch and optional base branch.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -449,7 +441,8 @@ const githubTools = [
 const githubToolRuntime: GitHubCoreRuntime = {
   githubFetch,
   buildHeaders: buildGitHubHeaders,
-  buildApiUrl: (path) => `${getGitHubApiUrl().replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`,
+  buildApiUrl: (path) =>
+    `${getGitHubApiUrl().replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`,
   decodeBase64: (content) => Buffer.from(content, 'base64').toString('utf8'),
   isSensitivePath,
   redactSensitiveText,
@@ -495,33 +488,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const githubToolCall = parseGitHubCoreToolCall(request.params.name, asRecord(request.params.arguments) ?? {});
+  const githubToolCall = parseGitHubCoreToolCall(
+    request.params.name,
+    asRecord(request.params.arguments) ?? {},
+  );
   if (githubToolCall) {
     const result = await executeGitHubCoreTool(githubToolRuntime, githubToolCall);
     return formatToolResult(result);
   }
 
   if (
-    request.params.name === TOOL_FETCH_PR
-    || request.params.name === TOOL_LIST_PRS
-    || request.params.name === TOOL_LIST_COMMITS
-    || request.params.name === TOOL_READ_FILE
-    || request.params.name === TOOL_GREP_FILE
-    || request.params.name === TOOL_LIST_DIRECTORY
-    || request.params.name === TOOL_LIST_BRANCHES
-    || request.params.name === TOOL_FETCH_CHECKS
-    || request.params.name === TOOL_SEARCH_FILES
-    || request.params.name === TOOL_LIST_COMMIT_FILES
-    || request.params.name === TOOL_TRIGGER_WORKFLOW
-    || request.params.name === TOOL_GET_WORKFLOW_RUNS
-    || request.params.name === TOOL_GET_WORKFLOW_LOGS
-    || request.params.name === TOOL_CREATE_PR
-    || request.params.name === TOOL_MERGE_PR
-    || request.params.name === TOOL_DELETE_BRANCH
-    || request.params.name === TOOL_CHECK_PR_MERGEABLE
-    || request.params.name === TOOL_FIND_EXISTING_PR
+    request.params.name === TOOL_FETCH_PR ||
+    request.params.name === TOOL_LIST_PRS ||
+    request.params.name === TOOL_LIST_COMMITS ||
+    request.params.name === TOOL_READ_FILE ||
+    request.params.name === TOOL_GREP_FILE ||
+    request.params.name === TOOL_LIST_DIRECTORY ||
+    request.params.name === TOOL_LIST_BRANCHES ||
+    request.params.name === TOOL_FETCH_CHECKS ||
+    request.params.name === TOOL_SEARCH_FILES ||
+    request.params.name === TOOL_LIST_COMMIT_FILES ||
+    request.params.name === TOOL_TRIGGER_WORKFLOW ||
+    request.params.name === TOOL_GET_WORKFLOW_RUNS ||
+    request.params.name === TOOL_GET_WORKFLOW_LOGS ||
+    request.params.name === TOOL_CREATE_PR ||
+    request.params.name === TOOL_MERGE_PR ||
+    request.params.name === TOOL_DELETE_BRANCH ||
+    request.params.name === TOOL_CHECK_PR_MERGEABLE ||
+    request.params.name === TOOL_FIND_EXISTING_PR
   ) {
-    throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for tool: ${request.params.name}`);
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Invalid arguments for tool: ${request.params.name}`,
+    );
   }
 
   switch (request.params.name) {

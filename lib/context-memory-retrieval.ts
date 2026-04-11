@@ -171,20 +171,20 @@ export function scoreRecord(
   }
 
   breakdown.total =
-    breakdown.branch
-    + breakdown.taskLineage
-    + breakdown.taskText
-    + breakdown.fileOverlap
-    + breakdown.symbolOverlap
-    + breakdown.roleFamily
-    + breakdown.recency
-    + breakdown.freshness;
+    breakdown.branch +
+    breakdown.taskLineage +
+    breakdown.taskText +
+    breakdown.fileOverlap +
+    breakdown.symbolOverlap +
+    breakdown.roleFamily +
+    breakdown.recency +
+    breakdown.freshness;
 
   const hasSpecificMatch =
-    breakdown.taskLineage > 0
-    || breakdown.taskText > 0
-    || breakdown.fileOverlap > 0
-    || breakdown.symbolOverlap > 0;
+    breakdown.taskLineage > 0 ||
+    breakdown.taskText > 0 ||
+    breakdown.fileOverlap > 0 ||
+    breakdown.symbolOverlap > 0;
   if (!hasSpecificMatch) return null;
 
   return { score: breakdown.total, breakdown };

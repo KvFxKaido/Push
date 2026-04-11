@@ -28,19 +28,19 @@ export const PROMPT_SECTION_IDS = [
 export type PromptSectionId = (typeof PROMPT_SECTION_IDS)[number];
 
 const SECTION_CONFIG: Record<PromptSectionId, { priority: number; volatile: boolean }> = {
-  identity:          { priority: 0,  volatile: false },
-  voice:             { priority: 10, volatile: false },
-  safety:            { priority: 15, volatile: false },
-  user_context:      { priority: 20, volatile: true },
-  capabilities:      { priority: 25, volatile: true },
-  environment:       { priority: 30, volatile: true },
+  identity: { priority: 0, volatile: false },
+  voice: { priority: 10, volatile: false },
+  safety: { priority: 15, volatile: false },
+  user_context: { priority: 20, volatile: true },
+  capabilities: { priority: 25, volatile: true },
+  environment: { priority: 30, volatile: true },
   tool_instructions: { priority: 40, volatile: false },
-  delegation:        { priority: 50, volatile: false },
-  guidelines:        { priority: 60, volatile: false },
-  project_context:   { priority: 70, volatile: true },
-  memory:            { priority: 75, volatile: true },
-  state:             { priority: 78, volatile: true },
-  custom:            { priority: 80, volatile: true },
+  delegation: { priority: 50, volatile: false },
+  guidelines: { priority: 60, volatile: false },
+  project_context: { priority: 70, volatile: true },
+  memory: { priority: 75, volatile: true },
+  state: { priority: 78, volatile: true },
+  custom: { priority: 80, volatile: true },
   last_instructions: { priority: 99, volatile: true },
 };
 
@@ -121,7 +121,9 @@ export class SystemPromptBuilder {
   }
 
   snapshot(): Partial<Record<PromptSectionId, { hash: number; size: number; volatile: boolean }>> {
-    const result: Partial<Record<PromptSectionId, { hash: number; size: number; volatile: boolean }>> = {};
+    const result: Partial<
+      Record<PromptSectionId, { hash: number; size: number; volatile: boolean }>
+    > = {};
     for (const [id, section] of this.sections) {
       result[id] = {
         hash: simpleHash(section.content),
@@ -155,12 +157,14 @@ export function diffSnapshots(prev: PromptSnapshot, next: PromptSnapshot): Snaps
   const unchanged: PromptSectionId[] = [];
 
   const allIdSet = new Set([
-    ...Object.keys(prev) as PromptSectionId[],
-    ...Object.keys(next) as PromptSectionId[],
+    ...(Object.keys(prev) as PromptSectionId[]),
+    ...(Object.keys(next) as PromptSectionId[]),
   ]);
   const sectionOrder = new Map(PROMPT_SECTION_IDS.map((id, index) => [id, index]));
-  const allIds = Array.from(allIdSet).sort((a, b) =>
-    (sectionOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (sectionOrder.get(b) ?? Number.MAX_SAFE_INTEGER),
+  const allIds = Array.from(allIdSet).sort(
+    (a, b) =>
+      (sectionOrder.get(a) ?? Number.MAX_SAFE_INTEGER) -
+      (sectionOrder.get(b) ?? Number.MAX_SAFE_INTEGER),
   );
 
   for (const id of allIds) {
@@ -168,7 +172,12 @@ export function diffSnapshots(prev: PromptSnapshot, next: PromptSnapshot): Snaps
     const current = next[id];
     if (!previous && current) added.push(id);
     else if (previous && !current) removed.push(id);
-    else if (previous && current && (previous.hash !== current.hash || previous.size !== current.size)) changed.push(id);
+    else if (
+      previous &&
+      current &&
+      (previous.hash !== current.hash || previous.size !== current.size)
+    )
+      changed.push(id);
     else unchanged.push(id);
   }
 

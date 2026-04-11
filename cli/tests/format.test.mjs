@@ -5,7 +5,7 @@ import { createFormatter, hasColor, Spinner } from '../format.ts';
 // ─── createFormatter ────────────────────────────────────────────
 
 describe('createFormatter', () => {
-  const on  = createFormatter(true);
+  const on = createFormatter(true);
   const off = createFormatter(false);
 
   it('bold wraps with ANSI when enabled', () => {

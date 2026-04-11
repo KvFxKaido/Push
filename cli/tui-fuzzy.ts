@@ -77,7 +77,7 @@ export function fuzzyMatch(query: string, target: string): FuzzyMatchResult | nu
         }
         // Penalty for gaps
         if (lastMatchEnd !== -1) {
-          gapPenalty += (matchStart - lastMatchEnd);
+          gapPenalty += matchStart - lastMatchEnd;
         }
       }
       qIdx++;
@@ -109,11 +109,15 @@ export function fuzzyMatch(query: string, target: string): FuzzyMatchResult | nu
  * Each item can be a string or an object with a `text` property.
  * Returns array of { item, score, matches } sorted by score descending.
  */
-export function fuzzyFilter<T>(items: T[], query: string, options: FuzzyFilterOptions = {}): FuzzyFilterResult<T>[] {
+export function fuzzyFilter<T>(
+  items: T[],
+  query: string,
+  options: FuzzyFilterOptions = {},
+): FuzzyFilterResult<T>[] {
   const { key = null, maxResults = Infinity } = options;
 
   if (!query || !query.trim()) {
-    return items.map(item => ({ item, score: 1, matches: [] }));
+    return items.map((item) => ({ item, score: 1, matches: [] }));
   }
 
   const results: FuzzyFilterResult<T>[] = [];
@@ -122,7 +126,9 @@ export function fuzzyFilter<T>(items: T[], query: string, options: FuzzyFilterOp
   for (const item of items) {
     const text = key
       ? (item as Record<string, unknown>)[key]
-      : (typeof item === 'string' ? item : (item as Record<string, unknown>).text || '');
+      : typeof item === 'string'
+        ? item
+        : (item as Record<string, unknown>).text || '';
     const result = fuzzyMatch(q, String(text));
     if (result) {
       results.push({ item, score: result.score, matches: result.matches });
@@ -171,7 +177,7 @@ export function highlightMatches(text: string, matches: MatchRange[], theme: The
  */
 export function filterSessions(sessions: Session[], query: string): FuzzyFilterResult<Session>[] {
   if (!query || !query.trim()) {
-    return sessions.map(s => ({ item: s, score: 1, matches: [] }));
+    return sessions.map((s) => ({ item: s, score: 1, matches: [] }));
   }
 
   const q = query.toLowerCase().trim();

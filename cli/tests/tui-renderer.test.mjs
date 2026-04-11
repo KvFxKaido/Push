@@ -1,9 +1,17 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  stripAnsi, visibleWidth, truncate, wordWrap, padTo,
-  drawBox, drawDivider, computeLayout,
-  createScreenBuffer, createRenderScheduler, charWidth,
+  stripAnsi,
+  visibleWidth,
+  truncate,
+  wordWrap,
+  padTo,
+  drawBox,
+  drawDivider,
+  computeLayout,
+  createScreenBuffer,
+  createRenderScheduler,
+  charWidth,
 } from '../tui-renderer.ts';
 import { createTheme, GLYPHS_UNICODE, GLYPHS_ASCII } from '../tui-theme.ts';
 
@@ -201,7 +209,7 @@ describe('computeLayout', () => {
     const layout = computeLayout(40, 100, { toolPaneOpen: true });
     assert.ok(layout.toolPane);
     const ratio = layout.toolPane.width / layout.innerWidth;
-    assert.ok(ratio >= 0.30 && ratio <= 0.42, `Tool pane ratio: ${ratio}`);
+    assert.ok(ratio >= 0.3 && ratio <= 0.42, `Tool pane ratio: ${ratio}`);
   });
 
   it('transcript width shrinks when tool pane opens', () => {
@@ -241,7 +249,9 @@ describe('createScreenBuffer', () => {
 describe('createRenderScheduler', () => {
   it('calls renderFn', (t, done) => {
     let called = false;
-    const scheduler = createRenderScheduler(() => { called = true; });
+    const scheduler = createRenderScheduler(() => {
+      called = true;
+    });
     scheduler.schedule();
     // Immediate call since first render has no recent render
     setTimeout(() => {
@@ -253,7 +263,9 @@ describe('createRenderScheduler', () => {
 
   it('flush calls renderFn immediately', () => {
     let called = false;
-    const scheduler = createRenderScheduler(() => { called = true; });
+    const scheduler = createRenderScheduler(() => {
+      called = true;
+    });
     scheduler.flush();
     assert.ok(called);
     scheduler.destroy();

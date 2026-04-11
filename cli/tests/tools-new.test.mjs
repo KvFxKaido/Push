@@ -3,12 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {
-  executeToolCall,
-  backupFile,
-  isReadOnlyToolCall,
-  TOOL_PROTOCOL,
-} from '../tools.ts';
+import { executeToolCall, backupFile, isReadOnlyToolCall, TOOL_PROTOCOL } from '../tools.ts';
 
 const PUSH_ROOT = path.resolve(import.meta.dirname, '..', '..');
 const originalFetch = globalThis.fetch;
@@ -58,7 +53,10 @@ describe('read_symbols', () => {
     );
 
     assert.equal(result.ok, true);
-    assert.ok(result.meta.symbolCount >= 4, `expected >= 4 symbols, got ${result.meta.symbolCount}`);
+    assert.ok(
+      result.meta.symbolCount >= 4,
+      `expected >= 4 symbols, got ${result.meta.symbolCount}`,
+    );
     assert.ok(result.text.includes('[function]'), 'should contain [function]');
     assert.ok(result.text.includes('[class]'), 'should contain [class]');
     assert.ok(result.text.includes('[interface]'), 'should contain [interface]');
@@ -66,7 +64,7 @@ describe('read_symbols', () => {
   });
 
   it('reports no symbols for an empty file', async () => {
-    tmpDir = tmpDir || await fs.mkdtemp(path.join(os.tmpdir(), 'push-symbols-'));
+    tmpDir = tmpDir || (await fs.mkdtemp(path.join(os.tmpdir(), 'push-symbols-')));
     await fs.writeFile(path.join(tmpDir, 'empty.txt'), '', 'utf8');
 
     const result = await executeToolCall(
@@ -88,10 +86,7 @@ describe('read_symbols', () => {
 
 describe('git_status', () => {
   it('returns structured output in a real git repo', async () => {
-    const result = await executeToolCall(
-      { tool: 'git_status', args: {} },
-      PUSH_ROOT,
-    );
+    const result = await executeToolCall({ tool: 'git_status', args: {} }, PUSH_ROOT);
 
     assert.equal(result.ok, true);
     assert.ok(result.meta.branch, 'should have a branch name');
@@ -111,10 +106,7 @@ describe('git_status', () => {
 
 describe('git_diff', () => {
   it('runs without error in a real git repo', async () => {
-    const result = await executeToolCall(
-      { tool: 'git_diff', args: {} },
-      PUSH_ROOT,
-    );
+    const result = await executeToolCall({ tool: 'git_diff', args: {} }, PUSH_ROOT);
 
     assert.equal(result.ok, true);
     assert.equal(typeof result.text, 'string');
@@ -127,10 +119,7 @@ describe('git_diff', () => {
   });
 
   it('accepts staged flag', async () => {
-    const result = await executeToolCall(
-      { tool: 'git_diff', args: { staged: true } },
-      PUSH_ROOT,
-    );
+    const result = await executeToolCall({ tool: 'git_diff', args: { staged: true } }, PUSH_ROOT);
 
     assert.equal(result.ok, true);
     assert.equal(result.meta.staged, true);
@@ -240,7 +229,11 @@ describe('web_search', () => {
       return new Response(
         JSON.stringify({
           results: [
-            { title: 'Ollama Result', url: 'https://example.com/ollama', content: 'native search context' },
+            {
+              title: 'Ollama Result',
+              url: 'https://example.com/ollama',
+              content: 'native search context',
+            },
           ],
         }),
         { status: 200 },
@@ -339,7 +332,8 @@ describe('web_search', () => {
   });
 
   it('returns no-results message when parser finds none', async () => {
-    globalThis.fetch = async () => new Response('<html><body>No hits</body></html>', { status: 200 });
+    globalThis.fetch = async () =>
+      new Response('<html><body>No hits</body></html>', { status: 200 });
 
     const result = await executeToolCall(
       { tool: 'web_search', args: { query: 'no results expected' } },
@@ -412,7 +406,10 @@ describe('backupFile', () => {
     const backupDir = path.join(tmpDir, '.push', 'backups');
     const entries = await fs.readdir(backupDir);
     assert.equal(entries.length, 1, 'should have exactly one backup');
-    assert.ok(entries[0].startsWith('target.txt.'), `backup name should start with target.txt., got ${entries[0]}`);
+    assert.ok(
+      entries[0].startsWith('target.txt.'),
+      `backup name should start with target.txt., got ${entries[0]}`,
+    );
     assert.ok(entries[0].endsWith('.bak'), `backup name should end with .bak, got ${entries[0]}`);
 
     const backupContent = await fs.readFile(path.join(backupDir, entries[0]), 'utf8');
@@ -420,7 +417,7 @@ describe('backupFile', () => {
   });
 
   it('does not fail when file does not exist', async () => {
-    tmpDir = tmpDir || await fs.mkdtemp(path.join(os.tmpdir(), 'push-backup-'));
+    tmpDir = tmpDir || (await fs.mkdtemp(path.join(os.tmpdir(), 'push-backup-')));
     const nonExistent = path.join(tmpDir, 'ghost.txt');
 
     // Should not throw
@@ -428,7 +425,7 @@ describe('backupFile', () => {
   });
 
   it('flattens nested paths with underscores', async () => {
-    tmpDir = tmpDir || await fs.mkdtemp(path.join(os.tmpdir(), 'push-backup-'));
+    tmpDir = tmpDir || (await fs.mkdtemp(path.join(os.tmpdir(), 'push-backup-')));
     const nested = path.join(tmpDir, 'src', 'lib');
     await fs.mkdir(nested, { recursive: true });
     const filePath = path.join(nested, 'index.ts');
@@ -438,7 +435,7 @@ describe('backupFile', () => {
 
     const backupDir = path.join(tmpDir, '.push', 'backups');
     const entries = await fs.readdir(backupDir);
-    const nestedBackup = entries.find(e => e.startsWith('src__lib__index.ts.'));
+    const nestedBackup = entries.find((e) => e.startsWith('src__lib__index.ts.'));
     assert.ok(nestedBackup, `expected flattened path in backup name, got ${entries.join(', ')}`);
   });
 });
@@ -459,10 +456,7 @@ describe('edit_file context preview', () => {
     await fs.writeFile(path.join(tmpDir, 'ctx.txt'), content, 'utf8');
 
     // First read to get anchors
-    const read = await executeToolCall(
-      { tool: 'read_file', args: { path: 'ctx.txt' } },
-      tmpDir,
-    );
+    const read = await executeToolCall({ tool: 'read_file', args: { path: 'ctx.txt' } }, tmpDir);
     assert.equal(read.ok, true);
 
     // Get hash for line 5
@@ -486,19 +480,22 @@ describe('edit_file context preview', () => {
     assert.ok(edit.text.includes('Context after edits:'), 'should contain context header');
     assert.ok(edit.text.includes('REPLACED'), 'should contain the replacement text');
     // Should show surrounding lines
-    assert.ok(edit.text.includes('line2') || edit.text.includes('line3'), 'should show lines before edit site');
-    assert.ok(edit.text.includes('line6') || edit.text.includes('line7'), 'should show lines after edit site');
+    assert.ok(
+      edit.text.includes('line2') || edit.text.includes('line3'),
+      'should show lines before edit site',
+    );
+    assert.ok(
+      edit.text.includes('line6') || edit.text.includes('line7'),
+      'should show lines after edit site',
+    );
   });
 
   it('edit_file creates a backup before editing', async () => {
-    tmpDir = tmpDir || await fs.mkdtemp(path.join(os.tmpdir(), 'push-editctx-'));
+    tmpDir = tmpDir || (await fs.mkdtemp(path.join(os.tmpdir(), 'push-editctx-')));
     const content = 'aaa\nbbb\nccc\n';
     await fs.writeFile(path.join(tmpDir, 'bak.txt'), content, 'utf8');
 
-    const read = await executeToolCall(
-      { tool: 'read_file', args: { path: 'bak.txt' } },
-      tmpDir,
-    );
+    const read = await executeToolCall({ tool: 'read_file', args: { path: 'bak.txt' } }, tmpDir);
     const anchorLine = read.text.split('\n')[0];
     const match = anchorLine.match(/^(\d+):([a-f0-9]{7})\t/i);
     const ref = `${match[1]}:${match[2]}`;
@@ -516,7 +513,7 @@ describe('edit_file context preview', () => {
 
     const backupDir = path.join(tmpDir, '.push', 'backups');
     const entries = await fs.readdir(backupDir);
-    const bakEntry = entries.find(e => e.startsWith('bak.txt.'));
+    const bakEntry = entries.find((e) => e.startsWith('bak.txt.'));
     assert.ok(bakEntry, 'should have created a backup for bak.txt');
 
     // Backup should contain original content
@@ -557,7 +554,10 @@ describe('TOOL_PROTOCOL', () => {
     assert.ok(TOOL_PROTOCOL.includes('exec_poll'), 'TOOL_PROTOCOL should mention exec_poll');
     assert.ok(TOOL_PROTOCOL.includes('exec_write'), 'TOOL_PROTOCOL should mention exec_write');
     assert.ok(TOOL_PROTOCOL.includes('exec_stop'), 'TOOL_PROTOCOL should mention exec_stop');
-    assert.ok(TOOL_PROTOCOL.includes('exec_list_sessions'), 'TOOL_PROTOCOL should mention exec_list_sessions');
+    assert.ok(
+      TOOL_PROTOCOL.includes('exec_list_sessions'),
+      'TOOL_PROTOCOL should mention exec_list_sessions',
+    );
   });
 });
 
@@ -611,14 +611,14 @@ describe('undo_edit', () => {
   });
 
   it('picks the most recent backup when multiple exist', async () => {
-    tmpDir = tmpDir || await fs.mkdtemp(path.join(os.tmpdir(), 'push-undo-'));
+    tmpDir = tmpDir || (await fs.mkdtemp(path.join(os.tmpdir(), 'push-undo-')));
     const filePath = path.join(tmpDir, 'multi.txt');
 
     // Create two backups with different content
     await fs.writeFile(filePath, 'v1', 'utf8');
     await backupFile(filePath, tmpDir);
     // Small delay to ensure different timestamps
-    await new Promise(r => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 10));
     await fs.writeFile(filePath, 'v2', 'utf8');
     await backupFile(filePath, tmpDir);
 
@@ -636,7 +636,7 @@ describe('undo_edit', () => {
   });
 
   it('returns error when no backups exist', async () => {
-    tmpDir = tmpDir || await fs.mkdtemp(path.join(os.tmpdir(), 'push-undo-'));
+    tmpDir = tmpDir || (await fs.mkdtemp(path.join(os.tmpdir(), 'push-undo-')));
     const result = await executeToolCall(
       { tool: 'undo_edit', args: { path: 'nonexistent.txt' } },
       tmpDir,

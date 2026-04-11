@@ -32,7 +32,10 @@ function extractCliProviderEntries(source) {
     const modelStrings = [...defaultModelLine[1].matchAll(/'([^']+)'/g)].map(([, value]) => value);
 
     assert.ok(urlStrings.length > 0, `Expected ${providerId} url line to include a default string`);
-    assert.ok(modelStrings.length > 0, `Expected ${providerId} defaultModel line to include a default string`);
+    assert.ok(
+      modelStrings.length > 0,
+      `Expected ${providerId} defaultModel line to include a default string`,
+    );
 
     entries.push({
       id: providerId,
@@ -54,14 +57,22 @@ function extractSetValues(source, setName) {
 function extractObjectEntries(source, constName) {
   const match = source.match(new RegExp(`const ${constName} = \\{([\\s\\S]*?)\\n\\};`));
   assert.ok(match, `Expected to find ${constName}`);
-  return [...match[1].matchAll(/^\s+([a-z]+):\s+'([^']+)',?$/gm)].map(([, key, value]) => ({ key, value }));
+  return [...match[1].matchAll(/^\s+([a-z]+):\s+'([^']+)',?$/gm)].map(([, key, value]) => ({
+    key,
+    value,
+  }));
 }
 
 function extractReadmeTableRows(source) {
   return source
     .split('\n')
     .filter((line) => /^\| `[^`]+` \|/.test(line))
-    .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()));
+    .map((line) =>
+      line
+        .split('|')
+        .slice(1, -1)
+        .map((cell) => cell.trim()),
+    );
 }
 
 function extractReadmeEnvVarRows(source) {
@@ -73,7 +84,17 @@ function extractReadmeEnvVarRows(source) {
 function extractReadmeProviderRows(source) {
   const rows = extractReadmeTableRows(source);
   return rows
-    .filter(([provider]) => ['`ollama`', '`openrouter`', '`zen`', '`nvidia`', '`kilocode`', '`blackbox`', '`openadapter`'].includes(provider))
+    .filter(([provider]) =>
+      [
+        '`ollama`',
+        '`openrouter`',
+        '`zen`',
+        '`nvidia`',
+        '`kilocode`',
+        '`blackbox`',
+        '`openadapter`',
+      ].includes(provider),
+    )
     .map(([provider, model, requiresKey]) => ({
       id: provider.slice(1, -1),
       defaultModel: model.slice(1, -1),
@@ -137,11 +158,16 @@ describe('README config parity', () => {
       `${providerEntries.map((provider) => provider.id).join(' | ')} (default: ollama)`,
     );
 
-    const deprecatedSentence = readmeSource.match(/Removed providers \(([^)]+)\) are gracefully redirected to `([^`]+)`/);
+    const deprecatedSentence = readmeSource.match(
+      /Removed providers \(([^)]+)\) are gracefully redirected to `([^`]+)`/,
+    );
     assert.ok(deprecatedSentence, 'Expected README deprecated provider note');
 
     const deprecatedIds = extractBacktickList(deprecatedSentence[1]);
-    assert.deepEqual(deprecatedIds, deprecatedProviders.map(({ key }) => key));
+    assert.deepEqual(
+      deprecatedIds,
+      deprecatedProviders.map(({ key }) => key),
+    );
     assert.ok(
       deprecatedProviders.every(({ value }) => value === deprecatedSentence[2]),
       'Expected all deprecated providers to redirect to the README replacement target',

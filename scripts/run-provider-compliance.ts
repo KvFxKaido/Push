@@ -113,7 +113,7 @@ async function streamCompletion(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({ model, messages, stream: true, temperature: 0.1 }),
       signal: controller.signal,
@@ -145,7 +145,9 @@ async function streamCompletion(
           const chunk = JSON.parse(data);
           const content = chunk.choices?.[0]?.delta?.content;
           if (typeof content === 'string') accumulated += content;
-        } catch { /* skip malformed SSE chunks */ }
+        } catch {
+          /* skip malformed SSE chunks */
+        }
       }
     }
 
@@ -168,7 +170,9 @@ function detectToolCall(text: string): ToolCall | null {
       if (parsed && typeof parsed.tool === 'string' && parsed.args !== undefined) {
         return parsed as ToolCall;
       }
-    } catch { /* not valid JSON */ }
+    } catch {
+      /* not valid JSON */
+    }
   }
   // Bare JSON fallback (no fences)
   const trimmed = text.trim();
@@ -176,7 +180,9 @@ function detectToolCall(text: string): ToolCall | null {
     try {
       const parsed = JSON.parse(trimmed);
       if (parsed && typeof parsed.tool === 'string') return parsed as ToolCall;
-    } catch { /* not valid JSON */ }
+    } catch {
+      /* not valid JSON */
+    }
   }
   return null;
 }
@@ -205,16 +211,24 @@ class ComplianceRunner {
     const start = Date.now();
     const name = 'streaming-integrity';
     try {
-      const response = await this.chat([
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: 'Write a 500-word essay about the history of version control systems. Do not use any tools.' },
-      ], 30_000);
+      const response = await this.chat(
+        [
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content:
+              'Write a 500-word essay about the history of version control systems. Do not use any tools.',
+          },
+        ],
+        30_000,
+      );
 
       const toolCall = detectToolCall(response);
       const words = wordCount(response);
       const endsAbruptly = response.trim().endsWith('...');
 
-      if (toolCall) return fail(name, start, `Tool call emitted despite instruction: ${toolCall.tool}`);
+      if (toolCall)
+        return fail(name, start, `Tool call emitted despite instruction: ${toolCall.tool}`);
       if (words < 400) return fail(name, start, `Response too short: ${words} words (need ≥ 400)`);
       if (endsAbruptly) return fail(name, start, 'Response appears truncated (ends with "...")');
 
@@ -231,19 +245,28 @@ class ComplianceRunner {
     try {
       const response = await this.chat([
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: 'Read the file /workspace/test.txt using the sandbox_read_file tool.' },
+        {
+          role: 'user',
+          content: 'Read the file /workspace/test.txt using the sandbox_read_file tool.',
+        },
       ]);
 
       const toolCall = detectToolCall(response);
       if (!toolCall) return fail(name, start, 'No tool call detected');
-      if (toolCall.tool !== 'sandbox_read_file') return fail(name, start, `Wrong tool: ${toolCall.tool}`);
-      if (typeof toolCall.args.path !== 'string') return fail(name, start, 'Missing required arg: path');
+      if (toolCall.tool !== 'sandbox_read_file')
+        return fail(name, start, `Wrong tool: ${toolCall.tool}`);
+      if (typeof toolCall.args.path !== 'string')
+        return fail(name, start, 'Missing required arg: path');
 
       // Penalise excessive preamble
       const fenceIdx = response.indexOf('```');
       const preamble = fenceIdx > 0 ? response.slice(0, fenceIdx).trim() : '';
       if (preamble.length > 50) {
-        return fail(name, start, `Excessive preamble (${preamble.length} chars): "${preamble.slice(0, 60)}..."`);
+        return fail(
+          name,
+          start,
+          `Excessive preamble (${preamble.length} chars): "${preamble.slice(0, 60)}..."`,
+        );
       }
 
       return pass(name, start, { tool: toolCall.tool, path: toolCall.args.path });
@@ -266,14 +289,17 @@ class ComplianceRunner {
         },
         {
           role: 'user',
-          content: '[TOOL_RESULT]\nYour tool call for "sandbox_read_file" was truncated (JSON cut off). Please retry with the complete JSON block.\n[/TOOL_RESULT]',
+          content:
+            '[TOOL_RESULT]\nYour tool call for "sandbox_read_file" was truncated (JSON cut off). Please retry with the complete JSON block.\n[/TOOL_RESULT]',
         },
       ]);
 
       const toolCall = detectToolCall(response);
       if (!toolCall) return fail(name, start, 'No corrected tool call in response');
-      if (toolCall.tool !== 'sandbox_read_file') return fail(name, start, `Wrong tool in correction: ${toolCall.tool}`);
-      if (typeof toolCall.args.path !== 'string') return fail(name, start, 'Corrected call missing required arg: path');
+      if (toolCall.tool !== 'sandbox_read_file')
+        return fail(name, start, `Wrong tool in correction: ${toolCall.tool}`);
+      if (typeof toolCall.args.path !== 'string')
+        return fail(name, start, 'Corrected call missing required arg: path');
 
       // Penalise excessive apology/explanation
       const fenceIdx = response.indexOf('```');
@@ -304,7 +330,8 @@ class ComplianceRunner {
       { role: 'system', content: SYSTEM_PROMPT },
       {
         role: 'user',
-        content: 'Read /workspace/numbers.txt, sum all the numbers, then write the result to /workspace/result.txt.',
+        content:
+          'Read /workspace/numbers.txt, sum all the numbers, then write the result to /workspace/result.txt.',
       },
     ];
 
@@ -417,7 +444,10 @@ class ComplianceRunner {
 
         if (toolCall.tool === 'sandbox_exec') {
           // Accept exec as an alternative (e.g. `echo '...' > hello.py`)
-          messages.push({ role: 'user', content: '[TOOL_RESULT]\nCommand executed.\n[/TOOL_RESULT]' });
+          messages.push({
+            role: 'user',
+            content: '[TOOL_RESULT]\nCommand executed.\n[/TOOL_RESULT]',
+          });
           continue;
         }
 
@@ -497,7 +527,9 @@ async function main() {
 
   const providerName = values.provider as string | undefined;
   if (!providerName) {
-    console.error('Usage: npx tsx scripts/run-provider-compliance.ts --provider <name> [--model <model>] [--json] [--test <name>]');
+    console.error(
+      'Usage: npx tsx scripts/run-provider-compliance.ts --provider <name> [--model <model>] [--json] [--test <name>]',
+    );
     console.error('Providers:', Object.keys(PROVIDER_CONFIGS).join(', '));
     process.exit(1);
   }
@@ -528,22 +560,20 @@ async function main() {
   const runner = new ComplianceRunner(config.url, apiKey, model);
 
   const ALL_TESTS = [
-    { name: 'streaming-integrity',  fn: () => runner.test1_streamingIntegrity() },
-    { name: 'tool-call-schema',     fn: () => runner.test2_toolCallSchema() },
-    { name: 'truncated-recovery',   fn: () => runner.test3_truncatedRecovery() },
-    { name: 'multi-round-coherence',fn: () => runner.test4_multiRoundCoherence() },
-    { name: 'delegation-signal',    fn: () => runner.test5a_delegationSignal() },
-    { name: 'sandbox-execution',    fn: () => runner.test5b_sandboxExecution() },
-    { name: 'event-stream-clean',   fn: () => runner.test6_eventStreamClean() },
+    { name: 'streaming-integrity', fn: () => runner.test1_streamingIntegrity() },
+    { name: 'tool-call-schema', fn: () => runner.test2_toolCallSchema() },
+    { name: 'truncated-recovery', fn: () => runner.test3_truncatedRecovery() },
+    { name: 'multi-round-coherence', fn: () => runner.test4_multiRoundCoherence() },
+    { name: 'delegation-signal', fn: () => runner.test5a_delegationSignal() },
+    { name: 'sandbox-execution', fn: () => runner.test5b_sandboxExecution() },
+    { name: 'event-stream-clean', fn: () => runner.test6_eventStreamClean() },
   ];
 
-  const toRun = singleTest
-    ? ALL_TESTS.filter(t => t.name === singleTest)
-    : ALL_TESTS;
+  const toRun = singleTest ? ALL_TESTS.filter((t) => t.name === singleTest) : ALL_TESTS;
 
   if (singleTest && toRun.length === 0) {
     console.error(`Unknown test: ${singleTest}`);
-    console.error('Available:', ALL_TESTS.map(t => t.name).join(', '));
+    console.error('Available:', ALL_TESTS.map((t) => t.name).join(', '));
     process.exit(1);
   }
 
@@ -563,8 +593,8 @@ async function main() {
     }
   }
 
-  const allPassed = results.every(r => r.passed);
-  const failures = results.filter(r => !r.passed);
+  const allPassed = results.every((r) => r.passed);
+  const failures = results.filter((r) => !r.passed);
 
   if (jsonMode) {
     const output = {
@@ -574,7 +604,7 @@ async function main() {
       spec_version: '1.0.0',
       eligible: allPassed,
       tests: results,
-      failures: failures.map(r => ({ name: r.name, error: r.error })),
+      failures: failures.map((r) => ({ name: r.name, error: r.error })),
     };
     console.log(JSON.stringify(output, null, 2));
   } else {
@@ -582,14 +612,16 @@ async function main() {
     if (allPassed) {
       console.log(`→ ELIGIBLE`);
     } else {
-      console.log(`→ NOT ELIGIBLE  (${failures.length} failure${failures.length !== 1 ? 's' : ''})`);
+      console.log(
+        `→ NOT ELIGIBLE  (${failures.length} failure${failures.length !== 1 ? 's' : ''})`,
+      );
     }
   }
 
   process.exit(allPassed ? 0 : 1);
 }
 
-main().catch(e => {
+main().catch((e) => {
   console.error(e);
   process.exit(1);
 });

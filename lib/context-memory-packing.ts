@@ -4,12 +4,7 @@
 
 import type { MemoryRecord, ScoredMemoryRecord } from './runtime-contract';
 
-export const MEMORY_PACK_SECTION_ORDER = [
-  'facts',
-  'taskMemory',
-  'verification',
-  'stale',
-] as const;
+export const MEMORY_PACK_SECTION_ORDER = ['facts', 'taskMemory', 'verification', 'stale'] as const;
 
 export type MemoryPackSectionKey = (typeof MEMORY_PACK_SECTION_ORDER)[number];
 
@@ -34,8 +29,9 @@ export const DEFAULT_MEMORY_PACK_SECTION_BUDGETS: MemoryPackSectionBudgets = {
   stale: 500,
 };
 
-export const DEFAULT_MEMORY_PACK_BUDGET_CHARS = Object.values(DEFAULT_MEMORY_PACK_SECTION_BUDGETS)
-  .reduce((sum, value) => sum + value, 0);
+export const DEFAULT_MEMORY_PACK_BUDGET_CHARS = Object.values(
+  DEFAULT_MEMORY_PACK_SECTION_BUDGETS,
+).reduce((sum, value) => sum + value, 0);
 
 const PER_RECORD_SUMMARY_CAP = 220;
 
@@ -92,8 +88,14 @@ function resolveSectionBudgets(
 ): MemoryPackSectionBudgets {
   return {
     facts: normalizeBudget(overrides?.facts, DEFAULT_MEMORY_PACK_SECTION_BUDGETS.facts),
-    taskMemory: normalizeBudget(overrides?.taskMemory, DEFAULT_MEMORY_PACK_SECTION_BUDGETS.taskMemory),
-    verification: normalizeBudget(overrides?.verification, DEFAULT_MEMORY_PACK_SECTION_BUDGETS.verification),
+    taskMemory: normalizeBudget(
+      overrides?.taskMemory,
+      DEFAULT_MEMORY_PACK_SECTION_BUDGETS.taskMemory,
+    ),
+    verification: normalizeBudget(
+      overrides?.verification,
+      DEFAULT_MEMORY_PACK_SECTION_BUDGETS.verification,
+    ),
     stale: normalizeBudget(overrides?.stale, DEFAULT_MEMORY_PACK_SECTION_BUDGETS.stale),
   };
 }
@@ -253,7 +255,10 @@ export function packRetrievedMemory(
   }
 
   const sections = Object.fromEntries(
-    MEMORY_PACK_SECTION_ORDER.map((key) => [key, createEmptySectionResult(key, sectionBudgets[key])]),
+    MEMORY_PACK_SECTION_ORDER.map((key) => [
+      key,
+      createEmptySectionResult(key, sectionBudgets[key]),
+    ]),
   ) as Record<MemoryPackSectionKey, MemoryPackSectionResult>;
 
   const blocks: string[] = [];

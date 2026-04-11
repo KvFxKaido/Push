@@ -3,13 +3,7 @@
   "$id": "https://push.sh/schemas/push-runtime-response-envelope.schema.json",
   "title": "Push Runtime Response Envelope",
   "type": "object",
-  "required": [
-    "v",
-    "kind",
-    "requestId",
-    "type",
-    "ok"
-  ],
+  "required": ["v", "kind", "requestId", "type", "ok"],
   "properties": {
     "v": {
       "$ref": "./push-runtime-defs.schema.json#/$defs/protocolVersion"
@@ -54,9 +48,7 @@
         }
       },
       "then": {
-        "required": [
-          "payload"
-        ]
+        "required": ["payload"]
       }
     },
     {
@@ -68,9 +60,7 @@
         }
       },
       "then": {
-        "required": [
-          "error"
-        ]
+        "required": ["error"]
       }
     },
 
@@ -138,17 +128,12 @@
             "const": true
           },
           "type": {
-            "enum": [
-              "attach_session",
-              "resume_session"
-            ]
+            "enum": ["attach_session", "resume_session"]
           }
         }
       },
       "then": {
-        "required": [
-          "sessionId"
-        ],
+        "required": ["sessionId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/attachSessionResponsePayload"
@@ -168,9 +153,7 @@
         }
       },
       "then": {
-        "required": [
-          "sessionId"
-        ],
+        "required": ["sessionId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/sendUserMessageResponsePayload"
@@ -190,9 +173,7 @@
         }
       },
       "then": {
-        "required": [
-          "sessionId"
-        ],
+        "required": ["sessionId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/submitApprovalResponsePayload"
@@ -212,9 +193,7 @@
         }
       },
       "then": {
-        "required": [
-          "sessionId"
-        ],
+        "required": ["sessionId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/cancelRunResponsePayload"

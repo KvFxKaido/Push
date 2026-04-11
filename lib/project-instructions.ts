@@ -13,8 +13,9 @@ export function sanitizeProjectInstructions(raw: string): string {
   let content = raw;
 
   if (content.length > MAX_PROJECT_INSTRUCTIONS_SIZE) {
-    content = content.slice(0, MAX_PROJECT_INSTRUCTIONS_SIZE)
-      + `\n\n[Project instructions truncated — ${raw.length - MAX_PROJECT_INSTRUCTIONS_SIZE} chars omitted]`;
+    content =
+      content.slice(0, MAX_PROJECT_INSTRUCTIONS_SIZE) +
+      `\n\n[Project instructions truncated — ${raw.length - MAX_PROJECT_INSTRUCTIONS_SIZE} chars omitted]`;
   }
 
   content = content

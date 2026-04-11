@@ -60,14 +60,20 @@ export function validateTaskGraph(nodes: TaskGraphNode[]): TaskGraphValidationEr
 
   for (const node of nodes) {
     if (node.agent !== 'explorer' && node.agent !== 'coder') {
-      errors.push({ type: 'invalid_agent', message: `Task "${node.id}" has invalid agent "${node.agent}". Must be "explorer" or "coder".` });
+      errors.push({
+        type: 'invalid_agent',
+        message: `Task "${node.id}" has invalid agent "${node.agent}". Must be "explorer" or "coder".`,
+      });
     }
   }
 
   for (const node of nodes) {
     for (const dep of node.dependsOn ?? []) {
       if (!ids.has(dep)) {
-        errors.push({ type: 'missing_dependency', message: `Task "${node.id}" depends on unknown task "${dep}".` });
+        errors.push({
+          type: 'missing_dependency',
+          message: `Task "${node.id}" depends on unknown task "${dep}".`,
+        });
       }
     }
   }
@@ -242,7 +248,9 @@ export function buildTaskGraphMemoryEntry(state: TaskGraphNodeState): TaskGraphM
 function formatMemoryEntry(entry: TaskGraphMemoryEntry): string {
   const lines = [`- [${entry.namespace} | ${entry.agent} | ${entry.status}] ${entry.summary}`];
   if (entry.checks && entry.checks.length > 0) {
-    lines.push(`  Checks: ${entry.checks.map((check) => `${check.passed ? 'PASS' : 'FAIL'} ${check.id}`).join(', ')}`);
+    lines.push(
+      `  Checks: ${entry.checks.map((check) => `${check.passed ? 'PASS' : 'FAIL'} ${check.id}`).join(', ')}`,
+    );
   }
   if (entry.evidenceLabels && entry.evidenceLabels.length > 0) {
     lines.push(`  Evidence: ${entry.evidenceLabels.join(', ')}`);
@@ -312,8 +320,8 @@ export interface TaskGraphExecutorOptions {
 
 function isAbortError(err: unknown): boolean {
   return (
-    (err instanceof DOMException && err.name === 'AbortError')
-    || (typeof err === 'object' && err !== null && 'name' in err && err.name === 'AbortError')
+    (err instanceof DOMException && err.name === 'AbortError') ||
+    (typeof err === 'object' && err !== null && 'name' in err && err.name === 'AbortError')
   );
 }
 
@@ -358,7 +366,12 @@ export async function executeTaskGraph(
         state.memoryEntry = buildTaskGraphMemoryEntry(state) ?? undefined;
         state.elapsedMs = Date.now() - taskStartMs;
         totalRounds += result.rounds;
-        onProgress?.({ type: 'task_completed', taskId: id, detail: result.summary, elapsedMs: state.elapsedMs });
+        onProgress?.({
+          type: 'task_completed',
+          taskId: id,
+          detail: result.summary,
+          elapsedMs: state.elapsedMs,
+        });
       } catch (err) {
         if (state.status === 'cancelled') {
           state.elapsedMs ??= Date.now() - taskStartMs;
@@ -369,17 +382,31 @@ export async function executeTaskGraph(
           state.status = 'cancelled';
           state.error = 'Cancelled by user.';
           state.elapsedMs = Date.now() - taskStartMs;
-          onProgress?.({ type: 'task_cancelled', taskId: id, detail: state.error, elapsedMs: state.elapsedMs });
+          onProgress?.({
+            type: 'task_cancelled',
+            taskId: id,
+            detail: state.error,
+            elapsedMs: state.elapsedMs,
+          });
           return id;
         }
         state.status = 'failed';
         state.error = err instanceof Error ? err.message : String(err);
         state.elapsedMs = Date.now() - taskStartMs;
-        onProgress?.({ type: 'task_failed', taskId: id, detail: state.error, elapsedMs: state.elapsedMs });
+        onProgress?.({
+          type: 'task_failed',
+          taskId: id,
+          detail: state.error,
+          elapsedMs: state.elapsedMs,
+        });
 
         const cancelled = cascadeFailure(id, states);
         for (const cancelledId of cancelled) {
-          onProgress?.({ type: 'task_cancelled', taskId: cancelledId, detail: `Dependency "${id}" failed.` });
+          onProgress?.({
+            type: 'task_cancelled',
+            taskId: cancelledId,
+            detail: `Dependency "${id}" failed.`,
+          });
         }
       }
       return id;
@@ -467,8 +494,9 @@ export async function executeTaskGraph(
     success: allSuccess,
     aborted,
     memoryEntries: new Map(
-      [...states.entries()]
-        .flatMap(([id, state]) => (state.memoryEntry ? [[id, state.memoryEntry] as const] : [])),
+      [...states.entries()].flatMap(([id, state]) =>
+        state.memoryEntry ? [[id, state.memoryEntry] as const] : [],
+      ),
     ),
     nodeStates: states,
     summary: summaryParts.join('\n'),
@@ -493,14 +521,15 @@ export function formatTaskGraphResult(result: TaskGraphResult): string {
 
   for (const [id, state] of result.nodeStates) {
     const elapsed = state.elapsedMs ? ` (${Math.round(state.elapsedMs / 1000)}s)` : '';
-    const icon = state.status === 'completed' ? 'OK' : state.status === 'failed' ? 'FAILED' : 'CANCELLED';
-    const detail = state.status === 'completed'
-      ? state.result ?? ''
-      : state.error ?? '';
+    const icon =
+      state.status === 'completed' ? 'OK' : state.status === 'failed' ? 'FAILED' : 'CANCELLED';
+    const detail = state.status === 'completed' ? (state.result ?? '') : (state.error ?? '');
     lines.push(`${id} [${state.node.agent}, ${icon}${elapsed}]: ${detail}`);
   }
 
   lines.push('');
-  lines.push(`Total: ${result.nodeStates.size} tasks, ${result.totalRounds} rounds, ${Math.round(result.wallTimeMs / 1000)}s wall time.`);
+  lines.push(
+    `Total: ${result.nodeStates.size} tasks, ${result.totalRounds} rounds, ${Math.round(result.wallTimeMs / 1000)}s wall time.`,
+  );
   return lines.join('\n');
 }

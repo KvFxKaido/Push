@@ -2,7 +2,10 @@
 // Separate file for testability — pure function with injected deps.
 
 import { RESERVED_COMMANDS } from './skill-loader.js';
-import { extractAtReferenceCompletionTarget, listReferencePathCompletionsSync } from './path-completion.js';
+import {
+  extractAtReferenceCompletionTarget,
+  listReferencePathCompletionsSync,
+} from './path-completion.js';
 
 export interface ProviderConfig {
   id: string;
@@ -30,14 +33,25 @@ export type CompleterFn = (line: string) => [string[], string];
 /**
  * Creates a readline-compatible completer function.
  */
-export function createCompleter({ ctx, skills, getCuratedModels, getProviderList, workspaceRoot, getPathCompletions }: CompleterDeps): CompleterFn {
-  const pathCompleter: (workspaceRoot: string, fragment: string) => string[] = getPathCompletions ?? listReferencePathCompletionsSync;
+export function createCompleter({
+  ctx,
+  skills,
+  getCuratedModels,
+  getProviderList,
+  workspaceRoot,
+  getPathCompletions,
+}: CompleterDeps): CompleterFn {
+  const pathCompleter: (workspaceRoot: string, fragment: string) => string[] =
+    getPathCompletions ?? listReferencePathCompletionsSync;
 
   return (line: string): [string[], string] => {
     if (workspaceRoot) {
-      const target: { fragment: string; token: string } | null = extractAtReferenceCompletionTarget(line);
+      const target: { fragment: string; token: string } | null =
+        extractAtReferenceCompletionTarget(line);
       if (target) {
-        const hits: string[] = pathCompleter(workspaceRoot, target.fragment).map((p: string) => `@${p}`);
+        const hits: string[] = pathCompleter(workspaceRoot, target.fragment).map(
+          (p: string) => `@${p}`,
+        );
         if (hits.length > 0) {
           return [hits, target.token];
         }

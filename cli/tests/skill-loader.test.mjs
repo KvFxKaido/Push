@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { loadSkills, interpolateSkill, RESERVED_COMMANDS, getSkillPromptTemplate } from '../skill-loader.ts';
+import {
+  loadSkills,
+  interpolateSkill,
+  RESERVED_COMMANDS,
+  getSkillPromptTemplate,
+} from '../skill-loader.ts';
 
 let tmpDir;
 
@@ -19,7 +24,15 @@ describe('loadSkills — built-in', () => {
   it('returns all built-in skills', async () => {
     const skills = await loadSkills(tmpDir);
     const names = [...skills.keys()].sort();
-    assert.deepEqual(names, ['commit', 'explain', 'fix', 'playwright', 'review', 'skill-creator', 'test']);
+    assert.deepEqual(names, [
+      'commit',
+      'explain',
+      'fix',
+      'playwright',
+      'review',
+      'skill-creator',
+      'test',
+    ]);
   });
 
   it('each built-in has name, description, promptTemplate, source=builtin', async () => {
@@ -53,7 +66,10 @@ describe('loadSkills — workspace override', () => {
   it('workspace skill overrides built-in of the same name', async () => {
     const skillDir = path.join(tmpDir, '.push', 'skills');
     await fs.mkdir(skillDir, { recursive: true });
-    await fs.writeFile(path.join(skillDir, 'commit.md'), '# Custom commit\n\nDo a custom commit.\n\n{{args}}\n');
+    await fs.writeFile(
+      path.join(skillDir, 'commit.md'),
+      '# Custom commit\n\nDo a custom commit.\n\n{{args}}\n',
+    );
 
     const skills = await loadSkills(tmpDir);
     const commit = skills.get('commit');
@@ -84,7 +100,10 @@ describe('loadSkills — Claude command auto-detect', () => {
   it('loads workspace Claude commands from .claude/commands', async () => {
     const cmdDir = path.join(tmpDir, '.claude', 'commands');
     await fs.mkdir(cmdDir, { recursive: true });
-    await fs.writeFile(path.join(cmdDir, 'ship.md'), '# Ship changes\n\nRun release checks and ship.\n\n{{args}}\n');
+    await fs.writeFile(
+      path.join(cmdDir, 'ship.md'),
+      '# Ship changes\n\nRun release checks and ship.\n\n{{args}}\n',
+    );
 
     const skills = await loadSkills(tmpDir);
     assert.ok(skills.has('ship'));
@@ -119,7 +138,10 @@ describe('loadSkills — Claude command auto-detect', () => {
   it('loads third-party prompt templates only when requested', async () => {
     const claudeDir = path.join(tmpDir, '.claude', 'commands');
     await fs.mkdir(claudeDir, { recursive: true });
-    await fs.writeFile(path.join(claudeDir, 'debug.md'), '# Debug\n\nInspect the issue.\n\n{{args}}\n');
+    await fs.writeFile(
+      path.join(claudeDir, 'debug.md'),
+      '# Debug\n\nInspect the issue.\n\n{{args}}\n',
+    );
 
     const skills = await loadSkills(tmpDir);
     const debugSkill = skills.get('debug');
@@ -195,7 +217,17 @@ describe('loadSkills — validation', () => {
 
 describe('RESERVED_COMMANDS', () => {
   it('contains expected commands', () => {
-    for (const cmd of ['help', 'exit', 'quit', 'new', 'session', 'model', 'provider', 'skills', 'compact']) {
+    for (const cmd of [
+      'help',
+      'exit',
+      'quit',
+      'new',
+      'session',
+      'model',
+      'provider',
+      'skills',
+      'compact',
+    ]) {
       assert.ok(RESERVED_COMMANDS.has(cmd), `Should contain "${cmd}"`);
     }
   });

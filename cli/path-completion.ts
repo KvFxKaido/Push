@@ -47,7 +47,9 @@ function toPosix(relPath: string): string {
  * - "foo@bar.com" -> null
  * - "@@" -> null
  */
-export function extractAtReferenceCompletionTarget(text: string | null | undefined): AtReferenceTarget | null {
+export function extractAtReferenceCompletionTarget(
+  text: string | null | undefined,
+): AtReferenceTarget | null {
   const source = String(text || '');
   if (!source) return null;
 

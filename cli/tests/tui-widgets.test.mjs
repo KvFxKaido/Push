@@ -33,4 +33,3 @@ describe('getWindowedListRange', () => {
     assert.deepEqual(getWindowedListRange(20, 19, 5), { start: 15, end: 20 });
   });
 });
-

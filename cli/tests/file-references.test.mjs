@@ -22,18 +22,26 @@ afterEach(async () => {
 
 describe('parseFileReferences', () => {
   it('parses file refs with optional line ranges', () => {
-    const { refs, skippedDueToLimit } = parseFileReferences('Check @src/a.ts and @src/b.ts:10 and @src/c.ts:20-30');
+    const { refs, skippedDueToLimit } = parseFileReferences(
+      'Check @src/a.ts and @src/b.ts:10 and @src/c.ts:20-30',
+    );
     assert.equal(skippedDueToLimit, 0);
-    assert.deepEqual(refs.map((r) => [r.path, r.startLine, r.endLine, r.invalidRange]), [
-      ['src/a.ts', null, null, false],
-      ['src/b.ts', 10, 10, false],
-      ['src/c.ts', 20, 30, false],
-    ]);
+    assert.deepEqual(
+      refs.map((r) => [r.path, r.startLine, r.endLine, r.invalidRange]),
+      [
+        ['src/a.ts', null, null, false],
+        ['src/b.ts', 10, 10, false],
+        ['src/c.ts', 20, 30, false],
+      ],
+    );
   });
 
   it('ignores emails and escaped @@ mentions', () => {
     const { refs } = parseFileReferences('email foo@bar.com @@README.md but keep @README.md');
-    assert.deepEqual(refs.map((r) => r.path), ['README.md']);
+    assert.deepEqual(
+      refs.map((r) => r.path),
+      ['README.md'],
+    );
   });
 
   it('dedupes refs and trims trailing punctuation', () => {
@@ -45,7 +53,9 @@ describe('parseFileReferences', () => {
   });
 
   it('caps number of refs', () => {
-    const text = Array.from({ length: MAX_FILE_REFERENCE_COUNT + 2 }, (_, i) => `@f${i}.txt`).join(' ');
+    const text = Array.from({ length: MAX_FILE_REFERENCE_COUNT + 2 }, (_, i) => `@f${i}.txt`).join(
+      ' ',
+    );
     const { refs, skippedDueToLimit } = parseFileReferences(text);
     assert.equal(refs.length, MAX_FILE_REFERENCE_COUNT);
     assert.equal(skippedDueToLimit, 2);
@@ -82,7 +92,10 @@ describe('buildFileReferenceContextMessage', () => {
   });
 
   it('reports missing files and invalid ranges', async () => {
-    const result = await buildFileReferenceContextMessage('use @missing.ts and @bad.ts:9-2', tmpDir);
+    const result = await buildFileReferenceContextMessage(
+      'use @missing.ts and @bad.ts:9-2',
+      tmpDir,
+    );
     assert.equal(result.resolvedCount, 0);
     assert.equal(result.errorCount, 2);
     assert.ok(result.message.includes('[FILE_REFERENCE_ERROR]'));
@@ -113,7 +126,9 @@ describe('appendUserMessageWithFileReferences', () => {
     const prompt = 'Expanded skill prompt with no file refs in body.';
     const rawArgs = 'Investigate @src/x.ts';
 
-    const info = await appendUserMessageWithFileReferences(state, prompt, tmpDir, { referenceSourceText: rawArgs });
+    const info = await appendUserMessageWithFileReferences(state, prompt, tmpDir, {
+      referenceSourceText: rawArgs,
+    });
 
     assert.equal(info.resolvedCount, 1);
     assert.equal(state.messages.length, 2);

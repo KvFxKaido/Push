@@ -6,8 +6,22 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 
-import { getSocketPath, getPidPath, validateAttachToken, getRestartPolicy, shouldRecover, DEFAULT_RESTART_POLICY } from '../pushd.ts';
-import { PROTOCOL_VERSION, writeRunMarker, clearRunMarker, readRunMarker, scanInterruptedSessions, makeSessionId } from '../session-store.ts';
+import {
+  getSocketPath,
+  getPidPath,
+  validateAttachToken,
+  getRestartPolicy,
+  shouldRecover,
+  DEFAULT_RESTART_POLICY,
+} from '../pushd.ts';
+import {
+  PROTOCOL_VERSION,
+  writeRunMarker,
+  clearRunMarker,
+  readRunMarker,
+  scanInterruptedSessions,
+  makeSessionId,
+} from '../session-store.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -300,7 +314,11 @@ describe('daemon-client module', () => {
       client.close();
     } finally {
       server.close();
-      try { await fs.unlink(sockPath); } catch { /* ignore */ }
+      try {
+        await fs.unlink(sockPath);
+      } catch {
+        /* ignore */
+      }
     }
   });
 
@@ -318,16 +336,32 @@ describe('daemon-client module', () => {
         for (const line of lines) {
           if (!line.trim()) continue;
           const req = JSON.parse(line);
-          socket.write(JSON.stringify({
-            v: PROTOCOL_VERSION, kind: 'response', requestId: req.requestId,
-            type: req.type, sessionId: null, ok: true, payload: {}, error: null,
-          }) + '\n');
+          socket.write(
+            JSON.stringify({
+              v: PROTOCOL_VERSION,
+              kind: 'response',
+              requestId: req.requestId,
+              type: req.type,
+              sessionId: null,
+              ok: true,
+              payload: {},
+              error: null,
+            }) + '\n',
+          );
           // Emit two events
           for (let i = 0; i < 2; i++) {
-            socket.write(JSON.stringify({
-              v: PROTOCOL_VERSION, kind: 'event', sessionId: 's', runId: 'r',
-              seq: i, ts: Date.now(), type: 'status', payload: { n: i },
-            }) + '\n');
+            socket.write(
+              JSON.stringify({
+                v: PROTOCOL_VERSION,
+                kind: 'event',
+                sessionId: 's',
+                runId: 'r',
+                seq: i,
+                ts: Date.now(),
+                type: 'status',
+                payload: { n: i },
+              }) + '\n',
+            );
           }
         }
       });
@@ -361,7 +395,11 @@ describe('daemon-client module', () => {
       client.close();
     } finally {
       server.close();
-      try { await fs.unlink(sockPath); } catch { /* ignore */ }
+      try {
+        await fs.unlink(sockPath);
+      } catch {
+        /* ignore */
+      }
     }
   });
 });
@@ -386,11 +424,15 @@ describe('protocol request format', () => {
   });
 
   it('submit_approval request format is correct', () => {
-    const req = makeRequest('submit_approval', {
-      sessionId: 'sess_1',
-      approvalId: 'appr_1',
-      decision: 'approve',
-    }, 'sess_1');
+    const req = makeRequest(
+      'submit_approval',
+      {
+        sessionId: 'sess_1',
+        approvalId: 'appr_1',
+        decision: 'approve',
+      },
+      'sess_1',
+    );
     assert.equal(req.type, 'submit_approval');
     assert.equal(req.payload.decision, 'approve');
   });
@@ -479,28 +521,28 @@ describe('multi-client fan-out', () => {
 
 describe('daemon version', () => {
   it('pushd version is 0.3.0 with crash recovery', async () => {
-    const content = await fs.readFile(
-      path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8'
-    );
+    const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
     assert.ok(content.includes("const VERSION = '0.3.0'"));
   });
 
   it('capabilities include multi_client, replay_attach, and crash_recovery', async () => {
-    const content = await fs.readFile(
-      path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8'
-    );
+    const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
     assert.ok(content.includes("'multi_client'"));
     assert.ok(content.includes("'replay_attach'"));
     assert.ok(content.includes("'crash_recovery'"));
   });
 
   it('all 8 handler types are registered', async () => {
-    const content = await fs.readFile(
-      path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8'
-    );
+    const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
     const handlers = [
-      'hello', 'ping', 'list_sessions', 'start_session',
-      'send_user_message', 'attach_session', 'submit_approval', 'cancel_run',
+      'hello',
+      'ping',
+      'list_sessions',
+      'start_session',
+      'send_user_message',
+      'attach_session',
+      'submit_approval',
+      'cancel_run',
     ];
     for (const h of handlers) {
       assert.ok(content.includes(`${h}: handle`), `Missing handler: ${h}`);

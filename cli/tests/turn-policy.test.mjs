@@ -1,10 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  isVerificationPhase,
-  createCoderPolicy,
-  TurnPolicyRegistry,
-} from '../turn-policy.ts';
+import { isVerificationPhase, createCoderPolicy, TurnPolicyRegistry } from '../turn-policy.ts';
 
 function makeCtx(round = 0, phase = undefined) {
   return { role: 'coder', round, maxRounds: 8, phase };
@@ -21,7 +17,15 @@ describe('isVerificationPhase', () => {
   });
 
   it('matches common verification phase names', () => {
-    for (const phase of ['verifying', 'verification', 'testing', 'running tests', 'validation', 'typecheck', 'linting']) {
+    for (const phase of [
+      'verifying',
+      'verification',
+      'testing',
+      'running tests',
+      'validation',
+      'typecheck',
+      'linting',
+    ]) {
       assert.equal(isVerificationPhase(phase), true, `expected "${phase}" to match`);
     }
   });
@@ -108,7 +112,8 @@ describe('Coder policy — drift detection', () => {
     const policy = createCoderPolicy();
     const driftHook = policy.afterModelCall[0];
 
-    const drifted = '\u592A\u5E73'.repeat(25) + '\n'.repeat(25) + 'Unrelated rambling about nothing.'.repeat(10);
+    const drifted =
+      '\u592A\u5E73'.repeat(25) + '\n'.repeat(25) + 'Unrelated rambling about nothing.'.repeat(10);
     const result = driftHook(drifted, makeCtx(5));
     assert.notEqual(result, null);
     assert.equal(result.action, 'inject');
@@ -118,7 +123,8 @@ describe('Coder policy — drift detection', () => {
     const policy = createCoderPolicy();
     const driftHook = policy.afterModelCall[0];
 
-    const drifted = '\u592A\u5E73'.repeat(25) + '\n'.repeat(25) + 'Unrelated rambling about nothing.'.repeat(10);
+    const drifted =
+      '\u592A\u5E73'.repeat(25) + '\n'.repeat(25) + 'Unrelated rambling about nothing.'.repeat(10);
 
     // First drift -> inject
     const r1 = driftHook(drifted, makeCtx(0));

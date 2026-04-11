@@ -2,9 +2,7 @@ import { buildDelegationBrief } from '../lib/delegation-brief.ts';
 import type { AcceptanceCriterion } from '../lib/runtime-contract.ts';
 
 function buildAcceptanceCriteria(checks: string[]): AcceptanceCriterion[] | undefined {
-  const normalized = checks
-    .map((check) => String(check || '').trim())
-    .filter(Boolean);
+  const normalized = checks.map((check) => String(check || '').trim()).filter(Boolean);
 
   if (normalized.length === 0) {
     return undefined;

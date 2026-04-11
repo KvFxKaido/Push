@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractAtReferenceCompletionTarget, listReferencePathCompletionsSync } from '../path-completion.ts';
+import {
+  extractAtReferenceCompletionTarget,
+  listReferencePathCompletionsSync,
+} from '../path-completion.ts';
 
 let tmpDir;
 
@@ -63,4 +66,3 @@ describe('listReferencePathCompletionsSync', () => {
     assert.deepEqual(hits, []);
   });
 });
-

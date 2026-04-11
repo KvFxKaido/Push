@@ -1,11 +1,31 @@
 import process from 'node:process';
-import { detectAllToolCalls, executeToolCall, isReadOnlyToolCall, truncateText, TOOL_PROTOCOL } from './tools.js';
+import {
+  detectAllToolCalls,
+  executeToolCall,
+  isReadOnlyToolCall,
+  truncateText,
+  TOOL_PROTOCOL,
+} from './tools.js';
 import { appendSessionEvent, saveSessionState, makeRunId } from './session-store.js';
 import { streamCompletion } from './provider.js';
-import { createFileLedger, getLedgerSummary, updateFileLedger, resetTurnBudget } from './file-ledger.js';
+import {
+  createFileLedger,
+  getLedgerSummary,
+  updateFileLedger,
+  resetTurnBudget,
+} from './file-ledger.js';
 import { recordMalformedToolCall } from './tool-call-metrics.js';
-import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from './workspace-context.js';
-import { trimContext, distillContext, estimateContextTokens, getContextBudget } from './context-manager.js';
+import {
+  buildWorkspaceSnapshot,
+  loadProjectInstructions,
+  loadMemory,
+} from './workspace-context.js';
+import {
+  trimContext,
+  distillContext,
+  estimateContextTokens,
+  getContextBudget,
+} from './context-manager.js';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { summarizeToolResultPreview } from '../lib/run-events.ts';
 import {
@@ -140,7 +160,6 @@ function cloneWorkingMemory(mem: WorkingMemory): WorkingMemory {
   return JSON.parse(JSON.stringify(mem)) as WorkingMemory;
 }
 
-
 // ─── System Prompt ───────────────────────────────────────────────
 
 function buildCliIdentity(workspaceRoot: string): string {
@@ -149,9 +168,10 @@ Workspace root: ${workspaceRoot}`;
 }
 
 function buildCliGuidelines(): string {
-  const explainBlock: string = process.env.PUSH_EXPLAIN_MODE === 'true'
-    ? `Explain mode is active. After each significant action, add a brief [explain] note (2–3 lines) describing the pattern or architectural convention at play — not what you just did, but why this approach fits the codebase. Focus on patterns the user can recognize next time (e.g. "this follows the hook factory pattern used across all provider configs" or "edit expressed as hashline ops to avoid line-number drift"). Keep it concise and skip it for trivial changes.`
-    : '';
+  const explainBlock: string =
+    process.env.PUSH_EXPLAIN_MODE === 'true'
+      ? `Explain mode is active. After each significant action, add a brief [explain] note (2–3 lines) describing the pattern or architectural convention at play — not what you just did, but why this approach fits the codebase. Focus on patterns the user can recognize next time (e.g. "this follows the hook factory pattern used across all provider configs" or "edit expressed as hashline ops to avoid line-number drift"). Keep it concise and skip it for trivial changes.`
+      : '';
 
   return [
     'You can read files, run commands, and write files using tools.',
@@ -161,7 +181,9 @@ function buildCliGuidelines(): string {
     'Use coder_update_state to keep a concise working plan; it is persisted and reinjected.',
     'Use save_memory to persist learnings across sessions (build commands, project patterns, conventions).',
     explainBlock,
-  ].filter(Boolean).join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function buildCliBaseBuilder(workspaceRoot: string): SystemPromptBuilder {
@@ -185,7 +207,10 @@ async function enrichCliBuilder(
     builder.set('environment', snapshot);
   }
   if (instructions) {
-    builder.set('project_context', `[PROJECT_INSTRUCTIONS source="${instructions.file}"]\n${instructions.content}\n[/PROJECT_INSTRUCTIONS]`);
+    builder.set(
+      'project_context',
+      `[PROJECT_INSTRUCTIONS source="${instructions.file}"]\n${instructions.content}\n[/PROJECT_INSTRUCTIONS]`,
+    );
   }
   if (memory) {
     builder.set('memory', `[MEMORY]\n${memory}\n[/MEMORY]`);
@@ -250,21 +275,31 @@ export async function buildSystemPrompt(workspaceRoot: string): Promise<string> 
 const _enrichmentMap: WeakMap<SessionState, Promise<void>> = new WeakMap();
 export function ensureSystemPromptReady(state: SessionState): Promise<void> {
   const sysMsg = (state.messages as Message[])[0];
-  if (!sysMsg || sysMsg.role !== 'system' || !(sysMsg.content as string).includes(NEEDS_ENRICHMENT)) {
+  if (
+    !sysMsg ||
+    sysMsg.role !== 'system' ||
+    !(sysMsg.content as string).includes(NEEDS_ENRICHMENT)
+  ) {
     return Promise.resolve();
   }
   if (_enrichmentMap.has(state)) return _enrichmentMap.get(state)!;
-  const promise: Promise<void> = buildEnrichedCliPrompt(state.cwd).then(({ prompt }: { prompt: string; snapshot: PromptSnapshot }): void => {
-    sysMsg.content = prompt;
-    _enrichmentMap.delete(state);
-  });
+  const promise: Promise<void> = buildEnrichedCliPrompt(state.cwd).then(
+    ({ prompt }: { prompt: string; snapshot: PromptSnapshot }): void => {
+      sysMsg.content = prompt;
+      _enrichmentMap.delete(state);
+    },
+  );
   _enrichmentMap.set(state, promise);
   return promise;
 }
 
 // ─── Tool Result Messages ────────────────────────────────────────
 
-export function buildToolResultMessage(call: ToolCall, result: ToolResult, metaEnvelope: MetaEnvelope | null = null): string {
+export function buildToolResultMessage(
+  call: ToolCall,
+  result: ToolResult,
+  metaEnvelope: MetaEnvelope | null = null,
+): string {
   const payload: Record<string, unknown> = {
     tool: call.tool,
     ok: result.ok,
@@ -278,11 +313,15 @@ export function buildToolResultMessage(call: ToolCall, result: ToolResult, metaE
 }
 
 function buildParseErrorMessage(malformed: { reason: string; sample: string }[]): string {
-  return `[TOOL_CALL_PARSE_ERROR]\n${JSON.stringify({
-    reason: 'malformed_tool_call',
-    malformed,
-    guidance: 'Emit strict JSON fenced blocks: {"tool":"name","args":{...}}',
-  }, null, 2)}\n[/TOOL_CALL_PARSE_ERROR]`;
+  return `[TOOL_CALL_PARSE_ERROR]\n${JSON.stringify(
+    {
+      reason: 'malformed_tool_call',
+      malformed,
+      guidance: 'Emit strict JSON fenced blocks: {"tool":"name","args":{...}}',
+    },
+    null,
+    2,
+  )}\n[/TOOL_CALL_PARSE_ERROR]`;
 }
 
 // ─── Main Loop ───────────────────────────────────────────────────
@@ -301,7 +340,16 @@ export async function runAssistantLoop(
   maxRounds: number,
   options: RunOptions = {},
 ): Promise<RunResult> {
-  const { approvalFn, askUserFn, signal, emit, runId: providedRunId, allowExec, safeExecPatterns, execMode } = options;
+  const {
+    approvalFn,
+    askUserFn,
+    signal,
+    emit,
+    runId: providedRunId,
+    allowExec,
+    safeExecPatterns,
+    execMode,
+  } = options;
   const runId: string = providedRunId || makeRunId();
   let finalAssistantText: string = '';
   const repeatedCalls: Map<string, number> = new Map();
@@ -315,15 +363,13 @@ export async function runAssistantLoop(
   // Surgical context distillation for long sessions: reduce history to essentials
   // if starting a new run with significant history.
   if ((state.messages as Message[]).length > 40) {
-      state.messages = distillContext(state.messages as Message[]) as any;
-      dispatchEvent('status', {
-        source: 'orchestrator',
-        phase: 'context_distillation',
-        detail: `History distilled to ${(state.messages as Message[]).length} essential messages.`,
-      });
+    state.messages = distillContext(state.messages as Message[]) as any;
+    dispatchEvent('status', {
+      source: 'orchestrator',
+      phase: 'context_distillation',
+      detail: `History distilled to ${(state.messages as Message[]).length} essential messages.`,
+    });
   }
-
-
 
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();
@@ -378,19 +424,28 @@ export async function runAssistantLoop(
     return current;
   }
 
-  async function executeOneToolCall(call: ToolCall, round: number, includeMemory: boolean = true): Promise<ToolResult> {
+  async function executeOneToolCall(
+    call: ToolCall,
+    round: number,
+    includeMemory: boolean = true,
+  ): Promise<ToolResult> {
     const toolStart: number = Date.now();
     const executionId = nextToolExecutionId(round);
     const toolSource = call.source || 'sandbox';
     const turnIndex = Math.max(0, round - 1);
 
-    await appendSessionEvent(state, 'tool.execution_start', {
-      round: turnIndex,
-      executionId,
-      toolName: call.tool,
-      toolSource,
-      args: call.args,
-    }, runId);
+    await appendSessionEvent(
+      state,
+      'tool.execution_start',
+      {
+        round: turnIndex,
+        executionId,
+        toolName: call.tool,
+        toolSource,
+        args: call.args,
+      },
+      runId,
+    );
 
     dispatchEvent('tool.execution_start', {
       round: turnIndex,
@@ -414,17 +469,22 @@ export async function runAssistantLoop(
     const durationMs: number = Date.now() - toolStart;
     const preview = summarizeToolResultPreview(result.text);
 
-    await appendSessionEvent(state, 'tool.execution_complete', {
-      round: turnIndex,
-      executionId,
-      toolName: call.tool,
-      toolSource,
-      durationMs,
-      isError: !result.ok,
-      preview,
-      text: result.text.slice(0, 500),
-      structuredError: result.structuredError || null,
-    }, runId);
+    await appendSessionEvent(
+      state,
+      'tool.execution_complete',
+      {
+        round: turnIndex,
+        executionId,
+        toolName: call.tool,
+        toolSource,
+        durationMs,
+        isError: !result.ok,
+        preview,
+        text: result.text.slice(0, 500),
+        structuredError: result.structuredError || null,
+      },
+      runId,
+    );
 
     updateFileLedger(fileLedger, call, result);
 
@@ -451,7 +511,10 @@ export async function runAssistantLoop(
       ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
     };
 
-    (state.messages as Message[]).push({ role: 'user', content: buildToolResultMessage(call, result, metaEnvelope) });
+    (state.messages as Message[]).push({
+      role: 'user',
+      content: buildToolResultMessage(call, result, metaEnvelope),
+    });
     toolsUsed.add(call.tool);
     return result;
   }
@@ -469,8 +532,18 @@ export async function runAssistantLoop(
     );
     if (signal?.aborted) {
       await saveSessionState(state);
-      await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'aborted' }, runId);
-      await appendSessionEvent(state, 'run_complete', { runId, outcome: 'aborted', summary: 'Aborted by user.' }, runId);
+      await appendSessionEvent(
+        state,
+        'assistant.turn_end',
+        { round: turnIndex, outcome: 'aborted' },
+        runId,
+      );
+      await appendSessionEvent(
+        state,
+        'run_complete',
+        { runId, outcome: 'aborted', summary: 'Aborted by user.' },
+        runId,
+      );
       dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'aborted' });
       dispatchEvent('run_complete', { outcome: 'aborted', summary: 'Aborted by user.' });
       return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: round - 1, runId };
@@ -480,7 +553,15 @@ export async function runAssistantLoop(
     dispatchEvent('assistant.turn_start', { round: turnIndex });
 
     // Trim context to fit provider budget (state.messages is never mutated)
-    if (shouldDistillMidSession(state.messages as Message[], state.workingMemory as WorkingMemory, round, providerConfig.id, state.model)) {
+    if (
+      shouldDistillMidSession(
+        state.messages as Message[],
+        state.workingMemory as WorkingMemory,
+        round,
+        providerConfig.id,
+        state.model,
+      )
+    ) {
       const beforeCount = (state.messages as Message[]).length;
       state.messages = distillContext(state.messages as Message[]) as any;
       if ((state.messages as Message[]).length < beforeCount) {
@@ -492,7 +573,11 @@ export async function runAssistantLoop(
       }
     }
 
-    const trimResult: TrimResult = trimContext(state.messages as Message[], providerConfig.id, state.model);
+    const trimResult: TrimResult = trimContext(
+      state.messages as Message[],
+      providerConfig.id,
+      state.model,
+    );
     lastTrimResult = trimResult;
     if (trimResult.trimmed) {
       dispatchEvent('status', {
@@ -502,16 +587,19 @@ export async function runAssistantLoop(
       });
     }
 
-    const streamOptions: { onThinkingToken?: (token: string | null) => void; sessionId?: string } = {
-      onThinkingToken: emit ? (token: string | null): void => {
-        if (token === null) {
-          dispatchEvent('assistant_thinking_done', {});
-          return;
-        }
-        dispatchEvent('assistant_thinking_token', { text: token });
-      } : undefined,
-      sessionId: state.sessionId,
-    };
+    const streamOptions: { onThinkingToken?: (token: string | null) => void; sessionId?: string } =
+      {
+        onThinkingToken: emit
+          ? (token: string | null): void => {
+              if (token === null) {
+                dispatchEvent('assistant_thinking_done', {});
+                return;
+              }
+              dispatchEvent('assistant_thinking_token', { text: token });
+            }
+          : undefined,
+        sessionId: state.sessionId,
+      };
 
     let assistantText: string;
     try {
@@ -528,30 +616,56 @@ export async function runAssistantLoop(
         streamOptions,
       );
     } catch (err: unknown) {
-      const isAbort: boolean = (err instanceof Error && err.name === 'AbortError') || (signal?.aborted ?? false);
+      const isAbort: boolean =
+        (err instanceof Error && err.name === 'AbortError') || (signal?.aborted ?? false);
       if (isAbort) {
         await saveSessionState(state);
-        await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'aborted' }, runId);
-        await appendSessionEvent(state, 'run_complete', { runId, outcome: 'aborted', summary: 'Aborted by user.' }, runId);
+        await appendSessionEvent(
+          state,
+          'assistant.turn_end',
+          { round: turnIndex, outcome: 'aborted' },
+          runId,
+        );
+        await appendSessionEvent(
+          state,
+          'run_complete',
+          { runId, outcome: 'aborted', summary: 'Aborted by user.' },
+          runId,
+        );
         dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'aborted' });
         dispatchEvent('run_complete', { outcome: 'aborted', summary: 'Aborted by user.' });
         return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: round - 1, runId };
       }
 
       const message: string = err instanceof Error ? err.message : String(err);
-      await appendSessionEvent(state, 'error', {
-        code: 'PROVIDER_ERROR',
-        message,
-        retryable: true,
-      }, runId);
+      await appendSessionEvent(
+        state,
+        'error',
+        {
+          code: 'PROVIDER_ERROR',
+          message,
+          retryable: true,
+        },
+        runId,
+      );
       dispatchEvent('error', { code: 'PROVIDER_ERROR', message });
 
-      await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'error' }, runId);
-      await appendSessionEvent(state, 'run_complete', {
+      await appendSessionEvent(
+        state,
+        'assistant.turn_end',
+        { round: turnIndex, outcome: 'error' },
         runId,
-        outcome: 'failed',
-        summary: message.slice(0, 500),
-      }, runId);
+      );
+      await appendSessionEvent(
+        state,
+        'run_complete',
+        {
+          runId,
+          outcome: 'failed',
+          summary: message.slice(0, 500),
+        },
+        runId,
+      );
       dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'error' });
       dispatchEvent('run_complete', { outcome: 'failed', summary: message.slice(0, 500) });
       return { outcome: 'error', finalAssistantText: message, rounds: round - 1, runId };
@@ -565,12 +679,22 @@ export async function runAssistantLoop(
     // --- Turn policy: afterModelCall evaluation ---
     const policyResult = policyRegistry.evaluateAfterModel(finalAssistantText, turnCtx);
     if (policyResult?.action === 'halt') {
-      await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'error' }, runId);
-      await appendSessionEvent(state, 'run_complete', {
+      await appendSessionEvent(
+        state,
+        'assistant.turn_end',
+        { round: turnIndex, outcome: 'error' },
         runId,
-        outcome: 'failed',
-        summary: policyResult.summary,
-      }, runId);
+      );
+      await appendSessionEvent(
+        state,
+        'run_complete',
+        {
+          runId,
+          outcome: 'failed',
+          summary: policyResult.summary,
+        },
+        runId,
+      );
       await saveSessionState(state);
       dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'error' });
       dispatchEvent('run_complete', { outcome: 'failed', summary: policyResult.summary });
@@ -578,15 +702,24 @@ export async function runAssistantLoop(
     }
     if (policyResult?.action === 'inject') {
       (state.messages as Message[]).push({ role: 'user', content: policyResult.message });
-      dispatchEvent('status', { source: 'policy', phase: 'correction', detail: policyResult.message.slice(0, 100) });
+      dispatchEvent('status', {
+        source: 'policy',
+        phase: 'correction',
+        detail: policyResult.message.slice(0, 100),
+      });
       await saveSessionState(state);
       continue;
     }
 
     const messageId: string = `asst_${Date.now().toString(36)}`;
-    await appendSessionEvent(state, 'assistant_done', {
-      messageId,
-    }, runId);
+    await appendSessionEvent(
+      state,
+      'assistant_done',
+      {
+        messageId,
+      },
+      runId,
+    );
     dispatchEvent('assistant_done', { messageId });
 
     const detected: DetectedToolCalls = detectAllToolCalls(assistantText);
@@ -594,40 +727,64 @@ export async function runAssistantLoop(
     if (detected.malformed.length > 0) {
       for (const malformed of detected.malformed) {
         recordMalformedToolCall(malformed.reason);
-        await appendSessionEvent(state, 'tool.call_malformed', {
-          round: turnIndex,
-          reason: malformed.reason,
-          preview: malformed.sample.slice(0, 500),
-        }, runId);
+        await appendSessionEvent(
+          state,
+          'tool.call_malformed',
+          {
+            round: turnIndex,
+            reason: malformed.reason,
+            preview: malformed.sample.slice(0, 500),
+          },
+          runId,
+        );
         dispatchEvent('tool.call_malformed', {
           round: turnIndex,
           reason: malformed.reason,
           preview: malformed.sample,
         });
       }
-      await appendSessionEvent(state, 'warning', {
-        code: 'MALFORMED_TOOL_CALL',
-        count: detected.malformed.length,
-        reasons: detected.malformed.map((m: { reason: string }) => m.reason),
-      }, runId);
+      await appendSessionEvent(
+        state,
+        'warning',
+        {
+          code: 'MALFORMED_TOOL_CALL',
+          count: detected.malformed.length,
+          reasons: detected.malformed.map((m: { reason: string }) => m.reason),
+        },
+        runId,
+      );
       dispatchEvent('warning', {
         code: 'MALFORMED_TOOL_CALL',
         message: 'Malformed tool calls detected',
         detail: detected.malformed.map((m: { reason: string }) => m.reason).join(', '),
       });
-      (state.messages as Message[]).push({ role: 'user', content: buildParseErrorMessage(detected.malformed) });
+      (state.messages as Message[]).push({
+        role: 'user',
+        content: buildParseErrorMessage(detected.malformed),
+      });
     }
 
-    const memoryCalls: ToolCall[] = detected.calls.filter((call: ToolCall) => call.tool === 'coder_update_state');
+    const memoryCalls: ToolCall[] = detected.calls.filter(
+      (call: ToolCall) => call.tool === 'coder_update_state',
+    );
     for (const call of memoryCalls) {
-      const updated: WorkingMemory = applyWorkingMemoryUpdateToState(state, (call.args || {}) as Partial<WorkingMemory>, round);
+      const updated: WorkingMemory = applyWorkingMemoryUpdateToState(
+        state,
+        (call.args || {}) as Partial<WorkingMemory>,
+        round,
+      );
       // Sync phase into turn context for policy gating
       if ('currentPhase' in (call.args || {})) {
         turnCtx.phase = updated.currentPhase || undefined;
       }
-      await appendSessionEvent(state, 'working_memory_updated', {
-        keys: Object.keys(updated),
-      }, runId);
+      await appendSessionEvent(
+        state,
+        'working_memory_updated',
+        {
+          keys: Object.keys(updated),
+        },
+        runId,
+      );
       const injectedWorkingMemory = takeWorkingMemoryForInjection(round);
       (state.messages as Message[]).push({
         role: 'user',
@@ -658,21 +815,38 @@ export async function runAssistantLoop(
       });
     }
 
-    const toolCalls: ToolCall[] = detected.calls.filter((call: ToolCall) => call.tool !== 'coder_update_state');
+    const toolCalls: ToolCall[] = detected.calls.filter(
+      (call: ToolCall) => call.tool !== 'coder_update_state',
+    );
 
     if (toolCalls.length === 0) {
       if (memoryCalls.length > 0 || detected.malformed.length > 0) {
-        await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'continued' }, runId);
+        await appendSessionEvent(
+          state,
+          'assistant.turn_end',
+          { round: turnIndex, outcome: 'continued' },
+          runId,
+        );
         dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'continued' });
         await saveSessionState(state);
         continue;
       }
-      await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'completed' }, runId);
-      await appendSessionEvent(state, 'run_complete', {
+      await appendSessionEvent(
+        state,
+        'assistant.turn_end',
+        { round: turnIndex, outcome: 'completed' },
         runId,
-        outcome: 'success',
-        summary: finalAssistantText.slice(0, 500),
-      }, runId);
+      );
+      await appendSessionEvent(
+        state,
+        'run_complete',
+        {
+          runId,
+          outcome: 'success',
+          summary: finalAssistantText.slice(0, 500),
+        },
+        runId,
+      );
       dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'completed' });
       dispatchEvent('run_complete', { outcome: 'success', summary: finalAssistantText });
       return { outcome: 'success', finalAssistantText, rounds: round, runId };
@@ -683,14 +857,27 @@ export async function runAssistantLoop(
     repeatedCalls.set(callKey, seen);
     if (seen >= 3) {
       const loopText: string = `Detected repeated tool call loop (${toolCalls.map((c: ToolCall) => c.tool).join(', ')}). Stopping run.`;
-      (state.messages as Message[]).push({ role: 'user', content: `[TOOL_RESULT]\n{"tool":"tool_loop","ok":false,"output":"${loopText}"}\n[/TOOL_RESULT]` });
-      await appendSessionEvent(state, 'error', {
-        code: 'TOOL_LOOP_DETECTED',
-        message: loopText,
-        retryable: false,
-      }, runId);
+      (state.messages as Message[]).push({
+        role: 'user',
+        content: `[TOOL_RESULT]\n{"tool":"tool_loop","ok":false,"output":"${loopText}"}\n[/TOOL_RESULT]`,
+      });
+      await appendSessionEvent(
+        state,
+        'error',
+        {
+          code: 'TOOL_LOOP_DETECTED',
+          message: loopText,
+          retryable: false,
+        },
+        runId,
+      );
       dispatchEvent('error', { code: 'TOOL_LOOP_DETECTED', message: loopText });
-      await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'error' }, runId);
+      await appendSessionEvent(
+        state,
+        'assistant.turn_end',
+        { round: turnIndex, outcome: 'error' },
+        runId,
+      );
       dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'error' });
       return { outcome: 'error', finalAssistantText: loopText, rounds: round, runId };
     }
@@ -699,9 +886,11 @@ export async function runAssistantLoop(
     const mutateCalls: ToolCall[] = toolCalls.filter((call: ToolCall) => !isReadOnlyToolCall(call));
 
     if (readCalls.length > 0) {
-      await Promise.all(readCalls.map((call: ToolCall, i: number) =>
-        executeOneToolCall(call, round, i === readCalls.length - 1 && mutateCalls.length === 0)
-      ));
+      await Promise.all(
+        readCalls.map((call: ToolCall, i: number) =>
+          executeOneToolCall(call, round, i === readCalls.length - 1 && mutateCalls.length === 0),
+        ),
+      );
     }
 
     if (mutateCalls.length > 0) {
@@ -728,13 +917,18 @@ export async function runAssistantLoop(
         const deniedSource = deniedCall.source || 'sandbox';
         const preview = summarizeToolResultPreview(deniedResult.text);
 
-        await appendSessionEvent(state, 'tool.execution_start', {
-          round: turnIndex,
-          executionId,
-          toolName: deniedCall.tool,
-          toolSource: deniedSource,
-          args: deniedCall.args,
-        }, runId);
+        await appendSessionEvent(
+          state,
+          'tool.execution_start',
+          {
+            round: turnIndex,
+            executionId,
+            toolName: deniedCall.tool,
+            toolSource: deniedSource,
+            args: deniedCall.args,
+          },
+          runId,
+        );
         dispatchEvent('tool.execution_start', {
           round: turnIndex,
           executionId,
@@ -743,34 +937,35 @@ export async function runAssistantLoop(
           args: deniedCall.args,
         });
 
-        await appendSessionEvent(state, 'tool.execution_complete', {
-          round: turnIndex,
-          executionId,
-          toolName: deniedCall.tool,
-          toolSource: deniedSource,
-          durationMs: 0,
-          isError: true,
-          preview,
-          text: deniedResult.text,
-          structuredError: deniedResult.structuredError,
-        }, runId);
+        await appendSessionEvent(
+          state,
+          'tool.execution_complete',
+          {
+            round: turnIndex,
+            executionId,
+            toolName: deniedCall.tool,
+            toolSource: deniedSource,
+            durationMs: 0,
+            isError: true,
+            preview,
+            text: deniedResult.text,
+            structuredError: deniedResult.structuredError,
+          },
+          runId,
+        );
 
         const injectedWorkingMemory = takeWorkingMemoryForInjection(round);
         (state.messages as Message[]).push({
           role: 'user',
-          content: buildToolResultMessage(
-            deniedCall,
-            deniedResult,
-            {
-              runId,
-              round,
-              contextChars,
-              trimmed: false,
-              estimatedTokens: 0,
-              ledger: getLedgerSummary(fileLedger),
-              ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
-            },
-          ),
+          content: buildToolResultMessage(deniedCall, deniedResult, {
+            runId,
+            round,
+            contextChars,
+            trimmed: false,
+            estimatedTokens: 0,
+            ledger: getLedgerSummary(fileLedger),
+            ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
+          }),
         });
         toolsUsed.add(deniedCall.tool);
         dispatchEvent('tool.execution_complete', {
@@ -784,7 +979,12 @@ export async function runAssistantLoop(
           text: deniedResult.text,
         });
         await saveSessionState(state);
-        await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'continued' }, runId);
+        await appendSessionEvent(
+          state,
+          'assistant.turn_end',
+          { round: turnIndex, outcome: 'continued' },
+          runId,
+        );
         dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'continued' });
         continue;
       }
@@ -807,13 +1007,18 @@ export async function runAssistantLoop(
         const skippedSource = call.source || 'sandbox';
         const preview = summarizeToolResultPreview(result.text);
 
-        await appendSessionEvent(state, 'tool.execution_start', {
-          round: turnIndex,
-          executionId,
-          toolName: call.tool,
-          toolSource: skippedSource,
-          args: call.args,
-        }, runId);
+        await appendSessionEvent(
+          state,
+          'tool.execution_start',
+          {
+            round: turnIndex,
+            executionId,
+            toolName: call.tool,
+            toolSource: skippedSource,
+            args: call.args,
+          },
+          runId,
+        );
         dispatchEvent('tool.execution_start', {
           round: turnIndex,
           executionId,
@@ -822,34 +1027,35 @@ export async function runAssistantLoop(
           args: call.args,
         });
 
-        await appendSessionEvent(state, 'tool.execution_complete', {
-          round: turnIndex,
-          executionId,
-          toolName: call.tool,
-          toolSource: skippedSource,
-          durationMs: 0,
-          isError: true,
-          preview,
-          text: result.text,
-          structuredError: result.structuredError,
-        }, runId);
+        await appendSessionEvent(
+          state,
+          'tool.execution_complete',
+          {
+            round: turnIndex,
+            executionId,
+            toolName: call.tool,
+            toolSource: skippedSource,
+            durationMs: 0,
+            isError: true,
+            preview,
+            text: result.text,
+            structuredError: result.structuredError,
+          },
+          runId,
+        );
 
         const injectedWorkingMemory = takeWorkingMemoryForInjection(round);
         (state.messages as Message[]).push({
           role: 'user',
-          content: buildToolResultMessage(
-            call,
-            result,
-            {
-              runId,
-              round,
-              contextChars,
-              trimmed: false,
-              estimatedTokens: 0,
-              ledger: getLedgerSummary(fileLedger),
-              ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
-            },
-          ),
+          content: buildToolResultMessage(call, result, {
+            runId,
+            round,
+            contextChars,
+            trimmed: false,
+            estimatedTokens: 0,
+            ledger: getLedgerSummary(fileLedger),
+            ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
+          }),
         });
         toolsUsed.add(call.tool);
         dispatchEvent('tool.execution_complete', {
@@ -865,17 +1071,27 @@ export async function runAssistantLoop(
       }
     }
 
-    await appendSessionEvent(state, 'assistant.turn_end', { round: turnIndex, outcome: 'continued' }, runId);
+    await appendSessionEvent(
+      state,
+      'assistant.turn_end',
+      { round: turnIndex, outcome: 'continued' },
+      runId,
+    );
     dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'continued' });
     await saveSessionState(state);
   }
 
   const warning: string = `Reached max rounds (${maxRounds}). Tools used: ${[...toolsUsed].join(', ') || 'none'}. Increase --max-rounds or break the task into smaller steps.`;
-  await appendSessionEvent(state, 'run_complete', {
+  await appendSessionEvent(
+    state,
+    'run_complete',
+    {
+      runId,
+      outcome: 'failed',
+      summary: warning,
+    },
     runId,
-    outcome: 'failed',
-    summary: warning,
-  }, runId);
+  );
   dispatchEvent('run_complete', { outcome: 'failed', summary: warning });
   return { outcome: 'max_rounds', finalAssistantText: warning, rounds: maxRounds, runId };
 }

@@ -14,7 +14,11 @@ import type {
 } from './runtime-contract';
 import { getDefaultMemoryStore, type ContextMemoryStore } from './context-memory-store';
 import { retrieveRecords } from './context-memory-retrieval';
-import { packRetrievedMemory, type MemoryPackOptions, type MemoryPackResult } from './context-memory-packing';
+import {
+  packRetrievedMemory,
+  type MemoryPackOptions,
+  type MemoryPackResult,
+} from './context-memory-packing';
 import { supersedeVerificationMemory } from './context-memory-invalidation';
 
 const MAX_SUMMARY_CHARS = 400;
@@ -63,8 +67,10 @@ export function createMemoryRecord(input: CreateMemoryRecordInput): MemoryRecord
       label: input.source.label,
       createdAt: input.source.createdAt ?? Date.now(),
     },
-    relatedFiles: input.relatedFiles && input.relatedFiles.length > 0 ? input.relatedFiles : undefined,
-    relatedSymbols: input.relatedSymbols && input.relatedSymbols.length > 0 ? input.relatedSymbols : undefined,
+    relatedFiles:
+      input.relatedFiles && input.relatedFiles.length > 0 ? input.relatedFiles : undefined,
+    relatedSymbols:
+      input.relatedSymbols && input.relatedSymbols.length > 0 ? input.relatedSymbols : undefined,
     tags: input.tags && input.tags.length > 0 ? input.tags : undefined,
     freshness: input.freshness ?? 'fresh',
     derivedFrom: input.derivedFrom,
@@ -103,7 +109,9 @@ export interface WriteExplorerMemoryInput {
   store?: ContextMemoryStore;
 }
 
-export async function writeExplorerMemory(input: WriteExplorerMemoryInput): Promise<MemoryRecord | null> {
+export async function writeExplorerMemory(
+  input: WriteExplorerMemoryInput,
+): Promise<MemoryRecord | null> {
   if (!input.summary?.trim()) return null;
   const store = input.store ?? getDefaultMemoryStore();
   const record = createMemoryRecord({
@@ -139,9 +147,7 @@ export async function writeCoderMemory(input: WriteCoderMemoryInput): Promise<Me
   const outcomeRecord = createMemoryRecord({
     kind: 'task_outcome',
     summary: outcome.summary || `Coder run: ${outcome.status}`,
-    detail: outcome.nextRequiredAction
-      ? `Next required: ${outcome.nextRequiredAction}`
-      : undefined,
+    detail: outcome.nextRequiredAction ? `Next required: ${outcome.nextRequiredAction}` : undefined,
     scope: coderScope,
     source: {
       kind: 'coder',
@@ -217,8 +223,7 @@ export async function writeTaskGraphNodeMemory(
 
   const store = input.store ?? getDefaultMemoryStore();
   const evidenceLabels = nodeState.delegationOutcome?.evidence?.map((evidence) => evidence.label);
-  const kind: MemoryRecordKind =
-    nodeState.node.agent === 'coder' ? 'task_outcome' : 'finding';
+  const kind: MemoryRecordKind = nodeState.node.agent === 'coder' ? 'task_outcome' : 'finding';
 
   const record = createMemoryRecord({
     kind,
@@ -271,7 +276,11 @@ export async function buildRetrievedMemoryKnownContext(
   };
 }
 
-export { getDefaultMemoryStore, setDefaultMemoryStore, createInMemoryStore } from './context-memory-store';
+export {
+  getDefaultMemoryStore,
+  setDefaultMemoryStore,
+  createInMemoryStore,
+} from './context-memory-store';
 export { scoreRecord, retrieveRecords } from './context-memory-retrieval';
 export {
   packRetrievedMemory,
@@ -280,6 +289,10 @@ export {
   classifyRetrievedMemorySection,
   MEMORY_PACK_SECTION_ORDER,
 } from './context-memory-packing';
-export { expireBranchScopedMemory, invalidateMemoryForChangedFiles, supersedeVerificationMemory } from './context-memory-invalidation';
+export {
+  expireBranchScopedMemory,
+  invalidateMemoryForChangedFiles,
+  supersedeVerificationMemory,
+} from './context-memory-invalidation';
 export type { ContextMemoryStore } from './context-memory-store';
 export type { MemoryPackOptions, MemoryPackResult } from './context-memory-packing';

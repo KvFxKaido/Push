@@ -97,7 +97,7 @@ export async function fetchModels(
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    const headers: Record<string, string> = { Accept: 'application/json' };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     if (providerId === 'openrouter') {
       headers['HTTP-Referer'] = process.env.PUSH_OPENROUTER_REFERER || 'https://push.local';
@@ -113,13 +113,9 @@ export async function fetchModels(
     // Ollama native: { models: [{ name: "model-name" }, ...] }
     let ids: string[] = [];
     if (Array.isArray(payload.data)) {
-      ids = payload.data
-        .map((m: ModelEntry) => m.id || m.name || '')
-        .filter(Boolean);
+      ids = payload.data.map((m: ModelEntry) => m.id || m.name || '').filter(Boolean);
     } else if (Array.isArray(payload.models)) {
-      ids = payload.models
-        .map((m: ModelEntry) => m.name || m.id || m.model || '')
-        .filter(Boolean);
+      ids = payload.models.map((m: ModelEntry) => m.name || m.id || m.model || '').filter(Boolean);
     }
 
     if (ids.length === 0) {
@@ -134,7 +130,10 @@ export async function fetchModels(
     const extra = ids.filter((id: string) => !curatedSet.has(id)).sort();
     // Keep curated order for known models, append discovered ones
     const orderedCurated = curated.filter((id: string) => ids.includes(id));
-    const merged = [...orderedCurated, ...extra.filter((id: string) => !orderedCurated.includes(id))];
+    const merged = [
+      ...orderedCurated,
+      ...extra.filter((id: string) => !orderedCurated.includes(id)),
+    ];
 
     return { models: merged, source: 'live' };
   } catch (err: unknown) {

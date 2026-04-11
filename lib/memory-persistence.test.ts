@@ -30,18 +30,18 @@ describe('PolicyEnforcedStore', () => {
 
     expect(await store.size()).toBe(1);
     const listed = await store.list();
-    expect(listed.find(r => r.id === '1')).toBeDefined();
-    expect(listed.find(r => r.id === '2')).toBeUndefined();
+    expect(listed.find((r) => r.id === '1')).toBeDefined();
+    expect(listed.find((r) => r.id === '2')).toBeUndefined();
     expect(await inner.get('2')).toBeUndefined();
   });
 
   it('should hide expired records', async () => {
     const inner = createInMemoryStore();
     const store = createPolicyEnforcedStore(inner);
-    
-    const oldTime = Date.now() - (40 * 24 * 60 * 60 * 1000); // 40 days ago
+
+    const oldTime = Date.now() - 40 * 24 * 60 * 60 * 1000; // 40 days ago
     const expired = createRecord('expired', 'finding', oldTime);
-    
+
     await inner.write(expired);
     expect(await store.get('expired')).toBeUndefined();
     expect(await store.list()).toHaveLength(0);
@@ -51,7 +51,7 @@ describe('PolicyEnforcedStore', () => {
     const inner = createInMemoryStore();
     const store = createPolicyEnforcedStore(inner);
 
-    const oldTime = Date.now() - (40 * 24 * 60 * 60 * 1000);
+    const oldTime = Date.now() - 40 * 24 * 60 * 60 * 1000;
     const now = Date.now();
 
     await inner.writeMany([

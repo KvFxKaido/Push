@@ -41,7 +41,13 @@ import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engin
 import { appendUserMessageWithFileReferences } from './file-references.js';
 
 const VERSION = '0.3.0';
-const CAPABILITIES = ['stream_tokens', 'approvals', 'replay_attach', 'multi_client', 'crash_recovery'];
+const CAPABILITIES = [
+  'stream_tokens',
+  'approvals',
+  'replay_attach',
+  'multi_client',
+  'crash_recovery',
+];
 
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -64,7 +70,11 @@ async function writePidFile() {
 }
 
 async function cleanPidFile() {
-  try { await fs.unlink(getPidPath()); } catch { /* ignore */ }
+  try {
+    await fs.unlink(getPidPath());
+  } catch {
+    /* ignore */
+  }
 }
 
 async function ensureSocketDir(socketPath) {
@@ -111,11 +121,18 @@ function makeResponse(requestId, type, sessionId, ok, payload, error = null) {
 }
 
 function makeErrorResponse(requestId, type, code, message, retryable = false) {
-  return makeResponse(requestId, type, null, false, {}, {
-    code,
-    message,
-    retryable,
-  });
+  return makeResponse(
+    requestId,
+    type,
+    null,
+    false,
+    {},
+    {
+      code,
+      message,
+      retryable,
+    },
+  );
 }
 
 // ─── Restart policies ─────────────────────────────────────────────
@@ -230,7 +247,11 @@ function broadcastEvent(sessionId, event) {
   const clients = sessionClients.get(sessionId);
   if (!clients) return;
   for (const emitFn of clients) {
-    try { emitFn(event); } catch { /* client may have disconnected */ }
+    try {
+      emitFn(event);
+    } catch {
+      /* client may have disconnected */
+    }
   }
 }
 
@@ -277,12 +298,19 @@ async function handleStartSession(req) {
   const provider = payload.provider || 'ollama';
   const providerConfig = PROVIDER_CONFIGS[provider];
   if (!providerConfig) {
-    return makeErrorResponse(req.requestId, 'start_session', 'PROVIDER_NOT_CONFIGURED', `Unknown provider: ${provider}`);
+    return makeErrorResponse(
+      req.requestId,
+      'start_session',
+      'PROVIDER_NOT_CONFIGURED',
+      `Unknown provider: ${provider}`,
+    );
   }
 
   const cwd = payload.repo?.rootPath || process.cwd();
   const model = payload.model || PROVIDER_CONFIGS[provider].defaultModel;
-  const restartPolicy = VALID_RESTART_POLICIES.has(payload.restartPolicy) ? payload.restartPolicy : DEFAULT_RESTART_POLICY;
+  const restartPolicy = VALID_RESTART_POLICIES.has(payload.restartPolicy)
+    ? payload.restartPolicy
+    : DEFAULT_RESTART_POLICY;
   const sessionId = makeSessionId();
   const attachToken = makeAttachToken();
   const now = Date.now();
@@ -323,7 +351,12 @@ async function handleSendUserMessage(req, emitEvent) {
   const text = req.payload?.text;
 
   if (!sessionId || !text) {
-    return makeErrorResponse(req.requestId, 'send_user_message', 'INVALID_REQUEST', 'sessionId and text are required');
+    return makeErrorResponse(
+      req.requestId,
+      'send_user_message',
+      'INVALID_REQUEST',
+      'sessionId and text are required',
+    );
   }
 
   let entry = activeSessions.get(sessionId);
@@ -333,18 +366,33 @@ async function handleSendUserMessage(req, emitEvent) {
       entry = { state, attachToken: makeAttachToken() };
       activeSessions.set(sessionId, entry);
     } catch {
-      return makeErrorResponse(req.requestId, 'send_user_message', 'SESSION_NOT_FOUND', `Session not found: ${sessionId}`);
+      return makeErrorResponse(
+        req.requestId,
+        'send_user_message',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
     }
   }
 
   // Reject if a run is already in progress
   if (entry.activeRunId) {
-    return makeErrorResponse(req.requestId, 'send_user_message', 'RUN_IN_PROGRESS', `Run ${entry.activeRunId} is already active`);
+    return makeErrorResponse(
+      req.requestId,
+      'send_user_message',
+      'RUN_IN_PROGRESS',
+      `Run ${entry.activeRunId} is already active`,
+    );
   }
 
   const providedToken = req.payload?.attachToken;
   if (!validateAttachToken(entry, providedToken)) {
-    return makeErrorResponse(req.requestId, 'send_user_message', 'INVALID_TOKEN', 'Invalid or missing attach token');
+    return makeErrorResponse(
+      req.requestId,
+      'send_user_message',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
   }
 
   const { state } = entry;
@@ -361,7 +409,12 @@ async function handleSendUserMessage(req, emitEvent) {
   });
 
   await appendUserMessageWithFileReferences(state, text, state.cwd);
-  await appendSessionEvent(state, 'user_message', { chars: text.length, preview: text.slice(0, 280) }, runId);
+  await appendSessionEvent(
+    state,
+    'user_message',
+    { chars: text.length, preview: text.slice(0, 280) },
+    runId,
+  );
 
   const providerConfig = PROVIDER_CONFIGS[state.provider];
   let apiKey;
@@ -370,7 +423,12 @@ async function handleSendUserMessage(req, emitEvent) {
   } catch (err) {
     entry.activeRunId = null;
     entry.abortController = null;
-    return makeErrorResponse(req.requestId, 'send_user_message', 'PROVIDER_NOT_CONFIGURED', err.message);
+    return makeErrorResponse(
+      req.requestId,
+      'send_user_message',
+      'PROVIDER_NOT_CONFIGURED',
+      err.message,
+    );
   }
 
   const approvalFn = buildApprovalFn(sessionId, entry, runId);
@@ -380,9 +438,15 @@ async function handleSendUserMessage(req, emitEvent) {
     // Write run marker so crash recovery can detect interrupted runs.
     // Awaited inside the async IIFE so a crash right after launch is still detectable.
     try {
-      await writeRunMarker(sessionId, runId, { provider: state.provider, model: state.model, cwd: state.cwd });
+      await writeRunMarker(sessionId, runId, {
+        provider: state.provider,
+        model: state.model,
+        cwd: state.cwd,
+      });
     } catch (err) {
-      process.stderr.write(`warning: failed to write run marker for ${sessionId}: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.stderr.write(
+        `warning: failed to write run marker for ${sessionId}: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
     }
     let sawError = false;
     let sawRunComplete = false;
@@ -412,11 +476,16 @@ async function handleSendUserMessage(req, emitEvent) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (!sawError) {
-        await appendSessionEvent(state, 'error', {
-          code: 'INTERNAL_ERROR',
-          message,
-          retryable: false,
-        }, runId);
+        await appendSessionEvent(
+          state,
+          'error',
+          {
+            code: 'INTERNAL_ERROR',
+            message,
+            retryable: false,
+          },
+          runId,
+        );
         broadcastEvent(sessionId, {
           v: PROTOCOL_VERSION,
           kind: 'event',
@@ -429,11 +498,16 @@ async function handleSendUserMessage(req, emitEvent) {
         });
       }
       if (!sawRunComplete) {
-        await appendSessionEvent(state, 'run_complete', {
+        await appendSessionEvent(
+          state,
+          'run_complete',
+          {
+            runId,
+            outcome: 'failed',
+            summary: message.slice(0, 500),
+          },
           runId,
-          outcome: 'failed',
-          summary: message.slice(0, 500),
-        }, runId);
+        );
         broadcastEvent(sessionId, {
           v: PROTOCOL_VERSION,
           kind: 'event',
@@ -464,7 +538,12 @@ async function handleSendUserMessage(req, emitEvent) {
 async function handleAttachSession(req, emitEvent) {
   const { sessionId, lastSeenSeq, attachToken: providedToken } = req.payload || {};
   if (!sessionId) {
-    return makeErrorResponse(req.requestId, 'attach_session', 'INVALID_REQUEST', 'sessionId is required');
+    return makeErrorResponse(
+      req.requestId,
+      'attach_session',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
   }
 
   let entry = activeSessions.get(sessionId);
@@ -474,12 +553,22 @@ async function handleAttachSession(req, emitEvent) {
       entry = { state, attachToken: makeAttachToken() };
       activeSessions.set(sessionId, entry);
     } catch {
-      return makeErrorResponse(req.requestId, 'attach_session', 'SESSION_NOT_FOUND', `Session not found: ${sessionId}`);
+      return makeErrorResponse(
+        req.requestId,
+        'attach_session',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
     }
   }
 
   if (!validateAttachToken(entry, providedToken)) {
-    return makeErrorResponse(req.requestId, 'attach_session', 'INVALID_TOKEN', 'Invalid or missing attach token');
+    return makeErrorResponse(
+      req.requestId,
+      'attach_session',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
   }
 
   // Register this client for multi-client fan-out
@@ -492,7 +581,7 @@ async function handleAttachSession(req, emitEvent) {
   // Replay missed events from disk
   try {
     const allEvents = await loadSessionEvents(sessionId);
-    const missed = allEvents.filter(e => e.seq >= fromSeq && e.seq <= currentSeq);
+    const missed = allEvents.filter((e) => e.seq >= fromSeq && e.seq <= currentSeq);
     for (const event of missed) {
       emitEvent(event);
     }
@@ -516,17 +605,32 @@ async function handleAttachSession(req, emitEvent) {
 async function handleSubmitApproval(req) {
   const { sessionId, approvalId, decision } = req.payload || {};
   if (!sessionId || !approvalId || !decision) {
-    return makeErrorResponse(req.requestId, 'submit_approval', 'INVALID_REQUEST', 'sessionId, approvalId, and decision are required');
+    return makeErrorResponse(
+      req.requestId,
+      'submit_approval',
+      'INVALID_REQUEST',
+      'sessionId, approvalId, and decision are required',
+    );
   }
 
   const entry = activeSessions.get(sessionId);
   if (!entry) {
-    return makeErrorResponse(req.requestId, 'submit_approval', 'SESSION_NOT_FOUND', `Session not found: ${sessionId}`);
+    return makeErrorResponse(
+      req.requestId,
+      'submit_approval',
+      'SESSION_NOT_FOUND',
+      `Session not found: ${sessionId}`,
+    );
   }
 
   const pending = entry.pendingApproval;
   if (!pending || pending.approvalId !== approvalId) {
-    return makeErrorResponse(req.requestId, 'submit_approval', 'APPROVAL_NOT_FOUND', `No pending approval with id: ${approvalId}`);
+    return makeErrorResponse(
+      req.requestId,
+      'submit_approval',
+      'APPROVAL_NOT_FOUND',
+      `No pending approval with id: ${approvalId}`,
+    );
   }
 
   clearTimeout(pending.timer);
@@ -556,20 +660,40 @@ async function handleSubmitApproval(req) {
 async function handleCancelRun(req) {
   const { sessionId, runId } = req.payload || {};
   if (!sessionId) {
-    return makeErrorResponse(req.requestId, 'cancel_run', 'INVALID_REQUEST', 'sessionId is required');
+    return makeErrorResponse(
+      req.requestId,
+      'cancel_run',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
   }
 
   const entry = activeSessions.get(sessionId);
   if (!entry) {
-    return makeErrorResponse(req.requestId, 'cancel_run', 'SESSION_NOT_FOUND', `Session not found: ${sessionId}`);
+    return makeErrorResponse(
+      req.requestId,
+      'cancel_run',
+      'SESSION_NOT_FOUND',
+      `Session not found: ${sessionId}`,
+    );
   }
 
   if (!entry.activeRunId) {
-    return makeErrorResponse(req.requestId, 'cancel_run', 'NO_ACTIVE_RUN', 'No active run to cancel');
+    return makeErrorResponse(
+      req.requestId,
+      'cancel_run',
+      'NO_ACTIVE_RUN',
+      'No active run to cancel',
+    );
   }
 
   if (runId && entry.activeRunId !== runId) {
-    return makeErrorResponse(req.requestId, 'cancel_run', 'NO_ACTIVE_RUN', `Run ${runId} is not the active run`);
+    return makeErrorResponse(
+      req.requestId,
+      'cancel_run',
+      'NO_ACTIVE_RUN',
+      `Run ${runId} is not the active run`,
+    );
   }
 
   // Abort the run
@@ -671,7 +795,11 @@ function handleConnection(socket) {
         }
         // Auto-attach when starting a session or sending a message
         if ((req.type === 'start_session' || req.type === 'send_user_message') && response.ok) {
-          const sid = response.sessionId || response.payload?.sessionId || req.sessionId || req.payload?.sessionId;
+          const sid =
+            response.sessionId ||
+            response.payload?.sessionId ||
+            req.sessionId ||
+            req.payload?.sessionId;
           if (sid) {
             addSessionClient(sid, emitEvent);
             attachedSessions.add(sid);
@@ -756,7 +884,9 @@ async function recoverInterruptedRuns() {
     const providerConfig = PROVIDER_CONFIGS[state.provider];
     if (!providerConfig) {
       await clearRunMarker(sessionId).catch(() => {});
-      process.stdout.write(`  ${sessionId}: unknown provider "${state.provider}", clearing marker\n`);
+      process.stdout.write(
+        `  ${sessionId}: unknown provider "${state.provider}", clearing marker\n`,
+      );
       continue;
     }
 
@@ -794,7 +924,12 @@ async function recoverInterruptedRuns() {
 
     // Clear old marker and write new one for the recovery run
     await clearRunMarker(sessionId).catch(() => {});
-    await writeRunMarker(sessionId, recoveryRunId, { provider: state.provider, model: state.model, cwd: state.cwd, recoveredFrom: marker.runId }).catch(() => {});
+    await writeRunMarker(sessionId, recoveryRunId, {
+      provider: state.provider,
+      model: state.model,
+      cwd: state.cwd,
+      recoveredFrom: marker.runId,
+    }).catch(() => {});
 
     // Build approval gate so recovered runs can request client approvals
     const approvalFn = buildApprovalFn(sessionId, entry, recoveryRunId);
@@ -829,18 +964,38 @@ async function recoverInterruptedRuns() {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (!sawError) {
-          await appendSessionEvent(state, 'error', { code: 'RECOVERY_ERROR', message, retryable: false }, recoveryRunId).catch(() => {});
+          await appendSessionEvent(
+            state,
+            'error',
+            { code: 'RECOVERY_ERROR', message, retryable: false },
+            recoveryRunId,
+          ).catch(() => {});
           broadcastEvent(sessionId, {
-            v: PROTOCOL_VERSION, kind: 'event', sessionId, runId: recoveryRunId,
-            seq: state.eventSeq, ts: Date.now(), type: 'error',
+            v: PROTOCOL_VERSION,
+            kind: 'event',
+            sessionId,
+            runId: recoveryRunId,
+            seq: state.eventSeq,
+            ts: Date.now(),
+            type: 'error',
             payload: { code: 'RECOVERY_ERROR', message, retryable: false },
           });
         }
         if (!sawRunComplete) {
-          await appendSessionEvent(state, 'run_complete', { runId: recoveryRunId, outcome: 'failed', summary: message.slice(0, 500) }, recoveryRunId).catch(() => {});
+          await appendSessionEvent(
+            state,
+            'run_complete',
+            { runId: recoveryRunId, outcome: 'failed', summary: message.slice(0, 500) },
+            recoveryRunId,
+          ).catch(() => {});
           broadcastEvent(sessionId, {
-            v: PROTOCOL_VERSION, kind: 'event', sessionId, runId: recoveryRunId,
-            seq: state.eventSeq, ts: Date.now(), type: 'run_complete',
+            v: PROTOCOL_VERSION,
+            kind: 'event',
+            sessionId,
+            runId: recoveryRunId,
+            seq: state.eventSeq,
+            ts: Date.now(),
+            type: 'run_complete',
             payload: { outcome: 'failed', summary: message.slice(0, 500) },
           });
         }
@@ -923,10 +1078,9 @@ export async function main() {
 }
 
 // Only run main() when executed directly (not when imported)
-const isDirectRun = process.argv[1] && (
-  process.argv[1].endsWith('/pushd.ts') ||
-  process.argv[1].endsWith('\\pushd.ts')
-);
+const isDirectRun =
+  process.argv[1] &&
+  (process.argv[1].endsWith('/pushd.ts') || process.argv[1].endsWith('\\pushd.ts'));
 
 if (isDirectRun) {
   main().catch((err) => {

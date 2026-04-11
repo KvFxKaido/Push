@@ -16,7 +16,9 @@ import {
 
 function extractExportedStringArray(source, exportName) {
   const match = source.match(
-    new RegExp(`export const ${exportName}(?::\\s*string\\[\\])?\\s*=\\s*\\[([\\s\\S]*?)\\r?\\n\\];`),
+    new RegExp(
+      `export const ${exportName}(?::\\s*string\\[\\])?\\s*=\\s*\\[([\\s\\S]*?)\\r?\\n\\];`,
+    ),
   );
   assert.ok(match, `Expected to find exported array ${exportName}`);
   // Match string literals and constant references (e.g. ZEN_DEFAULT_MODEL)
@@ -75,15 +77,33 @@ describe('getCuratedModels', () => {
 
 describe('catalog parity', () => {
   // Read from the shared source of truth where the arrays are actually defined
-  const providerModelsSource = readFileSync(new URL('../../lib/provider-models.ts', import.meta.url), 'utf8');
+  const providerModelsSource = readFileSync(
+    new URL('../../lib/provider-models.ts', import.meta.url),
+    'utf8',
+  );
 
   it('keeps the shared curated model lists in sync with the web catalog', () => {
-    assert.deepEqual(OPENROUTER_MODELS, extractExportedStringArray(providerModelsSource, 'OPENROUTER_MODELS'));
+    assert.deepEqual(
+      OPENROUTER_MODELS,
+      extractExportedStringArray(providerModelsSource, 'OPENROUTER_MODELS'),
+    );
     assert.deepEqual(ZEN_MODELS, extractExportedStringArray(providerModelsSource, 'ZEN_MODELS'));
-    assert.deepEqual(NVIDIA_MODELS, extractExportedStringArray(providerModelsSource, 'NVIDIA_MODELS'));
-    assert.deepEqual(KILOCODE_MODELS, extractExportedStringArray(providerModelsSource, 'KILOCODE_MODELS'));
-    assert.deepEqual(BLACKBOX_MODELS, extractExportedStringArray(providerModelsSource, 'BLACKBOX_MODELS'));
-    assert.deepEqual(OPENADAPTER_MODELS, extractExportedStringArray(providerModelsSource, 'OPENADAPTER_MODELS'));
+    assert.deepEqual(
+      NVIDIA_MODELS,
+      extractExportedStringArray(providerModelsSource, 'NVIDIA_MODELS'),
+    );
+    assert.deepEqual(
+      KILOCODE_MODELS,
+      extractExportedStringArray(providerModelsSource, 'KILOCODE_MODELS'),
+    );
+    assert.deepEqual(
+      BLACKBOX_MODELS,
+      extractExportedStringArray(providerModelsSource, 'BLACKBOX_MODELS'),
+    );
+    assert.deepEqual(
+      OPENADAPTER_MODELS,
+      extractExportedStringArray(providerModelsSource, 'OPENADAPTER_MODELS'),
+    );
   });
 
   it('keeps the CLI provider defaults in sync with the web catalog', () => {
@@ -114,16 +134,20 @@ describe('DEFAULT_MODELS', () => {
 
   it('has correct hardcoded defaults', () => {
     for (const [id, expected] of Object.entries(EXPECTED)) {
-      assert.equal(
-        DEFAULT_MODELS[id],
-        expected,
-        `DEFAULT_MODELS.${id} should be "${expected}"`,
-      );
+      assert.equal(DEFAULT_MODELS[id], expected, `DEFAULT_MODELS.${id} should be "${expected}"`);
     }
   });
 
   it('covers all providers', () => {
-    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), ['blackbox', 'kilocode', 'nvidia', 'ollama', 'openadapter', 'openrouter', 'zen']);
+    assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), [
+      'blackbox',
+      'kilocode',
+      'nvidia',
+      'ollama',
+      'openadapter',
+      'openrouter',
+      'zen',
+    ]);
   });
 
   it('each default appears in its curated list', () => {

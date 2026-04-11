@@ -61,7 +61,10 @@ function sleep(ms: number): Promise<void> {
 export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
   ollama: {
     id: 'ollama',
-    url: process.env.PUSH_OLLAMA_URL || process.env.OLLAMA_API_URL || 'https://ollama.com/v1/chat/completions',
+    url:
+      process.env.PUSH_OLLAMA_URL ||
+      process.env.OLLAMA_API_URL ||
+      'https://ollama.com/v1/chat/completions',
     defaultModel: process.env.PUSH_OLLAMA_MODEL || OLLAMA_DEFAULT_MODEL,
     apiKeyEnv: ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'],
     requiresKey: true,
@@ -90,11 +93,7 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
     id: 'nvidia',
     url: process.env.PUSH_NVIDIA_URL || 'https://integrate.api.nvidia.com/v1/chat/completions',
     defaultModel: process.env.PUSH_NVIDIA_MODEL || NVIDIA_DEFAULT_MODEL,
-    apiKeyEnv: [
-      'PUSH_NVIDIA_API_KEY',
-      'NVIDIA_API_KEY',
-      'VITE_NVIDIA_API_KEY',
-    ],
+    apiKeyEnv: ['PUSH_NVIDIA_API_KEY', 'NVIDIA_API_KEY', 'VITE_NVIDIA_API_KEY'],
     requiresKey: true,
   },
   kilocode: {
@@ -141,7 +140,9 @@ export function getProviderList(): ProviderListEntry[] {
     try {
       resolveApiKey(cfg);
       hasKey = true;
-    } catch { /* key missing */ }
+    } catch {
+      /* key missing */
+    }
     return {
       id: cfg.id,
       url: cfg.url,
@@ -278,7 +279,10 @@ export async function streamCompletion(
     }
 
     const timeoutController: AbortController = new AbortController();
-    const timeout: ReturnType<typeof setTimeout> = setTimeout(() => timeoutController.abort(), timeoutMs);
+    const timeout: ReturnType<typeof setTimeout> = setTimeout(
+      () => timeoutController.abort(),
+      timeoutMs,
+    );
     const signals: AbortSignal[] = [timeoutController.signal];
     if (externalSignal) signals.push(externalSignal);
     const controller: { signal: AbortSignal } = { signal: AbortSignal.any(signals) };
@@ -292,7 +296,12 @@ export async function streamCompletion(
       headers['X-Title'] = 'Push CLI';
     }
 
-    const baseBody: { model: string; messages: ChatMessage[]; stream: boolean; temperature: number } = {
+    const baseBody: {
+      model: string;
+      messages: ChatMessage[];
+      stream: boolean;
+      temperature: number;
+    } = {
       model,
       messages,
       stream: true,
@@ -301,15 +310,16 @@ export async function streamCompletion(
 
     // OpenRouter session tracking & trace metadata
     // See: https://openrouter.ai/docs/guides/features/broadcast/overview
-    const requestBody: Record<string, unknown> = config.id === 'openrouter'
-      ? {
-        ...baseBody,
-        ...(options?.sessionId
-          ? { session_id: options.sessionId.slice(0, OPENROUTER_MAX_SESSION_ID_LENGTH) }
-          : {}),
-        trace: { generation_name: 'push-cli-chat', trace_name: 'push-cli' },
-      }
-      : baseBody;
+    const requestBody: Record<string, unknown> =
+      config.id === 'openrouter'
+        ? {
+            ...baseBody,
+            ...(options?.sessionId
+              ? { session_id: options.sessionId.slice(0, OPENROUTER_MAX_SESSION_ID_LENGTH) }
+              : {}),
+            trace: { generation_name: 'push-cli-chat', trace_name: 'push-cli' },
+          }
+        : baseBody;
 
     let response: Response | undefined;
     try {
@@ -346,13 +356,10 @@ export async function streamCompletion(
       const decoder: TextDecoder = new TextDecoder();
       let buffer: string = '';
       let accumulated: string = '';
-      const reasoningParser: ReasoningTokenParser = createReasoningTokenParser(
-        (token: string) => {
-          accumulated += token;
-          if (onToken) onToken(token);
-        },
-        options?.onThinkingToken,
-      );
+      const reasoningParser: ReasoningTokenParser = createReasoningTokenParser((token: string) => {
+        accumulated += token;
+        if (onToken) onToken(token);
+      }, options?.onThinkingToken);
 
       while (true) {
         const { done, value }: ReadableStreamReadResult<Uint8Array> = await reader.read();
@@ -382,10 +389,7 @@ export async function streamCompletion(
               reasoningParser.pushReasoning(reasoningToken);
             }
 
-            const token: string =
-              choice.delta?.content ??
-              choice.message?.content ??
-              '';
+            const token: string = choice.delta?.content ?? choice.message?.content ?? '';
             if (token) {
               reasoningParser.pushContent(token);
             }

@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildWorkspaceSnapshot, loadProjectInstructions, loadMemory } from '../workspace-context.ts';
+import {
+  buildWorkspaceSnapshot,
+  loadProjectInstructions,
+  loadMemory,
+} from '../workspace-context.ts';
 import { executeToolCall } from '../tools.ts';
 
 const PUSH_ROOT = path.resolve(import.meta.dirname, '..', '..');
@@ -73,8 +77,13 @@ describe('buildWorkspaceSnapshot', () => {
       }
 
       const result = await buildWorkspaceSnapshot(tmpDir);
-      const treeLines = result.split('\n').filter((l) => l.startsWith('  f ') || l.startsWith('  d '));
-      assert.ok(treeLines.length <= 40, `expected at most 40 tree entries, got ${treeLines.length}`);
+      const treeLines = result
+        .split('\n')
+        .filter((l) => l.startsWith('  f ') || l.startsWith('  d '));
+      assert.ok(
+        treeLines.length <= 40,
+        `expected at most 40 tree entries, got ${treeLines.length}`,
+      );
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
@@ -88,11 +97,14 @@ describe('buildWorkspaceSnapshot', () => {
   it('summarizes package.json manifest', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
     try {
-      await fs.writeFile(path.join(tmpDir, 'package.json'), JSON.stringify({
-        name: 'test-pkg',
-        version: '2.3.4',
-        dependencies: { a: '1', b: '2', c: '3' },
-      }));
+      await fs.writeFile(
+        path.join(tmpDir, 'package.json'),
+        JSON.stringify({
+          name: 'test-pkg',
+          version: '2.3.4',
+          dependencies: { a: '1', b: '2', c: '3' },
+        }),
+      );
 
       const result = await buildWorkspaceSnapshot(tmpDir);
       assert.ok(result.includes('test-pkg@2.3.4'), 'should include package name and version');

@@ -11,7 +11,10 @@
  */
 
 import { RESERVED_COMMANDS } from './skill-loader.js';
-import { extractAtReferenceCompletionTarget, listReferencePathCompletionsSync } from './path-completion.js';
+import {
+  extractAtReferenceCompletionTarget,
+  listReferencePathCompletionsSync,
+} from './path-completion.js';
 
 export interface TabResult {
   text: string;
@@ -51,9 +54,17 @@ export interface TabCompleter {
   getState: () => CompletionState | null;
 }
 
-export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderList, workspaceRoot, getPathCompletions, extraCommands = [] }: TabCompleterDeps): TabCompleter {
+export function createTabCompleter({
+  ctx,
+  skills,
+  getCuratedModels,
+  getProviderList,
+  workspaceRoot,
+  getPathCompletions,
+  extraCommands = [],
+}: TabCompleterDeps): TabCompleter {
   let candidates: string[] | null = null;
-  let index: number = -1;        // -1 = preview, >= 0 = cycling
+  let index: number = -1; // -1 = preview, >= 0 = cycling
   let lastResolvedText: string | null = null;
   let lastResolvedCandidates: string[] | null = null;
   const pathCompleter = getPathCompletions ?? listReferencePathCompletionsSync;
@@ -105,7 +116,9 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
 
     if (cmd === 'model') {
       const models = getCuratedModels(ctx.providerConfig.id);
-      const resolved = models.filter((m: string) => m.startsWith(arg)).map((m: string) => prefix + m);
+      const resolved = models
+        .filter((m: string) => m.startsWith(arg))
+        .map((m: string) => prefix + m);
       lastResolvedText = text;
       lastResolvedCandidates = resolved;
       return resolved;
@@ -155,7 +168,9 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
       if (parts.length <= 1) {
         // First arg: subcommand
         const subs = ['key', 'url', 'tavily', 'sandbox'];
-        const resolved = subs.filter((s: string) => s.startsWith(arg)).map((s: string) => prefix + s + ' ');
+        const resolved = subs
+          .filter((s: string) => s.startsWith(arg))
+          .map((s: string) => prefix + s + ' ');
         lastResolvedText = text;
         lastResolvedCandidates = resolved;
         return resolved;
@@ -166,14 +181,18 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
       if (sub === 'key') {
         // Second arg: optional provider name
         const ids = getProviderList().map((p: ProviderEntry) => p.id);
-        const resolved = ids.filter((p: string) => p.startsWith(rest)).map((p: string) => subPrefix + p + ' ');
+        const resolved = ids
+          .filter((p: string) => p.startsWith(rest))
+          .map((p: string) => subPrefix + p + ' ');
         lastResolvedText = text;
         lastResolvedCandidates = resolved;
         return resolved;
       }
       if (sub === 'sandbox') {
         const opts = ['on', 'off'];
-        const resolved = opts.filter((o: string) => o.startsWith(rest)).map((o: string) => subPrefix + o);
+        const resolved = opts
+          .filter((o: string) => o.startsWith(rest))
+          .map((o: string) => subPrefix + o);
         lastResolvedText = text;
         lastResolvedCandidates = resolved;
         return resolved;
@@ -268,10 +287,10 @@ export function createTabCompleter({ ctx, skills, getCuratedModels, getProviderL
       }
       const trimmed = c.trimEnd();
       const sp = trimmed.indexOf(' ');
-      if (sp === -1) return trimmed;        // bare command (shouldn't happen, but safe)
+      if (sp === -1) return trimmed; // bare command (shouldn't happen, but safe)
       const cmd = trimmed.slice(0, sp);
       const arg = trimmed.slice(sp + 1);
-      return arg || cmd;                     // show arg if present, else command
+      return arg || cmd; // show arg if present, else command
     });
     return { items, index };
   }

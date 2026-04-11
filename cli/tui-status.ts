@@ -112,17 +112,24 @@ interface ContextBudget {
  * Build a visual context meter bar showing token usage vs. budget.
  * Returns a styled string like "▰▰▰▰▱▱▱▱ 42k/100k"
  */
-export function formatContextMeter(tokens: number, budget: ContextBudget | null, theme: Theme, barWidth: number = 8): string {
+export function formatContextMeter(
+  tokens: number,
+  budget: ContextBudget | null,
+  theme: Theme,
+  barWidth: number = 8,
+): string {
   const maxTokens = budget?.maxTokens || 100_000;
   const ratio = Math.max(0, Math.min(1, (tokens || 0) / maxTokens));
   const filled = Math.round(ratio * barWidth);
   const empty = barWidth - filled;
 
   // Color based on usage: green < 60%, yellow 60-85%, red > 85%
-  const color: TokenName = ratio > 0.85 ? 'state.error' : ratio > 0.60 ? 'state.warn' : 'state.success';
+  const color: TokenName =
+    ratio > 0.85 ? 'state.error' : ratio > 0.6 ? 'state.warn' : 'state.success';
   const filledChar = theme.unicode ? '▰' : '#';
   const emptyChar = theme.unicode ? '▱' : '-';
-  const bar = theme.style(color, filledChar.repeat(filled)) + theme.style('fg.dim', emptyChar.repeat(empty));
+  const bar =
+    theme.style(color, filledChar.repeat(filled)) + theme.style('fg.dim', emptyChar.repeat(empty));
   const label = `${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)}`;
   return `${bar} ${theme.style('fg.dim', label)}`;
 }
@@ -174,15 +181,20 @@ interface StatusBarOptions {
  * Render the enhanced status bar.
  * Shows: git branch | cwd | context meter | file awareness | [live indicator]
  */
-export function renderStatusBar(buf: ScreenBuffer, layout: Layout, theme: Theme, {
-  gitStatus = null,
-  cwd = '',
-  tokens = 0,
-  isStreaming = false,
-  messageCount = 0,
-  contextBudget = null,
-  fileAwareness = null,
-}: StatusBarOptions): void {
+export function renderStatusBar(
+  buf: ScreenBuffer,
+  layout: Layout,
+  theme: Theme,
+  {
+    gitStatus = null,
+    cwd = '',
+    tokens = 0,
+    isStreaming = false,
+    messageCount = 0,
+    contextBudget = null,
+    fileAwareness = null,
+  }: StatusBarOptions,
+): void {
   const { top, left, width } = layout.footer;
   const { glyphs } = theme;
 
@@ -234,8 +246,12 @@ export function renderStatusBar(buf: ScreenBuffer, layout: Layout, theme: Theme,
 
   // File awareness section
   if (fileAwareness && fileAwareness.total > 0) {
-    const reads = fileAwareness.files.filter((f: FileEntry) => f.status === 'fully_read' || f.status === 'partial_read').length;
-    const writes = fileAwareness.files.filter((f: FileEntry) => f.status === 'model_authored').length;
+    const reads = fileAwareness.files.filter(
+      (f: FileEntry) => f.status === 'fully_read' || f.status === 'partial_read',
+    ).length;
+    const writes = fileAwareness.files.filter(
+      (f: FileEntry) => f.status === 'model_authored',
+    ).length;
     let fileText = `${fileAwareness.total} files`;
     if (writes > 0) fileText += ` (${writes}w)`;
     else if (reads > 0) fileText += ` (${reads}r)`;
@@ -291,7 +307,13 @@ interface TuiState {
 /**
  * Render keybind hints line (secondary footer line).
  */
-export function renderKeybindHints(buf: ScreenBuffer, layout: Layout, theme: Theme, tuiState: TuiState, keybindHints: unknown): void {
+export function renderKeybindHints(
+  buf: ScreenBuffer,
+  layout: Layout,
+  theme: Theme,
+  tuiState: TuiState,
+  keybindHints: unknown,
+): void {
   const { top, left, width } = layout.footer;
   const line = top + 1;
 
@@ -313,7 +335,11 @@ export function renderKeybindHints(buf: ScreenBuffer, layout: Layout, theme: The
     leftHints = [
       theme.style('accent.link', 'j/k,↑↓') + theme.style('fg.dim', ' move'),
       theme.style('accent.link', 'Enter') + theme.style('fg.dim', ' toggle'),
-      theme.style('accent.link', 'a') + theme.style('fg.dim', tuiState.toolJsonPayloadsExpanded ? ' all:expanded' : ' all:collapsed'),
+      theme.style('accent.link', 'a') +
+        theme.style(
+          'fg.dim',
+          tuiState.toolJsonPayloadsExpanded ? ' all:expanded' : ' all:collapsed',
+        ),
       theme.style('accent.link', 'Esc / Ctrl+O') + theme.style('fg.dim', ' close'),
     ].join('  ');
   } else {
@@ -328,15 +354,16 @@ export function renderKeybindHints(buf: ScreenBuffer, layout: Layout, theme: The
   }
 
   // Right: state indicator
-  const stateLabel = tuiState.runState === 'running'
-    ? theme.style('state.warn', 'running')
-    : tuiState.runState === 'awaiting_approval'
-      ? theme.style('state.error', 'awaiting approval')
-      : tuiState.runState === 'awaiting_user_question'
-        ? theme.style('accent.primary', 'awaiting answer')
-        : tuiState.payloadInspectorOpen
-          ? theme.style('accent.secondary', 'payload inspect')
-        : theme.style('state.success', 'idle');
+  const stateLabel =
+    tuiState.runState === 'running'
+      ? theme.style('state.warn', 'running')
+      : tuiState.runState === 'awaiting_approval'
+        ? theme.style('state.error', 'awaiting approval')
+        : tuiState.runState === 'awaiting_user_question'
+          ? theme.style('accent.primary', 'awaiting answer')
+          : tuiState.payloadInspectorOpen
+            ? theme.style('accent.secondary', 'payload inspect')
+            : theme.style('state.success', 'idle');
 
   // Layout left/right
   const rightWidth = visibleWidth(stateLabel);

@@ -67,17 +67,11 @@ describe('session persistence', () => {
   });
 
   it('rejects loading with invalid session id', async () => {
-    await assert.rejects(
-      () => loadSessionState('nonexistent_session'),
-      /Invalid session id/,
-    );
+    await assert.rejects(() => loadSessionState('nonexistent_session'), /Invalid session id/);
   });
 
   it('rejects loading non-existent valid-format session id', async () => {
-    await assert.rejects(
-      () => loadSessionState('sess_abc123_def456'),
-      /ENOENT/,
-    );
+    await assert.rejects(() => loadSessionState('sess_abc123_def456'), /ENOENT/);
   });
 });
 
@@ -99,9 +93,31 @@ describe('event serialization', () => {
 
   it('writes JSONL events with protocol-aligned envelope', async () => {
     const runId = makeRunId();
-    await appendSessionEvent(state, 'session_started', { sessionId, state: 'idle', mode: 'interactive', provider: 'ollama', sandboxProvider: 'local' });
-    await appendSessionEvent(state, 'tool.execution_start', { round: 0, executionId: 'exec-1', toolSource: 'sandbox', toolName: 'exec', args: { command: 'ls' } }, runId);
-    await appendSessionEvent(state, 'run_complete', { runId, outcome: 'success', summary: 'done' }, runId);
+    await appendSessionEvent(state, 'session_started', {
+      sessionId,
+      state: 'idle',
+      mode: 'interactive',
+      provider: 'ollama',
+      sandboxProvider: 'local',
+    });
+    await appendSessionEvent(
+      state,
+      'tool.execution_start',
+      {
+        round: 0,
+        executionId: 'exec-1',
+        toolSource: 'sandbox',
+        toolName: 'exec',
+        args: { command: 'ls' },
+      },
+      runId,
+    );
+    await appendSessionEvent(
+      state,
+      'run_complete',
+      { runId, outcome: 'success', summary: 'done' },
+      runId,
+    );
 
     const eventsPath = path.join(getSessionDir(sessionId), 'events.jsonl');
     const raw = await fs.readFile(eventsPath, 'utf8');
@@ -147,12 +163,26 @@ describe('listSessions', () => {
     const id1 = makeSessionId();
     const id2 = makeSessionId();
     await saveSessionState({
-      sessionId: id1, createdAt: 1000, updatedAt: 1000,
-      provider: 'ollama', model: 'a', cwd: '/tmp', rounds: 0, eventSeq: 0, messages: [],
+      sessionId: id1,
+      createdAt: 1000,
+      updatedAt: 1000,
+      provider: 'ollama',
+      model: 'a',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
     });
     await saveSessionState({
-      sessionId: id2, createdAt: 2000, updatedAt: 2000,
-      provider: 'openrouter', model: 'b', cwd: '/tmp', rounds: 0, eventSeq: 0, messages: [],
+      sessionId: id2,
+      createdAt: 2000,
+      updatedAt: 2000,
+      provider: 'openrouter',
+      model: 'b',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
       sessionName: 'Review auth middleware',
     });
 
@@ -180,8 +210,15 @@ describe('deleteSession', () => {
   it('deletes an existing session directory and removes it from listings', async () => {
     const id = makeSessionId();
     await saveSessionState({
-      sessionId: id, createdAt: Date.now(), updatedAt: Date.now(),
-      provider: 'ollama', model: 'delete-me', cwd: '/tmp', rounds: 0, eventSeq: 0, messages: [],
+      sessionId: id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'delete-me',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
     });
 
     const deleted = await deleteSession(id);
@@ -253,8 +290,14 @@ describe('session file permissions', () => {
   it('creates session dir with mode 0o700', async () => {
     const id = makeSessionId();
     const state = {
-      sessionId: id, createdAt: Date.now(), updatedAt: Date.now(),
-      provider: 'ollama', model: 'test', cwd: '/tmp', rounds: 0, eventSeq: 0,
+      sessionId: id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'test',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
       messages: [{ role: 'system', content: 'test' }],
     };
     await saveSessionState(state);
@@ -266,8 +309,14 @@ describe('session file permissions', () => {
   it('creates state file with mode 0o600', async () => {
     const id = makeSessionId();
     const state = {
-      sessionId: id, createdAt: Date.now(), updatedAt: Date.now(),
-      provider: 'ollama', model: 'test', cwd: '/tmp', rounds: 0, eventSeq: 0,
+      sessionId: id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'test',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
       messages: [{ role: 'system', content: 'test' }],
     };
     await saveSessionState(state);
@@ -284,13 +333,20 @@ describe('listSessions security', () => {
     // Create a dir with an invalid name
     const badDir = path.join(tmpDir, '..sneaky_traversal');
     await fs.mkdir(badDir, { recursive: true });
-    await fs.writeFile(path.join(badDir, 'state.json'), JSON.stringify({
-      sessionId: '..sneaky_traversal', updatedAt: Date.now(),
-      provider: 'ollama', model: 'a', cwd: '/tmp',
-    }), 'utf8');
+    await fs.writeFile(
+      path.join(badDir, 'state.json'),
+      JSON.stringify({
+        sessionId: '..sneaky_traversal',
+        updatedAt: Date.now(),
+        provider: 'ollama',
+        model: 'a',
+        cwd: '/tmp',
+      }),
+      'utf8',
+    );
 
     const sessions = await listSessions();
-    const ids = sessions.map(s => s.sessionId);
+    const ids = sessions.map((s) => s.sessionId);
     assert.ok(!ids.includes('..sneaky_traversal'), 'should not list invalid session dirs');
 
     // Cleanup

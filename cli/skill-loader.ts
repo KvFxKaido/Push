@@ -23,7 +23,16 @@ const NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
 /** Commands that skills cannot shadow */
 export const RESERVED_COMMANDS: Set<string> = new Set([
-  'help', 'exit', 'quit', 'new', 'session', 'model', 'provider', 'skills', 'config', 'compact',
+  'help',
+  'exit',
+  'quit',
+  'new',
+  'session',
+  'model',
+  'provider',
+  'skills',
+  'config',
+  'compact',
 ]);
 
 type SkillSource = 'builtin' | 'workspace' | 'claude';
@@ -90,7 +99,11 @@ function parseSkillFile(
  * Scan a directory for .md skill files.
  * Returns a Map<name, Skill>. Silently skips files with invalid names or parse failures.
  */
-async function scanDir(dir: string, source: SkillSource, options: ScanOptions = {}): Promise<Map<string, Skill>> {
+async function scanDir(
+  dir: string,
+  source: SkillSource,
+  options: ScanOptions = {},
+): Promise<Map<string, Skill>> {
   const recursive = options.recursive === true;
   const eagerPromptTemplate = options.eagerPromptTemplate !== false;
   const skills: Map<string, Skill> = new Map();
@@ -115,16 +128,16 @@ async function scanDir(dir: string, source: SkillSource, options: ScanOptions = 
 
       const relFile = relPrefix ? path.join(relPrefix, entry.name) : entry.name;
       const relStem = relFile.slice(0, -3);
-      const name = recursive
-        ? relStem.split(path.sep).join('-')
-        : relStem;
+      const name = recursive ? relStem.split(path.sep).join('-') : relStem;
       if (!NAME_RE.test(name)) continue;
       if (RESERVED_COMMANDS.has(name)) continue;
 
       const filePath = path.join(currentDir, entry.name);
       try {
         const raw = await fs.readFile(filePath, 'utf8');
-        const skill = parseSkillFile(raw, name, source, filePath, { includePromptTemplate: eagerPromptTemplate });
+        const skill = parseSkillFile(raw, name, source, filePath, {
+          includePromptTemplate: eagerPromptTemplate,
+        });
         if (skill) skills.set(name, skill);
       } catch {
         // Skip unreadable files
@@ -144,7 +157,10 @@ async function scanDir(dir: string, source: SkillSource, options: ScanOptions = 
 export async function loadSkills(workspaceRoot: string): Promise<Map<string, Skill>> {
   const builtin = await scanDir(BUILTIN_DIR, 'builtin', { eagerPromptTemplate: true });
   const claudeCommandsDir = path.join(workspaceRoot, CLAUDE_COMMANDS_DIR);
-  const claude = await scanDir(claudeCommandsDir, 'claude', { recursive: true, eagerPromptTemplate: false });
+  const claude = await scanDir(claudeCommandsDir, 'claude', {
+    recursive: true,
+    eagerPromptTemplate: false,
+  });
   const workspaceDir = path.join(workspaceRoot, WORKSPACE_DIR);
   const workspace = await scanDir(workspaceDir, 'workspace', { eagerPromptTemplate: false });
 
@@ -173,7 +189,9 @@ export async function getSkillPromptTemplate(skill: Skill): Promise<string> {
   }
 
   const raw = await fs.readFile(skill.filePath, 'utf8');
-  const parsed = parseSkillFile(raw, skill.name, skill.source, skill.filePath, { includePromptTemplate: true });
+  const parsed = parseSkillFile(raw, skill.name, skill.source, skill.filePath, {
+    includePromptTemplate: true,
+  });
   if (!parsed || typeof parsed.promptTemplate !== 'string' || !parsed.promptTemplate) {
     throw new Error(`Invalid skill file: ${skill.filePath}`);
   }

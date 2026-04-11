@@ -3,12 +3,12 @@ export interface FileLedgerEntry {
   reads: number;
   writes: number;
   updatedAt: number;
-  relevance: number;  // search hit count — 0 means never appeared in search results
+  relevance: number; // search hit count — 0 means never appeared in search results
 }
 
 export interface ReadBudget {
   charsReadThisTurn: number;
-  turnBudgetChars: number;       // soft cap, surfaced to model
+  turnBudgetChars: number; // soft cap, surfaced to model
   filesReadThisTurn: number;
 }
 
@@ -26,7 +26,9 @@ interface ToolResult {
   meta?: Record<string, unknown> | null;
 }
 
-function getCoverage(meta: Record<string, unknown> | null | undefined): 'partial_read' | 'fully_read' {
+function getCoverage(
+  meta: Record<string, unknown> | null | undefined,
+): 'partial_read' | 'fully_read' {
   if (!meta) return 'partial_read';
   const total = Number(meta.total_lines || 0);
   const start = Number(meta.start_line || 0);
@@ -42,7 +44,11 @@ const DEFAULT_TURN_BUDGET_CHARS = 80_000;
 export function createFileLedger(): FileLedger {
   return {
     files: {},
-    readBudget: { charsReadThisTurn: 0, turnBudgetChars: DEFAULT_TURN_BUDGET_CHARS, filesReadThisTurn: 0 },
+    readBudget: {
+      charsReadThisTurn: 0,
+      turnBudgetChars: DEFAULT_TURN_BUDGET_CHARS,
+      filesReadThisTurn: 0,
+    },
   };
 }
 

@@ -3,15 +3,7 @@
   "$id": "https://push.sh/schemas/push-runtime-event-envelope.schema.json",
   "title": "Push Runtime Event Envelope",
   "type": "object",
-  "required": [
-    "v",
-    "kind",
-    "sessionId",
-    "seq",
-    "ts",
-    "type",
-    "payload"
-  ],
+  "required": ["v", "kind", "sessionId", "seq", "ts", "type", "payload"],
   "properties": {
     "v": {
       "$ref": "./push-runtime-defs.schema.json#/$defs/protocolVersion"
@@ -84,9 +76,7 @@
         }
       },
       "then": {
-        "required": [
-          "runId"
-        ],
+        "required": ["runId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/statusEventPayload"
@@ -103,9 +93,7 @@
         }
       },
       "then": {
-        "required": [
-          "runId"
-        ],
+        "required": ["runId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/thinkingTokenEventPayload"
@@ -122,9 +110,7 @@
         }
       },
       "then": {
-        "required": [
-          "runId"
-        ],
+        "required": ["runId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/assistantTokenEventPayload"
@@ -141,9 +127,7 @@
         }
       },
       "then": {
-        "required": [
-          "runId"
-        ],
+        "required": ["runId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/assistantDoneEventPayload"
@@ -160,9 +144,7 @@
         }
       },
       "then": {
-        "required": [
-          "runId"
-        ],
+        "required": ["runId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/toolCallEventPayload"
@@ -179,9 +161,7 @@
         }
       },
       "then": {
-        "required": [
-          "runId"
-        ],
+        "required": ["runId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/toolResultEventPayload"
@@ -198,9 +178,7 @@
         }
       },
       "then": {
-        "required": [
-          "runId"
-        ],
+        "required": ["runId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/approvalRequiredEventPayload"
@@ -217,9 +195,7 @@
         }
       },
       "then": {
-        "required": [
-          "runId"
-        ],
+        "required": ["runId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/approvalReceivedEventPayload"
@@ -268,9 +244,7 @@
         }
       },
       "then": {
-        "required": [
-          "runId"
-        ],
+        "required": ["runId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/runCompleteEventPayload"
