@@ -67,7 +67,9 @@ export function TestResultsCard({ data }: { data: TestResultsCardData }) {
           </pre>
         </div>
         {data.truncated && (
-          <span className="mt-2 inline-block text-push-xs text-push-status-warning">[output truncated]</span>
+          <span className="mt-2 inline-block text-push-xs text-push-status-warning">
+            [output truncated]
+          </span>
         )}
       </div>
     </div>

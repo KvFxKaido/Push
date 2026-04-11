@@ -61,13 +61,23 @@ export function useCommitPush(
   }, []);
 
   const fetchDiff = useCallback(async () => {
-    setState((s) => ({ ...s, phase: 'fetching-diff', error: null, diff: null, auditVerdict: null }));
+    setState((s) => ({
+      ...s,
+      phase: 'fetching-diff',
+      error: null,
+      diff: null,
+      auditVerdict: null,
+    }));
 
     try {
       const result = await getSandboxDiff(sandboxId);
 
       if (!result.diff) {
-        setState((s) => ({ ...s, phase: 'error', error: 'Nothing to commit — no changes detected.' }));
+        setState((s) => ({
+          ...s,
+          phase: 'error',
+          error: 'Nothing to commit — no changes detected.',
+        }));
         return;
       }
 
@@ -122,25 +132,29 @@ export function useCommitPush(
       let fileContexts: AuditorFileContext[] = [];
       try {
         const filePaths = parseDiffStats(diffText).fileNames;
-        fileContexts = await fetchAuditorFileContexts(
-          filePaths,
-          async (path) => {
-            const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
-            if (result.error) return null;
-            return { content: result.content, truncated: result.truncated };
-          },
-        );
+        fileContexts = await fetchAuditorFileContexts(filePaths, async (path) => {
+          const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
+          if (result.error) return null;
+          return { content: result.content, truncated: result.truncated };
+        });
       } catch {
         // Degrade gracefully — proceed with diff-only
       }
 
-      const auditResult = await runAuditor(diffText, () => {}, {
-        source: 'working-tree-commit',
-        sourceLabel: 'Working tree diff before commit/push',
-      }, undefined, {
-        providerOverride: effectiveAuditorProvider,
-        modelOverride: effectiveAuditorModel,
-      }, fileContexts);
+      const auditResult = await runAuditor(
+        diffText,
+        () => {},
+        {
+          source: 'working-tree-commit',
+          sourceLabel: 'Working tree diff before commit/push',
+        },
+        undefined,
+        {
+          providerOverride: effectiveAuditorProvider,
+          modelOverride: effectiveAuditorModel,
+        },
+        fileContexts,
+      );
 
       setState((s) => ({ ...s, auditVerdict: auditResult.card }));
 

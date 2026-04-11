@@ -323,7 +323,15 @@ export function useChatCheckpoint({
       repoRef.current,
       workspaceSessionIdRef.current,
     ).then(setInterruptedCheckpoint);
-  }, [activeChatId, branchInfoRef, isStreaming, repoRef, runEngineStateRef, sandboxIdRef, workspaceSessionIdRef]);
+  }, [
+    activeChatId,
+    branchInfoRef,
+    isStreaming,
+    repoRef,
+    runEngineStateRef,
+    sandboxIdRef,
+    workspaceSessionIdRef,
+  ]);
 
   // --- Resume callbacks ---
 
@@ -382,7 +390,8 @@ export function useChatCheckpoint({
         const msg: ChatMessage = {
           id: createId(),
           role: 'assistant',
-          content: 'Session was interrupted, but the sandbox is no longer available. Starting fresh.',
+          content:
+            'Session was interrupted, but the sandbox is no longer available. Starting fresh.',
           timestamp: Date.now(),
           status: 'done',
         };
@@ -457,7 +466,9 @@ export function useChatCheckpoint({
       updateAgentStatus(
         {
           active: true,
-          phase: resumeSandboxId ? 'Restoring expired session...' : 'Resuming from saved checkpoint...',
+          phase: resumeSandboxId
+            ? 'Restoring expired session...'
+            : 'Resuming from saved checkpoint...',
         },
         { chatId },
       );

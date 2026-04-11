@@ -33,7 +33,9 @@ export interface WorkerSpan {
  * Format: version-traceId-parentId-flags
  * Example: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
  */
-export function parseTraceparent(header: string | null): { traceId: string; parentSpanId: string } | null {
+export function parseTraceparent(
+  header: string | null,
+): { traceId: string; parentSpanId: string } | null {
   if (!header) return null;
   const parts = header.split('-');
   if (parts.length < 4) return null;
@@ -46,14 +48,14 @@ export function parseTraceparent(header: string | null): { traceId: string; pare
 export function generateSpanId(): string {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** Generate a random 32-character hex trace ID. */
 export function generateTraceId(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -84,7 +86,10 @@ export function buildTraceparent(ctx: WorkerSpanContext): string {
 /**
  * Create a child span context from a parent.
  */
-export function createChildContext(parent: WorkerSpanContext, requestId?: string): WorkerSpanContext {
+export function createChildContext(
+  parent: WorkerSpanContext,
+  requestId?: string,
+): WorkerSpanContext {
   return {
     traceId: parent.traceId,
     spanId: generateSpanId(),

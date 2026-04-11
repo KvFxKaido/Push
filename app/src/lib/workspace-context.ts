@@ -38,7 +38,9 @@ function formatRepoFull(repo: RepoWithActivity): string {
     stats.push(`${repo.activity.open_prs} open PR${repo.activity.open_prs > 1 ? 's' : ''}`);
   }
   if (repo.activity.recent_commits > 0) {
-    stats.push(`${repo.activity.recent_commits} commit${repo.activity.recent_commits > 1 ? 's' : ''} this week`);
+    stats.push(
+      `${repo.activity.recent_commits} commit${repo.activity.recent_commits > 1 ? 's' : ''} this week`,
+    );
   }
   stats.push(`pushed ${relativeTime(repo.pushed_at)}`);
 
@@ -66,13 +68,13 @@ export function buildWorkspaceContext(
     const focused = repos.find((r) => r.id === activeRepo.id);
 
     sections.push(`REPO — ${activeRepo.full_name}:\n`);
-    
+
     // Show branch context
     const branchContext = activeRepo.current_branch || activeRepo.default_branch;
-    const branchIndicator = activeRepo.current_branch 
-      ? " (current: " + activeRepo.current_branch + ")"
-      : " (default: " + activeRepo.default_branch + ")";
-    sections.push("Branch: " + branchContext + branchIndicator + "\n");
+    const branchIndicator = activeRepo.current_branch
+      ? ' (current: ' + activeRepo.current_branch + ')'
+      : ' (default: ' + activeRepo.default_branch + ')';
+    sections.push('Branch: ' + branchContext + branchIndicator + '\n');
 
     if (focused) {
       sections.push(formatRepoFull(focused));
@@ -82,9 +84,7 @@ export function buildWorkspaceContext(
   } else {
     // No active repo — list all with full detail for active ones
     const active = repos.filter((r) => r.activity.has_new_activity).slice(0, 10);
-    const recent = repos
-      .filter((r) => !r.activity.has_new_activity)
-      .slice(0, 5);
+    const recent = repos.filter((r) => !r.activity.has_new_activity).slice(0, 5);
 
     sections.push('WORKSPACE — GitHub repos for this user:\n');
 
@@ -139,13 +139,13 @@ export function buildSessionCapabilityBlock(
 ): string {
   const sandboxEnv = hasSandbox ? getSandboxEnvironment() : null;
   const lifecycleEvents = hasSandbox ? getSandboxLifecycleEvents() : [];
-  const creationEvent = lifecycleEvents.find(e => e.message.includes('Workspace created'));
+  const creationEvent = lifecycleEvents.find((e) => e.message.includes('Workspace created'));
   const ageMs = creationEvent ? Date.now() - creationEvent.timestamp : 0;
   const maxTtlMs = parseDurationToMs(sandboxEnv?.container_ttl);
   const remainingMs = creationEvent && maxTtlMs != null ? Math.max(0, maxTtlMs - ageMs) : null;
   const remainingMinutes = remainingMs != null ? Math.floor(remainingMs / 60_000) : null;
-  
-  const formattedEvents = lifecycleEvents.map(e => {
+
+  const formattedEvents = lifecycleEvents.map((e) => {
     const d = new Date(e.timestamp);
     return `[${d.toISOString()}] ${e.message}`;
   });
@@ -176,5 +176,9 @@ export function buildSessionCapabilityBlock(
     },
   };
 
-  return ['[SESSION_CAPABILITIES]', JSON.stringify(payload, null, 2), '[/SESSION_CAPABILITIES]'].join('\n');
+  return [
+    '[SESSION_CAPABILITIES]',
+    JSON.stringify(payload, null, 2),
+    '[/SESSION_CAPABILITIES]',
+  ].join('\n');
 }

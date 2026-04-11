@@ -23,7 +23,13 @@ import {
   setConversationQueuedFollowUps,
   setConversationVerificationState,
 } from '@/lib/chat-runtime-state';
-import { getActiveProvider, isProviderAvailable, estimateContextTokens, getContextBudget, type ActiveProvider } from '@/lib/orchestrator';
+import {
+  getActiveProvider,
+  isProviderAvailable,
+  estimateContextTokens,
+  getContextBudget,
+  type ActiveProvider,
+} from '@/lib/orchestrator';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { resolveChatProviderSelection } from '@/lib/provider-selection';
 import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
@@ -59,22 +65,14 @@ import { useChatCardActions } from './chat-card-actions';
 import { useChatManagement } from './chat-management';
 import { useChatReplay } from './chat-replay';
 import { useChatCheckpoint } from './useChatCheckpoint';
-import {
-  streamAssistantRound,
-  processAssistantTurn,
-  type SendLoopContext,
-} from './chat-send';
+import { streamAssistantRound, processAssistantTurn, type SendLoopContext } from './chat-send';
 import {
   appendQueuedItem,
   clearQueuedItems,
   shiftQueuedItem,
   type QueuedItemsByChat,
 } from './chat-queue';
-import {
-  mergeRunEventStreams,
-  shouldPersistRunEvent,
-  trimRunEvents,
-} from '@/lib/chat-run-events';
+import { mergeRunEventStreams, shouldPersistRunEvent, trimRunEvents } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
 import {
   IDLE_RUN_STATE,
@@ -101,9 +99,7 @@ import {
   resolveVerificationPolicy,
   type VerificationPolicy,
 } from '@/lib/verification-policy';
-import {
-  hydrateVerificationRuntimeState,
-} from '@/lib/verification-runtime';
+import { hydrateVerificationRuntimeState } from '@/lib/verification-runtime';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
@@ -162,9 +158,8 @@ function summarizeQueuedInputPreview(
 ): string {
   const candidate = displayText?.trim() || text.trim();
   const attachmentCount = attachments?.length ?? 0;
-  const attachmentLabel = attachmentCount > 0
-    ? `${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}`
-    : '';
+  const attachmentLabel =
+    attachmentCount > 0 ? `${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}` : '';
 
   const base = candidate
     ? attachmentLabel
@@ -172,9 +167,7 @@ function summarizeQueuedInputPreview(
       : candidate
     : attachmentLabel || '[no text]';
 
-  return base.length <= maxLength
-    ? base
-    : `${base.slice(0, maxLength - 1).trimEnd()}...`;
+  return base.length <= maxLength ? base : `${base.slice(0, maxLength - 1).trimEnd()}...`;
 }
 
 function buildRuntimeUserMessage(
@@ -189,9 +182,8 @@ function buildRuntimeUserMessage(
     id: createId(),
     role: 'user',
     content: trimmedText,
-    displayContent: trimmedDisplayText && trimmedDisplayText !== trimmedText
-      ? trimmedDisplayText
-      : undefined,
+    displayContent:
+      trimmedDisplayText && trimmedDisplayText !== trimmedText ? trimmedDisplayText : undefined,
     timestamp: Date.now(),
     status: 'done',
     attachments: attachments && attachments.length > 0 ? attachments : undefined,
@@ -246,15 +238,23 @@ export function useChat(
   const initialQueuedFollowUpsByChat = buildQueuedFollowUpsByChat(initialConversations);
 
   // --- Core state ---
-  const [conversations, setConversations] = useState<Record<string, Conversation>>(initialConversations);
-  const [activeChatId, setActiveChatId] = useState<string>(() => loadActiveChatId(initialConversations));
+  const [conversations, setConversations] =
+    useState<Record<string, Conversation>>(initialConversations);
+  const [activeChatId, setActiveChatId] = useState<string>(() =>
+    loadActiveChatId(initialConversations),
+  );
   const [conversationsLoaded, setConversationsLoaded] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ active: false, phase: '' });
-  const [agentEventsByChat, setAgentEventsByChat] = useState<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
-  const [queuedFollowUpsByChat, setQueuedFollowUpsByChat] = useState<QueuedItemsByChat<QueuedFollowUp>>(initialQueuedFollowUpsByChat);
+  const [agentEventsByChat, setAgentEventsByChat] =
+    useState<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
+  const [queuedFollowUpsByChat, setQueuedFollowUpsByChat] = useState<
+    QueuedItemsByChat<QueuedFollowUp>
+  >(initialQueuedFollowUpsByChat);
   const [liveRunEventsByChat, setLiveRunEventsByChat] = useState<Record<string, RunEvent[]>>({});
-  const [journalRunEventsByChat, setJournalRunEventsByChat] = useState<Record<string, RunEvent[]>>({});
+  const [journalRunEventsByChat, setJournalRunEventsByChat] = useState<Record<string, RunEvent[]>>(
+    {},
+  );
   const [pendingSteersByChat, setPendingSteersByChat] = useState<PendingSteersByChat>({});
 
   // --- Persistence refs ---
@@ -273,7 +273,9 @@ export function useChat(
   const processedContentRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
   const cancelStatusTimerRef = useRef<number | null>(null);
-  const queuedFollowUpsRef = useRef<QueuedItemsByChat<QueuedFollowUp>>(initialQueuedFollowUpsByChat);
+  const queuedFollowUpsRef = useRef<QueuedItemsByChat<QueuedFollowUp>>(
+    initialQueuedFollowUpsByChat,
+  );
   queuedFollowUpsRef.current = queuedFollowUpsByChat;
   const pendingSteersByChatRef = useRef<PendingSteersByChat>({});
   pendingSteersByChatRef.current = pendingSteersByChat;
@@ -321,26 +323,26 @@ export function useChat(
 
   useEffect(() => {
     const resolvedBranch = branchInfo?.currentBranch || branchInfo?.defaultBranch;
-    const currentMemoryScope = activeRepoFullName
-      && resolvedBranch
-      ? {
-          repoFullName: activeRepoFullName,
-          branch: resolvedBranch,
-        }
-      : null;
+    const currentMemoryScope =
+      activeRepoFullName && resolvedBranch
+        ? {
+            repoFullName: activeRepoFullName,
+            branch: resolvedBranch,
+          }
+        : null;
     const previousMemoryScope = previousMemoryBranchScopeRef.current;
 
     if (
-      previousMemoryScope
-      && (
-        !currentMemoryScope
-        || previousMemoryScope.repoFullName !== currentMemoryScope.repoFullName
-        || previousMemoryScope.branch !== currentMemoryScope.branch
-      )
+      previousMemoryScope &&
+      (!currentMemoryScope ||
+        previousMemoryScope.repoFullName !== currentMemoryScope.repoFullName ||
+        previousMemoryScope.branch !== currentMemoryScope.branch)
     ) {
       void expireBranchScopedMemory(previousMemoryScope).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[context-memory] expiring branch-scoped memory failed; continuing without cleanup. ${message}`);
+        console.warn(
+          `[context-memory] expiring branch-scoped memory failed; continuing without cleanup. ${message}`,
+        );
       });
     }
 
@@ -348,7 +350,11 @@ export function useChat(
   }, [activeRepoFullName, branchInfo?.currentBranch, branchInfo?.defaultBranch]);
 
   const updateConversations = useCallback(
-    (updater: Record<string, Conversation> | ((prev: Record<string, Conversation>) => Record<string, Conversation>)) => {
+    (
+      updater:
+        | Record<string, Conversation>
+        | ((prev: Record<string, Conversation>) => Record<string, Conversation>),
+    ) => {
       setConversations((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
         conversationsRef.current = next;
@@ -403,7 +409,10 @@ export function useChat(
             saveRetryCountsRef.current.set(id, count + 1);
             dirty.add(id);
           } else {
-            console.warn(`Failed to save conversation ${id} after 3 retries. Dropping update.`, err);
+            console.warn(
+              `Failed to save conversation ${id} after 3 retries. Dropping update.`,
+              err,
+            );
             saveRetryCountsRef.current.delete(id);
           }
         }
@@ -419,7 +428,10 @@ export function useChat(
           saveRetryCountsRef.current.set(id, count + 1);
           deleted.add(id);
         } else {
-          console.warn(`Failed to delete conversation ${id} after 3 retries. Dropping deletion.`, err);
+          console.warn(
+            `Failed to delete conversation ${id} after 3 retries. Dropping deletion.`,
+            err,
+          );
           saveRetryCountsRef.current.delete(id);
         }
       }
@@ -448,53 +460,47 @@ export function useChat(
       isMountedRef.current = false;
     };
   }, []);
-  const appendRunEvent = useCallback((chatId: string, event: RunEventInput) => {
-    const nextEvent: RunEvent = {
-      id: createId(),
-      timestamp: Date.now(),
-      ...event,
-    };
-
-    // Track B: append persisted events to the journal entry
-    if (shouldPersistRunEvent(event) && runJournalEntryRef.current) {
-      runJournalEntryRef.current = appendJournalEvent(
-        runJournalEntryRef.current,
-        nextEvent,
-      );
-      if (event.type === 'subagent.completed' && event.delegationOutcome) {
-        runJournalEntryRef.current = recordDelegationOutcome(
-          runJournalEntryRef.current,
-          event.delegationOutcome,
-        );
-      }
-      void saveJournalEntry(runJournalEntryRef.current);
-    }
-
-    if (!shouldPersistRunEvent(event)) {
-      replaceLiveRunEvents({
-        ...liveRunEventsByChatRef.current,
-        [chatId]: trimRunEvents([
-          ...(liveRunEventsByChatRef.current[chatId] || []),
-          nextEvent,
-        ]),
-      });
-      return;
-    }
-
-    updateConversations((prev) => {
-      const conversation = prev[chatId];
-      if (!conversation) return prev;
-      const runEvents = conversation.runState?.runEvents || [];
-      dirtyConversationIdsRef.current.add(chatId);
-      return {
-        ...prev,
-        [chatId]: setConversationRunEvents(conversation, [
-          ...runEvents,
-          nextEvent,
-        ]),
+  const appendRunEvent = useCallback(
+    (chatId: string, event: RunEventInput) => {
+      const nextEvent: RunEvent = {
+        id: createId(),
+        timestamp: Date.now(),
+        ...event,
       };
-    });
-  }, [replaceLiveRunEvents, updateConversations]);
+
+      // Track B: append persisted events to the journal entry
+      if (shouldPersistRunEvent(event) && runJournalEntryRef.current) {
+        runJournalEntryRef.current = appendJournalEvent(runJournalEntryRef.current, nextEvent);
+        if (event.type === 'subagent.completed' && event.delegationOutcome) {
+          runJournalEntryRef.current = recordDelegationOutcome(
+            runJournalEntryRef.current,
+            event.delegationOutcome,
+          );
+        }
+        void saveJournalEntry(runJournalEntryRef.current);
+      }
+
+      if (!shouldPersistRunEvent(event)) {
+        replaceLiveRunEvents({
+          ...liveRunEventsByChatRef.current,
+          [chatId]: trimRunEvents([...(liveRunEventsByChatRef.current[chatId] || []), nextEvent]),
+        });
+        return;
+      }
+
+      updateConversations((prev) => {
+        const conversation = prev[chatId];
+        if (!conversation) return prev;
+        const runEvents = conversation.runState?.runEvents || [];
+        dirtyConversationIdsRef.current.add(chatId);
+        return {
+          ...prev,
+          [chatId]: setConversationRunEvents(conversation, [...runEvents, nextEvent]),
+        };
+      });
+    },
+    [replaceLiveRunEvents, updateConversations],
+  );
 
   // --- Checkpoint + resume lifecycle ---
   const {
@@ -527,75 +533,93 @@ export function useChat(
     activeChatId,
   });
 
-  const getVerificationPolicyForChat = useCallback((chatId: string | null | undefined): VerificationPolicy => {
-    if (!chatId) return getDefaultVerificationPolicy();
-    return resolveVerificationPolicy(conversationsRef.current[chatId]?.verificationPolicy);
-  }, []);
+  const getVerificationPolicyForChat = useCallback(
+    (chatId: string | null | undefined): VerificationPolicy => {
+      if (!chatId) return getDefaultVerificationPolicy();
+      return resolveVerificationPolicy(conversationsRef.current[chatId]?.verificationPolicy);
+    },
+    [],
+  );
 
   const verificationStateByChatRef = useRef<Record<string, VerificationRuntimeState>>({});
 
-  const getVerificationStateForChat = useCallback((chatId: string | null | undefined): VerificationRuntimeState => {
-    const policy = getVerificationPolicyForChat(chatId);
-    const key = chatId || '';
-    const cached = verificationStateByChatRef.current[key];
-    const persisted = chatId
-      ? conversationsRef.current[chatId]?.runState?.verificationState
-      : undefined;
-    const hydrated = hydrateVerificationRuntimeState(policy, cached ?? persisted);
-    verificationStateByChatRef.current[key] = hydrated;
-    return hydrated;
-  }, [getVerificationPolicyForChat]);
+  const getVerificationStateForChat = useCallback(
+    (chatId: string | null | undefined): VerificationRuntimeState => {
+      const policy = getVerificationPolicyForChat(chatId);
+      const key = chatId || '';
+      const cached = verificationStateByChatRef.current[key];
+      const persisted = chatId
+        ? conversationsRef.current[chatId]?.runState?.verificationState
+        : undefined;
+      const hydrated = hydrateVerificationRuntimeState(policy, cached ?? persisted);
+      verificationStateByChatRef.current[key] = hydrated;
+      return hydrated;
+    },
+    [getVerificationPolicyForChat],
+  );
 
-  const applyWorkspaceContext = useCallback((ctx: WorkspaceContext | null, chatId: string | null | undefined) => {
-    if (!ctx) {
-      workspaceContextRef.current = null;
-      return;
-    }
-    workspaceContextRef.current = {
-      ...ctx,
-      verificationPolicy: getVerificationPolicyForChat(chatId),
-    };
-  }, [getVerificationPolicyForChat]);
-
-  const persistRunJournal = useCallback((entry: RunJournalEntry | null, options?: { prune?: boolean }) => {
-    if (!entry) return;
-    void saveJournalEntry(entry);
-    if (options?.prune) {
-      void pruneJournalEntries();
-    }
-  }, []);
-
-  const persistVerificationState = useCallback((chatId: string, verificationState: VerificationRuntimeState) => {
-    verificationStateByChatRef.current[chatId] = verificationState;
-
-    if (runJournalEntryRef.current?.chatId === chatId) {
-      runJournalEntryRef.current = updateJournalVerificationState(
-        runJournalEntryRef.current,
-        verificationState,
-      );
-      persistRunJournal(runJournalEntryRef.current);
-    }
-
-    updateConversations((prev) => {
-      const conversation = prev[chatId];
-      if (!conversation) return prev;
-      dirtyConversationIdsRef.current.add(chatId);
-      return {
-        ...prev,
-        [chatId]: setConversationVerificationState(conversation, verificationState),
+  const applyWorkspaceContext = useCallback(
+    (ctx: WorkspaceContext | null, chatId: string | null | undefined) => {
+      if (!ctx) {
+        workspaceContextRef.current = null;
+        return;
+      }
+      workspaceContextRef.current = {
+        ...ctx,
+        verificationPolicy: getVerificationPolicyForChat(chatId),
       };
-    });
-  }, [persistRunJournal, updateConversations]);
+    },
+    [getVerificationPolicyForChat],
+  );
 
-  const updateVerificationStateForChat = useCallback((
-    chatId: string,
-    updater: (state: VerificationRuntimeState) => VerificationRuntimeState,
-  ): VerificationRuntimeState => {
-    const current = getVerificationStateForChat(chatId);
-    const next = updater(current);
-    persistVerificationState(chatId, next);
-    return next;
-  }, [getVerificationStateForChat, persistVerificationState]);
+  const persistRunJournal = useCallback(
+    (entry: RunJournalEntry | null, options?: { prune?: boolean }) => {
+      if (!entry) return;
+      void saveJournalEntry(entry);
+      if (options?.prune) {
+        void pruneJournalEntries();
+      }
+    },
+    [],
+  );
+
+  const persistVerificationState = useCallback(
+    (chatId: string, verificationState: VerificationRuntimeState) => {
+      verificationStateByChatRef.current[chatId] = verificationState;
+
+      if (runJournalEntryRef.current?.chatId === chatId) {
+        runJournalEntryRef.current = updateJournalVerificationState(
+          runJournalEntryRef.current,
+          verificationState,
+        );
+        persistRunJournal(runJournalEntryRef.current);
+      }
+
+      updateConversations((prev) => {
+        const conversation = prev[chatId];
+        if (!conversation) return prev;
+        dirtyConversationIdsRef.current.add(chatId);
+        return {
+          ...prev,
+          [chatId]: setConversationVerificationState(conversation, verificationState),
+        };
+      });
+    },
+    [persistRunJournal, updateConversations],
+  );
+
+  const updateVerificationStateForChat = useCallback(
+    (
+      chatId: string,
+      updater: (state: VerificationRuntimeState) => VerificationRuntimeState,
+    ): VerificationRuntimeState => {
+      const current = getVerificationStateForChat(chatId);
+      const next = updater(current);
+      persistVerificationState(chatId, next);
+      return next;
+    },
+    [getVerificationStateForChat, persistVerificationState],
+  );
 
   /**
    * Emit a run engine event — the single mutation path for run state.
@@ -606,85 +630,92 @@ export function useChat(
    *
    * Track B: also maintains the run journal entry for lifecycle persistence.
    */
-  const emitRunEngineEvent = useCallback((event: RunEngineEvent) => {
-    runEngineStateRef.current = runEngineReducer(runEngineStateRef.current, event);
+  const emitRunEngineEvent = useCallback(
+    (event: RunEngineEvent) => {
+      runEngineStateRef.current = runEngineReducer(runEngineStateRef.current, event);
 
-    // --- Track B: journal lifecycle ---
-    const engineState = runEngineStateRef.current;
-    switch (event.type) {
-      case 'RUN_STARTED':
-        runJournalEntryRef.current = createJournalEntry({
-          runId: event.runId,
-          chatId: event.chatId,
-          provider: event.provider,
-          model: event.model,
-          baseMessageCount: event.baseMessageCount,
-          startedAt: event.timestamp,
-        });
-        runJournalEntryRef.current = updateJournalVerificationState(
-          runJournalEntryRef.current,
-          getVerificationStateForChat(event.chatId),
-        );
-        persistRunJournal(runJournalEntryRef.current);
-        break;
-
-      case 'ROUND_STARTED':
-        if (runJournalEntryRef.current) {
-          runJournalEntryRef.current = updateJournalPhase(
+      // --- Track B: journal lifecycle ---
+      const engineState = runEngineStateRef.current;
+      switch (event.type) {
+        case 'RUN_STARTED':
+          runJournalEntryRef.current = createJournalEntry({
+            runId: event.runId,
+            chatId: event.chatId,
+            provider: event.provider,
+            model: event.model,
+            baseMessageCount: event.baseMessageCount,
+            startedAt: event.timestamp,
+          });
+          runJournalEntryRef.current = updateJournalVerificationState(
             runJournalEntryRef.current,
-            engineState.phase,
-            event.round,
+            getVerificationStateForChat(event.chatId),
           );
           persistRunJournal(runJournalEntryRef.current);
-        }
-        break;
+          break;
 
-      case 'LOOP_COMPLETED':
-        if (runJournalEntryRef.current) {
-          runJournalEntryRef.current = finalizeJournalEntry(
-            runJournalEntryRef.current, 'completed',
-          );
-          persistRunJournal(runJournalEntryRef.current, { prune: true });
-          runJournalEntryRef.current = null;
-        }
-        break;
+        case 'ROUND_STARTED':
+          if (runJournalEntryRef.current) {
+            runJournalEntryRef.current = updateJournalPhase(
+              runJournalEntryRef.current,
+              engineState.phase,
+              event.round,
+            );
+            persistRunJournal(runJournalEntryRef.current);
+          }
+          break;
 
-      case 'LOOP_ABORTED':
-        if (runJournalEntryRef.current) {
-          runJournalEntryRef.current = finalizeJournalEntry(
-            runJournalEntryRef.current, 'aborted',
-          );
-          persistRunJournal(runJournalEntryRef.current, { prune: true });
-          runJournalEntryRef.current = null;
-        }
-        break;
+        case 'LOOP_COMPLETED':
+          if (runJournalEntryRef.current) {
+            runJournalEntryRef.current = finalizeJournalEntry(
+              runJournalEntryRef.current,
+              'completed',
+            );
+            persistRunJournal(runJournalEntryRef.current, { prune: true });
+            runJournalEntryRef.current = null;
+          }
+          break;
 
-      case 'LOOP_FAILED':
-        if (runJournalEntryRef.current) {
-          runJournalEntryRef.current = finalizeJournalEntry(
-            runJournalEntryRef.current, 'failed', event.reason,
-          );
-          persistRunJournal(runJournalEntryRef.current, { prune: true });
-          runJournalEntryRef.current = null;
-        }
-        break;
+        case 'LOOP_ABORTED':
+          if (runJournalEntryRef.current) {
+            runJournalEntryRef.current = finalizeJournalEntry(
+              runJournalEntryRef.current,
+              'aborted',
+            );
+            persistRunJournal(runJournalEntryRef.current, { prune: true });
+            runJournalEntryRef.current = null;
+          }
+          break;
 
-      case 'ACCUMULATED_UPDATED':
-        break;
+        case 'LOOP_FAILED':
+          if (runJournalEntryRef.current) {
+            runJournalEntryRef.current = finalizeJournalEntry(
+              runJournalEntryRef.current,
+              'failed',
+              event.reason,
+            );
+            persistRunJournal(runJournalEntryRef.current, { prune: true });
+            runJournalEntryRef.current = null;
+          }
+          break;
 
-      default:
-        // Phase updates for delegation, tools, etc.
-        if (runJournalEntryRef.current) {
-          runJournalEntryRef.current = updateJournalPhase(
-            runJournalEntryRef.current,
-            engineState.phase,
-            engineState.round,
-          );
-          persistRunJournal(runJournalEntryRef.current);
-        }
-        break;
-    }
-  }, [getVerificationStateForChat, persistRunJournal]);
+        case 'ACCUMULATED_UPDATED':
+          break;
+
+        default:
+          // Phase updates for delegation, tools, etc.
+          if (runJournalEntryRef.current) {
+            runJournalEntryRef.current = updateJournalPhase(
+              runJournalEntryRef.current,
+              engineState.phase,
+              engineState.round,
+            );
+            persistRunJournal(runJournalEntryRef.current);
+          }
+          break;
+      }
+    },
+    [getVerificationStateForChat, persistRunJournal],
+  );
 
   // --- CI poller ---
   const { ciStatus } = useCIPoller(activeChatId, activeRepoFullName, branchInfo);
@@ -739,19 +770,17 @@ export function useChat(
   }, [activeChatId, activePersistedRunEventCount]);
 
   // --- Derived state ---
-  const messages = useMemo(
-    () => activeConversation?.messages ?? [],
-    [activeConversation],
-  );
+  const messages = useMemo(() => activeConversation?.messages ?? [], [activeConversation]);
   const agentEvents = useMemo(
     () => agentEventsByChat[activeChatId] ?? [],
     [agentEventsByChat, activeChatId],
   );
   const runEvents = useMemo<RunEvent[]>(
-    () => mergeRunEventStreams(
-      activeConversation?.runState?.runEvents ?? journalRunEventsByChat[activeChatId] ?? [],
-      liveRunEventsByChat[activeChatId] ?? [],
-    ),
+    () =>
+      mergeRunEventStreams(
+        activeConversation?.runState?.runEvents ?? journalRunEventsByChat[activeChatId] ?? [],
+        liveRunEventsByChat[activeChatId] ?? [],
+      ),
     [activeConversation, activeChatId, journalRunEventsByChat, liveRunEventsByChat],
   );
   const conversationProvider = activeConversation?.provider;
@@ -761,7 +790,8 @@ export function useChat(
   );
 
   const contextUsage = useMemo(() => {
-    const contextProvider = (conversationProvider as ActiveProvider | undefined) || getActiveProvider();
+    const contextProvider =
+      (conversationProvider as ActiveProvider | undefined) || getActiveProvider();
     const contextModel = conversationModel || getModelNameForProvider(contextProvider);
     const budget = getContextBudget(contextProvider, contextModel);
     const used = estimateContextTokens(messages);
@@ -818,7 +848,9 @@ export function useChat(
         });
         setActiveChatId(id);
         saveActiveChatId(id);
-        setTimeout(() => { autoCreateRef.current = false; }, 0);
+        setTimeout(() => {
+          autoCreateRef.current = false;
+        }, 0);
       }
     } else if (sortedChatIds.length > 0 && !sortedChatIds.includes(activeChatId)) {
       setActiveChatId(sortedChatIds[0]);
@@ -827,11 +859,14 @@ export function useChat(
   }, [sortedChatIds, activeChatId, activeRepoFullName, updateConversations]);
 
   // --- Workspace context / sandbox setters ---
-  const setWorkspaceContext = useCallback((ctx: WorkspaceContext | null) => {
-    baseWorkspaceContextRef.current = ctx;
-    workspaceModeRef.current = ctx?.mode ?? null;
-    applyWorkspaceContext(ctx, activeChatIdRef.current);
-  }, [applyWorkspaceContext]);
+  const setWorkspaceContext = useCallback(
+    (ctx: WorkspaceContext | null) => {
+      baseWorkspaceContextRef.current = ctx;
+      workspaceModeRef.current = ctx?.mode ?? null;
+      applyWorkspaceContext(ctx, activeChatIdRef.current);
+    },
+    [applyWorkspaceContext],
+  );
 
   /** Synchronous mode setter — call during render to avoid stale ref between workspace transitions. */
   const setWorkspaceMode = useCallback((mode: WorkspaceMode | null) => {
@@ -866,89 +901,108 @@ export function useChat(
     instructionFilenameRef.current = filename;
   }, []);
 
-  const persistQueuedFollowUps = useCallback((chatId: string, queuedFollowUps: QueuedFollowUp[]) => {
-    updateConversations((prev) => {
-      const conversation = prev[chatId];
-      if (!conversation) return prev;
-      dirtyConversationIdsRef.current.add(chatId);
-      return {
-        ...prev,
-        [chatId]: setConversationQueuedFollowUps(conversation, queuedFollowUps),
-      };
-    });
-  }, [updateConversations]);
+  const persistQueuedFollowUps = useCallback(
+    (chatId: string, queuedFollowUps: QueuedFollowUp[]) => {
+      updateConversations((prev) => {
+        const conversation = prev[chatId];
+        if (!conversation) return prev;
+        dirtyConversationIdsRef.current.add(chatId);
+        return {
+          ...prev,
+          [chatId]: setConversationQueuedFollowUps(conversation, queuedFollowUps),
+        };
+      });
+    },
+    [updateConversations],
+  );
 
-  const replaceQueuedFollowUps = useCallback((
-    next: QueuedItemsByChat<QueuedFollowUp>,
-    options?: { persist?: boolean },
-  ) => {
-    const previous = queuedFollowUpsRef.current;
-    queuedFollowUpsRef.current = next;
-    if (isMountedRef.current) {
-      setQueuedFollowUpsByChat(next);
-    }
-    if (!options?.persist) return;
+  const replaceQueuedFollowUps = useCallback(
+    (next: QueuedItemsByChat<QueuedFollowUp>, options?: { persist?: boolean }) => {
+      const previous = queuedFollowUpsRef.current;
+      queuedFollowUpsRef.current = next;
+      if (isMountedRef.current) {
+        setQueuedFollowUpsByChat(next);
+      }
+      if (!options?.persist) return;
 
-    const changedChatIds = new Set([
-      ...Object.keys(previous),
-      ...Object.keys(next),
-    ]);
+      const changedChatIds = new Set([...Object.keys(previous), ...Object.keys(next)]);
 
-    changedChatIds.forEach((chatId) => {
-      if (previous[chatId] === next[chatId]) return;
-      persistQueuedFollowUps(chatId, next[chatId] || []);
-    });
-  }, [persistQueuedFollowUps]);
+      changedChatIds.forEach((chatId) => {
+        if (previous[chatId] === next[chatId]) return;
+        persistQueuedFollowUps(chatId, next[chatId] || []);
+      });
+    },
+    [persistQueuedFollowUps],
+  );
 
-  const enqueueQueuedFollowUp = useCallback((chatId: string, followUp: QueuedFollowUp) => {
-    replaceQueuedFollowUps(
-      appendQueuedItem(queuedFollowUpsRef.current, chatId, followUp),
-      { persist: true },
-    );
-  }, [replaceQueuedFollowUps]);
+  const enqueueQueuedFollowUp = useCallback(
+    (chatId: string, followUp: QueuedFollowUp) => {
+      replaceQueuedFollowUps(appendQueuedItem(queuedFollowUpsRef.current, chatId, followUp), {
+        persist: true,
+      });
+    },
+    [replaceQueuedFollowUps],
+  );
 
-  const dequeueQueuedFollowUp = useCallback((chatId: string): QueuedFollowUp | null => {
-    const { next, item } = shiftQueuedItem(queuedFollowUpsRef.current, chatId);
-    if (!item) return null;
-    replaceQueuedFollowUps(next, { persist: true });
-    return item;
-  }, [replaceQueuedFollowUps]);
+  const dequeueQueuedFollowUp = useCallback(
+    (chatId: string): QueuedFollowUp | null => {
+      const { next, item } = shiftQueuedItem(queuedFollowUpsRef.current, chatId);
+      if (!item) return null;
+      replaceQueuedFollowUps(next, { persist: true });
+      return item;
+    },
+    [replaceQueuedFollowUps],
+  );
 
-  const clearQueuedFollowUps = useCallback((chatId: string) => {
-    replaceQueuedFollowUps(
-      clearQueuedItems(queuedFollowUpsRef.current, chatId),
-      { persist: true },
-    );
-  }, [replaceQueuedFollowUps]);
+  const clearQueuedFollowUps = useCallback(
+    (chatId: string) => {
+      replaceQueuedFollowUps(clearQueuedItems(queuedFollowUpsRef.current, chatId), {
+        persist: true,
+      });
+    },
+    [replaceQueuedFollowUps],
+  );
 
-  const setPendingSteer = useCallback((chatId: string, steer: PendingSteerRequest) => {
-    replacePendingSteers({
-      ...pendingSteersByChatRef.current,
-      [chatId]: steer,
-    });
-  }, [replacePendingSteers]);
+  const setPendingSteer = useCallback(
+    (chatId: string, steer: PendingSteerRequest) => {
+      replacePendingSteers({
+        ...pendingSteersByChatRef.current,
+        [chatId]: steer,
+      });
+    },
+    [replacePendingSteers],
+  );
 
-  const consumePendingSteer = useCallback((chatId: string): PendingSteerRequest | null => {
-    const current = pendingSteersByChatRef.current[chatId];
-    if (!current) return null;
-    const next = { ...pendingSteersByChatRef.current };
-    delete next[chatId];
-    replacePendingSteers(next);
-    return current;
-  }, [replacePendingSteers]);
+  const consumePendingSteer = useCallback(
+    (chatId: string): PendingSteerRequest | null => {
+      const current = pendingSteersByChatRef.current[chatId];
+      if (!current) return null;
+      const next = { ...pendingSteersByChatRef.current };
+      delete next[chatId];
+      replacePendingSteers(next);
+      return current;
+    },
+    [replacePendingSteers],
+  );
 
-  const clearPendingSteer = useCallback((chatId: string): boolean => {
-    if (!pendingSteersByChatRef.current[chatId]) return false;
-    const next = { ...pendingSteersByChatRef.current };
-    delete next[chatId];
-    replacePendingSteers(next);
-    return true;
-  }, [replacePendingSteers]);
+  const clearPendingSteer = useCallback(
+    (chatId: string): boolean => {
+      if (!pendingSteersByChatRef.current[chatId]) return false;
+      const next = { ...pendingSteersByChatRef.current };
+      delete next[chatId];
+      replacePendingSteers(next);
+      return true;
+    },
+    [replacePendingSteers],
+  );
 
-  const hydratePersistedRunState = useCallback((convs: Record<string, Conversation>) => {
-    replaceAgentEvents(buildAgentEventsByChat(convs));
-    replaceQueuedFollowUps(buildQueuedFollowUpsByChat(convs));
-  }, [replaceAgentEvents, replaceQueuedFollowUps]);
+  const hydratePersistedRunState = useCallback(
+    (convs: Record<string, Conversation>) => {
+      replaceAgentEvents(buildAgentEventsByChat(convs));
+      replaceQueuedFollowUps(buildQueuedFollowUpsByChat(convs));
+    },
+    [replaceAgentEvents, replaceQueuedFollowUps],
+  );
 
   // --- IndexedDB migration ---
   useEffect(() => {
@@ -966,29 +1020,32 @@ export function useChat(
   }, [hydratePersistedRunState, updateConversations]);
 
   // --- Abort stream ---
-  const abortStream = useCallback((options?: AbortStreamOptions) => {
-    if (options?.clearQueuedFollowUps) {
-      const runningChatId = runEngineStateRef.current.chatId || activeChatIdRef.current;
-      if (runningChatId) {
-        const hadQueuedFollowUps = (queuedFollowUpsRef.current[runningChatId]?.length ?? 0) > 0;
-        clearQueuedFollowUps(runningChatId);
-        if (hadQueuedFollowUps) {
-          emitRunEngineEvent({ type: 'FOLLOW_UP_QUEUE_CLEARED', timestamp: Date.now() });
+  const abortStream = useCallback(
+    (options?: AbortStreamOptions) => {
+      if (options?.clearQueuedFollowUps) {
+        const runningChatId = runEngineStateRef.current.chatId || activeChatIdRef.current;
+        if (runningChatId) {
+          const hadQueuedFollowUps = (queuedFollowUpsRef.current[runningChatId]?.length ?? 0) > 0;
+          clearQueuedFollowUps(runningChatId);
+          if (hadQueuedFollowUps) {
+            emitRunEngineEvent({ type: 'FOLLOW_UP_QUEUE_CLEARED', timestamp: Date.now() });
+          }
         }
       }
-    }
-    abortRef.current = true;
-    abortControllerRef.current?.abort();
-    setIsStreaming(false);
-    if (cancelStatusTimerRef.current !== null) {
-      window.clearTimeout(cancelStatusTimerRef.current);
-    }
-    updateAgentStatus({ active: true, phase: 'Cancelled' });
-    cancelStatusTimerRef.current = window.setTimeout(() => {
-      updateAgentStatus({ active: false, phase: '' });
-      cancelStatusTimerRef.current = null;
-    }, 1200);
-  }, [clearQueuedFollowUps, emitRunEngineEvent, updateAgentStatus]);
+      abortRef.current = true;
+      abortControllerRef.current?.abort();
+      setIsStreaming(false);
+      if (cancelStatusTimerRef.current !== null) {
+        window.clearTimeout(cancelStatusTimerRef.current);
+      }
+      updateAgentStatus({ active: true, phase: 'Cancelled' });
+      cancelStatusTimerRef.current = window.setTimeout(() => {
+        updateAgentStatus({ active: false, phase: '' });
+        cancelStatusTimerRef.current = null;
+      }, 1200);
+    },
+    [clearQueuedFollowUps, emitRunEngineEvent, updateAgentStatus],
+  );
 
   useEffect(() => {
     return () => {
@@ -1077,7 +1134,11 @@ export function useChat(
         }
 
         const queuePosition = (queuedFollowUpsRef.current[runningChatId]?.length ?? 0) + 1;
-        const queuedFollowUp = toQueuedFollowUp(trimmedText, hasAttachments ? attachments : undefined, options);
+        const queuedFollowUp = toQueuedFollowUp(
+          trimmedText,
+          hasAttachments ? attachments : undefined,
+          options,
+        );
         enqueueQueuedFollowUp(runningChatId, queuedFollowUp);
         emitRunEngineEvent({
           type: 'FOLLOW_UP_ENQUEUED',
@@ -1101,10 +1162,12 @@ export function useChat(
 
       // --- Prepare context ---
       const displayText = options?.displayText?.trim();
-      const userMessage: ChatMessage = options?.existingUserMessage
-        ?? buildRuntimeUserMessage(trimmedText, attachments, displayText);
+      const userMessage: ChatMessage =
+        options?.existingUserMessage ??
+        buildRuntimeUserMessage(trimmedText, attachments, displayText);
 
-      const currentMessages = options?.baseMessages ?? (conversationsRef.current[chatId]?.messages || []);
+      const currentMessages =
+        options?.baseMessages ?? (conversationsRef.current[chatId]?.messages || []);
       const updatedWithUser = options?.existingUserMessage
         ? currentMessages
         : [...currentMessages, userMessage];
@@ -1229,7 +1292,11 @@ export function useChat(
         });
         return;
       }
-      emitRunEngineEvent({ type: 'TAB_LOCK_ACQUIRED', timestamp: Date.now(), tabLockId: acquiredTabId });
+      emitRunEngineEvent({
+        type: 'TAB_LOCK_ACQUIRED',
+        timestamp: Date.now(),
+        tabLockId: acquiredTabId,
+      });
       if (tabLockIntervalRef.current) clearInterval(tabLockIntervalRef.current);
       tabLockIntervalRef.current = setInterval(
         () => heartbeatRunTabLock(chatId, acquiredTabId),
@@ -1381,13 +1448,15 @@ export function useChat(
             apiMessages = [
               ...apiMessages,
               ...(shouldKeepAssistantDraft
-                ? [{
-                    id: createId(),
-                    role: 'assistant' as const,
-                    content: accumulated,
-                    timestamp: Date.now(),
-                    status: 'done' as const,
-                  }]
+                ? [
+                    {
+                      id: createId(),
+                      role: 'assistant' as const,
+                      content: accumulated,
+                      timestamp: Date.now(),
+                      status: 'done' as const,
+                    },
+                  ]
                 : []),
               steerUserMessage,
             ];
@@ -1454,11 +1523,12 @@ export function useChat(
             continue;
           }
 
-          const turnOutcome = turnResult.loopAction === 'continue'
-            ? 'continued'
-            : turnResult.loopCompletedNormally
-              ? 'completed'
-              : 'aborted';
+          const turnOutcome =
+            turnResult.loopAction === 'continue'
+              ? 'continued'
+              : turnResult.loopCompletedNormally
+                ? 'completed'
+                : 'aborted';
           if (turnResult.loopCompletedNormally) loopCompletedNormally = true;
           appendRunEvent(chatId, {
             type: 'assistant.turn_end',
@@ -1482,9 +1552,9 @@ export function useChat(
 
         const currentRunPhase = runEngineStateRef.current.phase;
         const runAlreadyTerminal =
-          currentRunPhase === 'completed'
-          || currentRunPhase === 'aborted'
-          || currentRunPhase === 'failed';
+          currentRunPhase === 'completed' ||
+          currentRunPhase === 'aborted' ||
+          currentRunPhase === 'failed';
         if (!runAlreadyTerminal) {
           emitRunEngineEvent({
             type: loopCompletedNormally ? 'LOOP_COMPLETED' : 'LOOP_ABORTED',
@@ -1576,22 +1646,23 @@ export function useChat(
   });
 
   // --- Card actions ---
-  const { injectAssistantCardMessage, handleCardAction } =
-    useChatCardActions({
-      setConversations: updateConversations,
-      dirtyConversationIdsRef,
-      activeChatId,
-      sandboxIdRef,
-      isMainProtectedRef,
-      branchInfoRef,
-      repoRef,
-      lockedProvider,
-      lockedModel,
-      updateAgentStatus,
-      sendMessageRef: sendMessageRef as import('react').MutableRefObject<((text: string) => Promise<void>) | null>,
-      isStreaming,
-      messages,
-    });
+  const { injectAssistantCardMessage, handleCardAction } = useChatCardActions({
+    setConversations: updateConversations,
+    dirtyConversationIdsRef,
+    activeChatId,
+    sandboxIdRef,
+    isMainProtectedRef,
+    branchInfoRef,
+    repoRef,
+    lockedProvider,
+    lockedModel,
+    updateAgentStatus,
+    sendMessageRef: sendMessageRef as import('react').MutableRefObject<
+      ((text: string) => Promise<void>) | null
+    >,
+    isStreaming,
+    messages,
+  });
 
   // ---------------------------------------------------------------------------
   // Return

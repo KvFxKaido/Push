@@ -120,10 +120,7 @@ export function createJournalEntry(params: {
  * Append a persisted event to the journal entry.
  * Trims oldest events if the entry exceeds MAX_EVENTS_PER_ENTRY.
  */
-export function appendJournalEvent(
-  entry: RunJournalEntry,
-  event: RunEvent,
-): RunJournalEntry {
+export function appendJournalEvent(entry: RunJournalEntry, event: RunEvent): RunJournalEntry {
   const events = [...entry.events, event];
   if (events.length > MAX_EVENTS_PER_ENTRY) {
     events.splice(0, events.length - MAX_EVENTS_PER_ENTRY);
@@ -155,9 +152,7 @@ export function finalizeJournalEntry(
   failureReason?: string,
 ): RunJournalEntry {
   const terminalPhase: RunEnginePhase =
-    outcome === 'completed' ? 'completed'
-      : outcome === 'aborted' ? 'aborted'
-        : 'failed';
+    outcome === 'completed' ? 'completed' : outcome === 'aborted' ? 'aborted' : 'failed';
 
   return {
     ...entry,
@@ -228,16 +223,10 @@ export async function loadJournalEntry(runId: string): Promise<RunJournalEntry |
  */
 export async function loadJournalEntriesForChat(chatId: string): Promise<RunJournalEntry[]> {
   try {
-    return await withStore<RunJournalEntry[]>(
-      STORE.runJournal,
-      'readonly',
-      (store) => {
-        const index = store.index('chatId');
-        return index.getAll(chatId);
-      },
-    ).then((entries) =>
-      entries.sort((a, b) => b.startedAt - a.startedAt),
-    );
+    return await withStore<RunJournalEntry[]>(STORE.runJournal, 'readonly', (store) => {
+      const index = store.index('chatId');
+      return index.getAll(chatId);
+    }).then((entries) => entries.sort((a, b) => b.startedAt - a.startedAt));
   } catch (err) {
     console.warn('[RunJournal] Failed to load entries for chat', chatId, err);
     return [];
@@ -250,10 +239,8 @@ export async function loadJournalEntriesForChat(chatId: string): Promise<RunJour
  */
 export async function pruneJournalEntries(): Promise<number> {
   try {
-    const allEntries = await withStore<RunJournalEntry[]>(
-      STORE.runJournal,
-      'readonly',
-      (store) => store.getAll(),
+    const allEntries = await withStore<RunJournalEntry[]>(STORE.runJournal, 'readonly', (store) =>
+      store.getAll(),
     );
 
     if (allEntries.length <= MAX_JOURNAL_ENTRIES) return 0;
@@ -262,17 +249,13 @@ export async function pruneJournalEntries(): Promise<number> {
     allEntries.sort((a, b) => a.startedAt - b.startedAt);
     const toRemove = allEntries.slice(0, allEntries.length - MAX_JOURNAL_ENTRIES);
 
-    await withStore<IDBRequest<number>>(
-      STORE.runJournal,
-      'readwrite',
-      (store) => {
-        for (const entry of toRemove) {
-          store.delete(entry.runId);
-        }
-        // Return a dummy request — the transaction completion is what matters
-        return store.count();
-      },
-    );
+    await withStore<IDBRequest<number>>(STORE.runJournal, 'readwrite', (store) => {
+      for (const entry of toRemove) {
+        store.delete(entry.runId);
+      }
+      // Return a dummy request — the transaction completion is what matters
+      return store.count();
+    });
 
     return toRemove.length;
   } catch (err) {

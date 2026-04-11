@@ -21,14 +21,30 @@ import type {
 import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './tool-hooks';
 import type { ApprovalGateRegistry } from './approval-gates';
 import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
-import { detectSandboxToolCall, executeSandboxToolCall, getUnrecognizedSandboxToolName, type SandboxToolCall } from './sandbox-tools';
+import {
+  detectSandboxToolCall,
+  executeSandboxToolCall,
+  getUnrecognizedSandboxToolName,
+  type SandboxToolCall,
+} from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
-import { detectWebSearchToolCall, executeWebSearch, type WebSearchToolCall } from './web-search-tools';
+import {
+  detectWebSearchToolCall,
+  executeWebSearch,
+  type WebSearchToolCall,
+} from './web-search-tools';
 import { detectAskUserToolCall, type AskUserToolCall } from './ask-user-tools';
 import { getActiveProvider, type ActiveProvider } from './orchestrator';
 import { execInSandbox } from './sandbox-client';
 import { ALL_CAPABILITIES, type Capability } from './capabilities';
-import { asRecord, detectToolFromText, extractBareToolJsonObjects, repairToolJson, detectTruncatedToolCall, diagnoseJsonSyntaxError } from './utils';
+import {
+  asRecord,
+  detectToolFromText,
+  extractBareToolJsonObjects,
+  repairToolJson,
+  detectTruncatedToolCall,
+  diagnoseJsonSyntaxError,
+} from './utils';
 import {
   escapeToolNameForRegex,
   getToolArgHint,
@@ -212,7 +228,8 @@ function stableJsonStringify(value: unknown): string {
 
 function normalizeJsonValue(value: unknown): unknown {
   if (value === null) return null;
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
+    return value;
   if (Array.isArray(value)) {
     return value.map((item) => {
       const normalized = normalizeJsonValue(item);
@@ -237,7 +254,13 @@ function normalizeJsonValue(value: unknown): unknown {
 export type AnyToolCall =
   | { source: 'github'; call: ToolCall }
   | { source: 'sandbox'; call: SandboxToolCall }
-  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: CoderDelegationArgs } | { tool: 'delegate_explorer'; args: ExplorerDelegationArgs } | { tool: 'plan_tasks'; args: TaskGraphArgs } }
+  | {
+      source: 'delegate';
+      call:
+        | { tool: 'delegate_coder'; args: CoderDelegationArgs }
+        | { tool: 'delegate_explorer'; args: ExplorerDelegationArgs }
+        | { tool: 'plan_tasks'; args: TaskGraphArgs };
+    }
   | { source: 'scratchpad'; call: ScratchpadToolCall }
   | { source: 'web-search'; call: WebSearchToolCall }
   | { source: 'ask-user'; call: AskUserToolCall };
@@ -358,149 +381,160 @@ export async function executeAnyToolCall(
 ): Promise<ToolExecutionResult> {
   const toolName = getHookToolName(toolCall);
   const toolArgs = getHookToolArgs(toolCall);
-  const hookContext: ToolHookContext = { sandboxId, allowedRepo, activeProvider, activeModel, capabilityLedger };
+  const hookContext: ToolHookContext = {
+    sandboxId,
+    allowedRepo,
+    activeProvider,
+    activeModel,
+    capabilityLedger,
+  };
 
   try {
-  // --- Pre-hooks evaluation ---
-  if (hooks && hooks.pre.length > 0) {
-    const preResult = await evaluatePreHooks(hooks, toolName, toolArgs, hookContext);
+    // --- Pre-hooks evaluation ---
+    if (hooks && hooks.pre.length > 0) {
+      const preResult = await evaluatePreHooks(hooks, toolName, toolArgs, hookContext);
 
-    if (preResult?.decision === 'deny') {
-      const result: ToolExecutionResult = {
-        text: `[Tool Blocked] ${preResult.reason || 'Blocked by pre-execution hook.'}`,
-      };
-      return result;
-    }
-
-    // Apply modified args if a hook rewrote them
-    if (preResult?.modifiedArgs) {
-      Object.assign(toolArgs, preResult.modifiedArgs);
-      applyHookToolArgs(toolCall, preResult.modifiedArgs);
-    }
-  }
-
-  // --- Approval gate evaluation ---
-  if (approvalGates) {
-    const gateResult = await approvalGates.evaluate(toolName, toolArgs, hookContext);
-    if (gateResult) {
-      if (gateResult.decision === 'blocked') {
-        const err: StructuredToolError = {
-          type: 'APPROVAL_GATE_BLOCKED',
-          retryable: false,
-          message: gateResult.reason,
-          detail: gateResult.recoveryPath,
+      if (preResult?.decision === 'deny') {
+        const result: ToolExecutionResult = {
+          text: `[Tool Blocked] ${preResult.reason || 'Blocked by pre-execution hook.'}`,
         };
-        return {
-          text: `[Tool Blocked — ${toolName}] ${gateResult.reason}\n\nRecovery: ${gateResult.recoveryPath}`,
-          structuredError: err,
-        };
+        return result;
       }
-      if (gateResult.decision === 'ask_user') {
-        return {
-          text: `[Approval Required — ${toolName}] This action requires explicit user approval.\n\nReason: ${gateResult.reason}\n\nUse ask_user to request permission before proceeding. Explain what you want to do and why.\n\nRecovery: ${gateResult.recoveryPath}`,
-          structuredError: {
+
+      // Apply modified args if a hook rewrote them
+      if (preResult?.modifiedArgs) {
+        Object.assign(toolArgs, preResult.modifiedArgs);
+        applyHookToolArgs(toolCall, preResult.modifiedArgs);
+      }
+    }
+
+    // --- Approval gate evaluation ---
+    if (approvalGates) {
+      const gateResult = await approvalGates.evaluate(toolName, toolArgs, hookContext);
+      if (gateResult) {
+        if (gateResult.decision === 'blocked') {
+          const err: StructuredToolError = {
             type: 'APPROVAL_GATE_BLOCKED',
-            retryable: true,
+            retryable: false,
             message: gateResult.reason,
-            detail: `Use ask_user to get approval. ${gateResult.recoveryPath}`,
-          },
+            detail: gateResult.recoveryPath,
+          };
+          return {
+            text: `[Tool Blocked — ${toolName}] ${gateResult.reason}\n\nRecovery: ${gateResult.recoveryPath}`,
+            structuredError: err,
+          };
+        }
+        if (gateResult.decision === 'ask_user') {
+          return {
+            text: `[Approval Required — ${toolName}] This action requires explicit user approval.\n\nReason: ${gateResult.reason}\n\nUse ask_user to request permission before proceeding. Explain what you want to do and why.\n\nRecovery: ${gateResult.recoveryPath}`,
+            structuredError: {
+              type: 'APPROVAL_GATE_BLOCKED',
+              retryable: true,
+              message: gateResult.reason,
+              detail: `Use ask_user to get approval. ${gateResult.recoveryPath}`,
+            },
+          };
+        }
+      }
+    }
+
+    // Enforce Protect Main: block commit/push tools when on the default branch
+    if (
+      isMainProtected &&
+      toolCall.source === 'sandbox' &&
+      PROTECTED_MAIN_TOOLS.has(toolCall.call.tool) &&
+      sandboxId
+    ) {
+      const currentBranch = await getSandboxBranch(sandboxId);
+      const mainBranches = new Set(['main', 'master']);
+      if (defaultBranch) mainBranches.add(defaultBranch);
+      // Block if we can't determine the branch (fail-safe) or if we're on the default branch
+      if (!currentBranch || mainBranches.has(currentBranch)) {
+        return {
+          text: `[Tool Error] Protect Main is enabled. Commits and pushes to the main/default branch are blocked. Create a new branch first (e.g. sandbox_exec with "git checkout -b feature/my-change"), then retry.`,
         };
       }
     }
-  }
 
-  // Enforce Protect Main: block commit/push tools when on the default branch
-  if (isMainProtected && toolCall.source === 'sandbox' && PROTECTED_MAIN_TOOLS.has(toolCall.call.tool) && sandboxId) {
-    const currentBranch = await getSandboxBranch(sandboxId);
-    const mainBranches = new Set(['main', 'master']);
-    if (defaultBranch) mainBranches.add(defaultBranch);
-    // Block if we can't determine the branch (fail-safe) or if we're on the default branch
-    if (!currentBranch || mainBranches.has(currentBranch)) {
-      return {
-        text: `[Tool Error] Protect Main is enabled. Commits and pushes to the main/default branch are blocked. Create a new branch first (e.g. sandbox_exec with "git checkout -b feature/my-change"), then retry.`,
-      };
-    }
-  }
+    // Execute through the appropriate handler
+    let result: ToolExecutionResult;
 
-  // Execute through the appropriate handler
-  let result: ToolExecutionResult;
+    switch (toolCall.source) {
+      case 'github':
+        result = await executeToolCall(toolCall.call, allowedRepo);
+        break;
 
-  switch (toolCall.source) {
-    case 'github':
-      result = await executeToolCall(toolCall.call, allowedRepo);
-      break;
+      case 'sandbox':
+        if (!sandboxId) {
+          const err: StructuredToolError = {
+            type: 'SANDBOX_UNREACHABLE',
+            retryable: true,
+            message: 'No active sandbox session',
+            detail: `Attempted tool: ${toolCall.call.tool}`,
+          };
+          result = {
+            text: `[Tool Error] No active sandbox. The sandbox may still be starting — wait a moment and retry. If this persists, the user needs to start a sandbox from the UI.\nerror_type: ${err.type}\nretryable: ${err.retryable}`,
+            structuredError: err,
+          };
+          break;
+        }
+        result = await executeSandboxToolCall(toolCall.call, sandboxId, {
+          auditorProviderOverride: activeProvider,
+          auditorModelOverride: activeModel,
+        });
+        break;
 
-    case 'sandbox':
-      if (!sandboxId) {
-        const err: StructuredToolError = {
-          type: 'SANDBOX_UNREACHABLE',
-          retryable: true,
-          message: 'No active sandbox session',
-          detail: `Attempted tool: ${toolCall.call.tool}`,
-        };
-        result = {
-          text: `[Tool Error] No active sandbox. The sandbox may still be starting — wait a moment and retry. If this persists, the user needs to start a sandbox from the UI.\nerror_type: ${err.type}\nretryable: ${err.retryable}`,
-          structuredError: err,
-        };
+      case 'delegate':
+        result = { text: '[Tool Error] Delegation must be handled by the chat hook.' };
+        break;
+
+      case 'scratchpad':
+        result = { text: '[Tool Error] Scratchpad must be handled by the chat hook.' };
+        break;
+
+      case 'web-search': {
+        const provider = activeProvider || getActiveProvider();
+        result = await executeWebSearch(toolCall.call.args.query, provider);
         break;
       }
-      result = await executeSandboxToolCall(toolCall.call, sandboxId, {
-        auditorProviderOverride: activeProvider,
-        auditorModelOverride: activeModel,
-      });
-      break;
 
-    case 'delegate':
-      result = { text: '[Tool Error] Delegation must be handled by the chat hook.' };
-      break;
+      case 'ask-user':
+        result = {
+          text: '[Tool Result] Question sent to user. The system will wait for their response.',
+          card: { type: 'ask-user', data: toolCall.call.args },
+        };
+        break;
 
-    case 'scratchpad':
-      result = { text: '[Tool Error] Scratchpad must be handled by the chat hook.' };
-      break;
-
-    case 'web-search': {
-      const provider = activeProvider || getActiveProvider();
-      result = await executeWebSearch(toolCall.call.args.query, provider);
-      break;
+      default:
+        result = { text: '[Tool Error] Unknown tool source.' };
     }
 
-    case 'ask-user':
-      result = {
-        text: '[Tool Result] Question sent to user. The system will wait for their response.',
-        card: { type: 'ask-user', data: toolCall.call.args }
-      };
-      break;
-
-    default:
-      result = { text: '[Tool Error] Unknown tool source.' };
-  }
-
-  // --- Record capability usage ---
-  if (capabilityLedger) {
-    capabilityLedger.recordToolUse(toolName);
-  }
-
-  // --- Post-hooks evaluation ---
-  if (hooks && hooks.post.length > 0) {
-    const postResult = await evaluatePostHooks(hooks, toolName, toolArgs, result, hookContext);
-
-    if (postResult?.resultOverride) {
-      result = { ...result, text: postResult.resultOverride };
+    // --- Record capability usage ---
+    if (capabilityLedger) {
+      capabilityLedger.recordToolUse(toolName);
     }
-    // systemMessage is returned to the caller for injection into the conversation
-    if (postResult?.systemMessage) {
-      result = { ...result, text: `${result.text}\n\n[Hook] ${postResult.systemMessage}` };
-    }
-    // Policy actions: inject/halt flow through ToolExecutionResult to the caller
-    if (postResult?.action === 'inject' && postResult.injectMessage) {
-      result = { ...result, postHookInject: postResult.injectMessage };
-    }
-    if (postResult?.action === 'halt' && postResult.haltSummary) {
-      result = { ...result, postHookHalt: postResult.haltSummary };
-    }
-  }
 
-  return result;
+    // --- Post-hooks evaluation ---
+    if (hooks && hooks.post.length > 0) {
+      const postResult = await evaluatePostHooks(hooks, toolName, toolArgs, result, hookContext);
+
+      if (postResult?.resultOverride) {
+        result = { ...result, text: postResult.resultOverride };
+      }
+      // systemMessage is returned to the caller for injection into the conversation
+      if (postResult?.systemMessage) {
+        result = { ...result, text: `${result.text}\n\n[Hook] ${postResult.systemMessage}` };
+      }
+      // Policy actions: inject/halt flow through ToolExecutionResult to the caller
+      if (postResult?.action === 'inject' && postResult.injectMessage) {
+        result = { ...result, postHookInject: postResult.injectMessage };
+      }
+      if (postResult?.action === 'halt' && postResult.haltSummary) {
+        result = { ...result, postHookHalt: postResult.haltSummary };
+      }
+    }
+
+    return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const structuredError: StructuredToolError = {
@@ -579,7 +613,8 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
 
   // Phase 2: Validation failure — JSON parses (or repairs), has a known tool name,
   // but the subsystem validator rejected it (wrong/missing args)
-  const fenceRegex = /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
+  const fenceRegex =
+    /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
   let fenceMatch;
   while ((fenceMatch = fenceRegex.exec(text)) !== null) {
     const toolName = extractKnownToolName(fenceMatch[1].trim());
@@ -595,7 +630,7 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
 
   for (const parsed of extractBareToolJsonObjects(text)) {
     const obj = asRecord(parsed);
-    const toolName = typeof obj?.tool === 'string' ? resolveToolName(obj.tool) ?? obj.tool : null;
+    const toolName = typeof obj?.tool === 'string' ? (resolveToolName(obj.tool) ?? obj.tool) : null;
     if (toolName && KNOWN_TOOL_NAMES.has(toolName)) {
       return {
         reason: 'validation_failed',
@@ -630,11 +665,12 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
       return {
         reason: 'validation_failed',
         toolName: inferred,
-        errorMessage: `Your response contains what looks like "${getToolPublicName(inferred)}" arguments but is missing the required wrapper format. Use this structure:\n\n`
-          + '```json\n'
-          + `{"tool": "${getToolPublicName(inferred)}", "args": ${JSON.stringify(obj)}}\n`
-          + '```\n\n'
-          + 'Always wrap tool calls in {"tool": "...", "args": {...}} format.',
+        errorMessage:
+          `Your response contains what looks like "${getToolPublicName(inferred)}" arguments but is missing the required wrapper format. Use this structure:\n\n` +
+          '```json\n' +
+          `{"tool": "${getToolPublicName(inferred)}", "args": ${JSON.stringify(obj)}}\n` +
+          '```\n\n' +
+          'Always wrap tool calls in {"tool": "...", "args": {...}} format.',
         telemetryOnly: true,
       };
     }
@@ -647,7 +683,6 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
   // 4. Bias toward discovery intent (Prose describes investigation without tool call)
   const explorerDiagnosis = diagnoseMissingExplorerCall(text);
   if (explorerDiagnosis) return explorerDiagnosis;
-
 
   const nlIntent = detectNaturalLanguageToolIntent(text);
   if (nlIntent) return nlIntent;
@@ -662,19 +697,22 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
 function diagnoseMissingExplorerCall(text: string): ToolCallDiagnosis | null {
   const classification = classifyIntent(text);
   if (classification !== 'discovery') return null;
-  const directIntentPattern = /\b(I\s+(?:should|will|need to|must|have to|want to)|Let\s+me|I'm\s+(?:going to|about to)|should\s+I)\b/i;
-  const quotedPattern = /^\s*(?:feat:|fix:|refactor:|chore:|docs:|test:|The\s|You\s|This\s|Here\s)/im;
+  const directIntentPattern =
+    /\b(I\s+(?:should|will|need to|must|have to|want to)|Let\s+me|I'm\s+(?:going to|about to)|should\s+I)\b/i;
+  const quotedPattern =
+    /^\s*(?:feat:|fix:|refactor:|chore:|docs:|test:|The\s|You\s|This\s|Here\s)/im;
   if (!directIntentPattern.test(text) || quotedPattern.test(text)) return null;
   return {
-      reason: 'natural_language_intent',
-      toolName: 'delegate_explorer',
-      errorMessage: `Your response describes an investigation or discovery process but you didn't include the \`explorer\` tool call. `
-        + `To explore the codebase, include a fenced JSON block like this:\n\n`
-        + '```json\n'
-        + '{"tool": "explorer", "args": {"task": "Trace the auth flow and summarize where session refresh happens", "files": ["src/auth.ts"]}}\n'
-        + '```\n\n'
-        + `A brief sentence before or after the block is fine, but the JSON block must be present.`,
-    };
+    reason: 'natural_language_intent',
+    toolName: 'delegate_explorer',
+    errorMessage:
+      `Your response describes an investigation or discovery process but you didn't include the \`explorer\` tool call. ` +
+      `To explore the codebase, include a fenced JSON block like this:\n\n` +
+      '```json\n' +
+      '{"tool": "explorer", "args": {"task": "Trace the auth flow and summarize where session refresh happens", "files": ["src/auth.ts"]}}\n' +
+      '```\n\n' +
+      `A brief sentence before or after the block is fine, but the JSON block must be present.`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -686,11 +724,13 @@ function buildValidationErrorMessage(toolName: string): string {
   const publicName = getToolPublicName(toolName);
   const hint = getToolArgHint(toolName);
   if (hint) {
-    return `Your call to "${publicName}" has invalid or missing arguments. Expected format:\n\n`
-      + '```json\n'
-      + `${hint}\n`
-      + '```\n\n'
-      + 'Check required fields and retry.';
+    return (
+      `Your call to "${publicName}" has invalid or missing arguments. Expected format:\n\n` +
+      '```json\n' +
+      `${hint}\n` +
+      '```\n\n' +
+      'Check required fields and retry.'
+    );
   }
   return `Your call to "${publicName}" has invalid or missing arguments. Check the tool protocol and retry with the correct argument format.`;
 }
@@ -715,7 +755,8 @@ function diagnoseMalformedToolJson(text: string): ToolCallDiagnosis | null {
   //   2. Bare text containing `"tool": "<name>"` patterns outside valid JSON
 
   // Check fenced blocks first (higher signal)
-  const fenceRegex = /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
+  const fenceRegex =
+    /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
   let fenceMatch;
   while ((fenceMatch = fenceRegex.exec(text)) !== null) {
     const content = fenceMatch[1].trim();
@@ -744,7 +785,12 @@ function diagnoseMalformedToolJson(text: string): ToolCallDiagnosis | null {
     const region = text.slice(regionStart, regionEnd + 1);
 
     // Skip if this region is already valid JSON (handled by earlier phases)
-    try { JSON.parse(region); continue; } catch { /* expected — this is broken JSON */ }
+    try {
+      JSON.parse(region);
+      continue;
+    } catch {
+      /* expected — this is broken JSON */
+    }
 
     // Skip if repair succeeds (handled by normal detection pipeline)
     if (repairToolJson(region)) continue;
@@ -762,7 +808,12 @@ function diagnoseMalformedToolJson(text: string): ToolCallDiagnosis | null {
  */
 function tryDiagnoseFragment(fragment: string): ToolCallDiagnosis | null {
   // Skip if it parses cleanly
-  try { JSON.parse(fragment); return null; } catch { /* expected */ }
+  try {
+    JSON.parse(fragment);
+    return null;
+  } catch {
+    /* expected */
+  }
 
   // Skip if repair succeeds (the normal pipeline will handle it)
   if (repairToolJson(fragment)) return null;
@@ -778,9 +829,7 @@ function tryDiagnoseFragment(fragment: string): ToolCallDiagnosis | null {
   if (!syntaxError) return null;
 
   const hint = getToolArgHint(toolName);
-  const hintBlock = hint
-    ? `\n\nExpected format:\n\`\`\`json\n${hint}\n\`\`\``
-    : '';
+  const hintBlock = hint ? `\n\nExpected format:\n\`\`\`json\n${hint}\n\`\`\`` : '';
 
   return {
     reason: 'malformed_json',
@@ -837,9 +886,18 @@ function findFollowingBrace(text: string, pos: number): number {
   let escaped = false;
   for (let i = pos; i < searchEnd; i++) {
     const ch = text[i];
-    if (escaped) { escaped = false; continue; }
-    if (ch === '\\' && inString) { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
     if (ch === '{') depth++;
     if (ch === '}') {
@@ -861,14 +919,15 @@ function extractKnownToolName(text: string): string | null {
   try {
     const parsed = JSON.parse(text);
     const obj = asRecord(parsed);
-    const toolName = typeof obj?.tool === 'string' ? resolveToolName(obj.tool) ?? obj.tool : null;
+    const toolName = typeof obj?.tool === 'string' ? (resolveToolName(obj.tool) ?? obj.tool) : null;
     if (toolName && KNOWN_TOOL_NAMES.has(toolName)) {
       return toolName;
     }
   } catch {
     // Try repair
     const repaired = repairToolJson(text);
-    const toolName = typeof repaired?.tool === 'string' ? resolveToolName(repaired.tool) ?? repaired.tool : null;
+    const toolName =
+      typeof repaired?.tool === 'string' ? (resolveToolName(repaired.tool) ?? repaired.tool) : null;
     if (toolName && KNOWN_TOOL_NAMES.has(toolName)) {
       return toolName;
     }
@@ -896,7 +955,8 @@ function detectUnknownToolName(text: string): ToolCallDiagnosis | null {
   // Only check fenced code blocks — these are high-signal tool-call contexts.
   // Bare JSON with unknown tool names in prose (docs, examples, spec output)
   // should not trigger retry loops.
-  const fenceRegex = /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
+  const fenceRegex =
+    /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
   let fenceMatch;
   while ((fenceMatch = fenceRegex.exec(text)) !== null) {
     const result = extractUnknownToolName(fenceMatch[1].trim());
@@ -910,12 +970,22 @@ function extractUnknownToolName(text: string): string | null {
   try {
     const parsed = JSON.parse(text);
     const obj = asRecord(parsed);
-    if (obj && typeof obj.tool === 'string' && !KNOWN_TOOL_NAMES.has(obj.tool) && obj.args !== undefined) {
+    if (
+      obj &&
+      typeof obj.tool === 'string' &&
+      !KNOWN_TOOL_NAMES.has(obj.tool) &&
+      obj.args !== undefined
+    ) {
       return obj.tool;
     }
   } catch {
     const repaired = repairToolJson(text);
-    if (repaired && typeof repaired.tool === 'string' && !KNOWN_TOOL_NAMES.has(repaired.tool) && repaired.args !== undefined) {
+    if (
+      repaired &&
+      typeof repaired.tool === 'string' &&
+      !KNOWN_TOOL_NAMES.has(repaired.tool) &&
+      repaired.args !== undefined
+    ) {
       return repaired.tool;
     }
   }
@@ -925,11 +995,13 @@ function extractUnknownToolName(text: string): string | null {
 function buildUnknownToolDiagnosis(toolName: string): ToolCallDiagnosis {
   const suggestions = TOOL_NAME_SUGGESTIONS[toolName.toLowerCase()];
   const suggestionBlock = suggestions
-    ? `\n\nDid you mean one of these?\n${suggestions.map(s => {
-        const hint = getToolArgHint(s);
-        const publicName = getToolPublicName(s);
-        return hint ? `- ${publicName}: \`${hint}\`` : `- ${publicName}`;
-      }).join('\n')}`
+    ? `\n\nDid you mean one of these?\n${suggestions
+        .map((s) => {
+          const hint = getToolArgHint(s);
+          const publicName = getToolPublicName(s);
+          return hint ? `- ${publicName}: \`${hint}\`` : `- ${publicName}`;
+        })
+        .join('\n')}`
     : `\n\nAvailable tools: ${KNOWN_PUBLIC_TOOL_NAMES.slice().sort().join(', ')}`;
 
   return {
@@ -964,21 +1036,41 @@ function extractAllBareJsonObjects(text: string): Record<string, unknown>[] {
 
     for (let j = braceIdx; j < text.length; j++) {
       const ch = text[j];
-      if (escaped) { escaped = false; continue; }
-      if (ch === '\\' && inString) { escaped = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\' && inString) {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
       if (inString) continue;
       if (ch === '{') depth++;
-      if (ch === '}') { depth--; if (depth === 0) { end = j; break; } }
+      if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          end = j;
+          break;
+        }
+      }
     }
 
-    if (end === -1) { i = braceIdx + 1; continue; }
+    if (end === -1) {
+      i = braceIdx + 1;
+      continue;
+    }
 
     try {
       const parsed = JSON.parse(text.slice(braceIdx, end + 1));
       const obj = asRecord(parsed);
       if (obj) results.push(obj);
-    } catch { /* not valid JSON — skip */ }
+    } catch {
+      /* not valid JSON — skip */
+    }
 
     i = end + 1;
   }
@@ -1086,7 +1178,10 @@ function tryRecoverBareToolArgs(text: string): AnyToolCall | null {
 function detectDelegationTool(text: string): AnyToolCall | null {
   return detectToolFromText<AnyToolCall>(text, (parsed) => {
     const parsedObj = asRecord(parsed);
-    const toolName = typeof parsedObj?.tool === 'string' ? resolveToolName(parsedObj.tool) ?? parsedObj.tool : '';
+    const toolName =
+      typeof parsedObj?.tool === 'string'
+        ? (resolveToolName(parsedObj.tool) ?? parsedObj.tool)
+        : '';
     const args = asRecord(parsedObj?.args);
     const task = asTrimmedString(args?.task);
     const tasks = asTrimmedStringArray(args?.tasks);
@@ -1096,28 +1191,33 @@ function detectDelegationTool(text: string): AnyToolCall | null {
     const knownContext = asTrimmedStringArray(args?.knownContext);
     const constraints = asTrimmedStringArray(args?.constraints);
     const declaredCapabilities = Array.isArray(args?.declaredCapabilities)
-      ? (args.declaredCapabilities as unknown[])
-        .filter((entry): entry is Capability => typeof entry === 'string' && KNOWN_CAPABILITIES.has(entry as Capability))
+      ? (args.declaredCapabilities as unknown[]).filter(
+          (entry): entry is Capability =>
+            typeof entry === 'string' && KNOWN_CAPABILITIES.has(entry as Capability),
+        )
       : undefined;
     // Parse acceptance criteria if provided
     let acceptanceCriteria: AcceptanceCriterion[] | undefined;
     if (Array.isArray(args?.acceptanceCriteria)) {
-      acceptanceCriteria = (args.acceptanceCriteria as unknown[]).filter((c): c is AcceptanceCriterion => {
-        const cr = asRecord(c);
-        return !!cr && typeof cr.id === 'string' && typeof cr.check === 'string';
-      }).map(c => ({
-        id: c.id,
-        check: c.check,
-        exitCode: typeof c.exitCode === 'number' ? c.exitCode : undefined,
-        description: typeof c.description === 'string' ? c.description : undefined,
-      }));
+      acceptanceCriteria = (args.acceptanceCriteria as unknown[])
+        .filter((c): c is AcceptanceCriterion => {
+          const cr = asRecord(c);
+          return !!cr && typeof cr.id === 'string' && typeof cr.check === 'string';
+        })
+        .map((c) => ({
+          id: c.id,
+          check: c.check,
+          exitCode: typeof c.exitCode === 'number' ? c.exitCode : undefined,
+          description: typeof c.description === 'string' ? c.description : undefined,
+        }));
       if (acceptanceCriteria.length === 0) acceptanceCriteria = undefined;
     }
     // Require a meaningful task description — reject placeholder/trivially short tasks
     // to prevent phantom delegations when the model fires coder calls inappropriately.
     const MIN_CODER_TASK_LENGTH = 20;
     const hasValidTask = task && task.length >= MIN_CODER_TASK_LENGTH;
-    const hasValidTasks = tasks && tasks.length > 0 && tasks.some((t) => t.length >= MIN_CODER_TASK_LENGTH);
+    const hasValidTasks =
+      tasks && tasks.length > 0 && tasks.some((t) => t.length >= MIN_CODER_TASK_LENGTH);
     if (toolName === 'delegate_coder' && (hasValidTask || hasValidTasks)) {
       return {
         source: 'delegate',
@@ -1132,7 +1232,10 @@ function detectDelegationTool(text: string): AnyToolCall | null {
             deliverable,
             knownContext: knownContext && knownContext.length > 0 ? knownContext : undefined,
             constraints: constraints && constraints.length > 0 ? constraints : undefined,
-            declaredCapabilities: declaredCapabilities && declaredCapabilities.length > 0 ? declaredCapabilities : undefined,
+            declaredCapabilities:
+              declaredCapabilities && declaredCapabilities.length > 0
+                ? declaredCapabilities
+                : undefined,
           },
         },
       };
@@ -1169,15 +1272,17 @@ function detectDelegationTool(text: string): AnyToolCall | null {
         // Parse per-node acceptance criteria (coder tasks)
         let nodeAcceptanceCriteria: AcceptanceCriterion[] | undefined;
         if (Array.isArray(t.acceptanceCriteria)) {
-          nodeAcceptanceCriteria = (t.acceptanceCriteria as unknown[]).filter((c): c is AcceptanceCriterion => {
-            const cr = asRecord(c);
-            return !!cr && typeof cr.id === 'string' && typeof cr.check === 'string';
-          }).map(c => ({
-            id: c.id,
-            check: c.check,
-            exitCode: typeof c.exitCode === 'number' ? c.exitCode : undefined,
-            description: typeof c.description === 'string' ? c.description : undefined,
-          }));
+          nodeAcceptanceCriteria = (t.acceptanceCriteria as unknown[])
+            .filter((c): c is AcceptanceCriterion => {
+              const cr = asRecord(c);
+              return !!cr && typeof cr.id === 'string' && typeof cr.check === 'string';
+            })
+            .map((c) => ({
+              id: c.id,
+              check: c.check,
+              exitCode: typeof c.exitCode === 'number' ? c.exitCode : undefined,
+              description: typeof c.description === 'string' ? c.description : undefined,
+            }));
           if (nodeAcceptanceCriteria.length === 0) nodeAcceptanceCriteria = undefined;
         }
         parsedTasks.push({
@@ -1233,24 +1338,44 @@ interface NLIntentPattern {
 const NL_INTENT_PATTERNS: NLIntentPattern[] = [
   // delegate_coder — most common failure case (e.g. Codex says "I'll delegate to the coder")
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:to\\s+)?(?:the\\s+)?coder`, 'i'),
+    regex: new RegExp(
+      `${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:to\\s+)?(?:the\\s+)?coder`,
+      'i',
+    ),
     toolName: 'delegate_coder',
-    exampleJson: getToolArgHint('delegate_coder') ?? '{"tool": "coder", "args": {"task": "describe the task here"}}',
+    exampleJson:
+      getToolArgHint('delegate_coder') ??
+      '{"tool": "coder", "args": {"task": "describe the task here"}}',
   },
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:task\\s+)?(?:to\\s+)?(?:the\\s+)?coder(?:\\s+agent)?`, 'i'),
+    regex: new RegExp(
+      `${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:task\\s+)?(?:to\\s+)?(?:the\\s+)?coder(?:\\s+agent)?`,
+      'i',
+    ),
     toolName: 'delegate_coder',
-    exampleJson: getToolArgHint('delegate_coder') ?? '{"tool": "coder", "args": {"task": "describe the task here"}}',
+    exampleJson:
+      getToolArgHint('delegate_coder') ??
+      '{"tool": "coder", "args": {"task": "describe the task here"}}',
   },
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:to\\s+)?(?:the\\s+)?explorer`, 'i'),
+    regex: new RegExp(
+      `${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:to\\s+)?(?:the\\s+)?explorer`,
+      'i',
+    ),
     toolName: 'delegate_explorer',
-    exampleJson: getToolArgHint('delegate_explorer') ?? '{"tool": "explorer", "args": {"task": "describe what to investigate"}}',
+    exampleJson:
+      getToolArgHint('delegate_explorer') ??
+      '{"tool": "explorer", "args": {"task": "describe what to investigate"}}',
   },
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:task\\s+)?(?:to\\s+)?(?:the\\s+)?explorer(?:\\s+agent)?`, 'i'),
+    regex: new RegExp(
+      `${INTENT_VERBS}\\s+delegat(?:e|ing)\\s+(?:this\\s+)?(?:task\\s+)?(?:to\\s+)?(?:the\\s+)?explorer(?:\\s+agent)?`,
+      'i',
+    ),
     toolName: 'delegate_explorer',
-    exampleJson: getToolArgHint('delegate_explorer') ?? '{"tool": "explorer", "args": {"task": "describe what to investigate"}}',
+    exampleJson:
+      getToolArgHint('delegate_explorer') ??
+      '{"tool": "explorer", "args": {"task": "describe what to investigate"}}',
   },
   // Action-phrase patterns — catch natural descriptions of tool actions
   // (e.g. "I'll fetch the recent commits") without requiring exact tool names.
@@ -1258,29 +1383,50 @@ const NL_INTENT_PATTERNS: NLIntentPattern[] = [
   // Word boundaries (\b) on key nouns prevent false matches on substrings
   // (e.g. "filename" won't match the "file" pattern).
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:fetch|get|pull|check|grab|look\\s+at|retrieve|show)\\s+(?:the\\s+)?(?:recent\\s+|latest\\s+)?commits\\b`, 'i'),
+    regex: new RegExp(
+      `${INTENT_VERBS}\\s+(?:fetch|get|pull|check|grab|look\\s+at|retrieve|show)\\s+(?:the\\s+)?(?:recent\\s+|latest\\s+)?commits\\b`,
+      'i',
+    ),
     toolName: 'list_commits',
-    exampleJson: getToolArgHint('list_commits') ?? '{"tool": "commits", "args": {"repo": "owner/repo"}}',
+    exampleJson:
+      getToolArgHint('list_commits') ?? '{"tool": "commits", "args": {"repo": "owner/repo"}}',
   },
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:read|open|look\\s+at|check|view|inspect|pull\\s+up|examine)\\s+(?:the\\s+|that\\s+)?file\\b`, 'i'),
+    regex: new RegExp(
+      `${INTENT_VERBS}\\s+(?:read|open|look\\s+at|check|view|inspect|pull\\s+up|examine)\\s+(?:the\\s+|that\\s+)?file\\b`,
+      'i',
+    ),
     toolName: 'read_file',
-    exampleJson: getToolArgHint('read_file') ?? '{"tool": "repo_read", "args": {"repo": "owner/repo", "path": "src/app.ts"}}',
+    exampleJson:
+      getToolArgHint('read_file') ??
+      '{"tool": "repo_read", "args": {"repo": "owner/repo", "path": "src/app.ts"}}',
   },
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:search|find|look\\s+for|grep|scan)\\s+(?:the\\s+|for\\s+)?(?:code|repo|codebase|files)\\b`, 'i'),
+    regex: new RegExp(
+      `${INTENT_VERBS}\\s+(?:search|find|look\\s+for|grep|scan)\\s+(?:the\\s+|for\\s+)?(?:code|repo|codebase|files)\\b`,
+      'i',
+    ),
     toolName: 'search_files',
-    exampleJson: getToolArgHint('search_files') ?? '{"tool": "repo_search", "args": {"repo": "owner/repo", "query": "searchTerm"}}',
+    exampleJson:
+      getToolArgHint('search_files') ??
+      '{"tool": "repo_search", "args": {"repo": "owner/repo", "query": "searchTerm"}}',
   },
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:fetch|get|check|pull|grab|look\\s+at|retrieve|show)\\s+(?:the\\s+)?(?:open\\s+|recent\\s+|latest\\s+)?(?:PRs?|pull\\s+requests?)\\b`, 'i'),
+    regex: new RegExp(
+      `${INTENT_VERBS}\\s+(?:fetch|get|check|pull|grab|look\\s+at|retrieve|show)\\s+(?:the\\s+)?(?:open\\s+|recent\\s+|latest\\s+)?(?:PRs?|pull\\s+requests?)\\b`,
+      'i',
+    ),
     toolName: 'list_prs',
     exampleJson: getToolArgHint('list_prs') ?? '{"tool": "prs", "args": {"repo": "owner/repo"}}',
   },
   {
-    regex: new RegExp(`${INTENT_VERBS}\\s+(?:fetch|get|check|list|pull|grab|look\\s+at|retrieve|show)\\s+(?:the\\s+)?branches\\b`, 'i'),
+    regex: new RegExp(
+      `${INTENT_VERBS}\\s+(?:fetch|get|check|list|pull|grab|look\\s+at|retrieve|show)\\s+(?:the\\s+)?branches\\b`,
+      'i',
+    ),
     toolName: 'list_branches',
-    exampleJson: getToolArgHint('list_branches') ?? '{"tool": "branches", "args": {"repo": "owner/repo"}}',
+    exampleJson:
+      getToolArgHint('list_branches') ?? '{"tool": "branches", "args": {"repo": "owner/repo"}}',
   },
   // Generic: model mentions a known tool name by its exact name without JSON
   // e.g. "I'll use sandbox_exec to run the tests"
@@ -1320,7 +1466,8 @@ function detectNaturalLanguageToolIntent(text: string): ToolCallDiagnosis | null
       toolName = resolveToolName(match[1]) ?? match[1];
       // Build a generic example for the matched tool
       if (KNOWN_TOOL_NAMES.has(toolName)) {
-        exampleJson = getToolArgHint(toolName) ?? `{"tool": "${getToolPublicName(toolName)}", "args": {}}`;
+        exampleJson =
+          getToolArgHint(toolName) ?? `{"tool": "${getToolPublicName(toolName)}", "args": {}}`;
       } else {
         continue; // Not a real tool name — skip
       }
@@ -1331,12 +1478,13 @@ function detectNaturalLanguageToolIntent(text: string): ToolCallDiagnosis | null
     return {
       reason: 'natural_language_intent',
       toolName,
-      errorMessage: `You described wanting to use "${getToolPublicName(toolName)}" but didn't include the required JSON tool block. `
-        + `To call a tool, include a fenced JSON block like this:\n\n`
-        + '```json\n'
-        + `${exampleJson}\n`
-        + '```\n\n'
-        + `A brief sentence before or after the block is fine, but the JSON block must be present.`,
+      errorMessage:
+        `You described wanting to use "${getToolPublicName(toolName)}" but didn't include the required JSON tool block. ` +
+        `To call a tool, include a fenced JSON block like this:\n\n` +
+        '```json\n' +
+        `${exampleJson}\n` +
+        '```\n\n' +
+        `A brief sentence before or after the block is fine, but the JSON block must be present.`,
     };
   }
 

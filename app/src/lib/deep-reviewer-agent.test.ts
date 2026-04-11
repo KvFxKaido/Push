@@ -96,20 +96,18 @@ describe('runDeepReviewer', () => {
 
   it('marks results truncated when diff chunking omits files', async () => {
     let streamCalls = 0;
-    mockStreamFn.mockImplementation((
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      if (streamCalls === 0) {
-        onToken('{"tool":"sandbox_read_file","args":{"path":"/workspace/src/large.ts"}}');
-      } else {
-        onToken('[REVIEW_COMPLETE]\n{"summary":"Looks good","comments":[]}');
-      }
-      streamCalls++;
-      onDone();
-      return Promise.resolve();
-    });
+    mockStreamFn.mockImplementation(
+      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        if (streamCalls === 0) {
+          onToken('{"tool":"sandbox_read_file","args":{"path":"/workspace/src/large.ts"}}');
+        } else {
+          onToken('[REVIEW_COMPLETE]\n{"summary":"Looks good","comments":[]}');
+        }
+        streamCalls++;
+        onDone();
+        return Promise.resolve();
+      },
+    );
 
     const diff = [
       makeAddedFileDiff('src/large.ts', 'x'.repeat(45_000)),
@@ -132,23 +130,23 @@ describe('runDeepReviewer', () => {
     const abortController = new AbortController();
     let streamCalls = 0;
 
-    mockStreamFn.mockImplementation((
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      streamCalls++;
-      onToken('Still investigating');
-      onDone();
-      if (streamCalls === 7) abortController.abort();
-      return Promise.resolve();
-    });
+    mockStreamFn.mockImplementation(
+      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        streamCalls++;
+        onToken('Still investigating');
+        onDone();
+        if (streamCalls === 7) abortController.abort();
+        return Promise.resolve();
+      },
+    );
 
-    await expect(runDeepReviewer(
-      makeAddedFileDiff('src/example.ts', 'const value = 1;'),
-      { provider: 'openrouter', allowedRepo: 'KvFxKaido/Push' },
-      { onStatus: () => {}, signal: abortController.signal },
-    )).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(
+      runDeepReviewer(
+        makeAddedFileDiff('src/example.ts', 'const value = 1;'),
+        { provider: 'openrouter', allowedRepo: 'KvFxKaido/Push' },
+        { onStatus: () => {}, signal: abortController.signal },
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
 
     expect(mockStreamFn).toHaveBeenCalledTimes(7);
   });

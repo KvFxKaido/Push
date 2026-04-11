@@ -47,8 +47,8 @@ export interface UsageStats {
 
 // Rough token cost estimates (per 1M tokens) for visibility
 // These are estimates — actual costs depend on the provider/plan
-const COST_PER_1M_INPUT = 0.15;  // $0.15 per 1M input tokens
-const COST_PER_1M_OUTPUT = 0.60; // $0.60 per 1M output tokens
+const COST_PER_1M_INPUT = 0.15; // $0.15 per 1M input tokens
+const COST_PER_1M_OUTPUT = 0.6; // $0.60 per 1M output tokens
 
 // --- Stats calculation ---
 
@@ -124,11 +124,7 @@ export function useUsageTracking() {
     setStats(calculateStats(entries));
   }, [entries]);
 
-  const trackUsage = useCallback((
-    model: string,
-    inputTokens: number,
-    outputTokens: number,
-  ) => {
+  const trackUsage = useCallback((model: string, inputTokens: number, outputTokens: number) => {
     const entry: UsageEntry = {
       timestamp: Date.now(),
       model,

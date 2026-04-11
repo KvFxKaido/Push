@@ -2,7 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { getVisionCapabilityNotice } from '@/lib/model-capabilities';
 import { buildQuickPromptMessage } from '@/lib/quick-prompts';
-import type { AIProviderType, AttachmentData, CardAction, ChatSendOptions, QuickPrompt } from '@/types';
+import type {
+  AIProviderType,
+  AttachmentData,
+  CardAction,
+  ChatSendOptions,
+  QuickPrompt,
+} from '@/types';
 import type { ChatRouteProps } from '@/sections/workspace-chat-route-types';
 
 const CHAT_PROVIDER_LABELS: Record<AIProviderType, string> = {
@@ -88,9 +94,7 @@ export function useWorkspaceChatComposerController({
   })();
 
   const isDisplayedComposerProviderLocked = Boolean(
-    isProviderLocked &&
-    lockedProvider &&
-    lockedProvider === selectedComposerProvider,
+    isProviderLocked && lockedProvider && lockedProvider === selectedComposerProvider,
   );
 
   const selectedComposerModel = (() => {
@@ -108,48 +112,73 @@ export function useWorkspaceChatComposerController({
     return 'demo';
   })();
 
-  const validateComposerAttachments = useCallback((attachments?: AttachmentData[]) => {
-    const hasImageAttachments = Boolean(attachments?.some((attachment) => attachment.type === 'image'));
-    if (!hasImageAttachments) return true;
+  const validateComposerAttachments = useCallback(
+    (attachments?: AttachmentData[]) => {
+      const hasImageAttachments = Boolean(
+        attachments?.some((attachment) => attachment.type === 'image'),
+      );
+      if (!hasImageAttachments) return true;
 
-    const visionNotice = getVisionCapabilityNotice(selectedComposerProvider, selectedComposerModel);
-    if (visionNotice.support !== 'unsupported') return true;
+      const visionNotice = getVisionCapabilityNotice(
+        selectedComposerProvider,
+        selectedComposerModel,
+      );
+      if (visionNotice.support !== 'unsupported') return true;
 
-    const providerLabel = CHAT_PROVIDER_LABELS[selectedComposerProvider];
-    toast.error(`${providerLabel} · ${selectedComposerModel} cannot read image attachments yet.`);
-    return false;
-  }, [selectedComposerModel, selectedComposerProvider]);
+      const providerLabel = CHAT_PROVIDER_LABELS[selectedComposerProvider];
+      toast.error(`${providerLabel} · ${selectedComposerModel} cannot read image attachments yet.`);
+      return false;
+    },
+    [selectedComposerModel, selectedComposerProvider],
+  );
 
-  const handleComposerSend = useCallback((message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
-    if (!validateComposerAttachments(attachments)) return;
-    markSnapshotActivity();
+  const handleComposerSend = useCallback(
+    (message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
+      if (!validateComposerAttachments(attachments)) return;
+      markSnapshotActivity();
 
-    if (editingUserMessageId) {
-      const targetMessageId = editingUserMessageId;
-      setEditingUserMessageId(null);
-      return editMessageAndResend(targetMessageId, message, attachments, options);
-    }
+      if (editingUserMessageId) {
+        const targetMessageId = editingUserMessageId;
+        setEditingUserMessageId(null);
+        return editMessageAndResend(targetMessageId, message, attachments, options);
+      }
 
-    return sendMessage(message, attachments, options);
-  }, [editMessageAndResend, editingUserMessageId, markSnapshotActivity, sendMessage, validateComposerAttachments]);
+      return sendMessage(message, attachments, options);
+    },
+    [
+      editMessageAndResend,
+      editingUserMessageId,
+      markSnapshotActivity,
+      sendMessage,
+      validateComposerAttachments,
+    ],
+  );
 
-  const handleQuickPrompt = useCallback((quickPrompt: QuickPrompt) => {
-    const { text, displayText } = buildQuickPromptMessage(quickPrompt);
-    markSnapshotActivity();
-    return sendMessage(text, undefined, { displayText });
-  }, [markSnapshotActivity, sendMessage]);
+  const handleQuickPrompt = useCallback(
+    (quickPrompt: QuickPrompt) => {
+      const { text, displayText } = buildQuickPromptMessage(quickPrompt);
+      markSnapshotActivity();
+      return sendMessage(text, undefined, { displayText });
+    },
+    [markSnapshotActivity, sendMessage],
+  );
 
-  const handleEditUserMessage = useCallback((messageId: string) => {
-    const target = messages.find((message) => message.id === messageId && message.role === 'user' && !message.isToolResult);
-    if (!target) return;
+  const handleEditUserMessage = useCallback(
+    (messageId: string) => {
+      const target = messages.find(
+        (message) => message.id === messageId && message.role === 'user' && !message.isToolResult,
+      );
+      if (!target) return;
 
-    setEditingUserMessageId(messageId);
-    setComposerPrefillRequest({
-      token: Date.now(),
-      text: target.displayContent ?? target.content,
-      attachments: target.attachments,
-    });
-  }, [messages]);
+      setEditingUserMessageId(messageId);
+      setComposerPrefillRequest({
+        token: Date.now(),
+        text: target.displayContent ?? target.content,
+        attachments: target.attachments,
+      });
+    },
+    [messages],
+  );
 
   const handleRegenerateLastResponse = useCallback(() => {
     setEditingUserMessageId(null);
@@ -159,31 +188,43 @@ export function useWorkspaceChatComposerController({
 
   useEffect(() => {
     if (!editingUserMessageId) return;
-    const stillExists = messages.some((message) => message.id === editingUserMessageId && message.role === 'user' && !message.isToolResult);
+    const stillExists = messages.some(
+      (message) =>
+        message.id === editingUserMessageId && message.role === 'user' && !message.isToolResult,
+    );
     if (!stillExists) {
       const timeout = setTimeout(() => setEditingUserMessageId(null), 0);
       return () => clearTimeout(timeout);
     }
   }, [editingUserMessageId, messages]);
 
-  const handleCardActionWithSnapshotHeartbeat = useCallback((action: CardAction) => {
-    markSnapshotActivity();
-    return handleCardAction(action);
-  }, [handleCardAction, markSnapshotActivity]);
+  const handleCardActionWithSnapshotHeartbeat = useCallback(
+    (action: CardAction) => {
+      markSnapshotActivity();
+      return handleCardAction(action);
+    },
+    [handleCardAction, markSnapshotActivity],
+  );
 
-  const handleSelectAzureDeploymentFromChat = useCallback((id: string) => {
-    const deployment = catalog.azure.deployments.find((candidate) => candidate.id === id);
-    if (!deployment) return;
-    catalog.azure.selectDeployment(id);
-    handleSelectAzureModelFromChat(deployment.model);
-  }, [catalog.azure, handleSelectAzureModelFromChat]);
+  const handleSelectAzureDeploymentFromChat = useCallback(
+    (id: string) => {
+      const deployment = catalog.azure.deployments.find((candidate) => candidate.id === id);
+      if (!deployment) return;
+      catalog.azure.selectDeployment(id);
+      handleSelectAzureModelFromChat(deployment.model);
+    },
+    [catalog.azure, handleSelectAzureModelFromChat],
+  );
 
-  const handleSelectBedrockDeploymentFromChat = useCallback((id: string) => {
-    const deployment = catalog.bedrock.deployments.find((candidate) => candidate.id === id);
-    if (!deployment) return;
-    catalog.bedrock.selectDeployment(id);
-    handleSelectBedrockModelFromChat(deployment.model);
-  }, [catalog.bedrock, handleSelectBedrockModelFromChat]);
+  const handleSelectBedrockDeploymentFromChat = useCallback(
+    (id: string) => {
+      const deployment = catalog.bedrock.deployments.find((candidate) => candidate.id === id);
+      if (!deployment) return;
+      catalog.bedrock.selectDeployment(id);
+      handleSelectBedrockModelFromChat(deployment.model);
+    },
+    [catalog.bedrock, handleSelectBedrockModelFromChat],
+  );
 
   const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
   const isZenModelLocked = isModelLocked && lockedProvider === 'zen';
@@ -197,10 +238,12 @@ export function useWorkspaceChatComposerController({
 
   return {
     composerPrefillRequest,
-    editState: editingUserMessageId ? {
-      label: 'Editing an earlier message. Sending will replay the chat from here.',
-      onCancel: () => setEditingUserMessageId(null),
-    } : null,
+    editState: editingUserMessageId
+      ? {
+          label: 'Editing an earlier message. Sending will replay the chat from here.',
+          onCancel: () => setEditingUserMessageId(null),
+        }
+      : null,
     handleComposerSend,
     handleQuickPrompt,
     handleEditUserMessage,

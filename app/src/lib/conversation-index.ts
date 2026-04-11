@@ -1,6 +1,8 @@
 import type { Conversation, ConversationIndex } from '@/types';
 
-export function toConversationIndex(conversations: Record<string, Conversation>): ConversationIndex {
+export function toConversationIndex(
+  conversations: Record<string, Conversation>,
+): ConversationIndex {
   const index: ConversationIndex = {};
   for (const [chatId, conversation] of Object.entries(conversations)) {
     index[chatId] = Object.fromEntries(

@@ -85,7 +85,10 @@ function openDb(): Promise<IDBDatabase> {
 
       // Usage log — auto-increment ID, indexed by timestamp
       if (!db.objectStoreNames.contains(STORE.usageLog)) {
-        const usageStore = db.createObjectStore(STORE.usageLog, { keyPath: 'id', autoIncrement: true });
+        const usageStore = db.createObjectStore(STORE.usageLog, {
+          keyPath: 'id',
+          autoIncrement: true,
+        });
         usageStore.createIndex('timestamp', 'timestamp', { unique: false });
       }
 
@@ -129,8 +132,10 @@ export async function withStore<T>(
     const request = Array.isArray(result) ? result[result.length - 1] : result;
 
     tx.oncomplete = () => resolve(request.result as T);
-    tx.onerror = () => reject(tx.error ?? new Error(`IndexedDB transaction failed on ${storeName}`));
-    tx.onabort = () => reject(tx.error ?? new Error(`IndexedDB transaction aborted on ${storeName}`));
+    tx.onerror = () =>
+      reject(tx.error ?? new Error(`IndexedDB transaction failed on ${storeName}`));
+    tx.onabort = () =>
+      reject(tx.error ?? new Error(`IndexedDB transaction aborted on ${storeName}`));
   });
 }
 
@@ -202,7 +207,7 @@ export async function deleteMany(storeName: string, keys: IDBValidKey[]): Promis
       store.delete(key);
     }
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error(`IndexedDB batch delete failed on ${storeName}`));
+    tx.onerror = () =>
+      reject(tx.error ?? new Error(`IndexedDB batch delete failed on ${storeName}`));
   });
 }
-

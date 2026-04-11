@@ -1,5 +1,11 @@
 import { Loader2, RotateCcw, Sparkles } from 'lucide-react';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
@@ -64,7 +70,9 @@ export function NewChatWorkspaceSheet({
 
         <div className="space-y-4 pt-3">
           {checking || !workspace ? (
-            <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} flex items-center gap-3 px-4 py-4 text-sm text-push-fg-secondary`}>
+            <div
+              className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} flex items-center gap-3 px-4 py-4 text-sm text-push-fg-secondary`}
+            >
               <Loader2 className="h-4 w-4 animate-spin text-push-fg-dim" />
               <span>Checking workspace changes…</span>
             </div>

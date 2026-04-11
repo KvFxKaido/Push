@@ -71,7 +71,7 @@ export const THRESHOLDS = {
   /** Edit error rate before tightening retry posture. */
   EDIT_ERROR_RATE_ESCALATION: 0.25,
   /** Edit stale rate before recommending re-reads. */
-  EDIT_STALE_RATE_ESCALATION: 0.20,
+  EDIT_STALE_RATE_ESCALATION: 0.2,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -82,10 +82,7 @@ export const THRESHOLDS = {
  * Collect adaptation signals from in-memory metrics for a given provider/model.
  * Returns zero-value signals if no metrics are available.
  */
-export function collectAdaptationSignals(
-  provider: string,
-  modelId?: string,
-): AdaptationSignals {
+export function collectAdaptationSignals(provider: string, modelId?: string): AdaptationSignals {
   const toolMetrics = getMalformedToolCallMetrics();
   const contextMetrics = getContextMetrics();
   const writeMetrics = getWriteFileMetrics();
@@ -167,15 +164,11 @@ export function computeAdaptiveProfile(
   if (signals.malformedCallCount >= THRESHOLDS.MALFORMED_CALL_ESCALATION) {
     if (!adaptedProfile.plannerRequired) {
       adaptedProfile.plannerRequired = true;
-      adaptationReasons.push(
-        `Enable planner: ${signals.malformedCallCount} malformed tool calls`,
-      );
+      adaptationReasons.push(`Enable planner: ${signals.malformedCallCount} malformed tool calls`);
     }
     if (adaptedProfile.maxCoderRounds > 20) {
       adaptedProfile.maxCoderRounds = 20;
-      adaptationReasons.push(
-        `Reduce max rounds to 20: high malformed call rate`,
-      );
+      adaptationReasons.push(`Reduce max rounds to 20: high malformed call rate`);
     }
   }
 

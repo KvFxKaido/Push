@@ -42,9 +42,11 @@ export function RepoAndChatSelector({
   const repoName = activeRepo?.name;
 
   // Build trigger label: repo name or just "Push"
-  const triggerLabel = repoName
-    ? <span className="truncate font-semibold text-push-fg">{repoName}</span>
-    : <span className="font-semibold text-push-fg">Push</span>;
+  const triggerLabel = repoName ? (
+    <span className="truncate font-semibold text-push-fg">{repoName}</span>
+  ) : (
+    <span className="font-semibold text-push-fg">Push</span>
+  );
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -82,9 +84,11 @@ export function RepoAndChatSelector({
                     isActive ? 'bg-[#0b74e8]/15' : 'hover:bg-push-surface-hover'
                   }`}
                 >
-                  <span className={`flex-1 truncate text-sm font-medium ${
-                    isActive ? 'text-push-link' : 'text-[#c5cfde]'
-                  }`}>
+                  <span
+                    className={`flex-1 truncate text-sm font-medium ${
+                      isActive ? 'text-push-link' : 'text-[#c5cfde]'
+                    }`}
+                  >
                     {repo.name}
                   </span>
                   <div className="flex items-center gap-1.5 shrink-0">

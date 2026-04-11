@@ -37,7 +37,17 @@ export interface StreamProviderConfig {
   checkFinishReason: (choice: unknown) => boolean;
   shouldResetStallOnReasoning?: boolean;
   /** Provider identity — used to conditionally inject provider-specific tool protocols */
-  providerType?: 'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'openadapter' | 'azure' | 'bedrock' | 'vertex';
+  providerType?:
+    | 'ollama'
+    | 'openrouter'
+    | 'zen'
+    | 'nvidia'
+    | 'blackbox'
+    | 'kilocode'
+    | 'openadapter'
+    | 'azure'
+    | 'bedrock'
+    | 'vertex';
   /** Override the fetch URL (e.g., for providers with alternate endpoints) */
   apiUrlOverride?: string;
   /** Transform the request body before sending (e.g., swap model for agent_id) */
@@ -50,7 +60,11 @@ export interface StreamProviderConfig {
 // Shared helper functions
 // ---------------------------------------------------------------------------
 
-export function parseProviderError(parsed: unknown, fallback: string, includeTopLevelMessage = false): string {
+export function parseProviderError(
+  parsed: unknown,
+  fallback: string,
+  includeTopLevelMessage = false,
+): string {
   return extractProviderErrorDetail(parsed, fallback, includeTopLevelMessage);
 }
 

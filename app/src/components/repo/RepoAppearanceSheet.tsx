@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { Palette, RotateCcw } from 'lucide-react';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
@@ -56,11 +62,16 @@ export function RepoAppearanceSheet({
         <div className="space-y-5 pt-3">
           <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-4 py-4`}>
             <div className="flex items-center gap-3">
-              <RepoAppearanceBadge appearance={draft} className="h-10 w-10 rounded-xl" iconClassName="h-5 w-5" />
+              <RepoAppearanceBadge
+                appearance={draft}
+                className="h-10 w-10 rounded-xl"
+                iconClassName="h-5 w-5"
+              />
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-push-fg">{repoName}</p>
                 <p className="text-xs text-push-fg-dim">
-                  {REPO_APPEARANCE_ICON_OPTIONS.find((option) => option.id === draft.icon)?.label} in{' '}
+                  {REPO_APPEARANCE_ICON_OPTIONS.find((option) => option.id === draft.icon)?.label}{' '}
+                  in{' '}
                   {REPO_APPEARANCE_COLOR_OPTIONS.find((option) => option.id === draft.color)?.label}
                 </p>
               </div>
@@ -69,7 +80,9 @@ export function RepoAppearanceSheet({
 
           <section className="space-y-2">
             <div className="flex items-center justify-between">
-              <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-push-fg-dim">Icon</h2>
+              <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-push-fg-dim">
+                Icon
+              </h2>
               <span className="text-push-2xs text-push-fg-dim">Curated set</span>
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -83,10 +96,14 @@ export function RepoAppearanceSheet({
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-auto min-h-[72px] flex-col gap-2 px-3 py-3 ${
                       selected ? 'border-push-edge-hover text-push-fg' : 'text-push-fg-secondary'
                     }`}
-                    style={selected ? {
-                      borderColor: hexToRgba(colorHex, 0.45),
-                      backgroundColor: hexToRgba(colorHex, 0.12),
-                    } : undefined}
+                    style={
+                      selected
+                        ? {
+                            borderColor: hexToRgba(colorHex, 0.45),
+                            backgroundColor: hexToRgba(colorHex, 0.12),
+                          }
+                        : undefined
+                    }
                   >
                     <HubControlGlow />
                     <RepoAppearanceGlyph icon={option.id} className="relative z-10 h-5 w-5" />
@@ -99,7 +116,9 @@ export function RepoAppearanceSheet({
 
           <section className="space-y-2">
             <div className="flex items-center justify-between">
-              <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-push-fg-dim">Color</h2>
+              <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-push-fg-dim">
+                Color
+              </h2>
               <span className="text-push-2xs text-push-fg-dim">Muted accents</span>
             </div>
             <div className="grid grid-cols-4 gap-2">
@@ -113,10 +132,14 @@ export function RepoAppearanceSheet({
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-auto gap-2 px-3 py-3 ${
                       selected ? 'border-push-edge-hover text-push-fg' : 'text-push-fg-secondary'
                     }`}
-                    style={selected ? {
-                      borderColor: hexToRgba(option.hex, 0.42),
-                      backgroundColor: hexToRgba(option.hex, 0.12),
-                    } : undefined}
+                    style={
+                      selected
+                        ? {
+                            borderColor: hexToRgba(option.hex, 0.42),
+                            backgroundColor: hexToRgba(option.hex, 0.12),
+                          }
+                        : undefined
+                    }
                   >
                     <HubControlGlow />
                     <span
@@ -161,7 +184,11 @@ export function RepoAppearanceSheet({
               }}
             >
               <HubControlGlow />
-              <RepoAppearanceBadge appearance={draft} className="relative z-10 h-5 w-5 rounded-md" iconClassName="h-3 w-3" />
+              <RepoAppearanceBadge
+                appearance={draft}
+                className="relative z-10 h-5 w-5 rounded-md"
+                iconClassName="h-3 w-3"
+              />
               <span className="relative z-10 text-sm">Save appearance</span>
             </button>
           </div>

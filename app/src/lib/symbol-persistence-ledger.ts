@@ -173,7 +173,12 @@ const MAX_SUMMARY_CHARS = 4000;
 export class SymbolPersistenceLedger {
   /** In-memory fast-path cache. */
   private cache = new Map<string, SymbolLedgerEntry>();
-  private _metrics: SymbolLedgerMetrics = { hits: 0, misses: 0, invalidations: 0, bulkInvalidations: 0 };
+  private _metrics: SymbolLedgerMetrics = {
+    hits: 0,
+    misses: 0,
+    invalidations: 0,
+    bulkInvalidations: 0,
+  };
   private currentRepo: string = '';
 
   // -----------------------------------------------------------------------

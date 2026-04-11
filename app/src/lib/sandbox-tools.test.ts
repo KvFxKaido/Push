@@ -6,10 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---- Mocks must be set up before importing the module under test ----
 
-const {
-  mockRecordWriteFileMetric,
-  mockRecordReadFileMetric,
-} = vi.hoisted(() => ({
+const { mockRecordWriteFileMetric, mockRecordReadFileMetric } = vi.hoisted(() => ({
   mockRecordWriteFileMetric: vi.fn(),
   mockRecordReadFileMetric: vi.fn(),
 }));
@@ -46,11 +43,7 @@ vi.mock('./tool-dispatch', async () => {
   };
 });
 
-import {
-  classifyError,
-  validateSandboxToolCall,
-  executeSandboxToolCall,
-} from './sandbox-tools';
+import { classifyError, validateSandboxToolCall, executeSandboxToolCall } from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
 import { runAuditor } from './auditor-agent';
 import { fileLedger } from './file-awareness-ledger';
@@ -228,8 +221,12 @@ describe('executeSandboxToolCall -- sandbox_verify_workspace', () => {
       },
     } as never);
 
-    vi.mocked(sandboxClient.execInSandbox)
-      .mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: 'typecheck boom', truncated: false });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'typecheck boom',
+      truncated: false,
+    });
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_verify_workspace', args: {} },
@@ -244,10 +241,8 @@ describe('executeSandboxToolCall -- sandbox_verify_workspace', () => {
   });
 });
 
-
 describe('executeSandboxToolCall -- stale write handling', () => {
   beforeEach(() => {
-
     mockRecordWriteFileMetric.mockReset();
     mockRecordReadFileMetric.mockReset();
     vi.mocked(sandboxClient.execInSandbox).mockReset();
@@ -276,7 +271,10 @@ describe('executeSandboxToolCall -- stale write handling', () => {
     );
 
     const writeResult = await executeSandboxToolCall(
-      { tool: 'sandbox_write_file', args: { path: '/workspace/src/example.ts', content: 'export const x = 2;' } },
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/src/example.ts', content: 'export const x = 2;' },
+      },
       'sb-123',
     );
 
@@ -290,11 +288,13 @@ describe('executeSandboxToolCall -- stale write handling', () => {
     expect(writeResult.text).toContain('Expected version: v1');
     expect(writeResult.text).toContain('Current version: v2');
     expect(fileLedger.getState('/workspace/src/example.ts')?.kind).toBe('stale');
-    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(expect.objectContaining({
-      outcome: 'stale',
-      errorCode: 'STALE_FILE',
-      durationMs: expect.any(Number),
-    }));
+    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'stale',
+        errorCode: 'STALE_FILE',
+        durationMs: expect.any(Number),
+      }),
+    );
   });
 
   it('invalidates cached workspace snapshots on workspace-level stale write rejection', async () => {
@@ -318,7 +318,10 @@ describe('executeSandboxToolCall -- stale write handling', () => {
     );
 
     const writeResult = await executeSandboxToolCall(
-      { tool: 'sandbox_write_file', args: { path: '/workspace/src/example.ts', content: 'export const x = 2;' } },
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/src/example.ts', content: 'export const x = 2;' },
+      },
       'sb-123',
     );
 
@@ -329,15 +332,19 @@ describe('executeSandboxToolCall -- stale write handling', () => {
       'v1',
       4,
     );
-    expect(writeResult.text).toContain('Workspace changed before /workspace/src/example.ts could be written.');
+    expect(writeResult.text).toContain(
+      'Workspace changed before /workspace/src/example.ts could be written.',
+    );
     expect(writeResult.text).toContain('Expected workspace revision: 4');
     expect(writeResult.text).toContain('Current workspace revision: 5');
     expect(fileLedger.getState('/workspace/src/example.ts')?.kind).toBe('stale');
-    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(expect.objectContaining({
-      outcome: 'stale',
-      errorCode: 'WORKSPACE_CHANGED',
-      durationMs: expect.any(Number),
-    }));
+    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'stale',
+        errorCode: 'WORKSPACE_CHANGED',
+        durationMs: expect.any(Number),
+      }),
+    );
   });
 });
 
@@ -345,7 +352,12 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', (
   beforeEach(() => {
     vi.mocked(sandboxClient.getSandboxDiff).mockReset();
     vi.mocked(sandboxClient.execInSandbox).mockReset();
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
     vi.mocked(runAuditor).mockReset();
   });
 
@@ -467,7 +479,6 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', (
 
 describe('executeSandboxToolCall -- read metrics', () => {
   beforeEach(() => {
-
     mockRecordReadFileMetric.mockReset();
     vi.mocked(sandboxClient.readFromSandbox).mockReset();
   });
@@ -484,13 +495,15 @@ describe('executeSandboxToolCall -- read metrics', () => {
       'sb-123',
     );
 
-    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(expect.objectContaining({
-      outcome: 'success',
-      isRangeRead: false,
-      payloadChars: 19,
-      truncated: false,
-      emptyRange: false,
-    }));
+    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'success',
+        isRangeRead: false,
+        payloadChars: 19,
+        truncated: false,
+        emptyRange: false,
+      }),
+    );
   });
 
   it('records empty range reads for out-of-bounds line windows', async () => {
@@ -503,17 +516,22 @@ describe('executeSandboxToolCall -- read metrics', () => {
     });
 
     await executeSandboxToolCall(
-      { tool: 'sandbox_read_file', args: { path: '/workspace/src/example.ts', start_line: 999, end_line: 1100 } },
+      {
+        tool: 'sandbox_read_file',
+        args: { path: '/workspace/src/example.ts', start_line: 999, end_line: 1100 },
+      },
       'sb-123',
     );
 
-    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(expect.objectContaining({
-      outcome: 'success',
-      isRangeRead: true,
-      payloadChars: 0,
-      truncated: false,
-      emptyRange: true,
-    }));
+    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'success',
+        isRangeRead: true,
+        payloadChars: 0,
+        truncated: false,
+        emptyRange: true,
+      }),
+    );
   });
 
   it('records read errors', async () => {
@@ -528,18 +546,19 @@ describe('executeSandboxToolCall -- read metrics', () => {
       'sb-123',
     );
 
-    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(expect.objectContaining({
-      outcome: 'error',
-      isRangeRead: false,
-      payloadChars: 0,
-      errorCode: 'READ_ERROR',
-    }));
+    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'error',
+        isRangeRead: false,
+        payloadChars: 0,
+        errorCode: 'READ_ERROR',
+      }),
+    );
   });
 });
 
 describe('executeSandboxToolCall -- write metrics', () => {
   beforeEach(() => {
-
     mockRecordWriteFileMetric.mockReset();
     vi.mocked(sandboxClient.execInSandbox).mockReset();
     vi.mocked(sandboxClient.writeToSandbox).mockReset();
@@ -559,15 +578,20 @@ describe('executeSandboxToolCall -- write metrics', () => {
     });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_write_file', args: { path: '/workspace/src/example.ts', content: 'const x=1;' } },
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/src/example.ts', content: 'const x=1;' },
+      },
       'sb-123',
     );
 
     expect(result.text).toContain('Wrote /workspace/src/example.ts');
-    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(expect.objectContaining({
-      outcome: 'success',
-      durationMs: expect.any(Number),
-    }));
+    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'success',
+        durationMs: expect.any(Number),
+      }),
+    );
   });
 
   it('records non-stale error metrics for sandbox_write_file', async () => {
@@ -578,16 +602,21 @@ describe('executeSandboxToolCall -- write metrics', () => {
     });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_write_file', args: { path: '/workspace/src/example.ts', content: 'const x=1;' } },
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/src/example.ts', content: 'const x=1;' },
+      },
       'sb-123',
     );
 
     expect(result.text).toContain('[Tool Error]');
-    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(expect.objectContaining({
-      outcome: 'error',
-      errorCode: 'WRITE_FAILED',
-      durationMs: expect.any(Number),
-    }));
+    expect(mockRecordWriteFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'error',
+        errorCode: 'WRITE_FAILED',
+        durationMs: expect.any(Number),
+      }),
+    );
   });
 });
 
@@ -615,7 +644,10 @@ describe('executeSandboxToolCall -- edit guard', () => {
     } as unknown as sandboxClient.FileReadResult);
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_write_file', args: { path: '/workspace/src/foo.ts', content: 'new content' } },
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/src/foo.ts', content: 'new content' },
+      },
       'sb-123',
     );
 
@@ -644,7 +676,10 @@ describe('executeSandboxToolCall -- edit guard', () => {
     });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_write_file', args: { path: '/workspace/src/foo.ts', content: 'updated content' } },
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/src/foo.ts', content: 'updated content' },
+      },
       'sb-123',
     );
 
@@ -689,7 +724,10 @@ describe('executeSandboxToolCall -- edit guard', () => {
     });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_write_file', args: { path: '/workspace/src/new.ts', content: 'brand new file' } },
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/src/new.ts', content: 'brand new file' },
+      },
       'sb-123',
     );
 
@@ -750,7 +788,10 @@ describe('executeSandboxToolCall -- edit guard', () => {
     });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_write_file', args: { path: '/workspace/src/empty.ts', content: 'new content' } },
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/src/empty.ts', content: 'new content' },
+      },
       'sb-123',
     );
 
@@ -775,7 +816,10 @@ describe('executeSandboxToolCall -- edit guard', () => {
       } as unknown as sandboxClient.FileReadResult);
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_write_file', args: { path: '/workspace/src/big.min.js', content: 'replacement' } },
+      {
+        tool: 'sandbox_write_file',
+        args: { path: '/workspace/src/big.min.js', content: 'replacement' },
+      },
       'sb-123',
     );
 
@@ -816,7 +860,11 @@ describe('sandbox path normalization', () => {
     expect(result).not.toBeNull();
     expect(result).toEqual({
       tool: 'sandbox_read_file',
-      args: { path: '/workspace/app/src/lib/sandbox-tools.ts', start_line: undefined, end_line: undefined },
+      args: {
+        path: '/workspace/app/src/lib/sandbox-tools.ts',
+        start_line: undefined,
+        end_line: undefined,
+      },
     });
   });
 
@@ -825,7 +873,10 @@ describe('sandbox path normalization', () => {
       tool: 'sandbox_apply_patchset',
       args: {
         edits: [
-          { path: 'app/worker.ts', ops: [{ op: 'replace_line', ref: 'abc1234', content: 'new line' }] },
+          {
+            path: 'app/worker.ts',
+            ops: [{ op: 'replace_line', ref: 'abc1234', content: 'new line' }],
+          },
           { path: 'app/src/lib/providers.ts', ops: [{ op: 'delete_line', ref: 'def5678' }] },
         ],
       },
@@ -844,7 +895,10 @@ describe('sandbox path normalization', () => {
       tool: 'sandbox_apply_patchset',
       args: {
         edits: [
-          { path: '/workspace/app/worker.ts', ops: [{ op: 'replace_line', ref: 'abc1234', content: 'new line' }] },
+          {
+            path: '/workspace/app/worker.ts',
+            ops: [{ op: 'replace_line', ref: 'abc1234', content: 'new line' }],
+          },
         ],
       },
     });
@@ -886,7 +940,7 @@ describe('sandbox path normalization', () => {
           { path: 'app/worker.ts', ops: [{ op: 'replace_line', ref: 'abc1234', content: 'new' }] },
           { path: 123, ops: [] }, // invalid: path is not a string
           { path: 'app/lib.ts' }, // invalid: missing ops
-          'not-an-object',        // invalid: not an object
+          'not-an-object', // invalid: not an object
         ],
       },
     });
@@ -903,9 +957,7 @@ describe('sandbox path normalization', () => {
     const result = validateSandboxToolCall({
       tool: 'sandbox_apply_patchset',
       args: {
-        edits: [
-          { path: 123, ops: [] },
-        ],
+        edits: [{ path: 123, ops: [] }],
       },
     });
     expect(result).toBeNull();
@@ -929,7 +981,11 @@ describe('sandbox path normalization', () => {
     if (!result || result.tool !== 'sandbox_apply_patchset') throw new Error('Expected patchset');
     expect(result.args.checks).toHaveLength(2);
     expect(result.args.checks![0]).toEqual({ command: 'npm test', exitCode: 0, timeoutMs: 5000 });
-    expect(result.args.checks![1]).toEqual({ command: 'npx tsc --noEmit', exitCode: undefined, timeoutMs: undefined });
+    expect(result.args.checks![1]).toEqual({
+      command: 'npx tsc --noEmit',
+      exitCode: undefined,
+      timeoutMs: undefined,
+    });
     expect(result.args.rollbackOnFailure).toBe(true);
   });
 
@@ -941,8 +997,8 @@ describe('sandbox path normalization', () => {
           { path: 'src/foo.ts', ops: [{ op: 'replace_line', ref: 'abc1234', content: 'x' }] },
         ],
         checks: [
-          { command: 'npm test', timeoutMs: 100 },    // below min
-          { command: 'npm build', timeoutMs: 99999 },  // above max
+          { command: 'npm test', timeoutMs: 100 }, // below min
+          { command: 'npm build', timeoutMs: 99999 }, // above max
         ],
       },
     });
@@ -1018,18 +1074,19 @@ describe('sandbox path normalization', () => {
   });
 
   it('normalizes workspace-prefixed exec workdir', async () => {
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     await executeSandboxToolCall(
       { tool: 'sandbox_exec', args: { command: 'pwd', workdir: 'workspace/app' } },
       'sb-123',
     );
 
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith(
-      'sb-123',
-      'pwd',
-      '/workspace/app',
-    );
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith('sb-123', 'pwd', '/workspace/app');
   });
 
   it('formats sandbox_find_references results with relative paths', async () => {
@@ -1067,7 +1124,7 @@ describe('sandbox path normalization', () => {
     expect(result.text).toContain('Symbol: getActiveProvider');
     expect(result.text).toContain('Scope: src/');
     expect(result.text).toContain('References: 2 (showing 2)');
-    expect(result.text).toContain("import  L  14  src/lib/auditor-agent.ts");
+    expect(result.text).toContain('import  L  14  src/lib/auditor-agent.ts');
     expect(result.text).toContain('call    L 156  src/lib/orchestrator.ts');
   });
 
@@ -1088,10 +1145,7 @@ describe('sandbox path normalization', () => {
       truncated: false,
     });
 
-    await executeSandboxToolCall(
-      { tool: 'sandbox_read_file', args: { path } },
-      'sb-123',
-    );
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
     expect(fileLedger.getState(path)?.kind).toBe('fully_read');
 
     const execResult = await executeSandboxToolCall(
@@ -1127,10 +1181,7 @@ describe('sandbox path normalization', () => {
       truncated: false,
     });
 
-    await executeSandboxToolCall(
-      { tool: 'sandbox_read_file', args: { path } },
-      'sb-123',
-    );
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
 
     const execResult = await executeSandboxToolCall(
       { tool: 'sandbox_exec', args: { command: 'pwd' } },
@@ -1139,11 +1190,7 @@ describe('sandbox path normalization', () => {
 
     expect(execResult.text).not.toContain('Marked 1 previously-read file(s) as stale');
     expect(fileLedger.getState(path)?.kind).toBe('fully_read');
-    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
-      'sb-123',
-      'pwd',
-      undefined,
-    );
+    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith('sb-123', 'pwd', undefined);
   });
 
   it('returns a structured git guard error when direct git mutations are blocked', async () => {
@@ -1161,7 +1208,8 @@ describe('sandbox path normalization', () => {
       type: 'GIT_GUARD_BLOCKED',
       retryable: false,
       message: 'Direct "git push" is blocked',
-      detail: 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.',
+      detail:
+        'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.',
     });
     expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
   });
@@ -1193,14 +1241,26 @@ describe('sandbox_edit_file large file fallback', () => {
         end_line: 400,
       });
 
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 20 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: 'diff', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 20,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'diff',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     const ref = await calculateLineHash('line 1');
 
     // Post-write verification read-back
-    vi.mocked(sandboxClient.readFromSandbox)
-      .mockResolvedValueOnce({ content: 'l', truncated: false, version: 'v2' });
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValueOnce({
+      content: 'l',
+      truncated: false,
+      version: 'v2',
+    });
 
     const result = await executeSandboxToolCall(
       {
@@ -1215,7 +1275,13 @@ describe('sandbox_edit_file large file fallback', () => {
 
     expect(result.text).toContain('Edited /workspace/demo.txt');
     // Call 2 is the chunk hydration read with line range (cached result reused for edit logic)
-    expect(sandboxClient.readFromSandbox).toHaveBeenNthCalledWith(2, 'sb-123', '/workspace/demo.txt', 1, 400);
+    expect(sandboxClient.readFromSandbox).toHaveBeenNthCalledWith(
+      2,
+      'sb-123',
+      '/workspace/demo.txt',
+      1,
+      400,
+    );
     // 3 calls total: guard initial + chunk + post-write verification
     expect(sandboxClient.readFromSandbox).toHaveBeenCalledTimes(3);
   });
@@ -1276,8 +1342,17 @@ describe('sandbox_edit_file version precedence', () => {
       truncated: false,
       version: 'v3',
     });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v4', bytes_written: 11 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v4',
+      bytes_written: 11,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     const ref = await calculateLineHash('hello world');
 
@@ -1308,8 +1383,17 @@ describe('sandbox_edit_file version precedence', () => {
       truncated: false,
       version: undefined as unknown as string,
     });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v1', bytes_written: 14 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v1',
+      bytes_written: 14,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     const ref = await calculateLineHash('hello world');
 
@@ -1355,10 +1439,7 @@ describe('sandbox_edit_file version precedence', () => {
       current_version: 'v2',
     });
 
-    await executeSandboxToolCall(
-      { tool: 'sandbox_read_file', args: { path } },
-      'sb-123',
-    );
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
 
     const ref = await calculateLineHash('hello world');
     const result = await executeSandboxToolCall(
@@ -1404,8 +1485,17 @@ describe('sandbox_write_file version precedence', () => {
 
     // Step 2: Write with a stale expected_version 'v1'
     // The cache has 'v2' which should take precedence
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v3', bytes_written: 15 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v3',
+      bytes_written: 15,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     await executeSandboxToolCall(
       {
@@ -1434,8 +1524,17 @@ describe('sandbox_write_file version precedence', () => {
       truncated: false,
       version: 'v1',
     });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 15 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 15,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     const result = await executeSandboxToolCall(
       {
@@ -1461,8 +1560,17 @@ describe('sandbox_write_file version precedence', () => {
       truncated: false,
       version: undefined as unknown as string,
     });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 15 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 15,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     await executeSandboxToolCall(
       {
@@ -1532,8 +1640,17 @@ describe('sandbox_edit_file symbolic guard', () => {
       truncated: false,
       version: 'v1',
     });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 50 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 50,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     const ref = await calculateLineHash('export function hello() {');
 
@@ -1570,13 +1687,19 @@ describe('sandbox_edit_file symbolic guard', () => {
         truncated: false,
         version: 'v1',
       });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 48 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 48,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
-    await executeSandboxToolCall(
-      { tool: 'sandbox_read_file', args: { path } },
-      'sb-123',
-    );
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
 
     const ref = await calculateLineHash('const value = 1;');
     const result = await executeSandboxToolCall(
@@ -1584,7 +1707,9 @@ describe('sandbox_edit_file symbolic guard', () => {
         tool: 'sandbox_edit_file',
         args: {
           path,
-          edits: [{ op: 'replace_line', ref, content: 'export function introduced() { return 1; }' }],
+          edits: [
+            { op: 'replace_line', ref, content: 'export function introduced() { return 1; }' },
+          ],
         },
       },
       'sb-123',
@@ -1612,7 +1737,9 @@ describe('sandbox_edit_file symbolic guard', () => {
         tool: 'sandbox_edit_file',
         args: {
           path: '/workspace/src/app.ts',
-          edits: [{ op: 'replace_line', ref, content: 'export function functionB() { return 1; }' }],
+          edits: [
+            { op: 'replace_line', ref, content: 'export function functionB() { return 1; }' },
+          ],
         },
       },
       'sb-123',
@@ -1681,13 +1808,19 @@ describe('sandbox_edit_file symbolic guard', () => {
       .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' })
       // Post-write verification read-back.
       .mockResolvedValueOnce({ content: 'h', truncated: false, version: 'v3' });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v3', bytes_written: 30 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v3',
+      bytes_written: 30,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
-    await executeSandboxToolCall(
-      { tool: 'sandbox_read_file', args: { path } },
-      'sb-123',
-    );
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
 
     const staleHash = await calculateLineHash('const value = 1;');
     const result = await executeSandboxToolCall(
@@ -1723,13 +1856,19 @@ describe('sandbox_edit_file symbolic guard', () => {
       .mockResolvedValueOnce({ content: oldContent, truncated: false, version: 'v1' })
       .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' })
       .mockResolvedValueOnce({ content: 'const value = 3;\n', truncated: false, version: 'v3' });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v3', bytes_written: 17 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v3',
+      bytes_written: 17,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
-    await executeSandboxToolCall(
-      { tool: 'sandbox_read_file', args: { path } },
-      'sb-123',
-    );
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
 
     const staleHash = await calculateLineHash('const value = 1;');
     const result = await executeSandboxToolCall(
@@ -1765,10 +1904,7 @@ describe('sandbox_edit_file symbolic guard', () => {
       .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' })
       .mockResolvedValueOnce({ content: latestContent, truncated: false, version: 'v2' });
 
-    await executeSandboxToolCall(
-      { tool: 'sandbox_read_file', args: { path } },
-      'sb-123',
-    );
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
 
     const staleHash = await calculateLineHash('const value = 1;');
     const missingHash = await calculateLineHash('const second = 1;');
@@ -1802,13 +1938,19 @@ describe('sandbox_edit_file symbolic guard', () => {
       .mockResolvedValueOnce({ content: fileContent, truncated: false, version: 'v1' })
       .mockResolvedValueOnce({ content: fileContent, truncated: false, version: 'v1' })
       .mockResolvedValueOnce({ content: 'const value = 3;\n', truncated: false, version: 'v2' });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 17 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 17,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
-    await executeSandboxToolCall(
-      { tool: 'sandbox_read_file', args: { path } },
-      'sb-123',
-    );
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
 
     const ref = await calculateLineHash('const value = 1;');
     const result = await executeSandboxToolCall(
@@ -1897,12 +2039,11 @@ describe('sandbox_edit_range', () => {
 
     // Range wrapper pre-reads the file, then primes the prefetch cache so the
     // delegated sandbox_edit_file skips a second read.
-    vi.mocked(sandboxClient.readFromSandbox)
-      .mockResolvedValueOnce({
-        content: fileContent,
-        truncated: false,
-        version: 'v1',
-      });
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValueOnce({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
     vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
       ok: true,
       bytes_written: 13,
@@ -1996,10 +2137,14 @@ describe('sandbox_apply_patchset symbolic guard', () => {
       {
         tool: 'sandbox_apply_patchset',
         args: {
-          edits: [{
-            path: '/workspace/src/a.ts',
-            ops: [{ op: 'replace_line', ref, content: 'export function greet() { return "hello"; }' }],
-          }],
+          edits: [
+            {
+              path: '/workspace/src/a.ts',
+              ops: [
+                { op: 'replace_line', ref, content: 'export function greet() { return "hello"; }' },
+              ],
+            },
+          ],
         },
       },
       'sb-123',
@@ -2025,26 +2170,27 @@ describe('sandbox_apply_patchset symbolic guard', () => {
       {
         tool: 'sandbox_apply_patchset',
         args: {
-          edits: [{
-            path,
-            start_line: 2,
-            end_line: 3,
-            content: 'dos\ntres',
-          }],
+          edits: [
+            {
+              path,
+              start_line: 2,
+              end_line: 3,
+              content: 'dos\ntres',
+            },
+          ],
         },
       },
       'sb-123',
     );
 
     expect(result.text).toContain('patched successfully');
-    expect(vi.mocked(sandboxClient.batchWriteToSandbox)).toHaveBeenCalledWith(
-      'sb-123',
-      [{
+    expect(vi.mocked(sandboxClient.batchWriteToSandbox)).toHaveBeenCalledWith('sb-123', [
+      {
         path,
         content: 'line 1\ndos\ntres\nline 4\n',
         expected_version: 'v1',
-      }],
-    );
+      },
+    ]);
   });
 
   it('surfaces double-replace warnings for successful patchsets', async () => {
@@ -2065,13 +2211,15 @@ describe('sandbox_apply_patchset symbolic guard', () => {
       {
         tool: 'sandbox_apply_patchset',
         args: {
-          edits: [{
-            path,
-            ops: [
-              { op: 'replace_line', ref, content: 'const value = 2;' },
-              { op: 'replace_line', ref, content: 'const value = 3;' },
-            ],
-          }],
+          edits: [
+            {
+              path,
+              ops: [
+                { op: 'replace_line', ref, content: 'const value = 2;' },
+                { op: 'replace_line', ref, content: 'const value = 3;' },
+              ],
+            },
+          ],
         },
       },
       'sb-123',
@@ -2097,10 +2245,14 @@ describe('sandbox_apply_patchset symbolic guard', () => {
       {
         tool: 'sandbox_apply_patchset',
         args: {
-          edits: [{
-            path: '/workspace/src/a.ts',
-            ops: [{ op: 'replace_line', ref, content: 'export function functionB() { return 1; }' }],
-          }],
+          edits: [
+            {
+              path: '/workspace/src/a.ts',
+              ops: [
+                { op: 'replace_line', ref, content: 'export function functionB() { return 1; }' },
+              ],
+            },
+          ],
         },
       },
       'sb-123',
@@ -2137,10 +2289,12 @@ describe('sandbox_apply_patchset symbolic guard', () => {
       {
         tool: 'sandbox_apply_patchset',
         args: {
-          edits: [{
-            path,
-            ops: [{ op: 'replace_line', ref, content: 'export function madeUp() { return 1; }' }],
-          }],
+          edits: [
+            {
+              path,
+              ops: [{ op: 'replace_line', ref, content: 'export function madeUp() { return 1; }' }],
+            },
+          ],
         },
       },
       'sb-123',
@@ -2193,10 +2347,14 @@ describe('sandbox_apply_patchset symbolic guard', () => {
       {
         tool: 'sandbox_apply_patchset',
         args: {
-          edits: [{
-            path: '/workspace/src/a.ts',
-            ops: [{ op: 'replace_line', ref, content: 'export function greet() { return "hello"; }' }],
-          }],
+          edits: [
+            {
+              path: '/workspace/src/a.ts',
+              ops: [
+                { op: 'replace_line', ref, content: 'export function greet() { return "hello"; }' },
+              ],
+            },
+          ],
         },
       },
       'sb-123',
@@ -2233,20 +2391,19 @@ describe('sandbox_apply_patchset symbolic guard', () => {
         end_line: 400,
       } as unknown as sandboxClient.FileReadResult);
 
-    await executeSandboxToolCall(
-      { tool: 'sandbox_read_file', args: { path } },
-      'sb-123',
-    );
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
 
     const ref = await calculateLineHash('const value = 1;');
     const result = await executeSandboxToolCall(
       {
         tool: 'sandbox_apply_patchset',
         args: {
-          edits: [{
-            path,
-            ops: [{ op: 'replace_line', ref, content: 'const value = 2;' }],
-          }],
+          edits: [
+            {
+              path,
+              ops: [{ op: 'replace_line', ref, content: 'const value = 2;' }],
+            },
+          ],
         },
       },
       'sb-123',
@@ -2275,29 +2432,30 @@ describe('sandbox_apply_patchset symbolic guard', () => {
       });
     vi.mocked(sandboxClient.batchWriteToSandbox).mockResolvedValue({
       ok: true,
-      results: [{
-        path,
-        ok: false,
-        code: 'STALE_FILE',
-        expected_version: 'v1',
-        current_version: 'v2',
-      }],
+      results: [
+        {
+          path,
+          ok: false,
+          code: 'STALE_FILE',
+          expected_version: 'v1',
+          current_version: 'v2',
+        },
+      ],
     });
 
-    await executeSandboxToolCall(
-      { tool: 'sandbox_read_file', args: { path } },
-      'sb-123',
-    );
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
 
     const ref = await calculateLineHash('const value = 1;');
     const result = await executeSandboxToolCall(
       {
         tool: 'sandbox_apply_patchset',
         args: {
-          edits: [{
-            path,
-            ops: [{ op: 'replace_line', ref, content: 'const value = 2;' }],
-          }],
+          edits: [
+            {
+              path,
+              ops: [{ op: 'replace_line', ref, content: 'const value = 2;' }],
+            },
+          ],
         },
       },
       'sb-123',
@@ -2388,10 +2546,12 @@ describe('sandbox_apply_patchset batch write fallback', () => {
       {
         tool: 'sandbox_apply_patchset',
         args: {
-          edits: [{
-            path: '/workspace/src/a.ts',
-            ops: [{ op: 'replace_line', ref, content: 'const a = 2;' }],
-          }],
+          edits: [
+            {
+              path: '/workspace/src/a.ts',
+              ops: [{ op: 'replace_line', ref, content: 'const a = 2;' }],
+            },
+          ],
         },
       },
       'sb-123',
@@ -2422,10 +2582,12 @@ describe('sandbox_apply_patchset batch write fallback', () => {
       {
         tool: 'sandbox_apply_patchset',
         args: {
-          edits: [{
-            path: '/workspace/src/a.ts',
-            ops: [{ op: 'replace_line', ref, content: 'const b = 2;' }],
-          }],
+          edits: [
+            {
+              path: '/workspace/src/a.ts',
+              ops: [{ op: 'replace_line', ref, content: 'const b = 2;' }],
+            },
+          ],
         },
       },
       'sb-123',
@@ -2454,9 +2616,22 @@ describe('sandbox_search_replace', () => {
   it('finds unique line and replaces matched substring', async () => {
     const path = '/workspace/src/app.ts';
     const fileContent = 'export function foo(x: number): number {\n  return x;\n}\n';
-    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 50 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 50,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     // Pre-read so edit guard passes.
     await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
@@ -2478,11 +2653,18 @@ describe('sandbox_search_replace', () => {
   it('errors when search string matches no lines', async () => {
     const path = '/workspace/src/app.ts';
     const fileContent = 'const a = 1;\n';
-    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
 
     await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_search_replace', args: { path, search: 'not present', replace: 'anything' } },
+      {
+        tool: 'sandbox_search_replace',
+        args: { path, search: 'not present', replace: 'anything' },
+      },
       'sb-123',
     );
 
@@ -2495,7 +2677,11 @@ describe('sandbox_search_replace', () => {
   it('errors when search string matches multiple lines', async () => {
     const path = '/workspace/src/app.ts';
     const fileContent = 'const a = null;\nconst b = null;\n';
-    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
 
     await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
     const result = await executeSandboxToolCall(
@@ -2513,13 +2699,29 @@ describe('sandbox_search_replace', () => {
   it('expands a single-line replace into multiple lines when replace contains newline', async () => {
     const path = '/workspace/src/app.ts';
     const fileContent = 'const x = 1;\n';
-    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 30 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 30,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_search_replace', args: { path, search: 'const x = 1;', replace: 'const x = 1;\nconst y = 2;' } },
+      {
+        tool: 'sandbox_search_replace',
+        args: { path, search: 'const x = 1;', replace: 'const x = 1;\nconst y = 2;' },
+      },
       'sb-123',
     );
 
@@ -2535,9 +2737,22 @@ describe('sandbox_search_replace', () => {
   it('treats replacement text literally (no $-pattern expansion)', async () => {
     const path = '/workspace/src/app.ts';
     const fileContent = 'const token = "foo";\n';
-    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 28 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 28,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_search_replace', args: { path, search: 'foo', replace: '$1$&$$' } },
@@ -2559,8 +2774,17 @@ describe('sandbox_search_replace', () => {
     vi.mocked(sandboxClient.readFromSandbox)
       .mockResolvedValueOnce({ content: fileContent, truncated: false, version: 'v1' })
       .mockResolvedValueOnce({ content: 'l', truncated: false, version: 'v2' });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 14 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 14,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_search_replace', args: { path, search: 'line2\n', replace: 'NEW' } },
@@ -2583,8 +2807,17 @@ describe('sandbox_search_replace', () => {
       .mockResolvedValueOnce({ content: fileContent, truncated: false, version: 'v1' })
       // Post-write verification read-back (non-critical, won't block edit).
       .mockResolvedValueOnce({ content: 'c', truncated: false, version: 'v2' });
-    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({ ok: true, new_version: 'v2', bytes_written: 12 });
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 12,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_search_replace', args: { path, search: 'x = 1', replace: 'x = 2' } },
@@ -2606,12 +2839,19 @@ describe('sandbox_search_replace', () => {
     const path = '/workspace/src/app.ts';
     // File has ASCII double quotes
     const fileContent = 'const msg = "hello world";\n';
-    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
 
     await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
     const result = await executeSandboxToolCall(
       // Search uses smart double quotes (U+201C / U+201D) instead of ASCII "
-      { tool: 'sandbox_search_replace', args: { path, search: '\u201chello world\u201d', replace: 'goodbye' } },
+      {
+        tool: 'sandbox_search_replace',
+        args: { path, search: '\u201chello world\u201d', replace: 'goodbye' },
+      },
       'sb-123',
     );
 
@@ -2627,12 +2867,19 @@ describe('sandbox_search_replace', () => {
     const path = '/workspace/src/app.ts';
     // File has a real em-dash (U+2014)
     const fileContent = 'Does not ping \u2014 just updates UI state\n';
-    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({ content: fileContent, truncated: false, version: 'v1' });
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
 
     await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
     const result = await executeSandboxToolCall(
       // Search uses CP1252 mojibake for em-dash: â€" = U+00E2 U+20AC U+201D
-      { tool: 'sandbox_search_replace', args: { path, search: 'Does not ping \u00e2\u20ac\u201d just updates', replace: 'fixed' } },
+      {
+        tool: 'sandbox_search_replace',
+        args: { path, search: 'Does not ping \u00e2\u20ac\u201d just updates', replace: 'fixed' },
+      },
       'sb-123',
     );
 

@@ -53,8 +53,14 @@ describe('Role capability grants', () => {
   it('Explorer has only read-only capabilities', () => {
     const explorerCaps = ROLE_CAPABILITIES.explorer;
     const writeCaps: Capability[] = [
-      'repo:write', 'sandbox:exec', 'git:commit', 'git:push',
-      'pr:write', 'workflow:trigger', 'delegate:coder', 'delegate:explorer',
+      'repo:write',
+      'sandbox:exec',
+      'git:commit',
+      'git:push',
+      'pr:write',
+      'workflow:trigger',
+      'delegate:coder',
+      'delegate:explorer',
     ];
     for (const cap of writeCaps) {
       expect(explorerCaps.has(cap), `Explorer should not have ${cap}`).toBe(false);

@@ -2,14 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 import type { GitHubUser } from '@/types';
 import { buildAuthSession } from './useAuthSession';
 
-function createPatAuth(overrides: Partial<{
-  token: string;
-  logout: () => void;
-  loading: boolean;
-  error: string | null;
-  setTokenManually: (token: string) => Promise<boolean>;
-  validatedUser: GitHubUser | null;
-}> = {}) {
+function createPatAuth(
+  overrides: Partial<{
+    token: string;
+    logout: () => void;
+    loading: boolean;
+    error: string | null;
+    setTokenManually: (token: string) => Promise<boolean>;
+    validatedUser: GitHubUser | null;
+  }> = {},
+) {
   return {
     token: '',
     logout: vi.fn(),
@@ -21,18 +23,20 @@ function createPatAuth(overrides: Partial<{
   };
 }
 
-function createAppAuth(overrides: Partial<{
-  token: string;
-  installationId: string;
-  connect: () => void;
-  install: () => void;
-  disconnect: () => void;
-  setInstallationIdManually: (id: string) => Promise<boolean>;
-  loading: boolean;
-  error: string | null;
-  validatedUser: GitHubUser | null;
-  isAppAuth: boolean;
-}> = {}) {
+function createAppAuth(
+  overrides: Partial<{
+    token: string;
+    installationId: string;
+    connect: () => void;
+    install: () => void;
+    disconnect: () => void;
+    setInstallationIdManually: (id: string) => Promise<boolean>;
+    loading: boolean;
+    error: string | null;
+    validatedUser: GitHubUser | null;
+    isAppAuth: boolean;
+  }> = {},
+) {
   return {
     token: '',
     installationId: '',

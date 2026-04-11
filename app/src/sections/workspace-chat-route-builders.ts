@@ -9,11 +9,20 @@ import type {
 import { buildWorkspaceScratchActions, type SnapshotManager } from '@/hooks/useSnapshotManager';
 import type { ChatRouteProps } from './workspace-chat-route-types';
 
-type WorkspaceHubProps = ComponentProps<typeof import('@/components/chat/WorkspaceHubSheet').WorkspaceHubSheet>;
-type RepoChatDrawerProps = ComponentProps<typeof import('@/components/chat/RepoChatDrawer').RepoChatDrawer>;
-type RepoLauncherSheetProps = ComponentProps<typeof import('@/components/launcher/RepoLauncherSheet').RepoLauncherSheet>;
+type WorkspaceHubProps = ComponentProps<
+  typeof import('@/components/chat/WorkspaceHubSheet').WorkspaceHubSheet
+>;
+type RepoChatDrawerProps = ComponentProps<
+  typeof import('@/components/chat/RepoChatDrawer').RepoChatDrawer
+>;
+type RepoLauncherSheetProps = ComponentProps<
+  typeof import('@/components/launcher/RepoLauncherSheet').RepoLauncherSheet
+>;
 
-export function buildSettingsAuth(props: ChatRouteProps, onDisconnect: () => void): SettingsAuthProps {
+export function buildSettingsAuth(
+  props: ChatRouteProps,
+  onDisconnect: () => void,
+): SettingsAuthProps {
   return {
     isConnected: Boolean(props.token),
     isAppAuth: props.isAppAuth,
@@ -363,7 +372,9 @@ export function buildWorkspaceHubBranchProps(args: {
     branchesLoading: args.repoBranchesLoading,
     onSwitchBranch: args.setCurrentBranch,
     onRefreshBranches: activeRepoFullName
-      ? () => { void args.loadRepoBranches(activeRepoFullName); }
+      ? () => {
+          void args.loadRepoBranches(activeRepoFullName);
+        }
       : () => {},
     onShowBranchCreate: () => args.setShowBranchCreate(true),
     onShowMergeFlow: () => args.setShowMergeFlow(true),
@@ -419,7 +430,9 @@ export function buildRepoChatDrawerProps(args: {
     branchesLoading: args.repoBranchesLoading,
     branchesError: args.repoBranchesError,
     onRefreshBranches: activeRepoFullName
-      ? () => { void args.loadRepoBranches(activeRepoFullName); }
+      ? () => {
+          void args.loadRepoBranches(activeRepoFullName);
+        }
       : undefined,
     onDeleteBranch: args.handleDeleteBranch,
   };
@@ -460,7 +473,9 @@ export function buildRepoLauncherSheetProps(args: {
     clearRepoAppearance: args.clearRepoAppearance,
     onSelectRepo: args.handleSelectRepoFromDrawer,
     onResumeConversation: args.handleResumeConversationFromLauncher,
-    sandboxSession: args.isScratch ? { status: args.sandboxStatus, createdAt: args.sandboxCreatedAt } : null,
+    sandboxSession: args.isScratch
+      ? { status: args.sandboxStatus, createdAt: args.sandboxCreatedAt }
+      : null,
     onStartWorkspace: args.handleStartWorkspace,
     onStartChat: args.handleStartChat,
     onDisconnect: args.handleDisconnect,

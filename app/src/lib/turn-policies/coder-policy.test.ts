@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { createCoderPolicy, detectCognitiveDrift, BACKPRESSURE_MUTATION_THRESHOLD, VERIFICATION_COMMAND_PATTERN } from './coder-policy';
+import {
+  createCoderPolicy,
+  detectCognitiveDrift,
+  BACKPRESSURE_MUTATION_THRESHOLD,
+  VERIFICATION_COMMAND_PATTERN,
+} from './coder-policy';
 import { isVerificationPhase, TurnPolicyRegistry } from '../turn-policy';
 import type { TurnContext } from '../turn-policy';
 
@@ -39,7 +44,8 @@ describe('detectCognitiveDrift', () => {
 
   it('requires 2+ signals for moderate drift', () => {
     // High non-ASCII alone is NOT drift (could be legit CJK code)
-    const cjkWithCode = '这是一个测试 ```json {"tool": "sandbox_read_file"} ``` 更多中文内容'.repeat(5);
+    const cjkWithCode =
+      '这是一个测试 ```json {"tool": "sandbox_read_file"} ``` 更多中文内容'.repeat(5);
     expect(detectCognitiveDrift(cjkWithCode)).toBeNull();
   });
 });
@@ -55,7 +61,10 @@ describe('Coder Policy — drift guard', () => {
     const ctx = makeCtx(5);
 
     // Generate drifted content: repeated pattern + extended prose + no code signals
-    const drifted = '太平'.repeat(25) + '\n'.repeat(25) + 'This is unrelated content about history and philosophy.'.repeat(5);
+    const drifted =
+      '太平'.repeat(25) +
+      '\n'.repeat(25) +
+      'This is unrelated content about history and philosophy.'.repeat(5);
 
     const result = await driftHook(drifted, [], ctx);
     expect(result).not.toBeNull();
@@ -66,7 +75,8 @@ describe('Coder Policy — drift guard', () => {
     const policy = createCoderPolicy();
     const driftHook = policy.afterModelCall![0];
 
-    const drifted = '太平'.repeat(25) + '\n'.repeat(25) + 'Unrelated rambling about nothing.'.repeat(10);
+    const drifted =
+      '太平'.repeat(25) + '\n'.repeat(25) + 'Unrelated rambling about nothing.'.repeat(10);
 
     // First drift → inject
     const r1 = await driftHook(drifted, [], makeCtx(0));
@@ -113,7 +123,8 @@ describe('Coder Policy — no-fake-completion', () => {
     const completionHook = policy.afterModelCall![1];
     const ctx = makeCtx();
 
-    const blocked = 'I cannot complete this task because the sandbox is missing the required Python dependencies.';
+    const blocked =
+      'I cannot complete this task because the sandbox is missing the required Python dependencies.';
     expect(await completionHook(blocked, [], ctx)).toBeNull();
   });
 
@@ -244,7 +255,13 @@ describe('Coder Policy — mechanical backpressure', () => {
 
     // Mutate exactly threshold times
     for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      await backpressureHook('sandbox_edit_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
+      await backpressureHook(
+        'sandbox_edit_file',
+        { path: `/workspace/f${i}.ts` },
+        'ok',
+        false,
+        ctx,
+      );
     }
 
     const result = await backpressureHook(
@@ -258,7 +275,9 @@ describe('Coder Policy — mechanical backpressure', () => {
     expect(result!.action).toBe('inject');
     if (result!.action === 'inject') {
       expect(result!.message.content).toContain('VERIFY_BEFORE_CONTINUING');
-      expect(result!.message.content).toContain(`${BACKPRESSURE_MUTATION_THRESHOLD} file mutations`);
+      expect(result!.message.content).toContain(
+        `${BACKPRESSURE_MUTATION_THRESHOLD} file mutations`,
+      );
     }
   });
 
@@ -269,7 +288,13 @@ describe('Coder Policy — mechanical backpressure', () => {
 
     // Mutate up to threshold - 1
     for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      await backpressureHook('sandbox_write_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
+      await backpressureHook(
+        'sandbox_write_file',
+        { path: `/workspace/f${i}.ts` },
+        'ok',
+        false,
+        ctx,
+      );
     }
 
     // Run typecheck → resets counter
@@ -296,7 +321,13 @@ describe('Coder Policy — mechanical backpressure', () => {
     // Failed mutations on different files — should not trigger backpressure
     // (each file only fails once, so no hard-failure either)
     for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD + 2; i++) {
-      const result = await hook('sandbox_write_file', { path: `/workspace/fail${i}.ts` }, 'err', true, ctx);
+      const result = await hook(
+        'sandbox_write_file',
+        { path: `/workspace/fail${i}.ts` },
+        'err',
+        true,
+        ctx,
+      );
       expect(result).toBeNull();
     }
   });
@@ -308,7 +339,13 @@ describe('Coder Policy — mechanical backpressure', () => {
 
     // Read tools should not affect the counter
     for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD + 2; i++) {
-      const result = await backpressureHook('sandbox_read_file', { path: '/workspace/a.ts' }, 'ok', false, ctx);
+      const result = await backpressureHook(
+        'sandbox_read_file',
+        { path: '/workspace/a.ts' },
+        'ok',
+        false,
+        ctx,
+      );
       expect(result).toBeNull();
     }
   });
@@ -320,11 +357,23 @@ describe('Coder Policy — mechanical backpressure', () => {
 
     // Mutate past threshold
     for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD; i++) {
-      await backpressureHook('sandbox_write_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
+      await backpressureHook(
+        'sandbox_write_file',
+        { path: `/workspace/f${i}.ts` },
+        'ok',
+        false,
+        ctx,
+      );
     }
 
     // Next mutation still triggers (counter not reset because no verification ran)
-    const result = await backpressureHook('sandbox_edit_file', { path: '/workspace/extra.ts' }, 'ok', false, ctx);
+    const result = await backpressureHook(
+      'sandbox_edit_file',
+      { path: '/workspace/extra.ts' },
+      'ok',
+      false,
+      ctx,
+    );
     expect(result).not.toBeNull();
     expect(result!.action).toBe('inject');
   });
@@ -381,7 +430,13 @@ describe('Coder Policy — mechanical backpressure', () => {
 
     // Another (threshold - 1) mutations should be fine
     for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      const result = await hook('sandbox_write_file', { path: `/workspace/new${i}.ts` }, 'ok', false, ctx);
+      const result = await hook(
+        'sandbox_write_file',
+        { path: `/workspace/new${i}.ts` },
+        'ok',
+        false,
+        ctx,
+      );
       expect(result).toBeNull();
     }
   });
@@ -401,7 +456,13 @@ describe('Coder Policy — mechanical backpressure', () => {
 
     // Another (threshold - 1) mutations should be fine
     for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      const result = await hook('sandbox_write_file', { path: `/workspace/new${i}.ts` }, 'ok', false, ctx);
+      const result = await hook(
+        'sandbox_write_file',
+        { path: `/workspace/new${i}.ts` },
+        'ok',
+        false,
+        ctx,
+      );
       expect(result).toBeNull();
     }
   });
@@ -418,7 +479,13 @@ describe('Coder Policy — mechanical backpressure', () => {
     await hook('sandbox_verify_workspace', {}, 'ok', false, ctx);
 
     for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      const result = await hook('sandbox_write_file', { path: `/workspace/new${i}.ts` }, 'ok', false, ctx);
+      const result = await hook(
+        'sandbox_write_file',
+        { path: `/workspace/new${i}.ts` },
+        'ok',
+        false,
+        ctx,
+      );
       expect(result).toBeNull();
     }
   });
@@ -435,10 +502,22 @@ describe('Coder Policy — registry integration', () => {
     const ctx = makeCtx();
 
     for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD; i++) {
-      await registry.evaluateAfterTool('sandbox_write_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
+      await registry.evaluateAfterTool(
+        'sandbox_write_file',
+        { path: `/workspace/f${i}.ts` },
+        'ok',
+        false,
+        ctx,
+      );
     }
 
-    const result = await registry.evaluateAfterTool('sandbox_write_file', { path: '/workspace/extra.ts' }, 'ok', false, ctx);
+    const result = await registry.evaluateAfterTool(
+      'sandbox_write_file',
+      { path: '/workspace/extra.ts' },
+      'ok',
+      false,
+      ctx,
+    );
     expect(result).not.toBeNull();
     expect(result!.action).toBe('inject');
     if (result!.action === 'inject') {
@@ -452,9 +531,27 @@ describe('Coder Policy — registry integration', () => {
     const ctx = makeCtx();
 
     // 3 consecutive failures → hard failure
-    await registry.evaluateAfterTool('sandbox_edit_file', { path: '/workspace/a.ts' }, 'err', true, ctx);
-    await registry.evaluateAfterTool('sandbox_edit_file', { path: '/workspace/a.ts' }, 'err', true, ctx);
-    const result = await registry.evaluateAfterTool('sandbox_edit_file', { path: '/workspace/a.ts' }, 'err', true, ctx);
+    await registry.evaluateAfterTool(
+      'sandbox_edit_file',
+      { path: '/workspace/a.ts' },
+      'err',
+      true,
+      ctx,
+    );
+    await registry.evaluateAfterTool(
+      'sandbox_edit_file',
+      { path: '/workspace/a.ts' },
+      'err',
+      true,
+      ctx,
+    );
+    const result = await registry.evaluateAfterTool(
+      'sandbox_edit_file',
+      { path: '/workspace/a.ts' },
+      'err',
+      true,
+      ctx,
+    );
     expect(result).not.toBeNull();
     expect(result!.action).toBe('inject');
     if (result!.action === 'inject') {
@@ -500,8 +597,12 @@ describe('Coder Policy — phase-aware mutation gating', () => {
     const policy = createCoderPolicy();
     const gate = policy.beforeToolExec![0];
 
-    expect(await gate('sandbox_write_file', { path: '/workspace/a.ts' }, makeCtx(0, 'implementing'))).toBeNull();
-    expect(await gate('sandbox_edit_file', { path: '/workspace/a.ts' }, makeCtx(0, 'planning'))).toBeNull();
+    expect(
+      await gate('sandbox_write_file', { path: '/workspace/a.ts' }, makeCtx(0, 'implementing')),
+    ).toBeNull();
+    expect(
+      await gate('sandbox_edit_file', { path: '/workspace/a.ts' }, makeCtx(0, 'planning')),
+    ).toBeNull();
     expect(await gate('sandbox_edit_range', { path: '/workspace/a.ts' }, makeCtx(0))).toBeNull();
   });
 
@@ -521,7 +622,12 @@ describe('Coder Policy — phase-aware mutation gating', () => {
     const gate = policy.beforeToolExec![0];
     const ctx = makeCtx(5, 'testing');
 
-    for (const tool of ['sandbox_write_file', 'sandbox_edit_file', 'sandbox_edit_range', 'sandbox_apply_patchset']) {
+    for (const tool of [
+      'sandbox_write_file',
+      'sandbox_edit_file',
+      'sandbox_edit_range',
+      'sandbox_apply_patchset',
+    ]) {
       const result = await gate(tool, {}, ctx);
       expect(result?.action).toBe('deny');
     }
@@ -547,7 +653,14 @@ describe('Coder Policy — phase-aware mutation gating', () => {
     const policy = createCoderPolicy();
     const gate = policy.beforeToolExec![0];
 
-    for (const phase of ['verifying', 'testing', 'validation', 'running tests', 'typecheck', 'linting']) {
+    for (const phase of [
+      'verifying',
+      'testing',
+      'validation',
+      'running tests',
+      'typecheck',
+      'linting',
+    ]) {
       const result = await gate('sandbox_write_file', {}, makeCtx(0, phase));
       expect(result?.action).toBe('deny');
     }

@@ -148,7 +148,9 @@ export function getVerificationPresetNames(): string[] {
  * Format a verification policy into a structured block for injection into
  * agent system prompts. Returns null if the policy has no rules.
  */
-export function formatVerificationPolicyBlock(policy: VerificationPolicy | undefined): string | null {
+export function formatVerificationPolicyBlock(
+  policy: VerificationPolicy | undefined,
+): string | null {
   if (!policy || policy.rules.length === 0) return null;
 
   const lines = [
@@ -161,11 +163,12 @@ export function formatVerificationPolicyBlock(policy: VerificationPolicy | undef
 
   for (const rule of policy.rules) {
     const scopeLabel = rule.scope === 'always' ? '' : ` (${rule.scope} only)`;
-    const kindDetail = rule.kind === 'command' && rule.command
-      ? ` → run: \`${rule.command}\``
-      : rule.kind === 'gate' && rule.gate
-        ? ` → require: ${rule.gate}`
-        : '';
+    const kindDetail =
+      rule.kind === 'command' && rule.command
+        ? ` → run: \`${rule.command}\``
+        : rule.kind === 'gate' && rule.gate
+          ? ` → require: ${rule.gate}`
+          : '';
     lines.push(`- [${rule.id}]${scopeLabel}: ${rule.label}${kindDetail}`);
   }
 
@@ -182,20 +185,16 @@ export function extractCommandRules(
   scope?: 'always' | 'backend' | 'commit',
 ): VerificationRule[] {
   if (!policy) return [];
-  return policy.rules.filter(r =>
-    r.kind === 'command' &&
-    r.command &&
-    (!scope || r.scope === 'always' || r.scope === scope),
+  return policy.rules.filter(
+    (r) =>
+      r.kind === 'command' && r.command && (!scope || r.scope === 'always' || r.scope === scope),
   );
 }
 
 /**
  * Check whether a policy requires a specific gate.
  */
-export function policyRequiresGate(
-  policy: VerificationPolicy | undefined,
-  gate: string,
-): boolean {
+export function policyRequiresGate(policy: VerificationPolicy | undefined, gate: string): boolean {
   if (!policy) return false;
-  return policy.rules.some(r => r.kind === 'gate' && r.gate === gate);
+  return policy.rules.some((r) => r.kind === 'gate' && r.gate === gate);
 }

@@ -7,11 +7,7 @@ function mockProviderState(options?: {
   preferredProvider?: MockPreferredProvider | null;
   lastUsedProvider?: MockPreferredProvider | null;
 }): void {
-  const {
-    kilocodeKey = '',
-    preferredProvider = null,
-    lastUsedProvider = null,
-  } = options ?? {};
+  const { kilocodeKey = '', preferredProvider = null, lastUsedProvider = null } = options ?? {};
 
   vi.doMock('@/hooks/useOllamaConfig', () => ({ getOllamaKey: () => '' }));
   vi.doMock('@/hooks/useOpenRouterConfig', () => ({ getOpenRouterKey: () => '' }));

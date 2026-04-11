@@ -1,8 +1,8 @@
-import { clsx, type ClassValue } from "clsx"
-import { twMerge } from "tailwind-merge"
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
 
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
+  return twMerge(clsx(inputs));
 }
 
 // ---------------------------------------------------------------------------
@@ -62,8 +62,7 @@ export const CARD_SHELL_CLASS =
 export const CARD_PANEL_CLASS =
   'rounded-[18px] border border-push-edge/70 bg-[linear-gradient(180deg,rgba(9,13,19,0.88)_0%,rgba(5,8,13,0.94)_100%)] shadow-[0_12px_26px_rgba(0,0,0,0.26),0_2px_8px_rgba(0,0,0,0.14)]';
 
-export const CARD_PANEL_SUBTLE_CLASS =
-  'rounded-[16px] border border-push-edge/70 bg-black/10';
+export const CARD_PANEL_SUBTLE_CLASS = 'rounded-[16px] border border-push-edge/70 bg-black/10';
 
 export const CARD_BUTTON_CLASS =
   'inline-flex items-center justify-center gap-1.5 rounded-full border border-push-edge-subtle bg-push-grad-input px-3 text-push-sm font-medium text-push-fg-secondary shadow-[0_10px_24px_rgba(0,0,0,0.26),0_2px_8px_rgba(0,0,0,0.14)] backdrop-blur-xl transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50';
@@ -79,14 +78,14 @@ export const CARD_INPUT_CLASS =
 // ---------------------------------------------------------------------------
 
 export const CARD_TEXT_SUCCESS = 'text-push-status-success';
-export const CARD_TEXT_ERROR   = 'text-push-status-error';
+export const CARD_TEXT_ERROR = 'text-push-status-error';
 export const CARD_TEXT_WARNING = 'text-push-status-warning';
 
 /** Pill badge (opacity /15) — inline status tags e.g. "Open", "SAFE". */
 export const CARD_BADGE_SUCCESS = 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-300';
-export const CARD_BADGE_ERROR   = 'border border-red-500/20 bg-red-500/10 text-red-300';
+export const CARD_BADGE_ERROR = 'border border-red-500/20 bg-red-500/10 text-red-300';
 export const CARD_BADGE_WARNING = 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-300';
-export const CARD_BADGE_INFO    = 'border border-push-edge/70 bg-black/10 text-[#9db8df]';
+export const CARD_BADGE_INFO = 'border border-push-edge/70 bg-black/10 text-[#9db8df]';
 
 /** Header background band (opacity /10) — used for card header rows. */
 export const CARD_HEADER_BG_SUCCESS =
@@ -113,7 +112,9 @@ export function isNetworkFetchError(err: unknown): boolean {
 // GitHub token validation (previously duplicated in auth hooks)
 // ---------------------------------------------------------------------------
 
-export async function validateGitHubToken(token: string): Promise<{ login: string; avatar_url: string } | null> {
+export async function validateGitHubToken(
+  token: string,
+): Promise<{ login: string; avatar_url: string } | null> {
   try {
     const res = await fetch('https://api.github.com/user', {
       headers: {
@@ -135,19 +136,27 @@ export async function validateGitHubToken(token: string): Promise<{ login: strin
 
 export function ciStatusColor(status: string | null): string {
   switch (status) {
-    case 'success': return 'text-push-status-success';
-    case 'failure': return 'text-push-status-error';
-    case 'pending': return 'text-push-status-warning';
-    default: return 'text-push-fg-secondary';
+    case 'success':
+      return 'text-push-status-success';
+    case 'failure':
+      return 'text-push-status-error';
+    case 'pending':
+      return 'text-push-status-warning';
+    default:
+      return 'text-push-fg-secondary';
   }
 }
 
 export function ciStatusBg(status: string | null): string {
   switch (status) {
-    case 'success': return CARD_HEADER_BG_SUCCESS;
-    case 'failure': return CARD_HEADER_BG_ERROR;
-    case 'pending': return CARD_HEADER_BG_WARNING;
-    default: return CARD_HEADER_BG_INFO;
+    case 'success':
+      return CARD_HEADER_BG_SUCCESS;
+    case 'failure':
+      return CARD_HEADER_BG_ERROR;
+    case 'pending':
+      return CARD_HEADER_BG_WARNING;
+    default:
+      return CARD_HEADER_BG_INFO;
   }
 }
 
@@ -171,7 +180,12 @@ export interface JsonSyntaxDiagnosis {
  */
 export function diagnoseJsonSyntaxError(text: string): JsonSyntaxDiagnosis | null {
   // If it actually parses, there's no error to diagnose
-  try { JSON.parse(text); return null; } catch { /* expected */ }
+  try {
+    JSON.parse(text);
+    return null;
+  } catch {
+    /* expected */
+  }
 
   const trimmed = text.trim();
   if (trimmed.length === 0) {
@@ -202,9 +216,18 @@ export function diagnoseJsonSyntaxError(text: string): JsonSyntaxDiagnosis | nul
   for (let i = 0; i < trimmed.length; i++) {
     const ch = trimmed[i];
 
-    if (escaped) { escaped = false; continue; }
-    if (ch === '\\' && inString) { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
 
     if (ch === '{' || ch === '[') depth++;
@@ -329,21 +352,47 @@ function replacePythonLiterals(text: string): string {
   let i = 0;
   while (i < text.length) {
     const ch = text[i];
-    if (escaped) { result += ch; escaped = false; i++; continue; }
-    if (ch === '\\' && inString) { result += ch; escaped = true; i++; continue; }
-    if (ch === '"') { inString = !inString; result += ch; i++; continue; }
-    if (inString) { result += ch; i++; continue; }
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      i++;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      result += ch;
+      escaped = true;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      result += ch;
+      i++;
+      continue;
+    }
+    if (inString) {
+      result += ch;
+      i++;
+      continue;
+    }
     // Outside string — check for Python literals
     if (text.startsWith('True', i) && !/\w/.test(text[i + 4] || '')) {
-      result += 'true'; i += 4; continue;
+      result += 'true';
+      i += 4;
+      continue;
     }
     if (text.startsWith('False', i) && !/\w/.test(text[i + 5] || '')) {
-      result += 'false'; i += 5; continue;
+      result += 'false';
+      i += 5;
+      continue;
     }
     if (text.startsWith('None', i) && !/\w/.test(text[i + 4] || '')) {
-      result += 'null'; i += 4; continue;
+      result += 'null';
+      i += 4;
+      continue;
     }
-    result += ch; i++;
+    result += ch;
+    i++;
   }
   return result;
 }
@@ -364,14 +413,38 @@ function escapeRawNewlinesInJsonStrings(text: string): string {
   let escaped = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
-    if (ch === '"' && !escaped) { inString = !inString; result += ch; continue; }
-    if (inString) {
-      if (ch === '\n') { result += escaped ? 'n' : '\\n'; escaped = false; continue; }
-      if (ch === '\r') { result += escaped ? 'r' : '\\r'; escaped = false; continue; }
-      if (ch === '\t') { result += escaped ? 't' : '\\t'; escaped = false; continue; }
+    if (ch === '"' && !escaped) {
+      inString = !inString;
+      result += ch;
+      continue;
     }
-    if (escaped) { result += ch; escaped = false; continue; }
-    if (ch === '\\' && inString) { result += ch; escaped = true; continue; }
+    if (inString) {
+      if (ch === '\n') {
+        result += escaped ? 'n' : '\\n';
+        escaped = false;
+        continue;
+      }
+      if (ch === '\r') {
+        result += escaped ? 'r' : '\\r';
+        escaped = false;
+        continue;
+      }
+      if (ch === '\t') {
+        result += escaped ? 't' : '\\t';
+        escaped = false;
+        continue;
+      }
+    }
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      result += ch;
+      escaped = true;
+      continue;
+    }
     result += ch;
   }
   return result;
@@ -407,14 +480,27 @@ function tryAutoCloseJson(text: string): Record<string, unknown> | null {
   let inString = false;
   let escaped = false;
   for (const ch of text) {
-    if (escaped) { escaped = false; continue; }
-    if (ch === '\\' && inString) { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
     if (ch === '{') stack.push('{');
     if (ch === '[') stack.push('[');
-    if (ch === '}') { if (stack.length && stack[stack.length - 1] === '{') stack.pop(); }
-    if (ch === ']') { if (stack.length && stack[stack.length - 1] === '[') stack.pop(); }
+    if (ch === '}') {
+      if (stack.length && stack[stack.length - 1] === '{') stack.pop();
+    }
+    if (ch === ']') {
+      if (stack.length && stack[stack.length - 1] === '[') stack.pop();
+    }
   }
 
   if (stack.length === 0 || stack.length > 3) return null;
@@ -453,9 +539,18 @@ export function detectTruncatedToolCall(text: string): { toolName: string } | nu
   let escaped = false;
 
   for (const ch of remainder) {
-    if (escaped) { escaped = false; continue; }
-    if (ch === '\\' && inString) { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
     if (ch === '{') depth++;
     if (ch === '}') depth--;
@@ -492,14 +587,26 @@ export function extractBareToolJsonObjects(text: string): unknown[] {
 
     for (let j = braceIdx; j < text.length; j++) {
       const ch = text[j];
-      if (escaped) { escaped = false; continue; }
-      if (ch === '\\' && inString) { escaped = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\' && inString) {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
       if (inString) continue;
       if (ch === '{') depth++;
       if (ch === '}') {
         depth--;
-        if (depth === 0) { end = j; break; }
+        if (depth === 0) {
+          end = j;
+          break;
+        }
       }
     }
 
@@ -548,7 +655,8 @@ export function detectToolFromText<T>(
   validate: (parsed: unknown) => T | null,
 ): T | null {
   // Match backtick fences (3+), optional language hint, and tilde fences (3+)
-  const fenceRegex = /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
+  const fenceRegex =
+    /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
   let match;
 
   while ((match = fenceRegex.exec(text)) !== null) {

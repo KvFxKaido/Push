@@ -26,11 +26,11 @@ describe('tool-call-recovery', () => {
         hint: 'Wrap the command under args.command.',
       }),
     ).toBe(
-      '[TOOL_CALL_PARSE_ERROR]\n'
-        + 'error_type: validation_failed\n'
-        + 'detected_tool: sandbox_exec\n'
-        + 'problem: Missing required command arg.\n'
-        + 'hint: Wrap the command under args.command.',
+      '[TOOL_CALL_PARSE_ERROR]\n' +
+        'error_type: validation_failed\n' +
+        'detected_tool: sandbox_exec\n' +
+        'problem: Missing required command arg.\n' +
+        'hint: Wrap the command under args.command.',
     );
   });
 
@@ -42,9 +42,9 @@ describe('tool-call-recovery', () => {
         guidanceLines: ['Use sandbox_read_file instead.'],
       }),
     ).toBe(
-      '[Tool Error] "sandbox_not_real" is not an available tool. It does not exist in this system.\n'
-        + 'Available sandbox inspection tools: sandbox_read_file, sandbox_exec.\n'
-        + 'Use sandbox_read_file instead.',
+      '[Tool Error] "sandbox_not_real" is not an available tool. It does not exist in this system.\n' +
+        'Available sandbox inspection tools: sandbox_read_file, sandbox_exec.\n' +
+        'Use sandbox_read_file instead.',
     );
   });
 
@@ -63,10 +63,10 @@ describe('tool-call-recovery', () => {
   });
 
   it('returns telemetry-only diagnoses without injecting feedback', () => {
-    const result = resolveToolCallRecovery(
-      '```json\n{"command":"npm test"}\n```',
-      { diagnosisRetries: 0, recoveryAttempted: false },
-    );
+    const result = resolveToolCallRecovery('```json\n{"command":"npm test"}\n```', {
+      diagnosisRetries: 0,
+      recoveryAttempted: false,
+    });
 
     expect(result.kind).toBe('telemetry_only');
     if (result.kind !== 'telemetry_only') return;
@@ -75,10 +75,10 @@ describe('tool-call-recovery', () => {
   });
 
   it('injects retry feedback before the diagnosis cap is reached', () => {
-    const result = resolveToolCallRecovery(
-      "I'll use sandbox_exec to inspect the workspace.",
-      { diagnosisRetries: 0, recoveryAttempted: false },
-    );
+    const result = resolveToolCallRecovery("I'll use sandbox_exec to inspect the workspace.", {
+      diagnosisRetries: 0,
+      recoveryAttempted: false,
+    });
 
     expect(result.kind).toBe('feedback');
     if (result.kind !== 'feedback') return;
@@ -89,13 +89,10 @@ describe('tool-call-recovery', () => {
   });
 
   it('injects a plain-text recovery prompt after retries are exhausted', () => {
-    const result = resolveToolCallRecovery(
-      "I'll use sandbox_exec to inspect the workspace.",
-      {
-        diagnosisRetries: MAX_TOOL_CALL_DIAGNOSIS_RETRIES,
-        recoveryAttempted: false,
-      },
-    );
+    const result = resolveToolCallRecovery("I'll use sandbox_exec to inspect the workspace.", {
+      diagnosisRetries: MAX_TOOL_CALL_DIAGNOSIS_RETRIES,
+      recoveryAttempted: false,
+    });
 
     expect(result.kind).toBe('feedback');
     if (result.kind !== 'feedback') return;
@@ -108,13 +105,10 @@ describe('tool-call-recovery', () => {
   });
 
   it('stops injecting after recovery has already been attempted', () => {
-    const result = resolveToolCallRecovery(
-      "I'll use sandbox_exec to inspect the workspace.",
-      {
-        diagnosisRetries: MAX_TOOL_CALL_DIAGNOSIS_RETRIES,
-        recoveryAttempted: true,
-      },
-    );
+    const result = resolveToolCallRecovery("I'll use sandbox_exec to inspect the workspace.", {
+      diagnosisRetries: MAX_TOOL_CALL_DIAGNOSIS_RETRIES,
+      recoveryAttempted: true,
+    });
 
     expect(result.kind).toBe('diagnosis_exhausted');
     if (result.kind !== 'diagnosis_exhausted') return;

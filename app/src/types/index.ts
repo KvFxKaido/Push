@@ -152,7 +152,6 @@ export type AIProviderType =
   | 'azure'
   | 'kilocode'
   | 'openadapter'
-
   | 'bedrock'
   | 'vertex'
   | 'demo';
@@ -248,8 +247,8 @@ export interface AttachmentData {
   filename: string;
   mimeType: string;
   sizeBytes: number;
-  content: string;      // base64 data URL for images, text for code/docs
-  thumbnail?: string;   // small preview for images
+  content: string; // base64 data URL for images, text for code/docs
+  thumbnail?: string; // small preview for images
 }
 
 /** Provenance metadata attached to tool result messages for audit trail. */
@@ -277,10 +276,10 @@ export interface ChatMessage {
   status?: 'sending' | 'streaming' | 'done' | 'error';
   thinking?: string;
   cards?: ChatCard[];
-  attachments?: AttachmentData[];  // User-attached files
-  isToolCall?: boolean;    // Assistant message that requested a tool
-  isToolResult?: boolean;  // Synthetic user message carrying tool data
-  isMalformed?: boolean;   // Assistant message that attempted a tool call but produced invalid JSON
+  attachments?: AttachmentData[]; // User-attached files
+  isToolCall?: boolean; // Assistant message that requested a tool
+  isToolResult?: boolean; // Synthetic user message carrying tool data
+  isMalformed?: boolean; // Assistant message that attempted a tool call but produced invalid JSON
   /** Provenance metadata — present on tool result messages for audit trail. */
   toolMeta?: ToolMeta;
 }
@@ -484,7 +483,14 @@ export interface PRCardData {
 export interface PRListCardData {
   repo: string;
   state: string;
-  prs: { number: number; title: string; author: string; additions?: number; deletions?: number; createdAt: string }[];
+  prs: {
+    number: number;
+    title: string;
+    author: string;
+    additions?: number;
+    deletions?: number;
+    createdAt: string;
+  }[];
 }
 
 export interface CommitListCardData {
@@ -598,7 +604,15 @@ export interface CommitReviewCardData {
 export interface CICheck {
   name: string;
   status: 'queued' | 'in_progress' | 'completed';
-  conclusion: 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | null;
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'neutral'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | null;
   detailsUrl?: string;
 }
 
@@ -622,8 +636,23 @@ export type CardAction =
   | { type: 'commit-reject'; messageId: string; cardIndex: number }
   | { type: 'ci-refresh'; messageId: string; cardIndex: number }
   | { type: 'sandbox-state-refresh'; messageId: string; cardIndex: number; sandboxId: string }
-  | { type: 'ask-user-submit'; messageId: string; cardIndex: number; responseText: string; selectedOptionIds: string[] }
-  | { type: 'editor-save'; messageId: string; cardIndex: number; path: string; content: string; sandboxId: string; expectedVersion?: string; expectedWorkspaceRevision?: number };
+  | {
+      type: 'ask-user-submit';
+      messageId: string;
+      cardIndex: number;
+      responseText: string;
+      selectedOptionIds: string[];
+    }
+  | {
+      type: 'editor-save';
+      messageId: string;
+      cardIndex: number;
+      path: string;
+      content: string;
+      sandboxId: string;
+      expectedVersion?: string;
+      expectedWorkspaceRevision?: number;
+    };
 
 export interface AgentStatus {
   active: boolean;
@@ -693,7 +722,7 @@ export interface Conversation {
   messages: ChatMessage[];
   createdAt: number;
   lastMessageAt: number;
-  repoFullName?: string;  // "owner/repo". Undefined = unscoped (scratch or older chats).
+  repoFullName?: string; // "owner/repo". Undefined = unscoped (scratch or older chats).
   /** The branch that was active when the conversation was created. Optional for backwards compat. */
   branch?: string;
   /** The AI provider that was used when the first message was sent. Locked for the whole conversation. */
@@ -797,7 +826,15 @@ export interface WorkflowRunItem {
   id: number;
   name: string;
   status: 'queued' | 'in_progress' | 'completed' | 'waiting' | 'requested' | 'pending';
-  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | 'neutral'
+    | null;
   branch: string;
   event: string;
   createdAt: string;
@@ -817,14 +854,30 @@ export interface WorkflowRunsCardData {
 export interface WorkflowJobStep {
   name: string;
   status: 'queued' | 'in_progress' | 'completed';
-  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | 'neutral'
+    | null;
   number: number;
 }
 
 export interface WorkflowJob {
   name: string;
   status: 'queued' | 'in_progress' | 'completed' | 'waiting';
-  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | 'neutral'
+    | null;
   steps: WorkflowJobStep[];
   htmlUrl: string;
 }
@@ -940,7 +993,11 @@ export interface PostToolUseResult {
 // ---------------------------------------------------------------------------
 
 /** Categories of actions that require explicit approval or a safe audited path. */
-export type ApprovalGateCategory = 'destructive_sandbox' | 'git_override' | 'remote_side_effect' | 'capability_violation';
+export type ApprovalGateCategory =
+  | 'destructive_sandbox'
+  | 'git_override'
+  | 'remote_side_effect'
+  | 'capability_violation';
 
 /**
  * Result of an approval gate check.

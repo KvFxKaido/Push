@@ -86,9 +86,11 @@ export function buildRunCheckpoint(snapshot: RunCheckpointSnapshot): RunCheckpoi
     thinkingAccumulated: snapshot.thinkingAccumulated,
     // Note: for task graphs this may be true even for explorer-only graphs.
     // Renaming the field would break checkpoint compatibility, so we accept the approximation.
-    coderDelegationActive: snapshot.phase === 'delegating_coder' || snapshot.phase === 'executing_task_graph',
+    coderDelegationActive:
+      snapshot.phase === 'delegating_coder' || snapshot.phase === 'executing_task_graph',
     lastCoderState:
-      (snapshot.phase === 'delegating_coder' || snapshot.phase === 'executing_task_graph') && snapshot.lastCoderState
+      (snapshot.phase === 'delegating_coder' || snapshot.phase === 'executing_task_graph') &&
+      snapshot.lastCoderState
         ? JSON.stringify(snapshot.lastCoderState)
         : null,
     savedAt: snapshot.savedAt ?? Date.now(),
@@ -174,12 +176,14 @@ export function buildCheckpointReconciliationMessage(
 ): string {
   // Cold resume: prior sandbox expired. Build from saved diff instead of live status.
   if (checkpoint.reason === 'expiry') {
-    let msg = '[SESSION_RESUMED]\nPrior sandbox expired. Resuming on a new sandbox (fresh clone).\n';
+    let msg =
+      '[SESSION_RESUMED]\nPrior sandbox expired. Resuming on a new sandbox (fresh clone).\n';
     if (checkpoint.savedDiff) {
       msg += `\nUncommitted changes at expiry:\n---\n${checkpoint.savedDiff}\n---\n`;
       msg += '\nRe-apply these changes to continue the task. Verify each file before editing.\n';
     } else {
-      msg += '\nNo uncommitted changes were pending at expiry.\nContinue from the conversation above.\n';
+      msg +=
+        '\nNo uncommitted changes were pending at expiry.\nContinue from the conversation above.\n';
     }
     msg += '\nDo not repeat work already committed to the branch.';
     return msg;
@@ -213,8 +217,7 @@ export function buildCheckpointReconciliationMessage(
       'against what the tools were supposed to do. If the expected changes are present,\n' +
       'proceed to the next step. If not, re-attempt the tool calls.\n';
   } else if (checkpoint.phase === 'delegating_coder') {
-    header +=
-      `\nInterruption: connection dropped during Coder delegation (round ${checkpoint.round}).\n`;
+    header += `\nInterruption: connection dropped during Coder delegation (round ${checkpoint.round}).\n`;
     if (checkpoint.lastCoderState) {
       header += `Last known Coder state:\n${checkpoint.lastCoderState}\n`;
     }
@@ -222,13 +225,11 @@ export function buildCheckpointReconciliationMessage(
       "The Coder's work may be partially complete. Check the sandbox state above.\n" +
       "Decide whether to re-delegate the remaining work or proceed based on what's done.\n";
   } else if (checkpoint.phase === 'delegating_explorer') {
-    header +=
-      `\nInterruption: connection dropped during Explorer delegation (round ${checkpoint.round}).\n`;
+    header += `\nInterruption: connection dropped during Explorer delegation (round ${checkpoint.round}).\n`;
     header +=
       'The Explorer may have gathered partial findings already. Check the sandbox state above and the recent conversation before re-running the investigation.\n';
   } else if (checkpoint.phase === 'executing_task_graph') {
-    header +=
-      `\nInterruption: connection dropped during task graph execution (round ${checkpoint.round}).\n`;
+    header += `\nInterruption: connection dropped during task graph execution (round ${checkpoint.round}).\n`;
     header +=
       'Some tasks in the graph may have completed while others were in-flight. Check the sandbox state above.\n' +
       'Decide whether to re-run the full graph or proceed with targeted follow-up delegations.\n';

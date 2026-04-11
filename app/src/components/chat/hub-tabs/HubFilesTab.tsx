@@ -74,21 +74,24 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
     }
   }, [sandboxId, ensureSandbox]);
 
-  const loadFilePreview = useCallback(async (path: string) => {
-    const id = await ensureHubSandbox();
-    if (!id) return;
-    setPreviewLoading(true);
-    try {
-      const result = await readFromSandbox(id, path);
-      setPreviewPath(path);
-      setPreviewContent(result.content);
-      setPreviewTruncated(result.truncated);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to read file');
-    } finally {
-      setPreviewLoading(false);
-    }
-  }, [ensureHubSandbox]);
+  const loadFilePreview = useCallback(
+    async (path: string) => {
+      const id = await ensureHubSandbox();
+      if (!id) return;
+      setPreviewLoading(true);
+      try {
+        const result = await readFromSandbox(id, path);
+        setPreviewPath(path);
+        setPreviewContent(result.content);
+        setPreviewTruncated(result.truncated);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to read file');
+      } finally {
+        setPreviewLoading(false);
+      }
+    },
+    [ensureHubSandbox],
+  );
 
   const handleDownloadPreview = useCallback(async () => {
     if (!previewPath || previewLoading || previewDownloading) return;
@@ -134,9 +137,13 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-9 px-3 text-push-fg-secondary`}
         >
           <HubControlGlow />
-          {(startingSandbox || sandboxStatus === 'creating') && <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />}
+          {(startingSandbox || sandboxStatus === 'creating') && (
+            <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
+          )}
           <span className="relative z-10">
-            {startingSandbox || sandboxStatus === 'creating' ? 'Starting sandbox...' : 'Start sandbox'}
+            {startingSandbox || sandboxStatus === 'creating'
+              ? 'Starting sandbox...'
+              : 'Start sandbox'}
           </span>
         </button>
       </div>
@@ -146,7 +153,9 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
   if (previewPath) {
     return (
       <div className="flex h-full min-h-0 flex-col p-3">
-        <div className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${HUB_PANEL_SURFACE_CLASS}`}>
+        <div
+          className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${HUB_PANEL_SURFACE_CLASS}`}
+        >
           <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-white/[0.04] to-transparent" />
           <div className="relative z-10 flex items-start gap-2 border-b border-push-edge/80 bg-[linear-gradient(180deg,rgba(10,13,20,0.78)_0%,rgba(6,9,14,0.88)_100%)] px-3 py-2.5 backdrop-blur-xl">
             <button
@@ -166,7 +175,9 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
               <p className="truncate font-mono text-push-2xs text-push-fg-dim">{previewPath}</p>
             </div>
             <button
-              onClick={() => { void handleDownloadPreview(); }}
+              onClick={() => {
+                void handleDownloadPreview();
+              }}
               disabled={previewDownloading || previewLoading}
               className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} shrink-0 px-2.5`}
               aria-label="Download file"
@@ -198,10 +209,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
                   </span>
                   {previewTruncated && <span className={HUB_TAG_CLASS}>Truncated preview</span>}
                 </div>
-                <ReadOnlyCodePreview
-                  content={previewContent}
-                  language={previewLanguage}
-                />
+                <ReadOnlyCodePreview content={previewContent} language={previewLanguage} />
               </div>
             )}
           </div>
@@ -238,7 +246,9 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
           aria-label="Refresh directory"
         >
           <HubControlGlow />
-          <RefreshCw className={`relative z-10 h-3.5 w-3.5 ${fileStatus === 'loading' ? 'animate-spin' : ''}`} />
+          <RefreshCw
+            className={`relative z-10 h-3.5 w-3.5 ${fileStatus === 'loading' ? 'animate-spin' : ''}`}
+          />
         </button>
       </div>
 

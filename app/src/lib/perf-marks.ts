@@ -42,9 +42,7 @@ export function perfMeasure(startMark: string, endMark?: string): PerformanceMea
       : performance.measure(`${start} → now`, start);
 
     if (import.meta.env.DEV) {
-      console.debug(
-        `[perf] ${measure.name}: ${measure.duration.toFixed(1)}ms`,
-      );
+      console.debug(`[perf] ${measure.name}: ${measure.duration.toFixed(1)}ms`);
     }
     return measure;
   } catch {
@@ -73,9 +71,7 @@ export function perfStart(name: string): () => PerformanceMeasure | null {
       performance.mark(endName);
       const measure = performance.measure(`${markName}`, markName, endName);
       if (import.meta.env.DEV) {
-        console.debug(
-          `[perf] ${name}: ${measure.duration.toFixed(1)}ms`,
-        );
+        console.debug(`[perf] ${name}: ${measure.duration.toFixed(1)}ms`);
       }
       return measure;
     } catch {

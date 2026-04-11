@@ -7,7 +7,14 @@
 
 import { useCallback } from 'react';
 import type { MutableRefObject } from 'react';
-import type { AIProviderType, AttachmentData, CIStatus, ChatMessage, Conversation, ChatSendOptions } from '@/types';
+import type {
+  AIProviderType,
+  AttachmentData,
+  CIStatus,
+  ChatMessage,
+  Conversation,
+  ChatSendOptions,
+} from '@/types';
 import { buildEditedReplay, buildRegeneratedReplay } from '@/lib/chat-replay';
 
 // ---------------------------------------------------------------------------
@@ -59,16 +66,12 @@ export function useChatReplay({
     const replay = buildRegeneratedReplay(conversation.messages);
     if (!replay) return;
 
-    await sendMessage(
-      replay.existingUserMessage.content,
-      replay.existingUserMessage.attachments,
-      {
-        chatId,
-        baseMessages: replay.baseMessages,
-        existingUserMessage: replay.existingUserMessage,
-        titleOverride: conversation.title,
-      },
-    );
+    await sendMessage(replay.existingUserMessage.content, replay.existingUserMessage.attachments, {
+      chatId,
+      baseMessages: replay.baseMessages,
+      existingUserMessage: replay.existingUserMessage,
+      titleOverride: conversation.title,
+    });
   }, [activeChatIdRef, conversations, isStreaming, sendMessage]);
 
   const editMessageAndResend = useCallback(

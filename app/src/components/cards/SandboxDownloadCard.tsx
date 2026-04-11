@@ -27,9 +27,7 @@ export function SandboxDownloadCard({ data }: SandboxDownloadCardProps) {
         <div className="flex items-center gap-2 min-w-0">
           <Download className="h-4 w-4 text-emerald-400 flex-shrink-0" />
           <div className="min-w-0">
-            <p className="text-xs font-medium text-push-fg truncate">
-              Workspace archive
-            </p>
+            <p className="text-xs font-medium text-push-fg truncate">Workspace archive</p>
             <p className="text-push-2xs text-push-fg-dim">
               {formatSize(data.sizeBytes)} &middot; {data.format}
             </p>

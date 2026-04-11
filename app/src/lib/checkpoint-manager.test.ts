@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunCheckpoint } from '@/types';
 
 const mockClearCheckpoint = vi.fn<(chatId: string) => Promise<void>>().mockResolvedValue(undefined);
-const mockLoadCheckpoint = vi.fn<(chatId: string) => Promise<RunCheckpoint | null>>().mockResolvedValue(null);
+const mockLoadCheckpoint = vi
+  .fn<(chatId: string) => Promise<RunCheckpoint | null>>()
+  .mockResolvedValue(null);
 const mockSaveCheckpoint = vi
   .fn<(checkpoint: RunCheckpoint) => Promise<void>>()
   .mockResolvedValue(undefined);
@@ -135,9 +137,7 @@ describe('checkpoint-manager', () => {
   });
 
   it('clears stale checkpoints during interrupted-run detection', async () => {
-    mockLoadCheckpoint.mockResolvedValue(
-      makeCheckpoint({ savedAt: Date.now() - 26 * 60 * 1_000 }),
-    );
+    mockLoadCheckpoint.mockResolvedValue(makeCheckpoint({ savedAt: Date.now() - 26 * 60 * 1_000 }));
 
     const result = await detectInterruptedRun(
       'chat-1',

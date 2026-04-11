@@ -71,7 +71,6 @@ function run(events: RunEngineEvent[]): RunEngineState {
 // ---------------------------------------------------------------------------
 
 describe('run-engine', () => {
-
   // ─── IDLE_RUN_STATE shape ────────────────────────────────────────────────
 
   it('IDLE_RUN_STATE has expected zero values', () => {
@@ -96,12 +95,12 @@ describe('run-engine', () => {
     const state = run([
       makeRunStarted(),
       { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-abc' },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 0 },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
       { type: 'STREAMING_COMPLETED', timestamp: t(), accumulated: 'Hello', thinking: '' },
-      { type: 'TOOLS_STARTED',       timestamp: t() },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 1 },
+      { type: 'TOOLS_STARTED', timestamp: t() },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 1 },
       { type: 'STREAMING_COMPLETED', timestamp: t(), accumulated: 'World', thinking: '' },
-      { type: 'LOOP_COMPLETED',      timestamp: t() },
+      { type: 'LOOP_COMPLETED', timestamp: t() },
     ]);
 
     expect(state.phase).toBe('completed');
@@ -146,10 +145,10 @@ describe('run-engine', () => {
   it('ROUND_STARTED resets accumulated content and advances round', () => {
     const s0 = run([
       makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED',   timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 0 },
+      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
       { type: 'STREAMING_COMPLETED', timestamp: t(), accumulated: 'partial', thinking: 'hmm' },
-      { type: 'TOOLS_STARTED',       timestamp: t() },
+      { type: 'TOOLS_STARTED', timestamp: t() },
     ]);
     const s1 = runEngineReducer(s0, { type: 'ROUND_STARTED', timestamp: t(), round: 1 });
 
@@ -164,10 +163,7 @@ describe('run-engine', () => {
   // Covers: tab lock guard in sendMessage (~line 886).
 
   it('TAB_LOCK_DENIED sets phase to failed with tab_lock_denied reason', () => {
-    const state = run([
-      makeRunStarted(),
-      { type: 'TAB_LOCK_DENIED', timestamp: t() },
-    ]);
+    const state = run([makeRunStarted(), { type: 'TAB_LOCK_DENIED', timestamp: t() }]);
 
     expect(state.phase).toBe('failed');
     expect(state.failureReason).toBe('tab_lock_denied');
@@ -177,7 +173,11 @@ describe('run-engine', () => {
 
   it('TAB_LOCK_ACQUIRED sets tabLockId without changing phase', () => {
     const s0 = runEngineReducer(IDLE_RUN_STATE, makeRunStarted());
-    const s1 = runEngineReducer(s0, { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-xyz' });
+    const s1 = runEngineReducer(s0, {
+      type: 'TAB_LOCK_ACQUIRED',
+      timestamp: t(),
+      tabLockId: 'lock-xyz',
+    });
 
     expect(s1.tabLockId).toBe('lock-xyz');
     expect(s1.phase).toBe('starting');
@@ -190,10 +190,10 @@ describe('run-engine', () => {
   it('LOOP_ABORTED sets phase to aborted and clears tabLockId', () => {
     const state = run([
       makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED',   timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 0 },
+      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
       { type: 'STREAMING_COMPLETED', timestamp: t(), accumulated: 'partial...', thinking: '' },
-      { type: 'LOOP_ABORTED',        timestamp: t() },
+      { type: 'LOOP_ABORTED', timestamp: t() },
     ]);
 
     expect(state.phase).toBe('aborted');
@@ -205,8 +205,8 @@ describe('run-engine', () => {
     const state = run([
       makeRunStarted(),
       { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',     timestamp: t(), round: 0 },
-      { type: 'LOOP_FAILED',       timestamp: t(), reason: 'network_error' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
+      { type: 'LOOP_FAILED', timestamp: t(), reason: 'network_error' },
     ]);
 
     expect(state.phase).toBe('failed');
@@ -225,7 +225,7 @@ describe('run-engine', () => {
     const s0 = run([
       makeRunStarted(),
       { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',     timestamp: t(), round: 0 },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
     ]);
     const s1 = runEngineReducer(s0, {
       type: 'STREAMING_COMPLETED',
@@ -242,8 +242,8 @@ describe('run-engine', () => {
   it('TOOLS_STARTED advances phase to executing_tools', () => {
     const s0 = run([
       makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED',   timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 0 },
+      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
       { type: 'STREAMING_COMPLETED', timestamp: t(), accumulated: 'text', thinking: '' },
     ]);
     const s1 = runEngineReducer(s0, { type: 'TOOLS_STARTED', timestamp: t() });
@@ -262,11 +262,11 @@ describe('run-engine', () => {
 
     const state = run([
       makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED',   timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 0 },
-      { type: 'FOLLOW_UP_ENQUEUED',  timestamp: t(), followUp: first },
-      { type: 'FOLLOW_UP_ENQUEUED',  timestamp: t(), followUp: second },
-      { type: 'FOLLOW_UP_DEQUEUED',  timestamp: t() },
+      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
+      { type: 'FOLLOW_UP_ENQUEUED', timestamp: t(), followUp: first },
+      { type: 'FOLLOW_UP_ENQUEUED', timestamp: t(), followUp: second },
+      { type: 'FOLLOW_UP_DEQUEUED', timestamp: t() },
     ]);
 
     expect(state.queuedFollowUps).toHaveLength(1);
@@ -276,10 +276,10 @@ describe('run-engine', () => {
   it('queue: FOLLOW_UP_QUEUE_CLEARED empties the queue', () => {
     const state = run([
       makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED',      timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',          timestamp: t(), round: 0 },
-      { type: 'FOLLOW_UP_ENQUEUED',     timestamp: t(), followUp: makeFollowUp('a') },
-      { type: 'FOLLOW_UP_ENQUEUED',     timestamp: t(), followUp: makeFollowUp('b') },
+      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
+      { type: 'FOLLOW_UP_ENQUEUED', timestamp: t(), followUp: makeFollowUp('a') },
+      { type: 'FOLLOW_UP_ENQUEUED', timestamp: t(), followUp: makeFollowUp('b') },
       { type: 'FOLLOW_UP_QUEUE_CLEARED', timestamp: t() },
     ]);
 
@@ -287,10 +287,7 @@ describe('run-engine', () => {
   });
 
   it('queue: FOLLOW_UP_DEQUEUED on empty queue leaves empty queue', () => {
-    const state = run([
-      makeRunStarted(),
-      { type: 'FOLLOW_UP_DEQUEUED', timestamp: t() },
-    ]);
+    const state = run([makeRunStarted(), { type: 'FOLLOW_UP_DEQUEUED', timestamp: t() }]);
 
     expect(state.queuedFollowUps).toHaveLength(0);
   });
@@ -324,11 +321,11 @@ describe('run-engine', () => {
   it('steer: STEER_CONSUMED clears hasPendingSteer and preview', () => {
     const state = run([
       makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED',   timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 0 },
+      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
       { type: 'STREAMING_COMPLETED', timestamp: t(), accumulated: 'hi', thinking: '' },
-      { type: 'STEER_SET',           timestamp: t(), preview: 'do something else' },
-      { type: 'STEER_CONSUMED',      timestamp: t() },
+      { type: 'STEER_SET', timestamp: t(), preview: 'do something else' },
+      { type: 'STEER_CONSUMED', timestamp: t() },
     ]);
 
     expect(state.hasPendingSteer).toBe(false);
@@ -338,10 +335,10 @@ describe('run-engine', () => {
   it('steer: STEER_CONSUMED does not change phase', () => {
     const s0 = run([
       makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED',   timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 0 },
+      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
       { type: 'STREAMING_COMPLETED', timestamp: t(), accumulated: 'hi', thinking: '' },
-      { type: 'STEER_SET',           timestamp: t(), preview: 'redirect' },
+      { type: 'STEER_SET', timestamp: t(), preview: 'redirect' },
     ]);
     const s1 = runEngineReducer(s0, { type: 'STEER_CONSUMED', timestamp: t() });
 
@@ -351,13 +348,13 @@ describe('run-engine', () => {
   it('steer: TURN_STEERED re-enters streaming_llm phase', () => {
     const state = run([
       makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED',   timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 0 },
+      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
       { type: 'STREAMING_COMPLETED', timestamp: t(), accumulated: 'partial', thinking: '' },
-      { type: 'STEER_SET',           timestamp: t(), preview: 'steer' },
-      { type: 'STEER_CONSUMED',      timestamp: t() },
-      { type: 'TURN_STEERED',        timestamp: t() },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 1 },
+      { type: 'STEER_SET', timestamp: t(), preview: 'steer' },
+      { type: 'STEER_CONSUMED', timestamp: t() },
+      { type: 'TURN_STEERED', timestamp: t() },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 1 },
     ]);
 
     expect(state.phase).toBe('streaming_llm');
@@ -368,7 +365,7 @@ describe('run-engine', () => {
   it('steer: STEER_CLEARED explicitly removes a pending steer', () => {
     const state = run([
       makeRunStarted(),
-      { type: 'STEER_SET',     timestamp: t(), preview: 'abort this' },
+      { type: 'STEER_SET', timestamp: t(), preview: 'abort this' },
       { type: 'STEER_CLEARED', timestamp: t() },
     ]);
 
@@ -382,8 +379,8 @@ describe('run-engine', () => {
     const state = run([
       makeRunStarted(),
       { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'STEER_SET',         timestamp: t(), preview: 'still pending' },
-      { type: 'LOOP_COMPLETED',    timestamp: t() },
+      { type: 'STEER_SET', timestamp: t(), preview: 'still pending' },
+      { type: 'LOOP_COMPLETED', timestamp: t() },
     ]);
 
     expect(state.phase).toBe('completed');
@@ -399,18 +396,31 @@ describe('run-engine', () => {
     let state = run([
       makeRunStarted(),
       { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',     timestamp: t(), round: 0 },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
     ]);
     states.push(state.phase);
 
-    state = runEngineReducer(state, { type: 'STREAMING_COMPLETED', timestamp: t(), accumulated: '', thinking: '' });
+    state = runEngineReducer(state, {
+      type: 'STREAMING_COMPLETED',
+      timestamp: t(),
+      accumulated: '',
+      thinking: '',
+    });
     state = runEngineReducer(state, { type: 'TOOLS_STARTED', timestamp: t() });
     states.push(state.phase);
 
-    state = runEngineReducer(state, { type: 'DELEGATION_STARTED', timestamp: t(), agent: 'explorer' });
+    state = runEngineReducer(state, {
+      type: 'DELEGATION_STARTED',
+      timestamp: t(),
+      agent: 'explorer',
+    });
     states.push(state.phase);
 
-    state = runEngineReducer(state, { type: 'DELEGATION_COMPLETED', timestamp: t(), agent: 'explorer' });
+    state = runEngineReducer(state, {
+      type: 'DELEGATION_COMPLETED',
+      timestamp: t(),
+      agent: 'explorer',
+    });
     states.push(state.phase);
 
     state = runEngineReducer(state, { type: 'TURN_CONTINUED', timestamp: t() });
@@ -430,29 +440,28 @@ describe('run-engine', () => {
   // Covers: planner pre-pass and auditor evaluation both run inside the
   // delegate_coder flow — all three map to 'delegating_coder'.
 
-  it.each([
-    ['coder'],
-    ['planner'],
-    ['auditor'],
-  ] as const)('DELEGATION_STARTED(%s) maps to delegating_coder', (agent) => {
-    const state = run([
-      makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',     timestamp: t(), round: 0 },
-      { type: 'TOOLS_STARTED',     timestamp: t() },
-      { type: 'DELEGATION_STARTED', timestamp: t(), agent },
-    ]);
+  it.each([['coder'], ['planner'], ['auditor']] as const)(
+    'DELEGATION_STARTED(%s) maps to delegating_coder',
+    (agent) => {
+      const state = run([
+        makeRunStarted(),
+        { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+        { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
+        { type: 'TOOLS_STARTED', timestamp: t() },
+        { type: 'DELEGATION_STARTED', timestamp: t(), agent },
+      ]);
 
-    expect(state.phase).toBe('delegating_coder');
-  });
+      expect(state.phase).toBe('delegating_coder');
+    },
+  );
 
   it('DELEGATION_COMPLETED after coder returns to executing_tools', () => {
     const state = run([
       makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED',   timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 0 },
-      { type: 'TOOLS_STARTED',       timestamp: t() },
-      { type: 'DELEGATION_STARTED',  timestamp: t(), agent: 'coder' },
+      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
+      { type: 'TOOLS_STARTED', timestamp: t() },
+      { type: 'DELEGATION_STARTED', timestamp: t(), agent: 'coder' },
       { type: 'DELEGATION_COMPLETED', timestamp: t(), agent: 'coder' },
     ]);
 
@@ -472,21 +481,21 @@ describe('run-engine', () => {
     expect(state.phase).toBe('executing_tools');
   });
 
-  it.each([
-    ['planner'],
-    ['auditor'],
-  ] as const)('DELEGATION_COMPLETED(%s) keeps delegating_coder phase', (agent) => {
-    const state = run([
-      makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED',   timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 0 },
-      { type: 'TOOLS_STARTED',       timestamp: t() },
-      { type: 'DELEGATION_STARTED',  timestamp: t(), agent },
-      { type: 'DELEGATION_COMPLETED', timestamp: t(), agent },
-    ]);
+  it.each([['planner'], ['auditor']] as const)(
+    'DELEGATION_COMPLETED(%s) keeps delegating_coder phase',
+    (agent) => {
+      const state = run([
+        makeRunStarted(),
+        { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+        { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
+        { type: 'TOOLS_STARTED', timestamp: t() },
+        { type: 'DELEGATION_STARTED', timestamp: t(), agent },
+        { type: 'DELEGATION_COMPLETED', timestamp: t(), agent },
+      ]);
 
-    expect(state.phase).toBe('delegating_coder');
-  });
+      expect(state.phase).toBe('delegating_coder');
+    },
+  );
 
   // ─── ACCUMULATED_UPDATED ─────────────────────────────────────────────────
 
@@ -494,7 +503,7 @@ describe('run-engine', () => {
     const s0 = run([
       makeRunStarted(),
       { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',     timestamp: t(), round: 0 },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
     ]);
     const s1 = runEngineReducer(s0, {
       type: 'ACCUMULATED_UPDATED',
@@ -541,16 +550,18 @@ describe('run-engine', () => {
       { type: 'STEER_SET', timestamp: t(), preview: 'redirect' },
     ]);
 
-    expect(collectRunEngineParityIssues(state, {
-      loopActive: true,
-      checkpointPhase: 'streaming_llm',
-      round: 0,
-      accumulatedText: 'hello',
-      accumulatedThinking: 'plan',
-      queuedFollowUpCount: 1,
-      hasPendingSteer: true,
-      tabLockId: 'lock-1',
-    })).toEqual([]);
+    expect(
+      collectRunEngineParityIssues(state, {
+        loopActive: true,
+        checkpointPhase: 'streaming_llm',
+        round: 0,
+        accumulatedText: 'hello',
+        accumulatedThinking: 'plan',
+        queuedFollowUpCount: 1,
+        hasPendingSteer: true,
+        tabLockId: 'lock-1',
+      }),
+    ).toEqual([]);
   });
 
   it('collectRunEngineParityIssues reports mismatches for active-state drift', () => {
@@ -584,11 +595,11 @@ describe('run-engine', () => {
   it('replayEvents produces the same result as manually folding events', () => {
     const events: RunEngineEvent[] = [
       makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED',   timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED',       timestamp: t(), round: 0 },
+      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
       { type: 'STREAMING_COMPLETED', timestamp: t(), accumulated: 'hi', thinking: '' },
-      { type: 'TOOLS_STARTED',       timestamp: t() },
-      { type: 'LOOP_COMPLETED',      timestamp: t() },
+      { type: 'TOOLS_STARTED', timestamp: t() },
+      { type: 'LOOP_COMPLETED', timestamp: t() },
     ];
 
     const fromReplay = replayEvents(IDLE_RUN_STATE, events);
@@ -615,7 +626,7 @@ describe('run-engine', () => {
 
     const result = replayEvents(midRunState, [
       { type: 'STREAMING_COMPLETED', timestamp: t(), accumulated: 'final answer', thinking: '' },
-      { type: 'LOOP_COMPLETED',      timestamp: t() },
+      { type: 'LOOP_COMPLETED', timestamp: t() },
     ]);
 
     expect(result.phase).toBe('completed');
@@ -628,8 +639,8 @@ describe('run-engine', () => {
 
   it.each([
     [{ type: 'LOOP_COMPLETED' as const, timestamp: 1 }, 'completed'],
-    [{ type: 'LOOP_ABORTED' as const,   timestamp: 1 }, 'aborted'],
-    [{ type: 'LOOP_FAILED' as const,    timestamp: 1, reason: 'err' }, 'failed'],
+    [{ type: 'LOOP_ABORTED' as const, timestamp: 1 }, 'aborted'],
+    [{ type: 'LOOP_FAILED' as const, timestamp: 1, reason: 'err' }, 'failed'],
   ] as const)('$0.type clears tabLockId', (event, expectedPhase) => {
     const withLock: RunEngineState = {
       ...IDLE_RUN_STATE,
@@ -641,5 +652,4 @@ describe('run-engine', () => {
     expect(result.tabLockId).toBeNull();
     expect(result.phase).toBe(expectedPhase);
   });
-
 });

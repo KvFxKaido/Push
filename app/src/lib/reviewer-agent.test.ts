@@ -57,15 +57,13 @@ describe('runReviewer', () => {
     }));
     mockGetModelForRole.mockReturnValue({ id: 'default-reviewer-model' });
     mockBuildReviewerRuntimeContext.mockResolvedValue('');
-    mockStreamFn.mockImplementation((
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      onToken('{"summary":"Looks good","comments":[]}');
-      onDone();
-      return Promise.resolve();
-    });
+    mockStreamFn.mockImplementation(
+      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        onToken('{"summary":"Looks good","comments":[]}');
+        onDone();
+        return Promise.resolve();
+      },
+    );
   });
 
   it('prefetches file structure when a sandbox is available', async () => {
@@ -73,7 +71,12 @@ describe('runReviewer', () => {
       .mockResolvedValueOnce({
         totalLines: 120,
         symbols: [
-          { name: 'validateToken', kind: 'function', line: 12, signature: 'export function validateToken(token: string)' },
+          {
+            name: 'validateToken',
+            kind: 'function',
+            line: 12,
+            signature: 'export function validateToken(token: string)',
+          },
           { name: 'AuthProvider', kind: 'class', line: 45, signature: 'export class AuthProvider' },
         ],
       })
@@ -85,22 +88,25 @@ describe('runReviewer', () => {
       makeAddedFileDiff('src/auth.test.ts', 'it("works", () => {})'),
     ].join('');
 
-    await runReviewer(
-      diff,
-      { provider: 'openrouter', sandboxId: 'sb-123' },
-      (phase) => { statuses.push(phase); },
-    );
+    await runReviewer(diff, { provider: 'openrouter', sandboxId: 'sb-123' }, (phase) => {
+      statuses.push(phase);
+    });
 
     expect(statuses).toContain('Preparing review...');
     expect(statuses).toContain('Reviewer reading diff…');
     expect(mockReadSymbolsFromSandbox).toHaveBeenCalledWith('sb-123', '/workspace/src/auth.ts');
-    expect(mockReadSymbolsFromSandbox).toHaveBeenCalledWith('sb-123', '/workspace/src/auth.test.ts');
+    expect(mockReadSymbolsFromSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      '/workspace/src/auth.test.ts',
+    );
 
     const messages = mockStreamFn.mock.calls[0]?.[0] as Array<{ content: string }>;
     const systemPrompt = mockStreamFn.mock.calls[0]?.[8] as string;
     const prompt = messages[0]?.content ?? '';
 
-    expect(systemPrompt).toContain("File structure is auto-fetched and shows the outline of changed files. Use it for orientation but don't assume it's complete.");
+    expect(systemPrompt).toContain(
+      "File structure is auto-fetched and shows the outline of changed files. Use it for orientation but don't assume it's complete.",
+    );
     expect(prompt).toContain('[FILE STRUCTURE — auto-fetched from changed files]');
     expect(prompt).toContain('--- src/auth.ts ---');
     expect(prompt).toContain('export function validateToken(token: string) [L12]');
@@ -109,23 +115,25 @@ describe('runReviewer', () => {
 
   it('coalesces concurrent identical reviews into a single stream call', async () => {
     // Use an async mock so the first call is still in-flight when the second arrives
-    mockStreamFn.mockImplementation(async (
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      await new Promise((r) => setTimeout(r, 10));
-      onToken('{"summary":"Looks good","comments":[]}');
-      onDone();
-    });
+    mockStreamFn.mockImplementation(
+      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        await new Promise((r) => setTimeout(r, 10));
+        onToken('{"summary":"Looks good","comments":[]}');
+        onDone();
+      },
+    );
 
     const statuses1: string[] = [];
     const statuses2: string[] = [];
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
 
     const [r1, r2] = await Promise.all([
-      runReviewer(diff, { provider: 'openrouter' }, (phase) => { statuses1.push(phase); }),
-      runReviewer(diff, { provider: 'openrouter' }, (phase) => { statuses2.push(phase); }),
+      runReviewer(diff, { provider: 'openrouter' }, (phase) => {
+        statuses1.push(phase);
+      }),
+      runReviewer(diff, { provider: 'openrouter' }, (phase) => {
+        statuses2.push(phase);
+      }),
     ]);
 
     // Both callers get the same result
@@ -138,16 +146,16 @@ describe('runReviewer', () => {
   });
 
   it('does not coalesce concurrent reviews with different runtime context', async () => {
-    mockBuildReviewerRuntimeContext.mockImplementation(async (_diff: string, context?: { sourceLabel?: string }) => context?.sourceLabel ?? '');
-    mockStreamFn.mockImplementation(async (
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      await new Promise((r) => setTimeout(r, 10));
-      onToken('{"summary":"Looks good","comments":[]}');
-      onDone();
-    });
+    mockBuildReviewerRuntimeContext.mockImplementation(
+      async (_diff: string, context?: { sourceLabel?: string }) => context?.sourceLabel ?? '',
+    );
+    mockStreamFn.mockImplementation(
+      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        await new Promise((r) => setTimeout(r, 10));
+        onToken('{"summary":"Looks good","comments":[]}');
+        onDone();
+      },
+    );
 
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
 
@@ -161,27 +169,26 @@ describe('runReviewer', () => {
 
   it('replays the latest status to a late-joining coalesced reviewer subscriber', async () => {
     const releaseSymbols: { current: null | (() => void) } = { current: null };
-    mockReadSymbolsFromSandbox.mockImplementation(() => new Promise((resolve) => {
-      releaseSymbols.current = () => resolve({ totalLines: 1, symbols: [] });
-    }));
+    mockReadSymbolsFromSandbox.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseSymbols.current = () => resolve({ totalLines: 1, symbols: [] });
+        }),
+    );
 
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
     const statuses1: string[] = [];
     const statuses2: string[] = [];
 
-    const first = runReviewer(
-      diff,
-      { provider: 'openrouter', sandboxId: 'sb-123' },
-      (phase) => { statuses1.push(phase); },
-    );
+    const first = runReviewer(diff, { provider: 'openrouter', sandboxId: 'sb-123' }, (phase) => {
+      statuses1.push(phase);
+    });
 
     await Promise.resolve();
 
-    const second = runReviewer(
-      diff,
-      { provider: 'openrouter', sandboxId: 'sb-123' },
-      (phase) => { statuses2.push(phase); },
-    );
+    const second = runReviewer(diff, { provider: 'openrouter', sandboxId: 'sb-123' }, (phase) => {
+      statuses2.push(phase);
+    });
 
     expect(statuses1).toContain('Preparing review...');
     expect(statuses2).toContain('Preparing review...');
@@ -196,11 +203,9 @@ describe('runReviewer', () => {
     const statuses: string[] = [];
     const diff = makeAddedFileDiff('src/auth.ts', 'const auth = true;');
 
-    await runReviewer(
-      diff,
-      { provider: 'openrouter' },
-      (phase) => { statuses.push(phase); },
-    );
+    await runReviewer(diff, { provider: 'openrouter' }, (phase) => {
+      statuses.push(phase);
+    });
 
     expect(statuses).not.toContain('Preparing review...');
     expect(mockReadSymbolsFromSandbox).not.toHaveBeenCalled();
@@ -214,7 +219,9 @@ describe('runReviewer', () => {
   });
 
   it('passes retrieved reviewer memory through the runtime context block', async () => {
-    mockBuildReviewerRuntimeContext.mockResolvedValue('## Review Run Context\n\n[RETRIEVED_TASK_MEMORY]\n- [decision | orchestrator] Prior review note\n[/RETRIEVED_TASK_MEMORY]');
+    mockBuildReviewerRuntimeContext.mockResolvedValue(
+      '## Review Run Context\n\n[RETRIEVED_TASK_MEMORY]\n- [decision | orchestrator] Prior review note\n[/RETRIEVED_TASK_MEMORY]',
+    );
 
     await runReviewer(
       makeAddedFileDiff('src/auth.ts', 'const auth = true;'),

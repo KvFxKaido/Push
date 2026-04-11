@@ -105,7 +105,12 @@ export function useChatManagement({
     const id = createId();
     const bi = branchInfoRef.current;
     const branch = bi?.currentBranch || bi?.defaultBranch || 'main';
-    const newConv = buildEmptyConversation(id, activeRepoFullName, branch, workspaceModeRef.current);
+    const newConv = buildEmptyConversation(
+      id,
+      activeRepoFullName,
+      branch,
+      workspaceModeRef.current,
+    );
     setConversations((prev) => {
       const updated = { ...prev, [id]: newConv };
       dirtyConversationIdsRef.current.add(id);
@@ -114,7 +119,14 @@ export function useChatManagement({
     setActiveChatId(id);
     saveActiveChatId(id);
     return id;
-  }, [activeRepoFullName, branchInfoRef, dirtyConversationIdsRef, setActiveChatId, setConversations, workspaceModeRef]);
+  }, [
+    activeRepoFullName,
+    branchInfoRef,
+    dirtyConversationIdsRef,
+    setActiveChatId,
+    setConversations,
+    workspaceModeRef,
+  ]);
 
   const switchChat = useCallback(
     (id: string) => {
@@ -176,7 +188,12 @@ export function useChatManagement({
                 branchInfoRef.current?.defaultBranch ||
                 'main'
               : undefined;
-            updated[newId] = buildEmptyConversation(newId, currentRepo, branch, currentWorkspaceMode);
+            updated[newId] = buildEmptyConversation(
+              newId,
+              currentRepo,
+              branch,
+              currentWorkspaceMode,
+            );
             setActiveChatId(newId);
             saveActiveChatId(newId);
           }
@@ -246,7 +263,16 @@ export function useChatManagement({
       }
       return kept;
     });
-  }, [branchInfoRef, clearQueuedFollowUps, conversations, repoRef, setActiveChatId, setAgentEventsByChat, setConversations, workspaceModeRef]);
+  }, [
+    branchInfoRef,
+    clearQueuedFollowUps,
+    conversations,
+    repoRef,
+    setActiveChatId,
+    setAgentEventsByChat,
+    setConversations,
+    workspaceModeRef,
+  ]);
 
   return { createNewChat, switchChat, renameChat, deleteChat, deleteAllChats };
 }

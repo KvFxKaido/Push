@@ -43,7 +43,9 @@ export function SandboxStatusBanner({
           <SandboxCubeIcon className="h-3.5 w-3.5 flex-shrink-0 text-push-fg-dim" />
           <div>
             <p className="text-xs font-medium text-push-fg-muted">Sandbox not running</p>
-            <p className="text-push-2xs text-push-fg-dim">Start to enable code tools for this workspace.</p>
+            <p className="text-push-2xs text-push-fg-dim">
+              Start to enable code tools for this workspace.
+            </p>
           </div>
         </div>
         <button
@@ -71,7 +73,9 @@ export function SandboxStatusBanner({
   if (status === 'error' && error) {
     const { title, detail } = categorizeSandboxError(error);
     return (
-      <div className={`mx-4 mt-5 flex items-center justify-between gap-2 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-red-500/25`}>
+      <div
+        className={`mx-4 mt-5 flex items-center justify-between gap-2 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-red-500/25`}
+      >
         <div className="min-w-0">
           <p className="text-xs font-medium text-red-300">{title}</p>
           <p className="text-push-2xs text-red-400/70">{detail}</p>

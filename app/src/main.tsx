@@ -1,9 +1,9 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App.tsx'
-import { initPushTracing } from './lib/tracing.ts'
-import { perfMark } from './lib/perf-marks.ts'
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import './index.css';
+import App from './App.tsx';
+import { initPushTracing } from './lib/tracing.ts';
+import { perfMark } from './lib/perf-marks.ts';
 
 perfMark('app:boot');
 
@@ -18,6 +18,6 @@ createRoot(rootElement).render(
   <StrictMode>
     <App />
   </StrictMode>,
-)
+);
 
 perfMark('app:render-scheduled');

@@ -19,7 +19,9 @@ let fakeStorage: Record<string, string> = {};
 
 vi.mock('./safe-storage', () => ({
   safeStorageGet: (key: string) => fakeStorage[key] ?? null,
-  safeStorageRemove: (key: string) => { delete fakeStorage[key]; },
+  safeStorageRemove: (key: string) => {
+    delete fakeStorage[key];
+  },
 }));
 
 const { loadUsageEntries } = await import('./usage-store');

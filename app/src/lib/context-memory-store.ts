@@ -38,15 +38,26 @@ export function createIndexedDbStore(): ContextMemoryStore {
     },
     async clearByRepo(repoFullName: string) {
       const all = await this.list((r) => r.scope.repoFullName === repoFullName);
-      await deleteMany(STORE.memoryRecords, all.map(r => r.id));
+      await deleteMany(
+        STORE.memoryRecords,
+        all.map((r) => r.id),
+      );
     },
     async clearByBranch(repoFullName: string, branch: string) {
-      const all = await this.list((r) => r.scope.repoFullName === repoFullName && r.scope.branch === branch);
-      await deleteMany(STORE.memoryRecords, all.map(r => r.id));
+      const all = await this.list(
+        (r) => r.scope.repoFullName === repoFullName && r.scope.branch === branch,
+      );
+      await deleteMany(
+        STORE.memoryRecords,
+        all.map((r) => r.id),
+      );
     },
     async pruneExpired(now = Date.now()) {
       const all = await this.list((r) => isExpired(r, now));
-      await deleteMany(STORE.memoryRecords, all.map(r => r.id));
+      await deleteMany(
+        STORE.memoryRecords,
+        all.map((r) => r.id),
+      );
       return all.length;
     },
     async size() {

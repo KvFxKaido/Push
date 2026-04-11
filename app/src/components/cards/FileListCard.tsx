@@ -12,16 +12,16 @@ export function FileListCard({ data }: { data: FileListCardData }) {
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-push-edge/80 px-3.5 py-3">
         <Folder className="h-3.5 w-3.5 text-push-fg-secondary" />
-        <span className="text-push-base font-medium text-push-fg truncate">
-          {data.path}
-        </span>
+        <span className="text-push-base font-medium text-push-fg truncate">{data.path}</span>
         <span className="text-push-sm text-push-fg-dim shrink-0">
           {dirs.length > 0 && `${dirs.length} dir${dirs.length !== 1 ? 's' : ''}`}
           {dirs.length > 0 && files.length > 0 && ', '}
           {files.length > 0 && `${files.length} file${files.length !== 1 ? 's' : ''}`}
         </span>
         {data.repo && (
-          <span className="text-push-sm text-push-fg-dim font-mono ml-auto shrink-0">{data.repo}</span>
+          <span className="text-push-sm text-push-fg-dim font-mono ml-auto shrink-0">
+            {data.repo}
+          </span>
         )}
       </div>
 
@@ -30,17 +30,13 @@ export function FileListCard({ data }: { data: FileListCardData }) {
         {dirs.map((entry) => (
           <div key={entry.name} className="flex items-center gap-2 px-3.5 py-2">
             <Folder className="h-3.5 w-3.5 text-push-link shrink-0" />
-            <span className="text-push-base text-push-fg font-mono truncate">
-              {entry.name}/
-            </span>
+            <span className="text-push-base text-push-fg font-mono truncate">{entry.name}/</span>
           </div>
         ))}
         {files.map((entry) => (
           <div key={entry.name} className="flex items-center gap-2 px-3.5 py-2">
             <FileText className="h-3.5 w-3.5 text-push-fg-dim shrink-0" />
-            <span className="text-push-base text-push-fg font-mono truncate">
-              {entry.name}
-            </span>
+            <span className="text-push-base text-push-fg font-mono truncate">{entry.name}</span>
             {entry.size != null && (
               <span className="text-push-xs text-push-fg-dim ml-auto shrink-0">
                 {formatSize(entry.size)}

@@ -71,24 +71,32 @@ function createVertexConfig(env: VertexConfigEnv): VertexConfigApi {
 
   const getLegacyKey = () => {
     const stored = safeStorageGet(LEGACY_VERTEX_KEY_STORAGE_KEY) || env.legacyKey?.trim() || '';
-    return looksLikeVertexServiceAccount(stored) ? null : (stored.trim() || null);
+    return looksLikeVertexServiceAccount(stored) ? null : stored.trim() || null;
   };
 
-  const getLegacyBaseUrl = () => safeStorageGet(LEGACY_VERTEX_BASE_URL_STORAGE_KEY) || env.legacyBaseUrl?.trim() || '';
+  const getLegacyBaseUrl = () =>
+    safeStorageGet(LEGACY_VERTEX_BASE_URL_STORAGE_KEY) || env.legacyBaseUrl?.trim() || '';
 
   const getRegion = () => {
-    const stored = safeStorageGet(VERTEX_REGION_STORAGE_KEY) || env.region?.trim() || VERTEX_DEFAULT_REGION;
+    const stored =
+      safeStorageGet(VERTEX_REGION_STORAGE_KEY) || env.region?.trim() || VERTEX_DEFAULT_REGION;
     const normalized = normalizeVertexRegion(stored);
     return normalized.ok ? normalized.normalized : stored.trim();
   };
 
-  const getModel = () => safeStorageGet(VERTEX_MODEL_STORAGE_KEY) || env.model?.trim() || VERTEX_DEFAULT_MODEL;
+  const getModel = () =>
+    safeStorageGet(VERTEX_MODEL_STORAGE_KEY) || env.model?.trim() || VERTEX_DEFAULT_MODEL;
 
   const getMode = (): VertexConfiguredMode => {
     const nativeKey = getServiceAccount();
     const model = getModel();
     const region = getRegion();
-    if (nativeKey && parseVertexServiceAccount(nativeKey).ok && normalizeVertexRegion(region).ok && model.trim()) {
+    if (
+      nativeKey &&
+      parseVertexServiceAccount(nativeKey).ok &&
+      normalizeVertexRegion(region).ok &&
+      model.trim()
+    ) {
       return 'native';
     }
 
@@ -177,11 +185,13 @@ function createVertexConfig(env: VertexConfigEnv): VertexConfigApi {
         hasModel: Boolean(model.trim()),
         isConfigured: mode !== 'none',
         mode,
-        regionError: regionValidation.ok ? null : (region ? regionValidation.error : null),
-        keyError: parsedKey.ok ? null : (key ? parsedKey.error : null),
+        regionError: regionValidation.ok ? null : region ? regionValidation.error : null,
+        keyError: parsedKey.ok ? null : key ? parsedKey.error : null,
         transport: getVertexModelTransport(model),
         projectId: parsedKey.ok ? parsedKey.parsed.projectId : null,
-        hasLegacyConfig: Boolean(getLegacyKey() && normalizeExperimentalBaseUrl('vertex', getLegacyBaseUrl()).ok),
+        hasLegacyConfig: Boolean(
+          getLegacyKey() && normalizeExperimentalBaseUrl('vertex', getLegacyBaseUrl()).ok,
+        ),
         setKey,
         clearKey,
         setRegion,
@@ -194,7 +204,8 @@ function createVertexConfig(env: VertexConfigEnv): VertexConfigApi {
 }
 
 const vertexConfig = createVertexConfig({
-  serviceAccount: import.meta.env.VITE_VERTEX_SERVICE_ACCOUNT_JSON || import.meta.env.VITE_VERTEX_API_KEY,
+  serviceAccount:
+    import.meta.env.VITE_VERTEX_SERVICE_ACCOUNT_JSON || import.meta.env.VITE_VERTEX_API_KEY,
   region: import.meta.env.VITE_VERTEX_REGION,
   model: import.meta.env.VITE_VERTEX_MODEL,
   legacyKey: import.meta.env.VITE_VERTEX_API_KEY,

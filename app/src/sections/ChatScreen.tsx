@@ -69,18 +69,26 @@ interface ChatScreenProps {
 
 const HEADER_PLAIN_INTERACTIVE_CLASS =
   'relative text-push-fg-secondary transition-colors duration-200 hover:text-push-fg active:scale-[0.98]';
-const HEADER_ROUND_BUTTON_CLASS =
-  `flex h-9 w-9 items-center justify-center ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
-const HEADER_PILL_BUTTON_CLASS =
-  `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
+const HEADER_ROUND_BUTTON_CLASS = `flex h-9 w-9 items-center justify-center ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
+const HEADER_PILL_BUTTON_CLASS = `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
 
-const APPROVAL_MODE_CONFIG: Record<ApprovalMode, { icon: typeof Shield; label: string; color: string }> = {
+const APPROVAL_MODE_CONFIG: Record<
+  ApprovalMode,
+  { icon: typeof Shield; label: string; color: string }
+> = {
   supervised: { icon: Shield, label: 'Supervised', color: 'text-emerald-400' },
   autonomous: { icon: ShieldOff, label: 'Autonomous', color: 'text-sky-400' },
   'full-auto': { icon: Zap, label: 'Full Auto', color: 'text-amber-400' },
 };
 
-export function ChatScreen({ workspace, shell, chat, banners, approvalMode, onCycleApprovalMode }: ChatScreenProps) {
+export function ChatScreen({
+  workspace,
+  shell,
+  chat,
+  banners,
+  approvalMode,
+  onCycleApprovalMode,
+}: ChatScreenProps) {
   usePerfMark('workspace-chat:painted', 'surface:workspace');
   const {
     activeRepo,
@@ -123,7 +131,9 @@ export function ChatScreen({ workspace, shell, chat, banners, approvalMode, onCy
                   iconClassName="h-[11px] w-[11px]"
                 />
               )}
-              <div className={`${activeRepoAppearance ? '-ml-1.5' : '-ml-2.5'} flex min-w-0 items-center self-stretch`}>
+              <div
+                className={`${activeRepoAppearance ? '-ml-1.5' : '-ml-2.5'} flex min-w-0 items-center self-stretch`}
+              >
                 <p className="truncate text-sm font-medium leading-tight text-[#f5f7ff]">
                   {isScratch ? (
                     <span className="hidden sm:inline">Workspace</span>
@@ -141,7 +151,9 @@ export function ChatScreen({ workspace, shell, chat, banners, approvalMode, onCy
                     className={`hidden text-push-2xs sm:inline ${snapshotIsStale ? 'text-amber-400' : 'text-push-fg-dim'}`}
                     title={`Latest snapshot: ${new Date(snapshots.latestSnapshot.createdAt).toLocaleString()}`}
                   >
-                    {snapshotIsStale ? `snapshot stale (${snapshotAgeLabel})` : `snapshot ${snapshotAgeLabel}`}
+                    {snapshotIsStale
+                      ? `snapshot stale (${snapshotAgeLabel})`
+                      : `snapshot ${snapshotAgeLabel}`}
                   </span>
                 )}
                 {sandboxStatus === 'ready' && (
@@ -152,19 +164,31 @@ export function ChatScreen({ workspace, shell, chat, banners, approvalMode, onCy
                     title="Save Snapshot Now"
                     aria-label="Save Snapshot Now"
                   >
-                    {snapshots.snapshotSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                    {snapshots.snapshotSaving ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Save className="h-3.5 w-3.5" />
+                    )}
                     <span className="hidden sm:inline">Save</span>
                   </button>
                 )}
                 {snapshots.latestSnapshot && (
                   <button
                     onClick={snapshots.handleRestoreFromSnapshot}
-                    disabled={snapshots.snapshotSaving || snapshots.snapshotRestoring || sandboxStatus === 'creating'}
+                    disabled={
+                      snapshots.snapshotSaving ||
+                      snapshots.snapshotRestoring ||
+                      sandboxStatus === 'creating'
+                    }
                     className="flex h-7 items-center gap-1 rounded-lg px-2 text-push-xs text-push-fg-dim transition-colors hover:bg-push-surface-hover hover:text-emerald-400 active:scale-95 disabled:opacity-50"
                     title="Restore from Last Snapshot"
                     aria-label="Restore from Last Snapshot"
                   >
-                    {snapshots.snapshotRestoring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                    {snapshots.snapshotRestoring ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    )}
                     <span className="hidden sm:inline">Restore</span>
                   </button>
                 )}
@@ -178,16 +202,24 @@ export function ChatScreen({ workspace, shell, chat, banners, approvalMode, onCy
                     title="Download workspace"
                     aria-label="Download workspace"
                   >
-                    {sandboxDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                    {sandboxDownloading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
                   </button>
                 )}
                 {snapshots.snapshotRestoring && snapshots.snapshotRestoreProgress && (
                   <div className="flex min-w-[120px] flex-col gap-1">
-                    <span className="text-push-2xs text-push-fg-muted">{snapshots.snapshotRestoreProgress.message}</span>
+                    <span className="text-push-2xs text-push-fg-muted">
+                      {snapshots.snapshotRestoreProgress.message}
+                    </span>
                     <div className="h-1 w-full overflow-hidden rounded bg-[#1a2130]">
                       <div
                         className="h-full bg-emerald-500 transition-all duration-300"
-                        style={{ width: `${snapshotStagePercent(snapshots.snapshotRestoreProgress.stage)}%` }}
+                        style={{
+                          width: `${snapshotStagePercent(snapshots.snapshotRestoreProgress.stage)}%`,
+                        }}
                       />
                     </div>
                   </div>
@@ -213,20 +245,22 @@ export function ChatScreen({ workspace, shell, chat, banners, approvalMode, onCy
           )}
 
           <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
-            {approvalMode && onCycleApprovalMode && (() => {
-              const cfg = APPROVAL_MODE_CONFIG[approvalMode];
-              const Icon = cfg.icon;
-              return (
-                <button
-                  onClick={onCycleApprovalMode}
-                  className={`${HEADER_ROUND_BUTTON_CLASS} ${cfg.color}`}
-                  aria-label={`Approval mode: ${cfg.label}. Click to cycle.`}
-                  title={`${cfg.label} mode — click to switch`}
-                >
-                  <Icon className="relative z-10 h-3.5 w-3.5" />
-                </button>
-              );
-            })()}
+            {approvalMode &&
+              onCycleApprovalMode &&
+              (() => {
+                const cfg = APPROVAL_MODE_CONFIG[approvalMode];
+                const Icon = cfg.icon;
+                return (
+                  <button
+                    onClick={onCycleApprovalMode}
+                    className={`${HEADER_ROUND_BUTTON_CLASS} ${cfg.color}`}
+                    aria-label={`Approval mode: ${cfg.label}. Click to cycle.`}
+                    title={`${cfg.label} mode — click to switch`}
+                  >
+                    <Icon className="relative z-10 h-3.5 w-3.5" />
+                  </button>
+                );
+              })()}
             {(activeRepo || isScratch) && (
               <button
                 onClick={onOpenWorkspaceHub}
@@ -238,7 +272,9 @@ export function ChatScreen({ workspace, shell, chat, banners, approvalMode, onCy
                 {hasWorkspaceActivityIndicator && (
                   <span
                     className={`absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-push-sky ${
-                      chatContainerProps.agentStatus.active ? 'animate-pulse shadow-[0_0_6px_rgba(56,189,248,0.5)]' : ''
+                      chatContainerProps.agentStatus.active
+                        ? 'animate-pulse shadow-[0_0_6px_rgba(56,189,248,0.5)]'
+                        : ''
                     }`}
                   />
                 )}
@@ -250,42 +286,50 @@ export function ChatScreen({ workspace, shell, chat, banners, approvalMode, onCy
 
         <SandboxStatusBanner {...sandboxStatusBannerProps} />
 
-        {sandboxExpiryBannerProps && (
-          <SandboxExpiryBanner {...sandboxExpiryBannerProps} />
-        )}
+        {sandboxExpiryBannerProps && <SandboxExpiryBanner {...sandboxExpiryBannerProps} />}
 
-        {!isScratch && activeRepo && instructions.projectInstructionsChecked && !instructions.projectInstructionsCheckFailed && !instructions.agentsMdContent && (
-          <div className={`mx-4 mt-5 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-push-edge/70`}>
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-push-fg">No AGENTS.md found</p>
-                <p className="text-push-xs text-push-fg-muted">Add project instructions so the agent understands your repo conventions.</p>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  onClick={instructions.handleCreateAgentsMdWithAI}
-                  disabled={instructions.creatingAgentsMdWithAI || sandboxStatusBannerProps.isStreaming}
-                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-emerald-300`}
-                >
-                  <HubControlGlow />
-                  <span className="relative z-10">
-                    {instructions.creatingAgentsMdWithAI ? 'Drafting...' : 'Create with AI'}
-                  </span>
-                </button>
-                <button
-                  onClick={instructions.handleCreateAgentsMd}
-                  disabled={instructions.creatingAgentsMd || instructions.creatingAgentsMdWithAI}
-                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-[#8ad4ff]`}
-                >
-                  <HubControlGlow />
-                  <span className="relative z-10">
-                    {instructions.creatingAgentsMd ? 'Creating...' : 'Create Template'}
-                  </span>
-                </button>
+        {!isScratch &&
+          activeRepo &&
+          instructions.projectInstructionsChecked &&
+          !instructions.projectInstructionsCheckFailed &&
+          !instructions.agentsMdContent && (
+            <div
+              className={`mx-4 mt-5 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-push-edge/70`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-push-fg">No AGENTS.md found</p>
+                  <p className="text-push-xs text-push-fg-muted">
+                    Add project instructions so the agent understands your repo conventions.
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    onClick={instructions.handleCreateAgentsMdWithAI}
+                    disabled={
+                      instructions.creatingAgentsMdWithAI || sandboxStatusBannerProps.isStreaming
+                    }
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-emerald-300`}
+                  >
+                    <HubControlGlow />
+                    <span className="relative z-10">
+                      {instructions.creatingAgentsMdWithAI ? 'Drafting...' : 'Create with AI'}
+                    </span>
+                  </button>
+                  <button
+                    onClick={instructions.handleCreateAgentsMd}
+                    disabled={instructions.creatingAgentsMd || instructions.creatingAgentsMdWithAI}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-3 text-[#8ad4ff]`}
+                  >
+                    <HubControlGlow />
+                    <span className="relative z-10">
+                      {instructions.creatingAgentsMd ? 'Creating...' : 'Create Template'}
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
         <ChatContainer {...chatContainerProps} />
         <ChatInput {...chatInputProps} />

@@ -62,17 +62,19 @@ export function TypeCheckCard({ data }: { data: TypeCheckCardData }) {
           {data.errors.slice(0, 15).map((err, i) => (
             <div key={i} className="px-3 py-2">
               <div className={`${CARD_PANEL_SUBTLE_CLASS} px-2.5 py-2`}>
-              <div className="flex items-center gap-2 text-push-sm">
-                <FileCode className="h-3 w-3 text-push-fg-dim shrink-0" />
-                <span className="text-push-link font-mono">
-                  {err.file}:{err.line}
-                  {err.column > 0 ? `:${err.column}` : ''}
-                </span>
-                {err.code && (
-                  <span className="text-push-fg-dim font-mono text-push-xs">{err.code}</span>
-                )}
-              </div>
-              <p className="text-push-xs text-push-fg-secondary mt-0.5 ml-5 truncate">{err.message}</p>
+                <div className="flex items-center gap-2 text-push-sm">
+                  <FileCode className="h-3 w-3 text-push-fg-dim shrink-0" />
+                  <span className="text-push-link font-mono">
+                    {err.file}:{err.line}
+                    {err.column > 0 ? `:${err.column}` : ''}
+                  </span>
+                  {err.code && (
+                    <span className="text-push-fg-dim font-mono text-push-xs">{err.code}</span>
+                  )}
+                </div>
+                <p className="text-push-xs text-push-fg-secondary mt-0.5 ml-5 truncate">
+                  {err.message}
+                </p>
               </div>
             </div>
           ))}

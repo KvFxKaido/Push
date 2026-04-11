@@ -75,8 +75,10 @@ async function fetchWithRetry(url: string, options?: RequestInit): Promise<Respo
       if (!response.ok && isRetryableError(null, response.status)) {
         if (attempt < MAX_RETRIES) {
           const delay = getRetryDelay(response, attempt + 1);
-          console.log(`[Push] GitHub API retry ${attempt + 1}/${MAX_RETRIES}: ${response.status} ${response.statusText}, waiting ${delay}ms`);
-          await new Promise(resolve => setTimeout(resolve, delay));
+          console.log(
+            `[Push] GitHub API retry ${attempt + 1}/${MAX_RETRIES}: ${response.status} ${response.statusText}, waiting ${delay}ms`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }
       }
@@ -86,14 +88,18 @@ async function fetchWithRetry(url: string, options?: RequestInit): Promise<Respo
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
       const errorMsg = isTimeout
         ? `GitHub API timed out after ${GITHUB_TIMEOUT_MS / 1000}s — check your connection.`
-        : err instanceof Error ? err.message : String(err);
+        : err instanceof Error
+          ? err.message
+          : String(err);
 
       lastError = new Error(errorMsg);
 
       if (attempt < MAX_RETRIES && isRetryableError(err)) {
         const delay = BASE_DELAY_MS * Math.pow(2, attempt);
-        console.log(`[Push] GitHub API retry ${attempt + 1}/${MAX_RETRIES}: ${errorMsg}, waiting ${delay}ms`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        console.log(
+          `[Push] GitHub API retry ${attempt + 1}/${MAX_RETRIES}: ${errorMsg}, waiting ${delay}ms`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }
 
@@ -143,7 +149,10 @@ async function fetchRepoBranchesLocally(
 
 function logGitHubWorkerFallback(action: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  console.warn(`[Push] GitHub worker backend failed for ${action}; falling back to legacy.`, message);
+  console.warn(
+    `[Push] GitHub worker backend failed for ${action}; falling back to legacy.`,
+    message,
+  );
 }
 
 export async function fetchRepoBranches(
@@ -191,7 +200,10 @@ function isWorkerGitHubToolCall(call: ToolCall): call is WorkerGitHubToolCall {
   return supportsWorkerGitHubTool(call.tool);
 }
 
-async function executeToolCallLegacy(call: ToolCall, allowedRepo: string): Promise<ToolExecutionResult> {
+async function executeToolCallLegacy(
+  call: ToolCall,
+  allowedRepo: string,
+): Promise<ToolExecutionResult> {
   if (call.tool === 'delegate_coder' || call.tool === 'delegate_explorer') {
     return { text: `[${call.tool}] Handled by tool-dispatch layer.` };
   }
@@ -199,13 +211,20 @@ async function executeToolCallLegacy(call: ToolCall, allowedRepo: string): Promi
   const allowedNormalized = normalizeRepoName(allowedRepo || '');
   const requestedNormalized = normalizeRepoName(call.args.repo || '');
   if (!allowedNormalized || !requestedNormalized || requestedNormalized !== allowedNormalized) {
-    console.debug('[Tool Error] Access denied — repo mismatch', { allowed: allowedRepo || '(empty)', requested: call.args.repo || '(empty)' });
-    return { text: `[Tool Error] Access denied — can only query the active repo "${allowedRepo || 'none'}" (requested: "${call.args.repo || 'none'}")` };
+    console.debug('[Tool Error] Access denied — repo mismatch', {
+      allowed: allowedRepo || '(empty)',
+      requested: call.args.repo || '(empty)',
+    });
+    return {
+      text: `[Tool Error] Access denied — can only query the active repo "${allowedRepo || 'none'}" (requested: "${call.args.repo || 'none'}")`,
+    };
   }
 
   try {
     if (!isWorkerGitHubToolCall(call)) {
-      return { text: `[Tool Error] Unknown tool: ${String((call as { tool?: unknown }).tool ?? 'unknown')}` };
+      return {
+        text: `[Tool Error] Unknown tool: ${String((call as { tool?: unknown }).tool ?? 'unknown')}`,
+      };
     }
 
     return await executeGitHubToolLocally(call);
@@ -216,7 +235,10 @@ async function executeToolCallLegacy(call: ToolCall, allowedRepo: string): Promi
   }
 }
 
-export async function executeToolCall(call: ToolCall, allowedRepo: string): Promise<ToolExecutionResult> {
+export async function executeToolCall(
+  call: ToolCall,
+  allowedRepo: string,
+): Promise<ToolExecutionResult> {
   if (getGitHubToolBackend() === 'worker' && isWorkerGitHubToolCall(call)) {
     try {
       return await executeGitHubToolViaWorker(call, allowedRepo);

@@ -44,15 +44,33 @@ function makeScored(
 
 describe('classifyRetrievedMemorySection', () => {
   it('routes fresh records by kind and stale records into the stale section', () => {
-    expect(classifyRetrievedMemorySection(makeScored('fact', 'x', { kind: 'fact' }).record)).toBe('facts');
-    expect(classifyRetrievedMemorySection(makeScored('finding', 'x', { kind: 'finding' }).record)).toBe('facts');
-    expect(classifyRetrievedMemorySection(makeScored('trace', 'x', { kind: 'dependency_trace' }).record)).toBe('facts');
-    expect(classifyRetrievedMemorySection(makeScored('decision', 'x', { kind: 'decision' }).record)).toBe('taskMemory');
-    expect(classifyRetrievedMemorySection(makeScored('task', 'x', { kind: 'task_outcome' }).record)).toBe('taskMemory');
-    expect(classifyRetrievedMemorySection(makeScored('file', 'x', { kind: 'file_change' }).record)).toBe('taskMemory');
-    expect(classifyRetrievedMemorySection(makeScored('verify', 'x', { kind: 'verification_result' }).record)).toBe('verification');
+    expect(classifyRetrievedMemorySection(makeScored('fact', 'x', { kind: 'fact' }).record)).toBe(
+      'facts',
+    );
     expect(
-      classifyRetrievedMemorySection(makeScored('stale', 'x', { kind: 'verification_result', freshness: 'stale' }).record),
+      classifyRetrievedMemorySection(makeScored('finding', 'x', { kind: 'finding' }).record),
+    ).toBe('facts');
+    expect(
+      classifyRetrievedMemorySection(makeScored('trace', 'x', { kind: 'dependency_trace' }).record),
+    ).toBe('facts');
+    expect(
+      classifyRetrievedMemorySection(makeScored('decision', 'x', { kind: 'decision' }).record),
+    ).toBe('taskMemory');
+    expect(
+      classifyRetrievedMemorySection(makeScored('task', 'x', { kind: 'task_outcome' }).record),
+    ).toBe('taskMemory');
+    expect(
+      classifyRetrievedMemorySection(makeScored('file', 'x', { kind: 'file_change' }).record),
+    ).toBe('taskMemory');
+    expect(
+      classifyRetrievedMemorySection(
+        makeScored('verify', 'x', { kind: 'verification_result' }).record,
+      ),
+    ).toBe('verification');
+    expect(
+      classifyRetrievedMemorySection(
+        makeScored('stale', 'x', { kind: 'verification_result', freshness: 'stale' }).record,
+      ),
     ).toBe('stale');
   });
 });
@@ -125,7 +143,10 @@ describe('packRetrievedMemory', () => {
     );
 
     expect(result.sections.facts.packed.map((record) => record.record.id)).toEqual(['small']);
-    expect(result.sections.facts.dropped.map((record) => record.record.id)).toEqual(['giant-1', 'giant-2']);
+    expect(result.sections.facts.dropped.map((record) => record.record.id)).toEqual([
+      'giant-1',
+      'giant-2',
+    ]);
   });
 
   it('routes stale records only into [STALE_CONTEXT]', () => {
@@ -133,20 +154,34 @@ describe('packRetrievedMemory', () => {
       makeScored('fresh-fact', 'Fresh file trace', { kind: 'finding' }),
       makeScored('fresh-verify', 'typecheck: passed', { kind: 'verification_result' }),
       makeScored('stale-fact', 'Old session guard note', { freshness: 'stale' }),
-      makeScored('stale-verify', 'tests: failed', { kind: 'verification_result', freshness: 'stale' }),
+      makeScored('stale-verify', 'tests: failed', {
+        kind: 'verification_result',
+        freshness: 'stale',
+      }),
     ]);
 
     expect(result.sections.facts.packed.map((record) => record.record.id)).toEqual(['fresh-fact']);
-    expect(result.sections.verification.packed.map((record) => record.record.id)).toEqual(['fresh-verify']);
-    expect(result.sections.stale.packed.map((record) => record.record.id)).toEqual(['stale-fact', 'stale-verify']);
-    expect(result.sections.facts.packed.some((record) => record.record.id === 'stale-fact')).toBe(false);
-    expect(result.sections.verification.packed.some((record) => record.record.id === 'stale-verify')).toBe(false);
+    expect(result.sections.verification.packed.map((record) => record.record.id)).toEqual([
+      'fresh-verify',
+    ]);
+    expect(result.sections.stale.packed.map((record) => record.record.id)).toEqual([
+      'stale-fact',
+      'stale-verify',
+    ]);
+    expect(result.sections.facts.packed.some((record) => record.record.id === 'stale-fact')).toBe(
+      false,
+    );
+    expect(
+      result.sections.verification.packed.some((record) => record.record.id === 'stale-verify'),
+    ).toBe(false);
     expect(result.block).toContain('[STALE_CONTEXT]');
   });
 
   it('surfaces combined and per-section metadata for prompt-cost inspection', () => {
     const result = packRetrievedMemory([
-      makeScored('fact', 'Session middleware runs before route guards', { files: ['app/src/middleware.ts'] }),
+      makeScored('fact', 'Session middleware runs before route guards', {
+        files: ['app/src/middleware.ts'],
+      }),
       makeScored('task', 'Updated auth retry flow and touched auth.ts', { kind: 'file_change' }),
       makeScored('verify', 'typecheck: passed', { kind: 'verification_result' }),
       makeScored('stale', 'Older note about auth.ts', { freshness: 'stale' }),

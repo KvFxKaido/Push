@@ -6,12 +6,9 @@ import {
 
 describe('parseParallelDelegationStatus', () => {
   it('parses writes, deletes, and untracked files into workspace paths', () => {
-    const parsed = parseParallelDelegationStatus([
-      ' M src/app.ts',
-      'A  src/new.ts',
-      'D  src/old.ts',
-      '?? notes/todo.md',
-    ].join('\n'));
+    const parsed = parseParallelDelegationStatus(
+      [' M src/app.ts', 'A  src/new.ts', 'D  src/old.ts', '?? notes/todo.md'].join('\n'),
+    );
 
     expect(parsed.unsupported).toHaveLength(0);
     expect(parsed.changes).toEqual([
@@ -23,10 +20,9 @@ describe('parseParallelDelegationStatus', () => {
   });
 
   it('flags rename and conflict statuses as unsupported', () => {
-    const parsed = parseParallelDelegationStatus([
-      'R  src/old.ts -> src/new.ts',
-      'UU src/conflicted.ts',
-    ].join('\n'));
+    const parsed = parseParallelDelegationStatus(
+      ['R  src/old.ts -> src/new.ts', 'UU src/conflicted.ts'].join('\n'),
+    );
 
     expect(parsed.changes).toHaveLength(0);
     expect(parsed.unsupported).toEqual([
@@ -62,12 +58,16 @@ describe('buildParallelDelegationMergePlan', () => {
     const plan = buildParallelDelegationMergePlan([
       {
         workerIndex: 0,
-        changes: [{ path: '/workspace/shared.ts', kind: 'write', status: ' M', raw: ' M shared.ts' }],
+        changes: [
+          { path: '/workspace/shared.ts', kind: 'write', status: ' M', raw: ' M shared.ts' },
+        ],
         unsupported: [],
       },
       {
         workerIndex: 1,
-        changes: [{ path: '/workspace/shared.ts', kind: 'write', status: ' M', raw: ' M shared.ts' }],
+        changes: [
+          { path: '/workspace/shared.ts', kind: 'write', status: ' M', raw: ' M shared.ts' },
+        ],
         unsupported: [],
       },
     ]);
@@ -81,7 +81,9 @@ describe('buildParallelDelegationMergePlan', () => {
       {
         workerIndex: 0,
         changes: [],
-        unsupported: [{ path: '/workspace/new.ts', status: 'R ', raw: 'R  a -> b', reason: 'rename_or_copy' }],
+        unsupported: [
+          { path: '/workspace/new.ts', status: 'R ', raw: 'R  a -> b', reason: 'rename_or_copy' },
+        ],
       },
     ]);
 

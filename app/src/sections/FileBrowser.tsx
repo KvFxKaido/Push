@@ -98,62 +98,86 @@ export function FileBrowser({
     }
   }, [operations]);
 
-  const handleFilePress = useCallback((file: FileEntry) => {
-    if (file.type === 'directory') {
-      navigateTo(file.path);
-    } else {
-      // Check if file is editable - if so, go straight to editor
-      const editability = getFileEditability(file.path, file.size);
-      if (editability.editable) {
-        setEditingFile(file);
+  const handleFilePress = useCallback(
+    (file: FileEntry) => {
+      if (file.type === 'directory') {
+        navigateTo(file.path);
       } else {
-        // Non-editable files still show actions sheet
-        setSelectedFile(file);
-        setSheetOpen(true);
+        // Check if file is editable - if so, go straight to editor
+        const editability = getFileEditability(file.path, file.size);
+        if (editability.editable) {
+          setEditingFile(file);
+        } else {
+          // Non-editable files still show actions sheet
+          setSelectedFile(file);
+          setSheetOpen(true);
+        }
       }
-    }
-  }, [navigateTo]);
+    },
+    [navigateTo],
+  );
 
   const handleLongPress = useCallback((file: FileEntry) => {
     setSelectedFile(file);
     setSheetOpen(true);
   }, []);
 
-  const handleDelete = useCallback((path: string) => {
-    deleteItem(path);
-  }, [deleteItem]);
+  const handleDelete = useCallback(
+    (path: string) => {
+      deleteItem(path);
+    },
+    [deleteItem],
+  );
 
   const handleEdit = useCallback((file: FileEntry) => {
     setEditingFile(file);
   }, []);
 
-  const handleSaveFile = useCallback(async (
-    path: string,
-    content: string,
-    expectedVersion?: string,
-    expectedWorkspaceRevision?: number,
-  ) => {
-    const result = await writeToSandbox(sandboxId, path, content, expectedVersion, expectedWorkspaceRevision);
-    if (result.ok) fileLedger.recordMutation(path, 'user');
-    if (!result.ok) {
-      if (result.code === 'WORKSPACE_CHANGED') {
-        const expected = result.expected_workspace_revision ?? expectedWorkspaceRevision ?? 'unknown';
-        const current = result.current_workspace_revision ?? result.workspace_revision ?? 'unknown';
-        throw new Error(`Workspace changed since last read (expected revision ${expected}, current ${current}). Re-open and retry.`);
+  const handleSaveFile = useCallback(
+    async (
+      path: string,
+      content: string,
+      expectedVersion?: string,
+      expectedWorkspaceRevision?: number,
+    ) => {
+      const result = await writeToSandbox(
+        sandboxId,
+        path,
+        content,
+        expectedVersion,
+        expectedWorkspaceRevision,
+      );
+      if (result.ok) fileLedger.recordMutation(path, 'user');
+      if (!result.ok) {
+        if (result.code === 'WORKSPACE_CHANGED') {
+          const expected =
+            result.expected_workspace_revision ?? expectedWorkspaceRevision ?? 'unknown';
+          const current =
+            result.current_workspace_revision ?? result.workspace_revision ?? 'unknown';
+          throw new Error(
+            `Workspace changed since last read (expected revision ${expected}, current ${current}). Re-open and retry.`,
+          );
+        }
+        if (result.code === 'STALE_FILE') {
+          const expected = result.expected_version || expectedVersion || 'unknown';
+          const current = result.current_version || 'missing';
+          throw new Error(
+            `File changed since last read (expected ${expected}, current ${current}). Re-open and retry.`,
+          );
+        }
+        throw new Error(result.error || 'Save failed');
       }
-      if (result.code === 'STALE_FILE') {
-        const expected = result.expected_version || expectedVersion || 'unknown';
-        const current = result.current_version || 'missing';
-        throw new Error(`File changed since last read (expected ${expected}, current ${current}). Re-open and retry.`);
-      }
-      throw new Error(result.error || 'Save failed');
-    }
-    return result;
-  }, [sandboxId]);
+      return result;
+    },
+    [sandboxId],
+  );
 
-  const handleUpload = useCallback((fileList: FileList) => {
-    uploadFiles(fileList);
-  }, [uploadFiles]);
+  const handleUpload = useCallback(
+    (fileList: FileList) => {
+      uploadFiles(fileList);
+    },
+    [uploadFiles],
+  );
 
   // If editing, show the editor instead of file browser
   if (editingFile) {
@@ -192,9 +216,7 @@ export function FileBrowser({
               <button
                 onClick={() => loadDirectory('/workspace')}
                 className={`px-1.5 py-0.5 rounded transition-colors ${
-                  isRoot
-                    ? 'font-medium text-push-fg'
-                    : 'text-push-fg-secondary hover:text-push-fg'
+                  isRoot ? 'font-medium text-push-fg' : 'text-push-fg-secondary hover:text-push-fg'
                 }`}
               >
                 {workspaceLabel}
@@ -299,7 +321,9 @@ export function FileBrowser({
         <div className="fixed bottom-6 left-4 right-[5.5rem] z-30 rounded-[20px] border border-push-edge bg-push-grad-panel/95 px-3 py-2.5 shadow-[0_16px_40px_rgba(0,0,0,0.42)] backdrop-blur-xl">
           <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-[0.18em] text-push-fg-dim">Workspace</p>
-            <p className={`mt-1 truncate text-push-2xs ${scratchActions.tone === 'stale' ? 'text-amber-300' : 'text-push-fg-dim'}`}>
+            <p
+              className={`mt-1 truncate text-push-2xs ${scratchActions.tone === 'stale' ? 'text-amber-300' : 'text-push-fg-dim'}`}
+            >
               {scratchActions.statusText}
             </p>
           </div>
@@ -311,7 +335,11 @@ export function FileBrowser({
               title="Save snapshot"
               aria-label="Save snapshot"
             >
-              {scratchActions.snapshotSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              {scratchActions.snapshotSaving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
               <span>Save</span>
             </button>
             <button
@@ -321,7 +349,11 @@ export function FileBrowser({
               title="Restore snapshot"
               aria-label="Restore snapshot"
             >
-              {scratchActions.snapshotRestoring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+              {scratchActions.snapshotRestoring ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}
               <span>Restore</span>
             </button>
             <button
@@ -331,7 +363,11 @@ export function FileBrowser({
               title="Download workspace"
               aria-label="Download workspace"
             >
-              {scratchActions.downloadingWorkspace ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              {scratchActions.downloadingWorkspace ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
               <span>Download</span>
             </button>
           </div>
@@ -339,10 +375,7 @@ export function FileBrowser({
       )}
 
       {/* Upload FAB */}
-      <UploadButton
-        onUpload={handleUpload}
-        disabled={status === 'loading'}
-      />
+      <UploadButton onUpload={handleUpload} disabled={status === 'loading'} />
 
       {/* File actions sheet */}
       <FileActionsSheet
@@ -432,7 +465,9 @@ function FileRow({ file, onTap, onLongPress }: FileRowProps) {
 
         {/* Name + meta */}
         <div className="flex-1 min-w-0">
-          <span className={`block truncate text-sm ${isDir ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
+          <span
+            className={`block truncate text-sm ${isDir ? 'text-push-fg' : 'text-push-fg-secondary'}`}
+          >
             {file.name}
           </span>
           {!isDir && editability?.warning === 'large_file' && (

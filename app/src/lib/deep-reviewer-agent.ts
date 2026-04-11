@@ -6,12 +6,7 @@
  * existing UI (findings display, send-to-chat, post-to-PR) works unchanged.
  */
 
-import type {
-  ChatMessage,
-  DeepReviewCallbacks,
-  ReviewComment,
-  ReviewResult,
-} from '@/types';
+import type { ChatMessage, DeepReviewCallbacks, ReviewComment, ReviewResult } from '@/types';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import {
   detectAllToolCalls,
@@ -54,8 +49,12 @@ const DEEP_REVIEW_ROUND_TIMEOUT_MS = 60_000;
 const REVIEW_COMPLETE_MARKER = '[REVIEW_COMPLETE]';
 const MAX_PROJECT_INSTRUCTIONS_SIZE = 12_000;
 const DIFF_LIMIT = 40_000;
-const REVIEWER_GITHUB_TOOL_NAMES = getToolPublicNames({ source: 'github', readOnly: true }).join(', ');
-const REVIEWER_SANDBOX_TOOL_NAMES = getToolPublicNames({ source: 'sandbox', readOnly: true }).join(', ');
+const REVIEWER_GITHUB_TOOL_NAMES = getToolPublicNames({ source: 'github', readOnly: true }).join(
+  ', ',
+);
+const REVIEWER_SANDBOX_TOOL_NAMES = getToolPublicNames({ source: 'sandbox', readOnly: true }).join(
+  ', ',
+);
 const REVIEWER_WEB_TOOL_NAME = getToolPublicName('web_search');
 const REVIEWER_MUTATION_BLOCKLIST = [
   getToolPublicName('delegate_coder'),
@@ -202,24 +201,27 @@ function parseReviewResult(
   const summary = typeof parsed?.summary === 'string' ? parsed.summary : 'No summary provided.';
   const rawComments = Array.isArray(parsed?.comments) ? parsed.comments : [];
 
-  const comments: ReviewComment[] = rawComments.map((c) => {
-    const rc = asRecord(c);
-    const sev = rc?.severity;
-    const severity: ReviewComment['severity'] =
-      sev === 'critical' || sev === 'warning' || sev === 'suggestion' || sev === 'note'
-        ? sev
-        : 'note';
-    const rawLine = rc?.line;
-    const line = typeof rawLine === 'number' && Number.isInteger(rawLine) && rawLine > 0
-      ? rawLine
-      : undefined;
-    return {
-      file: typeof rc?.file === 'string' ? rc.file : 'unknown',
-      severity,
-      comment: typeof rc?.comment === 'string' ? rc.comment : '',
-      ...(line !== undefined && { line }),
-    };
-  }).filter((c) => c.comment.length > 0);
+  const comments: ReviewComment[] = rawComments
+    .map((c) => {
+      const rc = asRecord(c);
+      const sev = rc?.severity;
+      const severity: ReviewComment['severity'] =
+        sev === 'critical' || sev === 'warning' || sev === 'suggestion' || sev === 'note'
+          ? sev
+          : 'note';
+      const rawLine = rc?.line;
+      const line =
+        typeof rawLine === 'number' && Number.isInteger(rawLine) && rawLine > 0
+          ? rawLine
+          : undefined;
+      return {
+        file: typeof rc?.file === 'string' ? rc.file : 'unknown',
+        severity,
+        comment: typeof rc?.comment === 'string' ? rc.comment : '',
+        ...(line !== undefined && { line }),
+      };
+    })
+    .filter((c) => c.comment.length > 0);
 
   return {
     summary,
@@ -256,8 +258,13 @@ function buildFallbackResult(
 // ---------------------------------------------------------------------------
 
 function getReasoningSnippet(content: string): string | null {
-  const lines = content.split('\n').map((line) => line.trim()).filter(Boolean);
-  const first = lines.find((line) => !line.startsWith('{') && !line.startsWith('```') && !line.startsWith('['));
+  const lines = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const first = lines.find(
+    (line) => !line.startsWith('{') && !line.startsWith('```') && !line.startsWith('['),
+  );
   if (!first) return null;
   return first.slice(0, 150);
 }
@@ -283,9 +290,8 @@ export async function runDeepReviewer(
   } = options;
 
   // Resolve provider
-  const activeProvider: ActiveProvider = provider === 'demo'
-    ? getActiveProvider()
-    : provider as ActiveProvider;
+  const activeProvider: ActiveProvider =
+    provider === 'demo' ? getActiveProvider() : (provider as ActiveProvider);
 
   if (activeProvider === 'demo') {
     throw new Error('No AI provider configured. Add an API key in Settings.');
@@ -319,7 +325,8 @@ export async function runDeepReviewer(
     systemPrompt += `\n\n[WORKSPACE CONTEXT]\nActive branch: ${branchContext.activeBranch}\nDefault branch: ${branchContext.defaultBranch}\nProtect main: ${branchContext.protectMain ? 'on' : 'off'}`;
   }
   if (!sandboxId) {
-    systemPrompt += '\n\n[SANDBOX STATUS]\nNo sandbox available — use GitHub tools instead of sandbox tools.';
+    systemPrompt +=
+      '\n\n[SANDBOX STATUS]\nNo sandbox available — use GitHub tools instead of sandbox tools.';
   }
 
   const runtimeContext = await buildReviewerRuntimeContext(diff, context);
@@ -362,7 +369,7 @@ export async function runDeepReviewer(
     const { promise: roundStreamPromise, getAccumulated } = streamWithTimeout(
       DEEP_REVIEW_ROUND_TIMEOUT_MS,
       `Deep review round ${roundNum} timed out after ${DEEP_REVIEW_ROUND_TIMEOUT_MS / 1000}s.`,
-      (onToken, onDone, onError) => (
+      (onToken, onDone, onError) =>
         streamFn(
           messages,
           onToken,
@@ -375,8 +382,7 @@ export async function runDeepReviewer(
           systemPrompt,
           undefined,
           callbacks.signal,
-        )
-      ),
+        ),
     );
 
     const streamError = await roundStreamPromise;
@@ -408,7 +414,9 @@ export async function runDeepReviewer(
           id: `deep-review-nudge-investigate-${round}`,
           role: 'user',
           content: formatAgentParseError(
-            "You haven't investigated yet. Use tools to read surrounding code, callers, and tests before concluding. Then emit " + REVIEW_COMPLETE_MARKER + ' with your findings.',
+            "You haven't investigated yet. Use tools to read surrounding code, callers, and tests before concluding. Then emit " +
+              REVIEW_COMPLETE_MARKER +
+              ' with your findings.',
           ),
           timestamp: Date.now(),
           isToolResult: true,
@@ -444,7 +452,8 @@ export async function runDeepReviewer(
         content: formatAgentParseError(
           buildToolCallParseErrorBlock({
             errorType: 'multiple_mutating_calls',
-            problem: 'Deep Reviewer only supports read-only inspection tools and at most one trailing call per turn.',
+            problem:
+              'Deep Reviewer only supports read-only inspection tools and at most one trailing call per turn.',
             hint: `Use one or more read-only tools, then finish with a plain-text analysis or emit ${REVIEW_COMPLETE_MARKER}.`,
           }),
         ),
@@ -455,17 +464,15 @@ export async function runDeepReviewer(
     }
 
     if (detected.readOnly.length > 1 || (detected.readOnly.length > 0 && detected.mutating)) {
-      callbacks.onStatus('Deep review executing...', `${detected.readOnly.length} read-only tool call${detected.readOnly.length === 1 ? '' : 's'}`);
+      callbacks.onStatus(
+        'Deep review executing...',
+        `${detected.readOnly.length} read-only tool call${detected.readOnly.length === 1 ? '' : 's'}`,
+      );
 
       const readResults = await Promise.all(
-        detected.readOnly.map((call) => executeReadOnlyTool(
-          call,
-          allowedRepo,
-          sandboxId ?? null,
-          activeProvider,
-          modelId,
-          hooks,
-        )),
+        detected.readOnly.map((call) =>
+          executeReadOnlyTool(call, allowedRepo, sandboxId ?? null, activeProvider, modelId, hooks),
+        ),
       );
 
       for (const entry of readResults) {
@@ -590,7 +597,7 @@ export async function runDeepReviewer(
   const { promise: finalStreamPromise, getAccumulated: getFinalAccumulated } = streamWithTimeout(
     DEEP_REVIEW_ROUND_TIMEOUT_MS,
     'Deep review final output timed out.',
-    (onToken, onDone, onError) => (
+    (onToken, onDone, onError) =>
       streamFn(
         messages,
         onToken,
@@ -603,8 +610,7 @@ export async function runDeepReviewer(
         systemPrompt,
         undefined,
         callbacks.signal,
-      )
-    ),
+      ),
   );
 
   const finalError = await finalStreamPromise;

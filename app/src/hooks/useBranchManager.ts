@@ -105,44 +105,51 @@ export function useBranchManager(
     void loadRepoBranches(activeRepoFullName);
   }, [activeRepoFullName, workspaceSession, loadRepoBranches]);
 
-  const handleDeleteBranch = useCallback(async (branchName: string): Promise<boolean> => {
-    if (!activeRepo || workspaceSession?.kind !== 'repo') return false;
-    const normalized = branchName.trim();
-    if (!normalized) return false;
+  const handleDeleteBranch = useCallback(
+    async (branchName: string): Promise<boolean> => {
+      if (!activeRepo || workspaceSession?.kind !== 'repo') return false;
+      const normalized = branchName.trim();
+      if (!normalized) return false;
 
-    const branchMeta = displayBranches.find((b) => b.name === normalized);
-    const isDefaultBranch = normalized === activeRepo.default_branch || Boolean(branchMeta?.isDefault);
-    const isProtectedBranch = Boolean(branchMeta?.isProtected);
-    const isCurrentBranch = normalized === currentBranch;
+      const branchMeta = displayBranches.find((b) => b.name === normalized);
+      const isDefaultBranch =
+        normalized === activeRepo.default_branch || Boolean(branchMeta?.isDefault);
+      const isProtectedBranch = Boolean(branchMeta?.isProtected);
+      const isCurrentBranch = normalized === currentBranch;
 
-    if (isCurrentBranch) {
-      toast.error(`Cannot delete current branch "${normalized}"`);
-      return false;
-    }
-    if (isDefaultBranch) {
-      toast.error(`Cannot delete default branch "${normalized}"`);
-      return false;
-    }
-    if (isProtectedBranch) {
-      toast.error(`Cannot delete protected branch "${normalized}"`);
-      return false;
-    }
+      if (isCurrentBranch) {
+        toast.error(`Cannot delete current branch "${normalized}"`);
+        return false;
+      }
+      if (isDefaultBranch) {
+        toast.error(`Cannot delete default branch "${normalized}"`);
+        return false;
+      }
+      if (isProtectedBranch) {
+        toast.error(`Cannot delete protected branch "${normalized}"`);
+        return false;
+      }
 
-    setDeletingBranch(normalized);
-    try {
-      await executeDeleteBranch(activeRepo.full_name, normalized);
-      toast.success(`Deleted branch "${normalized}"`);
-      setPendingDeleteBranch(null);
-      await loadRepoBranches(activeRepo.full_name);
-      return true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message.replace(/^\[Tool Error\]\s*/, '') : 'Failed to delete branch';
-      toast.error(message);
-      return false;
-    } finally {
-      setDeletingBranch((prev) => (prev === normalized ? null : prev));
-    }
-  }, [activeRepo, currentBranch, displayBranches, workspaceSession, loadRepoBranches]);
+      setDeletingBranch(normalized);
+      try {
+        await executeDeleteBranch(activeRepo.full_name, normalized);
+        toast.success(`Deleted branch "${normalized}"`);
+        setPendingDeleteBranch(null);
+        await loadRepoBranches(activeRepo.full_name);
+        return true;
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message.replace(/^\[Tool Error\]\s*/, '')
+            : 'Failed to delete branch';
+        toast.error(message);
+        return false;
+      } finally {
+        setDeletingBranch((prev) => (prev === normalized ? null : prev));
+      }
+    },
+    [activeRepo, currentBranch, displayBranches, workspaceSession, loadRepoBranches],
+  );
 
   return {
     repoBranches,

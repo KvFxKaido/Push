@@ -10,10 +10,19 @@ import type { LanguageSupport } from '@codemirror/language';
 type LangLoader = () => Promise<LanguageSupport>;
 
 const loaders: Record<string, LangLoader> = {
-  javascript: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true, typescript: false })),
-  typescript: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true, typescript: true })),
+  javascript: () =>
+    import('@codemirror/lang-javascript').then((m) =>
+      m.javascript({ jsx: true, typescript: false }),
+    ),
+  typescript: () =>
+    import('@codemirror/lang-javascript').then((m) =>
+      m.javascript({ jsx: true, typescript: true }),
+    ),
   jsx: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true })),
-  tsx: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true, typescript: true })),
+  tsx: () =>
+    import('@codemirror/lang-javascript').then((m) =>
+      m.javascript({ jsx: true, typescript: true }),
+    ),
   python: () => import('@codemirror/lang-python').then((m) => m.python()),
   json: () => import('@codemirror/lang-json').then((m) => m.json()),
   markdown: () => import('@codemirror/lang-markdown').then((m) => m.markdown()),
@@ -53,7 +62,7 @@ const aliases: Record<string, string> = {
   hpp: 'cpp',
   cc: 'cpp',
   cxx: 'cpp',
-  yaml: 'json',  // no YAML support — JSON is structurally closest
+  yaml: 'json', // no YAML support — JSON is structurally closest
   yml: 'json',
   toml: 'json',
   jsonc: 'json',

@@ -72,7 +72,12 @@ export function useChatCardActions({
   messages,
 }: ChatCardActionsParams) {
   const updateCardInMessage = useCallback(
-    (chatId: string, messageId: string, cardIndex: number, updater: (card: ChatCard) => ChatCard) => {
+    (
+      chatId: string,
+      messageId: string,
+      cardIndex: number,
+      updater: (card: ChatCard) => ChatCard,
+    ) => {
       setConversations((prev) => {
         const conv = prev[chatId];
         if (!conv) return prev;
@@ -209,9 +214,10 @@ export function useChatCardActions({
               { tool: 'sandbox_prepare_commit', args: { message: normalizedCommitMessage } },
               sandboxId,
               {
-                auditorProviderOverride: lockedProvider && lockedProvider !== 'demo'
-                  ? lockedProvider as ActiveProvider
-                  : undefined,
+                auditorProviderOverride:
+                  lockedProvider && lockedProvider !== 'demo'
+                    ? (lockedProvider as ActiveProvider)
+                    : undefined,
                 auditorModelOverride: lockedModel ?? null,
               },
             );
@@ -269,8 +275,12 @@ export function useChatCardActions({
           // Enforce Protect Main for UI-driven commits
           if (isMainProtectedRef.current) {
             try {
-              const branchResult = await execInSandbox(sandboxId, 'cd /workspace && git branch --show-current');
-              const currentBranch = branchResult.exitCode === 0 ? branchResult.stdout?.trim() : null;
+              const branchResult = await execInSandbox(
+                sandboxId,
+                'cd /workspace && git branch --show-current',
+              );
+              const currentBranch =
+                branchResult.exitCode === 0 ? branchResult.stdout?.trim() : null;
               const mainBranches = new Set(['main', 'master']);
               const defBranch = branchInfoRef.current?.defaultBranch;
               if (defBranch) mainBranches.add(defBranch);
@@ -310,7 +320,11 @@ export function useChatCardActions({
             if (card.type !== 'commit-review') return card;
             return {
               ...card,
-              data: { ...card.data, status: 'approved', commitMessage: action.commitMessage } as CommitReviewCardData,
+              data: {
+                ...card.data,
+                status: 'approved',
+                commitMessage: action.commitMessage,
+              } as CommitReviewCardData,
             };
           });
 
@@ -394,7 +408,10 @@ export function useChatCardActions({
             // Step 4: Success
             updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
               if (card.type !== 'commit-review') return card;
-              return { ...card, data: { ...card.data, status: 'committed' } as CommitReviewCardData };
+              return {
+                ...card,
+                data: { ...card.data, status: 'committed' } as CommitReviewCardData,
+              };
             });
 
             injectSyntheticMessage(chatId, `Committed and pushed: "${action.commitMessage}"`);
@@ -494,7 +511,11 @@ export function useChatCardActions({
               .split('\n')
               .map((line) => line.trimEnd())
               .filter(Boolean);
-            const statusLine = lines.find((line) => line.startsWith('##'))?.slice(2).trim() || 'unknown';
+            const statusLine =
+              lines
+                .find((line) => line.startsWith('##'))
+                ?.slice(2)
+                .trim() || 'unknown';
             const branch = statusLine.split('...')[0].trim() || 'unknown';
             const entries = lines.filter((line) => !line.startsWith('##'));
 
@@ -599,7 +620,8 @@ export function useChatCardActions({
                   `Save blocked for ${action.path}: workspace changed since last read (expected revision ${expected}, current ${current}). Re-open and retry.`,
                 );
               } else if (writeResult.code === 'STALE_FILE') {
-                const expected = writeResult.expected_version || action.expectedVersion || 'unknown';
+                const expected =
+                  writeResult.expected_version || action.expectedVersion || 'unknown';
                 const current = writeResult.current_version || 'missing';
                 injectSyntheticMessage(
                   chatId,
@@ -663,5 +685,10 @@ export function useChatCardActions({
     ],
   );
 
-  return { updateCardInMessage, injectSyntheticMessage, injectAssistantCardMessage, handleCardAction };
+  return {
+    updateCardInMessage,
+    injectSyntheticMessage,
+    injectAssistantCardMessage,
+    handleCardAction,
+  };
 }

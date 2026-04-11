@@ -100,8 +100,14 @@ describe('scoreRecord', () => {
 
   it('decays recency as the record ages', () => {
     const now = 1_000_000_000;
-    const fresh = makeRecord('fresh', { createdAt: now - 60_000, relatedFiles: ['app/src/auth.ts'] });
-    const old = makeRecord('old', { createdAt: now - 48 * 60 * 60 * 1000, relatedFiles: ['app/src/auth.ts'] });
+    const fresh = makeRecord('fresh', {
+      createdAt: now - 60_000,
+      relatedFiles: ['app/src/auth.ts'],
+    });
+    const old = makeRecord('old', {
+      createdAt: now - 48 * 60 * 60 * 1000,
+      relatedFiles: ['app/src/auth.ts'],
+    });
     const query = makeQuery({ fileHints: ['app/src/auth.ts'] });
     const scoredFresh = scoreRecord(fresh, query, now)!;
     const scoredOld = scoreRecord(old, query, now)!;
@@ -119,12 +125,18 @@ describe('scoreRecord', () => {
   });
 
   it('excludes records from other chats when both sides are chat-scoped', () => {
-    const record = makeRecord('r1', { scope: { chatId: 'chat-2' }, relatedFiles: ['app/src/auth.ts'] });
+    const record = makeRecord('r1', {
+      scope: { chatId: 'chat-2' },
+      relatedFiles: ['app/src/auth.ts'],
+    });
     expect(scoreRecord(record, makeQuery({ fileHints: ['app/src/auth.ts'] }))).toBeNull();
   });
 
   it('excludes records from other branches when both sides are branch-scoped', () => {
-    const record = makeRecord('r1', { scope: { branch: 'feature/payments' }, relatedFiles: ['app/src/auth.ts'] });
+    const record = makeRecord('r1', {
+      scope: { branch: 'feature/payments' },
+      relatedFiles: ['app/src/auth.ts'],
+    });
     expect(scoreRecord(record, makeQuery({ fileHints: ['app/src/auth.ts'] }))).toBeNull();
   });
 
@@ -157,11 +169,7 @@ describe('retrieveRecords', () => {
       }),
     );
 
-    const result = await retrieveRecords(
-      store,
-      makeQuery({ fileHints: ['app/src/auth.ts'] }),
-      now,
-    );
+    const result = await retrieveRecords(store, makeQuery({ fileHints: ['app/src/auth.ts'] }), now);
 
     expect(result.records[0].record.id).toBe('targeted');
   });
@@ -220,10 +228,7 @@ describe('retrieveRecords', () => {
         relatedFiles: ['app/src/auth.ts'],
       }),
     );
-    const result = await retrieveRecords(
-      store,
-      makeQuery({ fileHints: ['app/src/auth.ts'] }),
-    );
+    const result = await retrieveRecords(store, makeQuery({ fileHints: ['app/src/auth.ts'] }));
     expect(result.records).toHaveLength(0);
     expect(result.candidateCount).toBe(0);
   });
@@ -243,10 +248,7 @@ describe('retrieveRecords', () => {
         relatedFiles: ['app/src/auth.ts'],
       }),
     );
-    const result = await retrieveRecords(
-      store,
-      makeQuery({ fileHints: ['app/src/auth.ts'] }),
-    );
+    const result = await retrieveRecords(store, makeQuery({ fileHints: ['app/src/auth.ts'] }));
     expect(result.records.map((r) => r.record.id)).toEqual(['fresh-one']);
     expect(result.staleDropped).toBe(1);
     expect(result.expiredExcluded).toBe(1);
@@ -272,10 +274,7 @@ describe('retrieveRecords', () => {
       }),
     );
 
-    const result = await retrieveRecords(
-      store,
-      makeQuery({ fileHints: ['app/src/auth.ts'] }),
-    );
+    const result = await retrieveRecords(store, makeQuery({ fileHints: ['app/src/auth.ts'] }));
 
     expect(result.records.map((r) => r.record.id)).toEqual(['same-chat-same-branch']);
     expect(result.candidateCount).toBe(1);
@@ -302,11 +301,7 @@ describe('retrieveRecords', () => {
         relatedFiles: ['app/src/auth.ts'],
       }),
     );
-    const result = await retrieveRecords(
-      store,
-      makeQuery({ fileHints: ['app/src/auth.ts'] }),
-      now,
-    );
+    const result = await retrieveRecords(store, makeQuery({ fileHints: ['app/src/auth.ts'] }), now);
     // gamma is newest, then alpha/beta tied on score+age → id order
     expect(result.records.map((r) => r.record.id)).toEqual(['gamma', 'alpha', 'beta']);
   });

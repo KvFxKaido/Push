@@ -2,7 +2,11 @@ import { useState, type ReactNode } from 'react';
 import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { ProviderIcon } from '@/components/ui/provider-icon';
 import { SettingsSectionContent } from '@/components/SettingsSectionContent';
-import { PROVIDER_LABELS, SETTINGS_SECTION_ICONS, type SettingsSectionIcon } from '@/components/settings-shared';
+import {
+  PROVIDER_LABELS,
+  SETTINGS_SECTION_ICONS,
+  type SettingsSectionIcon,
+} from '@/components/settings-shared';
 import { SettingsCellsIcon } from '@/components/icons/push-custom-icons';
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -47,7 +51,10 @@ interface DetailShellProps {
   children: ReactNode;
 }
 
-const DETAIL_META: Record<SettingsTabKey, { title: string; description: string; icon: SettingsSectionIcon }> = {
+const DETAIL_META: Record<
+  SettingsTabKey,
+  { title: string; description: string; icon: SettingsSectionIcon }
+> = {
   you: {
     title: 'You',
     description: 'GitHub, profile, and the context Push carries into chats.',
@@ -94,9 +101,7 @@ function DetailShell({ description, icon: Icon, title, onBack, children }: Detai
           </div>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {children}
-      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
     </div>
   );
 }
@@ -132,7 +137,10 @@ function NotebookCard({
           </div>
           <div className="mt-3 space-y-2 border-t border-push-edge/70 pt-3">
             {lines.map((line) => (
-              <div key={line} className="flex items-start gap-2 text-push-xs leading-5 text-push-fg-secondary">
+              <div
+                key={line}
+                className="flex items-start gap-2 text-push-xs leading-5 text-push-fg-secondary"
+              >
                 <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-push-fg-dim/80" />
                 <span className="min-w-0 truncate">{line}</span>
               </div>
@@ -160,15 +168,18 @@ export function HubSettingsTab({
     ai.vertexProvider.hasKey,
   ].filter(Boolean).length;
 
-  const defaultProvider = ai.activeBackend ?? (ai.activeProviderLabel === 'demo' ? null : ai.activeProviderLabel);
-  const profileName = profile.profile.displayName.trim() || profile.validatedUser?.login || 'unnamed';
-  const sandboxLabel = workspace.sandboxStatus === 'ready'
-    ? 'live'
-    : workspace.sandboxStatus === 'creating'
-    ? 'booting'
-    : workspace.sandboxStatus === 'error'
-    ? 'error'
-    : 'idle';
+  const defaultProvider =
+    ai.activeBackend ?? (ai.activeProviderLabel === 'demo' ? null : ai.activeProviderLabel);
+  const profileName =
+    profile.profile.displayName.trim() || profile.validatedUser?.login || 'unnamed';
+  const sandboxLabel =
+    workspace.sandboxStatus === 'ready'
+      ? 'live'
+      : workspace.sandboxStatus === 'creating'
+        ? 'booting'
+        : workspace.sandboxStatus === 'error'
+          ? 'error'
+          : 'idle';
 
   const notebookCards: NotebookCardProps[] = [
     {
@@ -222,7 +233,10 @@ export function HubSettingsTab({
             transform: `translateX(-${activeViewIndex * (100 / views.length)}%)`,
           }}
         >
-          <section className="min-w-0 flex h-full flex-col" style={{ width: `${100 / views.length}%` }}>
+          <section
+            className="min-w-0 flex h-full flex-col"
+            style={{ width: `${100 / views.length}%` }}
+          >
             <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-3">
               <div className={`${HUB_PANEL_SURFACE_CLASS} px-4 py-4`}>
                 <div className="flex items-start gap-3">
@@ -232,7 +246,8 @@ export function HubSettingsTab({
                   <div className="min-w-0">
                     <h2 className="text-base font-semibold text-push-fg">Settings</h2>
                     <p className="mt-1 text-push-xs leading-5 text-push-fg-muted">
-                      Your profile, workspace behavior, and AI defaults live here. Pick a section to tune the details without leaving the hub.
+                      Your profile, workspace behavior, and AI defaults live here. Pick a section to
+                      tune the details without leaving the hub.
                     </p>
                   </div>
                 </div>
@@ -245,7 +260,9 @@ export function HubSettingsTab({
                     {auth.isConnected ? 'GitHub linked' : 'GitHub not linked'}
                   </span>
                   <span className={SETTINGS_PILL_CLASS}>
-                    {defaultProvider ? `${PROVIDER_LABELS[defaultProvider]} default` : 'Auto provider'}
+                    {defaultProvider
+                      ? `${PROVIDER_LABELS[defaultProvider]} default`
+                      : 'Auto provider'}
                   </span>
                 </div>
               </div>
@@ -257,12 +274,17 @@ export function HubSettingsTab({
               </div>
 
               {defaultProvider && (
-                <div className={`mt-3 flex items-center gap-2 px-4 py-3 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
+                <div
+                  className={`mt-3 flex items-center gap-2 px-4 py-3 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
+                >
                   <ProviderIcon provider={defaultProvider} size={16} className="shrink-0" />
                   <div className="min-w-0">
                     <p className="text-xs font-medium text-push-fg">Current default provider</p>
                     <p className="truncate text-push-2xs text-push-fg-dim">
-                      {PROVIDER_LABELS[defaultProvider]}{ai.lockedModel ? ` for new chats · current chat stays on ${ai.lockedModel}` : ' for new chats'}
+                      {PROVIDER_LABELS[defaultProvider]}
+                      {ai.lockedModel
+                        ? ` for new chats · current chat stays on ${ai.lockedModel}`
+                        : ' for new chats'}
                     </p>
                   </div>
                 </div>

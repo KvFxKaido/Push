@@ -1,8 +1,4 @@
-import type {
-  ChatCard,
-  DelegationOutcome,
-  DelegationResultCardData,
-} from '@/types';
+import type { ChatCard, DelegationOutcome, DelegationResultCardData } from '@/types';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 
 interface BuildDelegationResultOptions {
@@ -19,7 +15,10 @@ const INLINE_DELEGATION_CARD_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 function extractSection(summary: string, label: string): string | undefined {
-  const pattern = new RegExp(`\\*\\*${label}:\\*\\*\\s*([\\s\\S]*?)(?=\\n\\*\\*[A-Za-z][^\\n]*:\\*\\*|$)`, 'i');
+  const pattern = new RegExp(
+    `\\*\\*${label}:\\*\\*\\s*([\\s\\S]*?)(?=\\n\\*\\*[A-Za-z][^\\n]*:\\*\\*|$)`,
+    'i',
+  );
   const match = summary.match(pattern)?.[1]?.trim();
   return match || undefined;
 }
@@ -27,10 +26,12 @@ function extractSection(summary: string, label: string): string | undefined {
 function isTrivialValue(value: string | undefined): boolean {
   if (!value) return true;
   const normalized = value.trim().toLowerCase();
-  return normalized === 'nothing'
-    || normalized === 'none'
-    || normalized === 'not run'
-    || normalized === 'n/a';
+  return (
+    normalized === 'nothing' ||
+    normalized === 'none' ||
+    normalized === 'not run' ||
+    normalized === 'n/a'
+  );
 }
 
 function stripSummaryNoise(summary: string): string {
@@ -42,7 +43,10 @@ function stripSummaryNoise(summary: string): string {
     .trim();
 }
 
-function buildCompactSummary(agent: DelegationResultCardData['agent'], summary: string): {
+function buildCompactSummary(
+  agent: DelegationResultCardData['agent'],
+  summary: string,
+): {
   summary: string;
   verifiedText?: string;
   openText?: string;

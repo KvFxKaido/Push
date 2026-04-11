@@ -149,8 +149,12 @@ export function recordReadFileMetric(result: ReadMetricResult): void {
     result.truncated ? 'truncated' : '',
     result.emptyRange ? 'empty_range' : '',
     result.errorCode ? result.errorCode : '',
-  ].filter(Boolean).join(' ');
-  console.debug(`[edit] read_file ${readType} ${outcome} chars=${payloadChars}${flags ? ` ${flags}` : ''}`);
+  ]
+    .filter(Boolean)
+    .join(' ');
+  console.debug(
+    `[edit] read_file ${readType} ${outcome} chars=${payloadChars}${flags ? ` ${flags}` : ''}`,
+  );
 }
 
 export function getReadFileMetrics(): ReadFileMetrics {

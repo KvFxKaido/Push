@@ -86,7 +86,9 @@ export function parseParallelDelegationStatus(output: string): ParsedParallelDel
 
     const status = line.slice(0, 2);
     const rest = line.slice(3);
-    const normalizedPath = decodeGitPath(rest.includes(' -> ') ? rest.split(' -> ').pop() || rest : rest);
+    const normalizedPath = decodeGitPath(
+      rest.includes(' -> ') ? rest.split(' -> ').pop() || rest : rest,
+    );
     const path = toWorkspacePath(normalizedPath);
     const unsupportedReason = isUnsupportedStatus(status);
 
@@ -96,7 +98,8 @@ export function parseParallelDelegationStatus(output: string): ParsedParallelDel
       continue;
     }
 
-    const kind: ParallelDelegationChangeKind = status === '??' || !status.includes('D') ? 'write' : 'delete';
+    const kind: ParallelDelegationChangeKind =
+      status === '??' || !status.includes('D') ? 'write' : 'delete';
     changes.push({ path, kind, status, raw: line });
   }
 

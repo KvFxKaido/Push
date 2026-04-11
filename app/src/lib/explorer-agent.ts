@@ -48,8 +48,12 @@ import { CapabilityLedger, ROLE_CAPABILITIES } from './capabilities';
 const MAX_EXPLORER_ROUNDS = 14;
 const EXPLORER_ROUND_TIMEOUT_MS = 60_000;
 const MAX_PROJECT_INSTRUCTIONS_SIZE = 12_000;
-const EXPLORER_GITHUB_TOOL_NAMES = getToolPublicNames({ source: 'github', readOnly: true }).join(', ');
-const EXPLORER_SANDBOX_TOOL_NAMES = getToolPublicNames({ source: 'sandbox', readOnly: true }).join(', ');
+const EXPLORER_GITHUB_TOOL_NAMES = getToolPublicNames({ source: 'github', readOnly: true }).join(
+  ', ',
+);
+const EXPLORER_SANDBOX_TOOL_NAMES = getToolPublicNames({ source: 'sandbox', readOnly: true }).join(
+  ', ',
+);
 const EXPLORER_WEB_TOOL_NAME = getToolPublicName('web_search');
 const EXPLORER_MUTATION_BLOCKLIST = [
   getToolPublicName('delegate_coder'),
@@ -125,7 +129,6 @@ In "Recommended next step", name the next actor (answer directly, coder, ask_use
 
 If the request is clearly discovery-shaped (for example: where is X, how does Y work, trace the flow of Z, what depends on A, why does B happen), prefer a broad but bounded investigation before concluding. Inspect enough files to cover the main path, but stop once the next actor can proceed without rediscovery.`;
 
-
 const EXPLORER_TOOL_PROTOCOL = `
 ## Explorer Tool Protocol
 
@@ -195,8 +198,13 @@ const formatToolResult = formatAgentToolResult;
 const formatParseError = formatAgentParseError;
 
 function getReasoningSnippet(content: string): string | null {
-  const lines = content.split('\n').map((line) => line.trim()).filter(Boolean);
-  const first = lines.find((line) => !line.startsWith('{') && !line.startsWith('```') && !line.startsWith('['));
+  const lines = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const first = lines.find(
+    (line) => !line.startsWith('{') && !line.startsWith('```') && !line.startsWith('['),
+  );
   if (!first) return null;
   return first.slice(0, 150);
 }
@@ -209,9 +217,10 @@ export async function runExplorerAgent(
   allowedRepo: string,
   callbacks: ExplorerCallbacks,
 ): Promise<ExplorerResult> {
-  const requestedProvider = envelope.provider !== 'demo' && isProviderAvailable(envelope.provider as ActiveProvider)
-    ? envelope.provider as ActiveProvider
-    : null;
+  const requestedProvider =
+    envelope.provider !== 'demo' && isProviderAvailable(envelope.provider as ActiveProvider)
+      ? (envelope.provider as ActiveProvider)
+      : null;
   const activeProvider = requestedProvider || getActiveProvider();
 
   if (activeProvider === 'demo') {
@@ -220,11 +229,9 @@ export async function runExplorerAgent(
 
   const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'explorer');
-  const explorerModelId = resolveProviderSpecificModel(
-    activeProvider,
-    envelope.model,
-    envelope.provider,
-  ) || roleModel?.id;
+  const explorerModelId =
+    resolveProviderSpecificModel(activeProvider, envelope.model, envelope.provider) ||
+    roleModel?.id;
 
   const builder = buildExplorerBaseBuilder();
 
@@ -255,7 +262,9 @@ export async function runExplorerAgent(
   }
   if (envelope.branchContext) {
     const branch = envelope.branchContext;
-    envParts.push(`[WORKSPACE CONTEXT]\nActive branch: ${branch.activeBranch}\nDefault branch: ${branch.defaultBranch}\nProtect main: ${branch.protectMain ? 'on' : 'off'}`);
+    envParts.push(
+      `[WORKSPACE CONTEXT]\nActive branch: ${branch.activeBranch}\nDefault branch: ${branch.defaultBranch}\nProtect main: ${branch.protectMain ? 'on' : 'off'}`,
+    );
   }
   if (envParts.length) {
     builder.set('environment', envParts.join('\n\n'));
@@ -264,7 +273,10 @@ export async function runExplorerAgent(
   // Symbol cache
   const symbolSummary = symbolLedger.getSummary();
   if (symbolSummary) {
-    builder.set('memory', `[SYMBOL_CACHE]\n${symbolSummary}\nUse sandbox_read_symbols on cached files to get instant results (no sandbox round-trip).\n[/SYMBOL_CACHE]`);
+    builder.set(
+      'memory',
+      `[SYMBOL_CACHE]\n${symbolSummary}\nUse sandbox_read_symbols on cached files to get instant results (no sandbox round-trip).\n[/SYMBOL_CACHE]`,
+    );
   }
 
   const systemPrompt = builder.build();
@@ -314,7 +326,7 @@ export async function runExplorerAgent(
     const { promise: roundStreamPromise, getAccumulated } = streamWithTimeout(
       EXPLORER_ROUND_TIMEOUT_MS,
       `Explorer round ${rounds} timed out after ${EXPLORER_ROUND_TIMEOUT_MS / 1000}s.`,
-      (onToken, onDone, onError) => (
+      (onToken, onDone, onError) =>
         streamFn(
           messages,
           onToken,
@@ -327,8 +339,7 @@ export async function runExplorerAgent(
           systemPrompt,
           undefined,
           callbacks.signal,
-        )
-      ),
+        ),
     );
 
     const streamError = await roundStreamPromise;
@@ -357,7 +368,8 @@ export async function runExplorerAgent(
         content: formatParseError(
           buildToolCallParseErrorBlock({
             errorType: 'multiple_mutating_calls',
-            problem: 'Explorer only supports read-only inspection tools and at most one trailing call per turn.',
+            problem:
+              'Explorer only supports read-only inspection tools and at most one trailing call per turn.',
             hint: 'Use one or more read-only tools, then finish with a plain-text report.',
           }),
         ),
@@ -368,18 +380,23 @@ export async function runExplorerAgent(
     }
 
     if (detected.readOnly.length > 1 || (detected.readOnly.length > 0 && detected.mutating)) {
-      callbacks.onStatus('Explorer executing...', `${detected.readOnly.length} read-only tool call${detected.readOnly.length === 1 ? '' : 's'}`);
+      callbacks.onStatus(
+        'Explorer executing...',
+        `${detected.readOnly.length} read-only tool call${detected.readOnly.length === 1 ? '' : 's'}`,
+      );
 
       const readResults = await Promise.all(
-        detected.readOnly.map((call) => executeExplorerTool(
-          call,
-          allowedRepo,
-          sandboxId,
-          activeProvider,
-          explorerModelId,
-          hooks,
-          capabilityLedger,
-        )),
+        detected.readOnly.map((call) =>
+          executeExplorerTool(
+            call,
+            allowedRepo,
+            sandboxId,
+            activeProvider,
+            explorerModelId,
+            hooks,
+            capabilityLedger,
+          ),
+        ),
       );
 
       for (const call of detected.readOnly) capabilityLedger.recordToolUse(call.call.tool);

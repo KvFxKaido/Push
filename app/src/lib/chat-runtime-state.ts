@@ -26,10 +26,7 @@ function normalizeRunState(runState?: ConversationRunState): ConversationRunStat
   };
 }
 
-function withRunState(
-  conversation: Conversation,
-  runState?: ConversationRunState,
-): Conversation {
+function withRunState(conversation: Conversation, runState?: ConversationRunState): Conversation {
   const normalized = normalizeRunState(runState);
   if (!normalized) {
     const nextConversation = { ...conversation };
@@ -124,8 +121,6 @@ export function setConversationVerificationState(
   });
 }
 
-export function sanitizeConversationRuntimeState(
-  conversation: Conversation,
-): Conversation {
+export function sanitizeConversationRuntimeState(conversation: Conversation): Conversation {
   return withRunState(conversation, conversation.runState);
 }

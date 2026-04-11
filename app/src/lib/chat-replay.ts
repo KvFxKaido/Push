@@ -13,7 +13,10 @@ function normalizeMessageContent(text: string): string {
   return text.trim();
 }
 
-function normalizeDisplayContent(displayText: string | undefined, content: string): string | undefined {
+function normalizeDisplayContent(
+  displayText: string | undefined,
+  content: string,
+): string | undefined {
   const trimmed = displayText?.trim();
   if (!trimmed || trimmed === content) return undefined;
   return trimmed;
@@ -51,7 +54,9 @@ export function buildEditedReplay(
   const nextAttachments = normalizeAttachments(attachments);
   if (!content && !nextAttachments) return null;
 
-  const targetIndex = messages.findIndex((message) => message.id === messageId && isReplayableUserMessage(message));
+  const targetIndex = messages.findIndex(
+    (message) => message.id === messageId && isReplayableUserMessage(message),
+  );
   if (targetIndex === -1) return null;
 
   const original = messages[targetIndex];

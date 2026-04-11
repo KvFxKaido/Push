@@ -38,30 +38,36 @@ export function useFileBrowser(sandboxId: string | null) {
   }, []);
 
   // Fetch directory contents
-  const loadDirectory = useCallback(async (path: string) => {
-    if (!sandboxId || loadingRef.current) return;
-    loadingRef.current = true;
-    setStatus('loading');
-    setError(null);
+  const loadDirectory = useCallback(
+    async (path: string) => {
+      if (!sandboxId || loadingRef.current) return;
+      loadingRef.current = true;
+      setStatus('loading');
+      setError(null);
 
-    try {
-      const entries = await listDirectory(sandboxId, path);
-      setFiles(entries);
-      setCurrentPath(path);
-      setStatus('idle');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
-      setStatus('error');
-    } finally {
-      loadingRef.current = false;
-    }
-  }, [sandboxId]);
+      try {
+        const entries = await listDirectory(sandboxId, path);
+        setFiles(entries);
+        setCurrentPath(path);
+        setStatus('idle');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+        setStatus('error');
+      } finally {
+        loadingRef.current = false;
+      }
+    },
+    [sandboxId],
+  );
 
   // Navigate into a directory
-  const navigateTo = useCallback((path: string) => {
-    loadDirectory(path);
-  }, [loadDirectory]);
+  const navigateTo = useCallback(
+    (path: string) => {
+      loadDirectory(path);
+    },
+    [loadDirectory],
+  );
 
   // Navigate to parent
   const navigateUp = useCallback(() => {
@@ -71,67 +77,104 @@ export function useFileBrowser(sandboxId: string | null) {
   }, [currentPath, loadDirectory]);
 
   // Upload files to current directory
-  const uploadFiles = useCallback(async (fileList: FileList) => {
-    if (!sandboxId) return;
+  const uploadFiles = useCallback(
+    async (fileList: FileList) => {
+      if (!sandboxId) return;
 
-    for (let i = 0; i < fileList.length; i++) {
-      const file = fileList[i];
-      const targetPath = `${currentPath.replace(/\/$/, '')}/${file.name}`;
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        const targetPath = `${currentPath.replace(/\/$/, '')}/${file.name}`;
 
-      try {
-        const content = await file.text();
-        await writeToSandbox(sandboxId, targetPath, content);
-        fileLedger.recordMutation(targetPath, 'user');
-        addOperation({ type: 'upload', path: targetPath, status: 'success', message: `Uploaded ${file.name}` });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        addOperation({ type: 'upload', path: targetPath, status: 'error', message: `Failed to upload ${file.name}: ${msg}` });
+        try {
+          const content = await file.text();
+          await writeToSandbox(sandboxId, targetPath, content);
+          fileLedger.recordMutation(targetPath, 'user');
+          addOperation({
+            type: 'upload',
+            path: targetPath,
+            status: 'success',
+            message: `Uploaded ${file.name}`,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          addOperation({
+            type: 'upload',
+            path: targetPath,
+            status: 'error',
+            message: `Failed to upload ${file.name}: ${msg}`,
+          });
+        }
       }
-    }
 
-    // Refresh
-    loadDirectory(currentPath);
-  }, [sandboxId, currentPath, loadDirectory, addOperation]);
+      // Refresh
+      loadDirectory(currentPath);
+    },
+    [sandboxId, currentPath, loadDirectory, addOperation],
+  );
 
   // Delete file or folder
-  const deleteItem = useCallback(async (path: string) => {
-    if (!sandboxId) return;
-    const name = path.split('/').pop() || path;
+  const deleteItem = useCallback(
+    async (path: string) => {
+      if (!sandboxId) return;
+      const name = path.split('/').pop() || path;
 
-    try {
-      await deleteFromSandbox(sandboxId, path);
-      fileLedger.recordMutation(path, 'user');
-      addOperation({ type: 'delete', path, status: 'success', message: `Deleted ${name}` });
-      loadDirectory(currentPath);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addOperation({ type: 'delete', path, status: 'error', message: `Failed to delete ${name}: ${msg}` });
-    }
-  }, [sandboxId, currentPath, loadDirectory, addOperation]);
+      try {
+        await deleteFromSandbox(sandboxId, path);
+        fileLedger.recordMutation(path, 'user');
+        addOperation({ type: 'delete', path, status: 'success', message: `Deleted ${name}` });
+        loadDirectory(currentPath);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addOperation({
+          type: 'delete',
+          path,
+          status: 'error',
+          message: `Failed to delete ${name}: ${msg}`,
+        });
+      }
+    },
+    [sandboxId, currentPath, loadDirectory, addOperation],
+  );
 
   // Rename file or folder
-  const renameItem = useCallback(async (oldPath: string, newName: string) => {
-    if (!sandboxId) return;
-    const oldName = oldPath.split('/').pop() || oldPath;
-    const parentDir = oldPath.split('/').slice(0, -1).join('/');
-    const newPath = `${parentDir}/${newName}`;
+  const renameItem = useCallback(
+    async (oldPath: string, newName: string) => {
+      if (!sandboxId) return;
+      const oldName = oldPath.split('/').pop() || oldPath;
+      const parentDir = oldPath.split('/').slice(0, -1).join('/');
+      const newPath = `${parentDir}/${newName}`;
 
-    try {
-      await renameInSandbox(sandboxId, oldPath, newPath);
-      fileLedger.recordMutation(newPath, 'user');
-      addOperation({ type: 'rename', path: newPath, status: 'success', message: `Renamed ${oldName} → ${newName}` });
-      loadDirectory(currentPath);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addOperation({ type: 'rename', path: oldPath, status: 'error', message: `Failed to rename ${oldName}: ${msg}` });
-    }
-  }, [sandboxId, currentPath, loadDirectory, addOperation]);
+      try {
+        await renameInSandbox(sandboxId, oldPath, newPath);
+        fileLedger.recordMutation(newPath, 'user');
+        addOperation({
+          type: 'rename',
+          path: newPath,
+          status: 'success',
+          message: `Renamed ${oldName} → ${newName}`,
+        });
+        loadDirectory(currentPath);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addOperation({
+          type: 'rename',
+          path: oldPath,
+          status: 'error',
+          message: `Failed to rename ${oldName}: ${msg}`,
+        });
+      }
+    },
+    [sandboxId, currentPath, loadDirectory, addOperation],
+  );
 
   // Breadcrumb segments
-  const breadcrumbs = currentPath.split('/').filter(Boolean).map((segment, i, arr) => ({
-    label: segment,
-    path: '/' + arr.slice(0, i + 1).join('/'),
-  }));
+  const breadcrumbs = currentPath
+    .split('/')
+    .filter(Boolean)
+    .map((segment, i, arr) => ({
+      label: segment,
+      path: '/' + arr.slice(0, i + 1).join('/'),
+    }));
 
   return {
     currentPath,

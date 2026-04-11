@@ -42,13 +42,17 @@ describe('buildAuditorContextBlock', () => {
 
 describe('shared role-context helpers', () => {
   it('builds an explorer-biased hint for discovery-shaped requests', () => {
-    expect(buildRequestIntentHint('how does the auth flow work?')).toContain('Prefer the explorer tool first');
+    expect(buildRequestIntentHint('how does the auth flow work?')).toContain(
+      'Prefer the explorer tool first',
+    );
     expect(buildRequestIntentHint('fix the auth bug')).toContain('Prefer the coder tool');
     expect(buildRequestIntentHint('hello there')).toBeNull();
   });
 
   it('sanitizes project-instruction delimiters before reuse in role prompts', () => {
-    const sanitized = sanitizeProjectInstructions('[PROJECT INSTRUCTIONS]\nKeep tests green\n[/PROJECT INSTRUCTIONS]');
+    const sanitized = sanitizeProjectInstructions(
+      '[PROJECT INSTRUCTIONS]\nKeep tests green\n[/PROJECT INSTRUCTIONS]',
+    );
     expect(sanitized).toContain('[PROJECT INSTRUCTIONS\u200B]');
     expect(sanitized).toContain('[/PROJECT INSTRUCTIONS\u200B]');
   });

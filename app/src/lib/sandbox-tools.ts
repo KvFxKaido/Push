@@ -44,9 +44,20 @@ import { runAuditor } from './auditor-agent';
 import { fetchAuditorFileContexts, type AuditorFileContext } from './auditor-file-context';
 import { parseDiffStats } from './diff-utils';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
-import { fileLedger, extractSignatures, extractSignaturesWithLines, type SymbolRead, type SymbolKind } from './file-awareness-ledger';
+import {
+  fileLedger,
+  extractSignatures,
+  extractSignaturesWithLines,
+  type SymbolRead,
+  type SymbolKind,
+} from './file-awareness-ledger';
 import { symbolLedger } from './symbol-persistence-ledger';
-import { adaptiveHashDisplayLength, applyHashlineEdits, calculateLineHash, type HashlineOp } from './hashline';
+import {
+  adaptiveHashDisplayLength,
+  applyHashlineEdits,
+  calculateLineHash,
+  type HashlineOp,
+} from './hashline';
 import {
   filterSensitiveDirectoryEntries,
   formatSensitivePathToolError,
@@ -89,7 +100,11 @@ import {
   createGitHubRepo,
 } from './sandbox-tool-utils';
 
-import type { SandboxPatchsetEdit, SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
+import type {
+  SandboxPatchsetEdit,
+  SandboxToolCall,
+  SandboxExecutionOptions,
+} from './sandbox-tool-detection';
 
 import {
   setPrefetchedEditFile,
@@ -199,9 +214,12 @@ function summarizeWorkspaceVerifyOutput(output: string, maxChars = 4000): string
   return `${trimmed.slice(0, maxChars)}\n[output truncated]`;
 }
 
-function buildLineRanges(lineNumbers: readonly number[]): Array<{ startLine: number; endLine: number }> {
-  const sorted = [...new Set(lineNumbers.filter((lineNo) => Number.isFinite(lineNo) && lineNo > 0))]
-    .sort((a, b) => a - b);
+function buildLineRanges(
+  lineNumbers: readonly number[],
+): Array<{ startLine: number; endLine: number }> {
+  const sorted = [
+    ...new Set(lineNumbers.filter((lineNo) => Number.isFinite(lineNo) && lineNo > 0)),
+  ].sort((a, b) => a - b);
   if (sorted.length === 0) return [];
 
   const ranges: Array<{ startLine: number; endLine: number }> = [];
@@ -223,7 +241,9 @@ function buildLineRanges(lineNumbers: readonly number[]): Array<{ startLine: num
   return ranges;
 }
 
-function isPatchsetRangeEdit(edit: SandboxPatchsetEdit): edit is Extract<SandboxPatchsetEdit, { start_line: number; end_line: number; content: string }> {
+function isPatchsetRangeEdit(
+  edit: SandboxPatchsetEdit,
+): edit is Extract<SandboxPatchsetEdit, { start_line: number; end_line: number; content: string }> {
   return 'start_line' in edit;
 }
 
@@ -235,9 +255,17 @@ function getPatchsetEditContent(edit: SandboxPatchsetEdit): string {
     .join('\n');
 }
 
-async function compilePatchsetEditOps(content: string, edit: SandboxPatchsetEdit): Promise<HashlineOp[]> {
+async function compilePatchsetEditOps(
+  content: string,
+  edit: SandboxPatchsetEdit,
+): Promise<HashlineOp[]> {
   if (!isPatchsetRangeEdit(edit)) return edit.ops;
-  const { ops } = await buildRangeReplaceHashlineOps(content, edit.start_line, edit.end_line, edit.content);
+  const { ops } = await buildRangeReplaceHashlineOps(
+    content,
+    edit.start_line,
+    edit.end_line,
+    edit.content,
+  );
   return ops;
 }
 
@@ -285,7 +313,9 @@ function buildPatchsetDiagnosticSummary(
   enabled: boolean,
   output: string | null,
 ): ToolMutationDiagnostic {
-  const hasSupportedFile = changedFiles.some((filePath) => SUPPORTED_PATCHSET_DIAGNOSTIC_EXT_RE.test(filePath));
+  const hasSupportedFile = changedFiles.some((filePath) =>
+    SUPPORTED_PATCHSET_DIAGNOSTIC_EXT_RE.test(filePath),
+  );
   return {
     scope: 'project',
     label: 'project typecheck',
@@ -340,10 +370,14 @@ function appendMutationPostconditions(
       touched.bytesWritten !== undefined ? `${touched.bytesWritten}B` : null,
       formatVersionTransition(touched.versionBefore, touched.versionAfter),
     ].filter(Boolean);
-    lines.push(`- ${touched.mutation} ${touched.path}${details.length > 0 ? ` (${details.join(' · ')})` : ''}`);
+    lines.push(
+      `- ${touched.mutation} ${touched.path}${details.length > 0 ? ` (${details.join(' · ')})` : ''}`,
+    );
   }
   if (postconditions.touchedFiles.length > touchedFiles.length) {
-    lines.push(`- …and ${postconditions.touchedFiles.length - touchedFiles.length} more touched file(s)`);
+    lines.push(
+      `- …and ${postconditions.touchedFiles.length - touchedFiles.length} more touched file(s)`,
+    );
   }
 
   if (postconditions.diagnostics?.length) {
@@ -351,9 +385,8 @@ function appendMutationPostconditions(
     for (const diagnostic of postconditions.diagnostics.slice(0, 4)) {
       const target = diagnostic.path ? ` ${diagnostic.path}` : '';
       lines.push(`- ${diagnostic.label}: ${diagnostic.status}${target}`);
-      const output = diagnostic.status === 'issues'
-        ? truncatePostconditionOutput(diagnostic.output)
-        : undefined;
+      const output =
+        diagnostic.status === 'issues' ? truncatePostconditionOutput(diagnostic.output) : undefined;
       if (output) {
         lines.push(output);
       }
@@ -366,7 +399,9 @@ function appendMutationPostconditions(
   if (postconditions.checks?.length) {
     lines.push(`checks: ${postconditions.checks.length}`);
     for (const check of postconditions.checks.slice(0, 4)) {
-      lines.push(`- ${check.passed ? 'passed' : 'failed'} exit=${check.exitCode}: ${check.command}`);
+      lines.push(
+        `- ${check.passed ? 'passed' : 'failed'} exit=${check.exitCode}: ${check.command}`,
+      );
       const output = check.passed ? undefined : truncatePostconditionOutput(check.output);
       if (output) {
         lines.push(output);
@@ -433,7 +468,10 @@ export async function executeSandboxToolCall(
 ): Promise<ToolExecutionResult> {
   if (!sandboxId) {
     const err = classifyError('Sandbox unreachable — no active sandbox', 'executeSandboxToolCall');
-    return { text: formatStructuredError(err, '[Tool Error] No active sandbox — start one first.'), structuredError: err };
+    return {
+      text: formatStructuredError(err, '[Tool Error] No active sandbox — start one first.'),
+      structuredError: err,
+    };
   }
 
   try {
@@ -444,23 +482,25 @@ export async function executeSandboxToolCall(
         const blockedGitOp = detectBlockedGitCommand(call.args.command);
         const currentApprovalMode = getApprovalMode();
         if (blockedGitOp && !call.args.allowDirectGit && currentApprovalMode !== 'full-auto') {
-          const guardDetail = currentApprovalMode === 'autonomous'
-            ? 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or retry with allowDirectGit: true.'
-            : 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.';
+          const guardDetail =
+            currentApprovalMode === 'autonomous'
+              ? 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or retry with allowDirectGit: true.'
+              : 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.';
           const guardErr: StructuredToolError = {
             type: 'GIT_GUARD_BLOCKED',
             retryable: false,
             message: `Direct "${blockedGitOp}" is blocked`,
             detail: guardDetail,
           };
-          const guidance = currentApprovalMode === 'autonomous'
-            ? `Direct "${blockedGitOp}" is blocked. Use sandbox_prepare_commit + sandbox_push for the audited flow. If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`
-            : [
-                `Direct "${blockedGitOp}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
-                ``,
-                `If the standard flow is failing, use ask_user to explain the problem and request explicit permission from the user.`,
-                `If the user approves, retry with "allowDirectGit": true in your sandbox_exec args.`,
-              ].join('\n');
+          const guidance =
+            currentApprovalMode === 'autonomous'
+              ? `Direct "${blockedGitOp}" is blocked. Use sandbox_prepare_commit + sandbox_push for the audited flow. If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`
+              : [
+                  `Direct "${blockedGitOp}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
+                  ``,
+                  `If the standard flow is failing, use ask_user to explain the problem and request explicit permission from the user.`,
+                  `If the user approves, retry with "allowDirectGit": true in your sandbox_exec args.`,
+                ].join('\n');
           return {
             text: formatStructuredError(guardErr, `[Tool Blocked — sandbox_exec]\n${guidance}`),
             structuredError: guardErr,
@@ -471,17 +511,10 @@ export async function executeSandboxToolCall(
         const markWorkspaceMutated = isLikelyMutatingSandboxExec(call.args.command);
         const normalizedWorkdir = normalizeSandboxWorkdir(call.args.workdir);
         const result = markWorkspaceMutated
-          ? await execInSandbox(
-              sandboxId,
-              call.args.command,
-              normalizedWorkdir,
-              { markWorkspaceMutated: true },
-            )
-          : await execInSandbox(
-              sandboxId,
-              call.args.command,
-              normalizedWorkdir,
-            );
+          ? await execInSandbox(sandboxId, call.args.command, normalizedWorkdir, {
+              markWorkspaceMutated: true,
+            })
+          : await execInSandbox(sandboxId, call.args.command, normalizedWorkdir);
         const durationMs = Date.now() - start;
 
         // Exit code -1 means the command was never dispatched — the container
@@ -501,7 +534,10 @@ export async function executeSandboxToolCall(
             durationMs,
           };
           return {
-            text: formatStructuredError(err, `[Tool Error — sandbox_exec]\nCommand was not executed. ${reason}\nThe sandbox container is no longer reachable. Please restart the sandbox to continue.`),
+            text: formatStructuredError(
+              err,
+              `[Tool Error — sandbox_exec]\nCommand was not executed. ${reason}\nThe sandbox container is no longer reachable. Please restart the sandbox to continue.`,
+            ),
             card: { type: 'sandbox', data: cardData },
             structuredError: err,
           };
@@ -528,7 +564,9 @@ export async function executeSandboxToolCall(
           clearPrefetchedEditFileCache(sandboxId);
           const staleMarked = fileLedger.markAllStale();
           if (staleMarked > 0) {
-            lines.push(`\n[Context] Marked ${staleMarked} previously-read file(s) as stale after sandbox_exec. Re-read before editing.`);
+            lines.push(
+              `\n[Context] Marked ${staleMarked} previously-read file(s) as stale after sandbox_exec. Re-read before editing.`,
+            );
           }
         }
 
@@ -549,7 +587,12 @@ export async function executeSandboxToolCall(
           return { text: formatSensitivePathToolError(call.args.path) };
         }
         const isRangeRead = call.args.start_line !== undefined || call.args.end_line !== undefined;
-        const result = await readFromSandbox(sandboxId, call.args.path, call.args.start_line, call.args.end_line) as FileReadResult & { error?: string };
+        const result = (await readFromSandbox(
+          sandboxId,
+          call.args.path,
+          call.args.start_line,
+          call.args.end_line,
+        )) as FileReadResult & { error?: string };
         const cacheKey = fileVersionKey(sandboxId, call.args.path);
 
         // Handle directory or read errors (e.g. "cat: /path: Is a directory")
@@ -565,17 +608,17 @@ export async function executeSandboxToolCall(
             errorCode: 'READ_ERROR',
           });
           const err = classifyError(result.error, call.args.path);
-          return { text: formatStructuredError(err, formatSandboxError(result.error, call.args.path)), structuredError: err };
+          return {
+            text: formatStructuredError(err, formatSandboxError(result.error, call.args.path)),
+            structuredError: err,
+          };
         }
 
         syncReadSnapshot(sandboxId, call.args.path, result);
 
-        const rangeStart = typeof result.start_line === 'number'
-          ? result.start_line
-          : call.args.start_line ?? 1;
-        const rangeEnd = typeof result.end_line === 'number'
-          ? result.end_line
-          : call.args.end_line;
+        const rangeStart =
+          typeof result.start_line === 'number' ? result.start_line : (call.args.start_line ?? 1);
+        const rangeEnd = typeof result.end_line === 'number' ? result.end_line : call.args.end_line;
 
         // For every read: add hashline anchors and line numbers to the tool result text
         let toolResultContent = '';
@@ -592,13 +635,16 @@ export async function executeSandboxToolCall(
           const maxLineNum = Math.max(rangeStart, rangeStart + linesToNumber.length - 1);
           const padWidth = String(maxLineNum).length;
 
-          const fullHashPromises = linesToNumber.map(line => calculateLineHash(line, 12));
+          const fullHashPromises = linesToNumber.map((line) => calculateLineHash(line, 12));
           const fullHashes = await Promise.all(fullHashPromises);
           const hashDisplayLen = adaptiveHashDisplayLength(fullHashes);
-          const lineHashes = fullHashes.map(h => h.slice(0, hashDisplayLen));
+          const lineHashes = fullHashes.map((h) => h.slice(0, hashDisplayLen));
 
           toolResultContent = linesToNumber
-            .map((line, idx) => `${String(rangeStart + idx).padStart(padWidth)}:${lineHashes[idx]}\t${line}`)
+            .map(
+              (line, idx) =>
+                `${String(rangeStart + idx).padStart(padWidth)}:${lineHashes[idx]}\t${line}`,
+            )
             .join('\n');
         }
 
@@ -610,12 +656,17 @@ export async function executeSandboxToolCall(
         // partial_read.
         const effectivelyFullRead = isRangeRead && !rangeEnd && !result.truncated;
         // Extract symbols for ledger tracking
-        const readStartLine = (isRangeRead && !effectivelyFullRead) ? rangeStart : 1;
-        const symbols = result.content ? extractSignaturesWithLines(result.content, readStartLine) : [];
+        const readStartLine = isRangeRead && !effectivelyFullRead ? rangeStart : 1;
+        const symbols = result.content
+          ? extractSignaturesWithLines(result.content, readStartLine)
+          : [];
         if (!emptyRangeWarning) {
           fileLedger.recordRead(call.args.path, {
-            startLine: (isRangeRead && !effectivelyFullRead) ? rangeStart : undefined,
-            endLine: (isRangeRead && !effectivelyFullRead) ? (rangeEnd ?? rangeStart + contentLineCount - 1) : undefined,
+            startLine: isRangeRead && !effectivelyFullRead ? rangeStart : undefined,
+            endLine:
+              isRangeRead && !effectivelyFullRead
+                ? (rangeEnd ?? rangeStart + contentLineCount - 1)
+                : undefined,
             truncated: Boolean(result.truncated),
             totalLines: contentLineCount,
             symbols,
@@ -673,11 +724,28 @@ export async function executeSandboxToolCall(
         // Guess language from extension
         const ext = call.args.path.split('.').pop()?.toLowerCase() || '';
         const sandboxLangMap: Record<string, string> = {
-          ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-          py: 'python', rs: 'rust', go: 'go', rb: 'ruby', java: 'java',
-          md: 'markdown', json: 'json', yaml: 'yaml', yml: 'yaml',
-          css: 'css', html: 'html', sh: 'shell', bash: 'shell',
-          toml: 'toml', sql: 'sql', c: 'c', cpp: 'cpp', h: 'c',
+          ts: 'typescript',
+          tsx: 'typescript',
+          js: 'javascript',
+          jsx: 'javascript',
+          py: 'python',
+          rs: 'rust',
+          go: 'go',
+          rb: 'ruby',
+          java: 'java',
+          md: 'markdown',
+          json: 'json',
+          yaml: 'yaml',
+          yml: 'yaml',
+          css: 'css',
+          html: 'html',
+          sh: 'shell',
+          bash: 'shell',
+          toml: 'toml',
+          sql: 'sql',
+          c: 'c',
+          cpp: 'cpp',
+          h: 'c',
         };
         const language = sandboxLangMap[ext] || ext;
 
@@ -691,7 +759,10 @@ export async function executeSandboxToolCall(
               language,
               truncated: result.truncated,
               version: typeof result.version === 'string' ? result.version : undefined,
-              workspaceRevision: typeof result.workspace_revision === 'number' ? result.workspace_revision : undefined,
+              workspaceRevision:
+                typeof result.workspace_revision === 'number'
+                  ? result.workspace_revision
+                  : undefined,
               source: 'sandbox' as const,
               sandboxId,
             },
@@ -701,7 +772,9 @@ export async function executeSandboxToolCall(
 
       case 'sandbox_search': {
         const query = call.args.query.trim();
-        const searchPath = normalizeSandboxPath((call.args.path || '/workspace').trim() || '/workspace');
+        const searchPath = normalizeSandboxPath(
+          (call.args.path || '/workspace').trim() || '/workspace',
+        );
 
         if (!query) {
           return { text: '[Tool Error] sandbox_search requires a non-empty query.' };
@@ -732,7 +805,7 @@ export async function executeSandboxToolCall(
                 `No matches for "${query}" in ${searchPath}.`,
                 '',
                 'Suggestions:',
-                ...hints.map(h => `- ${h}`),
+                ...hints.map((h) => `- ${h}`),
               ].join('\n'),
             };
           }
@@ -742,7 +815,10 @@ export async function executeSandboxToolCall(
             return { text: pathHint };
           }
           return {
-            text: formatSandboxError(result.stderr || 'Search failed', `sandbox_search (${searchPath})`),
+            text: formatSandboxError(
+              result.stderr || 'Search failed',
+              `sandbox_search (${searchPath})`,
+            ),
           };
         }
 
@@ -755,7 +831,7 @@ export async function executeSandboxToolCall(
               `No matches for "${query}" in ${searchPath}.`,
               '',
               'Suggestions:',
-              ...hints.map(h => `- ${h}`),
+              ...hints.map((h) => `- ${h}`),
             ].join('\n'),
           };
         }
@@ -771,7 +847,9 @@ export async function executeSandboxToolCall(
           }
           const safeLine = redactSensitiveText(rawLine);
           redactedMatches ||= safeLine.redacted;
-          visibleLines.push(safeLine.text.length > 320 ? `${safeLine.text.slice(0, 320)}...` : safeLine.text);
+          visibleLines.push(
+            safeLine.text.length > 320 ? `${safeLine.text.slice(0, 320)}...` : safeLine.text,
+          );
         }
 
         if (visibleLines.length === 0 && hiddenMatches > 0) {
@@ -794,7 +872,9 @@ export async function executeSandboxToolCall(
             `Query: ${query}`,
             `Path: ${searchPath}`,
             `Matches: ${matchCount}${truncated ? ' (truncated)' : ''}`,
-            hiddenMatches > 0 ? `Hidden matches: ${hiddenMatches} secret-file result${hiddenMatches === 1 ? '' : 's'}` : '',
+            hiddenMatches > 0
+              ? `Hidden matches: ${hiddenMatches} secret-file result${hiddenMatches === 1 ? '' : 's'}`
+              : '',
             redactedMatches ? 'Redactions: secret-like values hidden.' : '',
             '',
             ...visibleLines,
@@ -817,7 +897,9 @@ export async function executeSandboxToolCall(
           `[Tool Result — sandbox_list_dir]`,
           `Directory: ${dirPath}`,
           `${dirs.length} directories, ${files.length} files\n`,
-          filtered.hiddenCount > 0 ? `(${filtered.hiddenCount} sensitive entr${filtered.hiddenCount === 1 ? 'y' : 'ies'} hidden)\n` : '',
+          filtered.hiddenCount > 0
+            ? `(${filtered.hiddenCount} sensitive entr${filtered.hiddenCount === 1 ? 'y' : 'ies'} hidden)\n`
+            : '',
         ];
 
         for (const d of dirs) {
@@ -832,14 +914,18 @@ export async function executeSandboxToolCall(
           path: dirPath,
           entries: [
             ...dirs.map((d) => ({ name: d.name, type: 'directory' as const })),
-            ...files.map((f) => ({ name: f.name, type: 'file' as const, size: f.size || undefined })),
+            ...files.map((f) => ({
+              name: f.name,
+              type: 'file' as const,
+              size: f.size || undefined,
+            })),
           ],
         };
 
         return { text: lines.join('\n'), card: { type: 'file-list', data: cardData } };
       }
 
-      case "sandbox_edit_file": {
+      case 'sandbox_edit_file': {
         const { path, edits } = call.args;
 
         // --- Edit Guard: symbolic check before editing ---
@@ -868,11 +954,15 @@ export async function executeSandboxToolCall(
           }
           if (typeof prefetched.workspaceRevision === 'number') {
             setSandboxWorkspaceRevision(sandboxId, prefetched.workspaceRevision);
-            setWorkspaceRevisionByKey(fileVersionKey(sandboxId, path), prefetched.workspaceRevision);
+            setWorkspaceRevisionByKey(
+              fileVersionKey(sandboxId, path),
+              prefetched.workspaceRevision,
+            );
           }
           guardCachedContent = prefetched.content;
           guardCachedVersion = typeof prefetched.version === 'string' ? prefetched.version : null;
-          guardCachedWorkspaceRevision = typeof prefetched.workspaceRevision === 'number' ? prefetched.workspaceRevision : null;
+          guardCachedWorkspaceRevision =
+            typeof prefetched.workspaceRevision === 'number' ? prefetched.workspaceRevision : null;
           guardCachedTruncated = prefetched.truncated;
         }
         const symbolicVerdict = fileLedger.checkSymbolicEditAllowed(path, editContentForGuard);
@@ -880,14 +970,20 @@ export async function executeSandboxToolCall(
           // Auto-expand: try reading the file so the ledger has coverage
           fileLedger.recordAutoExpandAttempt();
           try {
-            const autoReadResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+            const autoReadResult = (await readFromSandbox(sandboxId, path)) as FileReadResult & {
+              error?: string;
+            };
             if (!autoReadResult.error && autoReadResult.content !== undefined) {
               let autoContent = autoReadResult.content;
               let autoVersion = autoReadResult.version;
               let autoWorkspaceRevision = autoReadResult.workspace_revision;
               let autoTruncated = Boolean(autoReadResult.truncated);
               if (autoTruncated) {
-                const expanded = await readFullFileByChunks(sandboxId, path, autoReadResult.version);
+                const expanded = await readFullFileByChunks(
+                  sandboxId,
+                  path,
+                  autoReadResult.version,
+                );
                 autoContent = expanded.content;
                 autoVersion = expanded.version ?? autoVersion;
                 autoWorkspaceRevision = expanded.workspaceRevision ?? autoWorkspaceRevision;
@@ -908,13 +1004,14 @@ export async function executeSandboxToolCall(
               });
               fileLedger.recordAutoExpandSuccess();
               if (autoSymbols.length > 0) fileLedger.recordSymbolAutoExpand();
-              console.debug(`[edit-guard] Auto-expanded "${path}" for sandbox_edit_file (${autoLineCount} lines, ${autoSymbols.length} symbols).`);
+              console.debug(
+                `[edit-guard] Auto-expanded "${path}" for sandbox_edit_file (${autoLineCount} lines, ${autoSymbols.length} symbols).`,
+              );
               // Cache for reuse in Step 1
               guardCachedContent = autoContent;
               guardCachedVersion = typeof autoVersion === 'string' ? autoVersion : null;
-              guardCachedWorkspaceRevision = typeof autoWorkspaceRevision === 'number'
-                ? autoWorkspaceRevision
-                : null;
+              guardCachedWorkspaceRevision =
+                typeof autoWorkspaceRevision === 'number' ? autoWorkspaceRevision : null;
               guardCachedTruncated = autoTruncated;
               // Re-check after auto-expand
               const retryVerdict = fileLedger.checkSymbolicEditAllowed(path, editContentForGuard);
@@ -923,36 +1020,62 @@ export async function executeSandboxToolCall(
                   symbolicWarning = `${retryVerdict.reason} Proceeding because the file was fully auto-read.`;
                   fileLedger.recordSymbolWarningSoftened();
                 } else {
-                  const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${retryVerdict.reason}`, detail: 'Blocked after auto-expand' };
+                  const guardErr: StructuredToolError = {
+                    type: 'EDIT_GUARD_BLOCKED',
+                    retryable: false,
+                    message: `Edit guard: ${retryVerdict.reason}`,
+                    detail: 'Blocked after auto-expand',
+                  };
                   return {
-                    text: formatStructuredError(guardErr, [
-                      `[Tool Error — sandbox_edit_file]`,
-                      `Edit guard: ${retryVerdict.reason}`,
-                      `The file was auto-read but the guard still blocks this edit. Use sandbox_read_file to read the relevant sections, then retry.`,
-                    ].join('\n')),
+                    text: formatStructuredError(
+                      guardErr,
+                      [
+                        `[Tool Error — sandbox_edit_file]`,
+                        `Edit guard: ${retryVerdict.reason}`,
+                        `The file was auto-read but the guard still blocks this edit. Use sandbox_read_file to read the relevant sections, then retry.`,
+                      ].join('\n'),
+                    ),
                     structuredError: guardErr,
                   };
                 }
               }
             } else {
               // Auto-read failed — block the edit
-              const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${symbolicVerdict.reason}`, detail: autoReadResult.error ? `Auto-read error: ${autoReadResult.error}` : undefined };
+              const guardErr: StructuredToolError = {
+                type: 'EDIT_GUARD_BLOCKED',
+                retryable: false,
+                message: `Edit guard: ${symbolicVerdict.reason}`,
+                detail: autoReadResult.error
+                  ? `Auto-read error: ${autoReadResult.error}`
+                  : undefined,
+              };
               return {
-                text: formatStructuredError(guardErr, [
-                  `[Tool Error — sandbox_edit_file]`,
-                  `Edit guard: ${symbolicVerdict.reason}`,
-                ].join('\n')),
+                text: formatStructuredError(
+                  guardErr,
+                  [
+                    `[Tool Error — sandbox_edit_file]`,
+                    `Edit guard: ${symbolicVerdict.reason}`,
+                  ].join('\n'),
+                ),
                 structuredError: guardErr,
               };
             }
           } catch (autoExpandErr) {
-            const errMsg = autoExpandErr instanceof Error ? autoExpandErr.message : String(autoExpandErr);
-            const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${symbolicVerdict.reason}`, detail: `Auto-read threw: ${errMsg}` };
+            const errMsg =
+              autoExpandErr instanceof Error ? autoExpandErr.message : String(autoExpandErr);
+            const guardErr: StructuredToolError = {
+              type: 'EDIT_GUARD_BLOCKED',
+              retryable: false,
+              message: `Edit guard: ${symbolicVerdict.reason}`,
+              detail: `Auto-read threw: ${errMsg}`,
+            };
             return {
-              text: formatStructuredError(guardErr, [
-                `[Tool Error — sandbox_edit_file]`,
-                `Edit guard: ${symbolicVerdict.reason}`,
-              ].join('\n')),
+              text: formatStructuredError(
+                guardErr,
+                [`[Tool Error — sandbox_edit_file]`, `Edit guard: ${symbolicVerdict.reason}`].join(
+                  '\n',
+                ),
+              ),
               structuredError: guardErr,
             };
           }
@@ -968,11 +1091,16 @@ export async function executeSandboxToolCall(
             workspace_revision: guardCachedWorkspaceRevision ?? undefined,
           } as FileReadResult & { error?: string };
         } else {
-          readResult = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+          readResult = (await readFromSandbox(sandboxId, path)) as FileReadResult & {
+            error?: string;
+          };
         }
         if (readResult.error) {
           const err = classifyError(readResult.error, path);
-          return { text: formatStructuredError(err, formatSandboxError(readResult.error, path)), structuredError: err };
+          return {
+            text: formatStructuredError(err, formatSandboxError(readResult.error, path)),
+            structuredError: err,
+          };
         }
         syncReadSnapshot(sandboxId, path, readResult);
 
@@ -986,12 +1114,15 @@ export async function executeSandboxToolCall(
               detail: 'Chunk hydration remained truncated',
             };
             return {
-              text: formatStructuredError(err, [
-                `[Tool Error — sandbox_edit_file]`,
-                `Edit guard: ${path} is too large to fully load safely.`,
-                `Chunked hydration remained truncated (likely due to payload limits on a single line range).`,
-                `Use sandbox_read_file with narrower start_line/end_line ranges and retry with targeted edits.`,
-              ].join('\n')),
+              text: formatStructuredError(
+                err,
+                [
+                  `[Tool Error — sandbox_edit_file]`,
+                  `Edit guard: ${path} is too large to fully load safely.`,
+                  `Chunked hydration remained truncated (likely due to payload limits on a single line range).`,
+                  `Use sandbox_read_file with narrower start_line/end_line ranges and retry with targeted edits.`,
+                ].join('\n'),
+              ),
               structuredError: err,
             };
           }
@@ -1009,12 +1140,16 @@ export async function executeSandboxToolCall(
         let editResult = await applyHashlineEdits(readResult.content, edits);
         let autoRetryNote: string | null = null;
 
-        const allLineQualifiedRefs = edits.length > 0 && edits.every((op) => parseLineQualifiedRef(op.ref) !== null);
+        const allLineQualifiedRefs =
+          edits.length > 0 && edits.every((op) => parseLineQualifiedRef(op.ref) !== null);
         if (editResult.failed > 0 && allLineQualifiedRefs) {
           try {
             const sameLineRetry = await refreshSameLineQualifiedRefs(readResult.content, edits);
             if (sameLineRetry.refreshedCount > 0) {
-              const sameLineRetryResult = await applyHashlineEdits(readResult.content, sameLineRetry.edits);
+              const sameLineRetryResult = await applyHashlineEdits(
+                readResult.content,
+                sameLineRetry.edits,
+              );
               if (sameLineRetryResult.failed === 0) {
                 editResult = sameLineRetryResult;
                 autoRetryNote = `Auto-retry succeeded (refreshed ${sameLineRetry.refreshedCount} stale line-qualified ref(s) to current same-line hashes).`;
@@ -1024,7 +1159,9 @@ export async function executeSandboxToolCall(
             }
 
             if (editResult.failed > 0) {
-              let retryRead = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+              let retryRead = (await readFromSandbox(sandboxId, path)) as FileReadResult & {
+                error?: string;
+              };
               if (!retryRead.error) {
                 if (retryRead.truncated) {
                   const expanded = await readFullFileByChunks(sandboxId, path, retryRead.version);
@@ -1036,7 +1173,8 @@ export async function executeSandboxToolCall(
                       content: expanded.content,
                       truncated: expanded.truncated,
                       version: expanded.version ?? retryRead.version,
-                      workspace_revision: expanded.workspaceRevision ?? retryRead.workspace_revision,
+                      workspace_revision:
+                        expanded.workspaceRevision ?? retryRead.workspace_revision,
                     };
                   }
                 }
@@ -1045,11 +1183,14 @@ export async function executeSandboxToolCall(
                   syncReadSnapshot(sandboxId, path, retryRead);
                   // Strip line-number prefixes and retry by hash only when the target
                   // content may have moved elsewhere in the file.
-                  const hashOnlyEdits = edits.map(op => {
+                  const hashOnlyEdits = edits.map((op) => {
                     const m = op.ref.trim().match(/^\d+:([a-f0-9]{7,12})$/i);
                     return m ? { ...op, ref: m[1] } : op;
                   });
-                  const retryEditResult = await applyHashlineEdits(retryRead.content, hashOnlyEdits);
+                  const retryEditResult = await applyHashlineEdits(
+                    retryRead.content,
+                    hashOnlyEdits,
+                  );
                   if (retryEditResult.failed === 0) {
                     editResult = retryEditResult;
                     readResult = retryRead;
@@ -1069,18 +1210,28 @@ export async function executeSandboxToolCall(
         }
 
         if (editResult.failed > 0) {
-          const err: StructuredToolError = { type: 'EDIT_HASH_MISMATCH', retryable: false, message: `Failed to apply ${editResult.failed} of ${edits.length} edits.`, detail: editResult.errors.join('; ') };
+          const err: StructuredToolError = {
+            type: 'EDIT_HASH_MISMATCH',
+            retryable: false,
+            message: `Failed to apply ${editResult.failed} of ${edits.length} edits.`,
+            detail: editResult.errors.join('; '),
+          };
           const autoRetryLine = autoRetryNote ? `Auto-retry: ${autoRetryNote}` : null;
           const retryHints = await buildHashlineRetryHints(readResult.content, edits, path);
           return {
-            text: formatStructuredError(err, [
-              `[Tool Error — sandbox_edit_file]`,
-              `Failed to apply ${editResult.failed} of ${edits.length} edits.`,
-              ...editResult.errors.map(e => `- ${e}`),
-              ...(retryHints.length > 0 ? ['', 'Retry hints:', ...retryHints.map((hint) => `- ${hint}`)] : []),
-              ...(autoRetryLine ? [autoRetryLine] : []),
-              `No changes were saved. Review the file content and references then retry.`,
-            ].join("\n")),
+            text: formatStructuredError(
+              err,
+              [
+                `[Tool Error — sandbox_edit_file]`,
+                `Failed to apply ${editResult.failed} of ${edits.length} edits.`,
+                ...editResult.errors.map((e) => `- ${e}`),
+                ...(retryHints.length > 0
+                  ? ['', 'Retry hints:', ...retryHints.map((hint) => `- ${hint}`)]
+                  : []),
+                ...(autoRetryLine ? [autoRetryLine] : []),
+                `No changes were saved. Review the file content and references then retry.`,
+              ].join('\n'),
+            ),
             structuredError: err,
           };
         }
@@ -1092,13 +1243,21 @@ export async function executeSandboxToolCall(
         if (editResult.resolvedLines.length > 0) {
           const coverageVerdict = fileLedger.checkLinesCovered(path, editResult.resolvedLines);
           if (!coverageVerdict.allowed) {
-            const err: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Truncation guard: ${coverageVerdict.reason}`, detail: 'Hashline edit targets lines outside the model read range' };
+            const err: StructuredToolError = {
+              type: 'EDIT_GUARD_BLOCKED',
+              retryable: false,
+              message: `Truncation guard: ${coverageVerdict.reason}`,
+              detail: 'Hashline edit targets lines outside the model read range',
+            };
             return {
-              text: formatStructuredError(err, [
-                `[Tool Error — sandbox_edit_file]`,
-                coverageVerdict.reason,
-                `No changes were saved. Read the target lines first, then retry the edit.`,
-              ].join("\n")),
+              text: formatStructuredError(
+                err,
+                [
+                  `[Tool Error — sandbox_edit_file]`,
+                  coverageVerdict.reason,
+                  `No changes were saved. Read the target lines first, then retry the edit.`,
+                ].join('\n'),
+              ),
               structuredError: err,
             };
           }
@@ -1116,11 +1275,16 @@ export async function executeSandboxToolCall(
           typeof readResult.workspace_revision === 'number'
             ? readResult.workspace_revision
             : getWorkspaceRevisionByKey(editCacheKey);
-        const editWriteResult = await retryOnContainerError(
-          'sandbox_edit_file',
-          () => editWriteWorkspaceRevision === undefined
+        const editWriteResult = await retryOnContainerError('sandbox_edit_file', () =>
+          editWriteWorkspaceRevision === undefined
             ? writeToSandbox(sandboxId, path, editResult.content, editWriteVersion)
-            : writeToSandbox(sandboxId, path, editResult.content, editWriteVersion, editWriteWorkspaceRevision),
+            : writeToSandbox(
+                sandboxId,
+                path,
+                editResult.content,
+                editWriteVersion,
+                editWriteWorkspaceRevision,
+              ),
         );
 
         if (!editWriteResult.ok) {
@@ -1129,8 +1293,14 @@ export async function executeSandboxToolCall(
               sandboxId,
               editWriteResult.current_workspace_revision ?? editWriteResult.workspace_revision,
             );
-            const expected = editWriteResult.expected_workspace_revision ?? editWriteWorkspaceRevision ?? 'unknown';
-            const current = editWriteResult.current_workspace_revision ?? editWriteResult.workspace_revision ?? 'unknown';
+            const expected =
+              editWriteResult.expected_workspace_revision ??
+              editWriteWorkspaceRevision ??
+              'unknown';
+            const current =
+              editWriteResult.current_workspace_revision ??
+              editWriteResult.workspace_revision ??
+              'unknown';
             const workspaceErr: StructuredToolError = {
               type: 'WORKSPACE_CHANGED',
               retryable: false,
@@ -1138,19 +1308,29 @@ export async function executeSandboxToolCall(
               detail: `expected_revision=${expected} current_revision=${current}`,
             };
             return {
-              text: formatStructuredError(workspaceErr, [
-                `[Tool Error — sandbox_edit_file]`,
-                `Workspace changed before ${path} could be written.`,
-                `Expected workspace revision: ${expected}`,
-                `Current workspace revision: ${current}`,
-                staleMarked > 0 ? `Marked ${staleMarked} previously-read file(s) as stale.` : null,
-                `Re-read the file, then retry the edit.`,
-              ].filter(Boolean).join('\n')),
+              text: formatStructuredError(
+                workspaceErr,
+                [
+                  `[Tool Error — sandbox_edit_file]`,
+                  `Workspace changed before ${path} could be written.`,
+                  `Expected workspace revision: ${expected}`,
+                  `Current workspace revision: ${current}`,
+                  staleMarked > 0
+                    ? `Marked ${staleMarked} previously-read file(s) as stale.`
+                    : null,
+                  `Re-read the file, then retry the edit.`,
+                ]
+                  .filter(Boolean)
+                  .join('\n'),
+              ),
               structuredError: workspaceErr,
             };
           }
           if (editWriteResult.code === 'STALE_FILE') {
-            if (typeof editWriteResult.current_version === 'string' && editWriteResult.current_version) {
+            if (
+              typeof editWriteResult.current_version === 'string' &&
+              editWriteResult.current_version
+            ) {
               versionCacheSet(editCacheKey, editWriteResult.current_version);
             } else {
               versionCacheDelete(editCacheKey);
@@ -1166,18 +1346,27 @@ export async function executeSandboxToolCall(
               detail: `expected=${expected} current=${current}`,
             };
             return {
-              text: formatStructuredError(staleErr, [
-                `[Tool Error — sandbox_edit_file]`,
-                `Stale write rejected for ${path}.`,
-                `Expected version: ${expected}`,
-                `Current version: ${current}`,
-                `Re-read the file with sandbox_read_file, then retry the edit.`,
-              ].join('\n')),
+              text: formatStructuredError(
+                staleErr,
+                [
+                  `[Tool Error — sandbox_edit_file]`,
+                  `Stale write rejected for ${path}.`,
+                  `Expected version: ${expected}`,
+                  `Current version: ${current}`,
+                  `Re-read the file with sandbox_read_file, then retry the edit.`,
+                ].join('\n'),
+              ),
               structuredError: staleErr,
             };
           }
           const wErr = classifyError(editWriteResult.error || 'Write failed', path);
-          return { text: formatStructuredError(wErr, `[Tool Error — sandbox_edit_file]\n${editWriteResult.error || 'Write failed'}`), structuredError: wErr };
+          return {
+            text: formatStructuredError(
+              wErr,
+              `[Tool Error — sandbox_edit_file]\n${editWriteResult.error || 'Write failed'}`,
+            ),
+            structuredError: wErr,
+          };
         }
 
         // Update version cache and clear any stale prefetch for this path
@@ -1198,14 +1387,16 @@ export async function executeSandboxToolCall(
         let writeVerified = true;
         let verifyWarning: string | null = null;
         try {
-          const verifyRead = await readFromSandbox(sandboxId, path, 1, 1) as FileReadResult & { error?: string };
+          const verifyRead = (await readFromSandbox(sandboxId, path, 1, 1)) as FileReadResult & {
+            error?: string;
+          };
           if (verifyRead.error) {
             writeVerified = false;
             verifyWarning = `Post-write read-back failed: ${verifyRead.error}. The edit may not have persisted.`;
           } else if (
-            editWriteResult.new_version
-            && typeof verifyRead.version === 'string'
-            && verifyRead.version !== editWriteResult.new_version
+            editWriteResult.new_version &&
+            typeof verifyRead.version === 'string' &&
+            verifyRead.version !== editWriteResult.new_version
           ) {
             writeVerified = false;
             verifyWarning = `Post-write version mismatch: expected ${editWriteResult.new_version}, got ${verifyRead.version}. The file may have been overwritten or the edit did not persist.`;
@@ -1225,7 +1416,10 @@ export async function executeSandboxToolCall(
 
         // 5. Get the diff hunks for this file
         const escapedPath = path.replace(/'/g, "'\\''");
-        const diffResult = await execInSandbox(sandboxId, `cd /workspace && git diff -- '${escapedPath}'`);
+        const diffResult = await execInSandbox(
+          sandboxId,
+          `cd /workspace && git diff -- '${escapedPath}'`,
+        );
         const diffHunks = diffResult.exitCode === 0 ? diffResult.stdout.trim() : '';
 
         const editLines: string[] = [
@@ -1249,7 +1443,10 @@ export async function executeSandboxToolCall(
         if (diffHunks) {
           // Limit diff output to prevent context bloat
           const maxDiffLen = 3000;
-          const truncatedDiff = diffHunks.length > maxDiffLen ? diffHunks.slice(0, maxDiffLen) + '\n[diff truncated]' : diffHunks;
+          const truncatedDiff =
+            diffHunks.length > maxDiffLen
+              ? diffHunks.slice(0, maxDiffLen) + '\n[diff truncated]'
+              : diffHunks;
           editLines.push('', 'Diff:', truncatedDiff);
         } else {
           editLines.push('', 'No diff hunks (file may be outside git or content identical).');
@@ -1260,17 +1457,23 @@ export async function executeSandboxToolCall(
         if (diagnostics) {
           editLines.push('', '[DIAGNOSTICS]', diagnostics);
         }
-        const postconditionWarnings = [...editResult.warnings, symbolicWarning, autoRetryNote, writeVerified ? null : verifyWarning]
-          .filter((warning): warning is string => Boolean(warning));
+        const postconditionWarnings = [
+          ...editResult.warnings,
+          symbolicWarning,
+          autoRetryNote,
+          writeVerified ? null : verifyWarning,
+        ].filter((warning): warning is string => Boolean(warning));
         const editPostconditions: ToolMutationPostconditions = {
-          touchedFiles: [{
-            path,
-            mutation: 'edit',
-            bytesWritten: editWriteResult.bytes_written ?? editResult.content.length,
-            versionBefore: readResult.version ?? null,
-            versionAfter: editWriteResult.new_version ?? null,
-            changedSpans: buildHashlineChangedSpans(edits, editResult.resolvedLines),
-          }],
+          touchedFiles: [
+            {
+              path,
+              mutation: 'edit',
+              bytesWritten: editWriteResult.bytes_written ?? editResult.content.length,
+              versionBefore: readResult.version ?? null,
+              versionAfter: editWriteResult.new_version ?? null,
+              changedSpans: buildHashlineChangedSpans(edits, editResult.resolvedLines),
+            },
+          ],
           diagnostics: [buildPerEditDiagnosticSummary(path, diagnostics)],
           guardWarnings: postconditionWarnings.length > 0 ? postconditionWarnings : undefined,
           writeVerified,
@@ -1282,10 +1485,15 @@ export async function executeSandboxToolCall(
 
       case 'sandbox_edit_range': {
         const { path, start_line, end_line, content, expected_version } = call.args;
-        const baseRead = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+        const baseRead = (await readFromSandbox(sandboxId, path)) as FileReadResult & {
+          error?: string;
+        };
         if (baseRead.error) {
           const err = classifyError(baseRead.error, path);
-          return { text: formatStructuredError(err, formatSandboxError(baseRead.error, path)), structuredError: err };
+          return {
+            text: formatStructuredError(err, formatSandboxError(baseRead.error, path)),
+            structuredError: err,
+          };
         }
         syncReadSnapshot(sandboxId, path, baseRead);
 
@@ -1300,12 +1508,15 @@ export async function executeSandboxToolCall(
               detail: 'Range edit requires full-file hydration',
             };
             return {
-              text: formatStructuredError(err, [
-                `[Tool Error — sandbox_edit_range]`,
-                `Edit guard: ${path} is too large to fully load safely.`,
-                `Chunked hydration remained truncated.`,
-                `Use sandbox_read_file with narrow ranges and sandbox_edit_file with targeted hash refs instead.`,
-              ].join('\n')),
+              text: formatStructuredError(
+                err,
+                [
+                  `[Tool Error — sandbox_edit_range]`,
+                  `Edit guard: ${path} is too large to fully load safely.`,
+                  `Chunked hydration remained truncated.`,
+                  `Use sandbox_read_file with narrow ranges and sandbox_edit_file with targeted hash refs instead.`,
+                ].join('\n'),
+              ),
               structuredError: err,
             };
           }
@@ -1320,7 +1531,12 @@ export async function executeSandboxToolCall(
         }
 
         try {
-          const { ops } = await buildRangeReplaceHashlineOps(hydrated.content, start_line, end_line, content);
+          const { ops } = await buildRangeReplaceHashlineOps(
+            hydrated.content,
+            start_line,
+            end_line,
+            content,
+          );
 
           // Prime the edit guard/read path so delegated sandbox_edit_file does not
           // need to re-read just to establish awareness.
@@ -1337,7 +1553,9 @@ export async function executeSandboxToolCall(
             path,
             hydrated.content,
             typeof hydrated.version === 'string' ? hydrated.version : undefined,
-            typeof hydrated.workspace_revision === 'number' ? hydrated.workspace_revision : undefined,
+            typeof hydrated.workspace_revision === 'number'
+              ? hydrated.workspace_revision
+              : undefined,
             hydrated.truncated,
           );
 
@@ -1357,10 +1575,7 @@ export async function executeSandboxToolCall(
           const msg = rangeErr instanceof Error ? rangeErr.message : String(rangeErr);
           const err = classifyError(msg, path);
           return {
-            text: formatStructuredError(err, [
-              `[Tool Error — sandbox_edit_range]`,
-              msg,
-            ].join('\n')),
+            text: formatStructuredError(err, [`[Tool Error — sandbox_edit_range]`, msg].join('\n')),
             structuredError: err,
           };
         }
@@ -1370,10 +1585,15 @@ export async function executeSandboxToolCall(
         const { path, search, replace, expected_version } = call.args;
 
         // Read the full file so we can locate the search string.
-        const baseRead = await readFromSandbox(sandboxId, path) as FileReadResult & { error?: string };
+        const baseRead = (await readFromSandbox(sandboxId, path)) as FileReadResult & {
+          error?: string;
+        };
         if (baseRead.error) {
           const err = classifyError(baseRead.error, path);
-          return { text: formatStructuredError(err, formatSandboxError(baseRead.error, path)), structuredError: err };
+          return {
+            text: formatStructuredError(err, formatSandboxError(baseRead.error, path)),
+            structuredError: err,
+          };
         }
         syncReadSnapshot(sandboxId, path, baseRead);
         let hydrated = baseRead;
@@ -1387,11 +1607,14 @@ export async function executeSandboxToolCall(
               detail: 'Use sandbox_read_file with ranges and sandbox_edit_file instead.',
             };
             return {
-              text: formatStructuredError(err, [
-                `[Tool Error — sandbox_search_replace]`,
-                `${path} is too large to fully load safely.`,
-                `Use sandbox_read_file with narrow ranges and sandbox_edit_file with hash refs instead.`,
-              ].join('\n')),
+              text: formatStructuredError(
+                err,
+                [
+                  `[Tool Error — sandbox_search_replace]`,
+                  `${path} is too large to fully load safely.`,
+                  `Use sandbox_read_file with narrow ranges and sandbox_edit_file with hash refs instead.`,
+                ].join('\n'),
+              ),
               structuredError: err,
             };
           }
@@ -1433,23 +1656,34 @@ export async function executeSandboxToolCall(
                 detail: `Re-read the file with sandbox_read_file and copy the exact characters.`,
               };
               return {
-                text: formatStructuredError(err, [
-                  `[Tool Error — sandbox_search_replace]`,
-                  `Encoding mismatch in multi-line search string for ${path}.`,
-                  `A match was found near line ${fuzzyLineNo} after Unicode normalization.`,
-                  `Re-read the file with sandbox_read_file and use the exact characters from the output.`,
-                ].join('\n')),
+                text: formatStructuredError(
+                  err,
+                  [
+                    `[Tool Error — sandbox_search_replace]`,
+                    `Encoding mismatch in multi-line search string for ${path}.`,
+                    `A match was found near line ${fuzzyLineNo} after Unicode normalization.`,
+                    `Re-read the file with sandbox_read_file and use the exact characters from the output.`,
+                  ].join('\n'),
+                ),
                 structuredError: err,
               };
             }
-            const err: StructuredToolError = { type: 'EDIT_CONTENT_NOT_FOUND', retryable: false, message: `Multi-line search string not found in ${path}.`, detail: `"${search.slice(0, 120)}" matched nothing.` };
+            const err: StructuredToolError = {
+              type: 'EDIT_CONTENT_NOT_FOUND',
+              retryable: false,
+              message: `Multi-line search string not found in ${path}.`,
+              detail: `"${search.slice(0, 120)}" matched nothing.`,
+            };
             return {
-              text: formatStructuredError(err, [
-                `[Tool Error — sandbox_search_replace]`,
-                `Multi-line search string not found in ${path}.`,
-                `"${search.slice(0, 120)}" matched nothing.`,
-                `Use sandbox_read_file to verify the exact content, or use sandbox_edit_range for line-range replacements.`,
-              ].join('\n')),
+              text: formatStructuredError(
+                err,
+                [
+                  `[Tool Error — sandbox_search_replace]`,
+                  `Multi-line search string not found in ${path}.`,
+                  `"${search.slice(0, 120)}" matched nothing.`,
+                  `Use sandbox_read_file to verify the exact content, or use sandbox_edit_range for line-range replacements.`,
+                ].join('\n'),
+              ),
               structuredError: err,
             };
           }
@@ -1459,14 +1693,22 @@ export async function executeSandboxToolCall(
           if (secondIdx !== -1) {
             const firstLineNo = visibleContent.slice(0, firstIdx).split('\n').length;
             const secondLineNo = visibleContent.slice(0, secondIdx).split('\n').length;
-            const err: StructuredToolError = { type: 'EDIT_HASH_MISMATCH', retryable: false, message: `Ambiguous: multi-line search matches at least 2 locations in ${path} (lines ${firstLineNo} and ${secondLineNo}).`, detail: `Add more surrounding context to make the search unique.` };
+            const err: StructuredToolError = {
+              type: 'EDIT_HASH_MISMATCH',
+              retryable: false,
+              message: `Ambiguous: multi-line search matches at least 2 locations in ${path} (lines ${firstLineNo} and ${secondLineNo}).`,
+              detail: `Add more surrounding context to make the search unique.`,
+            };
             return {
-              text: formatStructuredError(err, [
-                `[Tool Error — sandbox_search_replace]`,
-                `Ambiguous: multi-line search matches at least 2 locations in ${path}.`,
-                `First match near line ${firstLineNo}, second near line ${secondLineNo}.`,
-                `Add more surrounding context to make the search unique.`,
-              ].join('\n')),
+              text: formatStructuredError(
+                err,
+                [
+                  `[Tool Error — sandbox_search_replace]`,
+                  `Ambiguous: multi-line search matches at least 2 locations in ${path}.`,
+                  `First match near line ${firstLineNo}, second near line ${secondLineNo}.`,
+                  `Add more surrounding context to make the search unique.`,
+                ].join('\n'),
+              ),
               structuredError: err,
             };
           }
@@ -1484,10 +1726,18 @@ export async function executeSandboxToolCall(
           const prefixStartIdx = visibleContent.lastIndexOf('\n', firstIdx - 1) + 1;
           const prefix = visibleContent.slice(prefixStartIdx, firstIdx);
           const suffixEndIdx = visibleContent.indexOf('\n', matchEndIdx);
-          const suffix = visibleContent.slice(matchEndIdx, suffixEndIdx === -1 ? undefined : suffixEndIdx);
+          const suffix = visibleContent.slice(
+            matchEndIdx,
+            suffixEndIdx === -1 ? undefined : suffixEndIdx,
+          );
           const replacementContent = prefix + replace + suffix;
 
-          const { ops } = await buildRangeReplaceHashlineOps(hydrated.content, matchStartLine, matchEndLine, replacementContent);
+          const { ops } = await buildRangeReplaceHashlineOps(
+            hydrated.content,
+            matchStartLine,
+            matchEndLine,
+            replacementContent,
+          );
 
           // Prime the edit guard/read path
           const hydratedLineCount = hydrated.content.split('\n').length;
@@ -1503,12 +1753,21 @@ export async function executeSandboxToolCall(
             path,
             hydrated.content,
             typeof hydrated.version === 'string' ? hydrated.version : undefined,
-            typeof hydrated.workspace_revision === 'number' ? hydrated.workspace_revision : undefined,
+            typeof hydrated.workspace_revision === 'number'
+              ? hydrated.workspace_revision
+              : undefined,
             hydrated.truncated,
           );
 
           return executeSandboxToolCall(
-            { tool: 'sandbox_edit_file', args: { path, edits: ops, expected_version: expected_version ?? hydrated.version ?? undefined } },
+            {
+              tool: 'sandbox_edit_file',
+              args: {
+                path,
+                edits: ops,
+                expected_version: expected_version ?? hydrated.version ?? undefined,
+              },
+            },
             sandboxId,
             options,
           );
@@ -1516,19 +1775,21 @@ export async function executeSandboxToolCall(
 
         // --- Single-line search path (original) ---
         const matchingIndices = visibleLines
-          .map((line, i) => line.includes(search) ? i : -1)
-          .filter(i => i !== -1);
+          .map((line, i) => (line.includes(search) ? i : -1))
+          .filter((i) => i !== -1);
 
         if (matchingIndices.length === 0) {
           // Before giving up, check if the mismatch is due to Unicode encoding
           // artifacts (smart quotes, em-dashes, mojibake like â€" etc.).
           const normalized = normalizeUnicode(search);
           const fuzzyMatches = visibleLines
-            .map((line, i) => normalizeUnicode(line).includes(normalized) ? i : -1)
-            .filter(i => i !== -1);
+            .map((line, i) => (normalizeUnicode(line).includes(normalized) ? i : -1))
+            .filter((i) => i !== -1);
 
           if (fuzzyMatches.length > 0) {
-            const shown = fuzzyMatches.slice(0, 3).map(i => `  L${i + 1}: ${visibleLines[i].trim().slice(0, 80)}`);
+            const shown = fuzzyMatches
+              .slice(0, 3)
+              .map((i) => `  L${i + 1}: ${visibleLines[i].trim().slice(0, 80)}`);
             const err: StructuredToolError = {
               type: 'EDIT_CONTENT_NOT_FOUND',
               retryable: true,
@@ -1536,43 +1797,65 @@ export async function executeSandboxToolCall(
               detail: `Your search contains characters that don't match the file exactly — common mismatches include mojibake (e.g. "\\u00e2\\u20ac\\u201c" instead of an em-dash), smart quotes (\\u201c/\\u201d instead of ASCII "), and typographic dashes (\\u2013/\\u2014 instead of -).\nMatching lines after normalization:\n${shown.join('\n')}\n\nRe-read the file with sandbox_read_file and copy the exact characters.`,
             };
             return {
-              text: formatStructuredError(err, [
-                `[Tool Error — sandbox_search_replace]`,
-                `Encoding mismatch in search string for ${path}.`,
-                `Your search contains Unicode artifacts (e.g. mojibake, smart quotes, or em-dashes that don't match the file).`,
-                `These lines match after normalization:`,
-                ...shown,
-                ``,
-                `Re-read the file with sandbox_read_file and use the exact characters from the output.`,
-              ].join('\n')),
+              text: formatStructuredError(
+                err,
+                [
+                  `[Tool Error — sandbox_search_replace]`,
+                  `Encoding mismatch in search string for ${path}.`,
+                  `Your search contains Unicode artifacts (e.g. mojibake, smart quotes, or em-dashes that don't match the file).`,
+                  `These lines match after normalization:`,
+                  ...shown,
+                  ``,
+                  `Re-read the file with sandbox_read_file and use the exact characters from the output.`,
+                ].join('\n'),
+              ),
               structuredError: err,
             };
           }
 
-          const err: StructuredToolError = { type: 'EDIT_CONTENT_NOT_FOUND', retryable: false, message: `Search string not found in ${path}.`, detail: `"${search.slice(0, 80)}" matched no lines.` };
+          const err: StructuredToolError = {
+            type: 'EDIT_CONTENT_NOT_FOUND',
+            retryable: false,
+            message: `Search string not found in ${path}.`,
+            detail: `"${search.slice(0, 80)}" matched no lines.`,
+          };
           return {
-            text: formatStructuredError(err, [
-              `[Tool Error — sandbox_search_replace]`,
-              `Search string not found in ${path}.`,
-              `"${search.slice(0, 80)}" matched no lines.`,
-              `Use sandbox_search to locate the content first.`,
-            ].join('\n')),
+            text: formatStructuredError(
+              err,
+              [
+                `[Tool Error — sandbox_search_replace]`,
+                `Search string not found in ${path}.`,
+                `"${search.slice(0, 80)}" matched no lines.`,
+                `Use sandbox_search to locate the content first.`,
+              ].join('\n'),
+            ),
             structuredError: err,
           };
         }
 
         if (matchingIndices.length > 1) {
           const MAX_SHOWN = 5;
-          const shown = matchingIndices.slice(0, MAX_SHOWN).map(i => `  L${i + 1}: ${visibleLines[i].trim().slice(0, 60)}`);
-          if (matchingIndices.length > MAX_SHOWN) shown.push(`  ... and ${matchingIndices.length - MAX_SHOWN} more`);
-          const err: StructuredToolError = { type: 'EDIT_HASH_MISMATCH', retryable: false, message: `Ambiguous: "${search.slice(0, 80)}" matches ${matchingIndices.length} lines in ${path}.`, detail: shown.join('\n') };
+          const shown = matchingIndices
+            .slice(0, MAX_SHOWN)
+            .map((i) => `  L${i + 1}: ${visibleLines[i].trim().slice(0, 60)}`);
+          if (matchingIndices.length > MAX_SHOWN)
+            shown.push(`  ... and ${matchingIndices.length - MAX_SHOWN} more`);
+          const err: StructuredToolError = {
+            type: 'EDIT_HASH_MISMATCH',
+            retryable: false,
+            message: `Ambiguous: "${search.slice(0, 80)}" matches ${matchingIndices.length} lines in ${path}.`,
+            detail: shown.join('\n'),
+          };
           return {
-            text: formatStructuredError(err, [
-              `[Tool Error — sandbox_search_replace]`,
-              `Ambiguous: "${search.slice(0, 80)}" matches ${matchingIndices.length} lines in ${path}.`,
-              `Add more surrounding context to make the search unique:`,
-              ...shown,
-            ].join('\n')),
+            text: formatStructuredError(
+              err,
+              [
+                `[Tool Error — sandbox_search_replace]`,
+                `Ambiguous: "${search.slice(0, 80)}" matches ${matchingIndices.length} lines in ${path}.`,
+                `Add more surrounding context to make the search unique:`,
+                ...shown,
+              ].join('\n'),
+            ),
             structuredError: err,
           };
         }
@@ -1618,7 +1901,14 @@ export async function executeSandboxToolCall(
         );
 
         return executeSandboxToolCall(
-          { tool: 'sandbox_edit_file', args: { path, edits: ops, expected_version: expected_version ?? hydrated.version ?? undefined } },
+          {
+            tool: 'sandbox_edit_file',
+            args: {
+              path,
+              edits: ops,
+              expected_version: expected_version ?? hydrated.version ?? undefined,
+            },
+          },
           sandboxId,
           options,
         );
@@ -1634,7 +1924,10 @@ export async function executeSandboxToolCall(
           // Phase 3: Scoped Auto-Expand — try to auto-read the file and allow the write
           fileLedger.recordAutoExpandAttempt();
           try {
-            const autoReadResult = await readFromSandbox(sandboxId, call.args.path) as FileReadResult & { error?: string };
+            const autoReadResult = (await readFromSandbox(
+              sandboxId,
+              call.args.path,
+            )) as FileReadResult & { error?: string };
             if (!autoReadResult.error && autoReadResult.content !== undefined) {
               // Record the auto-read in the ledger
               let autoReadContent = autoReadResult.content;
@@ -1642,7 +1935,11 @@ export async function executeSandboxToolCall(
               let autoReadWorkspaceRevision = autoReadResult.workspace_revision;
               let autoReadTruncated = Boolean(autoReadResult.truncated);
               if (autoReadTruncated) {
-                const expanded = await readFullFileByChunks(sandboxId, call.args.path, autoReadResult.version);
+                const expanded = await readFullFileByChunks(
+                  sandboxId,
+                  call.args.path,
+                  autoReadResult.version,
+                );
                 autoReadContent = expanded.content;
                 autoReadVersion = expanded.version ?? autoReadVersion;
                 autoReadWorkspaceRevision = expanded.workspaceRevision ?? autoReadWorkspaceRevision;
@@ -1661,7 +1958,9 @@ export async function executeSandboxToolCall(
                 workspace_revision: autoReadWorkspaceRevision,
               });
               fileLedger.recordAutoExpandSuccess();
-              console.debug(`[edit-guard] Auto-expanded "${call.args.path}" (${autoLineCount} lines) — proceeding with write.`);
+              console.debug(
+                `[edit-guard] Auto-expanded "${call.args.path}" (${autoLineCount} lines) — proceeding with write.`,
+              );
               // Re-check guard after auto-expand (should pass now unless still partial)
               const retryVerdict = fileLedger.checkWriteAllowed(call.args.path);
               if (!retryVerdict.allowed) {
@@ -1671,38 +1970,60 @@ export async function executeSandboxToolCall(
                   outcome: 'error',
                   errorCode: 'EDIT_GUARD_BLOCKED',
                 });
-                const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${retryVerdict.reason}`, detail: 'File too large for auto-expand' };
+                const guardErr: StructuredToolError = {
+                  type: 'EDIT_GUARD_BLOCKED',
+                  retryable: false,
+                  message: `Edit guard: ${retryVerdict.reason}`,
+                  detail: 'File too large for auto-expand',
+                };
                 return {
-                  text: formatStructuredError(guardErr, [
-                    `[Tool Error — sandbox_write_file]`,
-                    `Edit guard: ${retryVerdict.reason}`,
-                    `The file was auto-read but is too large to fully load. Use sandbox_read_file with start_line/end_line to read the sections you need to edit, then retry.`,
-                  ].join('\n')),
+                  text: formatStructuredError(
+                    guardErr,
+                    [
+                      `[Tool Error — sandbox_write_file]`,
+                      `Edit guard: ${retryVerdict.reason}`,
+                      `The file was auto-read but is too large to fully load. Use sandbox_read_file with start_line/end_line to read the sections you need to edit, then retry.`,
+                    ].join('\n'),
+                  ),
                   structuredError: guardErr,
                 };
               }
             } else {
               // Auto-read failed — the file may not exist (new file creation).
               // If the error looks like a missing file, allow the write.
-              const errMsg = typeof autoReadResult.error === 'string' ? autoReadResult.error.toLowerCase() : '';
-              if (errMsg.includes('no such file') || errMsg.includes('not found') || errMsg.includes('does not exist')) {
+              const errMsg =
+                typeof autoReadResult.error === 'string' ? autoReadResult.error.toLowerCase() : '';
+              if (
+                errMsg.includes('no such file') ||
+                errMsg.includes('not found') ||
+                errMsg.includes('does not exist')
+              ) {
                 fileLedger.recordCreation(call.args.path);
                 fileLedger.recordMutation(call.args.path, 'agent');
                 symbolLedger.invalidate(call.args.path);
                 fileLedger.recordAutoExpandSuccess();
-                console.debug(`[edit-guard] File "${call.args.path}" does not exist — allowing new file creation.`);
+                console.debug(
+                  `[edit-guard] File "${call.args.path}" does not exist — allowing new file creation.`,
+                );
               } else {
                 recordWriteFileMetric({
                   durationMs: Date.now() - writeStart,
                   outcome: 'error',
                   errorCode: 'EDIT_GUARD_BLOCKED',
                 });
-                const guardErr2: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${guardVerdict.reason}` };
+                const guardErr2: StructuredToolError = {
+                  type: 'EDIT_GUARD_BLOCKED',
+                  retryable: false,
+                  message: `Edit guard: ${guardVerdict.reason}`,
+                };
                 return {
-                  text: formatStructuredError(guardErr2, [
-                    `[Tool Error — sandbox_write_file]`,
-                    `Edit guard: ${guardVerdict.reason}`,
-                  ].join('\n')),
+                  text: formatStructuredError(
+                    guardErr2,
+                    [
+                      `[Tool Error — sandbox_write_file]`,
+                      `Edit guard: ${guardVerdict.reason}`,
+                    ].join('\n'),
+                  ),
                   structuredError: guardErr2,
                 };
               }
@@ -1714,12 +2035,19 @@ export async function executeSandboxToolCall(
               outcome: 'error',
               errorCode: 'EDIT_GUARD_BLOCKED',
             });
-            const guardErr3: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard: ${guardVerdict.reason}`, detail: 'Auto-read threw an exception' };
+            const guardErr3: StructuredToolError = {
+              type: 'EDIT_GUARD_BLOCKED',
+              retryable: false,
+              message: `Edit guard: ${guardVerdict.reason}`,
+              detail: 'Auto-read threw an exception',
+            };
             return {
-              text: formatStructuredError(guardErr3, [
-                `[Tool Error — sandbox_write_file]`,
-                `Edit guard: ${guardVerdict.reason}`,
-              ].join('\n')),
+              text: formatStructuredError(
+                guardErr3,
+                [`[Tool Error — sandbox_write_file]`, `Edit guard: ${guardVerdict.reason}`].join(
+                  '\n',
+                ),
+              ),
               structuredError: guardErr3,
             };
           }
@@ -1735,11 +2063,16 @@ export async function executeSandboxToolCall(
         const staleWarning = fileLedger.getStaleWarning(call.args.path);
 
         try {
-          const result = await retryOnContainerError(
-            'sandbox_write_file',
-            () => freshWorkspaceRevision === undefined
+          const result = await retryOnContainerError('sandbox_write_file', () =>
+            freshWorkspaceRevision === undefined
               ? writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion)
-              : writeToSandbox(sandboxId, call.args.path, call.args.content, freshVersion, freshWorkspaceRevision),
+              : writeToSandbox(
+                  sandboxId,
+                  call.args.path,
+                  call.args.content,
+                  freshVersion,
+                  freshWorkspaceRevision,
+                ),
           );
 
           if (!result.ok) {
@@ -1753,8 +2086,10 @@ export async function executeSandboxToolCall(
                 outcome: 'stale',
                 errorCode: 'WORKSPACE_CHANGED',
               });
-              const expected = result.expected_workspace_revision ?? freshWorkspaceRevision ?? 'unknown';
-              const current = result.current_workspace_revision ?? result.workspace_revision ?? 'unknown';
+              const expected =
+                result.expected_workspace_revision ?? freshWorkspaceRevision ?? 'unknown';
+              const current =
+                result.current_workspace_revision ?? result.workspace_revision ?? 'unknown';
               const err: StructuredToolError = {
                 type: 'WORKSPACE_CHANGED',
                 retryable: false,
@@ -1762,14 +2097,21 @@ export async function executeSandboxToolCall(
                 detail: `expected_revision=${expected} current_revision=${current}`,
               };
               return {
-                text: formatStructuredError(err, [
-                  `[Tool Error — sandbox_write_file]`,
-                  `Workspace changed before ${call.args.path} could be written.`,
-                  `Expected workspace revision: ${expected}`,
-                  `Current workspace revision: ${current}`,
-                  staleMarked > 0 ? `Marked ${staleMarked} previously-read file(s) as stale.` : null,
-                  `Re-read the file with sandbox_read_file, apply edits to the latest content, then retry.`,
-                ].filter(Boolean).join('\n')),
+                text: formatStructuredError(
+                  err,
+                  [
+                    `[Tool Error — sandbox_write_file]`,
+                    `Workspace changed before ${call.args.path} could be written.`,
+                    `Expected workspace revision: ${expected}`,
+                    `Current workspace revision: ${current}`,
+                    staleMarked > 0
+                      ? `Marked ${staleMarked} previously-read file(s) as stale.`
+                      : null,
+                    `Re-read the file with sandbox_read_file, apply edits to the latest content, then retry.`,
+                  ]
+                    .filter(Boolean)
+                    .join('\n'),
+                ),
                 structuredError: err,
               };
             }
@@ -1788,15 +2130,23 @@ export async function executeSandboxToolCall(
               });
               const expected = result.expected_version || freshVersion || 'unknown';
               const current = result.current_version || 'missing';
-              const err: StructuredToolError = { type: 'STALE_FILE', retryable: false, message: `Stale write rejected for ${call.args.path}.`, detail: `expected=${expected} current=${current}` };
+              const err: StructuredToolError = {
+                type: 'STALE_FILE',
+                retryable: false,
+                message: `Stale write rejected for ${call.args.path}.`,
+                detail: `expected=${expected} current=${current}`,
+              };
               return {
-                text: formatStructuredError(err, [
-                  `[Tool Error — sandbox_write_file]`,
-                  `Stale write rejected for ${call.args.path}.`,
-                  `Expected version: ${expected}`,
-                  `Current version: ${current}`,
-                  `Re-read the file with sandbox_read_file, apply edits to the latest content, then retry.`,
-                ].join('\n')),
+                text: formatStructuredError(
+                  err,
+                  [
+                    `[Tool Error — sandbox_write_file]`,
+                    `Stale write rejected for ${call.args.path}.`,
+                    `Expected version: ${expected}`,
+                    `Current version: ${current}`,
+                    `Re-read the file with sandbox_read_file, apply edits to the latest content, then retry.`,
+                  ].join('\n'),
+                ),
                 structuredError: err,
               };
             }
@@ -1809,7 +2159,10 @@ export async function executeSandboxToolCall(
             });
             const detail = result.error || 'Unknown error';
             const writeErr = classifyError(detail, call.args.path);
-            return { text: formatStructuredError(writeErr, formatSandboxError(detail, call.args.path)), structuredError: writeErr };
+            return {
+              text: formatStructuredError(writeErr, formatSandboxError(detail, call.args.path)),
+              structuredError: writeErr,
+            };
           }
 
           const previousVersion = versionCacheGet(cacheKey);
@@ -1833,7 +2186,9 @@ export async function executeSandboxToolCall(
 
           // Detect identical content by comparing version hashes (local check, no HTTP call)
           if (previousVersion && result.new_version === previousVersion) {
-            lines.push(`⚠ Note: Content is identical to the previous version — no effective change.`);
+            lines.push(
+              `⚠ Note: Content is identical to the previous version — no effective change.`,
+            );
           } else if (!call.args.path.startsWith('/workspace')) {
             lines.push(`⚠ Note: File is outside /workspace — git will not track this file.`);
           }
@@ -1854,14 +2209,16 @@ export async function executeSandboxToolCall(
           }
 
           const writePostconditions: ToolMutationPostconditions = {
-            touchedFiles: [{
-              path: call.args.path,
-              mutation: 'write',
-              bytesWritten: result.bytes_written ?? call.args.content.length,
-              versionBefore: freshVersion ?? previousVersion ?? null,
-              versionAfter: result.new_version ?? null,
-              changedSpans: [{ kind: 'full_write' }],
-            }],
+            touchedFiles: [
+              {
+                path: call.args.path,
+                mutation: 'write',
+                bytesWritten: result.bytes_written ?? call.args.content.length,
+                versionBefore: freshVersion ?? previousVersion ?? null,
+                versionAfter: result.new_version ?? null,
+                changedSpans: [{ kind: 'full_write' }],
+              },
+            ],
             diagnostics: [buildPerEditDiagnosticSummary(call.args.path, writeDiagnostics)],
             guardWarnings: staleWarning ? [staleWarning] : undefined,
           };
@@ -1881,7 +2238,10 @@ export async function executeSandboxToolCall(
             errorCode: errCode,
           });
           const writeError = classifyError(errMsg, call.args.path);
-          return { text: formatStructuredError(writeError, formatSandboxError(errMsg, call.args.path)), structuredError: writeError };
+          return {
+            text: formatStructuredError(writeError, formatSandboxError(errMsg, call.args.path)),
+            structuredError: writeError,
+          };
         }
       }
 
@@ -1890,18 +2250,20 @@ export async function executeSandboxToolCall(
 
         if (result.error) {
           const diffErr = classifyError(result.error, 'sandbox_diff');
-          return { text: formatStructuredError(diffErr, `[Tool Error — sandbox_diff]\n${result.error}`), structuredError: diffErr };
+          return {
+            text: formatStructuredError(diffErr, `[Tool Error — sandbox_diff]\n${result.error}`),
+            structuredError: diffErr,
+          };
         }
 
         if (!result.diff) {
-          const diagnosticLines = [
-            `[Tool Result — sandbox_diff]`,
-            `No changes detected.`,
-          ];
+          const diagnosticLines = [`[Tool Result — sandbox_diff]`, `No changes detected.`];
           if (result.git_status) {
             diagnosticLines.push(`\ngit status output:\n${result.git_status}`);
           } else {
-            diagnosticLines.push(`\nThe working tree is clean. If you expected changes, verify that sandbox_write_file succeeded and the file is inside /workspace.`);
+            diagnosticLines.push(
+              `\nThe working tree is clean. If you expected changes, verify that sandbox_write_file succeeded and the file is inside /workspace.`,
+            );
           }
           return { text: diagnosticLines.join('\n') };
         }
@@ -1931,7 +2293,13 @@ export async function executeSandboxToolCall(
 
         if (diffResult.error) {
           const commitDiffErr = classifyError(diffResult.error, 'sandbox_prepare_commit');
-          return { text: formatStructuredError(commitDiffErr, `[Tool Error — sandbox_prepare_commit]\n${diffResult.error}`), structuredError: commitDiffErr };
+          return {
+            text: formatStructuredError(
+              commitDiffErr,
+              `[Tool Error — sandbox_prepare_commit]\n${diffResult.error}`,
+            ),
+            structuredError: commitDiffErr,
+          };
         }
 
         if (!diffResult.diff) {
@@ -1939,14 +2307,20 @@ export async function executeSandboxToolCall(
           if (diffResult.git_status) {
             lines.push(`git status shows: ${diffResult.git_status}`);
           } else {
-            lines.push(`Working tree is clean. Verify files were written inside /workspace and content differs from the original.`);
+            lines.push(
+              `Working tree is clean. Verify files were written inside /workspace and content differs from the original.`,
+            );
           }
           return { text: lines.join('\n') };
         }
 
         // Step 2: Run pre-commit hook before auditing so the review reflects
         // the exact tree the user would commit.
-        const hookResult = await execInSandbox(sandboxId, 'if [ -x .git/hooks/pre-commit ]; then .git/hooks/pre-commit 2>&1 || exit $?; fi', '/workspace');
+        const hookResult = await execInSandbox(
+          sandboxId,
+          'if [ -x .git/hooks/pre-commit ]; then .git/hooks/pre-commit 2>&1 || exit $?; fi',
+          '/workspace',
+        );
         const hookOutput = [hookResult.stdout, hookResult.stderr]
           .filter((part): part is string => typeof part === 'string' && part.length > 0)
           .join('\n')
@@ -1976,11 +2350,19 @@ export async function executeSandboxToolCall(
         const postHookDiffResult = await getSandboxDiff(sandboxId);
         if (postHookDiffResult.error) {
           const commitDiffErr = classifyError(postHookDiffResult.error, 'sandbox_prepare_commit');
-          return { text: formatStructuredError(commitDiffErr, `[Tool Error — sandbox_prepare_commit]\n${postHookDiffResult.error}`), structuredError: commitDiffErr };
+          return {
+            text: formatStructuredError(
+              commitDiffErr,
+              `[Tool Error — sandbox_prepare_commit]\n${postHookDiffResult.error}`,
+            ),
+            structuredError: commitDiffErr,
+          };
         }
 
         if (!postHookDiffResult.diff) {
-          const lines = [`[Tool Result — sandbox_prepare_commit]\nNo changes to commit after running the pre-commit hook.`];
+          const lines = [
+            `[Tool Result — sandbox_prepare_commit]\nNo changes to commit after running the pre-commit hook.`,
+          ];
           if (postHookDiffResult.git_status) {
             lines.push(`git status shows: ${postHookDiffResult.git_status}`);
           }
@@ -1994,14 +2376,11 @@ export async function executeSandboxToolCall(
         let fileContexts: AuditorFileContext[] = [];
         try {
           const filePaths = parseDiffStats(postHookDiffResult.diff).fileNames;
-          fileContexts = await fetchAuditorFileContexts(
-            filePaths,
-            async (path) => {
-              const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
-              if (result.error) return null;
-              return { content: result.content, truncated: result.truncated };
-            },
-          );
+          fileContexts = await fetchAuditorFileContexts(filePaths, async (path) => {
+            const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
+            if (result.error) return null;
+            return { content: result.content, truncated: result.truncated };
+          });
         } catch {
           // Degrade gracefully — proceed with diff-only
         }
@@ -2131,12 +2510,9 @@ export async function executeSandboxToolCall(
           }
         }
 
-        const result = await execInSandbox(
-          sandboxId,
-          `cd /workspace && ${command}`,
-          undefined,
-          { markWorkspaceMutated: true },
-        );
+        const result = await execInSandbox(sandboxId, `cd /workspace && ${command}`, undefined, {
+          markWorkspaceMutated: true,
+        });
         const durationMs = Date.now() - start;
         // Tests can generate artifacts, coverage files, snapshots, etc.
         clearFileVersionCache(sandboxId);
@@ -2144,14 +2520,19 @@ export async function executeSandboxToolCall(
 
         // Parse test results from output
         const output = result.stdout + '\n' + result.stderr;
-        let passed = 0, failed = 0, skipped = 0, total = 0;
+        let passed = 0,
+          failed = 0,
+          skipped = 0,
+          total = 0;
 
         // npm/jest/vitest patterns
-        const jestMatch = output.match(/Tests:\s*(\d+)\s*passed.*?(\d+)\s*failed.*?(\d+)\s*total/i) ||
-                          output.match(/(\d+)\s*passing.*?(\d+)\s*failing/i);
+        const jestMatch =
+          output.match(/Tests:\s*(\d+)\s*passed.*?(\d+)\s*failed.*?(\d+)\s*total/i) ||
+          output.match(/(\d+)\s*passing.*?(\d+)\s*failing/i);
         // pytest patterns
-        const pytestMatch = output.match(/(\d+)\s*passed.*?(\d+)\s*failed/i) ||
-                            output.match(/passed:\s*(\d+).*?failed:\s*(\d+)/i);
+        const pytestMatch =
+          output.match(/(\d+)\s*passed.*?(\d+)\s*failed/i) ||
+          output.match(/passed:\s*(\d+).*?failed:\s*(\d+)/i);
         // cargo patterns
         const cargoMatch = output.match(/test result:.*?(\d+)\s*passed.*?(\d+)\s*failed/i);
         // go patterns — count both passing and failing packages
@@ -2161,7 +2542,7 @@ export async function executeSandboxToolCall(
         if (jestMatch) {
           passed = parseInt(jestMatch[1]) || 0;
           failed = parseInt(jestMatch[2]) || 0;
-          total = jestMatch[3] ? (parseInt(jestMatch[3]) || 0) : (passed + failed);
+          total = jestMatch[3] ? parseInt(jestMatch[3]) || 0 : passed + failed;
         } else if (pytestMatch) {
           passed = parseInt(pytestMatch[1]) || 0;
           failed = parseInt(pytestMatch[2]) || 0;
@@ -2184,7 +2565,9 @@ export async function executeSandboxToolCall(
         }
 
         const truncated = output.length > 8000;
-        const truncatedOutput = truncated ? output.slice(0, 8000) + '\n\n[...output truncated]' : output;
+        const truncatedOutput = truncated
+          ? output.slice(0, 8000) + '\n\n[...output truncated]'
+          : output;
 
         const statusIcon = result.exitCode === 0 ? '✓' : '✗';
         const lines: string[] = [
@@ -2192,7 +2575,9 @@ export async function executeSandboxToolCall(
           `${statusIcon} Tests ${result.exitCode === 0 ? 'PASSED' : 'FAILED'} (${framework})`,
           `Command: ${command}`,
           `Duration: ${(durationMs / 1000).toFixed(1)}s`,
-          total > 0 ? `Results: ${passed} passed, ${failed} failed${skipped > 0 ? `, ${skipped} skipped` : ''}` : '',
+          total > 0
+            ? `Results: ${passed} passed, ${failed} failed${skipped > 0 ? `, ${skipped} skipped` : ''}`
+            : '',
           `\nOutput:\n${truncatedOutput}`,
         ].filter(Boolean);
 
@@ -2225,9 +2610,16 @@ export async function executeSandboxToolCall(
         );
         const detected = detectResult.stdout.trim();
 
-        if (detected === 'tsconfig.json' || detected === 'tsconfig.app.json' || detected === 'tsconfig.node.json') {
+        if (
+          detected === 'tsconfig.json' ||
+          detected === 'tsconfig.app.json' ||
+          detected === 'tsconfig.node.json'
+        ) {
           // Check if node_modules exists, install if missing
-          const nodeModulesCheck = await execInSandbox(sandboxId, 'cd /workspace && ls -d node_modules 2>/dev/null');
+          const nodeModulesCheck = await execInSandbox(
+            sandboxId,
+            'cd /workspace && ls -d node_modules 2>/dev/null',
+          );
           if (nodeModulesCheck.exitCode !== 0) {
             const installResult = await execInSandbox(
               sandboxId,
@@ -2236,7 +2628,9 @@ export async function executeSandboxToolCall(
               { markWorkspaceMutated: true },
             );
             if (installResult.exitCode !== 0) {
-              return { text: `[Tool Result — sandbox_check_types]\nFailed to install dependencies:\n${installResult.stderr}` };
+              return {
+                text: `[Tool Result — sandbox_check_types]\nFailed to install dependencies:\n${installResult.stderr}`,
+              };
             }
             // npm install modifies node_modules, package-lock.json, etc.
             clearFileVersionCache(sandboxId);
@@ -2244,21 +2638,30 @@ export async function executeSandboxToolCall(
           }
 
           // Check if tsc is available and run type check
-          const tscCheck = await execInSandbox(sandboxId, 'cd /workspace && npx tsc --version 2>/dev/null');
+          const tscCheck = await execInSandbox(
+            sandboxId,
+            'cd /workspace && npx tsc --version 2>/dev/null',
+          );
           if (tscCheck.exitCode === 0) {
             command = 'npx tsc --noEmit';
             tool = 'tsc';
           }
         } else if (detected === 'pyrightconfig.json') {
           // Check if pyright is available
-          const pyrightCheck = await execInSandbox(sandboxId, 'cd /workspace && pyright --version 2>/dev/null');
+          const pyrightCheck = await execInSandbox(
+            sandboxId,
+            'cd /workspace && pyright --version 2>/dev/null',
+          );
           if (pyrightCheck.exitCode === 0) {
             command = 'pyright';
             tool = 'pyright';
           }
         } else if (detected === 'mypy.ini') {
           // Check if mypy is available
-          const mypyCheck = await execInSandbox(sandboxId, 'cd /workspace && mypy --version 2>/dev/null');
+          const mypyCheck = await execInSandbox(
+            sandboxId,
+            'cd /workspace && mypy --version 2>/dev/null',
+          );
           if (mypyCheck.exitCode === 0) {
             // Use 'mypy' without args to respect mypy.ini config paths
             command = 'mypy';
@@ -2268,21 +2671,23 @@ export async function executeSandboxToolCall(
 
         if (!command) {
           // Fallback: try tsc if package.json exists
-          const pkgCheck = await execInSandbox(sandboxId, 'cd /workspace && cat package.json 2>/dev/null');
+          const pkgCheck = await execInSandbox(
+            sandboxId,
+            'cd /workspace && cat package.json 2>/dev/null',
+          );
           if (pkgCheck.stdout.includes('typescript')) {
             command = 'npx tsc --noEmit';
             tool = 'tsc';
           } else {
-            return { text: '[Tool Result — sandbox_check_types]\nNo type checker detected. Supported: TypeScript (tsc), Pyright, mypy.' };
+            return {
+              text: '[Tool Result — sandbox_check_types]\nNo type checker detected. Supported: TypeScript (tsc), Pyright, mypy.',
+            };
           }
         }
 
-        const result = await execInSandbox(
-          sandboxId,
-          `cd /workspace && ${command}`,
-          undefined,
-          { markWorkspaceMutated: true },
-        );
+        const result = await execInSandbox(sandboxId, `cd /workspace && ${command}`, undefined, {
+          markWorkspaceMutated: true,
+        });
         const durationMs = Date.now() - start;
 
         const output = result.stdout + '\n' + result.stderr;
@@ -2354,13 +2759,17 @@ export async function executeSandboxToolCall(
           `${statusIcon} Type check ${result.exitCode === 0 ? 'PASSED' : 'FAILED'} (${tool})`,
           `Command: ${command}`,
           `Duration: ${(durationMs / 1000).toFixed(1)}s`,
-          errorCount > 0 || warningCount > 0 ? `Found: ${errorCount} error${errorCount !== 1 ? 's' : ''}${warningCount > 0 ? `, ${warningCount} warning${warningCount !== 1 ? 's' : ''}` : ''}` : '',
+          errorCount > 0 || warningCount > 0
+            ? `Found: ${errorCount} error${errorCount !== 1 ? 's' : ''}${warningCount > 0 ? `, ${warningCount} warning${warningCount !== 1 ? 's' : ''}` : ''}`
+            : '',
         ].filter(Boolean);
 
         if (errors.length > 0) {
           lines.push('\nErrors:');
           for (const err of errors.slice(0, 10)) {
-            lines.push(`  ${err.file}:${err.line}${err.column ? `:${err.column}` : ''} — ${err.message}`);
+            lines.push(
+              `  ${err.file}:${err.line}${err.column ? `:${err.column}` : ''} — ${err.message}`,
+            );
           }
           if (errors.length > 10) {
             lines.push(`  ...and ${errors.length - 10} more`);
@@ -2384,8 +2793,9 @@ export async function executeSandboxToolCall(
         const { steps, warnings } = buildWorkspaceVerifySteps(sandboxId);
 
         if (steps.length === 0) {
-          const hint = warnings[0]
-            ?? 'No install, typecheck, or test command could be inferred from the workspace readiness probe.';
+          const hint =
+            warnings[0] ??
+            'No install, typecheck, or test command could be inferred from the workspace readiness probe.';
           return {
             text: [
               '[Tool Result — sandbox_verify_workspace]',
@@ -2460,7 +2870,10 @@ export async function executeSandboxToolCall(
             summarizeWorkspaceVerifyOutput(failedStep.output),
           );
           if (failedStep.id !== 'install') {
-            lines.push('', 'Tip: rerun test() or typecheck() directly if you need more detailed output.');
+            lines.push(
+              '',
+              'Tip: rerun test() or typecheck() directly if you need more detailed output.',
+            );
           }
         }
 
@@ -2499,19 +2912,28 @@ export async function executeSandboxToolCall(
         }
 
         if (!draftDiffResult.diff) {
-          return { text: '[Tool Result — sandbox_save_draft]\nNo changes to save. Working tree is clean.' };
+          return {
+            text: '[Tool Result — sandbox_save_draft]\nNo changes to save. Working tree is clean.',
+          };
         }
 
         // Step 2: Get current branch
-        const currentBranchResult = await execInSandbox(sandboxId, 'cd /workspace && git branch --show-current');
-        const currentBranch = currentBranchResult.exitCode === 0 ? currentBranchResult.stdout.trim() : '';
+        const currentBranchResult = await execInSandbox(
+          sandboxId,
+          'cd /workspace && git branch --show-current',
+        );
+        const currentBranch =
+          currentBranchResult.exitCode === 0 ? currentBranchResult.stdout.trim() : '';
 
         // Step 3: Determine draft branch name — must start with draft/ (unaudited path)
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         if (call.args.branch_name && !call.args.branch_name.startsWith('draft/')) {
-          return { text: '[Tool Error — sandbox_save_draft]\nbranch_name must start with "draft/". This tool skips Auditor review and is restricted to draft branches. Use sandbox_prepare_commit for non-draft branches.' };
+          return {
+            text: '[Tool Error — sandbox_save_draft]\nbranch_name must start with "draft/". This tool skips Auditor review and is restricted to draft branches. Use sandbox_prepare_commit for non-draft branches.',
+          };
         }
-        const draftBranchName = call.args.branch_name || `draft/${currentBranch || 'main'}-${timestamp}`;
+        const draftBranchName =
+          call.args.branch_name || `draft/${currentBranch || 'main'}-${timestamp}`;
 
         // Step 4: Create draft branch if not already on one
         const needsNewBranch = !currentBranch.startsWith('draft/');
@@ -2523,7 +2945,9 @@ export async function executeSandboxToolCall(
             { markWorkspaceMutated: true },
           );
           if (checkoutResult.exitCode !== 0) {
-            return { text: `[Tool Error — sandbox_save_draft]\nFailed to create draft branch: ${checkoutResult.stderr}` };
+            return {
+              text: `[Tool Error — sandbox_save_draft]\nFailed to create draft branch: ${checkoutResult.stderr}`,
+            };
           }
         }
 
@@ -2538,7 +2962,9 @@ export async function executeSandboxToolCall(
           { markWorkspaceMutated: true },
         );
         if (stageResult.exitCode !== 0) {
-          return { text: `[Tool Error — sandbox_save_draft]\nFailed to stage changes: ${stageResult.stderr}` };
+          return {
+            text: `[Tool Error — sandbox_save_draft]\nFailed to stage changes: ${stageResult.stderr}`,
+          };
         }
 
         const commitResult = await execInSandbox(
@@ -2548,7 +2974,9 @@ export async function executeSandboxToolCall(
           { markWorkspaceMutated: true },
         );
         if (commitResult.exitCode !== 0) {
-          return { text: `[Tool Error — sandbox_save_draft]\nFailed to commit draft: ${commitResult.stderr}` };
+          return {
+            text: `[Tool Error — sandbox_save_draft]\nFailed to commit draft: ${commitResult.stderr}`,
+          };
         }
         // git add + commit changes file hashes tracked by git
         clearFileVersionCache(sandboxId);
@@ -2572,7 +3000,9 @@ export async function executeSandboxToolCall(
           `Commit: ${commitSha}`,
           `Message: ${draftMessage}`,
           `${draftStats.filesChanged} file${draftStats.filesChanged !== 1 ? 's' : ''} changed, +${draftStats.additions} -${draftStats.deletions}`,
-          pushOk ? 'Pushed to remote.' : `Push failed: ${pushResult.stderr}. Use sandbox_push() to retry.`,
+          pushOk
+            ? 'Pushed to remote.'
+            : `Push failed: ${pushResult.stderr}. Use sandbox_push() to retry.`,
         ];
 
         const draftCardData: DiffPreviewCardData = {
@@ -2593,7 +3023,9 @@ export async function executeSandboxToolCall(
 
       case 'promote_to_github': {
         const requestedName = call.args.repo_name.trim();
-        const repoName = requestedName.includes('/') ? requestedName.split('/').pop()!.trim() : requestedName;
+        const repoName = requestedName.includes('/')
+          ? requestedName.split('/').pop()!.trim()
+          : requestedName;
         if (!repoName) {
           return { text: '[Tool Error] promote_to_github requires a valid repo_name.' };
         }
@@ -2614,17 +3046,23 @@ export async function executeSandboxToolCall(
           sandboxId,
           'cd /workspace && git rev-parse --abbrev-ref HEAD',
         );
-        const branchName = branchResult.exitCode === 0
-          ? (branchResult.stdout.trim() || createdRepo.default_branch || 'main')
-          : (createdRepo.default_branch || 'main');
+        const branchName =
+          branchResult.exitCode === 0
+            ? branchResult.stdout.trim() || createdRepo.default_branch || 'main'
+            : createdRepo.default_branch || 'main';
 
         const remoteResult = await execInSandbox(
           sandboxId,
           `cd /workspace && if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin ${shellEscape(remoteUrl)}; else git remote add origin ${shellEscape(remoteUrl)}; fi`,
         );
         if (remoteResult.exitCode !== 0) {
-          const remoteError = sanitizeGitOutput(remoteResult.stderr || remoteResult.stdout || 'unknown error', authToken);
-          return { text: `[Tool Error] Created repo ${createdRepo.full_name}, but failed to configure git remote: ${remoteError}` };
+          const remoteError = sanitizeGitOutput(
+            remoteResult.stderr || remoteResult.stdout || 'unknown error',
+            authToken,
+          );
+          return {
+            text: `[Tool Error] Created repo ${createdRepo.full_name}, but failed to configure git remote: ${remoteError}`,
+          };
         }
 
         const pushResult = await execInSandbox(
@@ -2633,9 +3071,10 @@ export async function executeSandboxToolCall(
         );
 
         const rawPushError = `${pushResult.stderr}\n${pushResult.stdout}`.toLowerCase();
-        const noCommitsYet = rawPushError.includes('src refspec')
-          || rawPushError.includes('does not match any')
-          || rawPushError.includes('no commits yet');
+        const noCommitsYet =
+          rawPushError.includes('src refspec') ||
+          rawPushError.includes('does not match any') ||
+          rawPushError.includes('no commits yet');
 
         const repoObject: ActiveRepo = {
           id: createdRepo.id,
@@ -2647,15 +3086,19 @@ export async function executeSandboxToolCall(
         };
 
         if (pushResult.exitCode !== 0 && !noCommitsYet) {
-          const pushError = sanitizeGitOutput(pushResult.stderr || pushResult.stdout || 'unknown error', authToken);
+          const pushError = sanitizeGitOutput(
+            pushResult.stderr || pushResult.stdout || 'unknown error',
+            authToken,
+          );
           return {
             text: `[Tool Error] Repo ${createdRepo.full_name} was created, but push failed: ${pushError}. You can retry after fixing git/auth state.`,
           };
         }
 
-        const warning = pushResult.exitCode !== 0 && noCommitsYet
-          ? 'Repo created and remote configured, but there were no local commits to push yet.'
-          : undefined;
+        const warning =
+          pushResult.exitCode !== 0 && noCommitsYet
+            ? 'Repo created and remote configured, but there were no local commits to push yet.'
+            : undefined;
 
         const lines = [
           '[Tool Result — promote_to_github]',
@@ -2698,14 +3141,24 @@ export async function executeSandboxToolCall(
             // results so files with no symbols don't keep hitting the sandbox)
             symbolLedger.store(filePath, result.symbols, totalLines);
           }
-          const lang = ['py'].includes(ext) ? 'Python' : ['ts', 'tsx', 'js', 'jsx'].includes(ext) ? 'TypeScript/JavaScript' : ext;
+          const lang = ['py'].includes(ext)
+            ? 'Python'
+            : ['ts', 'tsx', 'js', 'jsx'].includes(ext)
+              ? 'TypeScript/JavaScript'
+              : ext;
 
           // Record symbol reads in the ledger so edit guards can verify coverage
           if (symbols.length > 0) {
-            const validKinds = new Set<string>(['function', 'class', 'interface', 'export', 'type']);
+            const validKinds = new Set<string>([
+              'function',
+              'class',
+              'interface',
+              'export',
+              'type',
+            ]);
             const ledgerSymbols: SymbolRead[] = symbols
-              .filter(s => validKinds.has(s.kind))
-              .map(s => {
+              .filter((s) => validKinds.has(s.kind))
+              .map((s) => {
                 // Normalize default export kind: the Python extractor emits 'function'
                 // for `export default function Foo`, but the ledger's edit guard keys
                 // default exports as 'export'. Check signature to detect this.
@@ -2742,7 +3195,9 @@ export async function executeSandboxToolCall(
           ];
 
           for (const sym of symbols) {
-            lines.push(`  ${sym.kind.padEnd(10)} L${String(sym.line).padStart(4)}  ${sym.signature}`);
+            lines.push(
+              `  ${sym.kind.padEnd(10)} L${String(sym.line).padStart(4)}  ${sym.signature}`,
+            );
           }
 
           if (symbols.length === 0) {
@@ -2753,7 +3208,10 @@ export async function executeSandboxToolCall(
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to extract symbols';
           const err = classifyError(message, filePath);
-          return { text: formatStructuredError(err, `[Tool Error — sandbox_read_symbols]\n${message}`), structuredError: err };
+          return {
+            text: formatStructuredError(err, `[Tool Error — sandbox_read_symbols]\n${message}`),
+            structuredError: err,
+          };
         }
       }
 
@@ -2762,7 +3220,12 @@ export async function executeSandboxToolCall(
         const scope = normalizeSandboxPath(call.args.scope || '/workspace');
 
         try {
-          const { references, truncated } = await findReferencesInSandbox(sandboxId, symbol, scope, 30);
+          const { references, truncated } = await findReferencesInSandbox(
+            sandboxId,
+            symbol,
+            scope,
+            30,
+          );
           const shownCount = references.length;
           const fileWidth = Math.max(
             ...references.map((reference) => formatSandboxDisplayPath(reference.file).length),
@@ -2790,7 +3253,10 @@ export async function executeSandboxToolCall(
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to find references';
           const err = classifyError(message, symbol);
-          return { text: formatStructuredError(err, `[Tool Error — sandbox_find_references]\n${message}`), structuredError: err };
+          return {
+            text: formatStructuredError(err, `[Tool Error — sandbox_find_references]\n${message}`),
+            structuredError: err,
+          };
         }
       }
 
@@ -2820,7 +3286,10 @@ export async function executeSandboxToolCall(
 
         // --- Edit Guard: symbolic check for each file in the patchset ---
         // Run guard checks in parallel, caching auto-expand results for reuse in Phase 1
-        const guardCachedFiles = new Map<string, { content: string; version?: string; workspaceRevision?: number }>();
+        const guardCachedFiles = new Map<
+          string,
+          { content: string; version?: string; workspaceRevision?: number }
+        >();
         const guardBlocked: string[] = [];
         const guardWarnings: string[] = [];
         const guardChecks = edits.map(async (edit) => {
@@ -2830,14 +3299,20 @@ export async function executeSandboxToolCall(
             // Auto-expand: try reading the file to populate ledger
             fileLedger.recordAutoExpandAttempt();
             try {
-              const autoRead = await readFromSandbox(sandboxId, edit.path) as FileReadResult & { error?: string };
+              const autoRead = (await readFromSandbox(sandboxId, edit.path)) as FileReadResult & {
+                error?: string;
+              };
               if (!autoRead.error && autoRead.content !== undefined) {
                 let content = autoRead.content;
                 let version = autoRead.version;
                 let workspaceRevision = autoRead.workspace_revision;
                 let truncated = Boolean(autoRead.truncated);
                 if (truncated) {
-                  const expanded = await readFullFileByChunks(sandboxId, edit.path, autoRead.version);
+                  const expanded = await readFullFileByChunks(
+                    sandboxId,
+                    edit.path,
+                    autoRead.version,
+                  );
                   content = expanded.content;
                   version = expanded.version ?? version;
                   workspaceRevision = expanded.workspaceRevision ?? workspaceRevision;
@@ -2857,7 +3332,9 @@ export async function executeSandboxToolCall(
                   workspace_revision: workspaceRevision,
                 });
                 if (truncated) {
-                  guardBlocked.push(`${edit.path}: file is too large to fully load safely (chunk hydration remained truncated)`);
+                  guardBlocked.push(
+                    `${edit.path}: file is too large to fully load safely (chunk hydration remained truncated)`,
+                  );
                   return;
                 }
                 fileLedger.recordAutoExpandSuccess();
@@ -2866,43 +3343,64 @@ export async function executeSandboxToolCall(
                 guardCachedFiles.set(edit.path, {
                   content,
                   version: typeof version === 'string' ? version : undefined,
-                  workspaceRevision: typeof workspaceRevision === 'number' ? workspaceRevision : undefined,
+                  workspaceRevision:
+                    typeof workspaceRevision === 'number' ? workspaceRevision : undefined,
                 });
                 // Re-check after auto-expand
-                const retryVerdict = fileLedger.checkSymbolicEditAllowed(edit.path, patchEditContent);
+                const retryVerdict = fileLedger.checkSymbolicEditAllowed(
+                  edit.path,
+                  patchEditContent,
+                );
                 if (!retryVerdict.allowed) {
                   if (isUnknownSymbolGuardReason(retryVerdict.reason) && !truncated) {
-                    guardWarnings.push(`${edit.path}: ${retryVerdict.reason} (proceeded after full auto-read)`);
+                    guardWarnings.push(
+                      `${edit.path}: ${retryVerdict.reason} (proceeded after full auto-read)`,
+                    );
                     fileLedger.recordSymbolWarningSoftened();
                   } else {
                     guardBlocked.push(`${edit.path}: ${retryVerdict.reason}`);
                   }
                 }
               } else {
-                guardBlocked.push(`${edit.path}: ${patchVerdict.reason}${autoRead.error ? ` (auto-read error: ${autoRead.error})` : ''}`);
+                guardBlocked.push(
+                  `${edit.path}: ${patchVerdict.reason}${autoRead.error ? ` (auto-read error: ${autoRead.error})` : ''}`,
+                );
               }
             } catch (guardErr) {
               const errMsg = guardErr instanceof Error ? guardErr.message : String(guardErr);
-              guardBlocked.push(`${edit.path}: ${patchVerdict.reason} (auto-read threw: ${errMsg})`);
+              guardBlocked.push(
+                `${edit.path}: ${patchVerdict.reason} (auto-read threw: ${errMsg})`,
+              );
             }
           }
         });
         await Promise.all(guardChecks);
         if (guardBlocked.length > 0) {
-          const guardErr: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Edit guard blocked ${guardBlocked.length} file(s) in patchset`, detail: guardBlocked.join('; ') };
+          const guardErr: StructuredToolError = {
+            type: 'EDIT_GUARD_BLOCKED',
+            retryable: false,
+            message: `Edit guard blocked ${guardBlocked.length} file(s) in patchset`,
+            detail: guardBlocked.join('; '),
+          };
           return {
-            text: formatStructuredError(guardErr, [
-              `[Tool Error — sandbox_apply_patchset]`,
-              `Edit guard blocked ${guardBlocked.length} file(s):`,
-              ...guardBlocked.map(b => `  - ${b}`),
-              `Use sandbox_read_file to read the relevant files/sections, then retry.`,
-            ].join('\n')),
+            text: formatStructuredError(
+              guardErr,
+              [
+                `[Tool Error — sandbox_apply_patchset]`,
+                `Edit guard blocked ${guardBlocked.length} file(s):`,
+                ...guardBlocked.map((b) => `  - ${b}`),
+                `Use sandbox_read_file to read the relevant files/sections, then retry.`,
+              ].join('\n'),
+            ),
             structuredError: guardErr,
           };
         }
 
         // Phase 1: Read all files and validate all hashline ops
-        const fileContents = new Map<string, { content: string; version?: string; workspaceRevision?: number }>();
+        const fileContents = new Map<
+          string,
+          { content: string; version?: string; workspaceRevision?: number }
+        >();
         const validationErrors: string[] = [];
         const phase1HydrationBlocked: string[] = [];
         const editResults: Array<{
@@ -2924,7 +3422,9 @@ export async function executeSandboxToolCall(
             return;
           }
           try {
-            const readResult = await readFromSandbox(sandboxId, edit.path) as FileReadResult & { error?: string };
+            const readResult = (await readFromSandbox(sandboxId, edit.path)) as FileReadResult & {
+              error?: string;
+            };
             if (readResult.error) {
               validationErrors.push(`${edit.path}: ${readResult.error}`);
               return;
@@ -2938,7 +3438,9 @@ export async function executeSandboxToolCall(
               version = expanded.version ?? version;
               workspaceRevision = expanded.workspaceRevision ?? workspaceRevision;
               if (expanded.truncated) {
-                phase1HydrationBlocked.push(`${edit.path}: file is too large to fully load safely (chunk hydration remained truncated)`);
+                phase1HydrationBlocked.push(
+                  `${edit.path}: file is too large to fully load safely (chunk hydration remained truncated)`,
+                );
                 return;
               }
             }
@@ -2951,7 +3453,8 @@ export async function executeSandboxToolCall(
             fileContents.set(edit.path, {
               content,
               version: typeof version === 'string' ? version : undefined,
-              workspaceRevision: typeof workspaceRevision === 'number' ? workspaceRevision : undefined,
+              workspaceRevision:
+                typeof workspaceRevision === 'number' ? workspaceRevision : undefined,
             });
           } catch (e) {
             validationErrors.push(`${edit.path}: ${e instanceof Error ? e.message : String(e)}`);
@@ -2967,36 +3470,52 @@ export async function executeSandboxToolCall(
             detail: phase1HydrationBlocked.join('; '),
           };
           return {
-            text: formatStructuredError(err, [
-              `[Tool Error — sandbox_apply_patchset]`,
-              `Edit guard blocked ${phase1HydrationBlocked.length} file(s):`,
-              ...phase1HydrationBlocked.map(e => `  - ${e}`),
-              `Use sandbox_read_file with narrower start_line/end_line ranges, then retry with targeted edits.`,
-            ].join('\n')),
+            text: formatStructuredError(
+              err,
+              [
+                `[Tool Error — sandbox_apply_patchset]`,
+                `Edit guard blocked ${phase1HydrationBlocked.length} file(s):`,
+                ...phase1HydrationBlocked.map((e) => `  - ${e}`),
+                `Use sandbox_read_file with narrower start_line/end_line ranges, then retry with targeted edits.`,
+              ].join('\n'),
+            ),
             structuredError: err,
           };
         }
 
         if (validationErrors.length > 0) {
-          const err: StructuredToolError = { type: 'FILE_NOT_FOUND', retryable: false, message: `Failed to read ${validationErrors.length} file(s)`, detail: validationErrors.join('; ') };
+          const err: StructuredToolError = {
+            type: 'FILE_NOT_FOUND',
+            retryable: false,
+            message: `Failed to read ${validationErrors.length} file(s)`,
+            detail: validationErrors.join('; '),
+          };
           return {
-            text: formatStructuredError(err, [
-              `[Tool Error — sandbox_apply_patchset]`,
-              `Failed to read ${validationErrors.length} file(s):`,
-              ...validationErrors.map(e => `  - ${e}`),
-              `No changes were written.`,
-            ].join('\n')),
+            text: formatStructuredError(
+              err,
+              [
+                `[Tool Error — sandbox_apply_patchset]`,
+                `Failed to read ${validationErrors.length} file(s):`,
+                ...validationErrors.map((e) => `  - ${e}`),
+                `No changes were written.`,
+              ].join('\n'),
+            ),
             structuredError: err,
           };
         }
 
-        const workspaceRevisions = [...new Set(
-          [...fileContents.values()]
-            .map((file) => file.workspaceRevision)
-            .filter((revision): revision is number => typeof revision === 'number'),
-        )];
+        const workspaceRevisions = [
+          ...new Set(
+            [...fileContents.values()]
+              .map((file) => file.workspaceRevision)
+              .filter((revision): revision is number => typeof revision === 'number'),
+          ),
+        ];
         if (workspaceRevisions.length > 1) {
-          const staleMarked = invalidateWorkspaceSnapshots(sandboxId, Math.max(...workspaceRevisions));
+          const staleMarked = invalidateWorkspaceSnapshots(
+            sandboxId,
+            Math.max(...workspaceRevisions),
+          );
           const err: StructuredToolError = {
             type: 'WORKSPACE_CHANGED',
             retryable: false,
@@ -3004,13 +3523,18 @@ export async function executeSandboxToolCall(
             detail: workspaceRevisions.join(', '),
           };
           return {
-            text: formatStructuredError(err, [
-              `[Tool Error — sandbox_apply_patchset]`,
-              `Workspace changed while validating the patchset.`,
-              `Observed workspace revisions: ${workspaceRevisions.join(', ')}`,
-              staleMarked > 0 ? `Marked ${staleMarked} previously-read file(s) as stale.` : null,
-              `Re-read the affected files, then retry the patchset.`,
-            ].filter(Boolean).join('\n')),
+            text: formatStructuredError(
+              err,
+              [
+                `[Tool Error — sandbox_apply_patchset]`,
+                `Workspace changed while validating the patchset.`,
+                `Observed workspace revisions: ${workspaceRevisions.join(', ')}`,
+                staleMarked > 0 ? `Marked ${staleMarked} previously-read file(s) as stale.` : null,
+                `Re-read the affected files, then retry the patchset.`,
+              ]
+                .filter(Boolean)
+                .join('\n'),
+            ),
             structuredError: err,
           };
         }
@@ -3026,24 +3550,37 @@ export async function executeSandboxToolCall(
           try {
             compiledOps = await compilePatchsetEditOps(fileData.content, edit);
           } catch (compileErr) {
-            validationErrors.push(`${edit.path}: ${compileErr instanceof Error ? compileErr.message : String(compileErr)}`);
+            validationErrors.push(
+              `${edit.path}: ${compileErr instanceof Error ? compileErr.message : String(compileErr)}`,
+            );
             continue;
           }
 
           const editResult = await applyHashlineEdits(fileData.content, compiledOps);
           if (editResult.failed > 0) {
-            const retryHints = await buildHashlineRetryHints(fileData.content, compiledOps, edit.path);
-            validationErrors.push([
-              `${edit.path}: ${editResult.errors.join('; ')}`,
-              ...(retryHints.length > 0 ? [`retry hints: ${retryHints.join(' ')}`] : []),
-            ].join(' '));
+            const retryHints = await buildHashlineRetryHints(
+              fileData.content,
+              compiledOps,
+              edit.path,
+            );
+            validationErrors.push(
+              [
+                `${edit.path}: ${editResult.errors.join('; ')}`,
+                ...(retryHints.length > 0 ? [`retry hints: ${retryHints.join(' ')}`] : []),
+              ].join(' '),
+            );
           } else {
             if (editResult.warnings.length > 0) {
-              guardWarnings.push(...editResult.warnings.map((warning) => `${edit.path}: ${warning}`));
+              guardWarnings.push(
+                ...editResult.warnings.map((warning) => `${edit.path}: ${warning}`),
+              );
             }
             // Truncation-hashline sync: verify resolved lines fall within read ranges
             if (editResult.resolvedLines.length > 0) {
-              const coverageVerdict = fileLedger.checkLinesCovered(edit.path, editResult.resolvedLines);
+              const coverageVerdict = fileLedger.checkLinesCovered(
+                edit.path,
+                editResult.resolvedLines,
+              );
               if (!coverageVerdict.allowed) {
                 coverageErrors.push(`${edit.path}: ${coverageVerdict.reason}`);
                 continue;
@@ -3063,27 +3600,43 @@ export async function executeSandboxToolCall(
 
         // Surface coverage guard failures as EDIT_GUARD_BLOCKED (not hash mismatch)
         if (coverageErrors.length > 0) {
-          const err: StructuredToolError = { type: 'EDIT_GUARD_BLOCKED', retryable: false, message: `Truncation guard: edit targets lines outside the model read range in ${coverageErrors.length} file(s)`, detail: coverageErrors.join('; ') };
+          const err: StructuredToolError = {
+            type: 'EDIT_GUARD_BLOCKED',
+            retryable: false,
+            message: `Truncation guard: edit targets lines outside the model read range in ${coverageErrors.length} file(s)`,
+            detail: coverageErrors.join('; '),
+          };
           return {
-            text: formatStructuredError(err, [
-              `[Tool Error — sandbox_apply_patchset]`,
-              `Edit guard blocked ${coverageErrors.length} file(s):`,
-              ...coverageErrors.map(e => `  - ${e}`),
-              `No changes were written. Read the target lines first, then retry the patchset.`,
-            ].join('\n')),
+            text: formatStructuredError(
+              err,
+              [
+                `[Tool Error — sandbox_apply_patchset]`,
+                `Edit guard blocked ${coverageErrors.length} file(s):`,
+                ...coverageErrors.map((e) => `  - ${e}`),
+                `No changes were written. Read the target lines first, then retry the patchset.`,
+              ].join('\n'),
+            ),
             structuredError: err,
           };
         }
 
         if (validationErrors.length > 0) {
-          const err: StructuredToolError = { type: 'EDIT_HASH_MISMATCH', retryable: false, message: `Hash mismatch in ${validationErrors.length} file(s)`, detail: validationErrors.join('; ') };
+          const err: StructuredToolError = {
+            type: 'EDIT_HASH_MISMATCH',
+            retryable: false,
+            message: `Hash mismatch in ${validationErrors.length} file(s)`,
+            detail: validationErrors.join('; '),
+          };
           return {
-            text: formatStructuredError(err, [
-              `[Tool Error — sandbox_apply_patchset]`,
-              `Validation failed for ${validationErrors.length} file(s):`,
-              ...validationErrors.map(e => `  - ${e}`),
-              `No changes were written. Re-read the affected files and retry.`,
-            ].join('\n')),
+            text: formatStructuredError(
+              err,
+              [
+                `[Tool Error — sandbox_apply_patchset]`,
+                `Validation failed for ${validationErrors.length} file(s):`,
+                ...validationErrors.map((e) => `  - ${e}`),
+                `No changes were written. Re-read the affected files and retry.`,
+              ].join('\n'),
+            ),
             structuredError: err,
           };
         }
@@ -3105,7 +3658,13 @@ export async function executeSandboxToolCall(
         }
 
         // Snapshot ledger state before Phase 2 writes (for rollback)
-        const ledgerSnapshots = new Map<string, { state: ReturnType<typeof fileLedger.getState>; provenance: ReturnType<typeof fileLedger.getProvenance> }>();
+        const ledgerSnapshots = new Map<
+          string,
+          {
+            state: ReturnType<typeof fileLedger.getState>;
+            provenance: ReturnType<typeof fileLedger.getProvenance>;
+          }
+        >();
         if (checks?.length && rollbackOnFailure) {
           for (const edit of edits) {
             ledgerSnapshots.set(edit.path, {
@@ -3118,21 +3677,23 @@ export async function executeSandboxToolCall(
         // Phase 2: Batch write all files in a single HTTP request
         const writeResults: string[] = [];
         const writeFailures: string[] = [];
-        const successfulWrites = new Map<string, { bytesWritten?: number; versionAfter?: string | null }>();
+        const successfulWrites = new Map<
+          string,
+          { bytesWritten?: number; versionAfter?: string | null }
+        >();
         let staleFailureCount = 0;
 
         // Build index for lookup by path
-        const editResultsByPath = new Map(editResults.map(r => [r.path, r]));
+        const editResultsByPath = new Map(editResults.map((r) => [r.path, r]));
 
         try {
-          const batchEntries: BatchWriteEntry[] = editResults.map(r => ({
+          const batchEntries: BatchWriteEntry[] = editResults.map((r) => ({
             path: r.path,
             content: r.content,
             expected_version: r.version,
           }));
-          const batchResult = await retryOnContainerError(
-            'sandbox_apply_patchset',
-            () => patchsetWorkspaceRevision === undefined
+          const batchResult = await retryOnContainerError('sandbox_apply_patchset', () =>
+            patchsetWorkspaceRevision === undefined
               ? batchWriteToSandbox(sandboxId, batchEntries)
               : batchWriteToSandbox(sandboxId, batchEntries, patchsetWorkspaceRevision),
           );
@@ -3144,11 +3705,16 @@ export async function executeSandboxToolCall(
             const errMsg = batchResult.error || 'Batch write failed with no results';
             const err = classifyError(`${errMsg} (${errCode})`, 'sandbox_apply_patchset');
             return {
-              text: formatStructuredError(err, [
-                `[Tool Error — sandbox_apply_patchset]`,
-                errMsg,
-                batchResult.code ? `Error code: ${batchResult.code}` : null,
-              ].filter(Boolean).join('\n')),
+              text: formatStructuredError(
+                err,
+                [
+                  `[Tool Error — sandbox_apply_patchset]`,
+                  errMsg,
+                  batchResult.code ? `Error code: ${batchResult.code}` : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n'),
+              ),
               structuredError: err,
             };
           }
@@ -3158,8 +3724,10 @@ export async function executeSandboxToolCall(
               sandboxId,
               batchResult.current_workspace_revision ?? batchResult.workspace_revision,
             );
-            const expected = batchResult.expected_workspace_revision ?? patchsetWorkspaceRevision ?? 'unknown';
-            const current = batchResult.current_workspace_revision ?? batchResult.workspace_revision ?? 'unknown';
+            const expected =
+              batchResult.expected_workspace_revision ?? patchsetWorkspaceRevision ?? 'unknown';
+            const current =
+              batchResult.current_workspace_revision ?? batchResult.workspace_revision ?? 'unknown';
             const err: StructuredToolError = {
               type: 'WORKSPACE_CHANGED',
               retryable: false,
@@ -3167,14 +3735,21 @@ export async function executeSandboxToolCall(
               detail: `expected_revision=${expected} current_revision=${current}`,
             };
             return {
-              text: formatStructuredError(err, [
-                `[Tool Error — sandbox_apply_patchset]`,
-                `Workspace changed before the patchset could be written.`,
-                `Expected workspace revision: ${expected}`,
-                `Current workspace revision: ${current}`,
-                staleMarked > 0 ? `Marked ${staleMarked} previously-read file(s) as stale.` : null,
-                `Re-read the affected files, then retry.`,
-              ].filter(Boolean).join('\n')),
+              text: formatStructuredError(
+                err,
+                [
+                  `[Tool Error — sandbox_apply_patchset]`,
+                  `Workspace changed before the patchset could be written.`,
+                  `Expected workspace revision: ${expected}`,
+                  `Current workspace revision: ${current}`,
+                  staleMarked > 0
+                    ? `Marked ${staleMarked} previously-read file(s) as stale.`
+                    : null,
+                  `Re-read the affected files, then retry.`,
+                ]
+                  .filter(Boolean)
+                  .join('\n'),
+              ),
               structuredError: err,
             };
           }
@@ -3198,17 +3773,21 @@ export async function executeSandboxToolCall(
                 bytesWritten: entry.bytes_written,
                 versionAfter: entry.new_version ?? null,
               });
-              writeResults.push(`${entry.path}: ${editInfo?.applied ?? '?'} op(s) applied, ${entry.bytes_written ?? 0} bytes written`);
+              writeResults.push(
+                `${entry.path}: ${editInfo?.applied ?? '?'} op(s) applied, ${entry.bytes_written ?? 0} bytes written`,
+              );
             } else {
               if (entry.code === 'STALE_FILE') {
                 const staleEntry = entry as BatchWriteResultEntry;
                 staleFailureCount += 1;
-                writeFailures.push(recordPatchsetStaleConflict(
-                  sandboxId,
-                  staleEntry.path,
-                  staleEntry.expected_version || editInfo?.version,
-                  staleEntry.current_version,
-                ));
+                writeFailures.push(
+                  recordPatchsetStaleConflict(
+                    sandboxId,
+                    staleEntry.path,
+                    staleEntry.expected_version || editInfo?.version,
+                    staleEntry.current_version,
+                  ),
+                );
               } else {
                 writeFailures.push(`${entry.path}: ${entry.error || 'write failed'}`);
               }
@@ -3233,7 +3812,10 @@ export async function executeSandboxToolCall(
               detail: errMsg,
             };
             return {
-              text: formatStructuredError(err, `[Tool Error — sandbox_apply_patchset] ${err.message}`),
+              text: formatStructuredError(
+                err,
+                `[Tool Error — sandbox_apply_patchset] ${err.message}`,
+              ),
               structuredError: err,
             };
           }
@@ -3242,7 +3824,9 @@ export async function executeSandboxToolCall(
           // Drop workspace revision guard: each sequential write bumps the revision,
           // so passing the original would cause WORKSPACE_CHANGED on file 2+.
           // Per-file expected_version still guards content integrity.
-          console.warn('[sandbox-tools] batch endpoint unavailable (404/405), falling back to sequential writes');
+          console.warn(
+            '[sandbox-tools] batch endpoint unavailable (404/405), falling back to sequential writes',
+          );
           for (const r of editResults) {
             versionCacheDeletePath(sandboxId, r.path);
           }
@@ -3252,12 +3836,14 @@ export async function executeSandboxToolCall(
               if (!writeResult.ok) {
                 if (writeResult.code === 'STALE_FILE') {
                   staleFailureCount += 1;
-                  writeFailures.push(recordPatchsetStaleConflict(
-                    sandboxId,
-                    r.path,
-                    writeResult.expected_version || r.version,
-                    writeResult.current_version,
-                  ));
+                  writeFailures.push(
+                    recordPatchsetStaleConflict(
+                      sandboxId,
+                      r.path,
+                      writeResult.expected_version || r.version,
+                      writeResult.current_version,
+                    ),
+                  );
                 } else {
                   writeFailures.push(`${r.path}: ${writeResult.error || 'write failed'}`);
                 }
@@ -3277,7 +3863,9 @@ export async function executeSandboxToolCall(
                   bytesWritten: writeResult.bytes_written ?? r.content.length,
                   versionAfter: writeResult.new_version ?? null,
                 });
-                writeResults.push(`${r.path}: ${r.applied} op(s) applied, ${writeResult.bytes_written ?? r.content.length} bytes written`);
+                writeResults.push(
+                  `${r.path}: ${r.applied} op(s) applied, ${writeResult.bytes_written ?? r.content.length} bytes written`,
+                );
               }
             } catch (e) {
               writeFailures.push(`${r.path}: ${e instanceof Error ? e.message : String(e)}`);
@@ -3287,39 +3875,43 @@ export async function executeSandboxToolCall(
 
         if (writeFailures.length > 0) {
           const detail = buildPatchsetFailureDetail(writeFailures);
-          const err: StructuredToolError = staleFailureCount > 0
-            ? {
-                type: 'STALE_FILE',
-                retryable: false,
-                message: `Patchset write failed for ${writeFailures.length} file(s), including ${staleFailureCount} stale version conflict(s).`,
-                detail,
-              }
-            : {
-                type: 'WRITE_FAILED',
-                retryable: false,
-                message: `Patchset write failed for ${writeFailures.length} file(s).`,
-                detail,
-              };
+          const err: StructuredToolError =
+            staleFailureCount > 0
+              ? {
+                  type: 'STALE_FILE',
+                  retryable: false,
+                  message: `Patchset write failed for ${writeFailures.length} file(s), including ${staleFailureCount} stale version conflict(s).`,
+                  detail,
+                }
+              : {
+                  type: 'WRITE_FAILED',
+                  retryable: false,
+                  message: `Patchset write failed for ${writeFailures.length} file(s).`,
+                  detail,
+                };
           const lines: string[] = [
             `[Tool Error — sandbox_apply_patchset] (partial failure)`,
             `${writeResults.length} of ${editResults.length} file(s) written successfully:`,
           ];
           if (writeResults.length > 0) {
-            lines.push(...writeResults.map(r => `  ✓ ${r}`));
+            lines.push(...writeResults.map((r) => `  ✓ ${r}`));
           }
           lines.push(`${writeFailures.length} file(s) failed:`);
-          lines.push(...writeFailures.map(f => `  ✗ ${f}`));
+          lines.push(...writeFailures.map((f) => `  ✗ ${f}`));
           if (guardWarnings.length > 0) {
             lines.push('Guard warnings:');
             lines.push(...guardWarnings.map((w) => `  ⚠ ${w}`));
           }
-          lines.push('Re-read failed files before retrying to avoid stale or partial-overwrite risk.');
-          const partialPostconditions = successfulWrites.size > 0
-            ? {
-                touchedFiles: buildPatchsetTouchedFiles(editResults, successfulWrites),
-                guardWarnings: guardWarnings.length > 0 ? guardWarnings : undefined,
-              } satisfies ToolMutationPostconditions
-            : undefined;
+          lines.push(
+            'Re-read failed files before retrying to avoid stale or partial-overwrite risk.',
+          );
+          const partialPostconditions =
+            successfulWrites.size > 0
+              ? ({
+                  touchedFiles: buildPatchsetTouchedFiles(editResults, successfulWrites),
+                  guardWarnings: guardWarnings.length > 0 ? guardWarnings : undefined,
+                } satisfies ToolMutationPostconditions)
+              : undefined;
           appendMutationPostconditions(lines, partialPostconditions);
           return {
             text: formatStructuredError(err, lines.join('\n')),
@@ -3341,13 +3933,28 @@ export async function executeSandboxToolCall(
               const escaped = check.command.replace(/'/g, "'\\''");
               const wrappedCommand = `timeout ${timeoutSec} sh -c '${escaped}' 2>&1`;
               const result = await execInSandbox(sandboxId, wrappedCommand);
-              const output = (result.stdout || '').slice(0, 4000) + (result.stderr ? '\n' + result.stderr.slice(0, 1000) : '');
+              const output =
+                (result.stdout || '').slice(0, 4000) +
+                (result.stderr ? '\n' + result.stderr.slice(0, 1000) : '');
               const passed = result.exitCode === expectedExit;
-              checksResults.push({ command: check.command, passed, exitCode: result.exitCode, output: output.trim() });
-              if (!passed) { checksFailed = true; break; }
+              checksResults.push({
+                command: check.command,
+                passed,
+                exitCode: result.exitCode,
+                output: output.trim(),
+              });
+              if (!passed) {
+                checksFailed = true;
+                break;
+              }
             } catch (checkErr) {
               const errMsg = checkErr instanceof Error ? checkErr.message : String(checkErr);
-              checksResults.push({ command: check.command, passed: false, exitCode: -1, output: errMsg });
+              checksResults.push({
+                command: check.command,
+                passed: false,
+                exitCode: -1,
+                output: errMsg,
+              });
               checksFailed = true;
               break;
             }
@@ -3358,7 +3965,10 @@ export async function executeSandboxToolCall(
         if (checksFailed && rollbackOnFailure) {
           const rollbackResults: string[] = [];
           const rollbackErrors: string[] = [];
-          const rollbackWrites = new Map<string, { bytesWritten?: number; versionAfter?: string | null }>();
+          const rollbackWrites = new Map<
+            string,
+            { bytesWritten?: number; versionAfter?: string | null }
+          >();
           for (const edit of edits) {
             const original = fileContents.get(edit.path);
             if (!original) {
@@ -3383,7 +3993,9 @@ export async function executeSandboxToolCall(
                 rollbackErrors.push(`${edit.path}: ${restoreResult.error || 'restore failed'}`);
               }
             } catch (rollbackErr) {
-              rollbackErrors.push(`${edit.path}: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
+              rollbackErrors.push(
+                `${edit.path}: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`,
+              );
             }
           }
 
@@ -3400,9 +4012,10 @@ export async function executeSandboxToolCall(
             }
           }
 
-          const rollbackLabel = rollbackErrors.length > 0
-            ? `(partial rollback — ${rollbackErrors.length} file(s) failed to restore)`
-            : '(rolled back)';
+          const rollbackLabel =
+            rollbackErrors.length > 0
+              ? `(partial rollback — ${rollbackErrors.length} file(s) failed to restore)`
+              : '(rolled back)';
           const rollbackLines: string[] = [
             `[Tool Result — sandbox_apply_patchset] ${rollbackLabel}`,
             `All ${editResults.length} file(s) were patched, but a post-write check failed:`,
@@ -3411,7 +4024,8 @@ export async function executeSandboxToolCall(
           for (const cr of checksResults) {
             rollbackLines.push(`  ${cr.passed ? '✓' : '✗'} ${cr.command} (exit ${cr.exitCode})`);
             if (cr.output) {
-              const truncOutput = cr.output.length > 800 ? cr.output.slice(0, 800) + '…' : cr.output;
+              const truncOutput =
+                cr.output.length > 800 ? cr.output.slice(0, 800) + '…' : cr.output;
               for (const line of truncOutput.split('\n').slice(0, 15)) {
                 rollbackLines.push(`    ${line}`);
               }
@@ -3419,7 +4033,9 @@ export async function executeSandboxToolCall(
           }
           rollbackLines.push('');
           if (rollbackResults.length > 0) {
-            rollbackLines.push(`Rolled back ${rollbackResults.length} file(s): ${rollbackResults.join(', ')}`);
+            rollbackLines.push(
+              `Rolled back ${rollbackResults.length} file(s): ${rollbackResults.join(', ')}`,
+            );
           }
           if (rollbackErrors.length > 0) {
             rollbackLines.push(`Rollback errors: ${rollbackErrors.join('; ')}`);
@@ -3438,7 +4054,7 @@ export async function executeSandboxToolCall(
         const lines: string[] = [
           `[Tool Result — sandbox_apply_patchset]`,
           `All ${editResults.length} file(s) patched successfully:`,
-          ...writeResults.map(r => `  ✓ ${r}`),
+          ...writeResults.map((r) => `  ✓ ${r}`),
         ];
         if (guardWarnings.length > 0) {
           lines.push('Guard warnings:');
@@ -3456,7 +4072,7 @@ export async function executeSandboxToolCall(
         // Tier 2 ambient diagnostics: full project typecheck after patchset (1A)
         let patchDiagnostics: string | null = null;
         if (call.args.diagnostics !== false) {
-          const changedPaths = editResults.map(r => r.path);
+          const changedPaths = editResults.map((r) => r.path);
           patchDiagnostics = await runPatchsetDiagnostics(sandboxId, changedPaths);
           if (patchDiagnostics) {
             lines.push('', '[DIAGNOSTICS — project typecheck]', patchDiagnostics);
@@ -3464,11 +4080,13 @@ export async function executeSandboxToolCall(
         }
         const patchsetPostconditions: ToolMutationPostconditions = {
           touchedFiles: buildPatchsetTouchedFiles(editResults, successfulWrites),
-          diagnostics: [buildPatchsetDiagnosticSummary(
-            editResults.map((result) => result.path),
-            call.args.diagnostics !== false,
-            patchDiagnostics,
-          )],
+          diagnostics: [
+            buildPatchsetDiagnosticSummary(
+              editResults.map((result) => result.path),
+              call.args.diagnostics !== false,
+              patchDiagnostics,
+            ),
+          ],
           checks: checksResults.length > 0 ? checksResults : undefined,
           guardWarnings: guardWarnings.length > 0 ? guardWarnings : undefined,
         };
@@ -3478,12 +4096,17 @@ export async function executeSandboxToolCall(
       }
 
       default:
-        return { text: `[Tool Error] Unknown sandbox tool: ${String((call as { tool?: unknown }).tool ?? 'unknown')}` };
+        return {
+          text: `[Tool Error] Unknown sandbox tool: ${String((call as { tool?: unknown }).tool ?? 'unknown')}`,
+        };
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[Push] Sandbox tool error:', msg);
     const catchErr = classifyError(msg, String((call as { tool?: unknown }).tool ?? 'unknown'));
-    return { text: formatStructuredError(catchErr, `[Tool Error] ${msg}`), structuredError: catchErr };
+    return {
+      text: formatStructuredError(catchErr, `[Tool Error] ${msg}`),
+      structuredError: catchErr,
+    };
   }
 }

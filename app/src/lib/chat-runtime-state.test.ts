@@ -119,8 +119,6 @@ describe('chat-runtime-state', () => {
       },
     });
 
-    expect(sanitizeConversationRuntimeState(conversation)).toEqual(
-      makeConversation(),
-    );
+    expect(sanitizeConversationRuntimeState(conversation)).toEqual(makeConversation());
   });
 });

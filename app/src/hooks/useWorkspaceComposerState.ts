@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
-import {
-  normalizeKilocodeModelName,
-  type PreferredProvider,
-} from '@/lib/providers';
+import { normalizeKilocodeModelName, type PreferredProvider } from '@/lib/providers';
 import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
 import type { AttachmentData, ChatSendOptions, Conversation } from '@/types';
 
@@ -37,7 +34,8 @@ function readStoredChatModelMemory(): Record<PreferredProvider, string> {
       azure: typeof parsed.azure === 'string' ? parsed.azure.trim() : '',
       bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
       vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
-      kilocode: typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
+      kilocode:
+        typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
       openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
     };
   } catch {
@@ -83,29 +81,32 @@ export function useWorkspaceComposerState({
   switchChat,
   sendMessage,
 }: WorkspaceComposerStateArgs) {
-  const defaultChatModels = useMemo<Record<PreferredProvider, string>>(() => ({
-    ollama: catalog.ollama.model,
-    openrouter: catalog.openRouter.model,
-    zen: catalog.zen.model,
-    nvidia: catalog.nvidia.model,
-    blackbox: catalog.blackbox.model,
-    kilocode: catalog.kilocode.model,
-    openadapter: catalog.openadapter.model,
-    azure: catalog.azure.model,
-    bedrock: catalog.bedrock.model,
-    vertex: catalog.vertex.model,
-  }), [
-    catalog.azure.model,
-    catalog.bedrock.model,
-    catalog.blackbox.model,
-    catalog.kilocode.model,
-    catalog.nvidia.model,
-    catalog.ollama.model,
-    catalog.openadapter.model,
-    catalog.openRouter.model,
-    catalog.vertex.model,
-    catalog.zen.model,
-  ]);
+  const defaultChatModels = useMemo<Record<PreferredProvider, string>>(
+    () => ({
+      ollama: catalog.ollama.model,
+      openrouter: catalog.openRouter.model,
+      zen: catalog.zen.model,
+      nvidia: catalog.nvidia.model,
+      blackbox: catalog.blackbox.model,
+      kilocode: catalog.kilocode.model,
+      openadapter: catalog.openadapter.model,
+      azure: catalog.azure.model,
+      bedrock: catalog.bedrock.model,
+      vertex: catalog.vertex.model,
+    }),
+    [
+      catalog.azure.model,
+      catalog.bedrock.model,
+      catalog.blackbox.model,
+      catalog.kilocode.model,
+      catalog.nvidia.model,
+      catalog.ollama.model,
+      catalog.openadapter.model,
+      catalog.openRouter.model,
+      catalog.vertex.model,
+      catalog.zen.model,
+    ],
+  );
 
   const availableChatProviders = useMemo(
     () => new Set(catalog.availableProviders.map(([provider]) => provider)),
@@ -116,57 +117,88 @@ export function useWorkspaceComposerState({
     if (catalog.activeBackend && availableChatProviders.has(catalog.activeBackend)) {
       return catalog.activeBackend;
     }
-    if (catalog.activeProviderLabel !== 'demo' && availableChatProviders.has(catalog.activeProviderLabel)) {
+    if (
+      catalog.activeProviderLabel !== 'demo' &&
+      availableChatProviders.has(catalog.activeProviderLabel)
+    ) {
       return catalog.activeProviderLabel;
     }
     return catalog.availableProviders[0]?.[0] ?? null;
-  }, [availableChatProviders, catalog.activeBackend, catalog.activeProviderLabel, catalog.availableProviders]);
+  }, [
+    availableChatProviders,
+    catalog.activeBackend,
+    catalog.activeProviderLabel,
+    catalog.availableProviders,
+  ]);
 
-  const [rememberedChatModels, setRememberedChatModels] = useState<Record<PreferredProvider, string>>(
-    () => readStoredChatModelMemory(),
-  );
+  const [rememberedChatModels, setRememberedChatModels] = useState<
+    Record<PreferredProvider, string>
+  >(() => readStoredChatModelMemory());
 
   useEffect(() => {
     safeStorageSet(CHAT_MODEL_MEMORY_STORAGE_KEY, JSON.stringify(rememberedChatModels));
   }, [rememberedChatModels]);
 
-  const rememberChatModel = useCallback((provider: PreferredProvider, model: string | null | undefined) => {
-    const trimmed = typeof model === 'string'
-      ? (provider === 'kilocode' ? normalizeKilocodeModelName(model) : model.trim())
-      : '';
-    if (!trimmed) return;
-    setRememberedChatModels((prev) => (
-      prev[provider] === trimmed
-        ? prev
-        : { ...prev, [provider]: trimmed }
-    ));
-  }, []);
+  const rememberChatModel = useCallback(
+    (provider: PreferredProvider, model: string | null | undefined) => {
+      const trimmed =
+        typeof model === 'string'
+          ? provider === 'kilocode'
+            ? normalizeKilocodeModelName(model)
+            : model.trim()
+          : '';
+      if (!trimmed) return;
+      setRememberedChatModels((prev) =>
+        prev[provider] === trimmed ? prev : { ...prev, [provider]: trimmed },
+      );
+    },
+    [],
+  );
 
-  const normalizeChatDraft = useCallback((draft?: Partial<ChatComposerDraft> | null): ChatComposerDraft => {
-    const models: Record<PreferredProvider, string> = {
-      ollama: draft?.models?.ollama?.trim() || rememberedChatModels.ollama || defaultChatModels.ollama,
-      openrouter: draft?.models?.openrouter?.trim() || rememberedChatModels.openrouter || defaultChatModels.openrouter,
-      zen: draft?.models?.zen?.trim() || rememberedChatModels.zen || defaultChatModels.zen,
-      nvidia: draft?.models?.nvidia?.trim() || rememberedChatModels.nvidia || defaultChatModels.nvidia,
-      blackbox: draft?.models?.blackbox?.trim() || rememberedChatModels.blackbox || defaultChatModels.blackbox,
-      azure: draft?.models?.azure?.trim() || rememberedChatModels.azure || defaultChatModels.azure,
-      bedrock: draft?.models?.bedrock?.trim() || rememberedChatModels.bedrock || defaultChatModels.bedrock,
-      vertex: draft?.models?.vertex?.trim() || rememberedChatModels.vertex || defaultChatModels.vertex,
-      kilocode: normalizeKilocodeModelName(
-        draft?.models?.kilocode?.trim()
-          || rememberedChatModels.kilocode
-          || defaultChatModels.kilocode,
-      ),
-      openadapter: draft?.models?.openadapter?.trim() || rememberedChatModels.openadapter || defaultChatModels.openadapter,
-    };
+  const normalizeChatDraft = useCallback(
+    (draft?: Partial<ChatComposerDraft> | null): ChatComposerDraft => {
+      const models: Record<PreferredProvider, string> = {
+        ollama:
+          draft?.models?.ollama?.trim() || rememberedChatModels.ollama || defaultChatModels.ollama,
+        openrouter:
+          draft?.models?.openrouter?.trim() ||
+          rememberedChatModels.openrouter ||
+          defaultChatModels.openrouter,
+        zen: draft?.models?.zen?.trim() || rememberedChatModels.zen || defaultChatModels.zen,
+        nvidia:
+          draft?.models?.nvidia?.trim() || rememberedChatModels.nvidia || defaultChatModels.nvidia,
+        blackbox:
+          draft?.models?.blackbox?.trim() ||
+          rememberedChatModels.blackbox ||
+          defaultChatModels.blackbox,
+        azure:
+          draft?.models?.azure?.trim() || rememberedChatModels.azure || defaultChatModels.azure,
+        bedrock:
+          draft?.models?.bedrock?.trim() ||
+          rememberedChatModels.bedrock ||
+          defaultChatModels.bedrock,
+        vertex:
+          draft?.models?.vertex?.trim() || rememberedChatModels.vertex || defaultChatModels.vertex,
+        kilocode: normalizeKilocodeModelName(
+          draft?.models?.kilocode?.trim() ||
+            rememberedChatModels.kilocode ||
+            defaultChatModels.kilocode,
+        ),
+        openadapter:
+          draft?.models?.openadapter?.trim() ||
+          rememberedChatModels.openadapter ||
+          defaultChatModels.openadapter,
+      };
 
-    let provider = draft?.provider ?? defaultChatProvider;
-    if (provider && !availableChatProviders.has(provider)) {
-      provider = defaultChatProvider;
-    }
+      let provider = draft?.provider ?? defaultChatProvider;
+      if (provider && !availableChatProviders.has(provider)) {
+        provider = defaultChatProvider;
+      }
 
-    return { provider, models };
-  }, [availableChatProviders, defaultChatModels, defaultChatProvider, rememberedChatModels]);
+      return { provider, models };
+    },
+    [availableChatProviders, defaultChatModels, defaultChatProvider, rememberedChatModels],
+  );
 
   const [storedChatDrafts, setStoredChatDrafts] = useState<Record<string, ChatComposerDraft>>({});
 
@@ -187,9 +219,10 @@ export function useWorkspaceComposerState({
   const activeChatDraft = (() => {
     const storedDraft = activeChatId ? chatDrafts[activeChatId] : null;
     const baseDraft = normalizeChatDraft(storedDraft);
-    const lockedConversationModel = activeConversation?.provider === 'kilocode' && activeConversation.model
-      ? normalizeKilocodeModelName(activeConversation.model)
-      : activeConversation?.model;
+    const lockedConversationModel =
+      activeConversation?.provider === 'kilocode' && activeConversation.model
+        ? normalizeKilocodeModelName(activeConversation.model)
+        : activeConversation?.model;
 
     if (activeConversation?.provider && activeConversation.provider !== 'demo') {
       return normalizeChatDraft({
@@ -203,22 +236,25 @@ export function useWorkspaceComposerState({
     return baseDraft;
   })();
 
-  const upsertChatDraft = useCallback((chatId: string, updates: ChatComposerDraftUpdate) => {
-    setStoredChatDrafts((prev) => {
-      const current = normalizeChatDraft(prev[chatId]);
-      const next = normalizeChatDraft({
-        provider: updates.provider ?? current.provider,
-        models: {
-          ...current.models,
-          ...(updates.models ?? {}),
-        },
+  const upsertChatDraft = useCallback(
+    (chatId: string, updates: ChatComposerDraftUpdate) => {
+      setStoredChatDrafts((prev) => {
+        const current = normalizeChatDraft(prev[chatId]);
+        const next = normalizeChatDraft({
+          provider: updates.provider ?? current.provider,
+          models: {
+            ...current.models,
+            ...(updates.models ?? {}),
+          },
+        });
+        return {
+          ...prev,
+          [chatId]: next,
+        };
       });
-      return {
-        ...prev,
-        [chatId]: next,
-      };
-    });
-  }, [normalizeChatDraft]);
+    },
+    [normalizeChatDraft],
+  );
 
   const ensureDraftChatForComposerChange = useCallback((): string => {
     if (activeChatId && !isProviderLocked && !isModelLocked) {
@@ -228,18 +264,31 @@ export function useWorkspaceComposerState({
     const nextId = createNewChat();
     upsertChatDraft(nextId, activeChatDraft);
     return nextId;
-  }, [activeChatDraft, activeChatId, createNewChat, isModelLocked, isProviderLocked, upsertChatDraft]);
+  }, [
+    activeChatDraft,
+    activeChatId,
+    createNewChat,
+    isModelLocked,
+    isProviderLocked,
+    upsertChatDraft,
+  ]);
 
-  const sendMessageWithChatDraft = useCallback((message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
-    if (activeChatDraft.provider) {
-      rememberChatModel(activeChatDraft.provider, activeChatDraft.models[activeChatDraft.provider]);
-    }
-    return sendMessage(message, attachments, {
-      ...options,
-      provider: activeChatDraft.provider,
-      model: activeChatDraft.provider ? activeChatDraft.models[activeChatDraft.provider] : null,
-    });
-  }, [activeChatDraft, rememberChatModel, sendMessage]);
+  const sendMessageWithChatDraft = useCallback(
+    (message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
+      if (activeChatDraft.provider) {
+        rememberChatModel(
+          activeChatDraft.provider,
+          activeChatDraft.models[activeChatDraft.provider],
+        );
+      }
+      return sendMessage(message, attachments, {
+        ...options,
+        provider: activeChatDraft.provider,
+        model: activeChatDraft.provider ? activeChatDraft.models[activeChatDraft.provider] : null,
+      });
+    },
+    [activeChatDraft, rememberChatModel, sendMessage],
+  );
 
   const handleCreateNewChat = useCallback(() => {
     if (activeChatDraft.provider) {
@@ -249,71 +298,104 @@ export function useWorkspaceComposerState({
     switchChat(id);
   }, [activeChatDraft, createNewChat, rememberChatModel, switchChat]);
 
-  const handleSelectBackend = useCallback((provider: PreferredProvider) => {
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { provider });
-  }, [ensureDraftChatForComposerChange, upsertChatDraft]);
+  const handleSelectBackend = useCallback(
+    (provider: PreferredProvider) => {
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { provider });
+    },
+    [ensureDraftChatForComposerChange, upsertChatDraft],
+  );
 
-  const handleSelectOllamaModelFromChat = useCallback((model: string) => {
-    rememberChatModel('ollama', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { ollama: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+  const handleSelectOllamaModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('ollama', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { ollama: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
 
-  const handleSelectOpenRouterModelFromChat = useCallback((model: string) => {
-    rememberChatModel('openrouter', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { openrouter: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+  const handleSelectOpenRouterModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('openrouter', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { openrouter: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
 
-  const handleSelectZenModelFromChat = useCallback((model: string) => {
-    rememberChatModel('zen', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { zen: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+  const handleSelectZenModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('zen', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { zen: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
 
-  const handleSelectNvidiaModelFromChat = useCallback((model: string) => {
-    rememberChatModel('nvidia', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { nvidia: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+  const handleSelectNvidiaModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('nvidia', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { nvidia: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
 
-  const handleSelectBlackboxModelFromChat = useCallback((model: string) => {
-    rememberChatModel('blackbox', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { blackbox: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+  const handleSelectBlackboxModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('blackbox', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { blackbox: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
 
-  const handleSelectKilocodeModelFromChat = useCallback((model: string) => {
-    const normalizedModel = normalizeKilocodeModelName(model);
-    rememberChatModel('kilocode', normalizedModel);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { kilocode: normalizedModel } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+  const handleSelectKilocodeModelFromChat = useCallback(
+    (model: string) => {
+      const normalizedModel = normalizeKilocodeModelName(model);
+      rememberChatModel('kilocode', normalizedModel);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { kilocode: normalizedModel } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
 
-  const handleSelectOpenAdapterModelFromChat = useCallback((model: string) => {
-    rememberChatModel('openadapter', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { openadapter: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+  const handleSelectOpenAdapterModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('openadapter', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { openadapter: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
 
-  const handleSelectAzureModelFromChat = useCallback((model: string) => {
-    rememberChatModel('azure', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { azure: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+  const handleSelectAzureModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('azure', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { azure: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
 
-  const handleSelectBedrockModelFromChat = useCallback((model: string) => {
-    rememberChatModel('bedrock', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { bedrock: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+  const handleSelectBedrockModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('bedrock', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { bedrock: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
 
-  const handleSelectVertexModelFromChat = useCallback((model: string) => {
-    rememberChatModel('vertex', model);
-    const chatId = ensureDraftChatForComposerChange();
-    upsertChatDraft(chatId, { models: { vertex: model } });
-  }, [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft]);
+  const handleSelectVertexModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('vertex', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { vertex: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
 
   return {
     selectedChatProvider: activeChatDraft.provider,

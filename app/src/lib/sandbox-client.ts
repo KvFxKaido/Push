@@ -26,14 +26,14 @@ import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storag
 // --- Types ---
 
 export interface SandboxEnvironment {
-  tools: Record<string, string>;    // e.g. { node: "v20.18.1", npm: "10.8.2" }
-  project_markers?: string[];       // e.g. ["package.json", "requirements.txt"]
-  warnings?: string[];              // e.g. ["Low disk space: 450M"]
-  disk_free?: string;               // e.g. "45000M"
+  tools: Record<string, string>; // e.g. { node: "v20.18.1", npm: "10.8.2" }
+  project_markers?: string[]; // e.g. ["package.json", "requirements.txt"]
+  warnings?: string[]; // e.g. ["Low disk space: 450M"]
+  disk_free?: string; // e.g. "45000M"
   scripts?: Record<string, string>; // e.g. { test: "vitest run", lint: "eslint ." }
-  git_available?: boolean;          // whether git works in the sandbox
-  container_ttl?: string;           // e.g. "30m"
-  writable_root?: string;           // e.g. "/workspace"
+  git_available?: boolean; // whether git works in the sandbox
+  container_ttl?: string; // e.g. "30m"
+  writable_root?: string; // e.g. "/workspace"
   readiness?: {
     package_manager?: string;
     dependencies?: 'installed' | 'missing' | 'unknown';
@@ -131,15 +131,19 @@ export interface SandboxError {
 
 // User-friendly error messages for each error code
 const ERROR_MESSAGES: Record<string, string> = {
-  MODAL_NOT_CONFIGURED: 'Sandbox is not configured. Ask your admin to set up MODAL_SANDBOX_BASE_URL.',
-  MODAL_URL_INVALID: 'Sandbox URL is misconfigured. The MODAL_SANDBOX_BASE_URL format is incorrect.',
-  MODAL_URL_TRAILING_SLASH: 'Sandbox URL has a trailing slash. Remove it from MODAL_SANDBOX_BASE_URL.',
+  MODAL_NOT_CONFIGURED:
+    'Sandbox is not configured. Ask your admin to set up MODAL_SANDBOX_BASE_URL.',
+  MODAL_URL_INVALID:
+    'Sandbox URL is misconfigured. The MODAL_SANDBOX_BASE_URL format is incorrect.',
+  MODAL_URL_TRAILING_SLASH:
+    'Sandbox URL has a trailing slash. Remove it from MODAL_SANDBOX_BASE_URL.',
   MODAL_NOT_FOUND: 'Sandbox app not deployed. Run: cd sandbox && modal deploy app.py',
   MODAL_AUTH_FAILED: 'Modal authentication failed. Your Modal tokens may have expired.',
   MODAL_UNAVAILABLE: 'Sandbox is starting up. Try again in a few seconds.',
   MODAL_TIMEOUT: 'Sandbox operation timed out. Try a simpler command.',
   MODAL_NETWORK_ERROR: 'Cannot connect to the sandbox. Check your network or Modal status.',
-  MODAL_ERROR: 'Sandbox container error. The container may be unhealthy — try restarting the sandbox.',
+  MODAL_ERROR:
+    'Sandbox container error. The container may be unhealthy — try restarting the sandbox.',
   CONTAINER_ERROR: 'Sandbox container is unhealthy. Restarting the sandbox may fix this.',
   MODAL_UNKNOWN_ERROR: 'An unexpected sandbox error occurred.',
 };
@@ -166,19 +170,29 @@ import type { ToolErrorType } from '@/types';
  */
 export function mapSandboxErrorCode(code: string): ToolErrorType {
   switch (code) {
-    case 'MODAL_TIMEOUT': return 'EXEC_TIMEOUT';
-    case 'MODAL_NETWORK_ERROR': return 'SANDBOX_UNREACHABLE';
+    case 'MODAL_TIMEOUT':
+      return 'EXEC_TIMEOUT';
+    case 'MODAL_NETWORK_ERROR':
+      return 'SANDBOX_UNREACHABLE';
     case 'MODAL_NOT_CONFIGURED':
     case 'MODAL_URL_INVALID':
     case 'MODAL_URL_TRAILING_SLASH':
-    case 'MODAL_NOT_FOUND': return 'SANDBOX_UNREACHABLE';
-    case 'MODAL_AUTH_FAILED': return 'AUTH_FAILURE';
-    case 'MODAL_UNAVAILABLE': return 'SANDBOX_UNREACHABLE';
-    case 'MODAL_ERROR': return 'SANDBOX_UNREACHABLE';
-    case 'CONTAINER_ERROR': return 'SANDBOX_UNREACHABLE';
-    case 'STALE_FILE': return 'STALE_FILE';
-    case 'WORKSPACE_CHANGED': return 'WORKSPACE_CHANGED';
-    default: return 'UNKNOWN';
+    case 'MODAL_NOT_FOUND':
+      return 'SANDBOX_UNREACHABLE';
+    case 'MODAL_AUTH_FAILED':
+      return 'AUTH_FAILURE';
+    case 'MODAL_UNAVAILABLE':
+      return 'SANDBOX_UNREACHABLE';
+    case 'MODAL_ERROR':
+      return 'SANDBOX_UNREACHABLE';
+    case 'CONTAINER_ERROR':
+      return 'SANDBOX_UNREACHABLE';
+    case 'STALE_FILE':
+      return 'STALE_FILE';
+    case 'WORKSPACE_CHANGED':
+      return 'WORKSPACE_CHANGED';
+    default:
+      return 'UNKNOWN';
   }
 }
 
@@ -186,7 +200,7 @@ export function mapSandboxErrorCode(code: string): ToolErrorType {
 
 const SANDBOX_BASE = '/api/sandbox';
 const DEFAULT_TIMEOUT_MS = 30_000; // 30s for most operations
-const EXEC_TIMEOUT_MS = 120_000;   // 120s for command execution
+const EXEC_TIMEOUT_MS = 120_000; // 120s for command execution
 let sandboxOwnerToken: string | null = null;
 const sandboxOwnerTokensById = new Map<string, string>();
 
@@ -432,12 +446,13 @@ function parsePersistedSandboxLifecycleEvents(raw: string | null): SandboxLifecy
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .filter((item): item is SandboxLifecycleEvent => (
-        Boolean(item)
-        && typeof item === 'object'
-        && typeof (item as SandboxLifecycleEvent).timestamp === 'number'
-        && typeof (item as SandboxLifecycleEvent).message === 'string'
-      ))
+      .filter(
+        (item): item is SandboxLifecycleEvent =>
+          Boolean(item) &&
+          typeof item === 'object' &&
+          typeof (item as SandboxLifecycleEvent).timestamp === 'number' &&
+          typeof (item as SandboxLifecycleEvent).message === 'string',
+      )
       .slice(-20);
   } catch {
     return [];
@@ -449,7 +464,9 @@ function persistSandboxLifecycleEvents(sandboxId: string, events: SandboxLifecyc
 }
 
 function loadSandboxLifecycleEvents(sandboxId: string): SandboxLifecycleEvent[] {
-  return parsePersistedSandboxLifecycleEvents(safeStorageGet(buildSandboxLifecycleStorageKey(sandboxId)));
+  return parsePersistedSandboxLifecycleEvents(
+    safeStorageGet(buildSandboxLifecycleStorageKey(sandboxId)),
+  );
 }
 
 export function recordSandboxLifecycleEvent(sandboxId: string, message: string): void {
@@ -565,7 +582,12 @@ export function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null
     if (markerSet.has('pnpm-lock.yaml')) return 'pnpm';
     if (markerSet.has('yarn.lock')) return 'yarn';
     if (markerSet.has('package-lock.json') || markerSet.has('package.json')) return 'npm';
-    if (markerSet.has('pyproject.toml') || markerSet.has('requirements.txt') || markerSet.has('setup.py')) return 'python';
+    if (
+      markerSet.has('pyproject.toml') ||
+      markerSet.has('requirements.txt') ||
+      markerSet.has('setup.py')
+    )
+      return 'python';
     if (markerSet.has('Cargo.toml')) return 'cargo';
     if (markerSet.has('go.mod')) return 'go';
     if (markerSet.has('pom.xml')) return 'maven';
@@ -574,7 +596,10 @@ export function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null
     return undefined;
   };
 
-  const buildScriptCommand = (packageManager: string | undefined, scriptName: string): string | undefined => {
+  const buildScriptCommand = (
+    packageManager: string | undefined,
+    scriptName: string,
+  ): string | undefined => {
     if (!packageManager) return undefined;
     if (packageManager === 'npm') {
       return scriptName === 'test' ? 'npm test' : `npm run ${scriptName}`;
@@ -614,16 +639,22 @@ export function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null
     readiness.test_runner = inferTestRunner(scripts.test);
   }
   if (scripts.typecheck) {
-    readiness.typecheck_command = buildScriptCommand(packageManager, 'typecheck') ?? scripts.typecheck;
-  } else if (scripts.check && /\b(tsc|typecheck|type-check|pyright|mypy|cargo test|go test)\b/i.test(scripts.check)) {
+    readiness.typecheck_command =
+      buildScriptCommand(packageManager, 'typecheck') ?? scripts.typecheck;
+  } else if (
+    scripts.check &&
+    /\b(tsc|typecheck|type-check|pyright|mypy|cargo test|go test)\b/i.test(scripts.check)
+  ) {
     readiness.typecheck_command = buildScriptCommand(packageManager, 'check') ?? scripts.check;
   }
 
   if (
-    readiness.dependencies === 'missing'
-    && (readiness.test_command || readiness.typecheck_command || scripts.build)
+    readiness.dependencies === 'missing' &&
+    (readiness.test_command || readiness.typecheck_command || scripts.build)
   ) {
-    warnings.push('Dependencies not installed (node_modules missing); test/typecheck/build scripts may fail until install.');
+    warnings.push(
+      'Dependencies not installed (node_modules missing); test/typecheck/build scripts may fail until install.',
+    );
   }
 
   const result: SandboxEnvironment = { tools };
@@ -653,11 +684,11 @@ const ENVIRONMENT_PROBE_SCRIPT =
   ' [ -f "$f" ] && echo "$f"; done;' +
   'echo "---SCRIPTS---";' +
   'cd /workspace 2>/dev/null && if [ -f package.json ]; then' +
-  " python3 -c \"import json,sys;" +
+  ' python3 -c "import json,sys;' +
   " d=json.load(open('package.json'));" +
   " s=d.get('scripts');" +
-  " s=s if isinstance(s,dict) else {};" +
-  " [print(f\\\"{k}:{str(v).replace(chr(10),' ')}\\\") for k,v in s.items()" +
+  ' s=s if isinstance(s,dict) else {};' +
+  ' [print(f\\"{k}:{str(v).replace(chr(10),\' \')}\\") for k,v in s.items()' +
   " if k in ('test','lint','typecheck','build','dev','start','check','format')]" +
   '" 2>/dev/null; fi;' +
   'echo "---READINESS---";' +
@@ -670,7 +701,9 @@ const ENVIRONMENT_PROBE_SCRIPT =
  * Run environment probe on an existing sandbox (used on reconnect).
  * Best-effort — returns null on any failure.
  */
-export async function probeSandboxEnvironment(sandboxId: string): Promise<SandboxEnvironment | null> {
+export async function probeSandboxEnvironment(
+  sandboxId: string,
+): Promise<SandboxEnvironment | null> {
   try {
     const result = await execInSandbox(sandboxId, ENVIRONMENT_PROBE_SCRIPT);
     const env = parseEnvironmentProbe(result.stdout);
@@ -681,7 +714,10 @@ export async function probeSandboxEnvironment(sandboxId: string): Promise<Sandbo
   }
 }
 
-function withOwnerToken(body: Record<string, unknown>, sandboxId?: string): Record<string, unknown> {
+function withOwnerToken(
+  body: Record<string, unknown>,
+  sandboxId?: string,
+): Record<string, unknown> {
   const token = (sandboxId ? sandboxOwnerTokensById.get(sandboxId) : null) || sandboxOwnerToken;
   if (!token) {
     throw new Error('Sandbox access token missing. Start or reconnect the sandbox session.');
@@ -695,7 +731,7 @@ const MAX_RETRIES = 4;
 const BASE_DELAY_MS = 2000; // 2s, 4s, 8s, 16s exponential backoff
 
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -777,14 +813,18 @@ async function withRetry<T>(
 
       // Exponential backoff: 2s, 4s, 8s, 16s
       const delayMs = BASE_DELAY_MS * Math.pow(2, attempt);
-      console.log(`[sandbox-client] ${endpoint} attempt ${attempt + 1} failed, retrying in ${delayMs}ms...`);
+      console.log(
+        `[sandbox-client] ${endpoint} attempt ${attempt + 1} failed, retrying in ${delayMs}ms...`,
+      );
       onRetryAttempt?.(attempt + 1, delayMs, lastError);
       await sleep(delayMs);
     }
   }
 
   onRetries?.(maxRetries);
-  throw new Error(`Sandbox ${endpoint} failed after ${maxRetries + 1} attempts: ${lastError?.message}`);
+  throw new Error(
+    `Sandbox ${endpoint} failed after ${maxRetries + 1} attempts: ${lastError?.message}`,
+  );
 }
 
 async function sandboxFetch<T>(
@@ -795,80 +835,92 @@ async function sandboxFetch<T>(
   maxRetries: number = MAX_RETRIES,
 ): Promise<T> {
   const tracer = getPushTracer('push.sandbox');
-  return tracer.startActiveSpan('sandbox.request', {
-    kind: SpanKind.CLIENT,
-    attributes: {
-      'push.sandbox.endpoint': endpoint,
-      'push.timeout_ms': timeoutMs,
-      'push.max_retries': maxRetries,
+  return tracer.startActiveSpan(
+    'sandbox.request',
+    {
+      kind: SpanKind.CLIENT,
+      attributes: {
+        'push.sandbox.endpoint': endpoint,
+        'push.timeout_ms': timeoutMs,
+        'push.max_retries': maxRetries,
+      },
     },
-  }, async (span) => {
-    const requestId = createRequestId('sandbox');
-    let retryCount = 0;
+    async (span) => {
+      const requestId = createRequestId('sandbox');
+      let retryCount = 0;
 
-    try {
-      const result = await withRetry(async () => {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const result = await withRetry(
+          async () => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-        try {
-          const headers = injectTraceHeaders({
-            'Content-Type': 'application/json',
-            [REQUEST_ID_HEADER]: requestId,
-          });
+            try {
+              const headers = injectTraceHeaders({
+                'Content-Type': 'application/json',
+                [REQUEST_ID_HEADER]: requestId,
+              });
 
-          const res = await fetch(`${SANDBOX_BASE}/${endpoint}`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(body),
-            signal: controller.signal,
-          });
-          span.setAttribute('http.response.status_code', res.status);
+              const res = await fetch(`${SANDBOX_BASE}/${endpoint}`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(body),
+                signal: controller.signal,
+              });
+              span.setAttribute('http.response.status_code', res.status);
 
-          if (!res.ok) {
-            const text = await res.text().catch(() => '');
-            // Attach status code for retry logic
-            const error = formatSandboxError(res.status, text);
-            (error as Error & { statusCode?: number }).statusCode = res.status;
-            throw error;
-          }
+              if (!res.ok) {
+                const text = await res.text().catch(() => '');
+                // Attach status code for retry logic
+                const error = formatSandboxError(res.status, text);
+                (error as Error & { statusCode?: number }).statusCode = res.status;
+                throw error;
+              }
 
-          return res.json();
-        } catch (err) {
-          if (err instanceof DOMException && err.name === 'AbortError') {
-            throw new Error(`Sandbox ${endpoint} timed out after ${Math.round(timeoutMs / 1000)}s — the server may be slow or unreachable.`);
-          }
-          throw err;
-        } finally {
-          clearTimeout(timer);
-        }
-      }, endpoint, (retries) => {
-        retryCount = retries;
-        onRetries?.(retries);
-      }, maxRetries, (attempt, delayMs, error) => {
-        span.addEvent('sandbox.retry', {
-          'push.retry.attempt': attempt,
-          'push.retry.delay_ms': delayMs,
-          'push.retry.message': error.message,
+              return res.json();
+            } catch (err) {
+              if (err instanceof DOMException && err.name === 'AbortError') {
+                throw new Error(
+                  `Sandbox ${endpoint} timed out after ${Math.round(timeoutMs / 1000)}s — the server may be slow or unreachable.`,
+                );
+              }
+              throw err;
+            } finally {
+              clearTimeout(timer);
+            }
+          },
+          endpoint,
+          (retries) => {
+            retryCount = retries;
+            onRetries?.(retries);
+          },
+          maxRetries,
+          (attempt, delayMs, error) => {
+            span.addEvent('sandbox.retry', {
+              'push.retry.attempt': attempt,
+              'push.retry.delay_ms': delayMs,
+              'push.retry.message': error.message,
+            });
+          },
+        );
+
+        setSpanAttributes(span, {
+          'push.request_id': requestId,
+          'push.retry_count': retryCount,
         });
-      });
-
-      setSpanAttributes(span, {
-        'push.request_id': requestId,
-        'push.retry_count': retryCount,
-      });
-      span.setStatus({ code: SpanStatusCode.OK });
-      return result;
-    } catch (error) {
-      recordSpanError(span, error, {
-        'push.request_id': requestId,
-        'push.retry_count': retryCount,
-      });
-      throw error;
-    } finally {
-      span.end();
-    }
-  });
+        span.setStatus({ code: SpanStatusCode.OK });
+        return result;
+      } catch (error) {
+        recordSpanError(span, error, {
+          'push.request_id': requestId,
+          'push.retry_count': retryCount,
+        });
+        throw error;
+      } finally {
+        span.end();
+      }
+    },
+  );
 }
 
 // --- Public API ---
@@ -879,15 +931,21 @@ export async function createSandbox(
   githubToken?: string,
   githubIdentity?: GitCommitIdentity,
 ): Promise<SandboxSession> {
-  const data = await sandboxFetch<{ sandbox_id: string | null; owner_token?: string; status?: string; error?: string; workspace_revision?: number; environment?: SandboxEnvironment | null }>(
-    'create',
-    {
-      repo,
-      branch: branch || 'main',
-      github_token: githubToken || '',
-      github_identity: githubIdentity ? { name: githubIdentity.name, email: githubIdentity.email } : undefined,
-    },
-  );
+  const data = await sandboxFetch<{
+    sandbox_id: string | null;
+    owner_token?: string;
+    status?: string;
+    error?: string;
+    workspace_revision?: number;
+    environment?: SandboxEnvironment | null;
+  }>('create', {
+    repo,
+    branch: branch || 'main',
+    github_token: githubToken || '',
+    github_identity: githubIdentity
+      ? { name: githubIdentity.name, email: githubIdentity.email }
+      : undefined,
+  });
 
   if (!data.sandbox_id || !data.owner_token) {
     return { sandboxId: '', status: 'error', error: data.error || 'Unknown error' };
@@ -905,7 +963,13 @@ export async function createSandbox(
 
   recordSandboxLifecycleEvent(data.sandbox_id, 'Workspace created');
 
-  return { sandboxId: data.sandbox_id, ownerToken: data.owner_token, status: 'ready', workspaceRevision: data.workspace_revision, environment };
+  return {
+    sandboxId: data.sandbox_id,
+    ownerToken: data.owner_token,
+    status: 'ready',
+    workspaceRevision: data.workspace_revision,
+    environment,
+  };
 }
 
 export async function execInSandbox(
@@ -917,14 +981,24 @@ export async function execInSandbox(
   },
 ): Promise<ExecResult> {
   // API returns snake_case, we need camelCase
-  const raw = await sandboxFetch<{ stdout: string; stderr: string; exit_code: number; truncated: boolean; error?: string; workspace_revision?: number }>(
+  const raw = await sandboxFetch<{
+    stdout: string;
+    stderr: string;
+    exit_code: number;
+    truncated: boolean;
+    error?: string;
+    workspace_revision?: number;
+  }>(
     'exec',
-    withOwnerToken({
-      sandbox_id: sandboxId,
-      command,
-      workdir: workdir || '/workspace',
-      mark_workspace_mutated: options?.markWorkspaceMutated === true,
-    }, sandboxId),
+    withOwnerToken(
+      {
+        sandbox_id: sandboxId,
+        command,
+        workdir: workdir || '/workspace',
+        mark_workspace_mutated: options?.markWorkspaceMutated === true,
+      },
+      sandboxId,
+    ),
     EXEC_TIMEOUT_MS,
   );
   if (typeof raw.workspace_revision === 'number') {
@@ -954,7 +1028,11 @@ export async function readSymbolsFromSandbox(
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     const lowerMsg = msg.toLowerCase();
-    const isTransient = lowerMsg.includes('timeout') || lowerMsg.includes('timed out') || lowerMsg.includes('signal') || lowerMsg.includes('aborterror');
+    const isTransient =
+      lowerMsg.includes('timeout') ||
+      lowerMsg.includes('timed out') ||
+      lowerMsg.includes('signal') ||
+      lowerMsg.includes('aborterror');
     if (!isTransient) {
       throw error;
     }
@@ -1001,26 +1079,28 @@ export async function readSymbolsFromSandbox(
 
   const symbols = Array.isArray(parsed.symbols)
     ? parsed.symbols
-      .filter((symbol): symbol is { name: string; kind: string; line: number; signature: string } => (
-        typeof symbol?.name === 'string'
-        && typeof symbol.kind === 'string'
-        && typeof symbol.line === 'number'
-        && Number.isFinite(symbol.line)
-        && typeof symbol.signature === 'string'
-      ))
-      .map((symbol) => ({
-        name: symbol.name,
-        kind: symbol.kind,
-        line: symbol.line,
-        signature: symbol.signature,
-      }))
+        .filter(
+          (symbol): symbol is { name: string; kind: string; line: number; signature: string } =>
+            typeof symbol?.name === 'string' &&
+            typeof symbol.kind === 'string' &&
+            typeof symbol.line === 'number' &&
+            Number.isFinite(symbol.line) &&
+            typeof symbol.signature === 'string',
+        )
+        .map((symbol) => ({
+          name: symbol.name,
+          kind: symbol.kind,
+          line: symbol.line,
+          signature: symbol.signature,
+        }))
     : [];
 
   return {
     symbols,
-    totalLines: typeof parsed.total_lines === 'number' && Number.isFinite(parsed.total_lines)
-      ? parsed.total_lines
-      : 0,
+    totalLines:
+      typeof parsed.total_lines === 'number' && Number.isFinite(parsed.total_lines)
+        ? parsed.total_lines
+        : 0,
   };
 }
 
@@ -1057,19 +1137,20 @@ export async function findReferencesInSandbox(
 
   const references = Array.isArray(parsed.references)
     ? parsed.references
-      .filter((reference): reference is SandboxReference => (
-        typeof reference?.file === 'string'
-        && typeof reference.line === 'number'
-        && Number.isFinite(reference.line)
-        && typeof reference.context === 'string'
-        && (reference.kind === 'import' || reference.kind === 'call')
-      ))
-      .map((reference) => ({
-        file: reference.file,
-        line: reference.line,
-        context: reference.context,
-        kind: reference.kind,
-      }))
+        .filter(
+          (reference): reference is SandboxReference =>
+            typeof reference?.file === 'string' &&
+            typeof reference.line === 'number' &&
+            Number.isFinite(reference.line) &&
+            typeof reference.context === 'string' &&
+            (reference.kind === 'import' || reference.kind === 'call'),
+        )
+        .map((reference) => ({
+          file: reference.file,
+          line: reference.line,
+          context: reference.context,
+          kind: reference.kind,
+        }))
     : [];
 
   return {
@@ -1124,7 +1205,7 @@ export interface WriteResult {
 const WRITE_TIMEOUT_MS = 60_000; // 60s for write operations (large files can be slow)
 
 const WRITE_MAX_RETRIES = 1; // Writes retry once — not 4x. A timed-out write may have succeeded
-                              // server-side; burning 5 × 60s on retries creates 5-min hangs.
+// server-side; burning 5 × 60s on retries creates 5-min hangs.
 
 export async function writeToSandbox(
   sandboxId: string,
@@ -1133,14 +1214,20 @@ export async function writeToSandbox(
   expectedVersion?: string,
   expectedWorkspaceRevision?: number,
 ): Promise<WriteResult> {
-  const result = await sandboxFetch<WriteResult>('write', {
-    ...withOwnerToken({}, sandboxId),
-    sandbox_id: sandboxId,
-    path,
-    content,
-    expected_version: expectedVersion,
-    expected_workspace_revision: expectedWorkspaceRevision,
-  }, WRITE_TIMEOUT_MS, undefined, WRITE_MAX_RETRIES);
+  const result = await sandboxFetch<WriteResult>(
+    'write',
+    {
+      ...withOwnerToken({}, sandboxId),
+      sandbox_id: sandboxId,
+      path,
+      content,
+      expected_version: expectedVersion,
+      expected_workspace_revision: expectedWorkspaceRevision,
+    },
+    WRITE_TIMEOUT_MS,
+    undefined,
+    WRITE_MAX_RETRIES,
+  );
   if (typeof result.workspace_revision === 'number') {
     setSandboxWorkspaceRevision(sandboxId, result.workspace_revision);
     if (result.ok && typeof result.new_version === 'string' && result.new_version) {
@@ -1192,12 +1279,18 @@ export async function batchWriteToSandbox(
   files: BatchWriteEntry[],
   expectedWorkspaceRevision?: number,
 ): Promise<BatchWriteResult> {
-  const result = await sandboxFetch<BatchWriteResult>('batch-write', {
-    ...withOwnerToken({}, sandboxId),
-    sandbox_id: sandboxId,
-    files,
-    expected_workspace_revision: expectedWorkspaceRevision,
-  }, BATCH_WRITE_TIMEOUT_MS, undefined, WRITE_MAX_RETRIES);
+  const result = await sandboxFetch<BatchWriteResult>(
+    'batch-write',
+    {
+      ...withOwnerToken({}, sandboxId),
+      sandbox_id: sandboxId,
+      files,
+      expected_workspace_revision: expectedWorkspaceRevision,
+    },
+    BATCH_WRITE_TIMEOUT_MS,
+    undefined,
+    WRITE_MAX_RETRIES,
+  );
   if (typeof result.workspace_revision === 'number') {
     setSandboxWorkspaceRevision(sandboxId, result.workspace_revision);
     for (const entry of result.results) {
@@ -1214,18 +1307,14 @@ export async function batchWriteToSandbox(
   return result;
 }
 
-export async function getSandboxDiff(
-  sandboxId: string,
-): Promise<DiffResult> {
+export async function getSandboxDiff(sandboxId: string): Promise<DiffResult> {
   return sandboxFetch<DiffResult>('diff', {
     ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
   });
 }
 
-export async function cleanupSandbox(
-  sandboxId: string,
-): Promise<{ ok: boolean }> {
+export async function cleanupSandbox(sandboxId: string): Promise<{ ok: boolean }> {
   const tokenForSandbox = getSandboxOwnerToken(sandboxId);
   const result = await sandboxFetch<{ ok: boolean }>('cleanup', {
     ...withOwnerToken({}, sandboxId),
@@ -1272,12 +1361,16 @@ export async function downloadFromSandbox(
     size_bytes?: number;
     format?: string;
     error?: string;
-  }>('download', {
-    ...withOwnerToken({}, sandboxId),
-    sandbox_id: sandboxId,
-    path,
-    format: 'tar.gz',
-  }, ARCHIVE_TIMEOUT_MS);
+  }>(
+    'download',
+    {
+      ...withOwnerToken({}, sandboxId),
+      sandbox_id: sandboxId,
+      path,
+      format: 'tar.gz',
+    },
+    ARCHIVE_TIMEOUT_MS,
+  );
 
   if (raw.ok) {
     recordSandboxLifecycleEvent(sandboxId, `Workspace tar.gz archive exported`);
@@ -1304,12 +1397,16 @@ export async function downloadFileFromSandbox(
     size_bytes?: number;
     format?: string;
     error?: string;
-  }>('download', {
-    ...withOwnerToken({}, sandboxId),
-    sandbox_id: sandboxId,
-    path,
-    format: 'raw',
-  }, ARCHIVE_TIMEOUT_MS);
+  }>(
+    'download',
+    {
+      ...withOwnerToken({}, sandboxId),
+      sandbox_id: sandboxId,
+      path,
+      format: 'raw',
+    },
+    ARCHIVE_TIMEOUT_MS,
+  );
 
   if (raw.ok) {
     recordSandboxLifecycleEvent(sandboxId, `File ${path} downloaded`);
@@ -1343,13 +1440,17 @@ export async function hydrateSnapshotInSandbox(
     restored_files?: number;
     error?: string;
     workspace_revision?: number;
-  }>('restore', {
-    ...withOwnerToken({}, sandboxId),
-    sandbox_id: sandboxId,
-    archive_base64: archiveBase64,
-    path,
-    format: 'tar.gz',
-  }, RESTORE_TIMEOUT_MS);
+  }>(
+    'restore',
+    {
+      ...withOwnerToken({}, sandboxId),
+      sandbox_id: sandboxId,
+      archive_base64: archiveBase64,
+      path,
+      format: 'tar.gz',
+    },
+    RESTORE_TIMEOUT_MS,
+  );
   if (typeof raw.workspace_revision === 'number') {
     setSandboxWorkspaceRevision(sandboxId, raw.workspace_revision);
   }
@@ -1455,32 +1556,55 @@ export async function sandboxStatus(sandboxId: string): Promise<SandboxStatusRes
 
   for (const line of output.split('\n')) {
     const trimmed = line.trim();
-    if (trimmed === '---HEAD---') { currentSection = 'head'; continue; }
-    if (trimmed === '---STATUS---') { currentSection = 'status'; continue; }
-    if (trimmed === '---STAT---') { currentSection = 'stat'; continue; }
-    if (trimmed === '---NAMES---') { currentSection = 'names'; continue; }
+    if (trimmed === '---HEAD---') {
+      currentSection = 'head';
+      continue;
+    }
+    if (trimmed === '---STATUS---') {
+      currentSection = 'status';
+      continue;
+    }
+    if (trimmed === '---STAT---') {
+      currentSection = 'stat';
+      continue;
+    }
+    if (trimmed === '---NAMES---') {
+      currentSection = 'names';
+      continue;
+    }
     if (currentSection) {
-      sections[currentSection] = (sections[currentSection] || '') + (sections[currentSection] ? '\n' : '') + line;
+      sections[currentSection] =
+        (sections[currentSection] || '') + (sections[currentSection] ? '\n' : '') + line;
     }
   }
 
   const head = (sections.head || 'unknown').trim();
-  const dirtyFiles = (sections.status || '').split('\n').map(l => l.trim()).filter(Boolean);
+  const dirtyFiles = (sections.status || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
   const diffStat = (sections.stat || '').trim();
-  const allChangedFiles = (sections.names || '').split('\n').map(l => l.trim()).filter(Boolean);
+  const allChangedFiles = (sections.names || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
 
   // Truncate to 50 files per design doc
   const MAX_CHANGED_FILES = 50;
-  const changedFiles = allChangedFiles.length > MAX_CHANGED_FILES
-    ? [...allChangedFiles.slice(0, MAX_CHANGED_FILES), `(and ${allChangedFiles.length - MAX_CHANGED_FILES} more files)`]
-    : allChangedFiles;
+  const changedFiles =
+    allChangedFiles.length > MAX_CHANGED_FILES
+      ? [
+          ...allChangedFiles.slice(0, MAX_CHANGED_FILES),
+          `(and ${allChangedFiles.length - MAX_CHANGED_FILES} more files)`,
+        ]
+      : allChangedFiles;
 
   return {
     head,
     dirtyFiles,
     diffStat,
     changedFiles,
-    error: result.exitCode !== 0 ? (result.stderr || 'git command failed') : undefined,
+    error: result.exitCode !== 0 ? result.stderr || 'git command failed' : undefined,
   };
 }
 
@@ -1502,5 +1626,8 @@ export async function fetchSandboxDiff(sandboxId: string): Promise<string> {
   const result = await execInSandbox(sandboxId, SANDBOX_DIFF_CAPTURE_COMMAND);
   const diff = result.stdout || '';
   if (diff.length <= DIFF_MAX_BYTES) return diff;
-  return diff.slice(0, Math.max(0, DIFF_MAX_BYTES - DIFF_TRUNCATION_SUFFIX.length)) + DIFF_TRUNCATION_SUFFIX;
+  return (
+    diff.slice(0, Math.max(0, DIFF_MAX_BYTES - DIFF_TRUNCATION_SUFFIX.length)) +
+    DIFF_TRUNCATION_SUFFIX
+  );
 }

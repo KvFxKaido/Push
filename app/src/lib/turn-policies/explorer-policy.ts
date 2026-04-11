@@ -17,14 +17,13 @@ import { EXPLORER_ALLOWED_TOOLS } from '../explorer-constants';
  * This is the policy equivalent of the existing buildExplorerHooks() pre-hook,
  * expressed as a TurnPolicy so it lives alongside other Explorer invariants.
  */
-function readOnlyGate(
-  toolName: string,
-): { action: 'deny'; reason: string } | null {
+function readOnlyGate(toolName: string): { action: 'deny'; reason: string } | null {
   if (EXPLORER_ALLOWED_TOOLS.has(toolName)) return null;
   return {
     action: 'deny',
-    reason: `Explorer is read-only. "${toolName}" is not allowed. `
-      + `Use only inspection/search tools such as ${Array.from(EXPLORER_ALLOWED_TOOLS).sort().join(', ')}.`,
+    reason:
+      `Explorer is read-only. "${toolName}" is not allowed. ` +
+      `Use only inspection/search tools such as ${Array.from(EXPLORER_ALLOWED_TOOLS).sort().join(', ')}.`,
   };
 }
 
@@ -35,9 +34,7 @@ function readOnlyGate(
  * We check for the required output sections (Summary, Findings, etc.)
  * to distinguish a genuine completion from a premature/empty one.
  */
-function noEmptyReport(
-  response: string,
-): { action: 'inject'; message: ChatMessage } | null {
+function noEmptyReport(response: string): { action: 'inject'; message: ChatMessage } | null {
   const trimmed = response.trim();
 
   // If it contains a tool call JSON block, it's not a completion attempt
@@ -77,12 +74,8 @@ export function createExplorerPolicy(): TurnPolicy {
     name: 'explorer-core',
     role: 'explorer',
 
-    beforeToolExec: [
-      (toolName) => readOnlyGate(toolName),
-    ],
+    beforeToolExec: [(toolName) => readOnlyGate(toolName)],
 
-    afterModelCall: [
-      (response) => noEmptyReport(response),
-    ],
+    afterModelCall: [(response) => noEmptyReport(response)],
   };
 }

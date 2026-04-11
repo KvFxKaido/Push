@@ -3,7 +3,9 @@ import { decodeGitHubBase64Utf8, detectToolCall } from './github-tools';
 
 describe('detectToolCall delegation validation', () => {
   it('trims delegation strings and drops blank entries', () => {
-    const result = detectToolCall('```json\n{"tool":"delegate_coder","args":{"task":"   ","tasks":["  inspect auth  ","   "],"files":[" src/auth.ts ",""],"intent":" tighten handoff flow ","deliverable":" a concise summary ","knownContext":[" existing note ","   "],"constraints":[" keep the API stable "," "],"declaredCapabilities":["repo:read","repo:write","not:a-real-capability"]}}\n```');
+    const result = detectToolCall(
+      '```json\n{"tool":"delegate_coder","args":{"task":"   ","tasks":["  inspect auth  ","   "],"files":[" src/auth.ts ",""],"intent":" tighten handoff flow ","deliverable":" a concise summary ","knownContext":[" existing note ","   "],"constraints":[" keep the API stable "," "],"declaredCapabilities":["repo:read","repo:write","not:a-real-capability"]}}\n```',
+    );
 
     expect(result).toEqual({
       tool: 'delegate_coder',

@@ -46,14 +46,16 @@ export function HubNotesTab({
 }: HubNotesTabProps) {
   const [memoryName, setMemoryName] = useState('');
   const activeMemory = activeMemoryId
-    ? scratchpadMemories.find((memory) => memory.id === activeMemoryId) ?? null
+    ? (scratchpadMemories.find((memory) => memory.id === activeMemoryId) ?? null)
     : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         <div className="flex min-h-full flex-col gap-4">
-          <section className={`flex min-h-[320px] flex-[1.55] flex-col gap-3 p-3.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
+          <section
+            className={`flex min-h-[320px] flex-[1.55] flex-col gap-3 p-3.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -66,7 +68,8 @@ export function HubNotesTab({
                 </p>
                 {activeMemory && (
                   <p className="mt-2 text-push-2xs text-push-fg-dim">
-                    Loaded memory: <span className="text-push-fg-secondary">{activeMemory.name}</span>
+                    Loaded memory:{' '}
+                    <span className="text-push-fg-secondary">{activeMemory.name}</span>
                   </p>
                 )}
               </div>
@@ -175,11 +178,7 @@ export function HubNotesTab({
             </div>
 
             <div className="min-h-0 flex-1 overflow-hidden rounded-[16px] border border-push-edge/60 bg-black/10">
-              <HubKeptTab
-                artifacts={artifacts}
-                onUnpin={onUnpin}
-                onUpdateLabel={onUpdateLabel}
-              />
+              <HubKeptTab artifacts={artifacts} onUnpin={onUnpin} onUpdateLabel={onUpdateLabel} />
             </div>
           </section>
         </div>

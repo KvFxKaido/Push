@@ -31,7 +31,8 @@ vi.mock(import('./providers'), async (importOriginal) => {
 
 vi.mock('./role-memory-context', () => ({
   buildAuditorRuntimeContext: (...args: unknown[]) => mockBuildAuditorRuntimeContext(...args),
-  buildAuditorEvaluationMemoryBlock: (...args: unknown[]) => mockBuildAuditorEvaluationMemoryBlock(...args),
+  buildAuditorEvaluationMemoryBlock: (...args: unknown[]) =>
+    mockBuildAuditorEvaluationMemoryBlock(...args),
 }));
 
 import { runAuditor, runAuditorEvaluation } from './auditor-agent';
@@ -64,15 +65,13 @@ describe('runAuditor', () => {
     mockGetModelForRole.mockReturnValue({ id: 'default-auditor-model' });
     mockBuildAuditorRuntimeContext.mockResolvedValue('');
     mockBuildAuditorEvaluationMemoryBlock.mockResolvedValue(null);
-    mockStreamFn.mockImplementation((
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
-      onDone();
-      return Promise.resolve();
-    });
+    mockStreamFn.mockImplementation(
+      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
+        onDone();
+        return Promise.resolve();
+      },
+    );
   });
 
   it('uses explicit provider/model overrides when supplied', async () => {
@@ -95,23 +94,25 @@ describe('runAuditor', () => {
 
   it('coalesces concurrent identical audits into a single stream call', async () => {
     // Use an async mock so the first call is still in-flight when the second arrives
-    mockStreamFn.mockImplementation(async (
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      await new Promise((r) => setTimeout(r, 10));
-      onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
-      onDone();
-    });
+    mockStreamFn.mockImplementation(
+      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        await new Promise((r) => setTimeout(r, 10));
+        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
+        onDone();
+      },
+    );
 
     const statuses1: string[] = [];
     const statuses2: string[] = [];
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
 
     const [r1, r2] = await Promise.all([
-      runAuditor(diff, (phase) => { statuses1.push(phase); }),
-      runAuditor(diff, (phase) => { statuses2.push(phase); }),
+      runAuditor(diff, (phase) => {
+        statuses1.push(phase);
+      }),
+      runAuditor(diff, (phase) => {
+        statuses2.push(phase);
+      }),
     ]);
 
     // Both callers get the same result
@@ -125,15 +126,13 @@ describe('runAuditor', () => {
   });
 
   it('does not coalesce concurrent audits with different hook output', async () => {
-    mockStreamFn.mockImplementation(async (
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      await new Promise((r) => setTimeout(r, 10));
-      onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
-      onDone();
-    });
+    mockStreamFn.mockImplementation(
+      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        await new Promise((r) => setTimeout(r, 10));
+        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
+        onDone();
+      },
+    );
 
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
 
@@ -146,24 +145,32 @@ describe('runAuditor', () => {
   });
 
   it('does not coalesce concurrent audits with different file context', async () => {
-    mockStreamFn.mockImplementation(async (
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      await new Promise((r) => setTimeout(r, 10));
-      onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
-      onDone();
-    });
+    mockStreamFn.mockImplementation(
+      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        await new Promise((r) => setTimeout(r, 10));
+        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
+        onDone();
+      },
+    );
 
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
 
     await Promise.all([
       runAuditor(diff, () => {}, undefined, undefined, undefined, [
-        { path: 'src/app.ts', content: 'const x = 1;', truncated: false, classification: 'production' },
+        {
+          path: 'src/app.ts',
+          content: 'const x = 1;',
+          truncated: false,
+          classification: 'production',
+        },
       ]),
       runAuditor(diff, () => {}, undefined, undefined, undefined, [
-        { path: 'src/app.ts', content: 'const x = 1;\nexport default x;', truncated: false, classification: 'production' },
+        {
+          path: 'src/app.ts',
+          content: 'const x = 1;\nexport default x;',
+          truncated: false,
+          classification: 'production',
+        },
       ]),
     ]);
 
@@ -172,25 +179,28 @@ describe('runAuditor', () => {
 
   it('replays the latest status to a late-joining coalesced auditor subscriber', async () => {
     const releaseStream: { current: null | (() => void) } = { current: null };
-    mockStreamFn.mockImplementation(async (
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => new Promise<void>((resolve) => {
-      releaseStream.current = () => {
-        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
-        onDone();
-        resolve();
-      };
-    }));
+    mockStreamFn.mockImplementation(
+      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) =>
+        new Promise<void>((resolve) => {
+          releaseStream.current = () => {
+            onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
+            onDone();
+            resolve();
+          };
+        }),
+    );
 
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
     const statuses1: string[] = [];
     const statuses2: string[] = [];
 
-    const first = runAuditor(diff, (phase) => { statuses1.push(phase); });
+    const first = runAuditor(diff, (phase) => {
+      statuses1.push(phase);
+    });
     await Promise.resolve();
-    const second = runAuditor(diff, (phase) => { statuses2.push(phase); });
+    const second = runAuditor(diff, (phase) => {
+      statuses2.push(phase);
+    });
 
     expect(statuses1).toContain('Auditor reviewing...');
     expect(statuses2).toContain('Auditor reviewing...');
@@ -205,10 +215,7 @@ describe('runAuditor', () => {
     const hugeProductionDiff = makeAddedFileDiff('src/huge.ts', 'x'.repeat(31_000));
     const omittedTestDiff = makeAddedFileDiff('src/ignored.test.ts', 'test');
 
-    await runAuditor(
-      hugeProductionDiff + omittedTestDiff,
-      () => {},
-    );
+    await runAuditor(hugeProductionDiff + omittedTestDiff, () => {});
 
     const messages = mockStreamFn.mock.calls[0]?.[0] as Array<{ content: string }>;
     const prompt = messages[0]?.content ?? '';
@@ -220,13 +227,14 @@ describe('runAuditor', () => {
   });
 
   it('passes retrieved auditor memory through the runtime context block', async () => {
-    mockBuildAuditorRuntimeContext.mockResolvedValue('## Audit Run Context\n\n[RETRIEVED_VERIFICATION]\n- [verification_result | coder] npm test: passed\n[/RETRIEVED_VERIFICATION]');
-
-    await runAuditor(
-      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
-      () => {},
-      { repoFullName: 'owner/repo', activeBranch: 'feature/audit' },
+    mockBuildAuditorRuntimeContext.mockResolvedValue(
+      '## Audit Run Context\n\n[RETRIEVED_VERIFICATION]\n- [verification_result | coder] npm test: passed\n[/RETRIEVED_VERIFICATION]',
     );
+
+    await runAuditor(makeAddedFileDiff('src/app.ts', 'const x = 1;'), () => {}, {
+      repoFullName: 'owner/repo',
+      activeBranch: 'feature/audit',
+    });
 
     const systemPrompt = mockStreamFn.mock.calls[0]?.[8] as string;
     expect(systemPrompt).toContain('[RETRIEVED_VERIFICATION]');
@@ -234,7 +242,9 @@ describe('runAuditor', () => {
   });
 
   it('injects retrieved memory into auditor evaluation requests', async () => {
-    mockBuildAuditorEvaluationMemoryBlock.mockResolvedValue('[RETRIEVED_TASK_MEMORY]\n- [decision | orchestrator] Previous checkpoint answer\n[/RETRIEVED_TASK_MEMORY]');
+    mockBuildAuditorEvaluationMemoryBlock.mockResolvedValue(
+      '[RETRIEVED_TASK_MEMORY]\n- [decision | orchestrator] Previous checkpoint answer\n[/RETRIEVED_TASK_MEMORY]',
+    );
 
     await runAuditorEvaluation(
       'finish the auth fix',

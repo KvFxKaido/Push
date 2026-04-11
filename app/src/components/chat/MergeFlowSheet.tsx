@@ -106,9 +106,7 @@ function parsePRUrl(text: string): string {
 
 /** Clean up error messages for UI display. */
 function cleanError(message: string): string {
-  return message
-    .replace(/^\[Tool Error\]\s*/i, '')
-    .replace(/^\[Tool Result.*?\]\s*/i, '');
+  return message.replace(/^\[Tool Error\]\s*/i, '').replace(/^\[Tool Result.*?\]\s*/i, '');
 }
 
 // ── Step indicator ───────────────────────────────────────────────────
@@ -285,7 +283,9 @@ function MergeFlowSheet({
     }
 
     checkTree();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [open, step, sandboxId, isOnDefault]);
 
   // ── Step 2: Find/create PR ─────────────────────────────────────────
@@ -337,7 +337,9 @@ function MergeFlowSheet({
     }
 
     findPR();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [open, step, prFormMode, repo, currentBranch, defaultBranch]);
 
   // ── Create PR handler ──────────────────────────────────────────────
@@ -350,7 +352,13 @@ function MergeFlowSheet({
     setStatusText('Creating PR...');
 
     try {
-      const result = await executeCreatePR(repo, prTitle.trim(), prBody.trim(), currentBranch, defaultBranch);
+      const result = await executeCreatePR(
+        repo,
+        prTitle.trim(),
+        prBody.trim(),
+        currentBranch,
+        defaultBranch,
+      );
       if (abortRef.current) return;
 
       const prNumber = parsePRNumber(result.text);
@@ -467,20 +475,27 @@ function MergeFlowSheet({
 
         // Run the Auditor
         setStatusText('Auditor reviewing...');
-        const result = await runAuditor(diff, (phase) => {
-          if (!cancelled && !abortRef.current) setStatusText(phase);
-        }, {
-          repoFullName: repo,
-          activeBranch: currentBranch,
-          defaultBranch,
-          source: 'pr-merge',
-          prNumber: pr.number,
-          sourceLabel: `PR #${pr.number}: ${pr.title}`,
-          projectInstructions,
-        }, undefined, {
-          providerOverride: lockedProvider || undefined,
-          modelOverride: lockedModel || undefined,
-        }, fileContexts);
+        const result = await runAuditor(
+          diff,
+          (phase) => {
+            if (!cancelled && !abortRef.current) setStatusText(phase);
+          },
+          {
+            repoFullName: repo,
+            activeBranch: currentBranch,
+            defaultBranch,
+            source: 'pr-merge',
+            prNumber: pr.number,
+            sourceLabel: `PR #${pr.number}: ${pr.title}`,
+            projectInstructions,
+          },
+          undefined,
+          {
+            providerOverride: lockedProvider || undefined,
+            modelOverride: lockedModel || undefined,
+          },
+          fileContexts,
+        );
         if (cancelled || abortRef.current) return;
 
         setAuditVerdict(result.verdict);
@@ -503,8 +518,21 @@ function MergeFlowSheet({
     }
 
     runAudit();
-    return () => { cancelled = true; };
-  }, [open, step, prInfo, repo, sandboxId, currentBranch, defaultBranch, projectInstructions, lockedProvider, lockedModel]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    open,
+    step,
+    prInfo,
+    repo,
+    sandboxId,
+    currentBranch,
+    defaultBranch,
+    projectInstructions,
+    lockedProvider,
+    lockedModel,
+  ]);
 
   // ── Step 4: Check mergeability ─────────────────────────────────────
 
@@ -532,9 +560,8 @@ function MergeFlowSheet({
         const stateMatch = text.match(/State: (\S+)/);
         const eligible = text.includes('eligible for merge');
 
-        const mergeable = mergeableMatch?.[1] === 'yes' ? true
-          : mergeableMatch?.[1] === 'no' ? false
-          : null;
+        const mergeable =
+          mergeableMatch?.[1] === 'yes' ? true : mergeableMatch?.[1] === 'no' ? false : null;
 
         setMergeStatus({
           mergeable,
@@ -562,7 +589,9 @@ function MergeFlowSheet({
     }
 
     checkMergeable();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [open, step, prInfo, repo, mergeStatus]);
 
   // ── Merge handler ──────────────────────────────────────────────────
@@ -657,14 +686,11 @@ function MergeFlowSheet({
           <div className="mt-4 space-y-4">
             <div className={MERGE_WARNING_PANEL_CLASS}>
               <p className="text-xs text-yellow-400">
-                You are on the default branch ({defaultBranch}). Switch to a feature branch to merge.
+                You are on the default branch ({defaultBranch}). Switch to a feature branch to
+                merge.
               </p>
             </div>
-            <Button
-              onClick={close}
-              variant="outline"
-              className={`${MERGE_BUTTON_CLASS} w-full`}
-            >
+            <Button onClick={close} variant="outline" className={`${MERGE_BUTTON_CLASS} w-full`}>
               <HubControlGlow />
               <span className="relative z-10">Close</span>
             </Button>
@@ -679,7 +705,9 @@ function MergeFlowSheet({
                 {loading && (
                   <div className="flex items-center gap-2.5 py-4">
                     <Loader2 className="h-4 w-4 animate-spin text-push-fg-dim" />
-                    <span className="text-sm text-push-fg-secondary">{statusText || 'Checking...'}</span>
+                    <span className="text-sm text-push-fg-secondary">
+                      {statusText || 'Checking...'}
+                    </span>
                   </div>
                 )}
 
@@ -691,16 +719,14 @@ function MergeFlowSheet({
                         <div>
                           <p className="text-xs font-medium text-yellow-400">Uncommitted changes</p>
                           <p className="text-xs text-yellow-400/70 mt-0.5">
-                            You have uncommitted changes in the sandbox. Commit and push before merging.
+                            You have uncommitted changes in the sandbox. Commit and push before
+                            merging.
                           </p>
                         </div>
                       </div>
                     </div>
                     <div className="flex gap-3">
-                      <Button
-                        onClick={close}
-                        className={`${MERGE_BUTTON_CLASS} flex-1`}
-                      >
+                      <Button onClick={close} className={`${MERGE_BUTTON_CLASS} flex-1`}>
                         <HubControlGlow />
                         <span className="relative z-10">Commit & push first</span>
                       </Button>
@@ -717,7 +743,14 @@ function MergeFlowSheet({
                 )}
 
                 {error && error !== 'uncommitted' && (
-                  <ErrorDisplay message={error} onRetry={() => { setError(null); setStep('check-tree'); }} onCancel={close} />
+                  <ErrorDisplay
+                    message={error}
+                    onRetry={() => {
+                      setError(null);
+                      setStep('check-tree');
+                    }}
+                    onCancel={close}
+                  />
                 )}
               </div>
             )}
@@ -728,7 +761,9 @@ function MergeFlowSheet({
                 {loading && (
                   <div className="flex items-center gap-2.5 py-4">
                     <Loader2 className="h-4 w-4 animate-spin text-push-fg-dim" />
-                    <span className="text-sm text-push-fg-secondary">{statusText || 'Looking for PRs...'}</span>
+                    <span className="text-sm text-push-fg-secondary">
+                      {statusText || 'Looking for PRs...'}
+                    </span>
                   </div>
                 )}
 
@@ -782,7 +817,10 @@ function MergeFlowSheet({
                           id="pr-title"
                           placeholder="What does this PR do?"
                           value={prTitle}
-                          onChange={(e) => { setPrTitle(e.target.value); setError(null); }}
+                          onChange={(e) => {
+                            setPrTitle(e.target.value);
+                            setError(null);
+                          }}
                           autoFocus
                           className={`${HUB_MATERIAL_INPUT_CLASS} h-11 rounded-[18px] text-sm`}
                           autoComplete="off"
@@ -837,7 +875,14 @@ function MergeFlowSheet({
                 )}
 
                 {error && (
-                  <ErrorDisplay message={error} onRetry={() => { setError(null); setPrFormMode(null); }} onCancel={close} />
+                  <ErrorDisplay
+                    message={error}
+                    onRetry={() => {
+                      setError(null);
+                      setPrFormMode(null);
+                    }}
+                    onCancel={close}
+                  />
                 )}
               </div>
             )}
@@ -848,7 +893,9 @@ function MergeFlowSheet({
                 {loading && (
                   <div className="flex items-center gap-2.5 py-4">
                     <Loader2 className="h-4 w-4 animate-spin text-push-fg-dim" />
-                    <span className="text-sm text-push-fg-secondary">{statusText || 'Auditing...'}</span>
+                    <span className="text-sm text-push-fg-secondary">
+                      {statusText || 'Auditing...'}
+                    </span>
                   </div>
                 )}
 
@@ -866,24 +913,25 @@ function MergeFlowSheet({
                             <div key={i} className="flex items-start gap-1.5">
                               <span
                                 className={`text-push-2xs font-medium uppercase mt-0.5 ${
-                                  risk.level === 'high' ? 'text-red-400' :
-                                  risk.level === 'medium' ? 'text-yellow-400' :
-                                  'text-push-fg-dim'
+                                  risk.level === 'high'
+                                    ? 'text-red-400'
+                                    : risk.level === 'medium'
+                                      ? 'text-yellow-400'
+                                      : 'text-push-fg-dim'
                                 }`}
                               >
                                 {risk.level}
                               </span>
-                              <span className="text-xs text-push-fg-secondary">{risk.description}</span>
+                              <span className="text-xs text-push-fg-secondary">
+                                {risk.description}
+                              </span>
                             </div>
                           ))}
                         </div>
                       )}
                     </div>
                     <div className="flex gap-3">
-                      <Button
-                        onClick={handleRetryAudit}
-                        className={`${MERGE_BUTTON_CLASS} flex-1`}
-                      >
+                      <Button onClick={handleRetryAudit} className={`${MERGE_BUTTON_CLASS} flex-1`}>
                         <HubControlGlow />
                         <span className="relative z-10">Fix and retry</span>
                       </Button>
@@ -929,7 +977,9 @@ function MergeFlowSheet({
                 {loading && !mergeStatus && (
                   <div className="flex items-center gap-2.5 py-4">
                     <Loader2 className="h-4 w-4 animate-spin text-push-fg-dim" />
-                    <span className="text-sm text-push-fg-secondary">{statusText || 'Checking...'}</span>
+                    <span className="text-sm text-push-fg-secondary">
+                      {statusText || 'Checking...'}
+                    </span>
                   </div>
                 )}
 
@@ -955,7 +1005,9 @@ function MergeFlowSheet({
                             </p>
                           )}
                           {mergeStatus.ciOverall === 'NO-CHECKS' && (
-                            <p className="text-push-xs text-push-fg-dim mt-2">No CI checks configured</p>
+                            <p className="text-push-xs text-push-fg-dim mt-2">
+                              No CI checks configured
+                            </p>
                           )}
                         </div>
                         <div className="flex gap-3">
@@ -972,7 +1024,7 @@ function MergeFlowSheet({
                               </>
                             ) : (
                               <>
-                              <MergeShieldIcon className="relative z-10 h-4 w-4" />
+                                <MergeShieldIcon className="relative z-10 h-4 w-4" />
                                 <span className="relative z-10">Merge</span>
                               </>
                             )}
@@ -999,7 +1051,8 @@ function MergeFlowSheet({
                             <div>
                               <p className="text-xs font-medium text-red-400">Merge conflicts</p>
                               <p className="text-xs text-red-400/70 mt-0.5">
-                                This branch has conflicts with {defaultBranch} that must be resolved.
+                                This branch has conflicts with {defaultBranch} that must be
+                                resolved.
                               </p>
                             </div>
                           </div>
@@ -1070,9 +1123,12 @@ function MergeFlowSheet({
                           <div className="flex items-center gap-2">
                             <Loader2 className="h-4 w-4 text-yellow-400 animate-spin shrink-0" />
                             <div>
-                              <p className="text-xs font-medium text-yellow-400">Computing merge status</p>
+                              <p className="text-xs font-medium text-yellow-400">
+                                Computing merge status
+                              </p>
                               <p className="text-xs text-yellow-400/70 mt-0.5">
-                                GitHub is still determining if this branch can be merged. Try again in a moment.
+                                GitHub is still determining if this branch can be merged. Try again
+                                in a moment.
                               </p>
                             </div>
                           </div>
@@ -1099,9 +1155,7 @@ function MergeFlowSheet({
                   </>
                 )}
 
-                {error && (
-                  <ErrorDisplay message={error} onRetry={handleRecheck} onCancel={close} />
-                )}
+                {error && <ErrorDisplay message={error} onRetry={handleRecheck} onCancel={close} />}
               </div>
             )}
 
@@ -1121,10 +1175,7 @@ function MergeFlowSheet({
                 </div>
 
                 <div className="flex flex-col gap-2.5">
-                  <Button
-                    onClick={handleSwitchToMain}
-                    className={`${MERGE_BUTTON_CLASS} w-full`}
-                  >
+                  <Button onClick={handleSwitchToMain} className={`${MERGE_BUTTON_CLASS} w-full`}>
                     <HubControlGlow />
                     <span className="relative z-10">Switch to {defaultBranch}</span>
                   </Button>
@@ -1143,7 +1194,9 @@ function MergeFlowSheet({
                     ) : (
                       <>
                         <Trash2 className="relative z-10 h-4 w-4" />
-                        <span className="relative z-10">Switch to {defaultBranch} + delete {currentBranch}</span>
+                        <span className="relative z-10">
+                          Switch to {defaultBranch} + delete {currentBranch}
+                        </span>
                       </>
                     )}
                   </Button>
@@ -1174,18 +1227,11 @@ function ErrorDisplay({
         <p className="text-xs text-red-400">{message}</p>
       </div>
       <div className="flex gap-3">
-        <Button
-          onClick={onRetry}
-          className={`${MERGE_BUTTON_CLASS} flex-1`}
-        >
+        <Button onClick={onRetry} className={`${MERGE_BUTTON_CLASS} flex-1`}>
           <HubControlGlow />
           <span className="relative z-10">Retry</span>
         </Button>
-        <Button
-          onClick={onCancel}
-          variant="outline"
-          className={`${MERGE_BUTTON_CLASS} flex-1`}
-        >
+        <Button onClick={onCancel} variant="outline" className={`${MERGE_BUTTON_CLASS} flex-1`}>
           <HubControlGlow />
           <span className="relative z-10">Cancel</span>
         </Button>

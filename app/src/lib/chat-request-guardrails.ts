@@ -65,7 +65,9 @@ export function validateAndNormalizeChatRequest(
   }
 
   if (!Array.isArray(parsed.messages) || parsed.messages.length === 0) {
-    return validationError(`${policy.routeLabel} request must include a non-empty "messages" array.`);
+    return validationError(
+      `${policy.routeLabel} request must include a non-empty "messages" array.`,
+    );
   }
 
   const maxMessages = policy.maxMessages ?? DEFAULT_MAX_MESSAGES;
@@ -76,12 +78,15 @@ export function validateAndNormalizeChatRequest(
   }
 
   const normalizedMessages: OpenAIMessage[] = [];
-  const maxContentPartsPerMessage = policy.maxContentPartsPerMessage ?? DEFAULT_MAX_CONTENT_PARTS_PER_MESSAGE;
+  const maxContentPartsPerMessage =
+    policy.maxContentPartsPerMessage ?? DEFAULT_MAX_CONTENT_PARTS_PER_MESSAGE;
 
   for (let index = 0; index < parsed.messages.length; index += 1) {
     const messageRecord = asRecord(parsed.messages[index]);
     if (!messageRecord) {
-      return validationError(`${policy.routeLabel} request message ${index + 1} must be an object.`);
+      return validationError(
+        `${policy.routeLabel} request message ${index + 1} must be an object.`,
+      );
     }
 
     const role = typeof messageRecord.role === 'string' ? messageRecord.role.trim() : '';
@@ -94,7 +99,9 @@ export function validateAndNormalizeChatRequest(
     const rawContent = messageRecord.content;
     if (typeof rawContent === 'string' || rawContent === null || rawContent === undefined) {
       normalizedMessages.push({
-        ...(Object.prototype.hasOwnProperty.call(messageRecord, 'content') ? { content: rawContent as string | null } : {}),
+        ...(Object.prototype.hasOwnProperty.call(messageRecord, 'content')
+          ? { content: rawContent as string | null }
+          : {}),
         role,
       });
       continue;
@@ -174,7 +181,9 @@ export function validateAndNormalizeChatRequest(
   for (const numericField of ['temperature', 'top_p'] as const) {
     const rawValue = parsed[numericField];
     if (rawValue !== undefined && (!Number.isFinite(rawValue) || typeof rawValue !== 'number')) {
-      return validationError(`${policy.routeLabel} request field "${numericField}" must be a number.`);
+      return validationError(
+        `${policy.routeLabel} request field "${numericField}" must be a number.`,
+      );
     }
   }
 
@@ -182,7 +191,9 @@ export function validateAndNormalizeChatRequest(
     const rawValue = parsed[tokenField];
     if (rawValue === undefined) continue;
     if (typeof rawValue !== 'number' || !Number.isInteger(rawValue) || rawValue < 1) {
-      return validationError(`${policy.routeLabel} request field "${tokenField}" must be a positive integer.`);
+      return validationError(
+        `${policy.routeLabel} request field "${tokenField}" must be a positive integer.`,
+      );
     }
     if (rawValue > policy.maxOutputTokens) {
       normalized[tokenField] = policy.maxOutputTokens;

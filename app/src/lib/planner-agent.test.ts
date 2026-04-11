@@ -45,27 +45,22 @@ describe('runPlanner', () => {
       streamFn: mockStreamFn,
     }));
     mockGetModelForRole.mockReturnValue({ id: 'coder-default-model' });
-    mockStreamFn.mockImplementation((
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      onToken('{"approach":"Ship the fix","features":[{"id":"auth","description":"Update auth flow"}]}');
-      onDone();
-      return Promise.resolve();
-    });
+    mockStreamFn.mockImplementation(
+      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        onToken(
+          '{"approach":"Ship the fix","features":[{"id":"auth","description":"Update auth flow"}]}',
+        );
+        onDone();
+        return Promise.resolve();
+      },
+    );
   });
 
   it('falls back to the active provider model when the override provider is unavailable', async () => {
-    const plan = await runPlanner(
-      'Fix the auth flow',
-      ['src/auth.ts'],
-      () => {},
-      {
-        providerOverride: 'vertex',
-        modelOverride: 'google/gemini-2.5-pro',
-      },
-    );
+    const plan = await runPlanner('Fix the auth flow', ['src/auth.ts'], () => {}, {
+      providerOverride: 'vertex',
+      modelOverride: 'google/gemini-2.5-pro',
+    });
 
     expect(plan?.features).toHaveLength(1);
     expect(mockGetProviderStreamFn).toHaveBeenCalledWith('openrouter');
@@ -75,15 +70,10 @@ describe('runPlanner', () => {
   it('keeps the explicit model override when the requested provider is still available', async () => {
     mockIsProviderAvailable.mockReturnValue(true);
 
-    await runPlanner(
-      'Fix the auth flow',
-      ['src/auth.ts'],
-      () => {},
-      {
-        providerOverride: 'openrouter',
-        modelOverride: 'anthropic/claude-sonnet-4.6:nitro',
-      },
-    );
+    await runPlanner('Fix the auth flow', ['src/auth.ts'], () => {}, {
+      providerOverride: 'openrouter',
+      modelOverride: 'anthropic/claude-sonnet-4.6:nitro',
+    });
 
     expect(mockGetProviderStreamFn).toHaveBeenCalledWith('openrouter');
     expect(mockStreamFn.mock.calls[0]?.[7]).toBe('anthropic/claude-sonnet-4.6:nitro');

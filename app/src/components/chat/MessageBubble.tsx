@@ -1,5 +1,14 @@
 import { memo, useMemo, useState, useCallback } from 'react';
-import { ChevronRight, FileCode, FileText, Copy, Check, Pin, Pencil, RefreshCw } from 'lucide-react';
+import {
+  ChevronRight,
+  FileCode,
+  FileText,
+  Copy,
+  Check,
+  Pin,
+  Pencil,
+  RefreshCw,
+} from 'lucide-react';
 import type { ChatMessage, CardAction, AttachmentData } from '@/types';
 import { CardRenderer } from '@/components/cards/CardRenderer';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
@@ -80,9 +89,7 @@ function formatContent(content: string): React.ReactNode[] {
 
     // --- Horizontal rule (---, ***, ___) ---
     if (/^(\s*[-*_]\s*){3,}$/.test(line) && line.trim().length >= 3) {
-      parts.push(
-        <hr key={`hr-${i}`} className="my-3 border-0 border-t border-push-edge" />,
-      );
+      parts.push(<hr key={`hr-${i}`} className="my-3 border-0 border-t border-push-edge" />);
       continue;
     }
 
@@ -165,11 +172,7 @@ function formatContent(content: string): React.ReactNode[] {
     }
 
     // --- Default: plain text line ---
-    parts.push(
-      <div key={`line-${i}`}>
-        {formatInline(line)}
-      </div>,
-    );
+    parts.push(<div key={`line-${i}`}>{formatInline(line)}</div>);
   }
 
   // Handle unclosed code blocks (streaming)
@@ -263,9 +266,7 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
         <ChevronRight
           className={`h-3 w-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
         />
-        <span className="font-medium">
-          {isStreaming ? 'Reasoning' : 'Thought process'}
-        </span>
+        <span className="font-medium">{isStreaming ? 'Reasoning' : 'Thought process'}</span>
         {isStreaming && (
           <span className="inline-block w-1 h-1 rounded-full bg-push-fg-dim animate-pulse ml-0.5" />
         )}
@@ -388,45 +389,42 @@ export const MessageBubble = memo(function MessageBubble({
   const isError = message.status === 'error';
   const isStreaming = message.status === 'streaming';
   const hasThinking = Boolean(message.thinking);
-  const displayContentText = useMemo(
-    () => {
-      if (isUser) {
-        return message.displayContent ?? message.content;
-      }
-      let text = message.content;
-      // Always strip leaked tool-result envelopes (safe — only targets our exact format)
-      text = stripToolResultEnvelopes(text);
-      // Aggressive tool-call JSON stripping for flagged tool calls AND streaming
-      // messages (prevents visual flash of raw JSON while model is still outputting).
-      // For streaming, gate on a cheap marker check to avoid regex/brace-scan cost
-      // on every token update when the response is just plain text.
-      // Always apply tool-call stripping to assistant messages if they look like tool calls.
-      // This acts as a fail-safe even if the background parser missed a malformed call
-      // or the streaming state has finished.
-      if (message.isToolCall || message.isMalformed || looksLikeToolCall(text)) {
-        text = stripToolCallPayload(text);
-      }
-      // Tool-call messages: any leftover text after stripping is the model narrating
-      // its intent (e.g. "Let me check..." or a delegation task brief). Force-clear
-      // so only the tool result / cards are visible — not internal machinery.
-      if (message.isToolCall) {
-        text = '';
-      }
-      // Malformed messages are failed tool calls — any leftover text is garbage
-      // (e.g. orphaned shell command fragments). Force-clear so the bubble hides.
-      if (message.isMalformed) {
-        text = '';
-      }
-      // Strip bracket-only artifacts, but only when we believe the content
-      // originated from a tool call / tool JSON, to avoid erasing legitimate
-      // minimal JSON-like replies such as "[]" or "{}".
-      if ((message.isToolCall || looksLikeToolCall(text)) && ONLY_BRACKETS_RE.test(text)) {
-        text = '';
-      }
-      return text;
-    },
-    [isUser, message.content, message.displayContent, message.isToolCall, message.isMalformed],
-  );
+  const displayContentText = useMemo(() => {
+    if (isUser) {
+      return message.displayContent ?? message.content;
+    }
+    let text = message.content;
+    // Always strip leaked tool-result envelopes (safe — only targets our exact format)
+    text = stripToolResultEnvelopes(text);
+    // Aggressive tool-call JSON stripping for flagged tool calls AND streaming
+    // messages (prevents visual flash of raw JSON while model is still outputting).
+    // For streaming, gate on a cheap marker check to avoid regex/brace-scan cost
+    // on every token update when the response is just plain text.
+    // Always apply tool-call stripping to assistant messages if they look like tool calls.
+    // This acts as a fail-safe even if the background parser missed a malformed call
+    // or the streaming state has finished.
+    if (message.isToolCall || message.isMalformed || looksLikeToolCall(text)) {
+      text = stripToolCallPayload(text);
+    }
+    // Tool-call messages: any leftover text after stripping is the model narrating
+    // its intent (e.g. "Let me check..." or a delegation task brief). Force-clear
+    // so only the tool result / cards are visible — not internal machinery.
+    if (message.isToolCall) {
+      text = '';
+    }
+    // Malformed messages are failed tool calls — any leftover text is garbage
+    // (e.g. orphaned shell command fragments). Force-clear so the bubble hides.
+    if (message.isMalformed) {
+      text = '';
+    }
+    // Strip bracket-only artifacts, but only when we believe the content
+    // originated from a tool call / tool JSON, to avoid erasing legitimate
+    // minimal JSON-like replies such as "[]" or "{}".
+    if ((message.isToolCall || looksLikeToolCall(text)) && ONLY_BRACKETS_RE.test(text)) {
+      text = '';
+    }
+    return text;
+  }, [isUser, message.content, message.displayContent, message.isToolCall, message.isMalformed]);
   const hasContent = Boolean(displayContentText.trim());
 
   const visibleCards = useMemo(
@@ -434,10 +432,7 @@ export const MessageBubble = memo(function MessageBubble({
     [message.cards],
   );
 
-  const content = useMemo(
-    () => formatContent(displayContentText),
-    [displayContentText],
-  );
+  const content = useMemo(() => formatContent(displayContentText), [displayContentText]);
 
   // Hide tool result messages — they now live in the Console drawer
   if (message.isToolResult || (message.role as string) === 'tool') {
@@ -492,10 +487,7 @@ export const MessageBubble = memo(function MessageBubble({
       </div>
       <div className="min-w-0 max-w-[85%]">
         {hasThinking && (
-          <ThinkingBlock
-            thinking={message.thinking!}
-            isStreaming={isStreaming && !hasContent}
-          />
+          <ThinkingBlock thinking={message.thinking!} isStreaming={isStreaming && !hasContent} />
         )}
         {hasContent && (
           <div

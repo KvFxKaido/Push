@@ -16,7 +16,12 @@ import { buildReviewerRuntimeContext } from './role-memory-context';
 import { readSymbolsFromSandbox, type SandboxSymbol } from './sandbox-client';
 import { SystemPromptBuilder } from './system-prompt-builder';
 import { asRecord, streamWithTimeout } from './utils';
-import { parseDiffStats, parseDiffIntoFiles, chunkDiffByFile, classifyFilePath } from './diff-utils';
+import {
+  parseDiffStats,
+  parseDiffIntoFiles,
+  chunkDiffByFile,
+  classifyFilePath,
+} from './diff-utils';
 
 const REVIEWER_TIMEOUT_MS = 90_000; // 90s — reviews can be thorough
 const REVIEWER_FILE_STRUCTURE_LIMIT = 2_000;
@@ -145,14 +150,17 @@ const REVIEWER_GUIDELINES = `${REVIEWER_CRITERIA_BLOCK}
 
 Keep comments specific and actionable. Prefer 0-5 high-signal comments total. Use "note" sparingly, and skip low-value style nits unless they materially affect maintainability or correctness. If the diff does not give you enough context to assess something, skip it rather than guessing. One precise comment is worth more than three vague ones.`;
 
-const REVIEWER_FILE_STRUCTURE_NOTE = "File structure is auto-fetched and shows the outline of changed files. Use it for orientation but don't assume it's complete.";
+const REVIEWER_FILE_STRUCTURE_NOTE =
+  "File structure is auto-fetched and shows the outline of changed files. Use it for orientation but don't assume it's complete.";
 
 function toSandboxWorkspacePath(path: string): string {
   if (path.startsWith('/workspace/')) return path;
   return `/workspace/${path.replace(/^\/+/, '')}`;
 }
 
-function buildFileStructureBlock(entries: Array<{ path: string; symbols: SandboxSymbol[] }>): string | null {
+function buildFileStructureBlock(
+  entries: Array<{ path: string; symbols: SandboxSymbol[] }>,
+): string | null {
   const lines = ['[FILE STRUCTURE — auto-fetched from changed files]'];
   let totalChars = lines[0].length;
   let includedEntries = 0;
@@ -187,10 +195,7 @@ function buildFileStructureBlock(entries: Array<{ path: string; symbols: Sandbox
   return includedEntries > 0 ? lines.join('\n') : null;
 }
 
-async function fetchFileStructure(
-  diff: string,
-  sandboxId: string,
-): Promise<string | null> {
+async function fetchFileStructure(diff: string, sandboxId: string): Promise<string | null> {
   const filePaths = parseDiffIntoFiles(diff)
     .map((file) => file.path)
     .slice(0, REVIEWER_FILE_STRUCTURE_MAX_FILES);
@@ -205,7 +210,15 @@ async function fetchFileStructure(
   );
 
   const entries = settled
-    .filter((result): result is PromiseFulfilledResult<{ path: string; symbols: SandboxSymbol[]; totalLines: number }> => result.status === 'fulfilled')
+    .filter(
+      (
+        result,
+      ): result is PromiseFulfilledResult<{
+        path: string;
+        symbols: SandboxSymbol[];
+        totalLines: number;
+      }> => result.status === 'fulfilled',
+    )
     .map((result) => ({ path: result.value.path, symbols: result.value.symbols }));
 
   return buildFileStructureBlock(entries);
@@ -244,12 +257,17 @@ export async function runReviewer(
 
   const run = (async () => {
     const runtimeContext = await buildReviewerRuntimeContext(diff, options.context);
-    return runReviewerCore(diff, {
-      ...options,
-      model: modelId,
-    }, runtimeContext, (phase) => {
-      broadcastReviewStatus(key, phase);
-    });
+    return runReviewerCore(
+      diff,
+      {
+        ...options,
+        model: modelId,
+      },
+      runtimeContext,
+      (phase) => {
+        broadcastReviewStatus(key, phase);
+      },
+    );
   })();
   pendingReviews.set(key, run);
   run.finally(() => {
@@ -336,24 +354,27 @@ async function runReviewerCore(
   const summary = typeof parsed?.summary === 'string' ? parsed.summary : 'No summary provided.';
   const rawComments = Array.isArray(parsed?.comments) ? parsed.comments : [];
 
-  const comments: ReviewComment[] = rawComments.map((c) => {
-    const rc = asRecord(c);
-    const sev = rc?.severity;
-    const severity: ReviewComment['severity'] =
-      sev === 'critical' || sev === 'warning' || sev === 'suggestion' || sev === 'note'
-        ? sev
-        : 'note';
-    const rawLine = rc?.line;
-    const line = typeof rawLine === 'number' && Number.isInteger(rawLine) && rawLine > 0
-      ? rawLine
-      : undefined;
-    return {
-      file: typeof rc?.file === 'string' ? rc.file : 'unknown',
-      severity,
-      comment: typeof rc?.comment === 'string' ? rc.comment : '',
-      ...(line !== undefined && { line }),
-    };
-  }).filter((c) => c.comment.length > 0);
+  const comments: ReviewComment[] = rawComments
+    .map((c) => {
+      const rc = asRecord(c);
+      const sev = rc?.severity;
+      const severity: ReviewComment['severity'] =
+        sev === 'critical' || sev === 'warning' || sev === 'suggestion' || sev === 'note'
+          ? sev
+          : 'note';
+      const rawLine = rc?.line;
+      const line =
+        typeof rawLine === 'number' && Number.isInteger(rawLine) && rawLine > 0
+          ? rawLine
+          : undefined;
+      return {
+        file: typeof rc?.file === 'string' ? rc.file : 'unknown',
+        severity,
+        comment: typeof rc?.comment === 'string' ? rc.comment : '',
+        ...(line !== undefined && { line }),
+      };
+    })
+    .filter((c) => c.comment.length > 0);
 
   return {
     summary,

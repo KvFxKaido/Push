@@ -8,15 +8,40 @@ import type { AttachmentData } from '@/types';
 export { formatSize as formatFileSize } from './diff-utils';
 
 // Size limits
-const MAX_IMAGE_SIZE = 750 * 1024;    // 750KB per image (base64 grows ~33%)
-const MAX_TEXT_SIZE = 50 * 1024;       // 50KB per text file
+const MAX_IMAGE_SIZE = 750 * 1024; // 750KB per image (base64 grows ~33%)
+const MAX_TEXT_SIZE = 50 * 1024; // 50KB per text file
 
 // Supported types
 const SUPPORTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const SUPPORTED_CODE_EXTENSIONS = [
-  '.js', '.ts', '.tsx', '.jsx', '.py', '.go', '.rs', '.java', '.c', '.cpp', '.h',
-  '.md', '.txt', '.json', '.yaml', '.yml', '.html', '.css', '.sql', '.sh', '.rb',
-  '.php', '.swift', '.kt', '.scala', '.vue', '.svelte', '.astro',
+  '.js',
+  '.ts',
+  '.tsx',
+  '.jsx',
+  '.py',
+  '.go',
+  '.rs',
+  '.java',
+  '.c',
+  '.cpp',
+  '.h',
+  '.md',
+  '.txt',
+  '.json',
+  '.yaml',
+  '.yml',
+  '.html',
+  '.css',
+  '.sql',
+  '.sh',
+  '.rb',
+  '.php',
+  '.swift',
+  '.kt',
+  '.scala',
+  '.vue',
+  '.svelte',
+  '.astro',
 ];
 
 export interface StagedAttachment extends AttachmentData {
@@ -112,12 +137,7 @@ async function processTextFile(
 /**
  * Resize image using canvas.
  */
-async function resizeImage(
-  file: File,
-  maxW: number,
-  maxH: number,
-  quality: number,
-): Promise<Blob> {
+async function resizeImage(file: File, maxW: number, maxH: number, quality: number): Promise<Blob> {
   const img = await createImageBitmap(file);
   const scale = Math.min(maxW / img.width, maxH / img.height, 1);
   const width = Math.round(img.width * scale);
@@ -133,11 +153,7 @@ async function resizeImage(
 /**
  * Create small thumbnail for preview.
  */
-async function createThumbnail(
-  blob: Blob,
-  maxW: number,
-  maxH: number,
-): Promise<string> {
+async function createThumbnail(blob: Blob, maxW: number, maxH: number): Promise<string> {
   const img = await createImageBitmap(blob);
   const scale = Math.min(maxW / img.width, maxH / img.height, 1);
   const width = Math.round(img.width * scale);
@@ -182,4 +198,3 @@ export function getTotalAttachmentSize(attachments: AttachmentData[]): number {
     return sum + size;
   }, 0);
 }
-

@@ -40,9 +40,7 @@ export function EditorCard({ data, messageId, cardIndex, onAction }: EditorCardP
           >
             <ExpandChevron expanded={expanded} className="shrink-0" />
             <FileCode className="h-3.5 w-3.5 text-push-fg-secondary shrink-0" />
-            <span className="text-push-base text-push-fg font-mono truncate">
-              {data.path}
-            </span>
+            <span className="text-push-base text-push-fg font-mono truncate">{data.path}</span>
             {data.language && (
               <span className={`${CARD_BADGE_INFO} shrink-0 px-1.5 py-0.5 text-push-xs`}>
                 {data.language}

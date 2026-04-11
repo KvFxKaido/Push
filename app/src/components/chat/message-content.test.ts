@@ -5,7 +5,9 @@ import { looksLikeToolCall, stripToolCallPayload } from './message-content';
 describe('looksLikeToolCall', () => {
   it('detects braced tool objects during streaming', () => {
     expect(
-      looksLikeToolCall('Explanation first.\n{"tool":"sandbox_read_file","args":{"path":"src/main.ts"}}'),
+      looksLikeToolCall(
+        'Explanation first.\n{"tool":"sandbox_read_file","args":{"path":"src/main.ts"}}',
+      ),
     ).toBe(true);
   });
 
@@ -20,19 +22,23 @@ describe('looksLikeToolCall', () => {
 
   it('detects native tool-call echo fragments', () => {
     expect(looksLikeToolCall('repo_ls", "repo": "KvFxKaido/Push"}}')).toBe(true);
-    expect(looksLikeToolCall('repo_read", "args": {"repo": "KvFxKaido/Push", "path": "README.md"}}')).toBe(true);
+    expect(
+      looksLikeToolCall('repo_read", "args": {"repo": "KvFxKaido/Push", "path": "README.md"}}'),
+    ).toBe(true);
   });
 
   it('detects orphaned JSON tails', () => {
-    expect(looksLikeToolCall('workspace/app && npm audit fix","workdir":"/workspace"}}')).toBe(true);
+    expect(looksLikeToolCall('workspace/app && npm audit fix","workdir":"/workspace"}}')).toBe(
+      true,
+    );
   });
 });
 
 describe('stripToolCallPayload', () => {
   it('strips braced tool JSON while preserving preceding prose', () => {
-    expect(
-      stripToolCallPayload('Before\n{"tool":"sandbox_exec","args":{"command":"ls"}}'),
-    ).toBe('Before');
+    expect(stripToolCallPayload('Before\n{"tool":"sandbox_exec","args":{"command":"ls"}}')).toBe(
+      'Before',
+    );
   });
 
   it('strips brace-less quoted tool JSON while preserving preceding prose', () => {
@@ -91,7 +97,9 @@ describe('stripToolCallPayload', () => {
 
   it('strips native echo with args object', () => {
     expect(
-      stripToolCallPayload('repo_read", "args": {"repo": "KvFxKaido/Push", "path": "README.md", "start_line": 1, "end_line": 400}}'),
+      stripToolCallPayload(
+        'repo_read", "args": {"repo": "KvFxKaido/Push", "path": "README.md", "start_line": 1, "end_line": 400}}',
+      ),
     ).toBe('');
   });
 
@@ -102,12 +110,16 @@ describe('stripToolCallPayload', () => {
   });
 
   it('strips orphaned JSON tail from shell command', () => {
-    const leaked = 'workspace/app && npm audit fix && npx vitest run src/lib/orchestrator.test.ts && npm audit --json","workdir":"/workspace"}}';
-    expect(stripToolCallPayload(leaked)).toBe('workspace/app && npm audit fix && npx vitest run src/lib/orchestrator.test.ts && npm audit --json');
+    const leaked =
+      'workspace/app && npm audit fix && npx vitest run src/lib/orchestrator.test.ts && npm audit --json","workdir":"/workspace"}}';
+    expect(stripToolCallPayload(leaked)).toBe(
+      'workspace/app && npm audit fix && npx vitest run src/lib/orchestrator.test.ts && npm audit --json',
+    );
   });
 
   it('strips native echo with fenced tool call JSON alongside', () => {
-    const content = 'repo_read", "args": {"repo": "a/b", "path": "AGENTS.md"}}\n```json\n{"tool":"repo_read","args":{"repo":"a/b","path":"AGENTS.md"}}\n```';
+    const content =
+      'repo_read", "args": {"repo": "a/b", "path": "AGENTS.md"}}\n```json\n{"tool":"repo_read","args":{"repo":"a/b","path":"AGENTS.md"}}\n```';
     expect(stripToolCallPayload(content)).toBe('');
   });
 });

@@ -38,11 +38,17 @@ describe('chat-management workspace scoping', () => {
 
   it('continues to scope repo chats by repo identity', () => {
     const repoConversation = makeConversation({ repoFullName: 'owner/repo-a', mode: 'repo' });
-    const otherRepoConversation = makeConversation({ id: 'chat-2', repoFullName: 'owner/repo-b', mode: 'repo' });
+    const otherRepoConversation = makeConversation({
+      id: 'chat-2',
+      repoFullName: 'owner/repo-b',
+      mode: 'repo',
+    });
     const chatConversation = makeConversation({ id: 'chat-3', mode: 'chat' });
 
     expect(conversationBelongsToWorkspace(repoConversation, 'owner/repo-a', 'repo')).toBe(true);
-    expect(conversationBelongsToWorkspace(otherRepoConversation, 'owner/repo-a', 'repo')).toBe(false);
+    expect(conversationBelongsToWorkspace(otherRepoConversation, 'owner/repo-a', 'repo')).toBe(
+      false,
+    );
     expect(conversationBelongsToWorkspace(chatConversation, 'owner/repo-a', 'repo')).toBe(false);
   });
 });

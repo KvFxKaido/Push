@@ -12,7 +12,9 @@ export const SANDBOX_ROUTES: Record<string, string> = {
   download: 'create-archive',
 };
 
-export function resolveModalSandboxBase(baseUrl: string): { ok: true; base: string } | { ok: false; code: string; details: string } {
+export function resolveModalSandboxBase(
+  baseUrl: string,
+): { ok: true; base: string } | { ok: false; code: string; details: string } {
   if (!baseUrl.startsWith('https://')) {
     return {
       ok: false,
@@ -25,7 +27,8 @@ export function resolveModalSandboxBase(baseUrl: string): { ok: true; base: stri
     return {
       ok: false,
       code: 'MODAL_URL_TRAILING_SLASH',
-      details: 'MODAL_SANDBOX_BASE_URL must not have a trailing slash. Remove the trailing / and redeploy.',
+      details:
+        'MODAL_SANDBOX_BASE_URL must not have a trailing slash. Remove the trailing / and redeploy.',
     };
   }
 

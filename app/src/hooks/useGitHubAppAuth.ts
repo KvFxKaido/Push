@@ -78,7 +78,11 @@ function getGitHubAppRedirectUri(): string {
   if (configured) {
     // Normalize via URL constructor so trailing-slash handling matches the fallback path
     // and GitHub's registered callback URL.
-    try { return new URL(configured).toString(); } catch { return configured; }
+    try {
+      return new URL(configured).toString();
+    } catch {
+      return configured;
+    }
   }
   // Canonical root URL avoids origin/slash mismatches in GitHub callback checks.
   return new URL('/', window.location.origin).toString();
@@ -153,7 +157,11 @@ async function fetchAppOAuth(code: string): Promise<TokenResponse & { installati
     let rawError = '';
     let installUrl = '';
     try {
-      const data = JSON.parse(rawBody) as { error?: unknown; details?: unknown; install_url?: unknown };
+      const data = JSON.parse(rawBody) as {
+        error?: unknown;
+        details?: unknown;
+        install_url?: unknown;
+      };
       if (typeof data.error === 'string' && data.error.trim()) {
         rawError = data.error;
       } else if (typeof data.details === 'string' && data.details.trim()) {
@@ -177,16 +185,14 @@ async function fetchAppOAuth(code: string): Promise<TokenResponse & { installati
 
 export function useGitHubAppAuth(): UseGitHubAppAuth {
   const [installationId, setInstallationId] = useState(
-    () => safeStorageGet(INSTALLATION_ID_KEY) || ''
+    () => safeStorageGet(INSTALLATION_ID_KEY) || '',
   );
   const [token, setToken] = useState(() => safeStorageGet(TOKEN_KEY) || '');
-  const [, setTokenExpiry] = useState(
-    () => safeStorageGet(TOKEN_EXPIRY_KEY) || ''
-  );
+  const [, setTokenExpiry] = useState(() => safeStorageGet(TOKEN_EXPIRY_KEY) || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [validatedUser, setValidatedUser] = useState<GitHubUser | null>(
-    () => parseStoredUser(safeStorageGet(USER_KEY))
+  const [validatedUser, setValidatedUser] = useState<GitHubUser | null>(() =>
+    parseStoredUser(safeStorageGet(USER_KEY)),
   );
 
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -210,123 +216,132 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
   }, []);
 
   // Schedule token refresh before expiry
-  const scheduleRefresh = useCallback((expiresAt: string, instId: string) => {
-    if (refreshTimeoutRef.current) {
-      clearTimeout(refreshTimeoutRef.current);
-    }
+  const scheduleRefresh = useCallback(
+    (expiresAt: string, instId: string) => {
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+      }
 
-    const expiryTime = new Date(expiresAt).getTime();
-    const now = Date.now();
-    const refreshIn = Math.max(0, expiryTime - now - REFRESH_BUFFER_MS);
+      const expiryTime = new Date(expiresAt).getTime();
+      const now = Date.now();
+      const refreshIn = Math.max(0, expiryTime - now - REFRESH_BUFFER_MS);
 
-    refreshTimeoutRef.current = setTimeout(async () => {
+      refreshTimeoutRef.current = setTimeout(async () => {
+        try {
+          const data = await fetchAppToken(instId);
+          safeStorageSet(TOKEN_KEY, data.token);
+          safeStorageSet(TOKEN_EXPIRY_KEY, data.expires_at);
+          setToken(data.token);
+          setTokenExpiry(data.expires_at);
+          const commitIdentity = coerceCommitIdentity(data.commit_identity);
+          if (commitIdentity) {
+            saveCommitIdentity(commitIdentity);
+          }
+          scheduleRefresh(data.expires_at, instId);
+        } catch (err) {
+          console.error('[Push] Token refresh failed:', err);
+          // Don't clear auth on refresh failure — user can still use current token
+        }
+      }, refreshIn);
+    },
+    [saveCommitIdentity],
+  );
+
+  // Fetch token for installation
+  const fetchAndSetToken = useCallback(
+    async (instId: string): Promise<boolean> => {
+      setLoading(true);
+      setError(null);
+      const normalizedInstId = instId.trim();
+
+      // Persist installation ID independently from token state so users don't lose it
+      // when token exchange fails temporarily (network/proxy/allowlist issues).
+      if (normalizedInstId) {
+        safeStorageSet(INSTALLATION_ID_KEY, normalizedInstId);
+        setInstallationId(normalizedInstId);
+      }
+
       try {
-        const data = await fetchAppToken(instId);
+        const data = await fetchAppToken(normalizedInstId);
+
         safeStorageSet(TOKEN_KEY, data.token);
         safeStorageSet(TOKEN_EXPIRY_KEY, data.expires_at);
+
         setToken(data.token);
         setTokenExpiry(data.expires_at);
+
         const commitIdentity = coerceCommitIdentity(data.commit_identity);
         if (commitIdentity) {
           saveCommitIdentity(commitIdentity);
         }
-        scheduleRefresh(data.expires_at, instId);
-      } catch (err) {
-        console.error('[Push] Token refresh failed:', err);
-        // Don't clear auth on refresh failure — user can still use current token
-      }
-    }, refreshIn);
-  }, [saveCommitIdentity]);
 
-  // Fetch token for installation
-  const fetchAndSetToken = useCallback(async (instId: string): Promise<boolean> => {
-    setLoading(true);
-    setError(null);
-    const normalizedInstId = instId.trim();
-
-    // Persist installation ID independently from token state so users don't lose it
-    // when token exchange fails temporarily (network/proxy/allowlist issues).
-    if (normalizedInstId) {
-      safeStorageSet(INSTALLATION_ID_KEY, normalizedInstId);
-      setInstallationId(normalizedInstId);
-    }
-
-    try {
-      const data = await fetchAppToken(normalizedInstId);
-
-      safeStorageSet(TOKEN_KEY, data.token);
-      safeStorageSet(TOKEN_EXPIRY_KEY, data.expires_at);
-
-      setToken(data.token);
-      setTokenExpiry(data.expires_at);
-
-      const commitIdentity = coerceCommitIdentity(data.commit_identity);
-      if (commitIdentity) {
-        saveCommitIdentity(commitIdentity);
-      }
-
-      const userFromResponse = data.user && data.user.login ? data.user : null;
-      if (userFromResponse) {
-        saveValidatedUser(userFromResponse);
-      } else {
-        // Fallback for environments that don't provide user metadata.
-        const user = await validateToken(data.token);
-        if (user) {
-          saveValidatedUser(user);
+        const userFromResponse = data.user && data.user.login ? data.user : null;
+        if (userFromResponse) {
+          saveValidatedUser(userFromResponse);
+        } else {
+          // Fallback for environments that don't provide user metadata.
+          const user = await validateToken(data.token);
+          if (user) {
+            saveValidatedUser(user);
+          }
         }
-      }
 
-      // Schedule refresh
-      scheduleRefresh(data.expires_at, normalizedInstId);
-      return true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to authenticate';
-      setError(message);
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  }, [saveCommitIdentity, saveValidatedUser, scheduleRefresh]);
+        // Schedule refresh
+        scheduleRefresh(data.expires_at, normalizedInstId);
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to authenticate';
+        setError(message);
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [saveCommitIdentity, saveValidatedUser, scheduleRefresh],
+  );
 
   // Handle OAuth code callback (auto-connect flow)
-  const handleOAuthCallback = useCallback(async (code: string) => {
-    setLoading(true);
-    setError(null);
+  const handleOAuthCallback = useCallback(
+    async (code: string) => {
+      setLoading(true);
+      setError(null);
 
-    try {
-      const data = await fetchAppOAuth(code);
+      try {
+        const data = await fetchAppOAuth(code);
 
-      safeStorageSet(INSTALLATION_ID_KEY, data.installation_id);
-      safeStorageSet(TOKEN_KEY, data.token);
-      safeStorageSet(TOKEN_EXPIRY_KEY, data.expires_at);
+        safeStorageSet(INSTALLATION_ID_KEY, data.installation_id);
+        safeStorageSet(TOKEN_KEY, data.token);
+        safeStorageSet(TOKEN_EXPIRY_KEY, data.expires_at);
 
-      setInstallationId(data.installation_id);
-      setToken(data.token);
-      setTokenExpiry(data.expires_at);
+        setInstallationId(data.installation_id);
+        setToken(data.token);
+        setTokenExpiry(data.expires_at);
 
-      const commitIdentity = coerceCommitIdentity(data.commit_identity);
-      if (commitIdentity) {
-        saveCommitIdentity(commitIdentity);
-      }
-
-      const userFromResponse = data.user && data.user.login ? data.user : null;
-      if (userFromResponse) {
-        saveValidatedUser(userFromResponse);
-      } else {
-        const user = await validateToken(data.token);
-        if (user) {
-          saveValidatedUser(user);
+        const commitIdentity = coerceCommitIdentity(data.commit_identity);
+        if (commitIdentity) {
+          saveCommitIdentity(commitIdentity);
         }
-      }
 
-      scheduleRefresh(data.expires_at, data.installation_id);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'OAuth connection failed';
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  }, [saveCommitIdentity, saveValidatedUser, scheduleRefresh]);
+        const userFromResponse = data.user && data.user.login ? data.user : null;
+        if (userFromResponse) {
+          saveValidatedUser(userFromResponse);
+        } else {
+          const user = await validateToken(data.token);
+          if (user) {
+            saveValidatedUser(user);
+          }
+        }
+
+        scheduleRefresh(data.expires_at, data.installation_id);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'OAuth connection failed';
+        setError(message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [saveCommitIdentity, saveValidatedUser, scheduleRefresh],
+  );
 
   // Handle installation callback from GitHub (install flow) or OAuth code callback (connect flow)
   useEffect(() => {
@@ -399,9 +414,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
       client_id: GITHUB_APP_CLIENT_ID,
       redirect_uri: getGitHubAppRedirectUri(),
     });
-    window.location.assign(
-      `https://github.com/login/oauth/authorize?${params.toString()}`
-    );
+    window.location.assign(`https://github.com/login/oauth/authorize?${params.toString()}`);
   }, []);
 
   const install = useCallback(() => {
@@ -410,7 +423,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
       redirect_uri: getGitHubAppRedirectUri(),
     });
     window.location.assign(
-      `https://github.com/apps/${GITHUB_APP_NAME}/installations/new?${params.toString()}`
+      `https://github.com/apps/${GITHUB_APP_NAME}/installations/new?${params.toString()}`,
     );
   }, []);
 
@@ -424,7 +437,7 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
       }
       return fetchAndSetToken(trimmed);
     },
-    [fetchAndSetToken]
+    [fetchAndSetToken],
   );
 
   const disconnect = useCallback(() => {

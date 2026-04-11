@@ -48,10 +48,16 @@ export function useWorkspaceChatPanelsController({
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
   const [isChatsDrawerOpen, setIsChatsDrawerOpen] = useState(false);
   const [newChatSheetOpen, setNewChatSheetOpen] = useState(false);
-  const [newChatWorkspaceState, setNewChatWorkspaceState] = useState<ChatRouteProps['inspectNewChatWorkspace'] extends () => Promise<infer T> ? T : never>(null);
+  const [newChatWorkspaceState, setNewChatWorkspaceState] =
+    useState<ChatRouteProps['inspectNewChatWorkspace'] extends () => Promise<infer T> ? T : never>(
+      null,
+    );
   const [checkingNewChatWorkspace, setCheckingNewChatWorkspace] = useState(false);
   const [resettingWorkspaceForNewChat, setResettingWorkspaceForNewChat] = useState(false);
-  const [hubTabRequest, setHubTabRequest] = useState<{ tab: 'files' | 'diff'; requestKey: number } | null>(null);
+  const [hubTabRequest, setHubTabRequest] = useState<{
+    tab: 'files' | 'diff';
+    requestKey: number;
+  } | null>(null);
 
   const closePanels = useCallback(() => {
     setIsLauncherOpen(false);
@@ -77,13 +83,16 @@ export function useWorkspaceChatPanelsController({
     setIsLauncherOpen(true);
   }, []);
 
-  const handleNewChatSheetOpenChange = useCallback((open: boolean) => {
-    setNewChatSheetOpen(open);
-    if (!open && !resettingWorkspaceForNewChat) {
-      setNewChatWorkspaceState(null);
-      setCheckingNewChatWorkspace(false);
-    }
-  }, [resettingWorkspaceForNewChat]);
+  const handleNewChatSheetOpenChange = useCallback(
+    (open: boolean) => {
+      setNewChatSheetOpen(open);
+      if (!open && !resettingWorkspaceForNewChat) {
+        setNewChatWorkspaceState(null);
+        setCheckingNewChatWorkspace(false);
+      }
+    },
+    [resettingWorkspaceForNewChat],
+  );
 
   const handleCreateNewChatRequest = useCallback(async () => {
     if (checkingNewChatWorkspace || resettingWorkspaceForNewChat) return;
@@ -179,45 +188,58 @@ export function useWorkspaceChatPanelsController({
     }
   }, [sandbox.sandboxId, saveExpiryCheckpoint]);
 
-  const handleFixReviewFinding = useCallback(async (prompt: string) => {
-    if (isStreaming) {
-      toast.error('Wait for the current response to finish before sending a fix request.');
-      return;
-    }
-
-    markSnapshotActivity();
-    handleWorkspaceHubOpenChange(false);
-
-    if (!sandbox.sandboxId) {
-      try {
-        await ensureSandbox();
-      } catch {
-        // Best effort — still send the fix request so the agent can explain next steps.
+  const handleFixReviewFinding = useCallback(
+    async (prompt: string) => {
+      if (isStreaming) {
+        toast.error('Wait for the current response to finish before sending a fix request.');
+        return;
       }
-    }
 
-    await sendMessage(prompt);
-  }, [ensureSandbox, handleWorkspaceHubOpenChange, isStreaming, markSnapshotActivity, sandbox.sandboxId, sendMessage]);
+      markSnapshotActivity();
+      handleWorkspaceHubOpenChange(false);
 
-  const handleResumeConversationFromLauncher = useCallback((chatId: string) => {
-    const conversation = conversations[chatId];
-    if (!conversation) return;
+      if (!sandbox.sandboxId) {
+        try {
+          await ensureSandbox();
+        } catch {
+          // Best effort — still send the fix request so the agent can explain next steps.
+        }
+      }
 
-    // Chat/scratch conversations have no repo — just switch to them directly.
-    if (!conversation.repoFullName) {
-      closePanels();
-      switchChat(chatId);
-      return;
-    }
+      await sendMessage(prompt);
+    },
+    [
+      ensureSandbox,
+      handleWorkspaceHubOpenChange,
+      isStreaming,
+      markSnapshotActivity,
+      sandbox.sandboxId,
+      sendMessage,
+    ],
+  );
 
-    // Repo conversations — select the repo first, then switch.
-    const repo = repos.find((candidate) => candidate.full_name === conversation.repoFullName);
-    if (!repo) return;
-    handleSelectRepoFromDrawer(repo, conversation.branch);
-    requestAnimationFrame(() => {
-      switchChat(chatId);
-    });
-  }, [closePanels, conversations, handleSelectRepoFromDrawer, repos, switchChat]);
+  const handleResumeConversationFromLauncher = useCallback(
+    (chatId: string) => {
+      const conversation = conversations[chatId];
+      if (!conversation) return;
+
+      // Chat/scratch conversations have no repo — just switch to them directly.
+      if (!conversation.repoFullName) {
+        closePanels();
+        switchChat(chatId);
+        return;
+      }
+
+      // Repo conversations — select the repo first, then switch.
+      const repo = repos.find((candidate) => candidate.full_name === conversation.repoFullName);
+      if (!repo) return;
+      handleSelectRepoFromDrawer(repo, conversation.branch);
+      requestAnimationFrame(() => {
+        switchChat(chatId);
+      });
+    },
+    [closePanels, conversations, handleSelectRepoFromDrawer, repos, switchChat],
+  );
 
   const handleStartWorkspaceRequest = useCallback(() => {
     closePanels();

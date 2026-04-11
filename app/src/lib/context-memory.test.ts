@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { DelegationOutcome, MemoryQuery, MemoryRecord, MemoryScope, TaskGraphNodeState } from '@/types';
+import type {
+  DelegationOutcome,
+  MemoryQuery,
+  MemoryRecord,
+  MemoryScope,
+  TaskGraphNodeState,
+} from '@/types';
 import {
   buildRetrievedMemoryKnownContext,
   createInMemoryStore,
@@ -20,9 +26,7 @@ function makeScope(overrides: Partial<MemoryScope> = {}): MemoryScope {
   };
 }
 
-function makeCoderOutcome(
-  overrides: Partial<DelegationOutcome> = {},
-): DelegationOutcome {
+function makeCoderOutcome(overrides: Partial<DelegationOutcome> = {}): DelegationOutcome {
   return {
     agent: 'coder',
     status: 'complete',
@@ -130,7 +134,12 @@ describe('writeCoderMemory', () => {
     });
 
     const kinds = records.map((r) => r.kind).sort();
-    expect(kinds).toEqual(['file_change', 'task_outcome', 'verification_result', 'verification_result']);
+    expect(kinds).toEqual([
+      'file_change',
+      'task_outcome',
+      'verification_result',
+      'verification_result',
+    ]);
 
     const outcome = records.find((r) => r.kind === 'task_outcome')!;
     expect(outcome.scope.role).toBe('coder');
@@ -170,7 +179,9 @@ describe('writeCoderMemory', () => {
     const records = await writeCoderMemory({
       store,
       scope: makeScope(),
-      outcome: makeCoderOutcome({ checks: [{ id: 'typecheck', passed: false, exitCode: 1, output: 'boom' }] }),
+      outcome: makeCoderOutcome({
+        checks: [{ id: 'typecheck', passed: false, exitCode: 1, output: 'boom' }],
+      }),
       verificationCommandsById: { typecheck: 'npm   run   typecheck' },
     });
 

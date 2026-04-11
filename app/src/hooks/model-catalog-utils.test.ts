@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  scheduleAutoFetch,
-  shouldAutoFetchProviderModels,
-} from './model-catalog-utils';
+import { scheduleAutoFetch, shouldAutoFetchProviderModels } from './model-catalog-utils';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -13,19 +10,23 @@ afterEach(() => {
 
 describe('shouldAutoFetchProviderModels', () => {
   it('auto-fetches only when the provider is idle, empty, and error-free', () => {
-    expect(shouldAutoFetchProviderModels({
-      hasKey: true,
-      modelCount: 0,
-      loading: false,
-      error: null,
-    })).toBe(true);
+    expect(
+      shouldAutoFetchProviderModels({
+        hasKey: true,
+        modelCount: 0,
+        loading: false,
+        error: null,
+      }),
+    ).toBe(true);
 
-    expect(shouldAutoFetchProviderModels({
-      hasKey: true,
-      modelCount: 0,
-      loading: false,
-      error: 'Request failed',
-    })).toBe(false);
+    expect(
+      shouldAutoFetchProviderModels({
+        hasKey: true,
+        modelCount: 0,
+        loading: false,
+        error: 'Request failed',
+      }),
+    ).toBe(false);
   });
 });
 

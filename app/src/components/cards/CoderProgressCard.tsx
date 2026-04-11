@@ -24,7 +24,9 @@ export function CoderProgressCard({ data }: CoderProgressCardProps) {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-push-accent opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-push-accent"></span>
             </span>
-            <span className={`${CARD_BADGE_INFO} truncate px-2 py-0.5 text-push-2xs font-medium max-w-[120px]`}>
+            <span
+              className={`${CARD_BADGE_INFO} truncate px-2 py-0.5 text-push-2xs font-medium max-w-[120px]`}
+            >
               {data.currentPhase}
             </span>
           </div>
@@ -34,7 +36,9 @@ export function CoderProgressCard({ data }: CoderProgressCardProps) {
       <div className="px-3 py-3 space-y-4">
         {data.plan && (
           <div className="space-y-1.5">
-            <div className="text-push-xs text-push-fg-muted font-medium uppercase tracking-wider">Plan</div>
+            <div className="text-push-xs text-push-fg-muted font-medium uppercase tracking-wider">
+              Plan
+            </div>
             <p className="text-push-sm text-push-fg-secondary leading-relaxed">{data.plan}</p>
           </div>
         )}
@@ -47,7 +51,10 @@ export function CoderProgressCard({ data }: CoderProgressCardProps) {
             </div>
             <div className="space-y-1.5">
               {data.openTasks?.map((task, idx) => (
-                <div key={idx} className={`${CARD_PANEL_SUBTLE_CLASS} flex items-start gap-2 px-2.5 py-2 text-push-sm text-push-fg-secondary`}>
+                <div
+                  key={idx}
+                  className={`${CARD_PANEL_SUBTLE_CLASS} flex items-start gap-2 px-2.5 py-2 text-push-sm text-push-fg-secondary`}
+                >
                   <CircleDashed className="h-3.5 w-3.5 mt-0.5 text-push-fg-dim shrink-0" />
                   <span>{task}</span>
                 </div>

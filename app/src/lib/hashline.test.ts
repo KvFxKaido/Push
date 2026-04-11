@@ -57,9 +57,7 @@ describe('applyHashlineEdits with longer refs (8–12 chars)', () => {
     const ref10 = await calculateLineHash('line2', 10);
     expect(ref10).toHaveLength(10);
 
-    const result = await applyHashlineEdits(content, [
-      { op: 'delete_line', ref: ref10 },
-    ]);
+    const result = await applyHashlineEdits(content, [{ op: 'delete_line', ref: ref10 }]);
     expect(result.applied).toBe(1);
     expect(result.failed).toBe(0);
     expect(result.content).toBe('line1\nline3');
@@ -159,8 +157,8 @@ describe('ambiguous 7-char ref → diagnostic → retry with longer ref', () => 
 describe('resolvedLines in edit results', () => {
   it('returns 1-indexed line numbers of successfully resolved targets', async () => {
     const content = 'aaa\nbbb\nccc\nddd';
-    const refB = '2:' + await calculateLineHash('bbb', 7);
-    const refD = '4:' + await calculateLineHash('ddd', 7);
+    const refB = '2:' + (await calculateLineHash('bbb', 7));
+    const refD = '4:' + (await calculateLineHash('ddd', 7));
 
     const result = await applyHashlineEdits(content, [
       { op: 'replace_line', ref: refB, content: 'BBB' },
@@ -172,7 +170,7 @@ describe('resolvedLines in edit results', () => {
 
   it('excludes failed edits from resolvedLines', async () => {
     const content = 'aaa\nbbb\nccc';
-    const refA = '1:' + await calculateLineHash('aaa', 7);
+    const refA = '1:' + (await calculateLineHash('aaa', 7));
     const badRef = '2:' + 'badhash';
 
     const result = await applyHashlineEdits(content, [
@@ -197,7 +195,7 @@ describe('resolvedLines in edit results', () => {
 describe('batched edits: same-line replace + insert_after', () => {
   it('replace_line then insert_after with the same line-qualified ref', async () => {
     const content = 'line1\nline2\nline3';
-    const ref2 = '2:' + await calculateLineHash('line2', 7);
+    const ref2 = '2:' + (await calculateLineHash('line2', 7));
 
     const result = await applyHashlineEdits(content, [
       { op: 'replace_line', ref: ref2, content: 'REPLACED' },
@@ -210,7 +208,7 @@ describe('batched edits: same-line replace + insert_after', () => {
 
   it('replace_line then insert_before with the same line-qualified ref', async () => {
     const content = 'line1\nline2\nline3';
-    const ref2 = '2:' + await calculateLineHash('line2', 7);
+    const ref2 = '2:' + (await calculateLineHash('line2', 7));
 
     const result = await applyHashlineEdits(content, [
       { op: 'replace_line', ref: ref2, content: 'REPLACED' },
@@ -223,8 +221,8 @@ describe('batched edits: same-line replace + insert_after', () => {
 
   it('insert_after shifts later line-qualified refs correctly', async () => {
     const content = 'aaa\nbbb\nccc\nddd';
-    const refB = '2:' + await calculateLineHash('bbb', 7);
-    const refD = '4:' + await calculateLineHash('ddd', 7);
+    const refB = '2:' + (await calculateLineHash('bbb', 7));
+    const refD = '4:' + (await calculateLineHash('ddd', 7));
 
     const result = await applyHashlineEdits(content, [
       { op: 'insert_after', ref: refB, content: 'NEW' },
@@ -238,8 +236,8 @@ describe('batched edits: same-line replace + insert_after', () => {
 
   it('delete_line shifts later line-qualified refs correctly', async () => {
     const content = 'aaa\nbbb\nccc\nddd';
-    const refB = '2:' + await calculateLineHash('bbb', 7);
-    const refD = '4:' + await calculateLineHash('ddd', 7);
+    const refB = '2:' + (await calculateLineHash('bbb', 7));
+    const refD = '4:' + (await calculateLineHash('ddd', 7));
 
     const result = await applyHashlineEdits(content, [
       { op: 'delete_line', ref: refB },
@@ -253,7 +251,7 @@ describe('batched edits: same-line replace + insert_after', () => {
 
   it('multiple ops on same line: replace + two inserts', async () => {
     const content = 'before\ntarget\nafter';
-    const ref = '2:' + await calculateLineHash('target', 7);
+    const ref = '2:' + (await calculateLineHash('target', 7));
 
     const result = await applyHashlineEdits(content, [
       { op: 'replace_line', ref, content: 'REPLACED' },
@@ -267,7 +265,7 @@ describe('batched edits: same-line replace + insert_after', () => {
 
   it('multiple insert_after on same line preserve order', async () => {
     const content = 'A\nB\nC';
-    const ref = '2:' + await calculateLineHash('B', 7);
+    const ref = '2:' + (await calculateLineHash('B', 7));
 
     const result = await applyHashlineEdits(content, [
       { op: 'insert_after', ref, content: 'X' },
@@ -281,7 +279,7 @@ describe('batched edits: same-line replace + insert_after', () => {
 
   it('rejects duplicate delete_line on the same line', async () => {
     const content = 'A\nB\nC';
-    const ref = '2:' + await calculateLineHash('B', 7);
+    const ref = '2:' + (await calculateLineHash('B', 7));
 
     const result = await applyHashlineEdits(content, [
       { op: 'delete_line', ref },
@@ -295,7 +293,7 @@ describe('batched edits: same-line replace + insert_after', () => {
 
   it('rejects replace_line targeting a line deleted earlier in batch', async () => {
     const content = 'A\nB\nC';
-    const ref = '2:' + await calculateLineHash('B', 7);
+    const ref = '2:' + (await calculateLineHash('B', 7));
 
     const result = await applyHashlineEdits(content, [
       { op: 'delete_line', ref },
@@ -309,7 +307,7 @@ describe('batched edits: same-line replace + insert_after', () => {
 
   it('rejects insert_after targeting a line deleted earlier in batch', async () => {
     const content = 'A\nB\nC';
-    const ref = '2:' + await calculateLineHash('B', 7);
+    const ref = '2:' + (await calculateLineHash('B', 7));
 
     const result = await applyHashlineEdits(content, [
       { op: 'delete_line', ref },
@@ -323,7 +321,7 @@ describe('batched edits: same-line replace + insert_after', () => {
 
   it('warns when replace_line targets the same original line twice', async () => {
     const content = 'A\nB\nC';
-    const ref = '2:' + await calculateLineHash('B', 7);
+    const ref = '2:' + (await calculateLineHash('B', 7));
 
     const result = await applyHashlineEdits(content, [
       { op: 'replace_line', ref, content: 'B1' },

@@ -363,7 +363,11 @@ export async function streamAssistantRound(
           const msgs = [...conv.messages];
           const lastIdx = msgs.length - 1;
           if (msgs[lastIdx]?.role === 'assistant') {
-            msgs[lastIdx] = { ...msgs[lastIdx], thinking: thinkingAccumulated, status: 'streaming' };
+            msgs[lastIdx] = {
+              ...msgs[lastIdx],
+              thinking: thinkingAccumulated,
+              status: 'streaming',
+            };
           }
           return { ...prev, [chatId]: { ...conv, messages: msgs } };
         });
@@ -591,7 +595,10 @@ export async function processAssistantTurn(
   };
 
   // --- Parallel tool calls (multiple reads + optional trailing mutation) ---
-  if (parallelToolCalls.length > 1 || (parallelToolCalls.length > 0 && Boolean(detected.mutating))) {
+  if (
+    parallelToolCalls.length > 1 ||
+    (parallelToolCalls.length > 0 && Boolean(detected.mutating))
+  ) {
     console.log(`[Push] Parallel tool calls detected:`, parallelToolCalls);
     const parallelExecutionIds = parallelToolCalls.map(() => createId());
 
@@ -750,8 +757,7 @@ export async function processAssistantTurn(
       });
 
       if (
-        (mutCall.source === 'sandbox' ||
-          delegateCallNeedsSandbox(mutCall)) &&
+        (mutCall.source === 'sandbox' || delegateCallNeedsSandbox(mutCall)) &&
         !sandboxIdRef.current &&
         ensureSandboxRef.current
       ) {
@@ -880,7 +886,10 @@ export async function processAssistantTurn(
         toolName: recoveryResult.diagnosis.toolName || undefined,
         preview: summarizeToolResultPreview(recoveryResult.diagnosis.errorMessage),
       });
-    } else if (recoveryResult.kind === 'telemetry_only' || recoveryResult.kind === 'diagnosis_exhausted') {
+    } else if (
+      recoveryResult.kind === 'telemetry_only' ||
+      recoveryResult.kind === 'diagnosis_exhausted'
+    ) {
       appendRunEvent(chatId, {
         type: 'tool.call_malformed',
         round,
@@ -888,7 +897,10 @@ export async function processAssistantTurn(
         toolName: recoveryResult.diagnosis.toolName || undefined,
         preview: summarizeToolResultPreview(recoveryResult.diagnosis.errorMessage),
       });
-    } else if (recoveryResult.kind === 'feedback' && recoveryResult.feedback.mode === 'unimplemented_tool') {
+    } else if (
+      recoveryResult.kind === 'feedback' &&
+      recoveryResult.feedback.mode === 'unimplemented_tool'
+    ) {
       appendRunEvent(chatId, {
         type: 'tool.call_malformed',
         round,
@@ -995,7 +1007,11 @@ export async function processAssistantTurn(
         activeProvider: lockedProvider,
         activeModel: resolvedModel,
       };
-      const policyResult = await orchestratorPolicy.evaluateAfterModel(accumulated, apiMessages, turnCtx);
+      const policyResult = await orchestratorPolicy.evaluateAfterModel(
+        accumulated,
+        apiMessages,
+        turnCtx,
+      );
       if (policyResult?.action === 'inject') {
         // Finalize the assistant message in conversation state before continuing,
         // so it doesn't remain with status: 'streaming' (stale spinner).
@@ -1012,10 +1028,7 @@ export async function processAssistantTurn(
         });
 
         // Nudge the model — inject corrective message and continue the loop
-        const nextApiMessages = [
-          ...action.apiMessages,
-          policyResult.message,
-        ];
+        const nextApiMessages = [...action.apiMessages, policyResult.message];
         return {
           nextApiMessages,
           nextRecoveryState,
@@ -1062,8 +1075,8 @@ export async function processAssistantTurn(
 
   let toolExecResult: ToolExecutionResult | undefined;
   const isCommitVerificationTool =
-    toolCall.source === 'sandbox'
-    && (toolCall.call.tool === 'sandbox_prepare_commit' || toolCall.call.tool === 'sandbox_push');
+    toolCall.source === 'sandbox' &&
+    (toolCall.call.tool === 'sandbox_prepare_commit' || toolCall.call.tool === 'sandbox_push');
 
   if (isCommitVerificationTool) {
     const verificationEvaluation = evaluateVerificationState(
@@ -1081,11 +1094,9 @@ export async function processAssistantTurn(
   // Lazy auto-spin: create sandbox on demand for sandbox calls and any
   // delegation that can execute Coder work (direct or via task graph).
   if (
-    !toolExecResult
-    && (
+    !toolExecResult &&
     (toolCall.source === 'sandbox' || delegateCallNeedsSandbox(toolCall)) &&
     !sandboxIdRef.current
-    )
   ) {
     if (ensureSandboxRef.current) {
       updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
@@ -1105,12 +1116,7 @@ export async function processAssistantTurn(
         text: '[Tool Error] Scratchpad not available. The scratchpad may not be initialized — try again after the UI loads.',
       };
     } else {
-      const result = executeScratchpadToolCall(
-        toolCall.call,
-        sp.content,
-        sp.replace,
-        sp.append,
-      );
+      const result = executeScratchpadToolCall(toolCall.call, sp.content, sp.replace, sp.append);
       if (result.ok) {
         if (toolCall.call.tool === 'set_scratchpad') {
           scratchpadRef.current = { ...sp, content: toolCall.call.content };
@@ -1168,45 +1174,36 @@ export async function processAssistantTurn(
   }
 
   const verificationResult = singleRawResult?.raw ?? toolExecResult;
-  const touchedPaths = verificationResult.postconditions?.touchedFiles.map((file) => file.path) ?? [];
+  const touchedPaths =
+    verificationResult.postconditions?.touchedFiles.map((file) => file.path) ?? [];
   if (touchedPaths.length > 0) {
     updateVerificationState(chatId, (state) =>
-      recordVerificationMutation(
-        state,
-        {
-          source: 'tool',
-          touchedPaths,
-          detail: `${getToolName(toolCall)} mutated the workspace.`,
-        },
-      ),
+      recordVerificationMutation(state, {
+        source: 'tool',
+        touchedPaths,
+        detail: `${getToolName(toolCall)} mutated the workspace.`,
+      }),
     );
   } else if (
-    toolCall.source === 'sandbox'
-    && toolCall.call.tool === 'sandbox_exec'
-    && !isReadOnlyToolCall(toolCall)
+    toolCall.source === 'sandbox' &&
+    toolCall.call.tool === 'sandbox_exec' &&
+    !isReadOnlyToolCall(toolCall)
   ) {
     updateVerificationState(chatId, (state) =>
-      recordVerificationMutation(
-        state,
-        {
-          source: 'tool',
-          detail: 'sandbox_exec may have mutated the workspace.',
-        },
-      ),
+      recordVerificationMutation(state, {
+        source: 'tool',
+        detail: 'sandbox_exec may have mutated the workspace.',
+      }),
     );
   }
 
   const verificationCommand = inferVerificationCommandResult(verificationResult);
   if (verificationCommand) {
     updateVerificationState(chatId, (state) =>
-      recordVerificationCommandResult(
-        state,
-        verificationCommand.command,
-        {
-          exitCode: verificationCommand.exitCode,
-          detail: verificationCommand.detail,
-        },
-      ),
+      recordVerificationCommandResult(state, verificationCommand.command, {
+        exitCode: verificationCommand.exitCode,
+        detail: verificationCommand.detail,
+      }),
     );
     updateVerificationState(chatId, (state) =>
       recordVerificationArtifact(
@@ -1215,16 +1212,13 @@ export async function processAssistantTurn(
       ),
     );
   } else if (
-    toolCall.source === 'sandbox'
-    && (toolCall.call.tool === 'sandbox_diff'
-      || toolCall.call.tool === 'sandbox_prepare_commit'
-      || toolCall.call.tool === 'sandbox_push')
+    toolCall.source === 'sandbox' &&
+    (toolCall.call.tool === 'sandbox_diff' ||
+      toolCall.call.tool === 'sandbox_prepare_commit' ||
+      toolCall.call.tool === 'sandbox_push')
   ) {
     updateVerificationState(chatId, (state) =>
-      recordVerificationArtifact(
-        state,
-        `${toolCall.call.tool} produced artifact evidence.`,
-      ),
+      recordVerificationArtifact(state, `${toolCall.call.tool} produced artifact evidence.`),
     );
   }
 

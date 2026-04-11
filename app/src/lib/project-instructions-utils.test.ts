@@ -13,9 +13,8 @@ describe('project-instructions-utils', () => {
     const applyEffectiveInstructions = vi.fn();
     const setInstructionFilenameState = vi.fn();
     const setInstructionFilename = vi.fn();
-    const readInstruction = vi.fn<
-      (sandboxId: string, path: string) => Promise<{ content?: string | null }>
-    >()
+    const readInstruction = vi
+      .fn<(sandboxId: string, path: string) => Promise<{ content?: string | null }>>()
       .mockResolvedValueOnce({ content: '' })
       .mockResolvedValueOnce({ content: 'Claude instructions' });
 

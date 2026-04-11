@@ -17,7 +17,12 @@ import {
   type WorkerSpan,
 } from './worker-tracing';
 
-export async function handleSandbox(request: Request, env: Env, requestUrl: URL, route: string): Promise<Response> {
+export async function handleSandbox(
+  request: Request,
+  env: Env,
+  requestUrl: URL,
+  route: string,
+): Promise<Response> {
   const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'sandbox');
   const spanCtx = createSpanContext(request, requestId);
   const modalFunction = SANDBOX_ROUTES[route];
@@ -27,20 +32,27 @@ export async function handleSandbox(request: Request, env: Env, requestUrl: URL,
 
   const baseUrl = env.MODAL_SANDBOX_BASE_URL;
   if (!baseUrl) {
-    return Response.json({
-      error: 'Sandbox not configured',
-      code: 'MODAL_NOT_CONFIGURED',
-      details: 'MODAL_SANDBOX_BASE_URL secret is not set. Run: npx wrangler secret put MODAL_SANDBOX_BASE_URL',
-    }, { status: 503 });
+    return Response.json(
+      {
+        error: 'Sandbox not configured',
+        code: 'MODAL_NOT_CONFIGURED',
+        details:
+          'MODAL_SANDBOX_BASE_URL secret is not set. Run: npx wrangler secret put MODAL_SANDBOX_BASE_URL',
+      },
+      { status: 503 },
+    );
   }
 
   const resolvedBase = resolveModalSandboxBase(baseUrl);
   if ('code' in resolvedBase) {
-    return Response.json({
-      error: 'Sandbox misconfigured',
-      code: resolvedBase.code,
-      details: resolvedBase.details,
-    }, { status: 503 });
+    return Response.json(
+      {
+        error: 'Sandbox misconfigured',
+        code: resolvedBase.code,
+        details: resolvedBase.details,
+      },
+      { status: 503 },
+    );
   }
 
   // Validate origin
@@ -64,24 +76,24 @@ export async function handleSandbox(request: Request, env: Env, requestUrl: URL,
   }
 
   // Read and forward body
-  const maxBodyBytes = (route === 'restore' || route === 'batch-write') ? RESTORE_MAX_BODY_SIZE_BYTES : MAX_BODY_SIZE_BYTES;
+  const maxBodyBytes =
+    route === 'restore' || route === 'batch-write'
+      ? RESTORE_MAX_BODY_SIZE_BYTES
+      : MAX_BODY_SIZE_BYTES;
   const bodyResult = await readBodyText(request, maxBodyBytes);
   if ('error' in bodyResult) {
-    return Response.json(
-      { error: bodyResult.error },
-      { status: bodyResult.status },
-    );
+    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
   }
 
   // Route-specific payload enrichment without changing client contracts.
   let forwardBodyText = bodyResult.text;
   if (
-    route === 'read'
-    || route === 'write'
-    || route === 'batch-write'
-    || route === 'list'
-    || route === 'delete'
-    || route === 'restore'
+    route === 'read' ||
+    route === 'write' ||
+    route === 'batch-write' ||
+    route === 'list' ||
+    route === 'delete' ||
+    route === 'restore'
   ) {
     try {
       const payload = JSON.parse(bodyResult.text) as Record<string, unknown>;
@@ -122,7 +134,7 @@ export async function handleSandbox(request: Request, env: Env, requestUrl: URL,
         headers: {
           'Content-Type': 'application/json',
           [REQUEST_ID_HEADER]: requestId,
-          'traceparent': buildTraceparent(sandboxUpstreamCtx),
+          traceparent: buildTraceparent(sandboxUpstreamCtx),
         },
         body: forwardBodyText,
         signal: controller.signal,
@@ -148,13 +160,23 @@ export async function handleSandbox(request: Request, env: Env, requestUrl: URL,
           details = `Modal endpoint not found. The app may not be deployed. Run: cd sandbox && modal deploy app.py`;
         } else if (upstream.status === 401 || upstream.status === 403) {
           code = 'MODAL_AUTH_FAILED';
-          details = 'Modal authentication failed. Check that your Modal tokens are valid and the app is deployed under the correct account.';
+          details =
+            'Modal authentication failed. Check that your Modal tokens are valid and the app is deployed under the correct account.';
         } else if (upstream.status === 500) {
           // Parse 500 error bodies for known patterns to give more specific codes
-          if (lowerBody.includes('not found') || lowerBody.includes('does not exist') || lowerBody.includes('no such') || lowerBody.includes('expired')) {
+          if (
+            lowerBody.includes('not found') ||
+            lowerBody.includes('does not exist') ||
+            lowerBody.includes('no such') ||
+            lowerBody.includes('expired')
+          ) {
             code = 'MODAL_NOT_FOUND';
             details = 'Sandbox not found or expired. The container may have been terminated.';
-          } else if (lowerBody.includes('terminated') || lowerBody.includes('closed') || lowerBody.includes('no longer running')) {
+          } else if (
+            lowerBody.includes('terminated') ||
+            lowerBody.includes('closed') ||
+            lowerBody.includes('no longer running')
+          ) {
             code = 'MODAL_NOT_FOUND';
             details = 'Sandbox has been terminated. Start a new sandbox session.';
           } else if (lowerBody.includes('timeout') || lowerBody.includes('timed out')) {
@@ -168,7 +190,8 @@ export async function handleSandbox(request: Request, env: Env, requestUrl: URL,
           }
         } else if (upstream.status === 502 || upstream.status === 503) {
           code = 'MODAL_UNAVAILABLE';
-          details = 'Modal is temporarily unavailable. The container may be cold-starting. Try again in a few seconds.';
+          details =
+            'Modal is temporarily unavailable. The container may be cold-starting. Try again in a few seconds.';
         } else if (upstream.status === 504) {
           code = 'MODAL_TIMEOUT';
           details = 'Modal request timed out. The operation took too long to complete.';
@@ -203,31 +226,49 @@ export async function handleSandbox(request: Request, env: Env, requestUrl: URL,
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isTimeout = err instanceof Error && err.name === 'AbortError';
-    wlog('error', 'sandbox_error', { requestId, route, message, timeout: isTimeout, trace_id: spanCtx.traceId });
+    wlog('error', 'sandbox_error', {
+      requestId,
+      route,
+      message,
+      timeout: isTimeout,
+      trace_id: spanCtx.traceId,
+    });
 
     if (isTimeout) {
-      return Response.json({
-        error: 'Sandbox request timed out',
-        code: 'MODAL_TIMEOUT',
-        details: `The sandbox took longer than ${routeTimeoutMs / 1000} seconds to respond. Try a simpler operation or check Modal dashboard for issues.`,
-      }, { status: 504 });
+      return Response.json(
+        {
+          error: 'Sandbox request timed out',
+          code: 'MODAL_TIMEOUT',
+          details: `The sandbox took longer than ${routeTimeoutMs / 1000} seconds to respond. Try a simpler operation or check Modal dashboard for issues.`,
+        },
+        { status: 504 },
+      );
     }
 
     // Check for common network errors
-    const isNetworkError = message.includes('fetch failed') || message.includes('ECONNREFUSED') || message.includes('network');
+    const isNetworkError =
+      message.includes('fetch failed') ||
+      message.includes('ECONNREFUSED') ||
+      message.includes('network');
     if (isNetworkError) {
-      return Response.json({
-        error: 'Cannot reach Modal',
-        code: 'MODAL_NETWORK_ERROR',
-        details: `Network error connecting to Modal. Check that the MODAL_SANDBOX_BASE_URL is correct and Modal is not experiencing outages. (${message})`,
-      }, { status: 502 });
+      return Response.json(
+        {
+          error: 'Cannot reach Modal',
+          code: 'MODAL_NETWORK_ERROR',
+          details: `Network error connecting to Modal. Check that the MODAL_SANDBOX_BASE_URL is correct and Modal is not experiencing outages. (${message})`,
+        },
+        { status: 502 },
+      );
     }
 
-    return Response.json({
-      error: 'Sandbox error',
-      code: 'MODAL_UNKNOWN_ERROR',
-      details: message,
-    }, { status: 500 });
+    return Response.json(
+      {
+        error: 'Sandbox error',
+        code: 'MODAL_UNKNOWN_ERROR',
+        details: message,
+      },
+      { status: 500 },
+    );
   }
 }
 
@@ -245,7 +286,11 @@ interface HealthStatus {
     blackbox: { status: 'ok' | 'unconfigured'; configured: boolean };
     kilocode: { status: 'ok' | 'unconfigured'; configured: boolean };
     openadapter: { status: 'ok' | 'unconfigured'; configured: boolean };
-    sandbox: { status: 'ok' | 'unconfigured' | 'misconfigured'; configured: boolean; error?: string };
+    sandbox: {
+      status: 'ok' | 'unconfigured' | 'misconfigured';
+      configured: boolean;
+      error?: string;
+    };
     github_app: { status: 'ok' | 'unconfigured'; configured: boolean };
     github_app_oauth: { status: 'ok' | 'unconfigured'; configured: boolean };
   };
@@ -273,13 +318,23 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
     } else {
       sandboxStatus = 'misconfigured';
       sandboxError = resolvedBase.details;
-  }
+    }
   }
 
-  const hasAnyLlm = ollamaConfigured || openRouterConfigured || zenConfigured || nvidiaConfigured || blackboxConfigured || kiloCodeConfigured || openAdapterConfigured;
+  const hasAnyLlm =
+    ollamaConfigured ||
+    openRouterConfigured ||
+    zenConfigured ||
+    nvidiaConfigured ||
+    blackboxConfigured ||
+    kiloCodeConfigured ||
+    openAdapterConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
-    hasAnyLlm && sandboxStatus === 'ok' ? 'healthy' :
-    hasAnyLlm || sandboxStatus === 'ok' ? 'degraded' : 'unhealthy';
+    hasAnyLlm && sandboxStatus === 'ok'
+      ? 'healthy'
+      : hasAnyLlm || sandboxStatus === 'ok'
+        ? 'degraded'
+        : 'unhealthy';
 
   const health: HealthStatus = {
     status: overallStatus,
@@ -287,15 +342,33 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
     services: {
       worker: { status: 'ok' },
       ollama: { status: ollamaConfigured ? 'ok' : 'unconfigured', configured: ollamaConfigured },
-      openrouter: { status: openRouterConfigured ? 'ok' : 'unconfigured', configured: openRouterConfigured },
+      openrouter: {
+        status: openRouterConfigured ? 'ok' : 'unconfigured',
+        configured: openRouterConfigured,
+      },
       zen: { status: zenConfigured ? 'ok' : 'unconfigured', configured: zenConfigured },
       nvidia: { status: nvidiaConfigured ? 'ok' : 'unconfigured', configured: nvidiaConfigured },
-      blackbox: { status: blackboxConfigured ? 'ok' : 'unconfigured', configured: blackboxConfigured },
-      kilocode: { status: kiloCodeConfigured ? 'ok' : 'unconfigured', configured: kiloCodeConfigured },
-      openadapter: { status: openAdapterConfigured ? 'ok' : 'unconfigured', configured: openAdapterConfigured },
+      blackbox: {
+        status: blackboxConfigured ? 'ok' : 'unconfigured',
+        configured: blackboxConfigured,
+      },
+      kilocode: {
+        status: kiloCodeConfigured ? 'ok' : 'unconfigured',
+        configured: kiloCodeConfigured,
+      },
+      openadapter: {
+        status: openAdapterConfigured ? 'ok' : 'unconfigured',
+        configured: openAdapterConfigured,
+      },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
-      github_app: { status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) },
-      github_app_oauth: { status: env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET ? 'ok' : 'unconfigured', configured: Boolean(env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET) },
+      github_app: {
+        status: env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY ? 'ok' : 'unconfigured',
+        configured: Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY),
+      },
+      github_app_oauth: {
+        status: env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET ? 'ok' : 'unconfigured',
+        configured: Boolean(env.GITHUB_APP_CLIENT_ID && env.GITHUB_APP_CLIENT_SECRET),
+      },
     },
     version: '1.0.0',
   };
@@ -326,15 +399,15 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
   }
 
   if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {
-    return Response.json({ error: 'GitHub App not configured (needed for installation token)' }, { status: 500 });
+    return Response.json(
+      { error: 'GitHub App not configured (needed for installation token)' },
+      { status: 500 },
+    );
   }
 
   const bodyResult = await readBodyText(request, 4096);
   if ('error' in bodyResult) {
-    return Response.json(
-      { error: bodyResult.error },
-      { status: bodyResult.status },
-    );
+    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
   }
 
   let payload: { code?: string };
@@ -355,7 +428,7 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json',
+        Accept: 'application/json',
       },
       body: JSON.stringify({
         client_id: env.GITHUB_APP_CLIENT_ID,
@@ -366,16 +439,34 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
 
     if (!tokenRes.ok) {
       const errBody = await tokenRes.text().catch(() => '');
-      wlog('error', 'github_oauth_error', { step: 'token_exchange', status: tokenRes.status, body: errBody.slice(0, 300) });
-      return Response.json({ error: `GitHub OAuth token exchange failed (${tokenRes.status})` }, { status: 502 });
+      wlog('error', 'github_oauth_error', {
+        step: 'token_exchange',
+        status: tokenRes.status,
+        body: errBody.slice(0, 300),
+      });
+      return Response.json(
+        { error: `GitHub OAuth token exchange failed (${tokenRes.status})` },
+        { status: 502 },
+      );
     }
 
-    const tokenData = await tokenRes.json() as { access_token?: string; error?: string; error_description?: string };
+    const tokenData = (await tokenRes.json()) as {
+      access_token?: string;
+      error?: string;
+      error_description?: string;
+    };
     if (tokenData.error || !tokenData.access_token) {
-      wlog('error', 'github_oauth_error', { step: 'token_parse', error: tokenData.error, description: tokenData.error_description });
-      return Response.json({
-        error: tokenData.error_description || tokenData.error || 'OAuth token exchange failed',
-      }, { status: 400 });
+      wlog('error', 'github_oauth_error', {
+        step: 'token_parse',
+        error: tokenData.error,
+        description: tokenData.error_description,
+      });
+      return Response.json(
+        {
+          error: tokenData.error_description || tokenData.error || 'OAuth token exchange failed',
+        },
+        { status: 400 },
+      );
     }
 
     const userToken = tokenData.access_token;
@@ -390,7 +481,7 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
         },
       });
       if (userRes.ok) {
-        const userData = await userRes.json() as { login?: unknown; avatar_url?: unknown };
+        const userData = (await userRes.json()) as { login?: unknown; avatar_url?: unknown };
         if (typeof userData.login === 'string' && userData.login.trim()) {
           oauthUser = {
             login: userData.login,
@@ -414,11 +505,18 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
 
     if (!installRes.ok) {
       const errBody = await installRes.text().catch(() => '');
-      wlog('error', 'github_oauth_error', { step: 'installations', status: installRes.status, body: errBody.slice(0, 300) });
-      return Response.json({ error: `Failed to fetch installations (${installRes.status})` }, { status: 502 });
+      wlog('error', 'github_oauth_error', {
+        step: 'installations',
+        status: installRes.status,
+        body: errBody.slice(0, 300),
+      });
+      return Response.json(
+        { error: `Failed to fetch installations (${installRes.status})` },
+        { status: 502 },
+      );
     }
 
-    const installData = await installRes.json() as {
+    const installData = (await installRes.json()) as {
       total_count: number;
       installations: Array<{
         id: number;
@@ -433,11 +531,15 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
     const installation = installData.installations.find((inst) => inst.app_id === appId);
 
     if (!installation) {
-      return Response.json({
-        error: 'No installation found',
-        details: 'You have not installed the Push Auth GitHub App. Please install it first, then try connecting again.',
-        install_url: `https://github.com/apps/push-auth/installations/new`,
-      }, { status: 404 });
+      return Response.json(
+        {
+          error: 'No installation found',
+          details:
+            'You have not installed the Push Auth GitHub App. Please install it first, then try connecting again.',
+          install_url: `https://github.com/apps/push-auth/installations/new`,
+        },
+        { status: 404 },
+      );
     }
 
     const installationId = String(installation.id);
@@ -496,10 +598,7 @@ export async function handleGitHubAppToken(request: Request, env: Env): Promise<
 
   const bodyResult = await readBodyText(request, 4096);
   if ('error' in bodyResult) {
-    return Response.json(
-      { error: bodyResult.error },
-      { status: bodyResult.status },
-    );
+    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
   }
 
   let payload: { installation_id?: string };
@@ -545,7 +644,10 @@ export async function handleGitHubAppToken(request: Request, env: Env): Promise<
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     wlog('error', 'github_token_error', { message });
-    return Response.json({ error: `GitHub App authentication failed: ${message}` }, { status: 500 });
+    return Response.json(
+      { error: `GitHub App authentication failed: ${message}` },
+      { status: 500 },
+    );
   }
 }
 
@@ -587,7 +689,7 @@ export async function generateGitHubAppJWT(appId: string, privateKeyPEM: string)
   if (!pemContents || pemContents.length < 100) {
     throw new Error(
       `Private key appears empty or truncated (${pemContents.length} base64 chars). ` +
-      'If using .dev.vars, wrap the PEM value in double quotes for multiline support.'
+        'If using .dev.vars, wrap the PEM value in double quotes for multiline support.',
     );
   }
 
@@ -600,13 +702,13 @@ export async function generateGitHubAppJWT(appId: string, privateKeyPEM: string)
     keyBytes,
     { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
     false,
-    ['sign']
+    ['sign'],
   );
 
   const signature = await crypto.subtle.sign(
     'RSASSA-PKCS1-v1_5',
     cryptoKey,
-    new TextEncoder().encode(signingInput)
+    new TextEncoder().encode(signingInput),
   );
 
   return `${signingInput}.${encodeBase64Url(new Uint8Array(signature))}`;
@@ -628,13 +730,13 @@ function wrapPkcs1InPkcs8(pkcs1Der: Uint8Array): Uint8Array {
 
   const version = new Uint8Array([0x02, 0x01, 0x00]);
   const rsaOid = new Uint8Array([
-    0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
-    0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
+    0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
   ]);
   const octetTag = new Uint8Array([0x04]);
   const octetLen = asn1Length(pkcs1Der.length);
 
-  const innerLen = version.length + rsaOid.length + octetTag.length + octetLen.length + pkcs1Der.length;
+  const innerLen =
+    version.length + rsaOid.length + octetTag.length + octetLen.length + pkcs1Der.length;
   const seqTag = new Uint8Array([0x30]);
   const seqLen = asn1Length(innerLen);
 
@@ -649,7 +751,7 @@ function wrapPkcs1InPkcs8(pkcs1Der: Uint8Array): Uint8Array {
 
 export async function exchangeForInstallationToken(
   jwt: string,
-  installationId: string
+  installationId: string,
 ): Promise<{ token: string; expires_at: string }> {
   const response = await fetch(
     `https://api.github.com/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
@@ -661,7 +763,7 @@ export async function exchangeForInstallationToken(
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'Push-App/1.0.0',
       },
-    }
+    },
   );
 
   if (!response.ok) {
@@ -669,12 +771,12 @@ export async function exchangeForInstallationToken(
     throw new Error(`GitHub API ${response.status}: ${error}`);
   }
 
-  return await response.json() as { token: string; expires_at: string };
+  return (await response.json()) as { token: string; expires_at: string };
 }
 
 export async function fetchInstallationMetadata(
   jwt: string,
-  installationId: string
+  installationId: string,
 ): Promise<{ account: { login: string; avatar_url: string } | null; app_slug: string | null }> {
   const response = await fetch(
     `https://api.github.com/app/installations/${encodeURIComponent(installationId)}`,
@@ -685,22 +787,23 @@ export async function fetchInstallationMetadata(
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'Push-App/1.0.0',
       },
-    }
+    },
   );
   if (!response.ok) {
     return { account: null, app_slug: null };
   }
 
-  const data = await response.json() as {
+  const data = (await response.json()) as {
     app_slug?: unknown;
     account?: { login?: unknown; avatar_url?: unknown };
   };
-  const account = data.account && typeof data.account.login === 'string'
-    ? {
-        login: data.account.login,
-        avatar_url: typeof data.account.avatar_url === 'string' ? data.account.avatar_url : '',
-      }
-    : null;
+  const account =
+    data.account && typeof data.account.login === 'string'
+      ? {
+          login: data.account.login,
+          avatar_url: typeof data.account.avatar_url === 'string' ? data.account.avatar_url : '',
+        }
+      : null;
   const appSlug = typeof data.app_slug === 'string' && data.app_slug.trim() ? data.app_slug : null;
   return { account, app_slug: appSlug };
 }
@@ -711,18 +814,15 @@ export async function fetchGitHubAppBotCommitIdentity(
   if (!appSlug || !appSlug.trim()) return null;
   const botLogin = `${appSlug}[bot]`;
   try {
-    const response = await fetch(
-      `https://api.github.com/users/${encodeURIComponent(botLogin)}`,
-      {
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          'User-Agent': 'Push-App/1.0.0',
-        },
-      }
-    );
+    const response = await fetch(`https://api.github.com/users/${encodeURIComponent(botLogin)}`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'Push-App/1.0.0',
+      },
+    });
     if (!response.ok) return null;
-    const data = await response.json() as { id?: unknown; login?: unknown; avatar_url?: unknown };
+    const data = (await response.json()) as { id?: unknown; login?: unknown; avatar_url?: unknown };
     if (typeof data.id !== 'number' || !Number.isFinite(data.id)) return null;
     const login = typeof data.login === 'string' && data.login.trim() ? data.login : botLogin;
     return {

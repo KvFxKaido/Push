@@ -7,14 +7,13 @@
  * PR review, branch diff, project instructions, and PR data for the hub.
  */
 
-import type {
-  CICheck,
-  CIOverallStatus,
-  ReviewResult,
-  ToolExecutionResult,
-} from '@/types';
+import type { CICheck, CIOverallStatus, ReviewResult, ToolExecutionResult } from '@/types';
 import { getGitHubAuthHeaders as getGitHubHeaders } from './github-auth';
-import { githubFetch, executeGitHubToolWithFallback, decodeGitHubBase64Utf8 } from './github-tool-executor';
+import {
+  githubFetch,
+  executeGitHubToolWithFallback,
+  decodeGitHubBase64Utf8,
+} from './github-tool-executor';
 
 // --- Re-exports for backward compatibility ---
 export type { ToolCall } from './github-tool-protocol';
@@ -52,7 +51,11 @@ function formatGitHubError(status: number, context: string, branch?: string): st
 
 // --- UI-owned GitHub actions ---
 
-export async function executeCreateBranch(repo: string, branchName: string, fromRef?: string): Promise<ToolExecutionResult> {
+export async function executeCreateBranch(
+  repo: string,
+  branchName: string,
+  fromRef?: string,
+): Promise<ToolExecutionResult> {
   const headers = getGitHubHeaders();
 
   let sourceRef: string = fromRef || '';
@@ -78,20 +81,19 @@ export async function executeCreateBranch(repo: string, branchName: string, from
     throw new Error(`[Tool Error] Could not resolve SHA for ref "${sourceRef}" on ${repo}.`);
   }
 
-  const createRes = await githubFetch(
-    `https://api.github.com/repos/${repo}/git/refs`,
-    {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ref: `refs/heads/${branchName}`, sha }),
-    },
-  );
+  const createRes = await githubFetch(`https://api.github.com/repos/${repo}/git/refs`, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ref: `refs/heads/${branchName}`, sha }),
+  });
 
   if (createRes.status === 422) {
     throw new Error(`[Tool Error] Branch "${branchName}" already exists on ${repo}.`);
   }
   if (!createRes.ok) {
-    throw new Error(formatGitHubError(createRes.status, `creating branch "${branchName}" on ${repo}`));
+    throw new Error(
+      formatGitHubError(createRes.status, `creating branch "${branchName}" on ${repo}`),
+    );
   }
 
   return {
@@ -103,35 +105,55 @@ export async function executeCreateBranch(repo: string, branchName: string, from
   };
 }
 
-export async function executeCreatePR(repo: string, title: string, body: string, head: string, base: string): Promise<ToolExecutionResult> {
+export async function executeCreatePR(
+  repo: string,
+  title: string,
+  body: string,
+  head: string,
+  base: string,
+): Promise<ToolExecutionResult> {
   return executeGitHubToolWithFallback(
     { tool: 'create_pr', args: { repo, title, body, head, base } },
     repo,
   );
 }
 
-export async function executeMergePR(repo: string, prNumber: number, mergeMethod?: string): Promise<ToolExecutionResult> {
+export async function executeMergePR(
+  repo: string,
+  prNumber: number,
+  mergeMethod?: string,
+): Promise<ToolExecutionResult> {
   return executeGitHubToolWithFallback(
     { tool: 'merge_pr', args: { repo, pr_number: prNumber, merge_method: mergeMethod } },
     repo,
   );
 }
 
-export async function executeDeleteBranch(repo: string, branchName: string): Promise<ToolExecutionResult> {
+export async function executeDeleteBranch(
+  repo: string,
+  branchName: string,
+): Promise<ToolExecutionResult> {
   return executeGitHubToolWithFallback(
     { tool: 'delete_branch', args: { repo, branch_name: branchName } },
     repo,
   );
 }
 
-export async function executeCheckPRMergeable(repo: string, prNumber: number): Promise<ToolExecutionResult> {
+export async function executeCheckPRMergeable(
+  repo: string,
+  prNumber: number,
+): Promise<ToolExecutionResult> {
   return executeGitHubToolWithFallback(
     { tool: 'check_pr_mergeable', args: { repo, pr_number: prNumber } },
     repo,
   );
 }
 
-export async function executeFindExistingPR(repo: string, headBranch: string, baseBranch?: string): Promise<ToolExecutionResult> {
+export async function executeFindExistingPR(
+  repo: string,
+  headBranch: string,
+  baseBranch?: string,
+): Promise<ToolExecutionResult> {
   return executeGitHubToolWithFallback(
     { tool: 'find_existing_pr', args: { repo, head_branch: headBranch, base_branch: baseBranch } },
     repo,
@@ -265,7 +287,11 @@ export interface RepoPullRequestDetail extends RepoPullRequestListItem {
 
 // --- PR data helpers ---
 
-function normalizePullRequestState(pr: { merged_at?: string | null; merged?: boolean; state?: string }): 'open' | 'closed' | 'merged' {
+function normalizePullRequestState(pr: {
+  merged_at?: string | null;
+  merged?: boolean;
+  state?: string;
+}): 'open' | 'closed' | 'merged' {
   if (pr.merged || pr.merged_at) return 'merged';
   return pr.state === 'closed' ? 'closed' : 'open';
 }
@@ -296,17 +322,19 @@ function normalizeReviewState(state?: string | null): RepoPullRequestReviewSumma
   }
 }
 
-function buildReviewThreads(comments: Array<{
-  id: number;
-  path?: string;
-  line?: number | null;
-  in_reply_to_id?: number | null;
-  body?: string;
-  created_at?: string;
-  html_url?: string;
-  user?: { login?: string };
-}>): RepoPullRequestReviewThread[] {
-  const byId = new Map<number, typeof comments[number]>();
+function buildReviewThreads(
+  comments: Array<{
+    id: number;
+    path?: string;
+    line?: number | null;
+    in_reply_to_id?: number | null;
+    body?: string;
+    created_at?: string;
+    html_url?: string;
+    user?: { login?: string };
+  }>,
+): RepoPullRequestReviewThread[] {
+  const byId = new Map<number, (typeof comments)[number]>();
   for (const comment of comments) byId.set(comment.id, comment);
 
   const threadMap = new Map<number, RepoPullRequestReviewThread>();
@@ -330,21 +358,25 @@ function buildReviewThreads(comments: Array<{
       id: rootId,
       file: root.path || comment.path || 'unknown',
       ...(typeof root.line === 'number' ? { line: root.line } : {}),
-      comments: [{
-        id: comment.id,
-        author: comment.user?.login || 'unknown',
-        body: comment.body || '',
-        createdAt: comment.created_at || '',
-        url: comment.html_url || '',
-        ...(typeof comment.line === 'number' ? { line: comment.line } : {}),
-      }],
+      comments: [
+        {
+          id: comment.id,
+          author: comment.user?.login || 'unknown',
+          body: comment.body || '',
+          createdAt: comment.created_at || '',
+          url: comment.html_url || '',
+          ...(typeof comment.line === 'number' ? { line: comment.line } : {}),
+        },
+      ],
     });
   }
 
   return [...threadMap.values()]
     .map((thread) => ({
       ...thread,
-      comments: [...thread.comments].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+      comments: [...thread.comments].sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      ),
     }))
     .sort((a, b) => {
       const aTime = a.comments[0]?.createdAt ? new Date(a.comments[0].createdAt).getTime() : 0;
@@ -353,7 +385,10 @@ function buildReviewThreads(comments: Array<{
     });
 }
 
-async function fetchCIStatusSummary(repo: string, ref?: string): Promise<{ overall: CIOverallStatus; checks: CICheck[]; ref: string }> {
+async function fetchCIStatusSummary(
+  repo: string,
+  ref?: string,
+): Promise<{ overall: CIOverallStatus; checks: CICheck[]; ref: string }> {
   const headers = getGitHubHeaders();
 
   const commitRef = ref || 'HEAD';
@@ -366,7 +401,15 @@ async function fetchCIStatusSummary(repo: string, ref?: string): Promise<{ overa
   let overall: CIOverallStatus = 'no-checks';
 
   if (checkRunsRes.ok) {
-    const data = await checkRunsRes.json() as { check_runs?: Array<{ name?: string; status?: string; conclusion?: string | null; html_url?: string; details_url?: string }> };
+    const data = (await checkRunsRes.json()) as {
+      check_runs?: Array<{
+        name?: string;
+        status?: string;
+        conclusion?: string | null;
+        html_url?: string;
+        details_url?: string;
+      }>;
+    };
     if (data.check_runs && data.check_runs.length > 0) {
       checks = data.check_runs.map((cr) => ({
         name: cr.name || 'unknown-check',
@@ -383,14 +426,21 @@ async function fetchCIStatusSummary(repo: string, ref?: string): Promise<{ overa
       { headers },
     );
     if (statusRes.ok) {
-      const statusData = await statusRes.json() as { statuses?: Array<{ context?: string; state?: string; target_url?: string }> };
+      const statusData = (await statusRes.json()) as {
+        statuses?: Array<{ context?: string; state?: string; target_url?: string }>;
+      };
       if (statusData.statuses && statusData.statuses.length > 0) {
         checks = statusData.statuses.map((s) => ({
           name: s.context || 'unknown-check',
           status: 'completed' as const,
-          conclusion: s.state === 'success' ? 'success' :
-                      s.state === 'failure' || s.state === 'error' ? 'failure' :
-                      s.state === 'pending' ? null : 'neutral',
+          conclusion:
+            s.state === 'success'
+              ? 'success'
+              : s.state === 'failure' || s.state === 'error'
+                ? 'failure'
+                : s.state === 'pending'
+                  ? null
+                  : 'neutral',
           detailsUrl: s.target_url,
         }));
         for (const check of checks) {
@@ -406,7 +456,11 @@ async function fetchCIStatusSummary(repo: string, ref?: string): Promise<{ overa
     overall = 'no-checks';
   } else if (checks.some((c) => c.status !== 'completed')) {
     overall = 'pending';
-  } else if (checks.every((c) => c.conclusion === 'success' || c.conclusion === 'skipped' || c.conclusion === 'neutral')) {
+  } else if (
+    checks.every(
+      (c) => c.conclusion === 'success' || c.conclusion === 'skipped' || c.conclusion === 'neutral',
+    )
+  ) {
     overall = 'success';
   } else if (checks.some((c) => c.conclusion === 'failure')) {
     overall = 'failure';
@@ -431,7 +485,7 @@ export async function fetchRepoPullRequests(
     throw new Error(formatGitHubError(res.status, `PRs on ${repo}`));
   }
 
-  const prs = await res.json() as Array<{
+  const prs = (await res.json()) as Array<{
     number: number;
     title: string;
     state: string;
@@ -476,17 +530,28 @@ export async function fetchPullRequestDetail(
 ): Promise<RepoPullRequestDetail> {
   const headers = getGitHubHeaders();
 
-  const [prRes, filesRes, commitsRes, diffRes, reviewsRes, issueCommentsRes, reviewCommentsRes] = await Promise.all([
-    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, { headers }),
-    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/files?per_page=100`, { headers }),
-    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/commits?per_page=20`, { headers }),
-    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
-      headers: { ...headers, Accept: 'application/vnd.github.v3.diff' },
-    }),
-    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews?per_page=100`, { headers }),
-    githubFetch(`https://api.github.com/repos/${repo}/issues/${prNumber}/comments?per_page=100`, { headers }),
-    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/comments?per_page=100`, { headers }),
-  ]);
+  const [prRes, filesRes, commitsRes, diffRes, reviewsRes, issueCommentsRes, reviewCommentsRes] =
+    await Promise.all([
+      githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, { headers }),
+      githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/files?per_page=100`, {
+        headers,
+      }),
+      githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/commits?per_page=20`, {
+        headers,
+      }),
+      githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
+        headers: { ...headers, Accept: 'application/vnd.github.v3.diff' },
+      }),
+      githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews?per_page=100`, {
+        headers,
+      }),
+      githubFetch(`https://api.github.com/repos/${repo}/issues/${prNumber}/comments?per_page=100`, {
+        headers,
+      }),
+      githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/comments?per_page=100`, {
+        headers,
+      }),
+    ]);
 
   if (!prRes.ok) {
     throw new Error(formatGitHubError(prRes.status, `PR #${prNumber} on ${repo}`));
@@ -501,7 +566,7 @@ export async function fetchPullRequestDetail(
     throw new Error(formatGitHubError(diffRes.status, `diff for PR #${prNumber} on ${repo}`));
   }
 
-  const pr = await prRes.json() as {
+  const pr = (await prRes.json()) as {
     number: number;
     title: string;
     body?: string | null;
@@ -525,39 +590,39 @@ export async function fetchPullRequestDetail(
     base?: { ref?: string };
     user?: { login?: string };
   };
-  const files = await filesRes.json() as Array<{
+  const files = (await filesRes.json()) as Array<{
     filename: string;
     status: string;
     additions: number;
     deletions: number;
     patch?: string;
   }>;
-  const commits = await commitsRes.json() as Array<{
+  const commits = (await commitsRes.json()) as Array<{
     sha: string;
     commit?: { message?: string; author?: { name?: string; date?: string } };
     author?: { login?: string };
   }>;
   const reviews = reviewsRes.ok
-    ? await reviewsRes.json() as Array<{
+    ? ((await reviewsRes.json()) as Array<{
         id: number;
         state?: string;
         body?: string;
         submitted_at?: string;
         html_url?: string;
         user?: { login?: string };
-      }>
+      }>)
     : [];
   const issueComments = issueCommentsRes.ok
-    ? await issueCommentsRes.json() as Array<{
+    ? ((await issueCommentsRes.json()) as Array<{
         id: number;
         body?: string;
         created_at?: string;
         html_url?: string;
         user?: { login?: string };
-      }>
+      }>)
     : [];
   const reviewComments = reviewCommentsRes.ok
-    ? await reviewCommentsRes.json() as Array<{
+    ? ((await reviewCommentsRes.json()) as Array<{
         id: number;
         path?: string;
         line?: number | null;
@@ -566,10 +631,14 @@ export async function fetchPullRequestDetail(
         created_at?: string;
         html_url?: string;
         user?: { login?: string };
-      }>
+      }>)
     : [];
   const checksStatus = pr.head?.sha
-    ? await fetchCIStatusSummary(repo, pr.head.sha).catch(() => ({ overall: 'unknown' as const, checks: [], ref: pr.head?.sha || '' }))
+    ? await fetchCIStatusSummary(repo, pr.head.sha).catch(() => ({
+        overall: 'unknown' as const,
+        checks: [],
+        ref: pr.head?.sha || '',
+      }))
     : { overall: 'unknown' as const, checks: [], ref: '' };
   const mergeable = typeof pr.mergeable === 'boolean' ? pr.mergeable : null;
   const mergeableState = pr.mergeable_state || 'unknown';
@@ -579,7 +648,9 @@ export async function fetchPullRequestDetail(
     canMerge: mergeable === true && pr.state === 'open' && checksStatus.overall !== 'failure',
     checksOverall: checksStatus.overall,
     checks: checksStatus.checks,
-    requestedReviewers: (pr.requested_reviewers || []).map((reviewer) => reviewer.login || 'unknown'),
+    requestedReviewers: (pr.requested_reviewers || []).map(
+      (reviewer) => reviewer.login || 'unknown',
+    ),
     requestedTeams: (pr.requested_teams || []).map((team) => team.name || 'team'),
   };
 
@@ -671,7 +742,9 @@ export async function fetchGitHubReviewDiff(
       { headers: { ...headers, Accept: 'application/vnd.github.v3.diff' } },
     );
     if (!diffRes.ok) {
-      throw new Error(formatGitHubError(diffRes.status, `PR diff for #${openPr.number} on ${repo}`));
+      throw new Error(
+        formatGitHubError(diffRes.status, `PR diff for #${openPr.number} on ${repo}`),
+      );
     }
     return {
       diff: await diffRes.text(),
@@ -686,7 +759,9 @@ export async function fetchGitHubReviewDiff(
   }
 
   if (headBranch === defaultBranch) {
-    throw new Error('No GitHub branch diff to review on the default branch. Use Working tree for local edits or switch to a feature branch.');
+    throw new Error(
+      'No GitHub branch diff to review on the default branch. Use Working tree for local edits or switch to a feature branch.',
+    );
   }
 
   const diffRes = await githubFetch(
@@ -695,7 +770,10 @@ export async function fetchGitHubReviewDiff(
   );
   if (!diffRes.ok) {
     throw new Error(
-      formatGitHubError(diffRes.status, `branch comparison ${defaultBranch}...${headBranch} on ${repo}`),
+      formatGitHubError(
+        diffRes.status,
+        `branch comparison ${defaultBranch}...${headBranch} on ${repo}`,
+      ),
     );
   }
 
@@ -732,15 +810,13 @@ export async function fetchLatestCommitDiff(
   const commit = commits[0];
   const sha = typeof commit.sha === 'string' ? commit.sha : '';
   const shortSha = sha.slice(0, 7);
-  const message = typeof commit.commit?.message === 'string'
-    ? commit.commit.message.split('\n')[0]
-    : sha;
+  const message =
+    typeof commit.commit?.message === 'string' ? commit.commit.message.split('\n')[0] : sha;
   const url = typeof commit.html_url === 'string' ? commit.html_url : '';
 
-  const diffRes = await githubFetch(
-    `https://api.github.com/repos/${repo}/commits/${sha}`,
-    { headers: { ...headers, Accept: 'application/vnd.github.v3.diff' } },
-  );
+  const diffRes = await githubFetch(`https://api.github.com/repos/${repo}/commits/${sha}`, {
+    headers: { ...headers, Accept: 'application/vnd.github.v3.diff' },
+  });
   if (!diffRes.ok) {
     throw new Error(formatGitHubError(diffRes.status, `diff for commit ${shortSha}`));
   }
@@ -791,19 +867,16 @@ export async function executePostPRReview(
   }
 
   const postReview = async (comments: typeof inlineComments, bodyText: string) =>
-    githubFetch(
-      `https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`,
-      {
-        method: 'POST',
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          commit_id: commitSha,
-          body: bodyText,
-          event: 'COMMENT',
-          comments,
-        }),
-      },
-    );
+    githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}/reviews`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        commit_id: commitSha,
+        body: bodyText,
+        event: 'COMMENT',
+        comments,
+      }),
+    });
 
   let res = await postReview(inlineComments, buildBody(false));
 

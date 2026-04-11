@@ -27,8 +27,8 @@ const checkpointMocks = vi.hoisted(() => ({
 vi.mock('react', () => ({
   useCallback: <T extends (...args: never[]) => unknown>(fn: T) => fn,
   useEffect: () => {},
-  useRef: <T,>(value: T) => ({ current: value }),
-  useState: <T,>(initial: T) => [
+  useRef: <T>(value: T) => ({ current: value }),
+  useState: <T>(initial: T) => [
     (hookState.interruptedCheckpoint as T | null) ?? initial,
     hookState.setInterruptedCheckpoint,
   ],

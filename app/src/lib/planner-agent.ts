@@ -14,7 +14,12 @@
  */
 
 import type { ChatMessage } from '@/types';
-import { getActiveProvider, isProviderAvailable, getProviderStreamFn, type ActiveProvider } from './orchestrator';
+import {
+  getActiveProvider,
+  isProviderAvailable,
+  getProviderStreamFn,
+  type ActiveProvider,
+} from './orchestrator';
 import { resolveProviderSpecificModel } from './provider-selection';
 import { getModelForRole } from './providers';
 import { asRecord, streamWithTimeout } from './utils';
@@ -97,25 +102,26 @@ export async function runPlanner(
   onStatus: (phase: string) => void,
   options?: PlannerOptions,
 ): Promise<PlannerFeatureList | null> {
-  const requestedProvider = options?.providerOverride && isProviderAvailable(options.providerOverride)
-    ? options.providerOverride
-    : null;
+  const requestedProvider =
+    options?.providerOverride && isProviderAvailable(options.providerOverride)
+      ? options.providerOverride
+      : null;
   const activeProvider = requestedProvider || getActiveProvider();
   if (activeProvider === 'demo') return null;
 
   const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'coder'); // Planner uses the same model slot as Coder
-  const modelId = resolveProviderSpecificModel(
-    activeProvider,
-    options?.modelOverride,
-    options?.providerOverride,
-  ) || roleModel?.id;
+  const modelId =
+    resolveProviderSpecificModel(
+      activeProvider,
+      options?.modelOverride,
+      options?.providerOverride,
+    ) || roleModel?.id;
 
   onStatus('Planning task...');
 
-  const fileContext = files.length > 0
-    ? `\n\nRelevant files:\n${files.map(f => `- ${f}`).join('\n')}`
-    : '';
+  const fileContext =
+    files.length > 0 ? `\n\nRelevant files:\n${files.map((f) => `- ${f}`).join('\n')}` : '';
 
   const messages: ChatMessage[] = [
     {
@@ -169,19 +175,24 @@ export async function runPlanner(
     const features: PlannerFeature[] = rawFeatures
       .map((f) => {
         const feat = asRecord(f);
-        if (!feat || typeof feat.id !== 'string' || typeof feat.description !== 'string') return null;
+        if (!feat || typeof feat.id !== 'string' || typeof feat.description !== 'string')
+          return null;
         const feature: PlannerFeature = {
           id: feat.id,
           description: feat.description,
         };
         if (Array.isArray(feat.files)) {
-          feature.files = (feat.files as unknown[]).filter((v): v is string => typeof v === 'string');
+          feature.files = (feat.files as unknown[]).filter(
+            (v): v is string => typeof v === 'string',
+          );
         }
         if (typeof feat.verifyCommand === 'string') {
           feature.verifyCommand = feat.verifyCommand;
         }
         if (Array.isArray(feat.dependsOn)) {
-          feature.dependsOn = (feat.dependsOn as unknown[]).filter((v): v is string => typeof v === 'string');
+          feature.dependsOn = (feat.dependsOn as unknown[]).filter(
+            (v): v is string => typeof v === 'string',
+          );
         }
         return feature;
       })
@@ -217,7 +228,9 @@ export function formatPlannerBrief(plan: PlannerFeatureList): string {
   }
 
   lines.push('');
-  lines.push('Work through features sequentially. Update your working memory (currentPhase, completedPhases) as you complete each one.');
+  lines.push(
+    'Work through features sequentially. Update your working memory (currentPhase, completedPhases) as you complete each one.',
+  );
   lines.push('[/IMPLEMENTATION PLAN]');
 
   return lines.join('\n');

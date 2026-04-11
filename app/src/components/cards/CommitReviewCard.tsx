@@ -58,12 +58,14 @@ function CommitMessageEditor({
 
       <div className="flex items-center gap-2 px-3 pb-3">
         <button
-          onClick={() => onAction?.({
-            type: 'commit-approve',
-            messageId,
-            cardIndex,
-            commitMessage,
-          })}
+          onClick={() =>
+            onAction?.({
+              type: 'commit-approve',
+              messageId,
+              cardIndex,
+              commitMessage,
+            })
+          }
           disabled={!editedMessage.trim()}
           className={`${CARD_BUTTON_CLASS} h-11 flex-1 text-emerald-300`}
           style={{ minHeight: '44px' }}
@@ -72,12 +74,14 @@ function CommitMessageEditor({
           {isError ? 'Try again' : 'Approve & Push'}
         </button>
         <button
-          onClick={() => onAction?.({
-            type: 'commit-refresh',
-            messageId,
-            cardIndex,
-            commitMessage,
-          })}
+          onClick={() =>
+            onAction?.({
+              type: 'commit-refresh',
+              messageId,
+              cardIndex,
+              commitMessage,
+            })
+          }
           disabled={!editedMessage.trim()}
           className={`${CARD_BUTTON_CLASS} h-11`}
           style={{ minHeight: '44px' }}
@@ -87,11 +91,13 @@ function CommitMessageEditor({
         </button>
         {!isError && (
           <button
-            onClick={() => onAction?.({
-              type: 'commit-reject',
-              messageId,
-              cardIndex,
-            })}
+            onClick={() =>
+              onAction?.({
+                type: 'commit-reject',
+                messageId,
+                cardIndex,
+              })
+            }
             className={`${CARD_BUTTON_CLASS} h-11`}
             style={{ minHeight: '44px' }}
           >
@@ -105,7 +111,6 @@ function CommitMessageEditor({
 }
 
 export function CommitReviewCard({ data, messageId, cardIndex, onAction }: CommitReviewCardProps) {
-
   const isPending = data.status === 'pending';
   const isRefreshing = data.status === 'refreshing';
   const isApproved = data.status === 'approved';
@@ -118,12 +123,17 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
   return (
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
-      <div className={`px-3 py-2.5 flex items-center gap-2 ${
-        isCommitted ? CARD_HEADER_BG_SUCCESS :
-        isRejected ? CARD_HEADER_BG_INFO :
-        isError ? CARD_HEADER_BG_ERROR :
-        CARD_HEADER_BG_INFO
-      }`}>
+      <div
+        className={`px-3 py-2.5 flex items-center gap-2 ${
+          isCommitted
+            ? CARD_HEADER_BG_SUCCESS
+            : isRejected
+              ? CARD_HEADER_BG_INFO
+              : isError
+                ? CARD_HEADER_BG_ERROR
+                : CARD_HEADER_BG_INFO
+        }`}
+      >
         {isCommitted ? (
           <Check className="h-4 w-4 shrink-0 text-push-status-success" />
         ) : isRejected ? (
@@ -135,19 +145,30 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
         ) : (
           <CommitPulseIcon className="h-4 w-4 shrink-0 text-push-link" />
         )}
-        <span className={`text-sm font-medium ${
-          isCommitted ? 'text-push-status-success' :
-           isRejected ? 'text-push-fg-dim' :
-           isError ? 'text-push-status-error' :
-           'text-push-fg'
-        }`}>
-          {isCommitted ? 'Committed and pushed!' :
-           isRejected ? 'Commit rejected' :
-           isError ? 'Commit failed' :
-           isRefreshing ? 'Refreshing review…' :
-           isPushing ? 'Pushing…' :
-           isApproved ? 'Committing…' :
-           'Review commit'}
+        <span
+          className={`text-sm font-medium ${
+            isCommitted
+              ? 'text-push-status-success'
+              : isRejected
+                ? 'text-push-fg-dim'
+                : isError
+                  ? 'text-push-status-error'
+                  : 'text-push-fg'
+          }`}
+        >
+          {isCommitted
+            ? 'Committed and pushed!'
+            : isRejected
+              ? 'Commit rejected'
+              : isError
+                ? 'Commit failed'
+                : isRefreshing
+                  ? 'Refreshing review…'
+                  : isPushing
+                    ? 'Pushing…'
+                    : isApproved
+                      ? 'Committing…'
+                      : 'Review commit'}
         </span>
       </div>
 
@@ -164,16 +185,12 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
       {/* Commit message */}
       <div className="px-3 pb-3">
         <div className="flex items-center justify-between mb-1.5">
-          <label className="text-push-xs text-push-fg-dim font-medium">
-            Commit message
-          </label>
+          <label className="text-push-xs text-push-fg-dim font-medium">Commit message</label>
           {isPending && (
-            <span className="text-push-2xs text-push-fg-dim italic">
-              auto-filled · tap to edit
-            </span>
+            <span className="text-push-2xs text-push-fg-dim italic">auto-filled · tap to edit</span>
           )}
         </div>
-        {(isPending || isError) ? (
+        {isPending || isError ? (
           <CommitMessageEditor
             key={data.commitMessage}
             initialMessage={data.commitMessage}
@@ -184,9 +201,7 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
           />
         ) : (
           <div className={`${CARD_PANEL_CLASS} px-3 py-2`}>
-            <p className="text-push-base text-push-fg-secondary font-mono">
-              {data.commitMessage}
-            </p>
+            <p className="text-push-base text-push-fg-secondary font-mono">{data.commitMessage}</p>
           </div>
         )}
       </div>
@@ -203,7 +218,10 @@ export function CommitReviewCard({ data, messageId, cardIndex, onAction }: Commi
       {/* Busy state */}
       {isBusy && (
         <div className="flex items-center gap-2 px-3 pb-3">
-          <div className={`${CARD_PANEL_CLASS} flex flex-1 items-center justify-center gap-1.5 px-4 py-2.5 text-push-base font-medium text-push-status-success opacity-70`} style={{ minHeight: '44px' }}>
+          <div
+            className={`${CARD_PANEL_CLASS} flex flex-1 items-center justify-center gap-1.5 px-4 py-2.5 text-push-base font-medium text-push-status-success opacity-70`}
+            style={{ minHeight: '44px' }}
+          >
             <Loader2 className="h-4 w-4 animate-spin" />
             {isRefreshing ? 'Refreshing review…' : isPushing ? 'Pushing…' : 'Committing…'}
           </div>

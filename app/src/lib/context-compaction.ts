@@ -6,7 +6,8 @@ const TOOL_CALL_NAME_RE = /"tool"\s*:\s*"([^"]+)"/i;
 const CODE_FENCE_RE = /^```/;
 const META_LINE_RE = /^\[meta\]/i;
 const BULLET_RE = /^(?:[-*]|\d+\.)\s+/;
-const IMPORTANT_PREFIX_RE = /^(?:Status|Exit code|Command|Path|Paths|File|Files|Branch|Branches|Commit|Commits|Diff|Changed|Created|Deleted|Updated|Renamed|Review|PR|Repo|Runtime|Workspace|Sandbox|Error|Warning|Reason|Result|Stdout|Stderr|Summary|Next|Current round|Plan|Open tasks|Phase|Completed|Assumptions|Errors)\s*:/i;
+const IMPORTANT_PREFIX_RE =
+  /^(?:Status|Exit code|Command|Path|Paths|File|Files|Branch|Branches|Commit|Commits|Diff|Changed|Created|Deleted|Updated|Renamed|Review|PR|Repo|Runtime|Workspace|Sandbox|Error|Warning|Reason|Result|Stdout|Stderr|Summary|Next|Current round|Plan|Open tasks|Phase|Completed|Assumptions|Errors)\s*:/i;
 
 interface SemanticSummaryOptions {
   includeHeader?: boolean;
@@ -42,13 +43,14 @@ function lineHasPath(line: string): boolean {
 
 function collectReferencedPaths(lines: string[], limit = 3): string[] {
   const matches = new Set<string>();
-  const pathRe = /\/workspace\/[^\s`'"]+|(?:^|\s)([A-Za-z0-9._/-]+\.(?:ts|tsx|js|jsx|py|md|json|yml|yaml|css|html|sh|rb|go|rs|java))(?:$|\s)/g;
+  const pathRe =
+    /\/workspace\/[^\s`'"]+|(?:^|\s)([A-Za-z0-9._/-]+\.(?:ts|tsx|js|jsx|py|md|json|yml|yaml|css|html|sh|rb|go|rs|java))(?:$|\s)/g;
 
   for (const line of lines) {
     let match: RegExpExecArray | null;
     while ((match = pathRe.exec(line)) !== null) {
       const raw = match[0].trim();
-      const path = raw.startsWith('/') ? raw : (match[1] || raw);
+      const path = raw.startsWith('/') ? raw : match[1] || raw;
       if (!path) continue;
       matches.add(path);
       if (matches.size >= limit) return [...matches];
@@ -59,7 +61,10 @@ function collectReferencedPaths(lines: string[], limit = 3): string[] {
 }
 
 function extractFirstNonEmptyLines(content: string): string[] {
-  return content.split('\n').map((line) => line.trim()).filter(Boolean);
+  return content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function buildOmissionMarker(hasDiffContent: boolean, hasCodeBlock: boolean): string {
@@ -94,7 +99,8 @@ export function extractSemanticSummaryLines(
   const summary: string[] = [];
   const seen = new Set<string>();
   const headerLine = lines[0];
-  const headerIncluded = includeHeader && (TOOL_RESULT_HEADER_RE.test(headerLine) || headerLine.startsWith('['));
+  const headerIncluded =
+    includeHeader && (TOOL_RESULT_HEADER_RE.test(headerLine) || headerLine.startsWith('['));
   let hasCodeBlock = false;
   let hasDiffContent = false;
 
@@ -125,9 +131,11 @@ export function extractSemanticSummaryLines(
       hasDiffContent = true;
       continue;
     }
-    if (summary.length < summaryCapacity
-      && !(headerIncluded && line === headerLine)
-      && (IMPORTANT_PREFIX_RE.test(line) || BULLET_RE.test(line))) {
+    if (
+      summary.length < summaryCapacity &&
+      !(headerIncluded && line === headerLine) &&
+      (IMPORTANT_PREFIX_RE.test(line) || BULLET_RE.test(line))
+    ) {
       addLine(line);
     }
   }
@@ -155,7 +163,8 @@ export function extractSemanticSummaryLines(
     }
   }
 
-  const omittedContent = hasCodeBlock || hasDiffContent || lines.length > summary.length + (includeHeader ? 1 : 0);
+  const omittedContent =
+    hasCodeBlock || hasDiffContent || lines.length > summary.length + (includeHeader ? 1 : 0);
   if (includeOmissionMarker && omittedContent) {
     if (summary.length >= maxLines) {
       summary[maxLines - 1] = buildOmissionMarker(hasDiffContent, hasCodeBlock);

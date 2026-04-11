@@ -66,7 +66,10 @@ export default {
     // API route: sandbox proxy to Modal
     if (url.pathname.startsWith('/api/sandbox/') && request.method === 'POST') {
       const route = url.pathname.replace('/api/sandbox/', '');
-      return withRequestIdOnResponse(await handleSandbox(requestWithId, env, url, route), requestId);
+      return withRequestIdOnResponse(
+        await handleSandbox(requestWithId, env, url, route),
+        requestId,
+      );
     }
 
     // SPA fallback: serve index.html for non-file paths
@@ -109,7 +112,11 @@ type ExactApiRoute = {
 };
 
 const EXACT_API_ROUTES: ExactApiRoute[] = [
-  { path: '/api/health', method: 'GET', handler: (request, env) => handleHealthCheck(env, request) },
+  {
+    path: '/api/health',
+    method: 'GET',
+    handler: (request, env) => handleHealthCheck(env, request),
+  },
   { path: '/api/github/app-token', method: 'POST', handler: handleGitHubAppToken },
   { path: '/api/github/app-oauth', method: 'POST', handler: handleGitHubAppOAuth },
   { path: '/api/github/tools', method: 'POST', handler: handleGitHubTools },
@@ -141,5 +148,7 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
 ];
 
 function matchExactApiRoute(pathname: string, method: string): ExactApiRoute | null {
-  return EXACT_API_ROUTES.find((route) => route.path === pathname && route.method === method) ?? null;
+  return (
+    EXACT_API_ROUTES.find((route) => route.path === pathname && route.method === method) ?? null
+  );
 }

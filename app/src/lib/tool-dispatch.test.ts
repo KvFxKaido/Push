@@ -32,7 +32,9 @@ describe('repairToolJson', () => {
   });
 
   it('repairs Python-style True/False/None', () => {
-    const result = repairToolJson('{"tool": "sandbox_exec", "args": {"command": "ls", "verbose": True, "timeout": None}}');
+    const result = repairToolJson(
+      '{"tool": "sandbox_exec", "args": {"command": "ls", "verbose": True, "timeout": None}}',
+    );
     expect(result).not.toBeNull();
     const args = result!.args as Record<string, unknown>;
     expect(args.verbose).toBe(true);
@@ -40,7 +42,9 @@ describe('repairToolJson', () => {
   });
 
   it('does not replace True/False/None inside string values', () => {
-    const result = repairToolJson('{"tool": "sandbox_exec", "args": {"command": "echo True False None"}}');
+    const result = repairToolJson(
+      '{"tool": "sandbox_exec", "args": {"command": "echo True False None"}}',
+    );
     expect(result).not.toBeNull();
     const args = result!.args as Record<string, unknown>;
     expect(args.command).toBe('echo True False None');
@@ -128,7 +132,8 @@ describe('detectToolFromText fence variants', () => {
   });
 
   it('recovers JSON from prose-surrounded fenced content', () => {
-    const text = '```json\nHere is the tool call:\n{"tool": "sandbox_exec", "args": {"command": "ls"}}\n```';
+    const text =
+      '```json\nHere is the tool call:\n{"tool": "sandbox_exec", "args": {"command": "ls"}}\n```';
     const result = detectToolFromText(text, validate);
     expect(result).not.toBeNull();
     expect(result!.tool).toBe('sandbox_exec');
@@ -162,7 +167,8 @@ describe('detectAnyToolCall resilience', () => {
   });
 
   it('recovers tool call with Python-style booleans', () => {
-    const text = '```json\n{"tool": "sandbox_write_file", "args": {"path": "/workspace/test.py", "content": "x=1", "create_dirs": True}}\n```';
+    const text =
+      '```json\n{"tool": "sandbox_write_file", "args": {"path": "/workspace/test.py", "content": "x=1", "create_dirs": True}}\n```';
     const result = detectAnyToolCall(text);
     expect(result).not.toBeNull();
     expect(result!.source).toBe('sandbox');
@@ -176,7 +182,8 @@ describe('detectAnyToolCall resilience', () => {
   });
 
   it('recovers tool call from prose-polluted fence', () => {
-    const text = '```json\nI will read the file:\n{"tool": "sandbox_read_file", "args": {"path": "/workspace/main.ts"}}\n```';
+    const text =
+      '```json\nI will read the file:\n{"tool": "sandbox_read_file", "args": {"path": "/workspace/main.ts"}}\n```';
     const result = detectAnyToolCall(text);
     expect(result).not.toBeNull();
     expect(result!.source).toBe('sandbox');
@@ -203,7 +210,7 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
   });
 
   it('detects delegate intent phrased with explorer agent', () => {
-    const result = diagnoseToolCallFailure("Let me delegate this to the explorer agent first.");
+    const result = diagnoseToolCallFailure('Let me delegate this to the explorer agent first.');
 
     expect(result?.reason).toBe('natural_language_intent');
     expect(result?.toolName).toBe('delegate_explorer');
@@ -211,14 +218,15 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
   });
 
   it('detects delegate intent phrased as discovery and tracing work for explorer', () => {
-    const result = diagnoseToolCallFailure('First I should delegate this to the explorer to trace the dependency flow and explain why it happens.');
+    const result = diagnoseToolCallFailure(
+      'First I should delegate this to the explorer to trace the dependency flow and explain why it happens.',
+    );
     expect(result?.toolName).toBe('delegate_explorer');
   });
 
-
   it('does not flag explanatory prose as tool intent', () => {
     const result = diagnoseToolCallFailure(
-      'The orchestrator may delegate this task to the coder agent when it is complex.'
+      'The orchestrator may delegate this task to the coder agent when it is complex.',
     );
 
     expect(result).toBeNull();
@@ -226,7 +234,7 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
 
   it('does not flag commit messages that mention discovery keywords', () => {
     const result = diagnoseToolCallFailure(
-      'Here is the commit:\n\nfeat: trace the flow of the auth module to understand session refresh\n\nThis improves performance.'
+      'Here is the commit:\n\nfeat: trace the flow of the auth module to understand session refresh\n\nThis improves performance.',
     );
     expect(result).toBeNull();
   });
@@ -234,70 +242,61 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
   // Action-phrase patterns — natural descriptions of tool actions
   it('detects "I\'ll fetch the recent commits" as list_commits intent', () => {
     const result = diagnoseToolCallFailure(
-      "To get the actual latest activity, I'll fetch the recent commits from the repo."
+      "To get the actual latest activity, I'll fetch the recent commits from the repo.",
     );
     expect(result?.reason).toBe('natural_language_intent');
     expect(result?.toolName).toBe('list_commits');
   });
 
   it('detects "Let me grab the latest commits" as list_commits intent', () => {
-    const result = diagnoseToolCallFailure(
-      'Let me grab the latest commits to see what changed.'
-    );
+    const result = diagnoseToolCallFailure('Let me grab the latest commits to see what changed.');
     expect(result?.reason).toBe('natural_language_intent');
     expect(result?.toolName).toBe('list_commits');
   });
 
   it('detects "I\'ll read the file" as read_file intent', () => {
-    const result = diagnoseToolCallFailure(
-      "I'll read the file to understand the implementation."
-    );
+    const result = diagnoseToolCallFailure("I'll read the file to understand the implementation.");
     expect(result?.reason).toBe('natural_language_intent');
     expect(result?.toolName).toBe('read_file');
   });
 
   it('detects "Let me search the codebase" as search_files intent', () => {
     const result = diagnoseToolCallFailure(
-      'Let me search the codebase for that function definition.'
+      'Let me search the codebase for that function definition.',
     );
     expect(result?.reason).toBe('natural_language_intent');
     expect(result?.toolName).toBe('search_files');
   });
 
   it('detects "I\'ll check the open PRs" as list_prs intent', () => {
-    const result = diagnoseToolCallFailure(
-      "I'll check the open PRs to see what's pending."
-    );
+    const result = diagnoseToolCallFailure("I'll check the open PRs to see what's pending.");
     expect(result?.reason).toBe('natural_language_intent');
     expect(result?.toolName).toBe('list_prs');
   });
 
   it('detects "Let me get the branches" as list_branches intent', () => {
-    const result = diagnoseToolCallFailure(
-      'Let me get the branches to see what exists.'
-    );
+    const result = diagnoseToolCallFailure('Let me get the branches to see what exists.');
     expect(result?.reason).toBe('natural_language_intent');
     expect(result?.toolName).toBe('list_branches');
   });
 
   it('does not flag conversational text that happens to mention commits', () => {
     const result = diagnoseToolCallFailure(
-      'The recent commits show that the team has been busy with refactoring.'
+      'The recent commits show that the team has been busy with refactoring.',
     );
     expect(result).toBeNull();
   });
 
   it('does not flag questions about actions', () => {
-    const result = diagnoseToolCallFailure(
-      'Would you like me to fetch the recent commits?'
-    );
+    const result = diagnoseToolCallFailure('Would you like me to fetch the recent commits?');
     expect(result).toBeNull();
   });
 });
 
 describe('detectAllToolCalls', () => {
   it('detects delegate_explorer JSON blocks as delegation tool calls', () => {
-    const text = '```json\n{"tool":"delegate_explorer","args":{"task":"trace auth flow","files":["src/auth.ts"]}}\n```';
+    const text =
+      '```json\n{"tool":"delegate_explorer","args":{"task":"trace auth flow","files":["src/auth.ts"]}}\n```';
 
     const detected = detectAnyToolCall(text);
     expect(detected?.source).toBe('delegate');
@@ -309,7 +308,8 @@ describe('detectAllToolCalls', () => {
   });
 
   it('detects plan_tasks JSON blocks as task graph delegation tool calls', () => {
-    const text = '```json\n{"tool":"plan_tasks","args":{"tasks":[{"id":"explore-auth","agent":"explorer","task":" trace auth flow ","files":[" src/auth.ts "],"dependsOn":[" "]},{"id":"fix-auth","agent":"coder","task":" fix auth ","dependsOn":["explore-auth"],"deliverable":" restore passing auth tests "}]}}\n```';
+    const text =
+      '```json\n{"tool":"plan_tasks","args":{"tasks":[{"id":"explore-auth","agent":"explorer","task":" trace auth flow ","files":[" src/auth.ts "],"dependsOn":[" "]},{"id":"fix-auth","agent":"coder","task":" fix auth ","dependsOn":["explore-auth"],"deliverable":" restore passing auth tests "}]}}\n```';
 
     const detected = detectAnyToolCall(text);
     expect(detected?.source).toBe('delegate');
@@ -342,7 +342,8 @@ describe('detectAllToolCalls', () => {
   });
 
   it('trims delegation string fields and drops blank array entries', () => {
-    const text = '```json\n{"tool":"delegate_coder","args":{"task":"   ","tasks":["  inspect auth flow and fix the handoff  ","   "],"files":[" src/auth.ts ",""],"intent":" tighten handoff flow ","deliverable":" a concise summary ","knownContext":[" existing note ","   "],"constraints":[" keep the API stable "," "]}}\n```';
+    const text =
+      '```json\n{"tool":"delegate_coder","args":{"task":"   ","tasks":["  inspect auth flow and fix the handoff  ","   "],"files":[" src/auth.ts ",""],"intent":" tighten handoff flow ","deliverable":" a concise summary ","knownContext":[" existing note ","   "],"constraints":[" keep the API stable "," "]}}\n```';
 
     const detected = detectAnyToolCall(text);
     expect(detected?.source).toBe('delegate');
@@ -475,8 +476,9 @@ describe('detectAllToolCalls', () => {
 
   it('truncates parallel reads to MAX instead of bailing', () => {
     // 8 read-only calls — should keep first 6, not bail entirely
-    const calls = Array.from({ length: 8 }, (_, i) =>
-      `{"tool":"sandbox_read_file","args":{"path":"/workspace/file${i}.ts"}}`
+    const calls = Array.from(
+      { length: 8 },
+      (_, i) => `{"tool":"sandbox_read_file","args":{"path":"/workspace/file${i}.ts"}}`,
     );
     const text = calls.join('\n');
 
@@ -558,9 +560,9 @@ describe('detectAllToolCalls', () => {
     }
   });
 
-
   it('detects delegate_explorer JSON with trimmed context fields', () => {
-    const text = '```json\n{"tool":"delegate_explorer","args":{"task":"  trace the auth flow across files  ","files":[" src/auth.ts "," src/middleware.ts "],"intent":" understand control points ","deliverable":" ranked file list with evidence ","knownContext":[" existing clue ","   "],"constraints":[" read only "," "]}}\n```';
+    const text =
+      '```json\n{"tool":"delegate_explorer","args":{"task":"  trace the auth flow across files  ","files":[" src/auth.ts "," src/middleware.ts "],"intent":" understand control points ","deliverable":" ranked file list with evidence ","knownContext":[" existing clue ","   "],"constraints":[" read only "," "]}}\n```';
     const detected = detectAnyToolCall(text);
     expect(detected?.source).toBe('delegate');
     if (detected?.source === 'delegate' && detected.call.tool === 'delegate_explorer') {
@@ -607,7 +609,9 @@ describe('diagnoseToolCallFailure arg hints', () => {
 
 describe('diagnoseJsonSyntaxError', () => {
   it('returns null for valid JSON', () => {
-    expect(diagnoseJsonSyntaxError('{"tool": "sandbox_exec", "args": {"command": "ls"}}')).toBeNull();
+    expect(
+      diagnoseJsonSyntaxError('{"tool": "sandbox_exec", "args": {"command": "ls"}}'),
+    ).toBeNull();
   });
 
   it('detects missing opening brace', () => {
@@ -692,7 +696,8 @@ describe('diagnoseToolCallFailure malformed JSON', () => {
 
   it('diagnoses malformed JSON with specific syntax error in fenced block', () => {
     // Broken JSON that repair can't fix: unterminated string + structural issues
-    const text = '```json\n{"tool": "sandbox_exec", "args": {"command": "ls, "extra": broken}}\n```';
+    const text =
+      '```json\n{"tool": "sandbox_exec", "args": {"command": "ls, "extra": broken}}\n```';
     const result = diagnoseToolCallFailure(text);
 
     if (result) {
@@ -703,7 +708,8 @@ describe('diagnoseToolCallFailure malformed JSON', () => {
 
   it('diagnoses unfenced malformed tool call', () => {
     // Bare text with tool pattern but broken JSON structure that repair can't fix
-    const text = 'I will run the tests:\n{"tool": "sandbox_exec", "args": {command: ls -la, "verbose": }}';
+    const text =
+      'I will run the tests:\n{"tool": "sandbox_exec", "args": {command: ls -la, "verbose": }}';
     const result = diagnoseToolCallFailure(text);
 
     if (result) {
@@ -737,7 +743,8 @@ describe('diagnoseToolCallFailure malformed JSON', () => {
 
 describe('diagnoseToolCallFailure unknown tool names', () => {
   it('treats short "edit" as a real tool name and returns a validation hint', () => {
-    const text = '```json\n{"tool": "edit", "args": {"repo": "owner/repo", "path": "src/app.ts", "old_string": "foo", "new_string": "bar"}}\n```';
+    const text =
+      '```json\n{"tool": "edit", "args": {"repo": "owner/repo", "path": "src/app.ts", "old_string": "foo", "new_string": "bar"}}\n```';
     const result = diagnoseToolCallFailure(text);
 
     expect(result).not.toBeNull();
@@ -748,7 +755,8 @@ describe('diagnoseToolCallFailure unknown tool names', () => {
   });
 
   it('detects hallucinated "write_file" tool and suggests write', () => {
-    const text = '```json\n{"tool": "write_file", "args": {"path": "/workspace/test.ts", "content": "hello"}}\n```';
+    const text =
+      '```json\n{"tool": "write_file", "args": {"path": "/workspace/test.ts", "content": "hello"}}\n```';
     const result = diagnoseToolCallFailure(text);
 
     expect(result).not.toBeNull();
@@ -758,7 +766,8 @@ describe('diagnoseToolCallFailure unknown tool names', () => {
 
   it('does not flag unknown tool names in bare prose JSON (only fenced blocks)', () => {
     // Model returning example JSON in prose — should NOT trigger diagnosis
-    const text = 'Here is an example tool call:\n{"tool": "my_custom_tool", "args": {"param": "value"}}\nThis shows the expected format.';
+    const text =
+      'Here is an example tool call:\n{"tool": "my_custom_tool", "args": {"param": "value"}}\nThis shows the expected format.';
     const result = diagnoseToolCallFailure(text);
 
     // Should either be null or not flagged as unknown tool

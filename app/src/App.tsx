@@ -16,7 +16,11 @@ import type {
   WorkspaceSession,
 } from '@/types';
 import './App.css';
-import { createIndexedDbStore, setDefaultMemoryStore, getDefaultMemoryStore } from '@/lib/context-memory-store';
+import {
+  createIndexedDbStore,
+  setDefaultMemoryStore,
+  getDefaultMemoryStore,
+} from '@/lib/context-memory-store';
 import { createPolicyEnforcedStore } from '@push/lib/context-memory-policy-store';
 
 setDefaultMemoryStore(createPolicyEnforcedStore(createIndexedDbStore()));
@@ -41,9 +45,10 @@ function normalizeWorkspaceSession(
   value: unknown,
   activeRepo: ActiveRepo | null,
 ): WorkspaceSession | null {
-  if (!value || typeof value !== 'object') return activeRepo
-    ? { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null }
-    : null;
+  if (!value || typeof value !== 'object')
+    return activeRepo
+      ? { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null }
+      : null;
 
   const candidate = value as Record<string, unknown>;
   if (typeof candidate.id !== 'string' || typeof candidate.kind !== 'string') {
@@ -98,27 +103,33 @@ function loadWorkspaceSession(activeRepo: ActiveRepo | null): WorkspaceSession |
 }
 
 const OnboardingScreen = lazyWithRecovery(
-  toDefaultExport(() => import('@/sections/OnboardingScreen'), (module) => module.OnboardingScreen),
+  toDefaultExport(
+    () => import('@/sections/OnboardingScreen'),
+    (module) => module.OnboardingScreen,
+  ),
 );
 const HomeScreen = lazyWithRecovery(
-  toDefaultExport(() => import('@/sections/HomeScreen'), (module) => module.HomeScreen),
+  toDefaultExport(
+    () => import('@/sections/HomeScreen'),
+    (module) => module.HomeScreen,
+  ),
 );
 const WorkspaceScreen = lazyWithRecovery(
-  toDefaultExport(() => import('@/sections/WorkspaceScreen'), (module) => module.WorkspaceScreen),
+  toDefaultExport(
+    () => import('@/sections/WorkspaceScreen'),
+    (module) => module.WorkspaceScreen,
+  ),
 );
 
 function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo, setCurrentBranch } = useActiveRepo();
-  const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() => loadWorkspaceSession(activeRepo));
+  const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(() =>
+    loadWorkspaceSession(activeRepo),
+  );
   const [conversationIndex, setConversationIndex] = useState<ConversationIndex>({});
   const [pendingResumeChatId, setPendingResumeChatId] = useState<string | null>(null);
 
-
-  const {
-    resolveRepoAppearance,
-    setRepoAppearance,
-    clearRepoAppearance,
-  } = useRepoAppearance();
+  const { resolveRepoAppearance, setRepoAppearance, clearRepoAppearance } = useRepoAppearance();
 
   useEffect(() => {
     perfMark('app:first-render');
@@ -135,14 +146,16 @@ function App() {
   useEffect(() => {
     perfMark('conversations:migrate-start');
     let cancelled = false;
-    migrateConversationsToIndexedDB().then((conversations) => {
-      if (cancelled) return;
-      setConversationIndex(toConversationIndex(conversations));
-      perfMark('conversations:migrate-end');
-      perfMeasure('conversations:migrate-start', 'conversations:migrate-end');
-    }).catch(() => {
-      // Best effort bootstrap for HomeScreen history.
-    });
+    migrateConversationsToIndexedDB()
+      .then((conversations) => {
+        if (cancelled) return;
+        setConversationIndex(toConversationIndex(conversations));
+        perfMark('conversations:migrate-end');
+        perfMeasure('conversations:migrate-start', 'conversations:migrate-end');
+      })
+      .catch(() => {
+        // Best effort bootstrap for HomeScreen history.
+      });
     return () => {
       cancelled = true;
     };
@@ -206,54 +219,65 @@ function App() {
       };
       setPendingResumeChatId(null);
       setActiveRepo(repoData);
-      setWorkspaceSession({ id: crypto.randomUUID(), kind: 'repo', repo: repoData, sandboxId: null });
+      setWorkspaceSession({
+        id: crypto.randomUUID(),
+        kind: 'repo',
+        repo: repoData,
+        sandboxId: null,
+      });
     },
     [setActiveRepo],
   );
 
-  const handleResumeConversationFromHome = useCallback((chatId: string) => {
-    const conversation = conversationIndex[chatId];
-    if (!conversation) return;
+  const handleResumeConversationFromHome = useCallback(
+    (chatId: string) => {
+      const conversation = conversationIndex[chatId];
+      if (!conversation) return;
 
-    // Chat mode conversations have no repo — resume directly into chat workspace.
-    if (conversation.mode === 'chat') {
+      // Chat mode conversations have no repo — resume directly into chat workspace.
+      if (conversation.mode === 'chat') {
+        setPendingResumeChatId(chatId);
+        clearActiveRepo();
+        setWorkspaceSession({ id: crypto.randomUUID(), kind: 'chat', sandboxId: null });
+        return;
+      }
+
+      // Scratch workspace conversations — resume into scratch workspace.
+      if (conversation.mode === 'scratch' || (!conversation.repoFullName && !conversation.mode)) {
+        setPendingResumeChatId(chatId);
+        clearActiveRepo();
+        setWorkspaceSession({ id: crypto.randomUUID(), kind: 'scratch', sandboxId: null });
+        return;
+      }
+
+      if (!conversation.repoFullName) return;
+
+      const repo = repos.find((candidate) => candidate.full_name === conversation.repoFullName);
+      if (!repo) return;
+
+      handleSelectRepo(repo, conversation.branch || undefined);
       setPendingResumeChatId(chatId);
-      clearActiveRepo();
-      setWorkspaceSession({ id: crypto.randomUUID(), kind: 'chat', sandboxId: null });
-      return;
-    }
+    },
+    [conversationIndex, repos, handleSelectRepo, clearActiveRepo],
+  );
 
-    // Scratch workspace conversations — resume into scratch workspace.
-    if (conversation.mode === 'scratch' || (!conversation.repoFullName && !conversation.mode)) {
-      setPendingResumeChatId(chatId);
-      clearActiveRepo();
-      setWorkspaceSession({ id: crypto.randomUUID(), kind: 'scratch', sandboxId: null });
-      return;
-    }
-
-    if (!conversation.repoFullName) return;
-
-    const repo = repos.find((candidate) => candidate.full_name === conversation.repoFullName);
-    if (!repo) return;
-
-    handleSelectRepo(repo, conversation.branch || undefined);
-    setPendingResumeChatId(chatId);
-  }, [conversationIndex, repos, handleSelectRepo, clearActiveRepo]);
-
-  const handleSetCurrentBranch = useCallback((branch: string) => {
-    setCurrentBranch(branch);
-    setWorkspaceSession((prev) => {
-      if (!prev || prev.kind !== 'repo') return prev;
-      if (prev.repo.current_branch === branch) return prev;
-      return {
-        ...prev,
-        repo: {
-          ...prev.repo,
-          current_branch: branch,
-        },
-      };
-    });
-  }, [setCurrentBranch]);
+  const handleSetCurrentBranch = useCallback(
+    (branch: string) => {
+      setCurrentBranch(branch);
+      setWorkspaceSession((prev) => {
+        if (!prev || prev.kind !== 'repo') return prev;
+        if (prev.repo.current_branch === branch) return prev;
+        return {
+          ...prev,
+          repo: {
+            ...prev.repo,
+            current_branch: branch,
+          },
+        };
+      });
+    },
+    [setCurrentBranch],
+  );
 
   const handleDisconnect = useCallback(() => {
     disconnectAuth();

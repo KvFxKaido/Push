@@ -148,10 +148,7 @@ export const IDLE_RUN_STATE: RunEngineState = {
  *     adapter is responsible for emitting STEER_CLEARED before the finally block.
  *     This keeps the reducer as a truth ledger, not a policy enforcer.
  */
-export function runEngineReducer(
-  state: RunEngineState,
-  event: RunEngineEvent,
-): RunEngineState {
+export function runEngineReducer(state: RunEngineState, event: RunEngineEvent): RunEngineState {
   const now = event.timestamp;
 
   switch (event.type) {
@@ -344,10 +341,7 @@ export function isRunActive(state: RunEngineState): boolean {
  * Takes `initial` (not hardcoded to IDLE_RUN_STATE) so partial histories and
  * mid-stream resumption scenarios can be replayed in tests and diagnostics.
  */
-export function replayEvents(
-  initial: RunEngineState,
-  events: RunEngineEvent[],
-): RunEngineState {
+export function replayEvents(initial: RunEngineState, events: RunEngineEvent[]): RunEngineState {
   return events.reduce(runEngineReducer, initial);
 }
 
@@ -388,16 +382,22 @@ export function collectRunEngineParityIssues(
 
   if (!terminalPhase) {
     if (state.queuedFollowUps.length !== observed.queuedFollowUpCount) {
-      issues.push(`queue length mismatch: engine=${state.queuedFollowUps.length} observed=${observed.queuedFollowUpCount}`);
+      issues.push(
+        `queue length mismatch: engine=${state.queuedFollowUps.length} observed=${observed.queuedFollowUpCount}`,
+      );
     }
 
     if (state.hasPendingSteer !== observed.hasPendingSteer) {
-      issues.push(`pending steer mismatch: engine=${state.hasPendingSteer} observed=${observed.hasPendingSteer}`);
+      issues.push(
+        `pending steer mismatch: engine=${state.hasPendingSteer} observed=${observed.hasPendingSteer}`,
+      );
     }
   }
 
   if (activeLoopPhase && state.tabLockId !== observed.tabLockId) {
-    issues.push(`tab lock mismatch: engine=${state.tabLockId ?? 'null'} observed=${observed.tabLockId ?? 'null'}`);
+    issues.push(
+      `tab lock mismatch: engine=${state.tabLockId ?? 'null'} observed=${observed.tabLockId ?? 'null'}`,
+    );
   }
 
   return issues;

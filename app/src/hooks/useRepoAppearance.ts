@@ -30,7 +30,8 @@ function loadRepoAppearances(): RepoAppearanceMap {
 }
 
 export function useRepoAppearance() {
-  const [appearancesByRepo, setAppearancesByRepo] = useState<RepoAppearanceMap>(loadRepoAppearances);
+  const [appearancesByRepo, setAppearancesByRepo] =
+    useState<RepoAppearanceMap>(loadRepoAppearances);
 
   const persist = useCallback((next: RepoAppearanceMap) => {
     safeStorageSet(REPO_APPEARANCE_STORAGE_KEY, JSON.stringify(next));
@@ -58,14 +59,20 @@ export function useRepoAppearance() {
     });
   }, []);
 
-  const getRepoAppearance = useCallback((repoFullName?: string | null): RepoAppearance | null => {
-    if (!repoFullName) return null;
-    return appearancesByRepo[repoFullName] ?? null;
-  }, [appearancesByRepo]);
+  const getRepoAppearance = useCallback(
+    (repoFullName?: string | null): RepoAppearance | null => {
+      if (!repoFullName) return null;
+      return appearancesByRepo[repoFullName] ?? null;
+    },
+    [appearancesByRepo],
+  );
 
-  const resolveRepoAppearance = useCallback((repoFullName?: string | null): RepoAppearance => {
-    return getRepoAppearance(repoFullName) ?? DEFAULT_REPO_APPEARANCE;
-  }, [getRepoAppearance]);
+  const resolveRepoAppearance = useCallback(
+    (repoFullName?: string | null): RepoAppearance => {
+      return getRepoAppearance(repoFullName) ?? DEFAULT_REPO_APPEARANCE;
+    },
+    [getRepoAppearance],
+  );
 
   return {
     appearancesByRepo,

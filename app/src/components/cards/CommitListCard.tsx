@@ -22,9 +22,7 @@ export function CommitListCard({ data }: { data: CommitListCardData }) {
               {commit.sha.slice(0, 7)}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-push-base text-push-fg leading-tight truncate">
-                {commit.message}
-              </p>
+              <p className="text-push-base text-push-fg leading-tight truncate">{commit.message}</p>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="text-push-xs text-push-fg-dim">{commit.author}</span>
                 <span className="text-push-xs text-push-fg-dim">{timeAgo(commit.date)}</span>

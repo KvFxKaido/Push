@@ -98,9 +98,7 @@ describe('chat-card-actions', () => {
       selectedOptionIds: ['blue'],
     });
 
-    expect(sendMessage).toHaveBeenCalledWith(
-      'Answer to your question "Pick a color": Blue',
-    );
+    expect(sendMessage).toHaveBeenCalledWith('Answer to your question "Pick a color": Blue');
     expect(conversations['chat-1'].messages[0].cards?.[0]).toMatchObject({
       type: 'ask-user',
       data: {
@@ -163,7 +161,13 @@ describe('chat-card-actions', () => {
         {
           type: 'commit-review',
           data: {
-            diff: { diff: 'old diff', filesChanged: 1, additions: 1, deletions: 0, truncated: false },
+            diff: {
+              diff: 'old diff',
+              filesChanged: 1,
+              additions: 1,
+              deletions: 0,
+              truncated: false,
+            },
             auditVerdict: { verdict: 'safe', summary: 'safe', risks: [], filesReviewed: 1 },
             commitMessage: 'fix: initial',
             status: 'pending',

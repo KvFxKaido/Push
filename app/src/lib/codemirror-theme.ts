@@ -85,53 +85,53 @@ export const diffEditorTheme = EditorView.theme(
 
 const highlightColors = HighlightStyle.define([
   // Keywords, control flow
-  { tag: tags.keyword, color: '#a78bfa' },            // violet-400
+  { tag: tags.keyword, color: '#a78bfa' }, // violet-400
   { tag: tags.controlKeyword, color: '#a78bfa' },
   { tag: tags.operatorKeyword, color: '#a78bfa' },
 
   // Functions
-  { tag: tags.function(tags.variableName), color: '#67e8f9' },  // cyan-300
+  { tag: tags.function(tags.variableName), color: '#67e8f9' }, // cyan-300
   { tag: tags.function(tags.definition(tags.variableName)), color: '#67e8f9' },
 
   // Strings
-  { tag: tags.string, color: '#86efac' },              // green-300
+  { tag: tags.string, color: '#86efac' }, // green-300
   { tag: tags.special(tags.string), color: '#86efac' },
 
   // Numbers, booleans
-  { tag: tags.number, color: '#fbbf24' },              // amber-400
+  { tag: tags.number, color: '#fbbf24' }, // amber-400
   { tag: tags.bool, color: '#fbbf24' },
 
   // Comments
-  { tag: tags.comment, color: '#52525b', fontStyle: 'italic' },  // zinc-600
+  { tag: tags.comment, color: '#52525b', fontStyle: 'italic' }, // zinc-600
   { tag: tags.lineComment, color: '#52525b', fontStyle: 'italic' },
   { tag: tags.blockComment, color: '#52525b', fontStyle: 'italic' },
 
   // Types, classes
-  { tag: tags.typeName, color: '#fca5a5' },            // red-300
+  { tag: tags.typeName, color: '#fca5a5' }, // red-300
   { tag: tags.className, color: '#fca5a5' },
   { tag: tags.namespace, color: '#fca5a5' },
 
   // Variables, properties
   { tag: tags.variableName, color: '#e4e4e7' },
-  { tag: tags.propertyName, color: '#93c5fd' },        // blue-300
+  { tag: tags.propertyName, color: '#93c5fd' }, // blue-300
   { tag: tags.definition(tags.propertyName), color: '#93c5fd' },
 
   // Operators, punctuation
-  { tag: tags.operator, color: '#a1a1aa' },            // zinc-400
-  { tag: tags.punctuation, color: '#71717a' },         // zinc-500
+  { tag: tags.operator, color: '#a1a1aa' }, // zinc-400
+  { tag: tags.punctuation, color: '#71717a' }, // zinc-500
   { tag: tags.bracket, color: '#a1a1aa' },
 
   // Tags (HTML/JSX)
-  { tag: tags.tagName, color: '#f87171' },             // red-400
-  { tag: tags.attributeName, color: '#93c5fd' },       // blue-300
+  { tag: tags.tagName, color: '#f87171' }, // red-400
+  { tag: tags.attributeName, color: '#93c5fd' }, // blue-300
   { tag: tags.attributeValue, color: '#86efac' },
 
   // Regex
-  { tag: tags.regexp, color: '#fb923c' },              // orange-400
+  { tag: tags.regexp, color: '#fb923c' }, // orange-400
 
   // Meta, annotations
   { tag: tags.meta, color: '#a1a1aa' },
-  { tag: tags.annotation, color: '#c4b5fd' },          // violet-300
+  { tag: tags.annotation, color: '#c4b5fd' }, // violet-300
 
   // Headings (markdown)
   { tag: tags.heading, color: '#fafafa', fontWeight: 'bold' },

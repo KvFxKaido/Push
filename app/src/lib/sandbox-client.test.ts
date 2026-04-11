@@ -87,7 +87,14 @@ describe('BatchWriteResult type shape', () => {
       ok: false,
       results: [
         { path: '/workspace/a.txt', ok: true, bytes_written: 42, new_version: 'abc123' },
-        { path: '/workspace/b.txt', ok: false, error: 'Stale file version.', code: 'STALE_FILE', expected_version: 'old', current_version: 'new' },
+        {
+          path: '/workspace/b.txt',
+          ok: false,
+          error: 'Stale file version.',
+          code: 'STALE_FILE',
+          expected_version: 'old',
+          current_version: 'new',
+        },
       ],
     };
 
@@ -113,9 +120,7 @@ describe('batchWriteToSandbox', () => {
   it('sends POST to /api/sandbox/batch-write with correct body', async () => {
     const mockResponse: BatchWriteResult = {
       ok: true,
-      results: [
-        { path: '/workspace/a.txt', ok: true, bytes_written: 5, new_version: 'abc' },
-      ],
+      results: [{ path: '/workspace/a.txt', ok: true, bytes_written: 5, new_version: 'abc' }],
     };
 
     mockFetch.mockResolvedValue({
@@ -124,9 +129,11 @@ describe('batchWriteToSandbox', () => {
     });
 
     const { batchWriteToSandbox } = await import('./sandbox-client');
-    const result = await batchWriteToSandbox('sb-123', [
-      { path: '/workspace/a.txt', content: 'hello', expected_version: 'v1' },
-    ], 7);
+    const result = await batchWriteToSandbox(
+      'sb-123',
+      [{ path: '/workspace/a.txt', content: 'hello', expected_version: 'v1' }],
+      7,
+    );
 
     expect(mockFetch).toHaveBeenCalled();
     const [url, options] = mockFetch.mock.calls[0];
@@ -210,9 +217,9 @@ describe('writeToSandbox', () => {
     setSandboxOwnerToken(null);
 
     const { writeToSandbox } = await import('./sandbox-client');
-    await expect(
-      writeToSandbox('sb-123', '/workspace/test.txt', 'hello'),
-    ).rejects.toThrow(/access token missing/i);
+    await expect(writeToSandbox('sb-123', '/workspace/test.txt', 'hello')).rejects.toThrow(
+      /access token missing/i,
+    );
   });
 });
 
@@ -294,29 +301,32 @@ describe('readSymbolsFromSandbox', () => {
     const arrowFunctionRegex = new RegExp(SANDBOX_TS_ARROW_FUNCTION_REGEX);
 
     expect(arrowFunctionRegex.test('const renderRow = (row: Row) => row.id')).toBe(true);
-    expect(arrowFunctionRegex.test('export const loadUser: Loader = async () => ({ ok: true })')).toBe(true);
+    expect(
+      arrowFunctionRegex.test('export const loadUser: Loader = async () => ({ ok: true })'),
+    ).toBe(true);
     expect(arrowFunctionRegex.test('const onSelect: (id: string) => void = noop')).toBe(false);
   });
 
   it('executes the symbol extractor and parses structured output', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({
-        stdout: JSON.stringify({
-          symbols: [
-            {
-              name: 'validateToken',
-              kind: 'function',
-              line: 12,
-              signature: 'export function validateToken(token: string)',
-            },
-          ],
-          total_lines: 120,
+      json: () =>
+        Promise.resolve({
+          stdout: JSON.stringify({
+            symbols: [
+              {
+                name: 'validateToken',
+                kind: 'function',
+                line: 12,
+                signature: 'export function validateToken(token: string)',
+              },
+            ],
+            total_lines: 120,
+          }),
+          stderr: '',
+          exit_code: 0,
+          truncated: false,
         }),
-        stderr: '',
-        exit_code: 0,
-        truncated: false,
-      }),
     });
 
     const { readSymbolsFromSandbox } = await import('./sandbox-client');
@@ -328,7 +338,7 @@ describe('readSymbolsFromSandbox', () => {
 
     const body = JSON.parse(options.body);
     expect(body.sandbox_id).toBe('sb-123');
-    expect(body.command).toContain("python3 -c");
+    expect(body.command).toContain('python3 -c');
     expect(body.command).toContain('/workspace/src/auth.ts');
 
     expect(result.totalLines).toBe(120);
@@ -345,18 +355,19 @@ describe('readSymbolsFromSandbox', () => {
   it('surfaces structured extractor errors', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({
-        stdout: JSON.stringify({ error: 'No such file or directory' }),
-        stderr: '',
-        exit_code: 0,
-        truncated: false,
-      }),
+      json: () =>
+        Promise.resolve({
+          stdout: JSON.stringify({ error: 'No such file or directory' }),
+          stderr: '',
+          exit_code: 0,
+          truncated: false,
+        }),
     });
 
     const { readSymbolsFromSandbox } = await import('./sandbox-client');
-    await expect(
-      readSymbolsFromSandbox('sb-123', '/workspace/src/missing.ts'),
-    ).rejects.toThrow('No such file or directory');
+    await expect(readSymbolsFromSandbox('sb-123', '/workspace/src/missing.ts')).rejects.toThrow(
+      'No such file or directory',
+    );
   });
 
   it('falls back to regex extractor when primary returns non-zero exit code', async () => {
@@ -367,26 +378,30 @@ describe('readSymbolsFromSandbox', () => {
         // Primary python extractor fails (non-zero exit, no retries triggered)
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({
-            stdout: '',
-            stderr: 'SyntaxError: invalid syntax',
-            exit_code: 1,
-            truncated: false,
-          }),
+          json: () =>
+            Promise.resolve({
+              stdout: '',
+              stderr: 'SyntaxError: invalid syntax',
+              exit_code: 1,
+              truncated: false,
+            }),
         });
       }
       // Regex fallback succeeds
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({
-          stdout: JSON.stringify({
-            symbols: [{ name: 'greet', kind: 'function', line: 1, signature: 'function greet()' }],
-            total_lines: 10,
+        json: () =>
+          Promise.resolve({
+            stdout: JSON.stringify({
+              symbols: [
+                { name: 'greet', kind: 'function', line: 1, signature: 'function greet()' },
+              ],
+              total_lines: 10,
+            }),
+            stderr: '',
+            exit_code: 0,
+            truncated: false,
           }),
-          stderr: '',
-          exit_code: 0,
-          truncated: false,
-        }),
       });
     });
 
@@ -413,26 +428,28 @@ describe('readSymbolsFromSandbox', () => {
         // Primary returns empty symbols
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({
-            stdout: JSON.stringify({ symbols: [], total_lines: 50 }),
-            stderr: '',
-            exit_code: 0,
-            truncated: false,
-          }),
+          json: () =>
+            Promise.resolve({
+              stdout: JSON.stringify({ symbols: [], total_lines: 50 }),
+              stderr: '',
+              exit_code: 0,
+              truncated: false,
+            }),
         });
       }
       // Regex fallback finds something
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({
-          stdout: JSON.stringify({
-            symbols: [{ name: 'Config', kind: 'class', line: 5, signature: 'class Config' }],
-            total_lines: 50,
+        json: () =>
+          Promise.resolve({
+            stdout: JSON.stringify({
+              symbols: [{ name: 'Config', kind: 'class', line: 5, signature: 'class Config' }],
+              total_lines: 50,
+            }),
+            stderr: '',
+            exit_code: 0,
+            truncated: false,
           }),
-          stderr: '',
-          exit_code: 0,
-          truncated: false,
-        }),
       });
     });
 
@@ -450,12 +467,13 @@ describe('readSymbolsFromSandbox', () => {
       // Both primary and fallback return non-zero exit (no retry-inducing errors)
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({
-          stdout: '',
-          stderr: 'command failed',
-          exit_code: 1,
-          truncated: false,
-        }),
+        json: () =>
+          Promise.resolve({
+            stdout: '',
+            stderr: 'command failed',
+            exit_code: 1,
+            truncated: false,
+          }),
       });
     });
 
@@ -470,9 +488,9 @@ describe('readSymbolsFromSandbox', () => {
     mockFetch.mockRejectedValue(new Error('Network failure'));
 
     const { readSymbolsFromSandbox } = await import('./sandbox-client');
-    await expect(
-      readSymbolsFromSandbox('sb-123', '/workspace/src/app.ts'),
-    ).rejects.toThrow('Network failure');
+    await expect(readSymbolsFromSandbox('sb-123', '/workspace/src/app.ts')).rejects.toThrow(
+      'Network failure',
+    );
   });
 });
 
@@ -480,12 +498,13 @@ describe('fetchSandboxDiff', () => {
   it('captures tracked, staged, and untracked changes from HEAD', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({
-        stdout: 'diff --git a/file.ts b/file.ts\n',
-        stderr: '',
-        exit_code: 0,
-        truncated: false,
-      }),
+      json: () =>
+        Promise.resolve({
+          stdout: 'diff --git a/file.ts b/file.ts\n',
+          stderr: '',
+          exit_code: 0,
+          truncated: false,
+        }),
     });
 
     const { fetchSandboxDiff } = await import('./sandbox-client');
@@ -507,12 +526,13 @@ describe('fetchSandboxDiff', () => {
   it('truncates oversized diffs to the checkpoint cap', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({
-        stdout: 'x'.repeat(30 * 1024 + 25),
-        stderr: '',
-        exit_code: 0,
-        truncated: false,
-      }),
+      json: () =>
+        Promise.resolve({
+          stdout: 'x'.repeat(30 * 1024 + 25),
+          stderr: '',
+          exit_code: 0,
+          truncated: false,
+        }),
     });
 
     const { fetchSandboxDiff } = await import('./sandbox-client');
@@ -527,32 +547,38 @@ describe('findReferencesInSandbox', () => {
   it('executes the ripgrep helper and parses structured output', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({
-        stdout: JSON.stringify({
-          references: [
-            {
-              file: 'src/lib/auditor-agent.ts',
-              line: 14,
-              context: "import { getActiveProvider } from './orchestrator'",
-              kind: 'import',
-            },
-            {
-              file: 'src/lib/orchestrator.ts',
-              line: 156,
-              context: 'const provider = getActiveProvider();',
-              kind: 'call',
-            },
-          ],
-          truncated: true,
+      json: () =>
+        Promise.resolve({
+          stdout: JSON.stringify({
+            references: [
+              {
+                file: 'src/lib/auditor-agent.ts',
+                line: 14,
+                context: "import { getActiveProvider } from './orchestrator'",
+                kind: 'import',
+              },
+              {
+                file: 'src/lib/orchestrator.ts',
+                line: 156,
+                context: 'const provider = getActiveProvider();',
+                kind: 'call',
+              },
+            ],
+            truncated: true,
+          }),
+          stderr: '',
+          exit_code: 0,
+          truncated: false,
         }),
-        stderr: '',
-        exit_code: 0,
-        truncated: false,
-      }),
     });
 
     const { findReferencesInSandbox } = await import('./sandbox-client');
-    const result = await findReferencesInSandbox('sb-123', 'getActiveProvider', '/workspace/src', 30);
+    const result = await findReferencesInSandbox(
+      'sb-123',
+      'getActiveProvider',
+      '/workspace/src',
+      30,
+    );
 
     const [url, options] = mockFetch.mock.calls[0];
     expect(url).toBe('/api/sandbox/exec');
@@ -560,7 +586,7 @@ describe('findReferencesInSandbox', () => {
 
     const body = JSON.parse(options.body);
     expect(body.sandbox_id).toBe('sb-123');
-    expect(body.command).toContain("python3 -c");
+    expect(body.command).toContain('python3 -c');
     expect(body.command).toContain('rg');
     expect(body.command).toContain('getActiveProvider');
     expect(body.command).toContain('/workspace/src');
@@ -586,12 +612,13 @@ describe('findReferencesInSandbox', () => {
   it('surfaces structured ripgrep helper errors', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({
-        stdout: JSON.stringify({ error: 'rg exited with code 2' }),
-        stderr: '',
-        exit_code: 0,
-        truncated: false,
-      }),
+      json: () =>
+        Promise.resolve({
+          stdout: JSON.stringify({ error: 'rg exited with code 2' }),
+          stderr: '',
+          exit_code: 0,
+          truncated: false,
+        }),
     });
 
     const { findReferencesInSandbox } = await import('./sandbox-client');
@@ -673,19 +700,20 @@ describe('sandbox lifecycle events', () => {
   it('records workspace creation even when readiness metadata exists', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({
-        sandbox_id: 'sb-created',
-        owner_token: 'owner-token',
-        workspace_revision: 1,
-        environment: {
-          tools: { node: 'v20.18.1' },
-          container_ttl: '30m',
-          readiness: {
-            package_manager: 'npm',
-            dependencies: 'installed',
+      json: () =>
+        Promise.resolve({
+          sandbox_id: 'sb-created',
+          owner_token: 'owner-token',
+          workspace_revision: 1,
+          environment: {
+            tools: { node: 'v20.18.1' },
+            container_ttl: '30m',
+            readiness: {
+              package_manager: 'npm',
+              dependencies: 'installed',
+            },
           },
-        },
-      }),
+        }),
     });
 
     const session = await createSandbox('owner/repo', 'main');

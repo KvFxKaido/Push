@@ -70,8 +70,6 @@ describe('buildExplorerSystemPrompt', () => {
     expect(prompt).not.toContain('{"tool": "coder"');
   });
 
-
-
   it('includes stronger discovery guidance and bounded stop conditions', () => {
     const prompt = buildExplorerSystemPrompt();
 
@@ -81,4 +79,3 @@ describe('buildExplorerSystemPrompt', () => {
     expect(prompt).toContain('broad but bounded investigation');
   });
 });
-

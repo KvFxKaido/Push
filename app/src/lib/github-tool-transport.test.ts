@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { executeGitHubToolViaWorker, fetchRepoBranchesViaWorker, supportsWorkerGitHubTool } from './github-tool-transport';
+import {
+  executeGitHubToolViaWorker,
+  fetchRepoBranchesViaWorker,
+  supportsWorkerGitHubTool,
+} from './github-tool-transport';
 import * as githubAuth from './github-auth';
 
 describe('github-tool-transport', () => {
@@ -38,50 +42,65 @@ describe('github-tool-transport', () => {
   });
 
   it('returns a parsed branch list payload from the worker', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({
-      result: {
-        text: '[Tool Result — list_branches]',
-        card: {
-          type: 'branch-list',
-          data: {
-            repo: 'owner/repo',
-            defaultBranch: 'main',
-            branches: [
-              { name: 'main', isDefault: true, isProtected: true },
-              { name: 'feature/demo', isDefault: false, isProtected: false },
-            ],
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          result: {
+            text: '[Tool Result — list_branches]',
+            card: {
+              type: 'branch-list',
+              data: {
+                repo: 'owner/repo',
+                defaultBranch: 'main',
+                branches: [
+                  { name: 'main', isDefault: true, isProtected: true },
+                  { name: 'feature/demo', isDefault: false, isProtected: false },
+                ],
+              },
+            },
           },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
         },
-      },
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }));
+      ),
+    );
 
     const result = await fetchRepoBranchesViaWorker('owner/repo', 50);
 
     expect(result.defaultBranch).toBe('main');
     expect(result.branches).toHaveLength(2);
-    expect(fetch).toHaveBeenCalledWith('/api/github/tools', expect.objectContaining({
-      method: 'POST',
-      headers: expect.objectContaining({
-        Authorization: 'token test-token',
-        'Content-Type': 'application/json',
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/github/tools',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'token test-token',
+          'Content-Type': 'application/json',
+        }),
       }),
-    }));
+    );
   });
 
   it('surfaces worker errors as exceptions', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({
-      error: 'Access denied — can only query the active repo "owner/repo"',
-    }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' },
-    }));
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: 'Access denied — can only query the active repo "owner/repo"',
+        }),
+        {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
 
-    await expect(executeGitHubToolViaWorker(
-      { tool: 'fetch_pr', args: { repo: 'owner/repo', pr: 42 } },
-      'owner/repo',
-    )).rejects.toThrow('Access denied');
+    await expect(
+      executeGitHubToolViaWorker(
+        { tool: 'fetch_pr', args: { repo: 'owner/repo', pr: 42 } },
+        'owner/repo',
+      ),
+    ).rejects.toThrow('Access denied');
   });
 });

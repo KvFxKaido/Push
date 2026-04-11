@@ -5,7 +5,8 @@ const { mockBuildRetrievedMemoryKnownContext } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/context-memory', () => ({
-  buildRetrievedMemoryKnownContext: (...args: unknown[]) => mockBuildRetrievedMemoryKnownContext(...args),
+  buildRetrievedMemoryKnownContext: (...args: unknown[]) =>
+    mockBuildRetrievedMemoryKnownContext(...args),
 }));
 
 import {

@@ -48,7 +48,10 @@ describe('vertex-provider', () => {
   });
 
   it('normalizes regions and accepts global', () => {
-    expect(normalizeVertexRegion(' global ')).toEqual({ ok: true, normalized: VERTEX_DEFAULT_REGION });
+    expect(normalizeVertexRegion(' global ')).toEqual({
+      ok: true,
+      normalized: VERTEX_DEFAULT_REGION,
+    });
     expect(normalizeVertexRegion('us-east5')).toEqual({ ok: true, normalized: 'us-east5' });
   });
 
@@ -58,9 +61,13 @@ describe('vertex-provider', () => {
   });
 
   it('builds the expected Vertex endpoints', () => {
-    expect(buildVertexOpenApiBaseUrl('demo-project', 'global'))
-      .toBe('https://aiplatform.googleapis.com/v1beta1/projects/demo-project/locations/global/endpoints/openapi');
-    expect(buildVertexAnthropicEndpoint('demo-project', 'us-east5', 'claude-sonnet-4-5@20250929'))
-      .toBe('https://aiplatform.googleapis.com/v1/projects/demo-project/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-5@20250929:streamRawPredict');
+    expect(buildVertexOpenApiBaseUrl('demo-project', 'global')).toBe(
+      'https://aiplatform.googleapis.com/v1beta1/projects/demo-project/locations/global/endpoints/openapi',
+    );
+    expect(
+      buildVertexAnthropicEndpoint('demo-project', 'us-east5', 'claude-sonnet-4-5@20250929'),
+    ).toBe(
+      'https://aiplatform.googleapis.com/v1/projects/demo-project/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-5@20250929:streamRawPredict',
+    );
   });
 });

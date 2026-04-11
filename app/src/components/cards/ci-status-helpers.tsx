@@ -46,7 +46,9 @@ export function getWorkflowRunsHeaderTone(runs: WorkflowRunItem[]): CheckTone {
   return tone === 'neutral' ? 'unknown' : tone;
 }
 
-export function getWorkflowLogsHeaderTone(conclusion: string | null): 'success' | 'failure' | 'pending' {
+export function getWorkflowLogsHeaderTone(
+  conclusion: string | null,
+): 'success' | 'failure' | 'pending' {
   switch (conclusion) {
     case 'success':
       return 'success';

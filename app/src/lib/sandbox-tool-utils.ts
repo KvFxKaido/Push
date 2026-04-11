@@ -37,26 +37,28 @@ export function formatSandboxDisplayScope(path: string): string {
  * in ISO-8859-1. We match both variants with a character class.
  */
 export function normalizeUnicode(s: string): string {
-  return s
-    // Mojibake: UTF-8 bytes decoded as CP1252 (common) or ISO-8859-1 (rare)
-    // â + €/\x80 + CP1252(byte3)  →  original character
-    .replace(/\u00e2[\u20ac\u0080]\u201c/g, '-')   // â€" (en-dash U+2013)
-    .replace(/\u00e2[\u20ac\u0080]\u201d/g, '-')   // â€" (em-dash U+2014)
-    .replace(/\u00e2[\u20ac\u0080]\u2122/g, "'")   // â€™ (right single quote U+2019)
-    .replace(/\u00e2[\u20ac\u0080]\u02dc/g, "'")   // â€˜ (left single quote U+2018)
-    .replace(/\u00e2[\u20ac\u0080]\u0153/g, '"')   // â€œ (left double quote U+201C)
-    .replace(/\u00e2[\u20ac\u0080][\u009d\u201d]/g, '"') // â€\x9d (right double quote U+201D)
-    .replace(/\u00e2[\u20ac\u0080]\u00a6/g, '...') // â€¦ (ellipsis U+2026)
-    .replace(/\u00e2[\u2020\u0086][\u2019\u0092]/g, '->') // â†' (right arrow U+2192)
-    // Actual Unicode typographic characters
-    .replace(/[\u2018\u2019\u201A\u201B]/g, "'") // smart single quotes → '
-    .replace(/[\u201C\u201D\u201E\u201F]/g, '"') // smart double quotes → "
-    .replace(/[\u2013\u2014]/g, '-')              // en-dash, em-dash → -
-    .replace(/\u2026/g, '...')                     // ellipsis → ...
-    .replace(/\u2192/g, '->')                      // right arrow → ->
-    .replace(/\u00A0/g, ' ')                       // non-breaking space → space
-    // NFC normalization for accented characters
-    .normalize('NFC');
+  return (
+    s
+      // Mojibake: UTF-8 bytes decoded as CP1252 (common) or ISO-8859-1 (rare)
+      // â + €/\x80 + CP1252(byte3)  →  original character
+      .replace(/\u00e2[\u20ac\u0080]\u201c/g, '-') // â€" (en-dash U+2013)
+      .replace(/\u00e2[\u20ac\u0080]\u201d/g, '-') // â€" (em-dash U+2014)
+      .replace(/\u00e2[\u20ac\u0080]\u2122/g, "'") // â€™ (right single quote U+2019)
+      .replace(/\u00e2[\u20ac\u0080]\u02dc/g, "'") // â€˜ (left single quote U+2018)
+      .replace(/\u00e2[\u20ac\u0080]\u0153/g, '"') // â€œ (left double quote U+201C)
+      .replace(/\u00e2[\u20ac\u0080][\u009d\u201d]/g, '"') // â€\x9d (right double quote U+201D)
+      .replace(/\u00e2[\u20ac\u0080]\u00a6/g, '...') // â€¦ (ellipsis U+2026)
+      .replace(/\u00e2[\u2020\u0086][\u2019\u0092]/g, '->') // â†' (right arrow U+2192)
+      // Actual Unicode typographic characters
+      .replace(/[\u2018\u2019\u201A\u201B]/g, "'") // smart single quotes → '
+      .replace(/[\u201C\u201D\u201E\u201F]/g, '"') // smart double quotes → "
+      .replace(/[\u2013\u2014]/g, '-') // en-dash, em-dash → -
+      .replace(/\u2026/g, '...') // ellipsis → ...
+      .replace(/\u2192/g, '->') // right arrow → ->
+      .replace(/\u00A0/g, ' ') // non-breaking space → space
+      // NFC normalization for accented characters
+      .normalize('NFC')
+  );
 }
 
 export function extractSandboxSearchResultPath(line: string): string | null {
@@ -69,8 +71,8 @@ export function formatSandboxError(error: string, context?: string): string {
   const lowerError = error.toLowerCase();
   const lowerContext = context?.toLowerCase() ?? '';
   const isEnoent = lowerError.includes('enoent') || error.includes('ENOENT');
-  const looksLikeCommandEnoent = isEnoent
-    && (lowerError.includes('spawn ') || lowerContext.startsWith('sandbox_exec'));
+  const looksLikeCommandEnoent =
+    isEnoent && (lowerError.includes('spawn ') || lowerContext.startsWith('sandbox_exec'));
 
   // Common error patterns with suggestions
   if (lowerError.includes('permission denied') || error.includes('EACCES')) {
@@ -99,7 +101,10 @@ export function diagnoseExecFailure(stderr: string): string | null {
   const lower = stderr.toLowerCase();
 
   // Command/binary not found — suggest install
-  if (lower.includes('command not found') || lower.includes('not found') && lower.includes(': ')) {
+  if (
+    lower.includes('command not found') ||
+    (lower.includes('not found') && lower.includes(': '))
+  ) {
     // Try to extract the missing command name
     const match = stderr.match(/(?:bash: |sh: |zsh: )?(\S+):\s*(?:command\s+)?not found/i);
     const missing = match?.[1];
@@ -124,8 +129,9 @@ export function diagnoseExecFailure(stderr: string): string | null {
 
   // Module/package not found — suggest install
   if (lower.includes('cannot find module') || lower.includes('module not found')) {
-    const moduleMatch = stderr.match(/cannot find module ['"]([^'"]+)['"]/i)
-      || stderr.match(/module not found.*['"]([^'"]+)['"]/i);
+    const moduleMatch =
+      stderr.match(/cannot find module ['"]([^'"]+)['"]/i) ||
+      stderr.match(/module not found.*['"]([^'"]+)['"]/i);
     if (moduleMatch?.[1]) {
       return `Module "${moduleMatch[1]}" is missing. Try: npm install ${moduleMatch[1]}`;
     }
@@ -145,8 +151,10 @@ export function diagnoseExecFailure(stderr: string): string | null {
   }
 
   // No such file or directory (not a "command not found" — more like a bad path arg)
-  if ((lower.includes('no such file or directory') || lower.includes('enoent'))
-    && !lower.includes('command not found')) {
+  if (
+    (lower.includes('no such file or directory') || lower.includes('enoent')) &&
+    !lower.includes('command not found')
+  ) {
     return `A file or directory in the command path does not exist. Use sandbox_list_dir to verify paths.`;
   }
 
@@ -166,7 +174,9 @@ export function buildSearchNoResultsHints(query: string, searchPath: string): st
   const isScreamingSnake = /^[A-Z_]+$/.test(query) && query.includes('_');
 
   if (isCamelOrPascal || isSnakeCase || isScreamingSnake) {
-    hints.push(`Search is case-sensitive. Try a partial/lowercase substring (e.g., "${extractKeyword(query)}") to catch different naming conventions.`);
+    hints.push(
+      `Search is case-sensitive. Try a partial/lowercase substring (e.g., "${extractKeyword(query)}") to catch different naming conventions.`,
+    );
   }
 
   // Multi-word queries — suggest shorter terms
@@ -179,15 +189,21 @@ export function buildSearchNoResultsHints(query: string, searchPath: string): st
 
   // Path filter is narrowing results
   if (searchPath !== '/workspace') {
-    hints.push(`Path is scoped to ${searchPath}. Try without a path filter to search the full workspace, or use sandbox_list_dir("${searchPath}") to verify the path exists.`);
+    hints.push(
+      `Path is scoped to ${searchPath}. Try without a path filter to search the full workspace, or use sandbox_list_dir("${searchPath}") to verify the path exists.`,
+    );
   }
 
   // General fallback suggestions
   if (hints.length === 0) {
-    hints.push('Try a shorter or more generic substring — partial matches work (e.g., "buildPrompt" instead of "buildOrchestratorPrompt").');
+    hints.push(
+      'Try a shorter or more generic substring — partial matches work (e.g., "buildPrompt" instead of "buildOrchestratorPrompt").',
+    );
   }
 
-  hints.push('Use sandbox_list_dir to browse the project structure, or sandbox_read_symbols(path) to extract function/class names from a specific file.');
+  hints.push(
+    'Use sandbox_list_dir to browse the project structure, or sandbox_read_symbols(path) to extract function/class names from a specific file.',
+  );
 
   return hints;
 }
@@ -202,12 +218,22 @@ export function extractKeyword(query: string): string {
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
     .split(/[\s_-]+/)
-    .map(p => p.toLowerCase())
-    .filter(p => p.length > 2);
+    .map((p) => p.toLowerCase())
+    .filter((p) => p.length > 2);
 
   // Skip common prefixes like "build", "get", "set", "is", "has"
-  const skipPrefixes = new Set(['build', 'get', 'set', 'is', 'has', 'create', 'make', 'init', 'the']);
-  const meaningful = parts.filter(p => !skipPrefixes.has(p));
+  const skipPrefixes = new Set([
+    'build',
+    'get',
+    'set',
+    'is',
+    'has',
+    'create',
+    'make',
+    'init',
+    'the',
+  ]);
+  const meaningful = parts.filter((p) => !skipPrefixes.has(p));
 
   return (meaningful[0] || parts[0] || query).toLowerCase();
 }
@@ -251,14 +277,37 @@ export function buildSearchPathErrorHints(stderr: string, searchPath: string): s
 export function classifyError(error: string, context?: string): StructuredToolError {
   const lower = error.toLowerCase();
 
-  if (lower.includes('no such file') || lower.includes('enoent') || lower.includes('not found') || lower.includes('does not exist')) {
+  if (
+    lower.includes('no such file') ||
+    lower.includes('enoent') ||
+    lower.includes('not found') ||
+    lower.includes('does not exist')
+  ) {
     return { type: 'FILE_NOT_FOUND', retryable: false, message: error, detail: context };
   }
   // Health-check failures must be matched before the generic timeout check so
   // "health check timed out" is classified as SANDBOX_UNREACHABLE, not EXEC_TIMEOUT.
-  if (lower.includes('sandbox_unreachable') || lower.includes('modal_network_error') || lower.includes('cannot connect') || lower.includes('modal_error') || lower.includes('sandbox unavailable') || lower.includes('container error') || lower.includes('container_error') || lower.includes('no longer reachable') || lower.includes('internal server error') || lower.includes('health check failed') || lower.includes('health check timed out')) {
+  if (
+    lower.includes('sandbox_unreachable') ||
+    lower.includes('modal_network_error') ||
+    lower.includes('cannot connect') ||
+    lower.includes('modal_error') ||
+    lower.includes('sandbox unavailable') ||
+    lower.includes('container error') ||
+    lower.includes('container_error') ||
+    lower.includes('no longer reachable') ||
+    lower.includes('internal server error') ||
+    lower.includes('health check failed') ||
+    lower.includes('health check timed out')
+  ) {
     // Transient container health issues are retryable; permanent config issues are not
-    const transient = lower.includes('internal server error') || lower.includes('container error') || lower.includes('container_error') || lower.includes('modal_network_error') || lower.includes('modal_error') || lower.includes('health check');
+    const transient =
+      lower.includes('internal server error') ||
+      lower.includes('container error') ||
+      lower.includes('container_error') ||
+      lower.includes('modal_network_error') ||
+      lower.includes('modal_error') ||
+      lower.includes('health check');
     return { type: 'SANDBOX_UNREACHABLE', retryable: transient, message: error, detail: context };
   }
   if (lower.includes('timed out') || lower.includes('timeout') || lower.includes('modal_timeout')) {
@@ -296,11 +345,7 @@ export function classifyError(error: string, context?: string): StructuredToolEr
  * Format a structured error into the text block injected into tool results.
  */
 export function formatStructuredError(err: StructuredToolError, baseText: string): string {
-  return [
-    baseText,
-    `error_type: ${err.type}`,
-    `retryable: ${err.retryable}`,
-  ].join('\n');
+  return [baseText, `error_type: ${err.type}`, `retryable: ${err.retryable}`].join('\n');
 }
 
 /**
@@ -316,7 +361,7 @@ export async function retryOnContainerError<T extends { ok: boolean; code?: stri
   let result = await writeFn();
   if (!result.ok && result.code === 'CONTAINER_ERROR') {
     console.log(`[${label}] Container error, retrying in 2s...`);
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
     result = await writeFn();
   }
   return result;
@@ -332,9 +377,7 @@ export function getGitHubHeaders(token: string): Record<string, string> {
 
 export function sanitizeGitOutput(value: string, token: string): string {
   if (!value) return value;
-  return value
-    .replaceAll(token, '***')
-    .replace(/x-access-token:[^@]+@/gi, 'x-access-token:***@');
+  return value.replaceAll(token, '***').replace(/x-access-token:[^@]+@/gi, 'x-access-token:***@');
 }
 
 export interface CreatedRepoResponse {
@@ -385,12 +428,18 @@ export async function createGitHubRepo(
       details = 'Failed to read response body';
     }
     if (response.status === 422) {
-      throw new Error(`Repository creation failed: name likely already exists (${details || 'validation error'}).`);
+      throw new Error(
+        `Repository creation failed: name likely already exists (${details || 'validation error'}).`,
+      );
     }
     if (response.status === 401 || response.status === 403) {
-      throw new Error(`Repository creation failed: GitHub auth error (${details || response.status}).`);
+      throw new Error(
+        `Repository creation failed: GitHub auth error (${details || response.status}).`,
+      );
     }
-    throw new Error(`Repository creation failed (${response.status}): ${details || 'unknown error'}`);
+    throw new Error(
+      `Repository creation failed (${response.status}): ${details || 'unknown error'}`,
+    );
   }
 
   return response.json() as Promise<CreatedRepoResponse>;
@@ -405,7 +454,9 @@ export function isLikelyMutatingSandboxExec(command: string): boolean {
   if (!normalized) return false;
 
   if (
-    /^(cd\s+\S+\s*&&\s*)?(pwd|ls|find|cat|head|tail|wc|stat|file|rg|grep|sed -n|awk|git status|git diff|git show|git branch --show-current)\b/.test(normalized)
+    /^(cd\s+\S+\s*&&\s*)?(pwd|ls|find|cat|head|tail|wc|stat|file|rg|grep|sed -n|awk|git status|git diff|git show|git branch --show-current)\b/.test(
+      normalized,
+    )
   ) {
     return false;
   }
@@ -414,14 +465,18 @@ export function isLikelyMutatingSandboxExec(command: string): boolean {
     return true;
   }
 
-  return /\b(rm|mv|cp|mkdir|rmdir|touch|chmod|chown|tee|patch)\b/.test(normalized)
-    || /\bgit\s+(add|commit|checkout|switch|merge|rebase|reset|restore|clean|stash|cherry-pick|apply|am|push)\b/.test(normalized)
-    || /\b(npm|pnpm|yarn)\s+(install|add|remove|uninstall|update|up|ci)\b/.test(normalized)
-    || /\b(pip|pip3)\s+install\b/.test(normalized)
-    || /\bgo\s+mod\b/.test(normalized)
-    || /\bcargo\s+(add|remove)\b/.test(normalized)
-    || /\bsed\s+-i\b/.test(normalized)
-    || /\bperl\s+-pi\b/.test(normalized);
+  return (
+    /\b(rm|mv|cp|mkdir|rmdir|touch|chmod|chown|tee|patch)\b/.test(normalized) ||
+    /\bgit\s+(add|commit|checkout|switch|merge|rebase|reset|restore|clean|stash|cherry-pick|apply|am|push)\b/.test(
+      normalized,
+    ) ||
+    /\b(npm|pnpm|yarn)\s+(install|add|remove|uninstall|update|up|ci)\b/.test(normalized) ||
+    /\b(pip|pip3)\s+install\b/.test(normalized) ||
+    /\bgo\s+mod\b/.test(normalized) ||
+    /\bcargo\s+(add|remove)\b/.test(normalized) ||
+    /\bsed\s+-i\b/.test(normalized) ||
+    /\bperl\s+-pi\b/.test(normalized)
+  );
 }
 
 // ---------------------------------------------------------------------------

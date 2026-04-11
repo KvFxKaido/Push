@@ -6,12 +6,7 @@
  */
 
 import { Trash2, FileEdit } from 'lucide-react';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { getFileEditability, formatFileSize } from '@/lib/file-utils';
 import type { FileEntry } from '@/types';
 

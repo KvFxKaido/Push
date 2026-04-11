@@ -4,11 +4,7 @@ import { PERSISTED_DETAIL_MAX_CHARS } from '@push/lib/memory-persistence-policy'
 import type { MemoryRecord } from '@/types';
 import { createInMemoryStore } from './context-memory-store';
 
-function createRecord(
-  id: string,
-  kind: MemoryRecord['kind'],
-  createdAt: number,
-): MemoryRecord {
+function createRecord(id: string, kind: MemoryRecord['kind'], createdAt: number): MemoryRecord {
   return {
     id,
     kind,

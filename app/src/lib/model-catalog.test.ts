@@ -638,7 +638,8 @@ describe('provider model fetchers', () => {
     {
       name: 'Ollama',
       fetchModels: fetchOllamaModels,
-      providerMatcher: (url: string) => url.includes('/ollama/') || url.includes('/api/ollama/models'),
+      providerMatcher: (url: string) =>
+        url.includes('/ollama/') || url.includes('/api/ollama/models'),
       modelsDevPayload: {
         'ollama-cloud': {
           models: {
@@ -654,7 +655,8 @@ describe('provider model fetchers', () => {
     {
       name: 'OpenCode Zen',
       fetchModels: fetchZenModels,
-      providerMatcher: (url: string) => url.includes('/opencode/zen/') || url.includes('/api/zen/models'),
+      providerMatcher: (url: string) =>
+        url.includes('/opencode/zen/') || url.includes('/api/zen/models'),
       modelsDevPayload: {
         opencode: {
           models: {
@@ -670,7 +672,8 @@ describe('provider model fetchers', () => {
     {
       name: 'Nvidia NIM',
       fetchModels: fetchNvidiaModels,
-      providerMatcher: (url: string) => url.includes('/nvidia/') || url.includes('/api/nvidia/models'),
+      providerMatcher: (url: string) =>
+        url.includes('/nvidia/') || url.includes('/api/nvidia/models'),
       modelsDevPayload: {
         nvidia: {
           models: {
@@ -683,25 +686,27 @@ describe('provider model fetchers', () => {
         },
       },
     },
-  ])('does not fall back to the raw provider list for $name when every model is filtered out', async ({
-    fetchModels,
-    providerMatcher,
-    modelsDevPayload,
-  }) => {
-    stubWindow();
-    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
-      const url = String(input);
-      if (url.includes('models.dev/api.json')) {
-        return jsonResponse(modelsDevPayload);
-      }
-      if (providerMatcher(url)) {
-        return jsonResponse({ data: [{ id: 'tiny-context-model' }] });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    }));
+  ])(
+    'does not fall back to the raw provider list for $name when every model is filtered out',
+    async ({ fetchModels, providerMatcher, modelsDevPayload }) => {
+      stubWindow();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string | URL) => {
+          const url = String(input);
+          if (url.includes('models.dev/api.json')) {
+            return jsonResponse(modelsDevPayload);
+          }
+          if (providerMatcher(url)) {
+            return jsonResponse({ data: [{ id: 'tiny-context-model' }] });
+          }
+          throw new Error(`Unexpected fetch: ${url}`);
+        }),
+      );
 
-    await expect(fetchModels()).resolves.toEqual([]);
-  });
+      await expect(fetchModels()).resolves.toEqual([]);
+    },
+  );
 
   it('re-fetches provider metadata after the in-memory cache TTL expires', async () => {
     vi.useFakeTimers();
@@ -734,10 +739,8 @@ describe('provider model fetchers', () => {
     vi.stubGlobal('fetch', fetchSpy);
 
     vi.resetModules();
-    const {
-      fetchNvidiaModels: fetchFreshNvidiaModels,
-      MIN_CONTEXT_TOKENS: freshMinContextTokens,
-    } = await import('./model-catalog');
+    const { fetchNvidiaModels: fetchFreshNvidiaModels, MIN_CONTEXT_TOKENS: freshMinContextTokens } =
+      await import('./model-catalog');
 
     await expect(fetchFreshNvidiaModels()).resolves.toEqual([]);
 
@@ -746,7 +749,9 @@ describe('provider model fetchers', () => {
 
     await expect(fetchFreshNvidiaModels()).resolves.toEqual(['fresh-context-model']);
 
-    const modelsDevCalls = fetchSpy.mock.calls.filter(([input]) => String(input).includes('models.dev/api.json'));
+    const modelsDevCalls = fetchSpy.mock.calls.filter(([input]) =>
+      String(input).includes('models.dev/api.json'),
+    );
     expect(modelsDevCalls).toHaveLength(2);
   });
 });
@@ -754,46 +759,49 @@ describe('provider model fetchers', () => {
 describe('fetchBlackboxModels', () => {
   it('returns a curated Blackbox chat-model list', async () => {
     stubWindow();
-    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
-      const url = String(input);
-      if (url.includes('models.dev/api.json')) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes('models.dev/api.json')) {
+          return jsonResponse({
+            anthropic: {
+              models: {
+                'anthropic/claude-sonnet-4.6': {
+                  id: 'anthropic/claude-sonnet-4.6',
+                  reasoning: true,
+                  tool_call: true,
+                  structured_output: true,
+                  modalities: { input: ['text', 'image'], output: ['text'] },
+                  limit: { context: 200_000 },
+                },
+              },
+            },
+            openai: {
+              models: {
+                'openai/gpt-image-1': {
+                  id: 'openai/gpt-image-1',
+                  modalities: { input: ['text'], output: ['image'] },
+                  limit: { context: 128_000 },
+                },
+              },
+            },
+          });
+        }
         return jsonResponse({
-          anthropic: {
-            models: {
-              'anthropic/claude-sonnet-4.6': {
-                id: 'anthropic/claude-sonnet-4.6',
-                reasoning: true,
-                tool_call: true,
-                structured_output: true,
-                modalities: { input: ['text', 'image'], output: ['text'] },
-                limit: { context: 200_000 },
-              },
-            },
-          },
-          openai: {
-            models: {
-              'openai/gpt-image-1': {
-                id: 'openai/gpt-image-1',
-                modalities: { input: ['text'], output: ['image'] },
-                limit: { context: 128_000 },
-              },
-            },
-          },
+          data: [
+            { id: 'claude-3-5-haiku-20241022' },
+            { id: 'blackbox-pro' },
+            { id: 'blackboxai/anthropic/claude-3.5-haiku' },
+            { id: 'blackboxai/anthropic/claude-sonnet-4.6' },
+            { id: 'blackboxai/qwen/qwen3-coder-32b-instruct' },
+            { id: 'blackboxai/meta/llama-3.2-3b-instruct' },
+            { id: 'blackboxai/openai/gpt-image-1' },
+            { id: 'fast-animatediff' },
+          ],
         });
-      }
-      return jsonResponse({
-        data: [
-          { id: 'claude-3-5-haiku-20241022' },
-          { id: 'blackbox-pro' },
-          { id: 'blackboxai/anthropic/claude-3.5-haiku' },
-          { id: 'blackboxai/anthropic/claude-sonnet-4.6' },
-          { id: 'blackboxai/qwen/qwen3-coder-32b-instruct' },
-          { id: 'blackboxai/meta/llama-3.2-3b-instruct' },
-          { id: 'blackboxai/openai/gpt-image-1' },
-          { id: 'fast-animatediff' },
-        ],
-      });
-    }));
+      }),
+    );
 
     await expect(fetchBlackboxModels()).resolves.toEqual([
       'blackboxai/anthropic/claude-3.5-haiku',
@@ -805,48 +813,57 @@ describe('fetchBlackboxModels', () => {
 
   it('throws on non-OK response', async () => {
     stubWindow();
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: false,
-      status: 401,
-      text: async () => 'Unauthorized',
-    })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 401,
+        text: async () => 'Unauthorized',
+      })),
+    );
 
     await expect(fetchBlackboxModels()).rejects.toThrow(/Blackbox AI model list failed \(401\)/);
   });
 
   it('throws on timeout', async () => {
     stubWindow();
-    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: { signal?: AbortSignal }) => {
-      init?.signal?.throwIfAborted();
-      const err = new DOMException('The operation was aborted.', 'AbortError');
-      throw err;
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: { signal?: AbortSignal }) => {
+        init?.signal?.throwIfAborted();
+        const err = new DOMException('The operation was aborted.', 'AbortError');
+        throw err;
+      }),
+    );
 
     await expect(fetchBlackboxModels()).rejects.toThrow(/timed out/);
   });
 
   it('does not fall back to the raw provider list when every model is filtered out', async () => {
     stubWindow();
-    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
-      const url = String(input);
-      if (url.includes('models.dev/api.json')) {
-        return jsonResponse({
-          openai: {
-            models: {
-              'openai/gpt-image-1': {
-                id: 'openai/gpt-image-1',
-                modalities: { input: ['text'], output: ['image'] },
-                limit: { context: 128_000 },
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes('models.dev/api.json')) {
+          return jsonResponse({
+            openai: {
+              models: {
+                'openai/gpt-image-1': {
+                  id: 'openai/gpt-image-1',
+                  modalities: { input: ['text'], output: ['image'] },
+                  limit: { context: 128_000 },
+                },
               },
             },
-          },
-        });
-      }
-      if (url.includes('/blackbox/')) {
-        return jsonResponse({ data: [{ id: 'blackboxai/openai/gpt-image-1' }] });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    }));
+          });
+        }
+        if (url.includes('/blackbox/')) {
+          return jsonResponse({ data: [{ id: 'blackboxai/openai/gpt-image-1' }] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
 
     await expect(fetchBlackboxModels()).resolves.toEqual([]);
   });
@@ -855,13 +872,18 @@ describe('fetchBlackboxModels', () => {
 describe('fetchKilocodeModels', () => {
   it('keeps only canonical model ids from the OpenAI-style Kilo catalog payload', async () => {
     stubWindow();
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
-      data: [
-        { id: 'google/gemini-3-flash-preview', name: 'Google: Gemini 3 Flash Preview' },
-        { id: 'anthropic/claude-sonnet-4.6', name: 'Anthropic: Claude Sonnet 4.6' },
-        { name: 'OpenAI: GPT 5.2' },
-      ],
-    })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          data: [
+            { id: 'google/gemini-3-flash-preview', name: 'Google: Gemini 3 Flash Preview' },
+            { id: 'anthropic/claude-sonnet-4.6', name: 'Anthropic: Claude Sonnet 4.6' },
+            { name: 'OpenAI: GPT 5.2' },
+          ],
+        }),
+      ),
+    );
 
     await expect(fetchKilocodeModels()).resolves.toEqual([
       'anthropic/claude-sonnet-4.6',
@@ -888,11 +910,11 @@ describe('filterModelByContext', () => {
   it('rejects models with contextLimit below MIN_CONTEXT_TOKENS threshold', () => {
     const result = filterModelByContext('test-model', MIN_CONTEXT_TOKENS - 1, prioritySet);
     expect(result.allowed).toBe(false);
-    
+
     // Exactly at threshold - should pass
     const atThreshold = filterModelByContext('test-model', MIN_CONTEXT_TOKENS, prioritySet);
     expect(atThreshold.allowed).toBe(true);
-    
+
     // Above threshold - should pass
     const above = filterModelByContext('test-model', MIN_CONTEXT_TOKENS + 1000, prioritySet);
     expect(above.allowed).toBe(true);
@@ -901,7 +923,7 @@ describe('filterModelByContext', () => {
   it('allows priority models to bypass context checks', () => {
     const result = filterModelByContext('priority-model-1', undefined, prioritySet);
     expect(result.allowed).toBe(true);
-    
+
     const lowContext = filterModelByContext('priority-model-2', 1000, prioritySet);
     expect(lowContext.allowed).toBe(true);
   });

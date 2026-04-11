@@ -21,10 +21,8 @@ interface ChatSurfaceScreenProps {
 
 const HEADER_PLAIN_INTERACTIVE_CLASS =
   'relative text-push-fg-secondary transition-colors duration-200 hover:text-push-fg active:scale-[0.98]';
-const HEADER_ROUND_BUTTON_CLASS =
-  `flex h-9 w-9 items-center justify-center ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
-const HEADER_PILL_BUTTON_CLASS =
-  `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
+const HEADER_ROUND_BUTTON_CLASS = `flex h-9 w-9 items-center justify-center ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
+const HEADER_PILL_BUTTON_CLASS = `pointer-events-auto flex h-9 items-center gap-2 px-1.5 ${HEADER_PLAIN_INTERACTIVE_CLASS}`;
 
 export function ChatSurfaceScreen({
   chatShellTransform,

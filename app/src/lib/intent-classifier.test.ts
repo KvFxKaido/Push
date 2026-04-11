@@ -17,7 +17,9 @@ describe('classifyIntent', () => {
   it('classifies implementation requests correctly', () => {
     expect(classifyIntent('add a dark mode toggle to the settings page')).toBe('implementation');
     expect(classifyIntent('fix the bug in the login function')).toBe('implementation');
-    expect(classifyIntent('refactor the auth module for better readability')).toBe('implementation');
+    expect(classifyIntent('refactor the auth module for better readability')).toBe(
+      'implementation',
+    );
     expect(classifyIntent('implement a new API endpoint for user data')).toBe('implementation');
     expect(classifyIntent('create a new component for the navigation bar')).toBe('implementation');
     expect(classifyIntent('update the user profile page with new fields')).toBe('implementation');

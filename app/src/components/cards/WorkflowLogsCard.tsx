@@ -18,7 +18,7 @@ interface WorkflowLogsCardProps {
 
 function getInitialExpanded(jobs: WorkflowJob[]): Set<number> {
   // Auto-expand first failed job, or first job if all pass
-  const failedIdx = jobs.findIndex(j => j.conclusion === 'failure');
+  const failedIdx = jobs.findIndex((j) => j.conclusion === 'failure');
   return new Set([failedIdx >= 0 ? failedIdx : 0]);
 }
 
@@ -31,7 +31,9 @@ function getInitialWorkflowExpansion(jobs: WorkflowJob[]): Set<number> {
 
 export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
   const isMobile = useIsMobile();
-  const [expanded, setExpanded] = useState<Set<number>>(() => getInitialWorkflowExpansion(data.jobs));
+  const [expanded, setExpanded] = useState<Set<number>>(() =>
+    getInitialWorkflowExpansion(data.jobs),
+  );
   const headerTone = getWorkflowLogsHeaderTone(data.conclusion);
   const hasUserInteractedRef = useRef(false);
   const previousIsMobileRef = useRef(isMobile);
@@ -48,7 +50,7 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
 
   const toggleJob = (idx: number) => {
     hasUserInteractedRef.current = true;
-    setExpanded(prev => {
+    setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(idx)) {
         next.delete(idx);
@@ -68,9 +70,7 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
           <span className={`text-sm font-medium ${checkToneColorClass(headerTone)}`}>
             {data.runName}
           </span>
-          <span className="text-push-xs text-push-fg-dim ml-1.5">
-            #{data.runNumber}
-          </span>
+          <span className="text-push-xs text-push-fg-dim ml-1.5">#{data.runNumber}</span>
         </div>
         <span className="text-push-xs text-push-fg-dim uppercase shrink-0">
           {data.conclusion || data.status}
@@ -87,10 +87,11 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
               className="flex w-full items-center gap-2 px-3.5 py-3 text-left transition-colors duration-200 hover:bg-white/[0.02]"
             >
               <ExpandChevron expanded={expanded.has(idx)} className="shrink-0" />
-              {renderCheckToneIcon(getCheckTone(job.status, job.conclusion), 'h-3.5 w-3.5 shrink-0')}
-              <span className="text-push-base text-push-fg truncate flex-1">
-                {job.name}
-              </span>
+              {renderCheckToneIcon(
+                getCheckTone(job.status, job.conclusion),
+                'h-3.5 w-3.5 shrink-0',
+              )}
+              <span className="text-push-base text-push-fg truncate flex-1">{job.name}</span>
               <span className="text-push-xs text-push-fg-dim shrink-0">
                 {job.conclusion || job.status}
               </span>
@@ -103,15 +104,16 @@ export function WorkflowLogsCard({ data }: WorkflowLogsCardProps) {
               className="px-3 pb-2 pl-10 space-y-0.5"
             >
               {job.steps.map((step) => (
-                <div key={step.number} className={`${CARD_PANEL_SUBTLE_CLASS} flex min-h-[22px] items-center gap-2 px-2.5 py-2`}>
+                <div
+                  key={step.number}
+                  className={`${CARD_PANEL_SUBTLE_CLASS} flex min-h-[22px] items-center gap-2 px-2.5 py-2`}
+                >
                   {renderCheckToneIcon(
                     getCheckTone(step.status, step.conclusion),
                     'h-3 w-3 shrink-0',
                     { neutralClassName: 'text-push-fg-dim' },
                   )}
-                  <span className="text-push-sm text-push-fg-muted">
-                    {step.number}.
-                  </span>
+                  <span className="text-push-sm text-push-fg-muted">{step.number}.</span>
                   <span className="text-push-sm text-push-fg-secondary truncate flex-1">
                     {step.name}
                   </span>

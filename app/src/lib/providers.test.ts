@@ -9,15 +9,17 @@ import {
 
 describe('formatModelDisplayName', () => {
   it('normalizes routed Blackbox ids and uses provider shorthand labels', () => {
-    expect(formatModelDisplayName('blackbox', 'blackboxai/anthropic/claude-sonnet-4.6'))
-      .toBe('Anthropic / claude-sonnet-4.6');
-    expect(formatModelDisplayName('openrouter', 'openai/gpt-5.4'))
-      .toBe('OpenAI / gpt-5.4');
+    expect(formatModelDisplayName('blackbox', 'blackboxai/anthropic/claude-sonnet-4.6')).toBe(
+      'Anthropic / claude-sonnet-4.6',
+    );
+    expect(formatModelDisplayName('openrouter', 'openai/gpt-5.4')).toBe('OpenAI / gpt-5.4');
   });
 
   it('keeps provider-native ids readable when they are not routed', () => {
     expect(formatModelDisplayName('blackbox', 'blackbox-pro')).toBe('blackbox-pro');
-    expect(formatModelDisplayName('ollama', 'gemini-3-flash-preview')).toBe('gemini-3-flash-preview');
+    expect(formatModelDisplayName('ollama', 'gemini-3-flash-preview')).toBe(
+      'gemini-3-flash-preview',
+    );
   });
 
   it('formats Kilo auto routes with a readable provider label', () => {
@@ -27,10 +29,16 @@ describe('formatModelDisplayName', () => {
 
 describe('normalizeKilocodeModelName', () => {
   it('migrates retired Kilo defaults and rejects label-shaped selections', () => {
-    expect(normalizeKilocodeModelName('google/gemini-2.0-flash')).toBe('google/gemini-3-flash-preview');
-    expect(normalizeKilocodeModelName('anthropic/claude-3.5-sonnet')).toBe('anthropic/claude-sonnet-4.6');
+    expect(normalizeKilocodeModelName('google/gemini-2.0-flash')).toBe(
+      'google/gemini-3-flash-preview',
+    );
+    expect(normalizeKilocodeModelName('anthropic/claude-3.5-sonnet')).toBe(
+      'anthropic/claude-sonnet-4.6',
+    );
     expect(normalizeKilocodeModelName('openai/gpt-4o')).toBe('openai/gpt-5.2');
-    expect(normalizeKilocodeModelName('Anthropic: Claude Sonnet 4.6')).toBe('google/gemini-3-flash-preview');
+    expect(normalizeKilocodeModelName('Anthropic: Claude Sonnet 4.6')).toBe(
+      'google/gemini-3-flash-preview',
+    );
     expect(normalizeKilocodeModelName('kilo-auto/balanced')).toBe('kilo-auto/balanced');
   });
 });
@@ -48,7 +56,9 @@ describe('Blackbox display grouping', () => {
       'blackboxai/anthropic/claude-sonnet-4.6',
     ];
 
-    expect([...models].sort((left, right) => compareProviderModelIds('blackbox', left, right))).toEqual([
+    expect(
+      [...models].sort((left, right) => compareProviderModelIds('blackbox', left, right)),
+    ).toEqual([
       'blackboxai/anthropic/claude-sonnet-4.6',
       'blackbox-pro',
       'blackboxai/qwen/qwen3-coder-32b-instruct',

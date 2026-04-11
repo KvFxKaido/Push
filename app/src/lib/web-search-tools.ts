@@ -86,8 +86,8 @@ function isWebSearchTool(obj: unknown): obj is { tool: 'web_search'; args: { que
     'args' in obj &&
     typeof (obj as { args: unknown }).args === 'object' &&
     (obj as { args: unknown }).args !== null &&
-    'query' in ((obj as { args: Record<string, unknown> }).args) &&
-    typeof ((obj as { args: { query: unknown } }).args.query) === 'string'
+    'query' in (obj as { args: Record<string, unknown> }).args &&
+    typeof (obj as { args: { query: unknown } }).args.query === 'string'
   );
 }
 
@@ -95,9 +95,7 @@ function isWebSearchTool(obj: unknown): obj is { tool: 'web_search'; args: { que
 // Execution — shared core
 // ---------------------------------------------------------------------------
 
-const OLLAMA_SEARCH_URL = import.meta.env.DEV
-  ? '/ollama/api/web_search'
-  : '/api/ollama/search';
+const OLLAMA_SEARCH_URL = import.meta.env.DEV ? '/ollama/api/web_search' : '/api/ollama/search';
 
 // In both dev and prod, /api routes go through the Worker (or Vite proxy → Worker).
 const FREE_SEARCH_URL = '/api/search';
@@ -181,7 +179,7 @@ export async function executeOllamaWebSearch(query: string): Promise<ToolExecuti
   }
 
   return executeWebSearchCore(OLLAMA_SEARCH_URL, query, {
-    'Authorization': `Bearer ${apiKey}`,
+    Authorization: `Bearer ${apiKey}`,
   });
 }
 
@@ -212,9 +210,14 @@ export async function executeTavilySearch(query: string): Promise<ToolExecutionR
     return { text: '[Tool Error — web_search] Tavily API key not configured.' };
   }
 
-  return executeWebSearchCore(TAVILY_SEARCH_URL, query, {
-    'Authorization': `Bearer ${apiKey}`,
-  }, 'Tavily search failed');
+  return executeWebSearchCore(
+    TAVILY_SEARCH_URL,
+    query,
+    {
+      Authorization: `Bearer ${apiKey}`,
+    },
+    'Tavily search failed',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +232,10 @@ export async function executeTavilySearch(query: string): Promise<ToolExecutionR
  *
  * Callers don't need to know which backend is used.
  */
-export async function executeWebSearch(query: string, activeProvider: string): Promise<ToolExecutionResult> {
+export async function executeWebSearch(
+  query: string,
+  activeProvider: string,
+): Promise<ToolExecutionResult> {
   // Priority 1: Tavily (optional premium upgrade)
   if (getTavilyKey()) {
     return executeTavilySearch(query);

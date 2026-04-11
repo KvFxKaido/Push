@@ -7,45 +7,131 @@ export { formatSize as formatFileSize } from './diff-utils';
 // Extensions that are safe and reasonable to edit on mobile
 export const EDITABLE_EXTENSIONS = new Set([
   // Web
-  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs',
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
   // Styles
-  'css', 'scss', 'sass', 'less', 'postcss',
+  'css',
+  'scss',
+  'sass',
+  'less',
+  'postcss',
   // Markup
-  'html', 'htm', 'xml', 'svg',
+  'html',
+  'htm',
+  'xml',
+  'svg',
   // Data
-  'json', 'jsonc', 'json5', 'yaml', 'yml', 'toml',
+  'json',
+  'jsonc',
+  'json5',
+  'yaml',
+  'yml',
+  'toml',
   // Docs
-  'md', 'mdx', 'txt', 'rst',
+  'md',
+  'mdx',
+  'txt',
+  'rst',
   // Config
-  'env', 'ini', 'conf', 'config',
+  'env',
+  'ini',
+  'conf',
+  'config',
   // Python
-  'py', 'pyi', 'pyw',
+  'py',
+  'pyi',
+  'pyw',
   // Shell/scripts
-  'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'cmd',
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'ps1',
+  'bat',
+  'cmd',
   // Other code
-  'rs', 'go', 'rb', 'php', 'c', 'cpp', 'cc', 'h', 'hpp', 'java', 'kt', 'swift',
+  'rs',
+  'go',
+  'rb',
+  'php',
+  'c',
+  'cpp',
+  'cc',
+  'h',
+  'hpp',
+  'java',
+  'kt',
+  'swift',
   // Git
-  'gitignore', 'gitattributes', 'gitmodules',
+  'gitignore',
+  'gitattributes',
+  'gitmodules',
 ]);
 
 // Extensions we should never attempt to edit (binary or too large)
 export const BLOCKED_EXTENSIONS = new Set([
   // Images
-  'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'ico', 'svgz',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'bmp',
+  'webp',
+  'ico',
+  'svgz',
   // Video
-  'mp4', 'mov', 'avi', 'mkv', 'webm',
+  'mp4',
+  'mov',
+  'avi',
+  'mkv',
+  'webm',
   // Audio
-  'mp3', 'wav', 'ogg', 'flac', 'aac',
+  'mp3',
+  'wav',
+  'ogg',
+  'flac',
+  'aac',
   // Archives
-  'zip', 'tar', 'gz', 'bz2', '7z', 'rar', 'xz',
+  'zip',
+  'tar',
+  'gz',
+  'bz2',
+  '7z',
+  'rar',
+  'xz',
   // Binaries
-  'exe', 'dll', 'so', 'dylib', 'bin', 'wasm', 'o', 'a', 'lib',
+  'exe',
+  'dll',
+  'so',
+  'dylib',
+  'bin',
+  'wasm',
+  'o',
+  'a',
+  'lib',
   // Fonts
-  'woff', 'woff2', 'ttf', 'otf', 'eot',
+  'woff',
+  'woff2',
+  'ttf',
+  'otf',
+  'eot',
   // Documents (binary)
-  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+  'pdf',
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'ppt',
+  'pptx',
   // Others
-  'lock', 'snap', 'pack', 'idx',
+  'lock',
+  'snap',
+  'pack',
+  'idx',
 ]);
 
 // Rough language mapping for display
@@ -158,13 +244,15 @@ export function isBinaryContent(content: string): boolean {
   }
 
   // If >10% non-printable, likely binary
-  return (nonPrintable / sample.length) > 0.1;
+  return nonPrintable / sample.length > 0.1;
 }
 
 /**
  * Get a human-readable reason why a file can't be edited.
  */
-export function getEditabilityReason(reason: 'blocked_extension' | 'too_large' | 'binary_encoding'): string {
+export function getEditabilityReason(
+  reason: 'blocked_extension' | 'too_large' | 'binary_encoding',
+): string {
   switch (reason) {
     case 'blocked_extension':
       return 'This file type cannot be edited (binary or unsupported format)';

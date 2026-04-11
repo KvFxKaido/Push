@@ -49,10 +49,7 @@ export function DiffPreviewCard({ data }: { data: DiffPreviewCardData }) {
       </button>
 
       {/* Diff content */}
-      <ExpandableCardPanel
-        expanded={expanded}
-        className="max-h-[400px] overflow-y-auto"
-      >
+      <ExpandableCardPanel expanded={expanded} className="max-h-[400px] overflow-y-auto">
         <div className="py-1">
           {lines.map((line, i) => (
             <DiffLine key={i} line={line} index={i} />

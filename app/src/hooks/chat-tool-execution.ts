@@ -7,11 +7,7 @@
  * Pure-ish helpers with explicit parameters. No React hooks, no closures over hook state.
  */
 
-import type {
-  ChatMessage,
-  ChatCard,
-  ToolExecutionResult,
-} from '@/types';
+import type { ChatMessage, ChatCard, ToolExecutionResult } from '@/types';
 import type { ApprovalGateRegistry } from '@/lib/approval-gates';
 import { createDefaultApprovalGates } from '@/lib/approval-gates';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
@@ -79,60 +75,64 @@ export async function executeTool(
   call: AnyToolCall,
   ctx: ToolExecRunContext,
 ): Promise<ToolExecRawResult> {
-  return withActiveSpan('tool.execute', {
-    scope: 'push.tools',
-    kind: SpanKind.INTERNAL,
-    attributes: {
-      'push.tool.name': call.call.tool,
-      'push.tool.source': call.source,
-      'push.provider': ctx.provider,
-      'push.model': ctx.model,
-      'push.has_repo': Boolean(ctx.repoFullName),
-      'push.has_sandbox': Boolean(ctx.sandboxId),
+  return withActiveSpan(
+    'tool.execute',
+    {
+      scope: 'push.tools',
+      kind: SpanKind.INTERNAL,
+      attributes: {
+        'push.tool.name': call.call.tool,
+        'push.tool.source': call.source,
+        'push.provider': ctx.provider,
+        'push.model': ctx.model,
+        'push.has_repo': Boolean(ctx.repoFullName),
+        'push.has_sandbox': Boolean(ctx.sandboxId),
+      },
     },
-  }, async (span) => {
-    const start = Date.now();
+    async (span) => {
+      const start = Date.now();
 
-    let result: ToolExecutionResult;
-    if (call.source === 'github' && !ctx.repoFullName) {
-      result = { text: '[Tool Error] No active repo selected — please select a repo in the UI.' };
-    } else {
-      result = await executeAnyToolCall(
-        call,
-        ctx.repoFullName || '',
-        ctx.sandboxId,
-        ctx.isMainProtected,
-        ctx.defaultBranch,
-        ctx.provider,
-        ctx.model,
-        undefined,
-        ctx.approvalGates ?? DEFAULT_APPROVAL_GATES,
-      );
-    }
+      let result: ToolExecutionResult;
+      if (call.source === 'github' && !ctx.repoFullName) {
+        result = { text: '[Tool Error] No active repo selected — please select a repo in the UI.' };
+      } else {
+        result = await executeAnyToolCall(
+          call,
+          ctx.repoFullName || '',
+          ctx.sandboxId,
+          ctx.isMainProtected,
+          ctx.defaultBranch,
+          ctx.provider,
+          ctx.model,
+          undefined,
+          ctx.approvalGates ?? DEFAULT_APPROVAL_GATES,
+        );
+      }
 
-    const durationMs = Date.now() - start;
-    const cards: ChatCard[] = [];
-    if (result.card && result.card.type !== 'sandbox-state') {
-      cards.push(result.card);
-    }
+      const durationMs = Date.now() - start;
+      const cards: ChatCard[] = [];
+      if (result.card && result.card.type !== 'sandbox-state') {
+        cards.push(result.card);
+      }
 
-    setSpanAttributes(span, {
-      'push.tool.duration_ms': durationMs,
-      'push.tool.card_count': cards.length,
-      'push.tool.error_type': result.structuredError?.type,
-      'push.tool.retryable': result.structuredError?.retryable,
-    });
-    if (result.structuredError) {
-      span.setStatus({
-        code: SpanStatusCode.ERROR,
-        message: result.structuredError.message,
+      setSpanAttributes(span, {
+        'push.tool.duration_ms': durationMs,
+        'push.tool.card_count': cards.length,
+        'push.tool.error_type': result.structuredError?.type,
+        'push.tool.retryable': result.structuredError?.retryable,
       });
-    } else {
-      span.setStatus({ code: SpanStatusCode.OK });
-    }
+      if (result.structuredError) {
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: result.structuredError.message,
+        });
+      } else {
+        span.setStatus({ code: SpanStatusCode.OK });
+      }
 
-    return { call, raw: result, cards, durationMs };
-  });
+      return { call, raw: result, cards, durationMs };
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -212,9 +212,10 @@ export function extractSideEffects(result: ToolExecutionResult): ToolSideEffects
   return {
     promotion: result.promotion,
     branchSwitch: result.branchSwitch,
-    sandboxUnreachable: result.structuredError?.type === 'SANDBOX_UNREACHABLE'
-      ? result.structuredError.message
-      : undefined,
+    sandboxUnreachable:
+      result.structuredError?.type === 'SANDBOX_UNREACHABLE'
+        ? result.structuredError.message
+        : undefined,
   };
 }
 
@@ -359,7 +360,13 @@ export function handleRecoveryResult(
       loopAction: 'continue',
       apiMessages: [
         ...apiMessages,
-        { id: createId(), role: 'assistant' as const, content: accumulated, timestamp: Date.now(), status: 'done' as const },
+        {
+          id: createId(),
+          role: 'assistant' as const,
+          content: accumulated,
+          timestamp: Date.now(),
+          status: 'done' as const,
+        },
         feedbackMsg,
       ],
       conversationUpdate: {
@@ -455,7 +462,13 @@ export function handleMultipleMutationsError(
     errorMessage,
     apiMessages: [
       ...apiMessages,
-      { id: createId(), role: 'assistant' as const, content: accumulated, timestamp: Date.now(), status: 'done' as const },
+      {
+        id: createId(),
+        role: 'assistant' as const,
+        content: accumulated,
+        timestamp: Date.now(),
+        status: 'done' as const,
+      },
       errorMessage,
     ],
     assistantUpdate: {

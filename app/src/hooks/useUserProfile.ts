@@ -38,7 +38,10 @@ export function useUserProfile() {
         merged.bio = merged.bio.slice(0, MAX_BIO_LENGTH);
       }
       // Cap chat instructions length
-      if (merged.chatInstructions && merged.chatInstructions.length > MAX_CHAT_INSTRUCTIONS_LENGTH) {
+      if (
+        merged.chatInstructions &&
+        merged.chatInstructions.length > MAX_CHAT_INSTRUCTIONS_LENGTH
+      ) {
         merged.chatInstructions = merged.chatInstructions.slice(0, MAX_CHAT_INSTRUCTIONS_LENGTH);
       }
       safeStorageSet(STORAGE_KEY, JSON.stringify(merged));

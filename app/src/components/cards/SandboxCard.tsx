@@ -13,7 +13,9 @@ import { ExpandChevron, ExpandableCardPanel } from './expandable';
 import { CardCodeBlock } from './card-code-block';
 
 export function SandboxCard({ data }: { data: SandboxCardData }) {
-  const { expanded, toggleExpanded } = useExpandable(data.exitCode !== 0, { collapseOnMobile: true });
+  const { expanded, toggleExpanded } = useExpandable(data.exitCode !== 0, {
+    collapseOnMobile: true,
+  });
   const [copied, setCopied] = useState(false);
   const isSuccess = data.exitCode === 0;
 
@@ -61,7 +63,11 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
                 className={`${CARD_ICON_BUTTON_CLASS} h-7 w-7`}
                 title="Copy output"
               >
-                {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+                {copied ? (
+                  <Check className="h-3 w-3 text-green-500" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
               </button>
               <button
                 onClick={handleDownload}
@@ -74,16 +80,21 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
           )}
           {data.durationMs !== undefined && (
             <span className="text-push-xs text-push-fg-dim font-mono">
-              {data.durationMs < 1000 ? `${data.durationMs}ms` : `${(data.durationMs / 1000).toFixed(1)}s`}
+              {data.durationMs < 1000
+                ? `${data.durationMs}ms`
+                : `${(data.durationMs / 1000).toFixed(1)}s`}
             </span>
           )}
           {isSuccess ? (
-            <span className={`inline-flex items-center gap-1 text-push-xs font-medium px-1.5 py-0.5 rounded-full ${CARD_BADGE_SUCCESS}`}>
-              <CheckCircle2 className="h-3 w-3" />
-              0
+            <span
+              className={`inline-flex items-center gap-1 text-push-xs font-medium px-1.5 py-0.5 rounded-full ${CARD_BADGE_SUCCESS}`}
+            >
+              <CheckCircle2 className="h-3 w-3" />0
             </span>
           ) : (
-            <span className={`inline-flex items-center gap-1 text-push-xs font-medium px-1.5 py-0.5 rounded-full ${CARD_BADGE_ERROR}`}>
+            <span
+              className={`inline-flex items-center gap-1 text-push-xs font-medium px-1.5 py-0.5 rounded-full ${CARD_BADGE_ERROR}`}
+            >
               <XCircle className="h-3 w-3" />
               {data.exitCode}
             </span>
@@ -100,7 +111,10 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
           </CardCodeBlock>
         )}
         {data.stderr && (
-          <CardCodeBlock preClassName="bg-push-surface-inset" codeClassName="text-push-status-error/70 whitespace-pre-wrap break-all">
+          <CardCodeBlock
+            preClassName="bg-push-surface-inset"
+            codeClassName="text-push-status-error/70 whitespace-pre-wrap break-all"
+          >
             {data.stderr}
           </CardCodeBlock>
         )}
@@ -110,9 +124,7 @@ export function SandboxCard({ data }: { data: SandboxCardData }) {
           </div>
         )}
         {!data.stdout && !data.stderr && (
-          <div className="px-3 py-2 text-push-sm text-push-fg-dim italic">
-            No output
-          </div>
+          <div className="px-3 py-2 text-push-sm text-push-fg-dim italic">No output</div>
         )}
       </ExpandableCardPanel>
     </div>

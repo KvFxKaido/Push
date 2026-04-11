@@ -13,7 +13,9 @@ function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> |
   };
 }
 
-function convertOpenAIContentToAnthropic(content: string | OpenAIContentPart[] | null | undefined): Array<Record<string, unknown>> {
+function convertOpenAIContentToAnthropic(
+  content: string | OpenAIContentPart[] | null | undefined,
+): Array<Record<string, unknown>> {
   if (typeof content === 'string') {
     return [{ type: 'text', text: content }];
   }
@@ -99,7 +101,7 @@ export function buildAnthropicMessagesRequest(
     const role = typeof message.role === 'string' ? message.role : 'user';
     if (role === 'system' || role === 'developer') {
       const systemParts = convertOpenAIContentToAnthropic(message.content)
-        .map((part) => typeof part.text === 'string' ? part.text : '')
+        .map((part) => (typeof part.text === 'string' ? part.text : ''))
         .filter(Boolean);
       if (systemParts.length > 0) {
         systemSegments.push(systemParts.join('\n\n'));
@@ -114,12 +116,16 @@ export function buildAnthropicMessagesRequest(
   }
 
   const body: Record<string, unknown> = {
-    messages: anthropicMessages.length > 0
-      ? anthropicMessages
-      : [{ role: 'user', content: [{ type: 'text', text: '' }] }],
-    max_tokens: typeof request.max_completion_tokens === 'number'
-      ? request.max_completion_tokens
-      : (typeof request.max_tokens === 'number' ? request.max_tokens : 8192),
+    messages:
+      anthropicMessages.length > 0
+        ? anthropicMessages
+        : [{ role: 'user', content: [{ type: 'text', text: '' }] }],
+    max_tokens:
+      typeof request.max_completion_tokens === 'number'
+        ? request.max_completion_tokens
+        : typeof request.max_tokens === 'number'
+          ? request.max_tokens
+          : 8192,
     stream: Boolean(request.stream),
   };
 
@@ -139,7 +145,10 @@ export function buildAnthropicMessagesRequest(
   return body;
 }
 
-export function createAnthropicTranslatedStream(upstream: Response, model: string): ReadableStream<Uint8Array> {
+export function createAnthropicTranslatedStream(
+  upstream: Response,
+  model: string,
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
@@ -154,7 +163,9 @@ export function createAnthropicTranslatedStream(upstream: Response, model: strin
       }
 
       let buffer = '';
-      let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+      let usage:
+        | { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+        | undefined;
 
       const processSseLine = (rawLine: string): boolean => {
         const line = rawLine.trim();
@@ -182,15 +193,26 @@ export function createAnthropicTranslatedStream(upstream: Response, model: strin
           return false;
         }
 
-        if (eventType === 'message_start' || eventType === 'message_delta' || eventType === 'message_stop') {
+        if (
+          eventType === 'message_start' ||
+          eventType === 'message_delta' ||
+          eventType === 'message_stop'
+        ) {
           const message = parsed.message as Record<string, unknown> | undefined;
           const delta = parsed.delta as Record<string, unknown> | undefined;
-          const usageRec = (parsed.usage as Record<string, unknown> | undefined)
-            || (message?.usage as Record<string, unknown> | undefined)
-            || (delta?.usage as Record<string, unknown> | undefined);
+          const usageRec =
+            (parsed.usage as Record<string, unknown> | undefined) ||
+            (message?.usage as Record<string, unknown> | undefined) ||
+            (delta?.usage as Record<string, unknown> | undefined);
           if (usageRec) {
-            const promptTokens = typeof usageRec.input_tokens === 'number' ? usageRec.input_tokens : usage?.prompt_tokens ?? 0;
-            const completionTokens = typeof usageRec.output_tokens === 'number' ? usageRec.output_tokens : usage?.completion_tokens ?? 0;
+            const promptTokens =
+              typeof usageRec.input_tokens === 'number'
+                ? usageRec.input_tokens
+                : (usage?.prompt_tokens ?? 0);
+            const completionTokens =
+              typeof usageRec.output_tokens === 'number'
+                ? usageRec.output_tokens
+                : (usage?.completion_tokens ?? 0);
             usage = {
               prompt_tokens: promptTokens,
               completion_tokens: completionTokens,
@@ -199,15 +221,22 @@ export function createAnthropicTranslatedStream(upstream: Response, model: strin
           }
 
           if (eventType === 'message_delta' || eventType === 'message_stop') {
-            const stopReason = typeof delta?.stop_reason === 'string'
-              ? delta.stop_reason
-              : (typeof message?.stop_reason === 'string' ? message.stop_reason : null);
+            const stopReason =
+              typeof delta?.stop_reason === 'string'
+                ? delta.stop_reason
+                : typeof message?.stop_reason === 'string'
+                  ? message.stop_reason
+                  : null;
             if (stopReason || eventType === 'message_stop') {
-              controller.enqueue(encoder.encode(buildOpenAISseChunk({
-                model,
-                finishReason: mapAnthropicStopReason(stopReason),
-                usage,
-              })));
+              controller.enqueue(
+                encoder.encode(
+                  buildOpenAISseChunk({
+                    model,
+                    finishReason: mapAnthropicStopReason(stopReason),
+                    usage,
+                  }),
+                ),
+              );
               controller.enqueue(encoder.encode('data: [DONE]\n\n'));
               controller.close();
               return true;
@@ -235,7 +264,9 @@ export function createAnthropicTranslatedStream(upstream: Response, model: strin
           if (processSseLine(buffer)) return;
         }
 
-        controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, finishReason: 'stop', usage })));
+        controller.enqueue(
+          encoder.encode(buildOpenAISseChunk({ model, finishReason: 'stop', usage })),
+        );
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();
       } catch (err) {

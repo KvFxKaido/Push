@@ -1,7 +1,11 @@
 import { useState, useCallback } from 'react';
 import type { RepoWithActivity, RepoSummary, RepoActivity } from '@/types';
 import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
-import { getActiveGitHubToken, getGitHubAuthHeaders, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
+import {
+  getActiveGitHubToken,
+  getGitHubAuthHeaders,
+  APP_TOKEN_STORAGE_KEY,
+} from '@/lib/github-auth';
 
 const APP_INSTALLATION_ID_KEY = 'github_app_installation_id';
 const PUSHED_STORAGE_KEY = 'repo_last_pushed';
@@ -78,7 +82,8 @@ function parseNextPage(linkHeader: string | null): string | null {
 
 async function fetchAllUserRepos(headers: Record<string, string>): Promise<unknown[]> {
   const all: unknown[] = [];
-  let url: string | null = 'https://api.github.com/user/repos?sort=pushed&direction=desc&per_page=100&page=1';
+  let url: string | null =
+    'https://api.github.com/user/repos?sort=pushed&direction=desc&per_page=100&page=1';
   let pages = 0;
   const MAX_PAGES = 10;
 
@@ -104,7 +109,7 @@ async function fetchAllInstallationRepos(headers: Record<string, string>): Promi
   while (url && pages < MAX_PAGES) {
     const res = await fetch(url, { headers });
     if (!res.ok) throw new Error('Failed to fetch installation repositories');
-    const payload = await res.json() as { repositories?: unknown[] };
+    const payload = (await res.json()) as { repositories?: unknown[] };
     all.push(...(payload.repositories ?? []));
     url = parseNextPage(res.headers.get('Link'));
     pages++;
@@ -160,19 +165,21 @@ export function useRepos() {
         default_branch: string;
         language?: string | null;
       };
-      const summaries: RepoSummary[] = (reposData as RepoApi[]).map((r) => ({
-        id: r.id,
-        name: r.name,
-        full_name: r.full_name,
-        owner: r.owner.login,
-        private: r.private,
-        description: r.description ?? null,
-        open_issues_count: r.open_issues_count,
-        pushed_at: r.pushed_at,
-        default_branch: r.default_branch,
-        language: r.language ?? null,
-        avatar_url: r.owner.avatar_url,
-      })).sort((a, b) => b.pushed_at.localeCompare(a.pushed_at));
+      const summaries: RepoSummary[] = (reposData as RepoApi[])
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          full_name: r.full_name,
+          owner: r.owner.login,
+          private: r.private,
+          description: r.description ?? null,
+          open_issues_count: r.open_issues_count,
+          pushed_at: r.pushed_at,
+          default_branch: r.default_branch,
+          language: r.language ?? null,
+          avatar_url: r.owner.avatar_url,
+        }))
+        .sort((a, b) => b.pushed_at.localeCompare(a.pushed_at));
 
       // Fetch activity for top 10 repos (rate limit friendly)
       const top = summaries.slice(0, 10);
@@ -186,9 +193,7 @@ export function useRepos() {
         }),
       );
 
-      const activityMap = new Map(
-        activityResults.map((a) => [a.fullName, a]),
-      );
+      const activityMap = new Map(activityResults.map((a) => [a.fullName, a]));
 
       const now = new Date().toISOString();
 
