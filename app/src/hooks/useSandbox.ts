@@ -70,6 +70,46 @@ function clearTrackedSession(sessionStorageKey?: string | null, sandboxId?: stri
   setSandboxOwnerToken(null);
 }
 
+/**
+ * True only when the message proves the container is gone (expired,
+ * terminated, or the Modal app isn't deployed at all). Transient signals —
+ * timeouts, cold starts, network blips, rate limits, unauthorized-token
+ * races, generic container errors — must NOT tear down the tracked
+ * session: the sandbox is probably still alive, and wiping it forces a
+ * fresh clone that loses all in-flight writes and resets the agent's view
+ * of the workspace back to HEAD.
+ *
+ * This is especially important because the sandbox backend's exec endpoint
+ * reuses `exit_code: -1` for several non-terminal failures (unauthorized
+ * owner token, command timeout, generic container error) in addition to
+ * the actual "sandbox not found / expired" case. So an exit_code === -1
+ * *alone* is NOT proof the container is gone — we have to inspect the
+ * accompanying error text, which is what this helper matches against.
+ */
+function isDefinitivelyGoneMessage(rawMessage: string | null | undefined): boolean {
+  if (!rawMessage) return false;
+  // All checks run on the lowercased message so a future casing change in
+  // the Worker's error formatter doesn't silently defeat the guard.
+  const lower = rawMessage.toLowerCase();
+  // Error codes bubbled up from the Worker / sandbox-client. sandboxFetch
+  // formats these as "... (CODE)" in the message.
+  if (lower.includes('modal_not_found')) return true;
+  // Phrases emitted directly by the sandbox backend / _load_sandbox /
+  // _format_sandbox_lookup_error when modal.Sandbox.from_id() fails with a
+  // terminal error. NOTE: do NOT match on generic phrases like
+  // "unauthorized" or "timed out" — the backend also returns exit_code -1
+  // for those, and they're transient, not gone.
+  if (lower.includes('sandbox not found')) return true;
+  if (lower.includes('sandbox is no longer running')) return true;
+  if (lower.includes('sandbox has been terminated')) return true;
+  return false;
+}
+
+function isDefinitivelyGoneError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return isDefinitivelyGoneMessage(err.message);
+}
+
 export function useSandbox(activeRepoFullName?: string | null, activeBranch?: string | null) {
   const [sandboxId, setSandboxId] = useState<string | null>(null);
   const [status, setStatus] = useState<SandboxStatus>('idle');
@@ -137,14 +177,34 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           console.log('[useSandbox] Reconnected to saved sandbox:', saved.sandboxId);
           return saved.sandboxId;
         }
-        clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
+        // Mirror the refresh() policy: gate teardown on the error text,
+        // not the exit code, because exit_code -1 is overloaded on the
+        // backend (used for unauthorized-token races and command timeouts
+        // in addition to the real "sandbox not found" case).
+        const reason = result.error || 'Sandbox is no longer reachable';
         setStatus('idle');
+        if (isDefinitivelyGoneMessage(reason)) {
+          console.debug(`[useSandbox] Reconnect: container gone for ${saved.sandboxId}: ${reason}`);
+          clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
+        } else {
+          console.debug(
+            `[useSandbox] Reconnect: transient failure for ${saved.sandboxId} (exit ${result.exitCode}): ${reason} — keeping session`,
+          );
+        }
         return null;
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (!cancelled) {
-          clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
           setStatus('idle');
+          const msg = err instanceof Error ? err.message : String(err);
+          if (isDefinitivelyGoneError(err)) {
+            console.debug(`[useSandbox] Reconnect: container gone for ${saved.sandboxId}: ${msg}`);
+            clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
+          } else {
+            console.debug(
+              `[useSandbox] Reconnect: transient error for ${saved.sandboxId}: ${msg} — keeping session`,
+            );
+          }
         }
         return null;
       })
@@ -310,6 +370,15 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
    * If alive → restore 'ready' status (clears transient errors).
    * If dead  → transition to 'error' with an actionable message.
    * No-op if no sandbox is active.
+   *
+   * IMPORTANT: the tracked session is only cleared when we have a
+   * *definitive* signal that the container is gone (exit_code === -1 from
+   * the backend, or a MODAL_NOT_FOUND-class error). Transient failures
+   * (timeouts, cold-starts, network blips, rate limits) leave the session
+   * intact so the next tool call can retry against the live container. The
+   * earlier catch-all "clear on any error" behavior silently nuked healthy
+   * sessions mid-chat, which surfaced as writes reporting success but the
+   * next read/exec hitting a brand-new sandbox with the original file state.
    */
   const refresh = useCallback(async (opts?: { silent?: boolean }): Promise<boolean> => {
     const id = sandboxIdRef.current;
@@ -327,21 +396,36 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         console.debug(`[useSandbox] Refresh success for ${id}`);
         return true;
       }
-      // exitCode -1 or other failure: container is gone
+
+      // exit_code === -1 is overloaded on the backend — it's returned for
+      // "sandbox not found / expired" (which IS gone) but also for
+      // "unauthorized owner token", "command timed out", and generic
+      // container errors (which are all transient). So we gate teardown on
+      // the accompanying error text, not the numeric exit code alone.
       const reason = result.error || 'Sandbox is no longer reachable';
       setStatus('error');
       setError(reason);
-      clearTrackedSession(sessionStorageKeyRef.current, id);
+      if (isDefinitivelyGoneMessage(reason)) {
+        console.debug(`[useSandbox] Refresh: container gone for ${id}: ${reason}`);
+        clearTrackedSession(sessionStorageKeyRef.current, id);
+      } else {
+        console.debug(
+          `[useSandbox] Refresh: transient failure for ${id} (exit ${result.exitCode}): ${reason} — keeping session`,
+        );
+      }
       return false;
-      console.debug(`[useSandbox] Refresh failed for ${id}: ${reason}`);
     } catch (err) {
       if (sandboxIdRef.current !== id) return false;
       const msg = err instanceof Error ? err.message : String(err);
       setStatus('error');
       setError(msg);
-      clearTrackedSession(sessionStorageKeyRef.current, id);
+      if (isDefinitivelyGoneError(err)) {
+        console.debug(`[useSandbox] Refresh: container gone for ${id}: ${msg}`);
+        clearTrackedSession(sessionStorageKeyRef.current, id);
+      } else {
+        console.debug(`[useSandbox] Refresh: transient error for ${id}: ${msg} — keeping session`);
+      }
       return false;
-      console.debug(`[useSandbox] Refresh error for ${id}: ${msg}`);
     }
   }, []);
 
