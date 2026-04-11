@@ -1,0 +1,4 @@
+This is a test file for verifying edits.
+Line 2: Original content.
+Line 3: SUCCESSFULLY CHANGED.
+Line 4: End of file.
