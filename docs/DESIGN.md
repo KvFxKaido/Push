@@ -1,4 +1,4 @@
-# Design System
+# Design
 
 ## Overview
 
