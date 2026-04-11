@@ -571,7 +571,9 @@ function toLLMMessages(
     // Start from the shared base and layer in runtime-dependent blocks.
     const builder = buildOrchestratorBaseBuilder();
 
-    // Chat mode — strip tool instructions and delegation (plain conversation)
+    // Chat mode — strip orchestrator tool instructions and delegation (plain
+    // conversation). Web search is layered back in below so chat can still
+    // ground answers on fresh information.
     if (workspaceContext?.mode === 'chat') {
       builder.set('tool_instructions', null);
       builder.set('delegation', null);
@@ -616,10 +618,14 @@ function toLLMMessages(
     }
 
     // Tool protocols — session-stable instructions about how to use tools.
-    // Chat mode skips all tool protocols — plain conversation only.
+    // Chat mode gets only the web_search protocol — no sandbox, delegation,
+    // scratchpad, or ask_user — so it stays a plain conversation that can
+    // still look things up on the web when the user asks.
     // Use set() to replace the base tool_instructions with the full set,
     // avoiding duplication if this code path runs more than once.
-    if (workspaceContext?.mode !== 'chat') {
+    if (workspaceContext?.mode === 'chat') {
+      builder.set('tool_instructions', WEB_SEARCH_TOOL_PROTOCOL);
+    } else {
       const baseToolInstructions = builder.get('tool_instructions') ?? '';
       const toolProtocols: string[] = [];
       if (hasSandbox) {
