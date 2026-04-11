@@ -83,10 +83,9 @@ export function estimateContextTokens(messages: Message[]): number {
 // ---------------------------------------------------------------------------
 // Budget resolution
 // ---------------------------------------------------------------------------
-
-const DEFAULT_BUDGET: ContextBudget = { targetTokens: 88_000, maxTokens: 100_000 };
+const DEFAULT_BUDGET: ContextBudget = { targetTokens: 60_000, maxTokens: 100_000 };
 // Gemini models (1M context window) — Ollama, OpenRouter, and Zen with Gemini models
-const GEMINI_BUDGET: ContextBudget = { targetTokens: 900_000, maxTokens: 950_000 };
+const GEMINI_BUDGET: ContextBudget = { targetTokens: 600_000, maxTokens: 950_000 };
 
 export function getContextBudget(providerId: string, model: string): ContextBudget {
   // Ollama, OpenRouter, or Zen running a Gemini model — full 1M budget
@@ -161,44 +160,27 @@ function summarizeVerboseMessage(msg: Message): Message {
 // ---------------------------------------------------------------------------
 
 function buildContextDigest(removed: Message[]): string {
-  const points: string[] = [];
-
-  for (const msg of removed) {
-    if (points.length >= 18) break;
-
-    if (isToolResultMessage(msg)) {
-      // Extract tool name from JSON payload if possible
-      const toolMatch: RegExpMatchArray | null = toContentString(msg.content).match(
-        /"tool"\s*:\s*"([^"]+)"/,
-      );
-      const toolName: string = toolMatch ? toolMatch[1] : 'unknown';
-      points.push(`- Tool result: ${toolName}`);
-      continue;
-    }
-
-    if (isParseErrorMessage(msg)) {
-      points.push('- Parse error feedback for malformed tool call');
-      continue;
-    }
-
-    const firstLine: string =
-      toContentString(msg.content)
-        .split('\n')
-        .map((l) => l.trim())
-        .find(Boolean) || '';
-    if (!firstLine) continue;
-    const snippet: string = firstLine.length > 200 ? firstLine.slice(0, 200) + '...' : firstLine;
-    points.push(`- ${msg.role === 'user' ? 'User' : 'Assistant'}: ${snippet}`);
-  }
-
-  if (points.length === 0) {
-    points.push('- Earlier context trimmed for token budget.');
-  }
-
   return [
     '[CONTEXT DIGEST]',
-    'Earlier messages were condensed to fit the context budget.',
-    ...points,
+    'Earlier messages were condensed to fit the context budget. To preserve continuity, synthesize the removed turns below into a structured summary covering these 9 dimensions:',
+    '',
+    '1. Current State: What is the current state of the workspace?',
+    '2. Goals & Intent: What is the user trying to achieve?',
+    '3. Recent Changes: What was most recently modified?',
+    '4. Key Decisions: What technical or architectural decisions were made so far?',
+    '5. Active Work: What are you actively working on?',
+    '6. Key Files: Which files have been accessed and are important to this task?',
+    '7. Learnings: What failed attempts or constraints were discovered?',
+    '8. Important Context: Any other critical context a new agent turn needs to know?',
+    '9. Optional Next Steps: What is the immediate next action requested?',
+    '',
+    '<removed_messages>',
+    ...removed.map(msg => {
+      const preview = toContentString(msg.content);
+      const snippet = preview.length > 500 ? preview.slice(0, 500) + '...[truncated]' : preview;
+      return `[${msg.role.toUpperCase()}]: ${snippet}`;
+    }),
+    '</removed_messages>',
     '[/CONTEXT DIGEST]',
   ].join('\n');
 }
