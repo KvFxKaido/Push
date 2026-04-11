@@ -1,16 +1,30 @@
 #!/bin/sh
-# Biome lives at the repo root and lints the entire monorepo in one pass.
-# Use the explicit local binary instead of `npx --no-install` so a stale
-# or missing node_modules can't silently fall back to a different `biome`
-# package from the registry. Fail loudly with actionable guidance if the
-# dependency isn't installed.
-if [ ! -x ./node_modules/.bin/biome ]; then
-  echo "[pre-commit] @biomejs/biome is not installed in the root node_modules." >&2
-  echo "[pre-commit] Run 'npm install' at the repo root before committing." >&2
+# The hook runs from the repo root (husky default cwd). Biome and ESLint
+# both live in app/node_modules under the canonical setup (`cd app &&
+# npm install`, which also runs husky's `prepare` script). Biome also
+# exists at the repo root for anyone who runs `npm install` there, so we
+# prefer the root copy when present and fall back to the app copy
+# otherwise. This keeps the hook compatible with both install flows.
+
+if [ -x ./node_modules/.bin/biome ]; then
+  BIOME=./node_modules/.bin/biome
+elif [ -x ./app/node_modules/.bin/biome ]; then
+  BIOME=./app/node_modules/.bin/biome
+else
+  echo "[pre-commit] @biomejs/biome is not installed." >&2
+  echo "[pre-commit] Run 'cd app && npm install' before committing." >&2
   exit 1
 fi
 
-./node_modules/.bin/biome check --staged --no-errors-on-unmatched || exit 1
+"$BIOME" check --staged --no-errors-on-unmatched || exit 1
 
-# ESLint still lives in app/ because its config depends on app-only plugins.
+# ESLint lives only in app/node_modules because its config depends on
+# app-only plugins. Guard explicitly so contributors who skipped the
+# app install get an actionable error instead of a cryptic npm failure.
+if [ ! -x ./app/node_modules/.bin/eslint ]; then
+  echo "[pre-commit] ESLint is not installed in app/node_modules." >&2
+  echo "[pre-commit] Run 'cd app && npm install' before committing." >&2
+  exit 1
+fi
+
 cd app && npm run lint
