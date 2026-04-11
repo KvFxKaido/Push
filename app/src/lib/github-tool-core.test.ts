@@ -136,7 +136,10 @@ describe('github-tool-core shared core', () => {
         return Response.json([
           {
             user: { login: 'pm' },
-            body: 'Looks good, ship it!',
+            // Multi-line body exercises the newline-collapsing path in
+            // truncateCommentBody so the one-comment-per-line layout stays
+            // stable in the rendered tool output.
+            body: 'Looks good,\nship it!\r\n\r\nthanks',
             created_at: '2026-03-28T13:00:00.000Z',
           },
         ]);
@@ -158,7 +161,11 @@ describe('github-tool-core shared core', () => {
     expect(result.text).toContain('Inline Review Comments (3)');
     expect(result.text).toContain('@reviewer on app/worker.ts:17');
     expect(result.text).toContain('Conversation (1)');
-    expect(result.text).toContain('@pm: Looks good, ship it!');
+    // Newlines in the original body are collapsed to single spaces so the
+    // `@author: body` line formatting stays on one physical line.
+    expect(result.text).toContain('@pm: Looks good, ship it! thanks');
+    expect(result.text).not.toContain('@pm: Looks good,\nship it!');
+    expect(result.card.data.issueComments?.[0].body).toBe('Looks good, ship it! thanks');
     expect(result.card.data.reviewComments).toHaveLength(3);
     // Desc fetch is reversed so display stays chronological (oldest -> newest).
     expect(result.card.data.reviewComments?.map((c) => c.body)).toEqual([
