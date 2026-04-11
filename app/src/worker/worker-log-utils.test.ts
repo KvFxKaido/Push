@@ -4,7 +4,9 @@ import { sanitizeUrlForLogging } from './worker-log-utils';
 describe('sanitizeUrlForLogging', () => {
   it('strips query strings', () => {
     expect(
-      sanitizeUrlForLogging('https://push.example.test/?installation_id=12345&setup_action=install'),
+      sanitizeUrlForLogging(
+        'https://push.example.test/?installation_id=12345&setup_action=install',
+      ),
     ).toBe('https://push.example.test/');
   });
 
