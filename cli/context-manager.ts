@@ -88,7 +88,7 @@ const DEFAULT_BUDGET: ContextBudget = { targetTokens: 60_000, maxTokens: 100_000
 const GEMINI_BUDGET: ContextBudget = { targetTokens: 600_000, maxTokens: 950_000 };
 
 export function getContextBudget(providerId: string, model: string): ContextBudget {
-  // Ollama, OpenRouter, or Zen running a Gemini model — full 1M budget
+  // Ollama, OpenRouter, or Zen running a Gemini model — using a conservative budget within 1M limit
   const normalized: string = (model || '').trim().toLowerCase();
   if (
     (providerId === 'ollama' || providerId === 'openrouter' || providerId === 'zen') &&
