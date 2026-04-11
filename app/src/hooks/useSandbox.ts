@@ -82,13 +82,14 @@ function isDefinitivelyGoneError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const message = err.message;
   if (!message) return false;
+  // All checks run on the lowercased message so a future casing change in
+  // the Worker's error formatter doesn't silently defeat the guard.
+  const lower = message.toLowerCase();
   // Error codes bubbled up from the Worker / sandbox-client. sandboxFetch
-  // formats these as "... (CODE)" in the message, and also attaches a
-  // statusCode property for HTTP-origin errors.
-  if (message.includes('MODAL_NOT_FOUND')) return true;
+  // formats these as "... (CODE)" in the message.
+  if (lower.includes('modal_not_found')) return true;
   // Phrases emitted directly by the sandbox backend / _load_sandbox
   // when modal.Sandbox.from_id() fails with a terminal error.
-  const lower = message.toLowerCase();
   if (lower.includes('sandbox not found')) return true;
   if (lower.includes('sandbox is no longer running')) return true;
   if (lower.includes('sandbox has been terminated')) return true;
@@ -162,14 +163,36 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           console.log('[useSandbox] Reconnected to saved sandbox:', saved.sandboxId);
           return saved.sandboxId;
         }
-        clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
+        // Mirror the refresh() policy: only tear down the saved session on
+        // a definitive "container gone" signal (exit_code === -1). A
+        // transient cold-start / 5xx blip on mount should leave the saved
+        // session in place so a retry (next tool call or next reload)
+        // still has a chance of rebinding to the live container.
         setStatus('idle');
+        if (result.exitCode === -1) {
+          console.debug(
+            `[useSandbox] Reconnect: container gone for ${saved.sandboxId}: ${result.error || 'unreachable'}`,
+          );
+          clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
+        } else {
+          console.debug(
+            `[useSandbox] Reconnect: unexpected exit ${result.exitCode} for ${saved.sandboxId} — keeping session`,
+          );
+        }
         return null;
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (!cancelled) {
-          clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
           setStatus('idle');
+          const msg = err instanceof Error ? err.message : String(err);
+          if (isDefinitivelyGoneError(err)) {
+            console.debug(`[useSandbox] Reconnect: container gone for ${saved.sandboxId}: ${msg}`);
+            clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
+          } else {
+            console.debug(
+              `[useSandbox] Reconnect: transient error for ${saved.sandboxId}: ${msg} — keeping session`,
+            );
+          }
         }
         return null;
       })
