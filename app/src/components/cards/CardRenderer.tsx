@@ -1,7 +1,8 @@
-import { Component, Suspense, type ComponentType, type ReactNode } from 'react';
+import { Component, Suspense, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
 import type { ChatCard, CardAction } from '@/types';
 import { CARD_PANEL_CLASS } from '@/lib/utils';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
+import { reportError } from '@/lib/error-reporting';
 import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
 
@@ -162,8 +163,14 @@ class CardErrorBoundary extends Component<CardErrorBoundaryProps, CardErrorBound
     };
   }
 
-  componentDidCatch(error: Error) {
+  componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[CardRenderer] Failed to load card component', error);
+    const stack = info.componentStack ?? '';
+    reportError({
+      source: 'card-render',
+      error,
+      attributes: stack ? { 'push.error.component_stack': stack.slice(0, 4000) } : undefined,
+    });
   }
 
   render() {
