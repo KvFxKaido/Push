@@ -690,11 +690,57 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
   return null;
 }
 
+const READONLY_TOOLS = new Set([
+  'repo_read',
+  'repo_grep',
+  'repo_search',
+  'repo_ls',
+  'branches',
+  'commits',
+  'read',
+  'search',
+  'ls',
+  'symbols',
+  'refs',
+  'web',
+]);
+
+function extractToolCallsFromResponse(response: string): string[] {
+  const tools: string[] = [];
+  const fencedJsonPattern = /```json\s*\n([\s\S]*?)\n```/g;
+  let match;
+
+  while ((match = fencedJsonPattern.exec(response)) !== null) {
+    try {
+      const jsonContent = match[1].trim();
+      const parsed = JSON.parse(jsonContent);
+      if (parsed.tool) {
+        tools.push(parsed.tool);
+      }
+    } catch {
+      // Silently ignore malformed JSON
+    }
+  }
+
+  return tools;
+}
+
 /**
  * Diagnoses a response that contains prose about wanting to explore or trace
  * without emitting the explorer tool. Bias toward investigation intent.
  */
 function diagnoseMissingExplorerCall(text: string): ToolCallDiagnosis | null {
+  // Check if response already contains read-only tool calls
+  const extractedTools = extractToolCallsFromResponse(text);
+  const hasReadonlyTools = extractedTools.some((tool) =>
+    READONLY_TOOLS.has(tool)
+  );
+
+  // If read-only tools are already present, don't diagnose missing Explorer
+  if (hasReadonlyTools) {
+    return null;
+  }
+
   const classification = classifyIntent(text);
   if (classification !== 'discovery') return null;
   const directIntentPattern =
