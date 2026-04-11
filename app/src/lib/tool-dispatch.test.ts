@@ -224,6 +224,35 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
     expect(result?.toolName).toBe('delegate_explorer');
   });
 
+  it('returns validation_failed (not delegate_explorer) when a read-only tool call fence is present', () => {
+    // Phase 2 catches fenced tool calls before Phase 4 (diagnoseMissingExplorerCall).
+    // The result should NOT be a delegate_explorer diagnosis.
+    const text = [
+      'Let me trace the auth flow to understand how session refresh works.',
+      '',
+      '```json',
+      '{"tool": "repo_read", "args": {"repo": "owner/repo", "path": "src/auth.ts"}}',
+      '```',
+    ].join('\n');
+    const result = diagnoseToolCallFailure(text);
+    expect(result?.toolName).not.toBe('delegate_explorer');
+    expect(result?.reason).toBe('validation_failed');
+  });
+
+  it('returns validation_failed (not delegate_explorer) when a web search tool call fence is present', () => {
+    // Same: Phase 2 returns validation_failed before Phase 4 can fire.
+    const text = [
+      'I should look this up first — let me search for the latest docs.',
+      '',
+      '```json',
+      '{"tool": "web", "args": {"query": "react 19 release notes"}}',
+      '```',
+    ].join('\n');
+    const result = diagnoseToolCallFailure(text);
+    expect(result?.toolName).not.toBe('delegate_explorer');
+    expect(result?.reason).toBe('validation_failed');
+  });
+
   it('does not flag explanatory prose as tool intent', () => {
     const result = diagnoseToolCallFailure(
       'The orchestrator may delegate this task to the coder agent when it is complex.',
