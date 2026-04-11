@@ -48,6 +48,7 @@ import {
   handleGitHubAppToken,
 } from './src/worker/worker-infra';
 import { handleGitHubTools } from './src/worker/worker-github-tools';
+import { sanitizeUrlForLogging } from './src/worker/worker-log-utils';
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -103,7 +104,7 @@ function handleUncaughtFetchError(err: unknown, request: Request, requestId: str
       level: 'error',
       source: 'worker.fetch',
       request_id: requestId,
-      url: request.url,
+      url: sanitizeUrlForLogging(request.url),
       method: request.method,
       error: message,
       ...(stack ? { stack } : {}),
