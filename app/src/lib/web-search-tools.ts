@@ -50,7 +50,7 @@ Prefer the short name \`${getToolPublicName('web_search')}\`. The long name stil
 - Looking up error messages, library docs, or Stack Overflow solutions
 
 **When NOT to use:**
-- Questions about the active repo (use GitHub or sandbox tools instead)
+- Questions answerable by reading the active repo — use repo or sandbox tools when they are available
 - General programming concepts you already know well
 - Tasks that don't need current information
 
