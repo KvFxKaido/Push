@@ -783,10 +783,13 @@ export async function executeFetchPRTool(
   }
 
   // Inline review comments (left on specific lines during a PR review).
+  // Fetch newest-first so that when a PR has more than 20 inline comments we
+  // surface the most recent reviewer feedback, then reverse the slice so the
+  // displayed order stays chronological (oldest -> newest).
   let reviewComments: GitHubCorePRReviewComment[] = [];
   try {
     const reviewCommentsRes = await runtime.githubFetch(
-      buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/comments?per_page=50`),
+      buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/comments?per_page=20&direction=desc`),
       { headers },
     );
     if (reviewCommentsRes.ok) {
@@ -797,22 +800,28 @@ export async function executeFetchPRTool(
         original_line?: number | null;
         body?: string;
       }>;
-      reviewComments = raw.slice(0, 20).map((comment) => ({
-        author: comment.user?.login || 'unknown',
-        path: comment.path,
-        line: comment.line ?? comment.original_line ?? undefined,
-        body: truncateCommentBody(comment.body || ''),
-      }));
+      reviewComments = raw
+        .slice(0, 20)
+        .map((comment) => ({
+          author: comment.user?.login || 'unknown',
+          path: comment.path,
+          line: comment.line ?? comment.original_line ?? undefined,
+          body: truncateCommentBody(comment.body || ''),
+        }))
+        .reverse();
     }
   } catch {
     // Best-effort enrichment only.
   }
 
   // Top-level PR conversation comments (use the issues endpoint per GitHub API).
+  // The /issues/{num}/comments endpoint does not support a direction parameter,
+  // so this returns the oldest comments first; per_page is matched to the slice
+  // limit to avoid over-fetching.
   let issueComments: GitHubCorePRIssueComment[] = [];
   try {
     const issueCommentsRes = await runtime.githubFetch(
-      buildGitHubApiUrl(runtime, `/repos/${repo}/issues/${pr}/comments?per_page=20`),
+      buildGitHubApiUrl(runtime, `/repos/${repo}/issues/${pr}/comments?per_page=10`),
       { headers },
     );
     if (issueCommentsRes.ok) {

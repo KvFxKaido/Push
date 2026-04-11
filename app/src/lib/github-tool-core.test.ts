@@ -106,16 +106,33 @@ describe('github-tool-core shared core', () => {
         ]);
       }
       if (url.includes('/pulls/42/comments')) {
+        expect(url).toContain('direction=desc');
+        expect(url).toContain('per_page=20');
+        // Simulate GitHub returning newest-first; the tool should reverse so
+        // the display order stays chronological (oldest -> newest).
         return Response.json([
           {
             user: { login: 'reviewer' },
             path: 'app/worker.ts',
             line: 17,
-            body: 'Consider handling the null case here.',
+            body: 'third (newest) comment',
+          },
+          {
+            user: { login: 'reviewer' },
+            path: 'app/worker.ts',
+            line: 12,
+            body: 'second comment',
+          },
+          {
+            user: { login: 'reviewer' },
+            path: 'app/worker.ts',
+            line: 9,
+            body: 'first (oldest) comment',
           },
         ]);
       }
       if (url.includes('/issues/42/comments')) {
+        expect(url).toContain('per_page=10');
         return Response.json([
           {
             user: { login: 'pm' },
@@ -138,18 +155,21 @@ describe('github-tool-core shared core', () => {
     }
     expect(result.card.data.title).toBe('Add worker bridge');
     expect(result.text).toContain('Linked Issues');
-    expect(result.text).toContain('Inline Review Comments (1)');
+    expect(result.text).toContain('Inline Review Comments (3)');
     expect(result.text).toContain('@reviewer on app/worker.ts:17');
-    expect(result.text).toContain('Consider handling the null case here.');
     expect(result.text).toContain('Conversation (1)');
     expect(result.text).toContain('@pm: Looks good, ship it!');
-    expect(result.card.data.reviewComments).toHaveLength(1);
-    expect(result.card.data.reviewComments?.[0]).toEqual({
-      author: 'reviewer',
-      path: 'app/worker.ts',
-      line: 17,
-      body: 'Consider handling the null case here.',
-    });
+    expect(result.card.data.reviewComments).toHaveLength(3);
+    // Desc fetch is reversed so display stays chronological (oldest -> newest).
+    expect(result.card.data.reviewComments?.map((c) => c.body)).toEqual([
+      'first (oldest) comment',
+      'second comment',
+      'third (newest) comment',
+    ]);
+    const oldestIdx = result.text.indexOf('first (oldest) comment');
+    const newestIdx = result.text.indexOf('third (newest) comment');
+    expect(oldestIdx).toBeGreaterThan(-1);
+    expect(newestIdx).toBeGreaterThan(oldestIdx);
     expect(result.card.data.issueComments).toHaveLength(1);
   });
 
