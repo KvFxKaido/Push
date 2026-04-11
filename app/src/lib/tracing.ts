@@ -73,18 +73,19 @@ export function resolveTracingConfigFromInputs(
   env: TracingEnvInput = import.meta.env,
   storageGet: (key: string) => string | null = readStorageValue,
 ): PushTracingConfig {
-  const explicitEnabled = parseBoolean(storageGet(STORAGE_KEYS.enabled)) ?? parseBoolean(env.VITE_OTEL_ENABLED);
-  const endpoint = normalizeString(storageGet(STORAGE_KEYS.endpoint))
-    || normalizeString(env.VITE_OTEL_EXPORTER_OTLP_ENDPOINT)
-    || null;
-  const consoleExporter = parseBoolean(storageGet(STORAGE_KEYS.console))
-    ?? parseBoolean(env.VITE_OTEL_CONSOLE)
-    ?? false;
-  const serviceName = normalizeString(storageGet(STORAGE_KEYS.serviceName))
-    || normalizeString(env.VITE_OTEL_SERVICE_NAME)
-    || DEFAULT_SERVICE_NAME;
-  const environment = normalizeString(env.MODE)
-    || (env.DEV ? 'development' : 'production');
+  const explicitEnabled =
+    parseBoolean(storageGet(STORAGE_KEYS.enabled)) ?? parseBoolean(env.VITE_OTEL_ENABLED);
+  const endpoint =
+    normalizeString(storageGet(STORAGE_KEYS.endpoint)) ||
+    normalizeString(env.VITE_OTEL_EXPORTER_OTLP_ENDPOINT) ||
+    null;
+  const consoleExporter =
+    parseBoolean(storageGet(STORAGE_KEYS.console)) ?? parseBoolean(env.VITE_OTEL_CONSOLE) ?? false;
+  const serviceName =
+    normalizeString(storageGet(STORAGE_KEYS.serviceName)) ||
+    normalizeString(env.VITE_OTEL_SERVICE_NAME) ||
+    DEFAULT_SERVICE_NAME;
+  const environment = normalizeString(env.MODE) || (env.DEV ? 'development' : 'production');
 
   return {
     enabled: explicitEnabled ?? Boolean(endpoint || consoleExporter),
@@ -145,11 +146,7 @@ export function setSpanAttributes(span: Span, attributes: Attributes): void {
   }
 }
 
-export function recordSpanError(
-  span: Span,
-  error: unknown,
-  attributes?: Attributes,
-): void {
+export function recordSpanError(span: Span, error: unknown, attributes?: Attributes): void {
   if (attributes) setSpanAttributes(span, attributes);
 
   const isAbort = error instanceof DOMException && error.name === 'AbortError';

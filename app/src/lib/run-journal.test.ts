@@ -239,25 +239,47 @@ describe('run-journal', () => {
 
     // Round 0
     entry = updateJournalPhase(entry, 'streaming_llm', 0);
-    entry = appendJournalEvent(entry, makeEvent({
-      id: 'e1', type: 'assistant.turn_end', round: 0, outcome: 'continued',
-    }));
+    entry = appendJournalEvent(
+      entry,
+      makeEvent({
+        id: 'e1',
+        type: 'assistant.turn_end',
+        round: 0,
+        outcome: 'continued',
+      }),
+    );
     entry = updateJournalPhase(entry, 'executing_tools', 0);
 
     // Delegation
     entry = updateJournalPhase(entry, 'delegating_coder', 0);
-    entry = appendJournalEvent(entry, makeEvent({
-      id: 'e2', type: 'subagent.started', timestamp: 5500,
-    } as Partial<RunEvent>));
-    entry = appendJournalEvent(entry, makeEvent({
-      id: 'e3', type: 'subagent.completed', timestamp: 6000,
-    } as Partial<RunEvent>));
+    entry = appendJournalEvent(
+      entry,
+      makeEvent({
+        id: 'e2',
+        type: 'subagent.started',
+        timestamp: 5500,
+      } as Partial<RunEvent>),
+    );
+    entry = appendJournalEvent(
+      entry,
+      makeEvent({
+        id: 'e3',
+        type: 'subagent.completed',
+        timestamp: 6000,
+      } as Partial<RunEvent>),
+    );
 
     // Round 1
     entry = updateJournalPhase(entry, 'streaming_llm', 1);
-    entry = appendJournalEvent(entry, makeEvent({
-      id: 'e4', type: 'assistant.turn_end', round: 1, outcome: 'completed',
-    }));
+    entry = appendJournalEvent(
+      entry,
+      makeEvent({
+        id: 'e4',
+        type: 'assistant.turn_end',
+        round: 1,
+        outcome: 'completed',
+      }),
+    );
 
     // Checkpoint was active
     entry = markJournalCheckpoint(entry, true);

@@ -1,9 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ExternalLink, Info, Loader2, RefreshCw, Sparkles, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  Info,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { runReviewer } from '@/lib/reviewer-agent';
 import { runDeepReviewer } from '@/lib/deep-reviewer-agent';
-import { executePostPRReview, fetchGitHubReviewDiff, fetchLatestCommitDiff } from '@/lib/github-tools';
+import {
+  executePostPRReview,
+  fetchGitHubReviewDiff,
+  fetchLatestCommitDiff,
+} from '@/lib/github-tools';
 import { parseDiffStats } from '@/lib/diff-utils';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import {
@@ -122,16 +137,16 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
 function readStoredReviewProvider(): PreferredProvider | null {
   const stored = safeStorageGet(REVIEW_PROVIDER_KEY);
   if (
-    stored === 'ollama'
-    || stored === 'openrouter'
-    || stored === 'zen'
-    || stored === 'nvidia'
-    || stored === 'blackbox'
-    || stored === 'azure'
-    || stored === 'bedrock'
-    || stored === 'vertex'
-    || stored === 'kilocode'
-    || stored === 'openadapter'
+    stored === 'ollama' ||
+    stored === 'openrouter' ||
+    stored === 'zen' ||
+    stored === 'nvidia' ||
+    stored === 'blackbox' ||
+    stored === 'azure' ||
+    stored === 'bedrock' ||
+    stored === 'vertex' ||
+    stored === 'kilocode' ||
+    stored === 'openadapter'
   ) {
     return stored;
   }
@@ -140,16 +155,16 @@ function readStoredReviewProvider(): PreferredProvider | null {
 
 function isPreferredProvider(value: string): value is PreferredProvider {
   return (
-    value === 'ollama'
-    || value === 'openrouter'
-    || value === 'zen'
-    || value === 'nvidia'
-    || value === 'blackbox'
-    || value === 'azure'
-    || value === 'bedrock'
-    || value === 'vertex'
-    || value === 'kilocode'
-    || value === 'openadapter'
+    value === 'ollama' ||
+    value === 'openrouter' ||
+    value === 'zen' ||
+    value === 'nvidia' ||
+    value === 'blackbox' ||
+    value === 'azure' ||
+    value === 'bedrock' ||
+    value === 'vertex' ||
+    value === 'kilocode' ||
+    value === 'openadapter'
   );
 }
 
@@ -188,9 +203,12 @@ function parseSavedReviewPayload(raw: string | null): SavedReviewPayload | null 
     return {
       version: 1,
       savedAt: parsed.savedAt,
-      reviewSource: parsed.reviewSource === 'github' || parsed.reviewSource === 'commit' || parsed.reviewSource === 'sandbox'
-        ? parsed.reviewSource
-        : 'sandbox',
+      reviewSource:
+        parsed.reviewSource === 'github' ||
+        parsed.reviewSource === 'commit' ||
+        parsed.reviewSource === 'sandbox'
+          ? parsed.reviewSource
+          : 'sandbox',
       result: parsed.result,
       reviewContext: parsed.reviewContext ?? null,
       reviewDiffData: parsed.reviewDiffData ?? null,
@@ -222,19 +240,43 @@ function trimDiffForStorage(diffData: DiffPreviewCardData | null): {
 
 function severityIcon(severity: ReviewComment['severity']) {
   switch (severity) {
-    case 'critical': return <AlertTriangle className="h-3.5 w-3.5 text-red-400 flex-shrink-0 mt-0.5" />;
-    case 'warning':  return <AlertTriangle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0 mt-0.5" />;
-    case 'suggestion': return <Sparkles className="h-3.5 w-3.5 text-sky-400 flex-shrink-0 mt-0.5" />;
-    case 'note':     return <Info className="h-3.5 w-3.5 text-push-fg-dim flex-shrink-0 mt-0.5" />;
+    case 'critical':
+      return <AlertTriangle className="h-3.5 w-3.5 text-red-400 flex-shrink-0 mt-0.5" />;
+    case 'warning':
+      return <AlertTriangle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0 mt-0.5" />;
+    case 'suggestion':
+      return <Sparkles className="h-3.5 w-3.5 text-sky-400 flex-shrink-0 mt-0.5" />;
+    case 'note':
+      return <Info className="h-3.5 w-3.5 text-push-fg-dim flex-shrink-0 mt-0.5" />;
   }
 }
 
 function severityLabel(severity: ReviewComment['severity']) {
   switch (severity) {
-    case 'critical':   return <span className="text-push-2xs font-medium uppercase tracking-wide text-red-400">Critical</span>;
-    case 'warning':    return <span className="text-push-2xs font-medium uppercase tracking-wide text-amber-400">Warning</span>;
-    case 'suggestion': return <span className="text-push-2xs font-medium uppercase tracking-wide text-sky-400">Suggestion</span>;
-    case 'note':       return <span className="text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Note</span>;
+    case 'critical':
+      return (
+        <span className="text-push-2xs font-medium uppercase tracking-wide text-red-400">
+          Critical
+        </span>
+      );
+    case 'warning':
+      return (
+        <span className="text-push-2xs font-medium uppercase tracking-wide text-amber-400">
+          Warning
+        </span>
+      );
+    case 'suggestion':
+      return (
+        <span className="text-push-2xs font-medium uppercase tracking-wide text-sky-400">
+          Suggestion
+        </span>
+      );
+    case 'note':
+      return (
+        <span className="text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">
+          Note
+        </span>
+      );
   }
 }
 
@@ -326,18 +368,31 @@ export function HubReviewTab({
   // Branch diff requires a feature branch — on the default branch there's nothing
   // to compare against and fetchGitHubReviewDiff explicitly rejects it.
   // Open PRs with the default branch as head are essentially impossible in practice.
-  const hasGitHubSource = Boolean(repoFullName && activeBranch && defaultBranch && activeBranch !== defaultBranch);
+  const hasGitHubSource = Boolean(
+    repoFullName && activeBranch && defaultBranch && activeBranch !== defaultBranch,
+  );
   const hasCommitSource = Boolean(repoFullName && activeBranch);
-  const [selectedProvider, setSelectedProvider] = useState<PreferredProvider | null>(() => readStoredReviewProvider());
-  const [reviewSource, setReviewSource] = useState<ReviewSourceMode>(hasGitHubSource ? 'github' : hasCommitSource ? 'commit' : 'sandbox');
-  const [selectedModels, setSelectedModels] = useState<Record<PreferredProvider, string>>(readStoredReviewModels);
+  const [selectedProvider, setSelectedProvider] = useState<PreferredProvider | null>(() =>
+    readStoredReviewProvider(),
+  );
+  const [reviewSource, setReviewSource] = useState<ReviewSourceMode>(
+    hasGitHubSource ? 'github' : hasCommitSource ? 'commit' : 'sandbox',
+  );
+  const [selectedModels, setSelectedModels] =
+    useState<Record<PreferredProvider, string>>(readStoredReviewModels);
   const [status, setStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ReviewResult | null>(null);
   const [reviewContext, setReviewContext] = useState<ReviewContext | null>(null);
   const [reviewDiffData, setReviewDiffData] = useState<DiffPreviewCardData | null>(null);
   const [savedReview, setSavedReview] = useState<SavedReviewPayload | null>(null);
-  const [savedReviewNotice, setSavedReviewNotice] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null);
-  const [loadedSavedReviewMeta, setLoadedSavedReviewMeta] = useState<{ savedAt: number; diffStorageTruncated: boolean } | null>(null);
+  const [savedReviewNotice, setSavedReviewNotice] = useState<{
+    tone: 'success' | 'error' | 'info';
+    text: string;
+  } | null>(null);
+  const [loadedSavedReviewMeta, setLoadedSavedReviewMeta] = useState<{
+    savedAt: number;
+    diffStorageTruncated: boolean;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reviewDepth, setReviewDepth] = useState<ReviewDepth>('quick');
   const [running, setRunning] = useState(false);
@@ -355,9 +410,10 @@ export function HubReviewTab({
     const nextSelected =
       selectedProvider && providerOptions.some((provider) => provider.type === selectedProvider)
         ? selectedProvider
-        : activeProvider !== 'demo' && providerOptions.some((provider) => provider.type === activeProvider)
+        : activeProvider !== 'demo' &&
+            providerOptions.some((provider) => provider.type === activeProvider)
           ? activeProvider
-          : providerOptions[0]?.type ?? null;
+          : (providerOptions[0]?.type ?? null);
 
     if (nextSelected !== selectedProvider) {
       setSelectedProvider(nextSelected);
@@ -374,7 +430,6 @@ export function HubReviewTab({
     setSavedReview(parseSavedReviewPayload(safeStorageGet(reviewStorageKey)));
     setSavedReviewNotice(null);
   }, [reviewStorageKey]);
-
 
   useEffect(() => {
     if (selectedProvider) {
@@ -405,16 +460,19 @@ export function HubReviewTab({
     setSelectedProvider(p);
   }, []);
 
-  const handleModelChange = useCallback((nextModel: string) => {
-    if (!selectedProvider) return;
-    setSelectedModels((prev) => ({ ...prev, [selectedProvider]: nextModel }));
-    const trimmed = nextModel.trim();
-    if (trimmed) {
-      safeStorageSet(REVIEW_MODEL_KEYS[selectedProvider], trimmed);
-    } else {
-      safeStorageRemove(REVIEW_MODEL_KEYS[selectedProvider]);
-    }
-  }, [selectedProvider]);
+  const handleModelChange = useCallback(
+    (nextModel: string) => {
+      if (!selectedProvider) return;
+      setSelectedModels((prev) => ({ ...prev, [selectedProvider]: nextModel }));
+      const trimmed = nextModel.trim();
+      if (trimmed) {
+        safeStorageSet(REVIEW_MODEL_KEYS[selectedProvider], trimmed);
+      } else {
+        safeStorageRemove(REVIEW_MODEL_KEYS[selectedProvider]);
+      }
+    },
+    [selectedProvider],
+  );
 
   const handleSourceChange = useCallback((source: ReviewSourceMode) => {
     setReviewSource(source);
@@ -433,7 +491,11 @@ export function HubReviewTab({
   const toggleFile = useCallback((file: string) => {
     setExpandedFiles((prev) => {
       const next = new Set(prev);
-      if (next.has(file)) { next.delete(file); } else { next.add(file); }
+      if (next.has(file)) {
+        next.delete(file);
+      } else {
+        next.add(file);
+      }
       return next;
     });
   }, []);
@@ -443,7 +505,12 @@ export function HubReviewTab({
     setPostState('posting');
     setPostError(null);
     try {
-      await executePostPRReview(repoFullName, reviewContext.pr.number, reviewContext.pr.commitSha, result);
+      await executePostPRReview(
+        repoFullName,
+        reviewContext.pr.number,
+        reviewContext.pr.commitSha,
+        result,
+      );
       setPostState('posted');
     } catch (err) {
       setPostState('error');
@@ -451,26 +518,31 @@ export function HubReviewTab({
     }
   }, [result, repoFullName, reviewContext]);
 
-  const handleOpenCommentInDiff = useCallback((file: string, line?: number) => {
-    if (!reviewDiffData || !reviewContext) return;
-    onOpenDiff({
-      diffData: reviewDiffData,
-      label: reviewContext.kind === 'sandbox' ? 'Working tree review snapshot' : reviewContext.label,
-      mode: reviewContext.kind === 'sandbox' ? 'review-sandbox' : 'review-github',
-      target: { path: file, ...(line !== undefined ? { line } : {}) },
-    });
-  }, [onOpenDiff, reviewContext, reviewDiffData]);
+  const handleOpenCommentInDiff = useCallback(
+    (file: string, line?: number) => {
+      if (!reviewDiffData || !reviewContext) return;
+      onOpenDiff({
+        diffData: reviewDiffData,
+        label:
+          reviewContext.kind === 'sandbox' ? 'Working tree review snapshot' : reviewContext.label,
+        mode: reviewContext.kind === 'sandbox' ? 'review-sandbox' : 'review-github',
+        target: { path: file, ...(line !== undefined ? { line } : {}) },
+      });
+    },
+    [onOpenDiff, reviewContext, reviewDiffData],
+  );
 
   const selectedDefaultModel = selectedProvider ? REVIEW_DEFAULT_MODELS[selectedProvider] : '';
-  const selectedReviewModelInput = selectedProvider ? selectedModels[selectedProvider] ?? '' : '';
+  const selectedReviewModelInput = selectedProvider ? (selectedModels[selectedProvider] ?? '') : '';
   const selectedReviewModel = selectedProvider
-    ? (selectedModels[selectedProvider]?.trim() || selectedDefaultModel)
+    ? selectedModels[selectedProvider]?.trim() || selectedDefaultModel
     : '';
 
   const modelOptionsForProvider = useMemo(() => {
     if (!selectedProvider || !providerModelOptions) return [];
     const options = providerModelOptions[selectedProvider] ?? [];
-    const active = selectedModels[selectedProvider]?.trim() || REVIEW_DEFAULT_MODELS[selectedProvider];
+    const active =
+      selectedModels[selectedProvider]?.trim() || REVIEW_DEFAULT_MODELS[selectedProvider];
     if (!active || options.includes(active)) return options;
     return [active, ...options];
   }, [selectedProvider, providerModelOptions, selectedModels]);
@@ -480,32 +552,37 @@ export function HubReviewTab({
   useEffect(() => {
     setUseCustomModel(false);
   }, [selectedProvider]);
-  const isCurrentReviewSaved = Boolean(result && savedReview && savedReview.result.reviewedAt === result.reviewedAt);
+  const isCurrentReviewSaved = Boolean(
+    result && savedReview && savedReview.result.reviewedAt === result.reviewedAt,
+  );
 
-  const applySavedReview = useCallback((payload: SavedReviewPayload) => {
-    setResult(payload.result);
-    setReviewContext(payload.reviewContext);
-    setReviewDiffData(payload.reviewDiffData);
-    setExpandedFiles(buildAutoExpandFiles(payload.result.comments));
-    setError(null);
-    setStatus(null);
-    setPostState('idle');
-    setPostError(null);
-    setLoadedSavedReviewMeta({
-      savedAt: payload.savedAt,
-      diffStorageTruncated: payload.diffStorageTruncated,
-    });
+  const applySavedReview = useCallback(
+    (payload: SavedReviewPayload) => {
+      setResult(payload.result);
+      setReviewContext(payload.reviewContext);
+      setReviewDiffData(payload.reviewDiffData);
+      setExpandedFiles(buildAutoExpandFiles(payload.result.comments));
+      setError(null);
+      setStatus(null);
+      setPostState('idle');
+      setPostError(null);
+      setLoadedSavedReviewMeta({
+        savedAt: payload.savedAt,
+        diffStorageTruncated: payload.diffStorageTruncated,
+      });
 
-    if (isPreferredProvider(payload.result.provider)) {
-      setSelectedModels((prev) => ({
-        ...prev,
-        [payload.result.provider]: payload.result.model,
-      }));
-      if (providerOptions.some((provider) => provider.type === payload.result.provider)) {
-        setSelectedProvider(payload.result.provider);
+      if (isPreferredProvider(payload.result.provider)) {
+        setSelectedModels((prev) => ({
+          ...prev,
+          [payload.result.provider]: payload.result.model,
+        }));
+        if (providerOptions.some((provider) => provider.type === payload.result.provider)) {
+          setSelectedProvider(payload.result.provider);
+        }
       }
-    }
-  }, [providerOptions]);
+    },
+    [providerOptions],
+  );
 
   const handleSaveReview = useCallback(() => {
     if (!result) {
@@ -535,7 +612,10 @@ export function HubReviewTab({
         return;
       }
       setSavedReview(fallbackPayload);
-      setSavedReviewNotice({ tone: 'info', text: 'Review saved locally without a diff snapshot due to storage limits.' });
+      setSavedReviewNotice({
+        tone: 'info',
+        text: 'Review saved locally without a diff snapshot due to storage limits.',
+      });
       return;
     }
 
@@ -595,9 +675,10 @@ export function HubReviewTab({
         setStatus('Resolving branch / PR diff…');
         const githubDiff = await fetchGitHubReviewDiff(repoFullName, activeBranch, defaultBranch);
         diff = githubDiff.diff;
-        nextContext = githubDiff.source === 'pr' && githubDiff.pr
-          ? { kind: 'github-pr', label: githubDiff.label, pr: githubDiff.pr }
-          : { kind: 'github-branch', label: githubDiff.label };
+        nextContext =
+          githubDiff.source === 'pr' && githubDiff.pr
+            ? { kind: 'github-pr', label: githubDiff.label, pr: githubDiff.pr }
+            : { kind: 'github-branch', label: githubDiff.label };
       } else if (reviewSource === 'commit') {
         if (!repoFullName || !activeBranch) {
           setError('Commit review is not available for this workspace.');
@@ -639,15 +720,19 @@ export function HubReviewTab({
       }
 
       const reviewSourceForPrompt =
-        nextContext.kind === 'github-pr' ? 'pr-diff'
-          : nextContext.kind === 'github-branch' ? 'branch-diff'
-            : nextContext.kind === 'github-commit' ? 'last-commit'
+        nextContext.kind === 'github-pr'
+          ? 'pr-diff'
+          : nextContext.kind === 'github-branch'
+            ? 'branch-diff'
+            : nextContext.kind === 'github-commit'
+              ? 'last-commit'
               : 'working-tree';
-      const reviewerSandboxId = nextContext.kind === 'sandbox'
-        ? sandboxId || undefined
-        : sandboxStatus === 'ready'
+      const reviewerSandboxId =
+        nextContext.kind === 'sandbox'
           ? sandboxId || undefined
-          : undefined;
+          : sandboxStatus === 'ready'
+            ? sandboxId || undefined
+            : undefined;
 
       let reviewResult: ReviewResult;
 
@@ -669,11 +754,14 @@ export function HubReviewTab({
               projectInstructions,
             },
             allowedRepo: repoFullName || '',
-            branchContext: activeBranch && defaultBranch ? {
-              activeBranch,
-              defaultBranch,
-              protectMain: protectMain ?? false,
-            } : undefined,
+            branchContext:
+              activeBranch && defaultBranch
+                ? {
+                    activeBranch,
+                    defaultBranch,
+                    protectMain: protectMain ?? false,
+                  }
+                : undefined,
             projectInstructions: projectInstructions ?? undefined,
           },
           {
@@ -752,11 +840,11 @@ export function HubReviewTab({
   const canRunReview =
     !running &&
     Boolean(selectedProvider) &&
-    (
-      reviewSource === 'github' ? hasGitHubSource :
-      reviewSource === 'commit' ? hasCommitSource :
-      (sandboxReady || sandboxStatus === 'idle')
-    );
+    (reviewSource === 'github'
+      ? hasGitHubSource
+      : reviewSource === 'commit'
+        ? hasCommitSource
+        : sandboxReady || sandboxStatus === 'idle');
   const showSandboxPostingHint = reviewContext?.kind === 'sandbox' && hasGitHubSource;
 
   return (
@@ -811,8 +899,8 @@ export function HubReviewTab({
                   {reviewSource === 'github'
                     ? 'Reviews the pushed PR or branch diff against the default branch.'
                     : reviewSource === 'commit'
-                    ? 'Reviews the diff of the most recent commit — no sandbox needed.'
-                    : 'Reviews uncommitted working tree edits in the current workspace.'}
+                      ? 'Reviews the diff of the most recent commit — no sandbox needed.'
+                      : 'Reviews uncommitted working tree edits in the current workspace.'}
                 </p>
               </div>
             )}
@@ -881,7 +969,9 @@ export function HubReviewTab({
                   className={`${HUB_MATERIAL_INPUT_CLASS} min-w-0 flex-1 px-2.5 py-1.5`}
                 >
                   {modelOptionsForProvider.map((m) => (
-                    <option key={m} value={m}>{formatModelDisplayName(selectedProvider ?? 'ollama', m)}</option>
+                    <option key={m} value={m}>
+                      {formatModelDisplayName(selectedProvider ?? 'ollama', m)}
+                    </option>
                   ))}
                   <option value="__custom__">Custom model…</option>
                 </select>
@@ -891,7 +981,9 @@ export function HubReviewTab({
                     type="text"
                     value={selectedReviewModelInput}
                     onChange={(e) => handleModelChange(e.target.value)}
-                    placeholder={selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Review model'}
+                    placeholder={
+                      selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Review model'
+                    }
                     className={`${HUB_MATERIAL_INPUT_CLASS} min-w-0 flex-1 px-2.5 py-1.5`}
                   />
                   {modelOptionsForProvider.length > 0 && (
@@ -917,8 +1009,12 @@ export function HubReviewTab({
                 )}
                 <span className="relative z-10">
                   {running
-                    ? (activeReviewDepth === 'deep' ? 'Investigating…' : 'Reviewing…')
-                    : (reviewDepth === 'deep' ? 'Run deep review' : 'Run review')}
+                    ? activeReviewDepth === 'deep'
+                      ? 'Investigating…'
+                      : 'Reviewing…'
+                    : reviewDepth === 'deep'
+                      ? 'Run deep review'
+                      : 'Run review'}
                 </span>
               </button>
               {running && runningReviewDepth === 'deep' && (
@@ -937,20 +1033,16 @@ export function HubReviewTab({
         )}
 
         {/* Status line */}
-        {running && status && (
-          <p className="text-push-xs text-push-fg-dim">{status}</p>
-        )}
-        {error && (
-          <p className="text-push-xs text-red-400">{error}</p>
-        )}
+        {running && status && <p className="text-push-xs text-push-fg-dim">{status}</p>}
+        {error && <p className="text-push-xs text-red-400">{error}</p>}
         {savedReviewNotice && (
           <p
             className={`text-push-xs ${
               savedReviewNotice.tone === 'error'
                 ? 'text-red-400'
                 : savedReviewNotice.tone === 'success'
-                ? 'text-emerald-400'
-                : 'text-push-fg-dim'
+                  ? 'text-emerald-400'
+                  : 'text-push-fg-dim'
             }`}
           >
             {savedReviewNotice.text}
@@ -967,7 +1059,8 @@ export function HubReviewTab({
                 <div className="min-w-0">
                   <p className="text-xs font-medium text-push-fg">Saved review available</p>
                   <p className="text-push-xs text-push-fg-dim">
-                    {savedReview.reviewContext?.label || 'Saved review'} · {new Date(savedReview.savedAt).toLocaleString()}
+                    {savedReview.reviewContext?.label || 'Saved review'} ·{' '}
+                    {new Date(savedReview.savedAt).toLocaleString()}
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -997,8 +1090,8 @@ export function HubReviewTab({
               {reviewSource === 'github'
                 ? 'Run a review to inspect the active branch or open PR from GitHub.'
                 : reviewSource === 'commit'
-                ? 'Run a review to inspect the most recent commit on this branch.'
-                : 'Run a review to see feedback on your current working tree changes.'}
+                  ? 'Run a review to inspect the most recent commit on this branch.'
+                  : 'Run a review to see feedback on your current working tree changes.'}
             </p>
           </div>
         )}
@@ -1017,19 +1110,22 @@ export function HubReviewTab({
                 <span className="text-push-2xs text-push-fg-dim">
                   {result.truncated
                     ? `${result.filesReviewed} of ${result.totalFiles} files`
-                    : `${result.filesReviewed} file${result.filesReviewed !== 1 ? 's' : ''}`
-                  } · {result.model}
+                    : `${result.filesReviewed} file${result.filesReviewed !== 1 ? 's' : ''}`}{' '}
+                  · {result.model}
                 </span>
               </div>
               {result.truncated && (
                 <div className="flex items-center gap-1.5 mb-1.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-1.5">
                   <AlertTriangle className="h-3 w-3 text-amber-400 flex-shrink-0" />
                   <p className="text-push-2xs text-amber-400">
-                    Diff too large — review covers {result.filesReviewed} of {result.totalFiles} files. Later files were not seen.
+                    Diff too large — review covers {result.filesReviewed} of {result.totalFiles}{' '}
+                    files. Later files were not seen.
                   </p>
                 </div>
               )}
-              <p className="text-push-xs leading-relaxed text-push-fg-secondary">{result.summary}</p>
+              <p className="text-push-xs leading-relaxed text-push-fg-secondary">
+                {result.summary}
+              </p>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <button
                   onClick={handleSaveReview}
@@ -1037,7 +1133,11 @@ export function HubReviewTab({
                 >
                   <HubControlGlow />
                   <span className="relative z-10">
-                    {isCurrentReviewSaved ? 'Saved locally' : savedReview ? 'Replace saved review' : 'Save locally'}
+                    {isCurrentReviewSaved
+                      ? 'Saved locally'
+                      : savedReview
+                        ? 'Replace saved review'
+                        : 'Save locally'}
                   </span>
                 </button>
                 {savedReview && !isCurrentReviewSaved && (
@@ -1067,7 +1167,8 @@ export function HubReviewTab({
               {loadedSavedReviewMeta?.diffStorageTruncated && (
                 <div className={`mt-2 px-2.5 py-2 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
                   <p className="text-push-2xs text-push-fg-dim">
-                    Loaded from local save. The stored diff snapshot was trimmed, so Diff jump targets may be incomplete.
+                    Loaded from local save. The stored diff snapshot was trimmed, so Diff jump
+                    targets may be incomplete.
                   </p>
                 </div>
               )}
@@ -1075,18 +1176,21 @@ export function HubReviewTab({
 
             {/* Post to PR */}
             {reviewContext?.kind === 'github-pr' && postState !== 'posted' && (
-              <div className={`flex items-center justify-between gap-2 px-3.5 py-2.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
+              <div
+                className={`flex items-center justify-between gap-2 px-3.5 py-2.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
+              >
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="text-push-xs text-push-fg-secondary truncate">
-                    PR <a
+                    PR{' '}
+                    <a
                       href={reviewContext.pr.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-push-accent hover:underline inline-flex items-center gap-0.5"
                     >
                       #{reviewContext.pr.number} <ExternalLink className="h-2.5 w-2.5" />
-                    </a>
-                    {' '}open
+                    </a>{' '}
+                    open
                   </span>
                   {postState === 'error' && postError && (
                     <span className="text-push-2xs text-red-400 truncate">{postError}</span>
@@ -1131,19 +1235,24 @@ export function HubReviewTab({
             {showSandboxPostingHint && (
               <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-2.5`}>
                 <p className="text-push-xs text-push-fg-dim">
-                  Working tree reviews stay in Push. Switch to <span className="text-push-fg-secondary">GitHub diff</span> to review the pushed branch or post findings back to a PR.
+                  Working tree reviews stay in Push. Switch to{' '}
+                  <span className="text-push-fg-secondary">GitHub diff</span> to review the pushed
+                  branch or post findings back to a PR.
                 </p>
               </div>
             )}
             {reviewContext?.kind === 'github-branch' && (
               <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3.5 py-2.5`}>
                 <p className="text-push-xs text-push-fg-dim">
-                  No open PR for this branch. This review covers the pushed branch diff against <span className="text-push-fg-secondary">{defaultBranch}</span>.
+                  No open PR for this branch. This review covers the pushed branch diff against{' '}
+                  <span className="text-push-fg-secondary">{defaultBranch}</span>.
                 </p>
               </div>
             )}
             {reviewContext?.kind === 'github-commit' && (
-              <div className={`flex items-center gap-2 px-3.5 py-2.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
+              <div
+                className={`flex items-center gap-2 px-3.5 py-2.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
+              >
                 <span className="text-push-xs text-push-fg-dim">Commit</span>
                 <a
                   href={reviewContext.url}
@@ -1158,18 +1267,26 @@ export function HubReviewTab({
 
             {/* No comments */}
             {result.comments.length === 0 && (
-              <p className="text-center text-xs text-push-fg-dim py-4">No specific comments — looks clean.</p>
+              <p className="text-center text-xs text-push-fg-dim py-4">
+                No specific comments — looks clean.
+              </p>
             )}
 
             {/* Comments grouped by file */}
             {result.comments.length > 0 && (
               <div className="space-y-2">
                 {Array.from(groupByFile(result.comments)).map(([file, comments]) => {
-                  const sorted = [...comments].sort((a, b) => severityOrder(a.severity) - severityOrder(b.severity));
+                  const sorted = [...comments].sort(
+                    (a, b) => severityOrder(a.severity) - severityOrder(b.severity),
+                  );
                   const expanded = expandedFiles.has(file);
                   const hasCritical = comments.some((c) => c.severity === 'critical');
                   const hasWarning = comments.some((c) => c.severity === 'warning');
-                  const headerColor = hasCritical ? 'text-red-300' : hasWarning ? 'text-amber-300' : 'text-push-fg-secondary';
+                  const headerColor = hasCritical
+                    ? 'text-red-300'
+                    : hasWarning
+                      ? 'text-amber-300'
+                      : 'text-push-fg-secondary';
 
                   return (
                     <div key={file} className={`overflow-hidden ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
@@ -1177,14 +1294,18 @@ export function HubReviewTab({
                         onClick={() => toggleFile(file)}
                         className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-push-surface-hover transition-colors"
                       >
-                        <span className={`min-w-0 flex-1 truncate text-left text-push-xs font-medium ${headerColor}`}>
+                        <span
+                          className={`min-w-0 flex-1 truncate text-left text-push-xs font-medium ${headerColor}`}
+                        >
                           {file}
                         </span>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <span className="text-push-2xs text-push-fg-dim">{comments.length}</span>
-                          {expanded
-                            ? <ChevronDown className="h-3 w-3 text-push-fg-dim" />
-                            : <ChevronRight className="h-3 w-3 text-push-fg-dim" />}
+                          {expanded ? (
+                            <ChevronDown className="h-3 w-3 text-push-fg-dim" />
+                          ) : (
+                            <ChevronRight className="h-3 w-3 text-push-fg-dim" />
+                          )}
                         </div>
                       </button>
 
@@ -1207,7 +1328,9 @@ export function HubReviewTab({
                                     </button>
                                   ) : null}
                                 </div>
-                                <p className="text-push-xs leading-relaxed text-push-fg-secondary">{c.comment}</p>
+                                <p className="text-push-xs leading-relaxed text-push-fg-secondary">
+                                  {c.comment}
+                                </p>
                               </div>
                               <button
                                 onClick={() => handleOpenCommentInDiff(c.file, c.line)}
@@ -1221,12 +1344,16 @@ export function HubReviewTab({
                               </button>
                               {onFixFinding && (
                                 <button
-                                  onClick={() => onFixFinding(buildFixPrompt({
-                                    comment: c,
-                                    reviewContext,
-                                    activeBranch,
-                                    defaultBranch,
-                                  }))}
+                                  onClick={() =>
+                                    onFixFinding(
+                                      buildFixPrompt({
+                                        comment: c,
+                                        reviewContext,
+                                        activeBranch,
+                                        defaultBranch,
+                                      }),
+                                    )
+                                  }
                                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} mt-0.5 h-7 gap-1 px-2.5 text-push-2xs text-push-fg-secondary`}
                                   title={`Send ${c.file}${typeof c.line === 'number' ? ` line ${c.line}` : ''} to chat as a fix request`}
                                 >

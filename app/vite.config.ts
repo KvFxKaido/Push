@@ -1,6 +1,6 @@
-import path from "path"
-import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import path from 'path';
+import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
 // https://vite.dev/config/
 const API_PROXY_TARGET = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8787';
 const API_PROXY_ORIGIN = (() => {
@@ -39,9 +39,7 @@ function packageChunkName(moduleId: string): string | null {
     pathIndex += 1;
   }
   if (parts[pathIndex]) {
-    filePart = parts[pathIndex]
-      .replace(/\.[^.]+$/, '')
-      .replace(/[^a-zA-Z0-9_-]/g, '');
+    filePart = parts[pathIndex].replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '');
   }
 
   if (!filePart || filePart === 'index') return packageSlug || null;
@@ -89,7 +87,11 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return;
 
-          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/scheduler')) {
+          if (
+            id.includes('node_modules/react') ||
+            id.includes('node_modules/react-dom') ||
+            id.includes('node_modules/scheduler')
+          ) {
             return 'vendor-react';
           }
           if (
@@ -114,7 +116,11 @@ export default defineConfig({
           if (id.includes('node_modules/date-fns')) {
             return 'vendor-date';
           }
-          if (id.includes('node_modules/zod') || id.includes('node_modules/react-hook-form') || id.includes('@hookform')) {
+          if (
+            id.includes('node_modules/zod') ||
+            id.includes('node_modules/react-hook-form') ||
+            id.includes('@hookform')
+          ) {
             return 'vendor-forms';
           }
           if (id.includes('@opentelemetry')) {
@@ -126,8 +132,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
-      "@push/lib": path.resolve(__dirname, "../lib"),
+      '@': path.resolve(__dirname, './src'),
+      '@push/lib': path.resolve(__dirname, '../lib'),
     },
   },
   server: {

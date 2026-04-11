@@ -10,10 +10,7 @@ import {
   normalizeExperimentalBaseUrl,
   type ExperimentalProviderType,
 } from '../lib/experimental-providers';
-import {
-  decodeVertexServiceAccountHeader,
-  normalizeVertexRegion,
-} from '../lib/vertex-provider';
+import { decodeVertexServiceAccountHeader, normalizeVertexRegion } from '../lib/vertex-provider';
 import { validateAndNormalizeChatRequest } from '../lib/chat-request-guardrails';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
 import {
@@ -100,13 +97,15 @@ export async function createGoogleJwtAssertion(serviceAccount: {
 }): Promise<string> {
   const nowSeconds = Math.floor(Date.now() / 1000);
   const header = base64UrlEncodeString(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const payload = base64UrlEncodeString(JSON.stringify({
-    iss: serviceAccount.clientEmail,
-    scope: GOOGLE_OAUTH_SCOPE,
-    aud: GOOGLE_TOKEN_ENDPOINT,
-    exp: nowSeconds + 3600,
-    iat: nowSeconds,
-  }));
+  const payload = base64UrlEncodeString(
+    JSON.stringify({
+      iss: serviceAccount.clientEmail,
+      scope: GOOGLE_OAUTH_SCOPE,
+      aud: GOOGLE_TOKEN_ENDPOINT,
+      exp: nowSeconds + 3600,
+      iat: nowSeconds,
+    }),
+  );
   const signingInput = `${header}.${payload}`;
   const key = await crypto.subtle.importKey(
     'pkcs8',
@@ -151,10 +150,12 @@ export async function getGoogleAccessToken(serviceAccount: {
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`Google OAuth token exchange failed (${response.status}): ${detail.slice(0, 200)}`);
+    throw new Error(
+      `Google OAuth token exchange failed (${response.status}): ${detail.slice(0, 200)}`,
+    );
   }
 
-  const payload = await response.json() as {
+  const payload = (await response.json()) as {
     access_token?: string;
     expires_in?: number;
   };
@@ -196,7 +197,11 @@ export function getAllowedOrigins(requestUrl: URL, env: Env): Set<string> {
   return allowed;
 }
 
-export function validateOrigin(request: Request, requestUrl: URL, env: Env): { ok: boolean; error?: string } {
+export function validateOrigin(
+  request: Request,
+  requestUrl: URL,
+  env: Env,
+): { ok: boolean; error?: string } {
   const origin = normalizeOrigin(request.headers.get('Origin'));
   const refererOrigin = normalizeOrigin(request.headers.get('Referer'));
   const candidates = [origin, refererOrigin].filter(Boolean) as string[];
@@ -226,7 +231,11 @@ export function getClientIp(request: Request): string {
   return 'unknown';
 }
 
-export function wlog(level: 'info' | 'warn' | 'error', event: string, data?: Record<string, unknown>): void {
+export function wlog(
+  level: 'info' | 'warn' | 'error',
+  event: string,
+  data?: Record<string, unknown>,
+): void {
   const entry = JSON.stringify({ level, event, ts: new Date().toISOString(), ...data });
   if (level === 'error') {
     console.error(entry);
@@ -333,10 +342,7 @@ export async function runPreamble(
   if (opts.needsBody !== false) {
     const bodyResult = await readBodyText(request, opts.maxBodyBytes ?? MAX_BODY_SIZE_BYTES);
     if ('error' in bodyResult) {
-      return Response.json(
-        { error: bodyResult.error },
-        { status: bodyResult.status },
-      );
+      return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
     }
     bodyText = bodyResult.text;
   }
@@ -384,8 +390,12 @@ export interface VertexNativeConfig {
   region: string;
 }
 
-export function getVertexNativeConfig(request: Request): { ok: true; config: VertexNativeConfig } | { ok: false; response: Response } {
-  const decoded = decodeVertexServiceAccountHeader(request.headers.get('X-Push-Vertex-Service-Account'));
+export function getVertexNativeConfig(
+  request: Request,
+): { ok: true; config: VertexNativeConfig } | { ok: false; response: Response } {
+  const decoded = decodeVertexServiceAccountHeader(
+    request.headers.get('X-Push-Vertex-Service-Account'),
+  );
   if (!decoded.ok) {
     return {
       ok: false,
@@ -469,7 +479,10 @@ export function createStreamProxyHandler(
       maxOutputTokens: config.maxOutputTokens,
     });
     if (!normalizedRequest.ok) {
-      return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
+      return Response.json(
+        { error: normalizedRequest.error },
+        { status: normalizedRequest.status },
+      );
     }
     if (normalizedRequest.value.adjustments.length > 0) {
       wlog('warn', 'chat_request_adjusted', {
@@ -486,13 +499,13 @@ export function createStreamProxyHandler(
       model: normalizedRequest.value.parsed.model,
     });
 
-    const upstreamUrl = typeof config.upstreamUrl === 'function'
-      ? config.upstreamUrl(request)
-      : config.upstreamUrl;
+    const upstreamUrl =
+      typeof config.upstreamUrl === 'function' ? config.upstreamUrl(request) : config.upstreamUrl;
 
-    const extraHeaders = typeof config.extraFetchHeaders === 'function'
-      ? config.extraFetchHeaders(request)
-      : (config.extraFetchHeaders ?? {});
+    const extraHeaders =
+      typeof config.extraFetchHeaders === 'function'
+        ? config.extraFetchHeaders(request)
+        : (config.extraFetchHeaders ?? {});
 
     // Trace context headers for response correlation
     const traceResponseHeaders: Record<string, string> = {
@@ -513,9 +526,9 @@ export function createStreamProxyHandler(
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': authHeader,
+            Authorization: authHeader,
             [REQUEST_ID_HEADER]: requestId,
-            'traceparent': buildTraceparent(upstreamCtx),
+            traceparent: buildTraceparent(upstreamCtx),
             ...extraHeaders,
           },
           body: normalizedRequest.value.bodyText,
@@ -525,7 +538,12 @@ export function createStreamProxyHandler(
         clearTimeout(timeoutId);
       }
 
-      wlog('info', 'upstream_ok', { requestId, route: config.logTag, status: upstream.status, trace_id: spanCtx.traceId });
+      wlog('info', 'upstream_ok', {
+        requestId,
+        route: config.logTag,
+        status: upstream.status,
+        trace_id: spanCtx.traceId,
+      });
 
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
@@ -554,9 +572,10 @@ export function createStreamProxyHandler(
         return new Response(upstream.body, {
           status: upstream.status,
           headers: {
-            'Content-Type': upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
+            'Content-Type':
+              upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
             'Cache-Control': 'no-cache, no-transform',
-            'Connection': 'keep-alive',
+            Connection: 'keep-alive',
             [REQUEST_ID_HEADER]: requestId,
             'X-Accel-Buffering': 'no',
             ...traceResponseHeaders,
@@ -571,7 +590,7 @@ export function createStreamProxyHandler(
           headers: {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
+            Connection: 'keep-alive',
             [REQUEST_ID_HEADER]: requestId,
             ...traceResponseHeaders,
           },
@@ -614,7 +633,7 @@ export function createJsonProxyHandler(
   config: JsonProxyConfig,
 ): (request: Request, env: Env) => Promise<Response> {
   const method = config.method ?? 'POST';
-  const needsBody = config.needsBody ?? (method === 'POST');
+  const needsBody = config.needsBody ?? method === 'POST';
 
   return async (request, env) => {
     const preamble = await runPreamble(request, env, {
@@ -650,9 +669,9 @@ export function createJsonProxyHandler(
         const fetchInit: RequestInit = {
           method,
           headers: {
-            'Authorization': authHeader,
+            Authorization: authHeader,
             [REQUEST_ID_HEADER]: requestId,
-            'traceparent': buildTraceparent(upstreamCtx),
+            traceparent: buildTraceparent(upstreamCtx),
             ...(needsBody ? { 'Content-Type': 'application/json' } : {}),
             ...(config.extraFetchHeaders ?? {}),
           },

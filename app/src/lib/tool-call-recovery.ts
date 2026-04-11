@@ -81,11 +81,9 @@ export function buildUnimplementedToolErrorText(
 ): string {
   const availableTools = options.availableTools ?? PUBLIC_SANDBOX_TOOL_NAMES;
   const availableToolsLabel = options.availableToolsLabel ?? 'Available sandbox tools';
-  const guidanceLines =
-    options.guidanceLines ??
-    [
-      `Use ${getToolPublicName('sandbox_write_file')} to write complete file contents, or ${getToolPublicName('sandbox_exec')} to run patch/sed commands for edits.`,
-    ];
+  const guidanceLines = options.guidanceLines ?? [
+    `Use ${getToolPublicName('sandbox_write_file')} to write complete file contents, or ${getToolPublicName('sandbox_exec')} to run patch/sed commands for edits.`,
+  ];
 
   return [
     `[Tool Error] "${toolName}" is not an available tool. It does not exist in this system.`,

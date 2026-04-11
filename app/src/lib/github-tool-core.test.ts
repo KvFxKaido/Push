@@ -5,10 +5,15 @@ import {
   type GitHubCoreRuntime,
 } from '@push/lib/github-tool-core';
 
-function createRuntime(fetchImpl: (url: string, options?: RequestInit) => Promise<Response>): GitHubCoreRuntime {
+function createRuntime(
+  fetchImpl: (url: string, options?: RequestInit) => Promise<Response>,
+): GitHubCoreRuntime {
   return {
     githubFetch: fetchImpl,
-    buildHeaders: (accept = 'application/vnd.github.v3+json') => ({ Accept: accept, Authorization: 'token test-token' }),
+    buildHeaders: (accept = 'application/vnd.github.v3+json') => ({
+      Accept: accept,
+      Authorization: 'token test-token',
+    }),
     buildApiUrl: (path) => `https://api.github.com${path}`,
     decodeBase64: (content) => atob(content),
     isSensitivePath: (path) => path.includes('.env'),
@@ -36,7 +41,11 @@ describe('github-tool-core shared core', () => {
 
     expect(result.defaultBranch).toBe('main');
     expect(result.branches[0]).toEqual({ name: 'main', isDefault: true, isProtected: true });
-    expect(result.branches[1]).toEqual({ name: 'feature/demo', isDefault: false, isProtected: false });
+    expect(result.branches[1]).toEqual({
+      name: 'feature/demo',
+      isDefault: false,
+      isProtected: false,
+    });
   });
 
   it('blocks sensitive search paths before making a request', async () => {
@@ -54,7 +63,11 @@ describe('github-tool-core shared core', () => {
 
   it('formats a PR result with card metadata', async () => {
     const runtime = createRuntime(async (url, options) => {
-      if (url.endsWith('/pulls/42') && options?.headers && (options.headers as Record<string, string>).Accept === 'application/vnd.github.v3+json') {
+      if (
+        url.endsWith('/pulls/42') &&
+        options?.headers &&
+        (options.headers as Record<string, string>).Accept === 'application/vnd.github.v3+json'
+      ) {
         return Response.json({
           title: 'Add worker bridge',
           body: 'Fixes #12',
@@ -74,14 +87,23 @@ describe('github-tool-core shared core', () => {
       }
       if (url.endsWith('/pulls/42/commits')) {
         return Response.json([
-          { sha: 'abcdef123456', commit: { message: 'Add worker bridge', author: { name: 'Shawn' } } },
+          {
+            sha: 'abcdef123456',
+            commit: { message: 'Add worker bridge', author: { name: 'Shawn' } },
+          },
         ]);
       }
-      if (url.endsWith('/pulls/42') && options?.headers && (options.headers as Record<string, string>).Accept === 'application/vnd.github.v3.diff') {
+      if (
+        url.endsWith('/pulls/42') &&
+        options?.headers &&
+        (options.headers as Record<string, string>).Accept === 'application/vnd.github.v3.diff'
+      ) {
         return new Response('diff --git a/file b/file');
       }
       if (url.endsWith('/pulls/42/files')) {
-        return Response.json([{ filename: 'app/worker.ts', status: 'modified', additions: 10, deletions: 2 }]);
+        return Response.json([
+          { filename: 'app/worker.ts', status: 'modified', additions: 10, deletions: 2 },
+        ]);
       }
       throw new Error(`unexpected url: ${url}`);
     });
@@ -135,8 +157,18 @@ describe('github-tool-core shared core', () => {
       if (url.includes('/check-runs?per_page=50')) {
         return Response.json({
           check_runs: [
-            { name: 'build', status: 'completed', conclusion: 'success', html_url: 'https://example.test/build' },
-            { name: 'lint', status: 'in_progress', conclusion: null, html_url: 'https://example.test/lint' },
+            {
+              name: 'build',
+              status: 'completed',
+              conclusion: 'success',
+              html_url: 'https://example.test/build',
+            },
+            {
+              name: 'lint',
+              status: 'in_progress',
+              conclusion: null,
+              html_url: 'https://example.test/lint',
+            },
           ],
         });
       }
@@ -221,8 +253,18 @@ describe('github-tool-core shared core', () => {
             author: { name: 'Shawn', date: '2026-03-28T18:00:00.000Z' },
           },
           files: [
-            { filename: 'lib/github-tool-core.ts', status: 'modified', additions: 25, deletions: 4 },
-            { filename: 'app/src/worker/worker-github-tools.ts', status: 'added', additions: 10, deletions: 0 },
+            {
+              filename: 'lib/github-tool-core.ts',
+              status: 'modified',
+              additions: 25,
+              deletions: 4,
+            },
+            {
+              filename: 'app/src/worker/worker-github-tools.ts',
+              status: 'added',
+              additions: 10,
+              deletions: 0,
+            },
           ],
         });
       }
@@ -249,7 +291,9 @@ describe('github-tool-core shared core', () => {
       }
       if (url.includes('/actions/workflows/ci.yml/dispatches')) {
         expect(options?.method).toBe('POST');
-        expect(options?.body).toBe(JSON.stringify({ ref: 'develop', inputs: { environment: 'staging' } }));
+        expect(options?.body).toBe(
+          JSON.stringify({ ref: 'develop', inputs: { environment: 'staging' } }),
+        );
         return new Response(null, { status: 204 });
       }
       throw new Error(`unexpected url: ${url}`);
@@ -355,12 +399,14 @@ describe('github-tool-core shared core', () => {
     const runtime = createRuntime(async (url, options) => {
       if (url.endsWith('/pulls')) {
         expect(options?.method).toBe('POST');
-        expect(options?.body).toBe(JSON.stringify({
-          title: 'Bridge GitHub tools',
-          body: 'Ports the last legacy GitHub tools.',
-          head: 'feature/bridge',
-          base: 'main',
-        }));
+        expect(options?.body).toBe(
+          JSON.stringify({
+            title: 'Bridge GitHub tools',
+            body: 'Ports the last legacy GitHub tools.',
+            head: 'feature/bridge',
+            base: 'main',
+          }),
+        );
         return Response.json({
           number: 55,
           title: 'Bridge GitHub tools',
@@ -399,9 +445,7 @@ describe('github-tool-core shared core', () => {
       }
       if (url.includes('/commits/abc123/check-runs?per_page=50')) {
         return Response.json({
-          check_runs: [
-            { name: 'build', status: 'completed', conclusion: 'success' },
-          ],
+          check_runs: [{ name: 'build', status: 'completed', conclusion: 'success' }],
         });
       }
       throw new Error(`unexpected url: ${url}`);

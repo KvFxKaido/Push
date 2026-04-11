@@ -42,9 +42,10 @@ function KeptCard({
   const [labelDraft, setLabelDraft] = useState(artifact.label ?? '');
 
   const needsTruncation = artifact.content.length > TRUNCATE_LENGTH;
-  const displayContent = expanded || !needsTruncation
-    ? artifact.content
-    : artifact.content.slice(0, TRUNCATE_LENGTH) + '\u2026';
+  const displayContent =
+    expanded || !needsTruncation
+      ? artifact.content
+      : artifact.content.slice(0, TRUNCATE_LENGTH) + '\u2026';
 
   const handleCopy = useCallback(async () => {
     try {
@@ -78,7 +79,10 @@ function KeptCard({
           {editingLabel ? (
             <form
               className="flex items-center gap-1"
-              onSubmit={(e) => { e.preventDefault(); handleLabelSave(); }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleLabelSave();
+              }}
             >
               <input
                 autoFocus
@@ -91,7 +95,10 @@ function KeptCard({
             </form>
           ) : (
             <button
-              onClick={() => { setLabelDraft(artifact.label ?? ''); setEditingLabel(true); }}
+              onClick={() => {
+                setLabelDraft(artifact.label ?? '');
+                setEditingLabel(true);
+              }}
               className="text-push-xs text-push-fg-dim hover:text-push-fg transition-colors truncate max-w-full text-left"
               title="Click to edit label"
             >

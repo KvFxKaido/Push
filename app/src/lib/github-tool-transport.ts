@@ -22,24 +22,26 @@ export function getGitHubToolBackend(): GitHubToolBackend {
 }
 
 export function supportsWorkerGitHubTool(name: string): name is WorkerGitHubToolName {
-  return name === 'fetch_pr'
-    || name === 'list_prs'
-    || name === 'list_commits'
-    || name === 'read_file'
-    || name === 'grep_file'
-    || name === 'list_directory'
-    || name === 'list_branches'
-    || name === 'fetch_checks'
-    || name === 'search_files'
-    || name === 'list_commit_files'
-    || name === 'trigger_workflow'
-    || name === 'get_workflow_runs'
-    || name === 'get_workflow_logs'
-    || name === 'create_pr'
-    || name === 'merge_pr'
-    || name === 'delete_branch'
-    || name === 'check_pr_mergeable'
-    || name === 'find_existing_pr';
+  return (
+    name === 'fetch_pr' ||
+    name === 'list_prs' ||
+    name === 'list_commits' ||
+    name === 'read_file' ||
+    name === 'grep_file' ||
+    name === 'list_directory' ||
+    name === 'list_branches' ||
+    name === 'fetch_checks' ||
+    name === 'search_files' ||
+    name === 'list_commit_files' ||
+    name === 'trigger_workflow' ||
+    name === 'get_workflow_runs' ||
+    name === 'get_workflow_logs' ||
+    name === 'create_pr' ||
+    name === 'merge_pr' ||
+    name === 'delete_branch' ||
+    name === 'check_pr_mergeable' ||
+    name === 'find_existing_pr'
+  );
 }
 
 async function postGitHubToolRequest(
@@ -54,9 +56,10 @@ async function postGitHubToolRequest(
     body: JSON.stringify(payload),
   });
 
-  const data = await response.json().catch(() => null) as WorkerGitHubToolResponse | null;
+  const data = (await response.json().catch(() => null)) as WorkerGitHubToolResponse | null;
   if (!response.ok) {
-    const message = data?.error || data?.details || `GitHub tool worker returned ${response.status}`;
+    const message =
+      data?.error || data?.details || `GitHub tool worker returned ${response.status}`;
     throw new Error(message);
   }
 

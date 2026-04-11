@@ -5,11 +5,7 @@
  * chunked reading, and per-edit / patchset diagnostics.
  */
 
-import {
-  readFromSandbox,
-  execInSandbox,
-  type FileReadResult,
-} from './sandbox-client';
+import { readFromSandbox, execInSandbox, type FileReadResult } from './sandbox-client';
 import {
   fileVersionKey,
   getSandboxWorkspaceRevision,
@@ -60,7 +56,10 @@ export function setPrefetchedEditFile(
   });
 }
 
-export function takePrefetchedEditFile(sandboxId: string, path: string): PrefetchedEditFileState | null {
+export function takePrefetchedEditFile(
+  sandboxId: string,
+  path: string,
+): PrefetchedEditFileState | null {
   const key = prefetchedEditFileKey(sandboxId, path);
   const cached = prefetchedEditFiles.get(key);
   if (!cached) return null;
@@ -68,9 +67,9 @@ export function takePrefetchedEditFile(sandboxId: string, path: string): Prefetc
   if (cached.expiresAt < Date.now()) return null;
   const latestRevision = getSandboxWorkspaceRevision(sandboxId);
   if (
-    typeof cached.workspaceRevision === 'number'
-    && typeof latestRevision === 'number'
-    && cached.workspaceRevision !== latestRevision
+    typeof cached.workspaceRevision === 'number' &&
+    typeof latestRevision === 'number' &&
+    cached.workspaceRevision !== latestRevision
   ) {
     return null;
   }
@@ -107,7 +106,10 @@ export function syncReadSnapshot(sandboxId: string, path: string, result: FileRe
   }
 }
 
-export function invalidateWorkspaceSnapshots(sandboxId: string, currentWorkspaceRevision?: number | null): number {
+export function invalidateWorkspaceSnapshots(
+  sandboxId: string,
+  currentWorkspaceRevision?: number | null,
+): number {
   if (typeof currentWorkspaceRevision === 'number') {
     setSandboxWorkspaceRevision(sandboxId, currentWorkspaceRevision);
   }
@@ -129,7 +131,9 @@ export const LINE_QUALIFIED_REF_RE = /^(\d+):([a-f0-9]{7,12})$/i;
 export const PATCHSET_DETAIL_MAX_FAILURES = 12;
 export const PATCHSET_DETAIL_MAX_CHARS = 1500;
 
-export function parseLineQualifiedRef(ref: string): { lineNo: number; hash: string; hashLength: number } | null {
+export function parseLineQualifiedRef(
+  ref: string,
+): { lineNo: number; hash: string; hashLength: number } | null {
   const m = ref.trim().match(LINE_QUALIFIED_REF_RE);
   if (!m) return null;
   return { lineNo: Number(m[1]), hash: m[2].toLowerCase(), hashLength: m[2].length };
@@ -211,11 +215,15 @@ export async function buildHashlineRetryHints(
       .slice(0, 4)
       .map((index) => `"${index + 1}:${fullHashes[index].slice(0, bareHash.hashLength)}"`)
       .join(', ');
-    hints.push(`Disambiguate "${edit.ref}" with a line-qualified ref: ${suggestedRefs}${matches.length > 4 ? ', …' : ''}.`);
+    hints.push(
+      `Disambiguate "${edit.ref}" with a line-qualified ref: ${suggestedRefs}${matches.length > 4 ? ', …' : ''}.`,
+    );
   }
 
   if (hints.length > 0) {
-    hints.push(`If you're replacing a contiguous block in ${path}, prefer sandbox_edit_range with explicit start/end lines.`);
+    hints.push(
+      `If you're replacing a contiguous block in ${path}, prefer sandbox_edit_range with explicit start/end lines.`,
+    );
   }
 
   return hints;
@@ -251,9 +259,9 @@ export async function refreshSameLineQualifiedRefs(
     const currentHash = fullHashes[idx].slice(0, parsed.hashLength);
     if (currentHash === parsed.hash) return edit;
 
-    const contentMovedElsewhere = fullHashes.some((hash, lineIndex) => (
-      lineIndex !== idx && hash.startsWith(parsed.hash)
-    ));
+    const contentMovedElsewhere = fullHashes.some(
+      (hash, lineIndex) => lineIndex !== idx && hash.startsWith(parsed.hash),
+    );
     if (contentMovedElsewhere) {
       relocatedCount += 1;
       return edit;
@@ -288,7 +296,9 @@ export async function buildRangeReplaceHashlineOps(
   const visibleLineCount = visibleLines.length;
 
   if (visibleLineCount === 0) {
-    throw new Error('File is empty. Use sandbox_write_file or sandbox_edit_file to add initial content.');
+    throw new Error(
+      'File is empty. Use sandbox_write_file or sandbox_edit_file to add initial content.',
+    );
   }
   if (startLine < 1 || endLine < startLine || endLine > visibleLineCount) {
     throw new Error(
@@ -342,14 +352,21 @@ export async function readFullFileByChunks(
   sandboxId: string,
   path: string,
   versionHint?: string | null,
-): Promise<{ content: string; version?: string | null; workspaceRevision?: number | null; truncated: boolean }> {
+): Promise<{
+  content: string;
+  version?: string | null;
+  workspaceRevision?: number | null;
+  truncated: boolean;
+}> {
   const chunkSize = 400;
   const maxChunks = 200;
   let version = versionHint;
 
   // Phase 1: Fetch the first chunk to establish version and determine if we
   // can use parallel fetching for the rest.
-  const firstRange = await readFromSandbox(sandboxId, path, 1, chunkSize) as FileReadResult & { error?: string };
+  const firstRange = (await readFromSandbox(sandboxId, path, 1, chunkSize)) as FileReadResult & {
+    error?: string;
+  };
   if (firstRange.error) {
     if (firstRange.code === 'WORKSPACE_CHANGED') {
       invalidateWorkspaceSnapshots(sandboxId, firstRange.current_workspace_revision);
@@ -359,9 +376,8 @@ export async function readFullFileByChunks(
   if (!version && typeof firstRange.version === 'string' && firstRange.version) {
     version = firstRange.version;
   }
-  const workspaceRevision = typeof firstRange.workspace_revision === 'number'
-    ? firstRange.workspace_revision
-    : null;
+  const workspaceRevision =
+    typeof firstRange.workspace_revision === 'number' ? firstRange.workspace_revision : null;
   if (!firstRange.content) {
     return { content: '', version, workspaceRevision, truncated: false };
   }
@@ -388,7 +404,9 @@ export async function readFullFileByChunks(
     if (lineCountResult.exitCode === 0 && lineCountResult.stdout.trim()) {
       totalLines = parseInt(lineCountResult.stdout.trim(), 10);
     }
-  } catch { /* fall through to sequential */ }
+  } catch {
+    /* fall through to sequential */
+  }
 
   // Phase 3: If we have a line count, fetch remaining chunks in parallel.
   if (totalLines > chunkSize) {
@@ -409,13 +427,16 @@ export async function readFullFileByChunks(
     for (let i = 0; i < remainingChunks.length; i += MAX_CONCURRENT_CHUNKS) {
       const batch = remainingChunks.slice(i, i + MAX_CONCURRENT_CHUNKS);
       const batchResults = await Promise.all(
-        batch.map(({ start, end }) =>
-          readFromSandbox(sandboxId, path, start, end) as Promise<FileReadResult & { error?: string }>
-        )
+        batch.map(
+          ({ start, end }) =>
+            readFromSandbox(sandboxId, path, start, end) as Promise<
+              FileReadResult & { error?: string }
+            >,
+        ),
       );
       chunkResults.push(...batchResults);
       // Stop early if any chunk in this batch was truncated or empty
-      if (batchResults.some(r => r.truncated || !r.content)) break;
+      if (batchResults.some((r) => r.truncated || !r.content)) break;
     }
 
     for (const range of chunkResults) {
@@ -426,9 +447,9 @@ export async function readFullFileByChunks(
         throw new Error(range.error);
       }
       if (
-        typeof workspaceRevision === 'number'
-        && typeof range.workspace_revision === 'number'
-        && range.workspace_revision !== workspaceRevision
+        typeof workspaceRevision === 'number' &&
+        typeof range.workspace_revision === 'number' &&
+        range.workspace_revision !== workspaceRevision
       ) {
         throw new Error('Workspace changed during read. Retry the read before editing.');
       }
@@ -461,7 +482,12 @@ export async function readFullFileByChunks(
   let lastHadTrailingNewline = firstHadTrailing;
 
   for (let i = 1; i < maxChunks; i += 1) {
-    const range = await readFromSandbox(sandboxId, path, startLine, startLine + chunkSize - 1) as FileReadResult & { error?: string };
+    const range = (await readFromSandbox(
+      sandboxId,
+      path,
+      startLine,
+      startLine + chunkSize - 1,
+    )) as FileReadResult & { error?: string };
     if (range.error) {
       if (range.code === 'WORKSPACE_CHANGED') {
         invalidateWorkspaceSnapshots(sandboxId, range.current_workspace_revision);
@@ -469,9 +495,9 @@ export async function readFullFileByChunks(
       throw new Error(range.error);
     }
     if (
-      typeof workspaceRevision === 'number'
-      && typeof range.workspace_revision === 'number'
-      && range.workspace_revision !== workspaceRevision
+      typeof workspaceRevision === 'number' &&
+      typeof range.workspace_revision === 'number' &&
+      range.workspace_revision !== workspaceRevision
     ) {
       throw new Error('Workspace changed during read. Retry the read before editing.');
     }
@@ -522,7 +548,10 @@ export async function readFullFileByChunks(
 // ---------------------------------------------------------------------------
 
 /** Per-edit fast syntax check. Returns diagnostic text or null if clean/unsupported/timeout. */
-export async function runPerEditDiagnostics(sandboxId: string, filePath: string): Promise<string | null> {
+export async function runPerEditDiagnostics(
+  sandboxId: string,
+  filePath: string,
+): Promise<string | null> {
   const ext = filePath.split('.').pop()?.toLowerCase();
   let cmd: string;
 
@@ -544,7 +573,11 @@ export async function runPerEditDiagnostics(sandboxId: string, filePath: string)
     if (result.exitCode !== 0) {
       const output = (result.stderr || result.stdout || '').trim();
       // Filter out harness/runtime noise (MODULE_NOT_FOUND, permission errors)
-      if (output && !output.includes('MODULE_NOT_FOUND') && !output.includes('Cannot find module')) {
+      if (
+        output &&
+        !output.includes('MODULE_NOT_FOUND') &&
+        !output.includes('Cannot find module')
+      ) {
         return output.slice(0, 1500);
       }
     }
@@ -555,11 +588,14 @@ export async function runPerEditDiagnostics(sandboxId: string, filePath: string)
 }
 
 /** Patchset-level full project typecheck. Returns diagnostic text filtered to changed files, or null. */
-export async function runPatchsetDiagnostics(sandboxId: string, changedFiles: string[]): Promise<string | null> {
+export async function runPatchsetDiagnostics(
+  sandboxId: string,
+  changedFiles: string[],
+): Promise<string | null> {
   if (changedFiles.length === 0) return null;
 
   // Only run if any changed files are TypeScript
-  const hasTs = changedFiles.some(f => /\.(ts|tsx)$/.test(f));
+  const hasTs = changedFiles.some((f) => /\.(ts|tsx)$/.test(f));
   if (!hasTs) return null;
 
   try {
@@ -571,10 +607,10 @@ export async function runPatchsetDiagnostics(sandboxId: string, changedFiles: st
     if (!output) return null;
 
     // Filter to only diagnostics referencing changed files
-    const normalizedChanged = new Set(changedFiles.map(f =>
-      f.replace(/^\/workspace\//, '').replace(/^\.\//, ''),
-    ));
-    const filtered = output.split('\n').filter(line => {
+    const normalizedChanged = new Set(
+      changedFiles.map((f) => f.replace(/^\/workspace\//, '').replace(/^\.\//, '')),
+    );
+    const filtered = output.split('\n').filter((line) => {
       // tsc output format: "src/lib/foo.ts(42,5): error TS1234: ..."
       for (const cf of normalizedChanged) {
         if (line.includes(cf)) return true;

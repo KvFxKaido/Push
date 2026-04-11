@@ -59,14 +59,18 @@ describe('delegation handoff integration', () => {
 
     symbolLedger.reset();
     symbolLedger.setRepo('KvFxKaido/Push:feature/auth-flow');
-    symbolLedger.store('/workspace/src/auth.ts', [
-      {
-        name: 'refreshSession',
-        kind: 'function',
-        line: 42,
-        signature: 'export async function refreshSession()',
-      },
-    ], 120);
+    symbolLedger.store(
+      '/workspace/src/auth.ts',
+      [
+        {
+          name: 'refreshSession',
+          kind: 'function',
+          line: 42,
+          signature: 'export async function refreshSession()',
+        },
+      ],
+      120,
+    );
 
     mockGetProviderStreamFn.mockImplementation((provider: string) => ({
       providerType: provider,
@@ -96,15 +100,15 @@ describe('delegation handoff integration', () => {
       },
     });
 
-    mockStreamFn.mockImplementation((
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      onToken('Summary:\nAuth refresh traced.\nFindings:\n- src/auth.ts:42 triggers the refresh path.\nRelevant files:\n- src/auth.ts\nOpen questions:\n- none\nRecommended next step:\nanswer directly with the trace.');
-      onDone();
-      return Promise.resolve();
-    });
+    mockStreamFn.mockImplementation(
+      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        onToken(
+          'Summary:\nAuth refresh traced.\nFindings:\n- src/auth.ts:42 triggers the refresh path.\nRelevant files:\n- src/auth.ts\nOpen questions:\n- none\nRecommended next step:\nanswer directly with the trace.',
+        );
+        onDone();
+        return Promise.resolve();
+      },
+    );
 
     if (!parsed || parsed.tool !== 'delegate_explorer' || !parsed.args.task) {
       throw new Error('Expected delegate_explorer tool call');
@@ -171,15 +175,15 @@ describe('delegation handoff integration', () => {
       },
     });
 
-    mockStreamFn.mockImplementation((
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      onToken('**Done:** Implemented the auth refresh fix.\n**Changed:** src/auth.ts, src/auth.test.ts\n**Verified:** not run\n**Open:** nothing');
-      onDone();
-      return Promise.resolve();
-    });
+    mockStreamFn.mockImplementation(
+      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        onToken(
+          '**Done:** Implemented the auth refresh fix.\n**Changed:** src/auth.ts, src/auth.test.ts\n**Verified:** not run\n**Open:** nothing',
+        );
+        onDone();
+        return Promise.resolve();
+      },
+    );
 
     if (!parsed || parsed.tool !== 'delegate_coder' || !parsed.args.task) {
       throw new Error('Expected delegate_coder tool call');
@@ -227,15 +231,15 @@ describe('delegation handoff integration', () => {
 
   it('falls back to the active provider model when the delegated explorer provider is unavailable', async () => {
     mockIsProviderAvailable.mockImplementation((provider: string) => provider === 'openrouter');
-    mockStreamFn.mockImplementation((
-      _messages: unknown,
-      onToken: (token: string) => void,
-      onDone: () => void,
-    ) => {
-      onToken('Summary:\nFallback used.\nFindings:\n- none\nRelevant files:\n- none\nOpen questions:\n- none\nRecommended next step:\nanswer directly with the result.');
-      onDone();
-      return Promise.resolve();
-    });
+    mockStreamFn.mockImplementation(
+      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        onToken(
+          'Summary:\nFallback used.\nFindings:\n- none\nRelevant files:\n- none\nOpen questions:\n- none\nRecommended next step:\nanswer directly with the result.',
+        );
+        onDone();
+        return Promise.resolve();
+      },
+    );
 
     await runExplorerAgent(
       {

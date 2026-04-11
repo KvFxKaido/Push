@@ -57,19 +57,23 @@ describe('verification presets', () => {
   });
 
   it('standard preset has expected rules', () => {
-    const ids = VERIFICATION_PRESET_STANDARD.rules.map(r => r.id);
+    const ids = VERIFICATION_PRESET_STANDARD.rules.map((r) => r.id);
     expect(ids).toContain('diff-evidence');
     expect(ids).toContain('auditor-gate');
   });
 
   it('strict preset includes command rules', () => {
-    const commandRules = VERIFICATION_PRESET_STRICT.rules.filter(r => r.kind === 'command');
+    const commandRules = VERIFICATION_PRESET_STRICT.rules.filter((r) => r.kind === 'command');
     expect(commandRules.length).toBeGreaterThan(0);
   });
 
   it('minimal preset has the fewest rules', () => {
-    expect(VERIFICATION_PRESET_MINIMAL.rules.length).toBeLessThan(VERIFICATION_PRESET_STANDARD.rules.length);
-    expect(VERIFICATION_PRESET_MINIMAL.rules.length).toBeLessThan(VERIFICATION_PRESET_STRICT.rules.length);
+    expect(VERIFICATION_PRESET_MINIMAL.rules.length).toBeLessThan(
+      VERIFICATION_PRESET_STANDARD.rules.length,
+    );
+    expect(VERIFICATION_PRESET_MINIMAL.rules.length).toBeLessThan(
+      VERIFICATION_PRESET_STRICT.rules.length,
+    );
   });
 });
 
@@ -169,7 +173,7 @@ describe('extractCommandRules', () => {
 
   it('returns only command-kind rules', () => {
     const commands = extractCommandRules(VERIFICATION_PRESET_STRICT);
-    expect(commands.every(r => r.kind === 'command')).toBe(true);
+    expect(commands.every((r) => r.kind === 'command')).toBe(true);
     expect(commands.length).toBe(2); // typecheck + test
   });
 

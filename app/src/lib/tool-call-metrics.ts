@@ -5,7 +5,11 @@
  * tool-call compliance across backends without external telemetry.
  */
 
-export type MalformedToolCallReason = 'truncated' | 'validation_failed' | 'malformed_json' | 'natural_language_intent';
+export type MalformedToolCallReason =
+  | 'truncated'
+  | 'validation_failed'
+  | 'malformed_json'
+  | 'natural_language_intent';
 
 export interface MalformedToolCallMetricInput {
   provider?: string;
@@ -98,7 +102,9 @@ export function recordMalformedToolCallMetric(input: MalformedToolCallMetricInpu
   modelMetrics.reasons[input.reason]++;
   modelMetrics.byTool[tool] = (modelMetrics.byTool[tool] || 0) + 1;
 
-  console.debug(`[tool-call] malformed provider=${provider} model=${model} reason=${input.reason} tool=${tool}`);
+  console.debug(
+    `[tool-call] malformed provider=${provider} model=${model} reason=${input.reason} tool=${tool}`,
+  );
 }
 
 export function getMalformedToolCallMetrics(): MalformedToolCallMetrics {

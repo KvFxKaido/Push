@@ -25,11 +25,29 @@ import {
 } from './workspace-chat-route-builders';
 import type { ChatRouteProps } from './workspace-chat-route-types';
 
-const BranchCreateSheet = lazy(() => import('@/components/chat/BranchCreateSheet').then((module) => ({ default: module.BranchCreateSheet })));
-const MergeFlowSheet = lazy(() => import('@/components/chat/MergeFlowSheet').then((module) => ({ default: module.MergeFlowSheet })));
-const NewChatWorkspaceSheet = lazy(() => import('@/components/chat/NewChatWorkspaceSheet').then((module) => ({ default: module.NewChatWorkspaceSheet })));
-const WorkspaceHubSheet = lazy(() => import('@/components/chat/WorkspaceHubSheet').then((module) => ({ default: module.WorkspaceHubSheet })));
-const RepoLauncherSheet = lazy(() => import('@/components/launcher/RepoLauncherSheet').then((module) => ({ default: module.RepoLauncherSheet })));
+const BranchCreateSheet = lazy(() =>
+  import('@/components/chat/BranchCreateSheet').then((module) => ({
+    default: module.BranchCreateSheet,
+  })),
+);
+const MergeFlowSheet = lazy(() =>
+  import('@/components/chat/MergeFlowSheet').then((module) => ({ default: module.MergeFlowSheet })),
+);
+const NewChatWorkspaceSheet = lazy(() =>
+  import('@/components/chat/NewChatWorkspaceSheet').then((module) => ({
+    default: module.NewChatWorkspaceSheet,
+  })),
+);
+const WorkspaceHubSheet = lazy(() =>
+  import('@/components/chat/WorkspaceHubSheet').then((module) => ({
+    default: module.WorkspaceHubSheet,
+  })),
+);
+const RepoLauncherSheet = lazy(() =>
+  import('@/components/launcher/RepoLauncherSheet').then((module) => ({
+    default: module.RepoLauncherSheet,
+  })),
+);
 
 export function WorkspaceChatRoute(props: ChatRouteProps) {
   const {
@@ -112,13 +130,14 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     const modes: ApprovalMode[] = ['supervised', 'autonomous', 'full-auto'];
     const next = modes[(modes.indexOf(approvalMode) + 1) % modes.length];
     updateApprovalMode(next);
-    toast.success(`Switched to ${next === 'full-auto' ? 'Full Auto' : next.charAt(0).toUpperCase() + next.slice(1)} mode`);
+    toast.success(
+      `Switched to ${next === 'full-auto' ? 'Full Auto' : next.charAt(0).toUpperCase() + next.slice(1)} mode`,
+    );
   }, [approvalMode, updateApprovalMode]);
 
   const isScratch = workspaceSession?.kind === 'scratch';
-  const activeRepoAppearance = activeRepo && !isScratch
-    ? resolveRepoAppearance(activeRepo.full_name)
-    : null;
+  const activeRepoAppearance =
+    activeRepo && !isScratch ? resolveRepoAppearance(activeRepo.full_name) : null;
   const activeRepoAccentHex = activeRepoAppearance
     ? getRepoAppearanceColorHex(activeRepoAppearance.color)
     : null;
@@ -139,7 +158,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
 
     root.setAttribute('data-repo-theme', 'active');
     root.style.setProperty('--repo-theme-accent', activeRepoAccentHex);
-    root.style.setProperty('--repo-theme-accent-soft', hexToRgba(activeRepoAccentHex, 0.10));
+    root.style.setProperty('--repo-theme-accent-soft', hexToRgba(activeRepoAccentHex, 0.1));
     root.style.setProperty('--repo-theme-accent-ultra-soft', hexToRgba(activeRepoAccentHex, 0.06));
     root.style.setProperty('--repo-theme-accent-border', hexToRgba(activeRepoAccentHex, 0.38));
     root.style.setProperty('--repo-theme-accent-glow', hexToRgba(activeRepoAccentHex, 0.45));
@@ -182,7 +201,10 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       return;
     }
     if (activeRepo) {
-      void sandboxStart(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch);
+      void sandboxStart(
+        activeRepo.full_name,
+        activeRepo.current_branch || activeRepo.default_branch,
+      );
     }
   }, [activeRepo, isScratch, sandboxStart]);
 
@@ -192,7 +214,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       return;
     }
     if (activeRepo) {
-      void sandboxStop().then(() => sandboxStart(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch));
+      void sandboxStop().then(() =>
+        sandboxStart(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch),
+      );
     }
   }, [activeRepo, isScratch, sandboxStart, sandboxStop]);
 
@@ -277,12 +301,15 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     markSnapshotActivity,
   });
 
-  const handleWorkspaceHubOpenChangeWithMount = useCallback((open: boolean) => {
-    if (open) {
-      setWorkspaceHubMounted(true);
-    }
-    handleWorkspaceHubOpenChange(open);
-  }, [handleWorkspaceHubOpenChange]);
+  const handleWorkspaceHubOpenChangeWithMount = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setWorkspaceHubMounted(true);
+      }
+      handleWorkspaceHubOpenChange(open);
+    },
+    [handleWorkspaceHubOpenChange],
+  );
 
   const openWorkspaceHubWithMount = useCallback(() => {
     setWorkspaceHubMounted(true);
@@ -294,19 +321,25 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     openLauncher();
   }, [openLauncher]);
 
-  const setLauncherOpenWithMount = useCallback((open: boolean) => {
-    if (open) {
-      setLauncherSheetMounted(true);
-    }
-    setIsLauncherOpen(open);
-  }, [setIsLauncherOpen]);
+  const setLauncherOpenWithMount = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setLauncherSheetMounted(true);
+      }
+      setIsLauncherOpen(open);
+    },
+    [setIsLauncherOpen],
+  );
 
-  const handleNewChatSheetOpenChangeWithMount = useCallback((open: boolean) => {
-    if (open) {
-      setNewChatSheetMounted(true);
-    }
-    handleNewChatSheetOpenChange(open);
-  }, [handleNewChatSheetOpenChange]);
+  const handleNewChatSheetOpenChangeWithMount = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setNewChatSheetMounted(true);
+      }
+      handleNewChatSheetOpenChange(open);
+    },
+    [handleNewChatSheetOpenChange],
+  );
 
   const handleCreateNewChatRequestWithMount = useCallback(() => {
     setNewChatSheetMounted(true);
@@ -318,87 +351,98 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleReviewNewChatWorkspace();
   }, [handleReviewNewChatWorkspace]);
 
-  const setShowBranchCreateWithMount = useCallback((open: boolean) => {
-    if (open) {
-      setBranchCreateMounted(true);
-    }
-    setShowBranchCreate(open);
-  }, [setShowBranchCreate]);
+  const setShowBranchCreateWithMount = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setBranchCreateMounted(true);
+      }
+      setShowBranchCreate(open);
+    },
+    [setShowBranchCreate],
+  );
 
-  const setShowMergeFlowWithMount = useCallback((open: boolean) => {
-    if (open) {
-      setMergeFlowMounted(true);
-    }
-    setShowMergeFlow(open);
-  }, [setShowMergeFlow]);
+  const setShowMergeFlowWithMount = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setMergeFlowMounted(true);
+      }
+      setShowMergeFlow(open);
+    },
+    [setShowMergeFlow],
+  );
 
-  const handlePublishToGitHub = useCallback(async (args: {
-    repoName: string;
-    description?: string;
-    isPrivate: boolean;
-  }) => {
-    if (!isScratch) {
-      throw new Error('Workspace publishing is only available from scratch workspaces right now.');
-    }
-    if (!props.validatedUser) {
-      throw new Error('Connect GitHub in Settings before publishing this workspace.');
-    }
-    if (isStreaming) {
-      throw new Error('Wait for the current response to finish before publishing.');
-    }
+  const handlePublishToGitHub = useCallback(
+    async (args: { repoName: string; description?: string; isPrivate: boolean }) => {
+      if (!isScratch) {
+        throw new Error(
+          'Workspace publishing is only available from scratch workspaces right now.',
+        );
+      }
+      if (!props.validatedUser) {
+        throw new Error('Connect GitHub in Settings before publishing this workspace.');
+      }
+      if (isStreaming) {
+        throw new Error('Wait for the current response to finish before publishing.');
+      }
 
-    const sandboxId = sandbox.sandboxId ?? await ensureSandbox();
-    if (!sandboxId) {
-      throw new Error('Sandbox is not ready yet. Try again in a moment.');
-    }
+      const sandboxId = sandbox.sandboxId ?? (await ensureSandbox());
+      if (!sandboxId) {
+        throw new Error('Sandbox is not ready yet. Try again in a moment.');
+      }
 
-    const result = await executeSandboxToolCall(
-      {
-        tool: 'promote_to_github',
-        args: {
-          repo_name: args.repoName,
-          description: args.description,
-          private: args.isPrivate,
+      const result = await executeSandboxToolCall(
+        {
+          tool: 'promote_to_github',
+          args: {
+            repo_name: args.repoName,
+            description: args.description,
+            private: args.isPrivate,
+          },
         },
-      },
-      sandboxId,
-    );
+        sandboxId,
+      );
 
-    if (!result.promotion?.repo) {
-      throw new Error(cleanWorkspacePublishMessage(result.text) || 'Failed to publish workspace to GitHub.');
-    }
+      if (!result.promotion?.repo) {
+        throw new Error(
+          cleanWorkspacePublishMessage(result.text) || 'Failed to publish workspace to GitHub.',
+        );
+      }
 
-    const promotedRepo = result.promotion.repo;
-    handleWorkspacePromotion(promotedRepo, promotedRepo.default_branch, sandboxId);
+      const promotedRepo = result.promotion.repo;
+      handleWorkspacePromotion(promotedRepo, promotedRepo.default_branch, sandboxId);
 
-    if (result.promotion.warning) {
-      toast.warning(`${promotedRepo.full_name} created. ${result.promotion.warning}`);
-    } else {
-      toast.success(`Published to GitHub: ${promotedRepo.full_name}`);
-    }
-  }, [
-    ensureSandbox,
-    handleWorkspacePromotion,
-    isScratch,
-    isStreaming,
-    props.validatedUser,
-    sandbox.sandboxId,
-  ]);
+      if (result.promotion.warning) {
+        toast.warning(`${promotedRepo.full_name} created. ${result.promotion.warning}`);
+      } else {
+        toast.success(`Published to GitHub: ${promotedRepo.full_name}`);
+      }
+    },
+    [
+      ensureSandbox,
+      handleWorkspacePromotion,
+      isScratch,
+      isStreaming,
+      props.validatedUser,
+      sandbox.sandboxId,
+    ],
+  );
 
   const chatsDrawerOffset = 'min(86vw, 24rem)';
   const workspaceHubOffset = '94vw';
   const chatShellTransform = isChatsDrawerOpen
     ? `translateX(${chatsDrawerOffset})`
     : isWorkspaceHubOpen
-    ? `translateX(-${workspaceHubOffset})`
-    : 'translateX(0px)';
+      ? `translateX(-${workspaceHubOffset})`
+      : 'translateX(0px)';
   const chatShellShadow = isChatsDrawerOpen
     ? 'shadow-[-24px_0_56px_rgba(0,0,0,0.42)]'
     : isWorkspaceHubOpen
-    ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
-    : '';
+      ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
+      : '';
 
-  const snapshotAgeLabel = snapshots.latestSnapshot ? formatSnapshotAge(snapshots.latestSnapshot.createdAt) : null;
+  const snapshotAgeLabel = snapshots.latestSnapshot
+    ? formatSnapshotAge(snapshots.latestSnapshot.createdAt)
+    : null;
   const snapshotIsStale = snapshots.latestSnapshot
     ? isSnapshotStale(snapshots.latestSnapshot.createdAt)
     : false;
@@ -537,17 +581,23 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       sandboxId: sandbox.sandboxId,
       isInScratchWorkspace: Boolean(isScratch),
       onStart: startCurrentSandbox,
-      onRetry: () => { void sandbox.refresh(); },
+      onRetry: () => {
+        void sandbox.refresh();
+      },
       onNewSandbox: restartCurrentSandbox,
       onExitWorkspace: handleExitWorkspaceRequest,
     },
-    sandboxExpiryBannerProps: isScratch ? {
-      createdAt: sandbox.createdAt,
-      sandboxId: sandbox.sandboxId,
-      sandboxStatus: sandbox.status,
-      onRestart: handleSandboxRestart,
-      onWarningThresholdReached: () => { void handleExpiryWarningReached(); },
-    } : null,
+    sandboxExpiryBannerProps: isScratch
+      ? {
+          createdAt: sandbox.createdAt,
+          sandboxId: sandbox.sandboxId,
+          sandboxStatus: sandbox.status,
+          onRestart: handleSandboxRestart,
+          onWarningThresholdReached: () => {
+            void handleExpiryWarningReached();
+          },
+        }
+      : null,
   };
 
   return (
@@ -575,7 +625,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             sandboxError={sandbox.error}
             ensureSandbox={ensureSandbox}
             onStartSandbox={startCurrentSandbox}
-            onRetrySandbox={() => { void sandbox.refresh(); }}
+            onRetrySandbox={() => {
+              void sandbox.refresh();
+            }}
             onNewSandbox={restartCurrentSandbox}
             reviewProviders={catalog.availableProviders}
             reviewActiveProvider={catalog.activeProviderLabel}

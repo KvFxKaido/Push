@@ -24,7 +24,9 @@ export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
   return (
     <div className={CARD_SHELL_CLASS}>
       {/* Verdict header */}
-      <div className={`px-3.5 py-3 flex items-center gap-2.5 ${isSafe ? CARD_HEADER_BG_SUCCESS : CARD_HEADER_BG_ERROR}`}>
+      <div
+        className={`px-3.5 py-3 flex items-center gap-2.5 ${isSafe ? CARD_HEADER_BG_SUCCESS : CARD_HEADER_BG_ERROR}`}
+      >
         {isSafe ? (
           <ShieldCheck className={`h-4 w-4 shrink-0 ${CARD_TEXT_SUCCESS}`} />
         ) : (
@@ -40,17 +42,20 @@ export function AuditVerdictCard({ data }: { data: AuditVerdictCardData }) {
 
       {/* Summary */}
       <div className="px-3 py-2">
-        <p className="text-push-base text-push-fg-secondary leading-relaxed">
-          {data.summary}
-        </p>
+        <p className="text-push-base text-push-fg-secondary leading-relaxed">{data.summary}</p>
       </div>
 
       {/* Risks */}
       {data.risks.length > 0 && (
         <div className="px-3 pb-2 space-y-1.5">
           {data.risks.map((risk, i) => (
-            <div key={i} className={`${CARD_PANEL_SUBTLE_CLASS} flex items-start gap-2 px-2.5 py-2`}>
-              <span className={`inline-flex items-center text-push-2xs font-medium px-1.5 py-0.5 rounded-full mt-0.5 shrink-0 uppercase ${riskColors[risk.level]}`}>
+            <div
+              key={i}
+              className={`${CARD_PANEL_SUBTLE_CLASS} flex items-start gap-2 px-2.5 py-2`}
+            >
+              <span
+                className={`inline-flex items-center text-push-2xs font-medium px-1.5 py-0.5 rounded-full mt-0.5 shrink-0 uppercase ${riskColors[risk.level]}`}
+              >
                 {risk.level}
               </span>
               <span className="text-push-sm text-push-fg-secondary leading-relaxed">

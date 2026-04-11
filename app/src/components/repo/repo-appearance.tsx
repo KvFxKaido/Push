@@ -48,10 +48,7 @@ export function RepoAppearanceBadge({
 
   return (
     <span
-      className={cn(
-        'inline-flex items-center justify-center',
-        className,
-      )}
+      className={cn('inline-flex items-center justify-center', className)}
       style={{
         color: colorHex,
       }}

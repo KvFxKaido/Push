@@ -71,9 +71,10 @@ Legacy long names still work for compatibility, but prefer the short names above
  */
 export function detectScratchpadToolCall(text: string): ScratchpadToolCall | null {
   return detectToolFromText<ScratchpadToolCall>(text, (parsed) => {
-    const rawTool = typeof parsed === 'object' && parsed !== null && 'tool' in parsed
-      ? (parsed as { tool?: unknown }).tool
-      : undefined;
+    const rawTool =
+      typeof parsed === 'object' && parsed !== null && 'tool' in parsed
+        ? (parsed as { tool?: unknown }).tool
+        : undefined;
     const resolvedTool = resolveToolName(typeof rawTool === 'string' ? rawTool : undefined);
     // read_scratchpad — no content needed
     if (resolvedTool === 'read_scratchpad' || isReadScratchpadTool(parsed)) {
@@ -81,14 +82,14 @@ export function detectScratchpadToolCall(text: string): ScratchpadToolCall | nul
     }
     if (isScratchpadTool(parsed)) {
       return {
-        tool: resolveToolName(parsed.tool) as ScratchpadToolCall['tool'] ?? parsed.tool,
+        tool: (resolveToolName(parsed.tool) as ScratchpadToolCall['tool']) ?? parsed.tool,
         content: parsed.content,
       };
     }
     // Handle args-wrapped format: {"tool": "set_scratchpad", "args": {"content": "..."}}
     if (isScratchpadToolWrapped(parsed)) {
       return {
-        tool: resolveToolName(parsed.tool) as ScratchpadToolCall['tool'] ?? parsed.tool,
+        tool: (resolveToolName(parsed.tool) as ScratchpadToolCall['tool']) ?? parsed.tool,
         content: (parsed.args as { content: string }).content,
       };
     }
@@ -96,30 +97,41 @@ export function detectScratchpadToolCall(text: string): ScratchpadToolCall | nul
   });
 }
 
-function isScratchpadTool(obj: unknown): obj is { tool: 'set_scratchpad' | 'append_scratchpad'; content: string } {
+function isScratchpadTool(
+  obj: unknown,
+): obj is { tool: 'set_scratchpad' | 'append_scratchpad'; content: string } {
   return (
     typeof obj === 'object' &&
     obj !== null &&
     'tool' in obj &&
-    (resolveToolName((obj as { tool?: string }).tool) === 'set_scratchpad'
-      || resolveToolName((obj as { tool?: string }).tool) === 'append_scratchpad') &&
+    (resolveToolName((obj as { tool?: string }).tool) === 'set_scratchpad' ||
+      resolveToolName((obj as { tool?: string }).tool) === 'append_scratchpad') &&
     'content' in obj &&
     typeof (obj as { content: unknown }).content === 'string'
   );
 }
 
 function isReadScratchpadTool(obj: unknown): obj is { tool: 'read_scratchpad' } {
-  return typeof obj === 'object'
-    && obj !== null
-    && 'tool' in obj
-    && resolveToolName((obj as { tool?: string }).tool) === 'read_scratchpad';
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'tool' in obj &&
+    resolveToolName((obj as { tool?: string }).tool) === 'read_scratchpad'
+  );
 }
 
-function isScratchpadToolWrapped(obj: unknown): obj is { tool: 'set_scratchpad' | 'append_scratchpad'; args: { content: string } } {
+function isScratchpadToolWrapped(
+  obj: unknown,
+): obj is { tool: 'set_scratchpad' | 'append_scratchpad'; args: { content: string } } {
   if (typeof obj !== 'object' || obj === null) return false;
   const toolName = !('tool' in obj) ? null : resolveToolName((obj as { tool?: string }).tool);
   if (toolName !== 'set_scratchpad' && toolName !== 'append_scratchpad') return false;
-  if (!('args' in obj) || typeof (obj as { args: unknown }).args !== 'object' || (obj as { args: unknown }).args === null) return false;
+  if (
+    !('args' in obj) ||
+    typeof (obj as { args: unknown }).args !== 'object' ||
+    (obj as { args: unknown }).args === null
+  )
+    return false;
   const args = (obj as { args: { content?: unknown } }).args;
   return typeof args.content === 'string';
 }
@@ -142,9 +154,11 @@ export function executeScratchpadToolCall(
       return { text: '[Scratchpad is empty — no content yet]', ok: true };
     }
     const READ_CAP = 2_000;
-    const preview = currentContent.length > READ_CAP
-      ? currentContent.slice(0, READ_CAP) + `\n\n[...truncated at ${READ_CAP} chars — full content (${currentContent.length} chars) is in the system prompt]`
-      : currentContent;
+    const preview =
+      currentContent.length > READ_CAP
+        ? currentContent.slice(0, READ_CAP) +
+          `\n\n[...truncated at ${READ_CAP} chars — full content (${currentContent.length} chars) is in the system prompt]`
+        : currentContent;
     return { text: `[Scratchpad content (${currentContent.length} chars)]\n${preview}`, ok: true };
   }
 

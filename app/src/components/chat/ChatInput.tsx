@@ -67,7 +67,11 @@ function renderGroupedModelOptions(models: string[], provider: AIProviderType) {
 import type { PreferredProvider } from '@/lib/providers';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
-import { AttachmentLinkIcon, SendLiftIcon, VoicePulseIcon } from '@/components/icons/push-custom-icons';
+import {
+  AttachmentLinkIcon,
+  SendLiftIcon,
+  VoicePulseIcon,
+} from '@/components/icons/push-custom-icons';
 
 interface ChatInputProps {
   onSend: (message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => void;
@@ -170,7 +174,8 @@ function formatDeploymentLabel(dep: ExperimentalDeployment): string {
   return dep.model;
 }
 
-const ACCEPTED_FILES = 'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
+const ACCEPTED_FILES =
+  'image/*,.js,.ts,.tsx,.jsx,.py,.go,.rs,.java,.c,.cpp,.h,.md,.txt,.json,.yaml,.yml,.html,.css,.sql,.sh,.rb,.php,.swift,.kt,.scala,.vue,.svelte,.astro';
 const MAX_PAYLOAD = 750 * 1024; // 750KB total
 const COMPOSER_DRAFT_KEY_PREFIX = 'push:chat-composer-draft:';
 
@@ -250,7 +255,8 @@ export function ChatInput({
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const isMobile = useIsMobile();
 
-  const speechSupported = typeof window !== 'undefined' &&
+  const speechSupported =
+    typeof window !== 'undefined' &&
     ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
 
   const toggleListening = useCallback(() => {
@@ -274,7 +280,7 @@ export function ChatInput({
         }
       }
       if (transcript) {
-        setValue(prev => prev ? prev + ' ' + transcript.trim() : transcript.trim());
+        setValue((prev) => (prev ? prev + ' ' + transcript.trim() : transcript.trim()));
       }
     };
     recognition.onend = () => setIsListening(false);
@@ -285,7 +291,9 @@ export function ChatInput({
   }, [isListening]);
 
   useEffect(() => {
-    return () => { recognitionRef.current?.stop(); };
+    return () => {
+      recognitionRef.current?.stop();
+    };
   }, []);
 
   const hasAttachments = stagedAttachments.length > 0;
@@ -347,44 +355,47 @@ export function ChatInput({
     return () => cancelAnimationFrame(frame);
   }, [prefillRequest, adjustHeight]);
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+  const handleFileSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
 
-    // Check total size before processing
-    const currentSize = getTotalAttachmentSize(stagedAttachments);
-    let addedSize = 0;
+      // Check total size before processing
+      const currentSize = getTotalAttachmentSize(stagedAttachments);
+      let addedSize = 0;
 
-    for (const file of Array.from(files)) {
-      if (currentSize + addedSize + file.size > MAX_PAYLOAD * 1.5) {
-        // Skip files that would exceed limit (with some headroom for base64)
-        continue;
+      for (const file of Array.from(files)) {
+        if (currentSize + addedSize + file.size > MAX_PAYLOAD * 1.5) {
+          // Skip files that would exceed limit (with some headroom for base64)
+          continue;
+        }
+
+        // Add placeholder while processing
+        const placeholder: StagedAttachment = {
+          id: crypto.randomUUID(),
+          type: 'document',
+          filename: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          content: '',
+          status: 'processing',
+        };
+        setStagedAttachments((prev) => [...prev, placeholder]);
+
+        // Process file
+        const processed = await processFile(file);
+        setStagedAttachments((prev) =>
+          prev.map((a) => (a.id === placeholder.id ? { ...processed, id: placeholder.id } : a)),
+        );
+
+        addedSize += processed.content.length;
       }
 
-      // Add placeholder while processing
-      const placeholder: StagedAttachment = {
-        id: crypto.randomUUID(),
-        type: 'document',
-        filename: file.name,
-        mimeType: file.type,
-        sizeBytes: file.size,
-        content: '',
-        status: 'processing',
-      };
-      setStagedAttachments((prev) => [...prev, placeholder]);
-
-      // Process file
-      const processed = await processFile(file);
-      setStagedAttachments((prev) =>
-        prev.map((a) => (a.id === placeholder.id ? { ...processed, id: placeholder.id } : a)),
-      );
-
-      addedSize += processed.content.length;
-    }
-
-    // Clear input so same file can be selected again
-    e.target.value = '';
-  }, [stagedAttachments]);
+      // Clear input so same file can be selected again
+      e.target.value = '';
+    },
+    [stagedAttachments],
+  );
 
   const handleRemoveAttachment = useCallback((id: string) => {
     setStagedAttachments((prev) => prev.filter((a) => a.id !== id));
@@ -400,20 +411,22 @@ export function ChatInput({
 
   const selectedProvider: AIProviderType = (() => {
     if (!providerControls) return 'demo';
-    if (providerControls.isProviderLocked && providerControls.lockedProvider) return providerControls.lockedProvider;
+    if (providerControls.isProviderLocked && providerControls.lockedProvider)
+      return providerControls.lockedProvider;
     if (providerControls.selectedProvider) return providerControls.selectedProvider;
     return providerControls.availableProviders[0]?.[0] ?? 'demo';
   })();
 
   const isDisplayedProviderLocked = Boolean(
     providerControls?.isProviderLocked &&
-    providerControls.lockedProvider &&
-    providerControls.lockedProvider === selectedProvider,
+      providerControls.lockedProvider &&
+      providerControls.lockedProvider === selectedProvider,
   );
 
   const selectedModel = (() => {
     if (!providerControls) return '';
-    if (isDisplayedProviderLocked && providerControls.lockedModel) return providerControls.lockedModel;
+    if (isDisplayedProviderLocked && providerControls.lockedModel)
+      return providerControls.lockedModel;
     if (selectedProvider === 'ollama') return providerControls.ollamaModel;
     if (selectedProvider === 'openrouter') return providerControls.openRouterModel;
     if (selectedProvider === 'zen') return providerControls.zenModel;
@@ -450,18 +463,22 @@ export function ChatInput({
     if (selectedProvider === 'ollama') return formatTimeAgo(providerControls.ollamaModelsUpdatedAt);
     if (selectedProvider === 'zen') return formatTimeAgo(providerControls.zenModelsUpdatedAt);
     if (selectedProvider === 'nvidia') return formatTimeAgo(providerControls.nvidiaModelsUpdatedAt);
-    if (selectedProvider === 'blackbox') return formatTimeAgo(providerControls.blackboxModelsUpdatedAt);
-    if (selectedProvider === 'kilocode') return formatTimeAgo(providerControls.kilocodeModelsUpdatedAt);
-    if (selectedProvider === 'openadapter') return formatTimeAgo(providerControls.openadapterModelsUpdatedAt);
+    if (selectedProvider === 'blackbox')
+      return formatTimeAgo(providerControls.blackboxModelsUpdatedAt);
+    if (selectedProvider === 'kilocode')
+      return formatTimeAgo(providerControls.kilocodeModelsUpdatedAt);
+    if (selectedProvider === 'openadapter')
+      return formatTimeAgo(providerControls.openadapterModelsUpdatedAt);
     return null;
   })();
 
-  const canRefreshSelectedModelList = selectedProvider === 'ollama'
-    || selectedProvider === 'zen'
-    || selectedProvider === 'nvidia'
-    || selectedProvider === 'blackbox'
-    || selectedProvider === 'kilocode'
-    || selectedProvider === 'openadapter';
+  const canRefreshSelectedModelList =
+    selectedProvider === 'ollama' ||
+    selectedProvider === 'zen' ||
+    selectedProvider === 'nvidia' ||
+    selectedProvider === 'blackbox' ||
+    selectedProvider === 'kilocode' ||
+    selectedProvider === 'openadapter';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
@@ -479,63 +496,75 @@ export function ChatInput({
   const openAdapterModelList = providerControls?.openadapterModelOptions ?? EMPTY_MODEL_OPTIONS;
   const openAdapterFallbackModel = providerControls?.openadapterModel ?? '';
 
-  const openRouterModelOptions = useMemo(() => (
-    renderGroupedModelOptions(openRouterModelList, 'openrouter')
-  ), [openRouterModelList]);
+  const openRouterModelOptions = useMemo(
+    () => renderGroupedModelOptions(openRouterModelList, 'openrouter'),
+    [openRouterModelList],
+  );
 
   const blackboxModelOptions = useMemo(() => {
-    const models = blackboxModelList.length > 0
-      ? blackboxModelList
-      : blackboxFallbackModel
-        ? [blackboxFallbackModel]
-        : [];
+    const models =
+      blackboxModelList.length > 0
+        ? blackboxModelList
+        : blackboxFallbackModel
+          ? [blackboxFallbackModel]
+          : [];
     return renderGroupedModelOptions(models, 'blackbox');
   }, [blackboxFallbackModel, blackboxModelList]);
 
   const kilocodeModelOptions = useMemo(() => {
-    const models = kilocodeModelList.length > 0
-      ? kilocodeModelList
-      : kilocodeFallbackModel
-        ? [kilocodeFallbackModel]
-        : [];
+    const models =
+      kilocodeModelList.length > 0
+        ? kilocodeModelList
+        : kilocodeFallbackModel
+          ? [kilocodeFallbackModel]
+          : [];
     return renderGroupedModelOptions(models, 'kilocode');
   }, [kilocodeFallbackModel, kilocodeModelList]);
 
   const openAdapterModelOptions = useMemo(() => {
-    const models = openAdapterModelList.length > 0
-      ? openAdapterModelList
-      : openAdapterFallbackModel
-        ? [openAdapterFallbackModel]
-        : [];
+    const models =
+      openAdapterModelList.length > 0
+        ? openAdapterModelList
+        : openAdapterFallbackModel
+          ? [openAdapterFallbackModel]
+          : [];
     return renderGroupedModelOptions(models, 'openadapter');
   }, [openAdapterFallbackModel, openAdapterModelList]);
 
   // Reasoning effort (per-provider, only for models that support it)
   const modelCaps = getModelCapabilities(selectedProvider, selectedModel);
-  const [reasoningEffort, setReasoningEffortState] = useState<ReasoningEffort>(() => getReasoningEffort(selectedProvider));
+  const [reasoningEffort, setReasoningEffortState] = useState<ReasoningEffort>(() =>
+    getReasoningEffort(selectedProvider),
+  );
 
   // Sync reasoning effort when provider changes
   useEffect(() => {
     setReasoningEffortState(getReasoningEffort(selectedProvider));
   }, [selectedProvider]);
 
-  const handleCycleReasoning = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation(); // Don't open the popover
-    const next = cycleReasoningEffort(selectedProvider);
-    setReasoningEffortState(next);
-  }, [selectedProvider]);
+  const handleCycleReasoning = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation(); // Don't open the popover
+      const next = cycleReasoningEffort(selectedProvider);
+      setReasoningEffortState(next);
+    },
+    [selectedProvider],
+  );
 
   // Display model name: strip provider prefix for OpenRouter, use as-is for others
   const displayModelName = selectedModel.replace(/^[^/]+\//, '');
 
-  const readyImageAttachments = readyAttachments.filter((attachment) => attachment.type === 'image');
+  const readyImageAttachments = readyAttachments.filter(
+    (attachment) => attachment.type === 'image',
+  );
   const visionNotice = getVisionCapabilityNotice(selectedProvider, selectedModel);
   const hasUnsupportedImageAttachments =
     readyImageAttachments.length > 0 && visionNotice.support === 'unsupported';
   const hasUnknownImageSupport =
     readyImageAttachments.length > 0 && visionNotice.support === 'unknown';
   const canSend = canSendBase && !hasUnsupportedImageAttachments;
-  const canStreamWithDraft = Boolean(isStreaming) && hasDraftContent && !hasUnsupportedImageAttachments;
+  const canStreamWithDraft =
+    Boolean(isStreaming) && hasDraftContent && !hasUnsupportedImageAttachments;
 
   const handleSend = (streamingBehavior?: ChatSendOptions['streamingBehavior']) => {
     if (!canSend && !canStreamWithDraft) return;
@@ -586,9 +615,10 @@ export function ChatInput({
         };
       }
       if (canStreamWithDraft) {
-        const queueText = queuedFollowUpCount > 0
-          ? `Queue waits behind ${queuedFollowUpCount} queued follow-up${queuedFollowUpCount === 1 ? '' : 's'}.`
-          : 'Queue waits until the current run finishes.';
+        const queueText =
+          queuedFollowUpCount > 0
+            ? `Queue waits behind ${queuedFollowUpCount} queued follow-up${queuedFollowUpCount === 1 ? '' : 's'}.`
+            : 'Queue waits until the current run finishes.';
         return {
           tone: 'default' as const,
           text: `Send steers the next turn. ${queueText}`,
@@ -606,7 +636,10 @@ export function ChatInput({
           text: `${queuedFollowUpCount} follow-up${queuedFollowUpCount === 1 ? '' : 's'} queued`,
         };
       }
-      return { tone: 'default' as const, text: 'Generating... Draft a steer or clear the composer to stop.' };
+      return {
+        tone: 'default' as const,
+        text: 'Generating... Draft a steer or clear the composer to stop.',
+      };
     }
     if (hasUnsupportedImageAttachments) {
       return {
@@ -670,10 +703,7 @@ export function ChatInput({
         {/* Attachment preview */}
         {hasAttachments && (
           <div className="px-3 pt-3">
-            <AttachmentPreview
-              attachments={stagedAttachments}
-              onRemove={handleRemoveAttachment}
-            />
+            <AttachmentPreview attachments={stagedAttachments} onRemove={handleRemoveAttachment} />
           </div>
         )}
 
@@ -684,7 +714,9 @@ export function ChatInput({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={placeholder ?? (repoName ? `Ask about ${repoName}...` : 'Ask about code...')}
+            placeholder={
+              placeholder ?? (repoName ? `Ask about ${repoName}...` : 'Ask about code...')
+            }
             rows={1}
             className="w-full resize-none overflow-y-auto bg-transparent px-1 pb-2 text-push-lg leading-6 text-push-fg placeholder:text-[#6f7787] focus:outline-none"
           />
@@ -716,9 +748,7 @@ export function ChatInput({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className={`flex h-10 w-10 items-center justify-center rounded-full border text-push-fg-secondary ${
-                `${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
-              }`}
+              className={`flex h-10 w-10 items-center justify-center rounded-full border text-push-fg-secondary ${`${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`}`}
               aria-label="Attach file"
               title="Attach file"
             >
@@ -739,7 +769,11 @@ export function ChatInput({
                     }
                   >
                     <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/[0.05] to-transparent" />
-                    <ProviderIcon provider={selectedProvider} size={14} className="relative z-10 shrink-0" />
+                    <ProviderIcon
+                      provider={selectedProvider}
+                      size={14}
+                      className="relative z-10 shrink-0"
+                    />
                     {modelCaps.reasoning && (
                       <button
                         type="button"
@@ -750,9 +784,7 @@ export function ChatInput({
                         {REASONING_EFFORT_LABELS[reasoningEffort]}
                       </button>
                     )}
-                    <span className="relative z-10 truncate">
-                      {displayModelName}
-                    </span>
+                    <span className="relative z-10 truncate">{displayModelName}</span>
                     {isDisplayedProviderLocked ? (
                       <Lock className="relative z-10 h-3 w-3 shrink-0" />
                     ) : (
@@ -773,7 +805,9 @@ export function ChatInput({
                       </p>
                     </div>
                     <div className="space-y-1">
-                      <p className="px-1 text-push-2xs font-medium uppercase tracking-wide text-[#7c879b]">Backend</p>
+                      <p className="px-1 text-push-2xs font-medium uppercase tracking-wide text-[#7c879b]">
+                        Backend
+                      </p>
                       {providerControls.availableProviders.length === 0 ? (
                         <div className="rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 py-2 text-push-xs text-[#7c879b]">
                           No API keys configured yet.
@@ -782,12 +816,15 @@ export function ChatInput({
                         <select
                           value={selectedBackendValue}
                           disabled={!canChangeProvider}
-                          onChange={(e) => providerControls.onSelectBackend(e.target.value as PreferredProvider)}
+                          onChange={(e) =>
+                            providerControls.onSelectBackend(e.target.value as PreferredProvider)
+                          }
                           className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                         >
                           {providerControls.availableProviders.map(([value, label]) => (
                             <option key={value} value={value}>
-                              {label}{value === 'zen' ? ' (Recommended)' : ''}
+                              {label}
+                              {value === 'zen' ? ' (Recommended)' : ''}
                             </option>
                           ))}
                         </select>
@@ -796,7 +833,9 @@ export function ChatInput({
 
                     <div className="space-y-1">
                       <div className="flex items-center justify-between px-1">
-                        <p className="text-push-2xs font-medium uppercase tracking-wide text-[#7c879b]">Model</p>
+                        <p className="text-push-2xs font-medium uppercase tracking-wide text-[#7c879b]">
+                          Model
+                        </p>
                         {canRefreshSelectedModelList && (
                           <button
                             type="button"
@@ -806,7 +845,11 @@ export function ChatInput({
                             aria-label="Refresh models"
                             title="Refresh models"
                           >
-                            {selectedModelLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                            {selectedModelLoading ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3 w-3" />
+                            )}
                           </button>
                         )}
                       </div>
@@ -821,7 +864,11 @@ export function ChatInput({
                         <>
                           <select
                             value={providerControls.ollamaModel}
-                            disabled={!canChangeModel || providerControls.ollamaModelsLoading || providerControls.ollamaModelOptions.length === 0}
+                            disabled={
+                              !canChangeModel ||
+                              providerControls.ollamaModelsLoading ||
+                              providerControls.ollamaModelOptions.length === 0
+                            }
                             onChange={(e) => providerControls.onSelectOllamaModel(e.target.value)}
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
@@ -829,28 +876,46 @@ export function ChatInput({
                               ? providerControls.ollamaModelOptions
                               : [providerControls.ollamaModel]
                             ).map((model) => {
-                              const hints = model ? formatModelCapabilityHints(getModelCapabilities('ollama', model)) : '';
+                              const hints = model
+                                ? formatModelCapabilityHints(getModelCapabilities('ollama', model))
+                                : '';
                               return (
                                 <option key={model || '__default'} value={model}>
-                                  {model ? (hints ? `${formatModelDisplayName('ollama', model)}  ·  ${hints}` : formatModelDisplayName('ollama', model)) : '(default)'}
+                                  {model
+                                    ? hints
+                                      ? `${formatModelDisplayName('ollama', model)}  ·  ${hints}`
+                                      : formatModelDisplayName('ollama', model)
+                                    : '(default)'}
                                 </option>
                               );
                             })}
                           </select>
                           {providerControls.ollamaModelsLoading && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading Ollama models...</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Loading Ollama models...
+                            </p>
                           )}
-                          {!providerControls.ollamaModelsLoading && providerControls.ollamaModelOptions.length === 0 && !providerControls.ollamaModelsError && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
-                          )}
+                          {!providerControls.ollamaModelsLoading &&
+                            providerControls.ollamaModelOptions.length === 0 &&
+                            !providerControls.ollamaModelsError && (
+                              <p className="px-1 text-push-2xs text-[#7c879b]">
+                                No models returned. Try refresh.
+                              </p>
+                            )}
                           {providerControls.ollamaModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.ollamaModelsError}</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              {providerControls.ollamaModelsError}
+                            </p>
                           )}
                           {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Updated {selectedModelUpdatedAgo}
+                            </p>
                           )}
                           {providerControls.isOllamaModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
                           )}
                         </>
                       )}
@@ -859,14 +924,21 @@ export function ChatInput({
                         <>
                           <select
                             value={providerControls.openRouterModel}
-                            disabled={!canChangeModel || providerControls.openRouterModelOptions.length === 0}
-                            onChange={(e) => providerControls.onSelectOpenRouterModel(e.target.value)}
+                            disabled={
+                              !canChangeModel ||
+                              providerControls.openRouterModelOptions.length === 0
+                            }
+                            onChange={(e) =>
+                              providerControls.onSelectOpenRouterModel(e.target.value)
+                            }
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
                             {openRouterModelOptions}
                           </select>
                           {providerControls.isOpenRouterModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
                           )}
                         </>
                       )}
@@ -875,7 +947,9 @@ export function ChatInput({
                         <>
                           <select
                             value={providerControls.zenModel}
-                            disabled={!canChangeModel || providerControls.zenModelOptions.length === 0}
+                            disabled={
+                              !canChangeModel || providerControls.zenModelOptions.length === 0
+                            }
                             onChange={(e) => providerControls.onSelectZenModel(e.target.value)}
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
@@ -883,28 +957,46 @@ export function ChatInput({
                               ? providerControls.zenModelOptions
                               : [providerControls.zenModel]
                             ).map((model) => {
-                              const hints = model ? formatModelCapabilityHints(getModelCapabilities('zen', model)) : '';
+                              const hints = model
+                                ? formatModelCapabilityHints(getModelCapabilities('zen', model))
+                                : '';
                               return (
                                 <option key={model || '__default'} value={model}>
-                                  {model ? (hints ? `${formatModelDisplayName('zen', model)}  ·  ${hints}` : formatModelDisplayName('zen', model)) : '(default)'}
+                                  {model
+                                    ? hints
+                                      ? `${formatModelDisplayName('zen', model)}  ·  ${hints}`
+                                      : formatModelDisplayName('zen', model)
+                                    : '(default)'}
                                 </option>
                               );
                             })}
                           </select>
                           {providerControls.zenModelsLoading && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading OpenCode Zen models...</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Loading OpenCode Zen models...
+                            </p>
                           )}
-                          {!providerControls.zenModelsLoading && providerControls.zenModelOptions.length === 0 && !providerControls.zenModelsError && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
-                          )}
+                          {!providerControls.zenModelsLoading &&
+                            providerControls.zenModelOptions.length === 0 &&
+                            !providerControls.zenModelsError && (
+                              <p className="px-1 text-push-2xs text-[#7c879b]">
+                                No models returned. Try refresh.
+                              </p>
+                            )}
                           {providerControls.zenModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.zenModelsError}</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              {providerControls.zenModelsError}
+                            </p>
                           )}
                           {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Updated {selectedModelUpdatedAgo}
+                            </p>
                           )}
                           {providerControls.isZenModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
                           )}
                         </>
                       )}
@@ -913,7 +1005,11 @@ export function ChatInput({
                         <>
                           <select
                             value={providerControls.nvidiaModel}
-                            disabled={!canChangeModel || providerControls.nvidiaModelsLoading || providerControls.nvidiaModelOptions.length === 0}
+                            disabled={
+                              !canChangeModel ||
+                              providerControls.nvidiaModelsLoading ||
+                              providerControls.nvidiaModelOptions.length === 0
+                            }
                             onChange={(e) => providerControls.onSelectNvidiaModel(e.target.value)}
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
@@ -921,28 +1017,46 @@ export function ChatInput({
                               ? providerControls.nvidiaModelOptions
                               : [providerControls.nvidiaModel]
                             ).map((model) => {
-                              const hints = model ? formatModelCapabilityHints(getModelCapabilities('nvidia', model)) : '';
+                              const hints = model
+                                ? formatModelCapabilityHints(getModelCapabilities('nvidia', model))
+                                : '';
                               return (
                                 <option key={model || '__default'} value={model}>
-                                  {model ? (hints ? `${formatModelDisplayName('nvidia', model)}  ·  ${hints}` : formatModelDisplayName('nvidia', model)) : '(default)'}
+                                  {model
+                                    ? hints
+                                      ? `${formatModelDisplayName('nvidia', model)}  ·  ${hints}`
+                                      : formatModelDisplayName('nvidia', model)
+                                    : '(default)'}
                                 </option>
                               );
                             })}
                           </select>
                           {providerControls.nvidiaModelsLoading && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading Nvidia NIM models...</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Loading Nvidia NIM models...
+                            </p>
                           )}
-                          {!providerControls.nvidiaModelsLoading && providerControls.nvidiaModelOptions.length === 0 && !providerControls.nvidiaModelsError && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
-                          )}
+                          {!providerControls.nvidiaModelsLoading &&
+                            providerControls.nvidiaModelOptions.length === 0 &&
+                            !providerControls.nvidiaModelsError && (
+                              <p className="px-1 text-push-2xs text-[#7c879b]">
+                                No models returned. Try refresh.
+                              </p>
+                            )}
                           {providerControls.nvidiaModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.nvidiaModelsError}</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              {providerControls.nvidiaModelsError}
+                            </p>
                           )}
                           {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Updated {selectedModelUpdatedAgo}
+                            </p>
                           )}
                           {providerControls.isNvidiaModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
                           )}
                         </>
                       )}
@@ -951,26 +1065,42 @@ export function ChatInput({
                         <>
                           <select
                             value={providerControls.blackboxModel}
-                            disabled={!canChangeModel || providerControls.blackboxModelsLoading || providerControls.blackboxModelOptions.length === 0}
+                            disabled={
+                              !canChangeModel ||
+                              providerControls.blackboxModelsLoading ||
+                              providerControls.blackboxModelOptions.length === 0
+                            }
                             onChange={(e) => providerControls.onSelectBlackboxModel(e.target.value)}
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
                             {blackboxModelOptions}
                           </select>
                           {providerControls.blackboxModelsLoading && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading Blackbox AI models...</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Loading Blackbox AI models...
+                            </p>
                           )}
-                          {!providerControls.blackboxModelsLoading && providerControls.blackboxModelOptions.length === 0 && !providerControls.blackboxModelsError && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
-                          )}
+                          {!providerControls.blackboxModelsLoading &&
+                            providerControls.blackboxModelOptions.length === 0 &&
+                            !providerControls.blackboxModelsError && (
+                              <p className="px-1 text-push-2xs text-[#7c879b]">
+                                No models returned. Try refresh.
+                              </p>
+                            )}
                           {providerControls.blackboxModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.blackboxModelsError}</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              {providerControls.blackboxModelsError}
+                            </p>
                           )}
                           {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Updated {selectedModelUpdatedAgo}
+                            </p>
                           )}
                           {providerControls.isBlackboxModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
                           )}
                         </>
                       )}
@@ -979,26 +1109,42 @@ export function ChatInput({
                         <>
                           <select
                             value={providerControls.kilocodeModel}
-                            disabled={!canChangeModel || providerControls.kilocodeModelsLoading || providerControls.kilocodeModelOptions.length === 0}
+                            disabled={
+                              !canChangeModel ||
+                              providerControls.kilocodeModelsLoading ||
+                              providerControls.kilocodeModelOptions.length === 0
+                            }
                             onChange={(e) => providerControls.onSelectKilocodeModel(e.target.value)}
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
                             {kilocodeModelOptions}
                           </select>
                           {providerControls.kilocodeModelsLoading && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading Kilo Code models...</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Loading Kilo Code models...
+                            </p>
                           )}
-                          {!providerControls.kilocodeModelsLoading && providerControls.kilocodeModelOptions.length === 0 && !providerControls.kilocodeModelsError && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
-                          )}
+                          {!providerControls.kilocodeModelsLoading &&
+                            providerControls.kilocodeModelOptions.length === 0 &&
+                            !providerControls.kilocodeModelsError && (
+                              <p className="px-1 text-push-2xs text-[#7c879b]">
+                                No models returned. Try refresh.
+                              </p>
+                            )}
                           {providerControls.kilocodeModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.kilocodeModelsError}</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              {providerControls.kilocodeModelsError}
+                            </p>
                           )}
                           {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Updated {selectedModelUpdatedAgo}
+                            </p>
                           )}
                           {providerControls.isKilocodeModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
                           )}
                         </>
                       )}
@@ -1007,26 +1153,44 @@ export function ChatInput({
                         <>
                           <select
                             value={providerControls.openadapterModel}
-                            disabled={!canChangeModel || providerControls.openadapterModelsLoading || providerControls.openadapterModelOptions.length === 0}
-                            onChange={(e) => providerControls.onSelectOpenAdapterModel(e.target.value)}
+                            disabled={
+                              !canChangeModel ||
+                              providerControls.openadapterModelsLoading ||
+                              providerControls.openadapterModelOptions.length === 0
+                            }
+                            onChange={(e) =>
+                              providerControls.onSelectOpenAdapterModel(e.target.value)
+                            }
                             className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                           >
                             {openAdapterModelOptions}
                           </select>
                           {providerControls.openadapterModelsLoading && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Loading OpenAdapter models...</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Loading OpenAdapter models...
+                            </p>
                           )}
-                          {!providerControls.openadapterModelsLoading && providerControls.openadapterModelOptions.length === 0 && !providerControls.openadapterModelsError && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">No models returned. Try refresh.</p>
-                          )}
+                          {!providerControls.openadapterModelsLoading &&
+                            providerControls.openadapterModelOptions.length === 0 &&
+                            !providerControls.openadapterModelsError && (
+                              <p className="px-1 text-push-2xs text-[#7c879b]">
+                                No models returned. Try refresh.
+                              </p>
+                            )}
                           {providerControls.openadapterModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">{providerControls.openadapterModelsError}</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              {providerControls.openadapterModelsError}
+                            </p>
                           )}
                           {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-[#7c879b]">Updated {selectedModelUpdatedAgo}</p>
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Updated {selectedModelUpdatedAgo}
+                            </p>
                           )}
                           {providerControls.isOpenAdapterModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
                           )}
                         </>
                       )}
@@ -1037,7 +1201,9 @@ export function ChatInput({
                             <select
                               value={providerControls.azureActiveDeploymentId ?? ''}
                               disabled={!canChangeModel}
-                              onChange={(e) => providerControls.onSelectAzureDeployment(e.target.value)}
+                              onChange={(e) =>
+                                providerControls.onSelectAzureDeployment(e.target.value)
+                              }
                               className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                             >
                               {providerControls.azureDeployments.map((dep) => (
@@ -1056,7 +1222,9 @@ export function ChatInput({
                             />
                           )}
                           {providerControls.isAzureModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a deployment starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a deployment starts a new chat.
+                            </p>
                           )}
                         </>
                       )}
@@ -1067,7 +1235,9 @@ export function ChatInput({
                             <select
                               value={providerControls.bedrockActiveDeploymentId ?? ''}
                               disabled={!canChangeModel}
-                              onChange={(e) => providerControls.onSelectBedrockDeployment(e.target.value)}
+                              onChange={(e) =>
+                                providerControls.onSelectBedrockDeployment(e.target.value)
+                              }
                               className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
                             >
                               {providerControls.bedrockDeployments.map((dep) => (
@@ -1080,13 +1250,17 @@ export function ChatInput({
                             <input
                               type="text"
                               value={providerControls.bedrockModel}
-                              onChange={(e) => providerControls.onSelectBedrockModel(e.target.value)}
+                              onChange={(e) =>
+                                providerControls.onSelectBedrockModel(e.target.value)
+                              }
                               className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579]"
                               placeholder="Bedrock model id"
                             />
                           )}
                           {providerControls.isBedrockModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
                           )}
                         </>
                       )}
@@ -1109,13 +1283,16 @@ export function ChatInput({
                             ))}
                           </select>
                           {providerControls.isVertexModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">Current chat locked; choosing a model starts a new chat.</p>
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
                           )}
                         </>
                       )}
                     </div>
                     <p className="px-1 text-push-2xs text-[#7c879b]">
-                      Settings controls your defaults. This picker only changes the selected backend/model for this chat.
+                      Settings controls your defaults. This picker only changes the selected
+                      backend/model for this chat.
                     </p>
                     <p
                       className={`px-1 text-push-2xs ${
@@ -1129,7 +1306,9 @@ export function ChatInput({
                       {visionNotice.text}
                     </p>
                     {isDisplayedProviderLocked && (
-                      <p className="px-1 text-push-2xs text-amber-400">Changing backend/model here will start a new chat.</p>
+                      <p className="px-1 text-push-2xs text-amber-400">
+                        Changing backend/model here will start a new chat.
+                      </p>
                     )}
                   </div>
                 </PopoverContent>
@@ -1168,9 +1347,7 @@ export function ChatInput({
             <button
               type="button"
               onClick={() => handleSend('queue')}
-              className={`flex h-10 shrink-0 items-center rounded-full px-3 text-xs text-push-fg-secondary ${
-                `${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`
-              }`}
+              className={`flex h-10 shrink-0 items-center rounded-full px-3 text-xs text-push-fg-secondary ${`${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`}`}
               aria-label="Queue follow-up"
               title="Queue follow-up"
             >

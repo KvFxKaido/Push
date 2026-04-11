@@ -1,14 +1,24 @@
 import { Plus, Minus, FileEdit } from 'lucide-react';
 import type { CommitFilesCardData } from '@/types';
-import { timeAgo, CARD_SHELL_CLASS, CARD_TEXT_SUCCESS, CARD_TEXT_ERROR, CARD_TEXT_WARNING, CARD_LIST_CLASS } from '@/lib/utils';
+import {
+  timeAgo,
+  CARD_SHELL_CLASS,
+  CARD_TEXT_SUCCESS,
+  CARD_TEXT_ERROR,
+  CARD_TEXT_WARNING,
+  CARD_LIST_CLASS,
+} from '@/lib/utils';
 import { CommitPulseIcon } from '@/components/icons/push-custom-icons';
 
 export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
   const statusIcon = (status: string) => {
     switch (status) {
-      case 'added': return <Plus className={`h-3 w-3 ${CARD_TEXT_SUCCESS}`} />;
-      case 'removed': return <Minus className={`h-3 w-3 ${CARD_TEXT_ERROR}`} />;
-      default: return <FileEdit className={`h-3 w-3 ${CARD_TEXT_WARNING}`} />;
+      case 'added':
+        return <Plus className={`h-3 w-3 ${CARD_TEXT_SUCCESS}`} />;
+      case 'removed':
+        return <Minus className={`h-3 w-3 ${CARD_TEXT_ERROR}`} />;
+      default:
+        return <FileEdit className={`h-3 w-3 ${CARD_TEXT_WARNING}`} />;
     }
   };
 
@@ -25,8 +35,7 @@ export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
           <span>{data.author}</span>
           <span>{timeAgo(data.date)}</span>
           <span className="ml-auto">
-            <span className="text-push-status-success">+{data.totalChanges.additions}</span>
-            {' '}
+            <span className="text-push-status-success">+{data.totalChanges.additions}</span>{' '}
             <span className="text-push-status-error">-{data.totalChanges.deletions}</span>
           </span>
         </div>
@@ -41,8 +50,7 @@ export function CommitFilesCard({ data }: { data: CommitFilesCardData }) {
               {file.filename}
             </span>
             <span className="text-push-xs text-push-fg-dim shrink-0">
-              <span className="text-push-status-success">+{file.additions}</span>
-              {' '}
+              <span className="text-push-status-success">+{file.additions}</span>{' '}
               <span className="text-push-status-error">-{file.deletions}</span>
             </span>
           </div>

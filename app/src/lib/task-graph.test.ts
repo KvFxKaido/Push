@@ -2,10 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DelegationOutcome, TaskGraphNode } from '@/types';
 import { executeTaskGraph, formatTaskGraphResult } from './task-graph';
 
-function makeDelegationOutcome(
-  agent: 'coder' | 'explorer',
-  summary: string,
-): DelegationOutcome {
+function makeDelegationOutcome(agent: 'coder' | 'explorer', summary: string): DelegationOutcome {
   return {
     agent,
     status: 'complete',
@@ -40,9 +37,10 @@ describe('task-graph', () => {
 
     const result = await executeTaskGraph(nodes, async (node, enrichedContext) => {
       contexts.set(node.id, enrichedContext);
-      const summary = node.id === 'explore-auth'
-        ? 'Found refresh trigger in middleware.'
-        : 'Applied auth flow fix.';
+      const summary =
+        node.id === 'explore-auth'
+          ? 'Found refresh trigger in middleware.'
+          : 'Applied auth flow fix.';
       return {
         summary,
         rounds: 1,
@@ -55,7 +53,9 @@ describe('task-graph', () => {
     expect(contexts.get('fix-auth')).toContain(
       '[TASK_GRAPH_MEMORY]\nDependency memory:\n- [explore-auth | explorer | complete] Found refresh trigger in middleware.\n[/TASK_GRAPH_MEMORY]',
     );
-    expect(result.memoryEntries.get('explore-auth')?.summary).toBe('Found refresh trigger in middleware.');
+    expect(result.memoryEntries.get('explore-auth')?.summary).toBe(
+      'Found refresh trigger in middleware.',
+    );
     expect(result.nodeStates.get('explore-auth')?.delegationOutcome?.summary).toBe(
       'Found refresh trigger in middleware.',
     );
@@ -73,16 +73,15 @@ describe('task-graph', () => {
 
     const result = await executeTaskGraph(nodes, async (node, enrichedContext) => {
       contexts.set(node.id, enrichedContext);
-      const summary = node.id === 'explore-tests'
-        ? longSummary
-        : `${node.id} complete`;
+      const summary = node.id === 'explore-tests' ? longSummary : `${node.id} complete`;
       return {
         summary,
         rounds: 1,
         delegationOutcome: {
           ...makeDelegationOutcome(node.agent, summary),
           checks: node.id === 'explore-tests' ? [{ id: 'coverage', passed: true, output: '' }] : [],
-          evidence: node.id === 'explore-tests' ? [{ kind: 'observation', label: 'Test patterns' }] : [],
+          evidence:
+            node.id === 'explore-tests' ? [{ kind: 'observation', label: 'Test patterns' }] : [],
         },
       };
     });
@@ -90,7 +89,9 @@ describe('task-graph', () => {
     expect(result.success).toBe(true);
     const fixAuthContext = contexts.get('fix-auth')?.join('\n') ?? '';
     expect(fixAuthContext).toContain('Dependency memory:');
-    expect(fixAuthContext).toContain('- [explore-auth | explorer | complete] explore-auth complete');
+    expect(fixAuthContext).toContain(
+      '- [explore-auth | explorer | complete] explore-auth complete',
+    );
     expect(fixAuthContext).toContain('Shared graph memory:');
     expect(fixAuthContext).toContain('- [explore-tests | explorer | complete]');
     expect(fixAuthContext).toContain('Evidence: Test patterns');
@@ -131,15 +132,16 @@ describe('task-graph', () => {
 
     const resultPromise = executeTaskGraph(
       nodes,
-      async (_node, _context, signal) => new Promise((_, reject) => {
-        if (signal?.aborted) {
-          reject(new DOMException('cancelled', 'AbortError'));
-          return;
-        }
-        signal?.addEventListener('abort', () => {
-          reject(new DOMException('cancelled', 'AbortError'));
-        });
-      }),
+      async (_node, _context, signal) =>
+        new Promise((_, reject) => {
+          if (signal?.aborted) {
+            reject(new DOMException('cancelled', 'AbortError'));
+            return;
+          }
+          signal?.addEventListener('abort', () => {
+            reject(new DOMException('cancelled', 'AbortError'));
+          });
+        }),
       { signal: controller.signal },
     );
 

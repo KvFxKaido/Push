@@ -21,8 +21,7 @@ vi.mock('./orchestrator', () => ({
 
 vi.mock('./file-awareness-ledger', () => ({
   fileLedger: {
-    getDirtyFilesWithProvenance: (...args: unknown[]) =>
-      mockGetDirtyFilesWithProvenance(...args),
+    getDirtyFilesWithProvenance: (...args: unknown[]) => mockGetDirtyFilesWithProvenance(...args),
   },
 }));
 
@@ -102,10 +101,7 @@ describe('chat-tool-messages', () => {
 
     const metaLine = buildToolResultMetaLine(
       3,
-      [
-        assistantMessage({ content: 'First message' }),
-        userMessage({ content: 'Second message' }),
-      ],
+      [assistantMessage({ content: 'First message' }), userMessage({ content: 'Second message' })],
       'openrouter',
       'claude-sonnet-4.6:nitro',
       { dirty: true, files: 3 },

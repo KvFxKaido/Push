@@ -41,9 +41,7 @@ export function HubChatsTab({
     const all = Object.values(conversations);
     if (!repoFullName) {
       // Sandbox mode — show chats without a repo
-      return all
-        .filter((c) => !c.repoFullName)
-        .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+      return all.filter((c) => !c.repoFullName).sort((a, b) => b.lastMessageAt - a.lastMessageAt);
     }
     return all
       .filter((c) => c.repoFullName === repoFullName)
@@ -152,13 +150,15 @@ export function HubChatsTab({
                   }}
                   className="flex w-full items-center gap-1.5 px-3 pb-1 pt-3 text-left"
                 >
-                  <BranchWaveIcon className={`h-3 w-3 shrink-0 ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`} />
-                  <span className={`truncate text-push-2xs font-medium ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`}>
+                  <BranchWaveIcon
+                    className={`h-3 w-3 shrink-0 ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`}
+                  />
+                  <span
+                    className={`truncate text-push-2xs font-medium ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`}
+                  >
                     {group.name}
                   </span>
-                  <span className="text-push-2xs text-push-fg-dim">
-                    ({group.chats.length})
-                  </span>
+                  <span className="text-push-2xs text-push-fg-dim">({group.chats.length})</span>
                 </button>
               )}
 
@@ -225,11 +225,14 @@ export function HubChatsTab({
                           }}
                           className="min-w-0 flex-1 px-2.5 py-2 text-left"
                         >
-                          <p className={`truncate text-push-sm ${isActive ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
+                          <p
+                            className={`truncate text-push-sm ${isActive ? 'text-push-fg' : 'text-push-fg-secondary'}`}
+                          >
                             {chat.title}
                           </p>
                           <p className="mt-0.5 text-push-2xs text-push-fg-muted">
-                            {messageCount} msg{messageCount !== 1 ? 's' : ''} · {timeAgoCompact(chat.lastMessageAt)}
+                            {messageCount} msg{messageCount !== 1 ? 's' : ''} ·{' '}
+                            {timeAgoCompact(chat.lastMessageAt)}
                           </p>
                         </button>
                         <button

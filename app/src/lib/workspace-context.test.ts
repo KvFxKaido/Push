@@ -35,10 +35,7 @@ describe('buildSessionCapabilityBlock', () => {
       },
     ]);
 
-    const block = buildSessionCapabilityBlock(
-      { mode: 'repo', includeGitHubTools: true },
-      true,
-    );
+    const block = buildSessionCapabilityBlock({ mode: 'repo', includeGitHubTools: true }, true);
     const payload = JSON.parse(block.split('\n').slice(1, -1).join('\n'));
 
     expect(payload.sandbox.containerTtl).toBe('45m');
@@ -62,10 +59,7 @@ describe('buildSessionCapabilityBlock', () => {
       },
     ]);
 
-    const block = buildSessionCapabilityBlock(
-      { mode: 'scratch', includeGitHubTools: false },
-      true,
-    );
+    const block = buildSessionCapabilityBlock({ mode: 'scratch', includeGitHubTools: false }, true);
     const payload = JSON.parse(block.split('\n').slice(1, -1).join('\n'));
 
     expect(payload.sandbox.lifecycleEvents).toEqual([

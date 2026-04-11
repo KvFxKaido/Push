@@ -62,11 +62,7 @@ export function useProtectMain(repoFullName?: string) {
   );
 
   const isProtected =
-    repoOverride === 'always'
-      ? true
-      : repoOverride === 'never'
-        ? false
-        : globalDefault;
+    repoOverride === 'always' ? true : repoOverride === 'never' ? false : globalDefault;
 
   return {
     isProtected,

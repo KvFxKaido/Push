@@ -16,21 +16,32 @@ describe('verification-runtime', () => {
 
     expect(state.requirements.find((req) => req.id === 'typecheck')?.status).toBe('pending');
     expect(state.requirements.find((req) => req.id === 'test')?.status).toBe('not_applicable');
-    expect(state.requirements.find((req) => req.id === 'auditor-gate')?.status).toBe('not_applicable');
+    expect(state.requirements.find((req) => req.id === 'auditor-gate')?.status).toBe(
+      'not_applicable',
+    );
   });
 
   it('marks coder mutations as evidence and invalidates checks while activating the auditor gate', () => {
     const initial = hydrateVerificationRuntimeState(VERIFICATION_PRESET_STRICT, undefined, 1000);
-    const afterChecks = recordVerificationCommandResult(initial, 'npx tsc --noEmit', {
-      exitCode: 0,
-      detail: 'typecheck passed',
-    }, 1100);
+    const afterChecks = recordVerificationCommandResult(
+      initial,
+      'npx tsc --noEmit',
+      {
+        exitCode: 0,
+        detail: 'typecheck passed',
+      },
+      1100,
+    );
 
-    const mutated = recordVerificationMutation(afterChecks, {
-      source: 'coder',
-      touchedPaths: ['app/src/lib/useChat.ts'],
-      detail: 'Coder updated runtime files.',
-    }, 1200);
+    const mutated = recordVerificationMutation(
+      afterChecks,
+      {
+        source: 'coder',
+        touchedPaths: ['app/src/lib/useChat.ts'],
+        detail: 'Coder updated runtime files.',
+      },
+      1200,
+    );
 
     expect(mutated.backendTouched).toBe(true);
     expect(mutated.requirements.find((req) => req.id === 'diff-evidence')?.status).toBe('passed');
@@ -51,7 +62,13 @@ describe('verification-runtime', () => {
       1200,
     );
 
-    const completed = recordVerificationGateResult(state, 'auditor', 'passed', 'Auditor marked the work complete.', 1300);
+    const completed = recordVerificationGateResult(
+      state,
+      'auditor',
+      'passed',
+      'Auditor marked the work complete.',
+      1300,
+    );
     const evaluation = evaluateVerificationState(completed, 'completion');
 
     expect(evaluation.passed).toBe(true);

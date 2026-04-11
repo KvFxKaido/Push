@@ -9,7 +9,13 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { EditorView, lineNumbers, drawSelection, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
+import {
+  EditorView,
+  lineNumbers,
+  drawSelection,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+} from '@codemirror/view';
 import { EditorState, Compartment } from '@codemirror/state';
 import { defaultHighlightStyle, syntaxHighlighting, bracketMatching } from '@codemirror/language';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
@@ -95,7 +101,9 @@ export function useCodeMirror({
       });
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [language, ready]);
 
   // Sync readOnly changes
@@ -110,7 +118,9 @@ export function useCodeMirror({
   useEffect(() => {
     if (!viewRef.current) return;
     viewRef.current.dispatch({
-      effects: lineWrappingCompartment.current.reconfigure(lineWrapping ? [EditorView.lineWrapping] : []),
+      effects: lineWrappingCompartment.current.reconfigure(
+        lineWrapping ? [EditorView.lineWrapping] : [],
+      ),
     });
   }, [lineWrapping, ready]);
 

@@ -1,10 +1,5 @@
 import type { Env } from './worker-middleware';
-import {
-  validateOrigin,
-  getClientIp,
-  readBodyText,
-  wlog,
-} from './worker-middleware';
+import { validateOrigin, getClientIp, readBodyText, wlog } from './worker-middleware';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
 import {
   formatSensitivePathToolError,
@@ -17,14 +12,8 @@ import {
   type GitHubCoreRuntime,
   type GitHubCoreToolCall,
 } from '@push/lib/github-tool-core';
-import type {
-  ToolExecutionResult,
-} from '../types';
-import {
-  asRecord,
-  asString,
-  parseGitHubCoreToolCall,
-} from '@push/lib/github-tool-parser';
+import type { ToolExecutionResult } from '../types';
+import { asRecord, asString, parseGitHubCoreToolCall } from '@push/lib/github-tool-parser';
 
 const GITHUB_TIMEOUT_MS = 15_000;
 const MAX_RETRIES = 3;
@@ -32,7 +21,10 @@ const BASE_DELAY_MS = 1000;
 
 type GitHubToolPayload = GitHubCoreToolCall & { allowedRepo: string };
 
-function getGitHubHeaders(request: Request, accept: string = 'application/vnd.github.v3+json'): Record<string, string> {
+function getGitHubHeaders(
+  request: Request,
+  accept: string = 'application/vnd.github.v3+json',
+): Record<string, string> {
   const authorization = request.headers.get('Authorization');
   const headers: Record<string, string> = { Accept: accept };
   if (authorization) {
@@ -81,7 +73,9 @@ async function githubFetch(url: string, options?: RequestInit): Promise<Response
       lastError = new Error(
         isTimeout
           ? `GitHub API timed out after ${GITHUB_TIMEOUT_MS / 1000}s`
-          : error instanceof Error ? error.message : String(error),
+          : error instanceof Error
+            ? error.message
+            : String(error),
       );
 
       if (attempt < MAX_RETRIES && isRetryableError(error)) {
@@ -119,10 +113,13 @@ export async function handleGitHubTools(request: Request, env: Env): Promise<Res
   const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: getClientIp(request) });
   if (!rateLimitOk) {
     wlog('warn', 'rate_limited', { requestId, path: 'api/github/tools', ip: getClientIp(request) });
-    return Response.json({ error: 'Rate limit exceeded. Try again later.' }, {
-      status: 429,
-      headers: { 'Retry-After': '60' },
-    });
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      {
+        status: 429,
+        headers: { 'Retry-After': '60' },
+      },
+    );
   }
 
   const bodyResult = await readBodyText(request, 64 * 1024);
@@ -144,32 +141,42 @@ export async function handleGitHubTools(request: Request, env: Env): Promise<Res
   const allowedNormalized = normalizeGitHubRepoName(parsed.allowedRepo);
   const requestedNormalized = normalizeGitHubRepoName(parsed.args.repo);
   if (!allowedNormalized || !requestedNormalized || allowedNormalized !== requestedNormalized) {
-    return Response.json({
-      error: `Access denied — can only query the active repo "${parsed.allowedRepo}"`,
-    }, { status: 403 });
+    return Response.json(
+      {
+        error: `Access denied — can only query the active repo "${parsed.allowedRepo}"`,
+      },
+      { status: 403 },
+    );
   }
 
   try {
     const runtime: GitHubCoreRuntime = {
       githubFetch,
-      buildHeaders: (accept = 'application/vnd.github.v3+json') => getGitHubHeaders(request, accept),
+      buildHeaders: (accept = 'application/vnd.github.v3+json') =>
+        getGitHubHeaders(request, accept),
       buildApiUrl: (path) => `https://api.github.com${path.startsWith('/') ? path : `/${path}`}`,
       decodeBase64: (content) => atob(content),
       isSensitivePath,
       redactSensitiveText,
       formatSensitivePathToolError,
     };
-    const result = await executeGitHubCoreTool(runtime, parsed) as ToolExecutionResult;
+    const result = (await executeGitHubCoreTool(runtime, parsed)) as ToolExecutionResult;
 
-    return Response.json({ result }, {
-      headers: { [REQUEST_ID_HEADER]: requestId },
-    });
+    return Response.json(
+      { result },
+      {
+        headers: { [REQUEST_ID_HEADER]: requestId },
+      },
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     wlog('error', 'github_tool_error', { requestId, tool: parsed.tool, message });
-    return Response.json({ error: message }, {
-      status: 502,
-      headers: { [REQUEST_ID_HEADER]: requestId },
-    });
+    return Response.json(
+      { error: message },
+      {
+        status: 502,
+        headers: { [REQUEST_ID_HEADER]: requestId },
+      },
+    );
   }
 }

@@ -1,2 +1,2 @@
 #!/bin/sh
-cd app && npm run lint
+cd app && npx --no-install biome check --staged --no-errors-on-unmatched && npm run lint

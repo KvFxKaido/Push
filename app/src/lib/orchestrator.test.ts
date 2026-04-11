@@ -4,10 +4,16 @@ import { getContextBudget, ORCHESTRATOR_SYSTEM_PROMPT } from './orchestrator';
 describe('ORCHESTRATOR_SYSTEM_PROMPT', () => {
   it('includes clarification guidance for when to ask vs assume', () => {
     expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain('## Clarifications and Assumptions');
-    expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain('First try to resolve ambiguity from the chat, repo context, and available inspection tools.');
-    expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain('If a genuine ambiguity remains and it would materially change the approach, risk wasted/incorrect work, or depend on user preference');
+    expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain(
+      'First try to resolve ambiguity from the chat, repo context, and available inspection tools.',
+    );
+    expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain(
+      'If a genuine ambiguity remains and it would materially change the approach, risk wasted/incorrect work, or depend on user preference',
+    );
     expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain('with 2–4 concrete options.');
-    expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain('If the ambiguity is minor or reversible, make the best reasonable assumption, state it briefly, and continue.');
+    expect(ORCHESTRATOR_SYSTEM_PROMPT).toContain(
+      'If the ambiguity is minor or reversible, make the best reasonable assumption, state it briefly, and continue.',
+    );
   });
 });
 

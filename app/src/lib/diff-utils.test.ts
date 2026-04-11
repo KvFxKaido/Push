@@ -17,11 +17,7 @@ describe('chunkDiffByFile', () => {
     const hugeProductionDiff = makeAddedFileDiff('src/huge.ts', 'x'.repeat(1_000));
     const smallTestDiff = makeAddedFileDiff('src/huge.test.ts', 'test');
 
-    const result = chunkDiffByFile(
-      hugeProductionDiff + smallTestDiff,
-      300,
-      classifyFilePath,
-    );
+    const result = chunkDiffByFile(hugeProductionDiff + smallTestDiff, 300, classifyFilePath);
 
     expect(result).toContain('diff --git a/src/huge.ts b/src/huge.ts');
     expect(result).toContain('[Largest file truncated to fit budget]');

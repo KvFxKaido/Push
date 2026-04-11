@@ -34,7 +34,11 @@ export function getFileWorkspaceRevision(sandboxId: string, path: string): numbe
   return sandboxFileWorkspaceRevisions.get(fileVersionKey(sandboxId, path));
 }
 
-export function setFileWorkspaceRevision(sandboxId: string, path: string, workspaceRevision: number): void {
+export function setFileWorkspaceRevision(
+  sandboxId: string,
+  path: string,
+  workspaceRevision: number,
+): void {
   sandboxFileWorkspaceRevisions.set(fileVersionKey(sandboxId, path), workspaceRevision);
 }
 

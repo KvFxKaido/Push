@@ -13,7 +13,12 @@ import {
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
-import { BranchWaveIcon, CommitPulseIcon, DiffSeamIcon, PRThreadIcon } from '@/components/icons/push-custom-icons';
+import {
+  BranchWaveIcon,
+  CommitPulseIcon,
+  DiffSeamIcon,
+  PRThreadIcon,
+} from '@/components/icons/push-custom-icons';
 import { DiffLine } from '@/components/cards/DiffPreviewCard';
 import { parseDiffStats } from '@/lib/diff-utils';
 import {
@@ -59,23 +64,43 @@ function stateBadge(pr: RepoPullRequestListItem | RepoPullRequestDetail) {
 function checksTone(overall: RepoPullRequestDetail['status']['checksOverall']) {
   switch (overall) {
     case 'success':
-      return { label: 'Checks passing', className: 'bg-emerald-500/15 text-emerald-300', Icon: CheckCircle2 };
+      return {
+        label: 'Checks passing',
+        className: 'bg-emerald-500/15 text-emerald-300',
+        Icon: CheckCircle2,
+      };
     case 'failure':
       return { label: 'Checks failing', className: 'bg-red-500/15 text-red-300', Icon: XCircle };
     case 'pending':
-      return { label: 'Checks running', className: 'bg-amber-500/15 text-amber-300', Icon: Loader2 };
+      return {
+        label: 'Checks running',
+        className: 'bg-amber-500/15 text-amber-300',
+        Icon: Loader2,
+      };
     case 'neutral':
-      return { label: 'Checks neutral', className: 'bg-slate-500/15 text-slate-300', Icon: CircleSlash };
+      return {
+        label: 'Checks neutral',
+        className: 'bg-slate-500/15 text-slate-300',
+        Icon: CircleSlash,
+      };
     case 'no-checks':
       return { label: 'No checks', className: 'bg-slate-500/15 text-slate-300', Icon: CircleSlash };
     default:
-      return { label: 'Checks unknown', className: 'bg-slate-500/15 text-slate-300', Icon: CircleSlash };
+      return {
+        label: 'Checks unknown',
+        className: 'bg-slate-500/15 text-slate-300',
+        Icon: CircleSlash,
+      };
   }
 }
 
 function mergeTone(detail: RepoPullRequestDetail) {
   if (detail.status.canMerge) {
-    return { label: 'Ready to merge', className: 'bg-emerald-500/15 text-emerald-300', Icon: ShieldCheck };
+    return {
+      label: 'Ready to merge',
+      className: 'bg-emerald-500/15 text-emerald-300',
+      Icon: ShieldCheck,
+    };
   }
   if (detail.status.mergeable === false || detail.status.checksOverall === 'failure') {
     return { label: 'Blocked', className: 'bg-red-500/15 text-red-300', Icon: ShieldAlert };
@@ -83,7 +108,11 @@ function mergeTone(detail: RepoPullRequestDetail) {
   if (detail.status.mergeable === null || detail.status.checksOverall === 'pending') {
     return { label: 'In progress', className: 'bg-amber-500/15 text-amber-300', Icon: Loader2 };
   }
-  return { label: 'Needs attention', className: 'bg-slate-500/15 text-slate-300', Icon: ShieldAlert };
+  return {
+    label: 'Needs attention',
+    className: 'bg-slate-500/15 text-slate-300',
+    Icon: ShieldAlert,
+  };
 }
 
 function reviewStateBadge(state: RepoPullRequestDetail['reviews'][number]['state']) {
@@ -174,7 +203,9 @@ export function HubPRsTab({
         const nextDetail = await fetchPullRequestDetail(repo, prNumber);
         if (cancelled) return;
         setDetail(nextDetail);
-        setExpandedFiles(new Set(nextDetail.files.length > 0 ? [nextDetail.files[0].filename] : []));
+        setExpandedFiles(
+          new Set(nextDetail.files.length > 0 ? [nextDetail.files[0].filename] : []),
+        );
       } catch (err) {
         if (cancelled) return;
         setDetail(null);
@@ -289,25 +320,17 @@ export function HubPRsTab({
                             <p className="line-clamp-2 text-sm font-medium leading-tight text-push-fg">
                               {pr.title}
                             </p>
-                            {pr.isDraft && (
-                              <span className={HUB_TAG_CLASS}>
-                                Draft
-                              </span>
-                            )}
+                            {pr.isDraft && <span className={HUB_TAG_CLASS}>Draft</span>}
                           </div>
                           <div className="mt-1 flex items-center gap-2 text-push-xs text-push-fg-dim">
                             <span>#{pr.number}</span>
                             <span>{timeAgo(pr.updatedAt || pr.createdAt)}</span>
                             {isActiveBranchPr && (
-                              <span className={HUB_TAG_CLASS}>
-                                active branch
-                              </span>
+                              <span className={HUB_TAG_CLASS}>active branch</span>
                             )}
                           </div>
                           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-push-xs text-push-fg-dim">
-                            <span className={`${HUB_TAG_CLASS} ${stateBadge(pr)}`}>
-                              {pr.state}
-                            </span>
+                            <span className={`${HUB_TAG_CLASS} ${stateBadge(pr)}`}>{pr.state}</span>
                             <span className="inline-flex items-center gap-1">
                               <BranchWaveIcon className="h-3 w-3" />
                               {pr.headRef} → {pr.baseRef}
@@ -341,7 +364,9 @@ export function HubPRsTab({
 
   const currentDetail = detail ?? selectedListItem;
   const commentCount = currentDetail ? currentDetail.comments + currentDetail.reviewComments : 0;
-  const canUseReviewTab = Boolean(detail && activeBranch && detail.headRef === activeBranch && onOpenReviewTab);
+  const canUseReviewTab = Boolean(
+    detail && activeBranch && detail.headRef === activeBranch && onOpenReviewTab,
+  );
   const checksSummary = detail ? checksTone(detail.status.checksOverall) : null;
   const mergeSummary = detail ? mergeTone(detail) : null;
 
@@ -400,13 +425,13 @@ export function HubPRsTab({
             Loading pull request...
           </div>
         ) : detailError ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 px-5 text-center">
-              <p className="text-xs text-red-300">{detailError}</p>
-              <button
-                onClick={() => setDetailReloadNonce((value) => value + 1)}
-                className="text-xs text-push-link hover:underline"
-              >
-                Retry
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-5 text-center">
+            <p className="text-xs text-red-300">{detailError}</p>
+            <button
+              onClick={() => setDetailReloadNonce((value) => value + 1)}
+              className="text-xs text-push-link hover:underline"
+            >
+              Retry
             </button>
           </div>
         ) : detail ? (
@@ -416,17 +441,11 @@ export function HubPRsTab({
                 <span className={`${HUB_TAG_CLASS} text-push-xs font-medium ${stateBadge(detail)}`}>
                   {detail.state}
                 </span>
-                {detail.isDraft && (
-                  <span className={HUB_TAG_CLASS}>
-                    Draft
-                  </span>
-                )}
+                {detail.isDraft && <span className={HUB_TAG_CLASS}>Draft</span>}
                 <span className="text-push-xs text-push-fg-dim">#{detail.number}</span>
               </div>
 
-              <h3 className="text-base font-semibold leading-tight text-push-fg">
-                {detail.title}
-              </h3>
+              <h3 className="text-base font-semibold leading-tight text-push-fg">{detail.title}</h3>
 
               <div className="flex flex-wrap items-center gap-2 text-push-xs text-push-fg-dim">
                 <span>{detail.author}</span>
@@ -461,15 +480,23 @@ export function HubPRsTab({
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
                   <div className="flex items-center gap-2">
-                    <mergeSummary.Icon className={`h-4 w-4 ${mergeSummary.Icon === Loader2 ? 'animate-spin' : ''}`} />
-                    <p className={`rounded-full px-2 py-0.5 text-push-xs font-medium ${mergeSummary.className}`}>
+                    <mergeSummary.Icon
+                      className={`h-4 w-4 ${mergeSummary.Icon === Loader2 ? 'animate-spin' : ''}`}
+                    />
+                    <p
+                      className={`rounded-full px-2 py-0.5 text-push-xs font-medium ${mergeSummary.className}`}
+                    >
                       {mergeSummary.label}
                     </p>
                   </div>
                   <p className="mt-2 text-push-sm text-push-fg-secondary">
                     Mergeable:{' '}
                     <span className="text-push-fg">
-                      {detail.status.mergeable === null ? 'computing' : detail.status.mergeable ? 'yes' : 'no'}
+                      {detail.status.mergeable === null
+                        ? 'computing'
+                        : detail.status.mergeable
+                          ? 'yes'
+                          : 'no'}
                     </span>
                   </p>
                   <p className="text-push-xs text-push-fg-dim">
@@ -479,18 +506,26 @@ export function HubPRsTab({
 
                 <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
                   <div className="flex items-center gap-2">
-                    <checksSummary.Icon className={`h-4 w-4 ${checksSummary.Icon === Loader2 ? 'animate-spin' : ''}`} />
-                    <p className={`rounded-full px-2 py-0.5 text-push-xs font-medium ${checksSummary.className}`}>
+                    <checksSummary.Icon
+                      className={`h-4 w-4 ${checksSummary.Icon === Loader2 ? 'animate-spin' : ''}`}
+                    />
+                    <p
+                      className={`rounded-full px-2 py-0.5 text-push-xs font-medium ${checksSummary.className}`}
+                    >
                       {checksSummary.label}
                     </p>
                   </div>
                   <p className="mt-2 text-push-sm text-push-fg-secondary">
-                    {detail.status.checks.length} check{detail.status.checks.length !== 1 ? 's' : ''}
+                    {detail.status.checks.length} check
+                    {detail.status.checks.length !== 1 ? 's' : ''}
                   </p>
-                  {(detail.status.requestedReviewers.length > 0 || detail.status.requestedTeams.length > 0) && (
+                  {(detail.status.requestedReviewers.length > 0 ||
+                    detail.status.requestedTeams.length > 0) && (
                     <p className="mt-1 text-push-xs text-push-fg-dim">
                       Review requested from{' '}
-                      {[...detail.status.requestedReviewers, ...detail.status.requestedTeams].join(', ')}
+                      {[...detail.status.requestedReviewers, ...detail.status.requestedTeams].join(
+                        ', ',
+                      )}
                     </p>
                   )}
                 </div>
@@ -520,8 +555,12 @@ export function HubPRsTab({
             </div>
 
             {activeBranch && detail.headRef !== activeBranch && (
-              <p className={`px-3 py-2 text-push-xs text-push-fg-dim ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
-                This PR targets <span className="text-push-fg-secondary">{detail.headRef}</span>. Switch to that branch if you want sandbox-backed fixes or branch-scoped review tools.
+              <p
+                className={`px-3 py-2 text-push-xs text-push-fg-dim ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
+              >
+                This PR targets <span className="text-push-fg-secondary">{detail.headRef}</span>.
+                Switch to that branch if you want sandbox-backed fixes or branch-scoped review
+                tools.
               </p>
             )}
 
@@ -561,7 +600,9 @@ export function HubPRsTab({
             {detailSection === 'overview' ? (
               <div className="space-y-3">
                 <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
-                  <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Description</p>
+                  <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">
+                    Description
+                  </p>
                   {detail.body ? (
                     <p className="whitespace-pre-wrap text-push-base leading-relaxed text-push-fg-secondary">
                       {detail.body}
@@ -573,13 +614,17 @@ export function HubPRsTab({
 
                 {detail.commits.length > 0 && (
                   <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
-                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Recent commits</p>
+                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">
+                      Recent commits
+                    </p>
                     <div className="space-y-2">
                       {detail.commits.slice(0, 6).map((commit) => (
                         <div key={commit.sha} className="flex items-start gap-2">
                           <CommitPulseIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
                           <div className="min-w-0">
-                            <p className="truncate text-push-sm text-push-fg-secondary">{commit.message || commit.sha}</p>
+                            <p className="truncate text-push-sm text-push-fg-secondary">
+                              {commit.message || commit.sha}
+                            </p>
                             <p className="text-push-2xs text-push-fg-dim">
                               <span className="font-mono">{commit.sha}</span> · {commit.author}
                             </p>
@@ -591,11 +636,18 @@ export function HubPRsTab({
                 )}
 
                 <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
-                  <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Files</p>
+                  <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">
+                    Files
+                  </p>
                   <div className="space-y-1.5">
                     {detail.files.map((file) => (
-                      <div key={file.filename} className="flex items-center justify-between gap-2 border-b border-push-edge/70 px-1 py-2 last:border-b-0">
-                        <p className="min-w-0 truncate text-push-sm text-push-fg-secondary">{file.filename}</p>
+                      <div
+                        key={file.filename}
+                        className="flex items-center justify-between gap-2 border-b border-push-edge/70 px-1 py-2 last:border-b-0"
+                      >
+                        <p className="min-w-0 truncate text-push-sm text-push-fg-secondary">
+                          {file.filename}
+                        </p>
                         <span className="shrink-0 text-push-xs font-mono">
                           <span className="text-push-status-success">+{file.additions}</span>{' '}
                           <span className="text-push-status-error">-{file.deletions}</span>
@@ -621,7 +673,9 @@ export function HubPRsTab({
                           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
                         )}
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-push-sm text-push-fg-secondary">{file.filename}</p>
+                          <p className="truncate text-push-sm text-push-fg-secondary">
+                            {file.filename}
+                          </p>
                           <p className="text-push-2xs text-push-fg-dim">{file.status}</p>
                         </div>
                         <span className="shrink-0 text-push-xs font-mono">
@@ -633,9 +687,15 @@ export function HubPRsTab({
                       {expanded && (
                         <div className="border-t border-push-edge bg-black/10 px-1 py-1">
                           {file.patch ? (
-                            file.patch.split('\n').map((line, index) => (
-                              <DiffLine key={`${file.filename}:${index}`} line={line} index={index} />
-                            ))
+                            file.patch
+                              .split('\n')
+                              .map((line, index) => (
+                                <DiffLine
+                                  key={`${file.filename}:${index}`}
+                                  line={line}
+                                  index={index}
+                                />
+                              ))
                           ) : (
                             <p className="px-3 py-2 text-push-xs text-push-fg-dim">
                               Patch preview unavailable for this file.
@@ -651,13 +711,22 @@ export function HubPRsTab({
               <div className="space-y-3">
                 {detail.reviews.length > 0 && (
                   <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
-                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Reviews</p>
+                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">
+                      Reviews
+                    </p>
                     <div className="space-y-2">
                       {detail.reviews.map((review) => (
-                        <div key={review.id} className="border-b border-push-edge/70 px-1 py-2.5 last:border-b-0">
+                        <div
+                          key={review.id}
+                          className="border-b border-push-edge/70 px-1 py-2.5 last:border-b-0"
+                        >
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-push-sm font-medium text-push-fg-secondary">{review.author}</span>
-                            <span className={`${HUB_TAG_CLASS} text-push-2xs font-medium ${reviewStateBadge(review.state)}`}>
+                            <span className="text-push-sm font-medium text-push-fg-secondary">
+                              {review.author}
+                            </span>
+                            <span
+                              className={`${HUB_TAG_CLASS} text-push-2xs font-medium ${reviewStateBadge(review.state)}`}
+                            >
                               {review.state.replace('_', ' ')}
                             </span>
                             <span className="text-push-2xs text-push-fg-dim">
@@ -677,13 +746,22 @@ export function HubPRsTab({
 
                 {detail.issueComments.length > 0 && (
                   <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
-                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Comments</p>
+                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">
+                      Comments
+                    </p>
                     <div className="space-y-2">
                       {detail.issueComments.map((comment) => (
-                        <div key={comment.id} className="border-b border-push-edge/70 px-1 py-2.5 last:border-b-0">
+                        <div
+                          key={comment.id}
+                          className="border-b border-push-edge/70 px-1 py-2.5 last:border-b-0"
+                        >
                           <div className="flex items-center gap-2">
-                            <span className="text-push-sm font-medium text-push-fg-secondary">{comment.author}</span>
-                            <span className="text-push-2xs text-push-fg-dim">{timeAgo(comment.createdAt)}</span>
+                            <span className="text-push-sm font-medium text-push-fg-secondary">
+                              {comment.author}
+                            </span>
+                            <span className="text-push-2xs text-push-fg-dim">
+                              {timeAgo(comment.createdAt)}
+                            </span>
                           </div>
                           <p className="mt-1.5 whitespace-pre-wrap text-push-sm leading-relaxed text-push-fg-secondary">
                             {comment.body}
@@ -696,10 +774,15 @@ export function HubPRsTab({
 
                 {detail.reviewThreads.length > 0 && (
                   <section className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3`}>
-                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">Review threads</p>
+                    <p className="mb-2 text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">
+                      Review threads
+                    </p>
                     <div className="space-y-2">
                       {detail.reviewThreads.map((thread) => (
-                        <div key={thread.id} className="border-b border-push-edge/70 px-1 py-2.5 last:border-b-0">
+                        <div
+                          key={thread.id}
+                          className="border-b border-push-edge/70 px-1 py-2.5 last:border-b-0"
+                        >
                           <div className="flex flex-wrap items-center gap-2">
                             <span className={`${HUB_TAG_CLASS} gap-1 text-push-2xs`}>
                               <BranchWaveIcon className="h-3 w-3" />
@@ -707,19 +790,22 @@ export function HubPRsTab({
                               {typeof thread.line === 'number' ? ` · L${thread.line}` : ''}
                             </span>
                             <span className="text-push-2xs text-push-fg-dim">
-                              {thread.comments.length} comment{thread.comments.length !== 1 ? 's' : ''}
+                              {thread.comments.length} comment
+                              {thread.comments.length !== 1 ? 's' : ''}
                             </span>
                           </div>
                           <div className="mt-2 space-y-2">
                             {thread.comments.map((comment) => (
                               <div key={comment.id} className="border-l border-push-edge pl-3">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-push-sm font-medium text-push-fg-secondary">{comment.author}</span>
-                                  <span className="text-push-2xs text-push-fg-dim">{timeAgo(comment.createdAt)}</span>
+                                  <span className="text-push-sm font-medium text-push-fg-secondary">
+                                    {comment.author}
+                                  </span>
+                                  <span className="text-push-2xs text-push-fg-dim">
+                                    {timeAgo(comment.createdAt)}
+                                  </span>
                                   {typeof comment.line === 'number' && (
-                                    <span className={HUB_TAG_CLASS}>
-                                      L{comment.line}
-                                    </span>
+                                    <span className={HUB_TAG_CLASS}>L{comment.line}</span>
                                   )}
                                 </div>
                                 <p className="mt-1 whitespace-pre-wrap text-push-sm leading-relaxed text-push-fg-secondary">
@@ -734,11 +820,15 @@ export function HubPRsTab({
                   </section>
                 )}
 
-                {detail.reviews.length === 0 && detail.issueComments.length === 0 && detail.reviewThreads.length === 0 && (
-                  <div className={`border border-dashed border-push-edge px-3 py-4 text-center text-xs text-push-fg-dim ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}>
-                    No review conversation yet.
-                  </div>
-                )}
+                {detail.reviews.length === 0 &&
+                  detail.issueComments.length === 0 &&
+                  detail.reviewThreads.length === 0 && (
+                    <div
+                      className={`border border-dashed border-push-edge px-3 py-4 text-center text-xs text-push-fg-dim ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
+                    >
+                      No review conversation yet.
+                    </div>
+                  )}
               </div>
             )}
           </div>

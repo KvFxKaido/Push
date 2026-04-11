@@ -29,11 +29,12 @@ export interface InvalidExperimentalBaseUrl {
   error: string;
 }
 
-export type ExperimentalBaseUrlResult =
-  | NormalizedExperimentalBaseUrl
-  | InvalidExperimentalBaseUrl;
+export type ExperimentalBaseUrlResult = NormalizedExperimentalBaseUrl | InvalidExperimentalBaseUrl;
 
-export const EXPERIMENTAL_PROVIDER_DESCRIPTORS: Record<ExperimentalProviderType, ExperimentalProviderDescriptor> = {
+export const EXPERIMENTAL_PROVIDER_DESCRIPTORS: Record<
+  ExperimentalProviderType,
+  ExperimentalProviderDescriptor
+> = {
   azure: {
     type: 'azure',
     label: 'Azure OpenAI',
@@ -41,7 +42,8 @@ export const EXPERIMENTAL_PROVIDER_DESCRIPTORS: Record<ExperimentalProviderType,
     defaultModel: 'gpt-4.1',
     baseUrlPlaceholder: 'https://your-resource.services.ai.azure.com/api/projects/PROJECT',
     modelPlaceholder: 'Deployment or model name',
-    helperText: 'Direct Azure connector. Accepts classic Azure OpenAI /openai/v1 URLs and Azure AI Foundry project URLs.',
+    helperText:
+      'Direct Azure connector. Accepts classic Azure OpenAI /openai/v1 URLs and Azure AI Foundry project URLs.',
   },
   bedrock: {
     type: 'bedrock',
@@ -50,16 +52,19 @@ export const EXPERIMENTAL_PROVIDER_DESCRIPTORS: Record<ExperimentalProviderType,
     defaultModel: 'anthropic.claude-3-7-sonnet-20250219-v1:0',
     baseUrlPlaceholder: 'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1',
     modelPlaceholder: 'Bedrock model id',
-    helperText: 'Direct Bedrock OpenAI-compatible endpoint. Use a region-specific bedrock-runtime host.',
+    helperText:
+      'Direct Bedrock OpenAI-compatible endpoint. Use a region-specific bedrock-runtime host.',
   },
   vertex: {
     type: 'vertex',
     label: 'Google Vertex',
     shortLabel: 'Vertex',
     defaultModel: 'google/gemini-2.5-pro',
-    baseUrlPlaceholder: 'https://aiplatform.googleapis.com/v1beta1/projects/PROJECT/locations/global/endpoints/openapi',
+    baseUrlPlaceholder:
+      'https://aiplatform.googleapis.com/v1beta1/projects/PROJECT/locations/global/endpoints/openapi',
     modelPlaceholder: 'Vertex model id',
-    helperText: 'Direct Vertex AI OpenAI-compatible endpoint. Use the OpenAPI endpoint base URL for your project/location.',
+    helperText:
+      'Direct Vertex AI OpenAI-compatible endpoint. Use the OpenAPI endpoint base URL for your project/location.',
   },
 };
 
@@ -67,7 +72,9 @@ export function isExperimentalProviderType(value: string): value is Experimental
   return EXPERIMENTAL_PROVIDER_TYPES.includes(value as ExperimentalProviderType);
 }
 
-export function getExperimentalProviderDescriptor(provider: ExperimentalProviderType): ExperimentalProviderDescriptor {
+export function getExperimentalProviderDescriptor(
+  provider: ExperimentalProviderType,
+): ExperimentalProviderDescriptor {
   return EXPERIMENTAL_PROVIDER_DESCRIPTORS[provider];
 }
 
@@ -113,7 +120,8 @@ function normalizeAzurePath(pathname: string): ExperimentalBaseUrlResult {
 
   return {
     ok: false,
-    error: 'Azure Foundry URLs must look like /api/projects/<project> (Push adds /openai/v1) or end at /openai/v1.',
+    error:
+      'Azure Foundry URLs must look like /api/projects/<project> (Push adds /openai/v1) or end at /openai/v1.',
   };
 }
 
@@ -151,7 +159,8 @@ export function normalizeExperimentalBaseUrl(
       if (!isClassicAzureHost && !isFoundryAzureHost) {
         return {
           ok: false,
-          error: 'Azure URLs must use either a <resource>.openai.azure.com or <resource>.services.ai.azure.com host.',
+          error:
+            'Azure URLs must use either a <resource>.openai.azure.com or <resource>.services.ai.azure.com host.',
         };
       }
 
@@ -172,7 +181,10 @@ export function normalizeExperimentalBaseUrl(
     }
     case 'bedrock': {
       if (!/^bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com$/i.test(parsed.hostname)) {
-        return { ok: false, error: 'Bedrock URLs must use a bedrock-runtime.<region>.amazonaws.com host.' };
+        return {
+          ok: false,
+          error: 'Bedrock URLs must use a bedrock-runtime.<region>.amazonaws.com host.',
+        };
       }
       if (pathname !== '/openai/v1') {
         return { ok: false, error: 'Bedrock base URL must end at /openai/v1.' };
@@ -183,13 +195,20 @@ export function normalizeExperimentalBaseUrl(
       if (!/^[a-z0-9-]+-aiplatform\.googleapis\.com$/i.test(parsed.hostname)) {
         const isGlobalHost = parsed.hostname === 'aiplatform.googleapis.com';
         if (!isGlobalHost) {
-          return { ok: false, error: 'Vertex URLs must use aiplatform.googleapis.com or a <location>-aiplatform.googleapis.com host.' };
+          return {
+            ok: false,
+            error:
+              'Vertex URLs must use aiplatform.googleapis.com or a <location>-aiplatform.googleapis.com host.',
+          };
         }
       }
-      if (!/^\/v1(?:beta1)?\/projects\/[^/]+\/locations\/[^/]+\/endpoints\/openapi$/i.test(pathname)) {
+      if (
+        !/^\/v1(?:beta1)?\/projects\/[^/]+\/locations\/[^/]+\/endpoints\/openapi$/i.test(pathname)
+      ) {
         return {
           ok: false,
-          error: 'Vertex base URL must look like /v1beta1/projects/<project>/locations/<location>/endpoints/openapi.',
+          error:
+            'Vertex base URL must look like /v1beta1/projects/<project>/locations/<location>/endpoints/openapi.',
         };
       }
       break;
@@ -243,7 +262,7 @@ export function parseStoredExperimentalDeployments(
     const normalized = normalizeExperimentalDeployment(
       provider,
       typeof item === 'object' && item
-        ? item as { id?: string | null; baseUrl?: string | null; model?: string | null }
+        ? (item as { id?: string | null; baseUrl?: string | null; model?: string | null })
         : {},
     );
     if (!normalized) continue;

@@ -4,11 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  TurnPolicyRegistry,
-  type TurnContext,
-  type AgentRole,
-} from './turn-policy';
+import { TurnPolicyRegistry, type TurnContext, type AgentRole } from './turn-policy';
 import { resetCoderPolicy } from './turn-policy-factory';
 import type { ChatMessage } from '@/types';
 
@@ -50,9 +46,7 @@ describe('TurnPolicyRegistry', () => {
     registry.register({
       name: 'coder-only',
       role: 'coder',
-      beforeToolExec: [
-        () => ({ action: 'deny', reason: 'coder says no' }),
-      ],
+      beforeToolExec: [() => ({ action: 'deny', reason: 'coder says no' })],
     });
 
     const coderCtx = makeCtx({ role: 'coder' });
@@ -73,9 +67,18 @@ describe('TurnPolicyRegistry', () => {
       name: 'policy-a',
       role: 'coder',
       afterModelCall: [
-        () => { calls.push('a'); return null; },
-        () => { calls.push('b'); return { action: 'inject', message: makeMsg('correction') }; },
-        () => { calls.push('c'); return null; }, // should not run
+        () => {
+          calls.push('a');
+          return null;
+        },
+        () => {
+          calls.push('b');
+          return { action: 'inject', message: makeMsg('correction') };
+        },
+        () => {
+          calls.push('c');
+          return null;
+        }, // should not run
       ],
     });
 
@@ -94,14 +97,20 @@ describe('TurnPolicyRegistry', () => {
       name: 'first',
       role: 'coder',
       afterModelCall: [
-        () => { calls.push('first'); return null; },
+        () => {
+          calls.push('first');
+          return null;
+        },
       ],
     });
     registry.register({
       name: 'second',
       role: 'coder',
       afterModelCall: [
-        () => { calls.push('second'); return { action: 'halt', summary: 'stop' }; },
+        () => {
+          calls.push('second');
+          return { action: 'halt', summary: 'stop' };
+        },
       ],
     });
 
@@ -117,9 +126,7 @@ describe('TurnPolicyRegistry', () => {
     registry.register({
       name: 'halt-test',
       role: 'explorer',
-      afterModelCall: [
-        () => ({ action: 'halt', summary: 'Explorer exceeded round limit' }),
-      ],
+      afterModelCall: [() => ({ action: 'halt', summary: 'Explorer exceeded round limit' })],
     });
 
     const ctx = makeCtx({ role: 'explorer' });
@@ -160,7 +167,12 @@ describe('TurnPolicyRegistry', () => {
     registry.register({
       name: 'coder-stateful',
       role: 'coder',
-      afterModelCall: [() => { callCount++; return { action: 'halt', summary: `call-${callCount}` }; }],
+      afterModelCall: [
+        () => {
+          callCount++;
+          return { action: 'halt', summary: `call-${callCount}` };
+        },
+      ],
     });
 
     const ctx = makeCtx({ role: 'coder' });

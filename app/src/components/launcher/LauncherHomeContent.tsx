@@ -179,7 +179,9 @@ export function LauncherHomeContent({
       </div>
 
       <AlertDialog open={disconnectDialogOpen} onOpenChange={setDisconnectDialogOpen}>
-        <AlertDialogContent className={`max-w-[calc(100%-2rem)] p-4 text-push-fg sm:max-w-sm ${HUB_PANEL_SURFACE_CLASS}`}>
+        <AlertDialogContent
+          className={`max-w-[calc(100%-2rem)] p-4 text-push-fg sm:max-w-sm ${HUB_PANEL_SURFACE_CLASS}`}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle className="text-base text-push-fg">
               Disconnect GitHub?

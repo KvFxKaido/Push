@@ -23,10 +23,7 @@ export type BuiltInSettingsProviderId = Extract<
   'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'openadapter'
 >;
 
-export type ExperimentalSettingsProviderId = Extract<
-  ExperimentalProviderType,
-  'azure' | 'bedrock'
->;
+export type ExperimentalSettingsProviderId = Extract<ExperimentalProviderType, 'azure' | 'bedrock'>;
 
 export type SettingsSectionIcon = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -113,12 +110,14 @@ export const EXPERIMENTAL_SETTINGS_PROVIDER_META: Record<
   }
 > = {
   azure: {
-    helperText: 'Use either your classic Azure OpenAI /openai/v1 base URL or an Azure AI Foundry project URL. Push normalizes Foundry project URLs to .../openai/v1.',
+    helperText:
+      'Use either your classic Azure OpenAI /openai/v1 base URL or an Azure AI Foundry project URL. Push normalizes Foundry project URLs to .../openai/v1.',
     baseUrlPlaceholder: 'https://your-resource.services.ai.azure.com/api/projects/PROJECT',
     modelPlaceholder: 'Deployment or model name',
   },
   bedrock: {
-    helperText: 'Use the Bedrock OpenAI-compatible /openai/v1 base URL for a specific region and the exact model id.',
+    helperText:
+      'Use the Bedrock OpenAI-compatible /openai/v1 base URL for a specific region and the exact model id.',
     baseUrlPlaceholder: 'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1',
     modelPlaceholder: 'Bedrock model id',
   },

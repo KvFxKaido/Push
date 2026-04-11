@@ -78,7 +78,8 @@ export function loadSandboxSession(
 
   const normalizedBranch = normalizeSandboxSessionBranch(repoFullName, branch);
   if (!normalizedBranch) return null;
-  if (legacy.repoFullName !== (repoFullName ?? '') || legacy.branch !== normalizedBranch) return null;
+  if (legacy.repoFullName !== (repoFullName ?? '') || legacy.branch !== normalizedBranch)
+    return null;
 
   safeStorageSet(storageKey, JSON.stringify(legacy));
   safeStorageRemove(LEGACY_SANDBOX_SESSION_KEY);

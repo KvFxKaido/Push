@@ -19,7 +19,12 @@ interface FileEditorProps {
   file: FileEntry;
   sandboxId: string;
   onBack: () => void;
-  onSave: (path: string, content: string, expectedVersion?: string, expectedWorkspaceRevision?: number) => Promise<WriteResult>;
+  onSave: (
+    path: string,
+    content: string,
+    expectedVersion?: string,
+    expectedWorkspaceRevision?: number,
+  ) => Promise<WriteResult>;
 }
 
 const MAX_FILE_SIZE = 1024 * 1024; // 1MB
@@ -47,12 +52,17 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
     setError(null);
 
     try {
-      const data = await readFromSandbox(sandboxId, file.path) as { content?: string; version?: string | null; error?: string; workspace_revision?: number };
+      const data = (await readFromSandbox(sandboxId, file.path)) as {
+        content?: string;
+        version?: string | null;
+        error?: string;
+        workspace_revision?: number;
+      };
 
       if (data.error) {
         throw new Error(data.error);
       }
-      
+
       if (data.content === undefined) {
         throw new Error('File is empty or could not be read');
       }
@@ -65,13 +75,17 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
       // Check size after loading
       const byteLength = new Blob([data.content]).size;
       if (byteLength > MAX_FILE_SIZE) {
-        throw new Error(`File too large (${formatFileSize(byteLength)}). Maximum editable size is 1MB.`);
+        throw new Error(
+          `File too large (${formatFileSize(byteLength)}). Maximum editable size is 1MB.`,
+        );
       }
 
       setContent(data.content);
       setOriginalContent(data.content);
       setFileVersion(typeof data.version === 'string' ? data.version : undefined);
-      setWorkspaceRevision(typeof data.workspace_revision === 'number' ? data.workspace_revision : undefined);
+      setWorkspaceRevision(
+        typeof data.workspace_revision === 'number' ? data.workspace_revision : undefined,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load file';
       setError(message);
@@ -138,15 +152,15 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
     const original = originalContent.split('\n');
     const current = content.split('\n');
     const lines: { type: 'same' | 'added' | 'removed'; content: string; num: number }[] = [];
-    
+
     // Simple LCS-based diff would be better, but this is a quick visual indicator
     let origIdx = 0;
     let currIdx = 0;
-    
+
     while (origIdx < original.length || currIdx < current.length) {
       const origLine = original[origIdx];
       const currLine = current[currIdx];
-      
+
       if (origLine === currLine) {
         lines.push({ type: 'same', content: origLine || '', num: currIdx + 1 });
         origIdx++;
@@ -160,11 +174,11 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
         lines.push({ type: 'removed', content: origLine || '', num: origIdx + 1 });
         origIdx++;
       }
-      
+
       // Safety limit
       if (lines.length > 1000) break;
     }
-    
+
     return lines;
   }, [showDiff, content, originalContent]);
 
@@ -180,7 +194,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
           </button>
           <h1 className="text-sm font-medium text-[#fafafa] flex-1 truncate">{file.name}</h1>
         </header>
-        
+
         <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6 text-center">
           <AlertCircle className="h-8 w-8 text-push-status-error/70" />
           <div>
@@ -209,7 +223,7 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
-        
+
         <div className="flex-1 min-w-0">
           <h1 className="text-sm font-medium text-[#fafafa] truncate flex items-center gap-2">
             <FileCode className="h-3.5 w-3.5 text-push-accent" />
@@ -234,10 +248,13 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
               <RotateCcw className="h-3.5 w-3.5" />
             </button>
           )}
-          
+
           {isMarkdown && (
             <button
-              onClick={() => { setShowPreview(!showPreview); if (!showPreview) setShowDiff(false); }}
+              onClick={() => {
+                setShowPreview(!showPreview);
+                if (!showPreview) setShowDiff(false);
+              }}
               disabled={saving}
               className={`flex h-8 px-3 items-center gap-1.5 rounded-lg text-xs transition-colors ${
                 showPreview
@@ -251,7 +268,10 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
           )}
 
           <button
-            onClick={() => { setShowDiff(!showDiff); if (!showDiff) setShowPreview(false); }}
+            onClick={() => {
+              setShowDiff(!showDiff);
+              if (!showDiff) setShowPreview(false);
+            }}
             disabled={saving}
             className={`flex h-8 px-3 items-center gap-1.5 rounded-lg text-xs transition-colors ${
               showDiff
@@ -292,9 +312,9 @@ export function FileEditor({ file, sandboxId, onBack, onSave }: FileEditorProps)
         ) : showDiff ? (
           <DiffView lines={diffLines} />
         ) : (
-          <CodeEditor 
-            content={content} 
-            onChange={setContent} 
+          <CodeEditor
+            content={content}
+            onChange={setContent}
             language={language}
             disabled={saving}
           />
@@ -321,21 +341,21 @@ interface CodeEditorProps {
 
 function CodeEditor({ content, onChange, disabled }: CodeEditorProps) {
   const lines = content.split('\n');
-  
+
   return (
     <div className="flex h-full">
       {/* Line numbers */}
       <div className="flex-shrink-0 w-12 bg-[#0a0a0a] border-r border-[#1a1a1a] py-2 overflow-hidden select-none">
         {lines.map((_, i) => (
-          <div 
-            key={i} 
+          <div
+            key={i}
             className="min-h-[1.5em] px-2 text-right text-push-2xs text-[#52525b] leading-[1.5em] font-mono"
           >
             {i + 1}
           </div>
         ))}
       </div>
-      
+
       {/* Textarea */}
       <textarea
         value={content}
@@ -371,23 +391,33 @@ function DiffView({ lines }: DiffViewProps) {
           <div
             key={i}
             className={`flex ${
-              line.type === 'added' ? 'bg-push-status-success/10' :
-              line.type === 'removed' ? 'bg-push-status-error/10' :
-              ''
+              line.type === 'added'
+                ? 'bg-push-status-success/10'
+                : line.type === 'removed'
+                  ? 'bg-push-status-error/10'
+                  : ''
             }`}
           >
-            <span className={`w-6 shrink-0 text-right pr-2 select-none ${
-              line.type === 'added' ? 'text-push-status-success' :
-              line.type === 'removed' ? 'text-push-status-error' :
-              'text-[#52525b]'
-            }`}>
+            <span
+              className={`w-6 shrink-0 text-right pr-2 select-none ${
+                line.type === 'added'
+                  ? 'text-push-status-success'
+                  : line.type === 'removed'
+                    ? 'text-push-status-error'
+                    : 'text-[#52525b]'
+              }`}
+            >
               {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
             </span>
-            <span className={`flex-1 whitespace-pre ${
-              line.type === 'added' ? 'text-[#4ade80]' :
-              line.type === 'removed' ? 'text-[#f87171]' :
-              'text-push-fg-secondary'
-            }`}>
+            <span
+              className={`flex-1 whitespace-pre ${
+                line.type === 'added'
+                  ? 'text-[#4ade80]'
+                  : line.type === 'removed'
+                    ? 'text-[#f87171]'
+                    : 'text-push-fg-secondary'
+              }`}
+            >
               {line.content || ' '}
             </span>
           </div>
@@ -401,24 +431,42 @@ function DiffView({ lines }: DiffViewProps) {
 
 function mdInline(text: string): React.ReactNode[] {
   const result: React.ReactNode[] = [];
-  const regex = /(\*\*(.+?)\*\*)|(\*([^*]+?)\*)|(`([^`]+?)`)|(\[([^\]]+)]\(([^)]+)\))|([^*`[]+|[*`[])/g;
+  const regex =
+    /(\*\*(.+?)\*\*)|(\*([^*]+?)\*)|(`([^`]+?)`)|(\[([^\]]+)]\(([^)]+)\))|([^*`[]+|[*`[])/g;
   let m: RegExpExecArray | null;
   let k = 0;
 
   while ((m = regex.exec(text)) !== null) {
     if (m[2]) {
-      result.push(<strong key={k++} className="font-semibold text-[#fafafa]">{m[2]}</strong>);
+      result.push(
+        <strong key={k++} className="font-semibold text-[#fafafa]">
+          {m[2]}
+        </strong>,
+      );
     } else if (m[4]) {
-      result.push(<em key={k++} className="italic text-[#d1d8e6]">{m[4]}</em>);
+      result.push(
+        <em key={k++} className="italic text-[#d1d8e6]">
+          {m[4]}
+        </em>,
+      );
     } else if (m[6]) {
       result.push(
-        <code key={k++} className="rounded border border-push-edge bg-push-surface px-1.5 py-0.5 font-mono text-xs text-[#e2e8f0]">
+        <code
+          key={k++}
+          className="rounded border border-push-edge bg-push-surface px-1.5 py-0.5 font-mono text-xs text-[#e2e8f0]"
+        >
           {m[6]}
         </code>,
       );
     } else if (m[8]) {
       result.push(
-        <a key={k++} href={m[9]} target="_blank" rel="noopener noreferrer" className="text-push-accent underline underline-offset-2 decoration-push-accent/30">
+        <a
+          key={k++}
+          href={m[9]}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-push-accent underline underline-offset-2 decoration-push-accent/30"
+        >
           {m[8]}
         </a>,
       );
@@ -444,9 +492,16 @@ function MarkdownPreview({ content }: { content: string }) {
       if (line.startsWith('```')) {
         if (inCode) {
           nodes.push(
-            <pre key={`code-${codeKey++}`} className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-[#0a0a0a] px-4 py-3">
-              {codeLang && <div className="mb-1.5 text-push-2xs text-[#52525b] font-mono">{codeLang}</div>}
-              <code className="font-mono text-xs text-[#e2e8f0] leading-relaxed">{codeLines.join('\n')}</code>
+            <pre
+              key={`code-${codeKey++}`}
+              className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-[#0a0a0a] px-4 py-3"
+            >
+              {codeLang && (
+                <div className="mb-1.5 text-push-2xs text-[#52525b] font-mono">{codeLang}</div>
+              )}
+              <code className="font-mono text-xs text-[#e2e8f0] leading-relaxed">
+                {codeLines.join('\n')}
+              </code>
             </pre>,
           );
           codeLines = [];
@@ -459,7 +514,10 @@ function MarkdownPreview({ content }: { content: string }) {
         continue;
       }
 
-      if (inCode) { codeLines.push(line); continue; }
+      if (inCode) {
+        codeLines.push(line);
+        continue;
+      }
 
       // Horizontal rule
       if (/^(\s*[-*_]\s*){3,}$/.test(line) && line.trim().length >= 3) {
@@ -477,7 +535,11 @@ function MarkdownPreview({ content }: { content: string }) {
           3: 'text-base font-semibold text-[#e2e8f0] mt-4 mb-1',
           4: 'text-sm font-medium text-[#8891a1] mt-3 mb-1 uppercase tracking-wide',
         };
-        nodes.push(<div key={`h-${i}`} className={styles[lvl]}>{mdInline(hm[2])}</div>);
+        nodes.push(
+          <div key={`h-${i}`} className={styles[lvl]}>
+            {mdInline(hm[2])}
+          </div>,
+        );
         continue;
       }
 
@@ -485,7 +547,10 @@ function MarkdownPreview({ content }: { content: string }) {
       if (line.startsWith('> ') || line === '>') {
         const qt = line.startsWith('> ') ? line.slice(2) : '';
         nodes.push(
-          <div key={`bq-${i}`} className="border-l-2 border-push-edge pl-3 my-1.5 text-[#8891a1] italic text-sm">
+          <div
+            key={`bq-${i}`}
+            className="border-l-2 border-push-edge pl-3 my-1.5 text-[#8891a1] italic text-sm"
+          >
             {qt ? mdInline(qt) : '\u00A0'}
           </div>,
         );
@@ -497,7 +562,11 @@ function MarkdownPreview({ content }: { content: string }) {
       if (ulm) {
         const indent = Math.min(Math.floor(ulm[1].length / 2), 3);
         nodes.push(
-          <div key={`ul-${i}`} className="flex items-start gap-2 my-0.5 text-sm" style={{ paddingLeft: `${indent * 16 + 4}px` }}>
+          <div
+            key={`ul-${i}`}
+            className="flex items-start gap-2 my-0.5 text-sm"
+            style={{ paddingLeft: `${indent * 16 + 4}px` }}
+          >
             <span className="shrink-0 mt-[9px] block w-1 h-1 rounded-full bg-[#52525b]" />
             <span className="flex-1 min-w-0 text-[#d1d8e6]">{mdInline(ulm[2])}</span>
           </div>,
@@ -510,8 +579,14 @@ function MarkdownPreview({ content }: { content: string }) {
       if (olm) {
         const indent = Math.min(Math.floor(olm[1].length / 2), 3);
         nodes.push(
-          <div key={`ol-${i}`} className="flex items-start gap-2 my-0.5 text-sm" style={{ paddingLeft: `${indent * 16 + 4}px` }}>
-            <span className="text-[#52525b] font-mono shrink-0 min-w-[1.25rem] text-right mt-px">{olm[2]}.</span>
+          <div
+            key={`ol-${i}`}
+            className="flex items-start gap-2 my-0.5 text-sm"
+            style={{ paddingLeft: `${indent * 16 + 4}px` }}
+          >
+            <span className="text-[#52525b] font-mono shrink-0 min-w-[1.25rem] text-right mt-px">
+              {olm[2]}.
+            </span>
             <span className="flex-1 min-w-0 text-[#d1d8e6]">{mdInline(olm[3])}</span>
           </div>,
         );
@@ -519,17 +594,29 @@ function MarkdownPreview({ content }: { content: string }) {
       }
 
       // Empty line
-      if (line.trim() === '') { nodes.push(<div key={`e-${i}`} className="h-3" />); continue; }
+      if (line.trim() === '') {
+        nodes.push(<div key={`e-${i}`} className="h-3" />);
+        continue;
+      }
 
       // Plain text
-      nodes.push(<div key={`p-${i}`} className="text-sm text-[#d1d8e6] leading-relaxed">{mdInline(line)}</div>);
+      nodes.push(
+        <div key={`p-${i}`} className="text-sm text-[#d1d8e6] leading-relaxed">
+          {mdInline(line)}
+        </div>,
+      );
     }
 
     // Unclosed code block
     if (inCode && codeLines.length > 0) {
       nodes.push(
-        <pre key={`code-${codeKey}`} className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-[#0a0a0a] px-4 py-3">
-          <code className="font-mono text-xs text-[#e2e8f0] leading-relaxed">{codeLines.join('\n')}</code>
+        <pre
+          key={`code-${codeKey}`}
+          className="my-3 overflow-x-auto rounded-lg border border-push-edge bg-[#0a0a0a] px-4 py-3"
+        >
+          <code className="font-mono text-xs text-[#e2e8f0] leading-relaxed">
+            {codeLines.join('\n')}
+          </code>
         </pre>,
       );
     }
@@ -537,9 +624,5 @@ function MarkdownPreview({ content }: { content: string }) {
     return nodes;
   }, [content]);
 
-  return (
-    <div className="h-full overflow-auto bg-[#000] px-5 py-4">
-      {parts}
-    </div>
-  );
+  return <div className="h-full overflow-auto bg-[#000] px-5 py-4">{parts}</div>;
 }

@@ -27,7 +27,9 @@ export function FileSearchCard({ data }: { data: FileSearchCardData }) {
           <span className="text-push-sm text-push-fg-dim font-mono">in {data.path}</span>
         )}
         {data.truncated && (
-          <span className={`${CARD_BADGE_WARNING} ml-auto px-1.5 py-0.5 text-push-xs`}>truncated</span>
+          <span className={`${CARD_BADGE_WARNING} ml-auto px-1.5 py-0.5 text-push-xs`}>
+            truncated
+          </span>
         )}
       </div>
 
@@ -52,9 +54,7 @@ export function FileSearchCard({ data }: { data: FileSearchCardData }) {
                 </div>
               ))}
               {matches.length > 3 && (
-                <span className="text-push-xs text-push-fg-dim">
-                  +{matches.length - 3} more
-                </span>
+                <span className="text-push-xs text-push-fg-dim">+{matches.length - 3} more</span>
               )}
             </div>
           </div>

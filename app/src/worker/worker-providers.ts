@@ -15,31 +15,46 @@ import {
 
 import { REQUEST_ID_HEADER } from '../lib/request-id';
 import { validateAndNormalizeChatRequest } from '../lib/chat-request-guardrails';
-import { buildAnthropicMessagesRequest, createAnthropicTranslatedStream } from '../lib/openai-anthropic-bridge';
+import {
+  buildAnthropicMessagesRequest,
+  createAnthropicTranslatedStream,
+} from '../lib/openai-anthropic-bridge';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
-import { buildVertexAnthropicEndpoint, buildVertexOpenApiBaseUrl, getVertexModelTransport, VERTEX_MODEL_OPTIONS } from '../lib/vertex-provider';
-import { formatExperimentalProviderHttpError, formatVertexProviderHttpError } from '../lib/provider-error-utils';
+import {
+  buildVertexAnthropicEndpoint,
+  buildVertexOpenApiBaseUrl,
+  getVertexModelTransport,
+  VERTEX_MODEL_OPTIONS,
+} from '../lib/vertex-provider';
+import {
+  formatExperimentalProviderHttpError,
+  formatVertexProviderHttpError,
+} from '../lib/provider-error-utils';
 import type { ExperimentalProviderType } from '../lib/experimental-providers';
 
 // --- Ollama Cloud ---
 
 export const handleOllamaModels = createJsonProxyHandler({
-  name: 'Ollama Cloud API', logTag: 'api/ollama/models',
+  name: 'Ollama Cloud API',
+  logTag: 'api/ollama/models',
   upstreamUrl: 'https://ollama.com/v1/models',
   method: 'GET',
   timeoutMs: 30_000,
   buildAuth: standardAuth('OLLAMA_API_KEY'),
-  keyMissingError: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
+  keyMissingError:
+    'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama Cloud model list timed out after 30 seconds',
 });
 
 export const handleOllamaChat = createStreamProxyHandler({
-  name: 'Ollama Cloud API', logTag: 'api/ollama/chat',
+  name: 'Ollama Cloud API',
+  logTag: 'api/ollama/chat',
   upstreamUrl: 'https://ollama.com/v1/chat/completions',
   timeoutMs: 180_000,
   maxOutputTokens: 8_192,
   buildAuth: standardAuth('OLLAMA_API_KEY'),
-  keyMissingError: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
+  keyMissingError:
+    'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama Cloud request timed out after 180 seconds',
 });
 
@@ -48,12 +63,14 @@ export const handleOllamaChat = createStreamProxyHandler({
 // --- OpenRouter ---
 
 export const handleOpenRouterChat = createStreamProxyHandler({
-  name: 'OpenRouter API', logTag: 'api/openrouter/chat',
+  name: 'OpenRouter API',
+  logTag: 'api/openrouter/chat',
   upstreamUrl: 'https://openrouter.ai/api/v1/chat/completions',
   timeoutMs: 120_000,
   maxOutputTokens: 12_288,
   buildAuth: standardAuth('OPENROUTER_API_KEY'),
-  keyMissingError: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
+  keyMissingError:
+    'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
   timeoutError: 'OpenRouter request timed out after 120 seconds',
   extraFetchHeaders: (request) => ({
     'HTTP-Referer': new URL(request.url).origin,
@@ -62,88 +79,108 @@ export const handleOpenRouterChat = createStreamProxyHandler({
 });
 
 export const handleOpenRouterModels = createJsonProxyHandler({
-  name: 'OpenRouter API', logTag: 'api/openrouter/models',
+  name: 'OpenRouter API',
+  logTag: 'api/openrouter/models',
   upstreamUrl: 'https://openrouter.ai/api/v1/models',
   method: 'GET',
   timeoutMs: 30_000,
   buildAuth: standardAuth('OPENROUTER_API_KEY'),
-  keyMissingError: 'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
+  keyMissingError:
+    'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
   timeoutError: 'OpenRouter model list timed out after 30 seconds',
 });
 
 // --- OpenCode Zen (OpenAI-compatible endpoint) ---
 
 export const handleZenChat = createStreamProxyHandler({
-  name: 'OpenCode Zen API', logTag: 'api/zen/chat',
+  name: 'OpenCode Zen API',
+  logTag: 'api/zen/chat',
   upstreamUrl: 'https://opencode.ai/zen/v1/chat/completions',
   timeoutMs: 120_000,
   maxOutputTokens: 12_288,
   buildAuth: standardAuth('ZEN_API_KEY'),
-  keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
+  keyMissingError:
+    'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
   timeoutError: 'OpenCode Zen request timed out after 120 seconds',
 });
 
 export const handleZenModels = createJsonProxyHandler({
-  name: 'OpenCode Zen API', logTag: 'api/zen/models',
+  name: 'OpenCode Zen API',
+  logTag: 'api/zen/models',
   upstreamUrl: 'https://opencode.ai/zen/v1/models',
   method: 'GET',
   timeoutMs: 30_000,
   buildAuth: standardAuth('ZEN_API_KEY'),
-  keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
+  keyMissingError:
+    'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
   timeoutError: 'OpenCode Zen model list timed out after 30 seconds',
 });
 
 // --- Kilo Code (OpenAI-compatible gateway) ---
 
 export const handleKiloCodeChat = createStreamProxyHandler({
-  name: 'Kilo Code API', logTag: 'api/kilocode/chat',
+  name: 'Kilo Code API',
+  logTag: 'api/kilocode/chat',
   upstreamUrl: 'https://api.kilo.ai/api/gateway/chat/completions',
   timeoutMs: 120_000,
   maxOutputTokens: 8_192,
   buildAuth: standardAuth('KILOCODE_API_KEY'),
-  keyMissingError: 'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
+  keyMissingError:
+    'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
   timeoutError: 'Kilo Code request timed out after 120 seconds',
 });
 
 export const handleKiloCodeModels = createJsonProxyHandler({
-  name: 'Kilo Code API', logTag: 'api/kilocode/models',
+  name: 'Kilo Code API',
+  logTag: 'api/kilocode/models',
   upstreamUrl: 'https://api.kilo.ai/api/gateway/models',
   method: 'GET',
   timeoutMs: 30_000,
   buildAuth: standardAuth('KILOCODE_API_KEY'),
-  keyMissingError: 'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
+  keyMissingError:
+    'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
   timeoutError: 'Kilo Code model list timed out after 30 seconds',
 });
 
 export const handleOpenAdapterChat = createStreamProxyHandler({
-  name: 'OpenAdapter API', logTag: 'api/openadapter/chat',
+  name: 'OpenAdapter API',
+  logTag: 'api/openadapter/chat',
   upstreamUrl: 'https://api.openadapter.in/v1/chat/completions',
   timeoutMs: 120_000,
   maxOutputTokens: 8_192,
   buildAuth: standardAuth('OPENADAPTER_API_KEY'),
-  keyMissingError: 'OpenAdapter API key not configured. Add it in Settings or set OPENADAPTER_API_KEY on the Worker.',
+  keyMissingError:
+    'OpenAdapter API key not configured. Add it in Settings or set OPENADAPTER_API_KEY on the Worker.',
   timeoutError: 'OpenAdapter request timed out after 120 seconds',
 });
 
 export const handleOpenAdapterModels = createJsonProxyHandler({
-  name: 'OpenAdapter API', logTag: 'api/openadapter/models',
+  name: 'OpenAdapter API',
+  logTag: 'api/openadapter/models',
   upstreamUrl: 'https://api.openadapter.in/v1/models',
   method: 'GET',
   timeoutMs: 30_000,
   buildAuth: standardAuth('OPENADAPTER_API_KEY'),
-  keyMissingError: 'OpenAdapter API key not configured. Add it in Settings or set OPENADAPTER_API_KEY on the Worker.',
+  keyMissingError:
+    'OpenAdapter API key not configured. Add it in Settings or set OPENADAPTER_API_KEY on the Worker.',
   timeoutError: 'OpenAdapter model list timed out after 30 seconds',
 });
 
 // --- OpenCode Zen Go tier (mixed OpenAI + Anthropic transports) ---
 
-export function getZenGoAuthHeaders(authHeader: string, requestId: string, transport: 'openai' | 'anthropic'): Record<string, string> {
+export function getZenGoAuthHeaders(
+  authHeader: string,
+  requestId: string,
+  transport: 'openai' | 'anthropic',
+): Record<string, string> {
   if (transport === 'anthropic') {
     const bearerPrefix = 'Bearer ';
-    const bearerToken = authHeader.startsWith(bearerPrefix) ? authHeader.slice(bearerPrefix.length).trim() : '';
+    const bearerToken = authHeader.startsWith(bearerPrefix)
+      ? authHeader.slice(bearerPrefix.length).trim()
+      : '';
     return {
       'Content-Type': 'application/json',
-      'Authorization': authHeader,
+      Authorization: authHeader,
       'anthropic-version': '2023-06-01',
       ...(bearerToken ? { 'x-api-key': bearerToken } : {}),
       [REQUEST_ID_HEADER]: requestId,
@@ -152,7 +189,7 @@ export function getZenGoAuthHeaders(authHeader: string, requestId: string, trans
 
   return {
     'Content-Type': 'application/json',
-    'Authorization': authHeader,
+    Authorization: authHeader,
     [REQUEST_ID_HEADER]: requestId,
   };
 }
@@ -160,7 +197,8 @@ export function getZenGoAuthHeaders(authHeader: string, requestId: string, trans
 export async function handleZenGoChat(request: Request, env: Env): Promise<Response> {
   const preamble = await runPreamble(request, env, {
     buildAuth: standardAuth('ZEN_API_KEY'),
-    keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
+    keyMissingError:
+      'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
     needsBody: true,
   });
   if (preamble instanceof Response) return preamble;
@@ -184,12 +222,14 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
   const parsedRequest = normalizedRequest.value.parsed;
   const model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
   const transport = getZenGoTransport(model);
-  const upstreamUrl = transport === 'anthropic'
-    ? 'https://opencode.ai/zen/go/v1/messages'
-    : 'https://opencode.ai/zen/go/v1/chat/completions';
-  const upstreamBody = transport === 'anthropic'
-    ? JSON.stringify(buildAnthropicMessagesRequest(parsedRequest))
-    : normalizedRequest.value.bodyText;
+  const upstreamUrl =
+    transport === 'anthropic'
+      ? 'https://opencode.ai/zen/go/v1/messages'
+      : 'https://opencode.ai/zen/go/v1/chat/completions';
+  const upstreamBody =
+    transport === 'anthropic'
+      ? JSON.stringify(buildAnthropicMessagesRequest(parsedRequest))
+      : normalizedRequest.value.bodyText;
 
   wlog('info', 'request', {
     requestId,
@@ -248,7 +288,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
         headers: {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
+          Connection: 'keep-alive',
           [REQUEST_ID_HEADER]: requestId,
         },
       });
@@ -259,7 +299,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
+        Connection: 'keep-alive',
         [REQUEST_ID_HEADER]: requestId,
       },
     });
@@ -283,7 +323,8 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
 export async function handleZenGoModels(request: Request, env: Env): Promise<Response> {
   const preamble = await runPreamble(request, env, {
     buildAuth: standardAuth('ZEN_API_KEY'),
-    keyMissingError: 'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
+    keyMissingError:
+      'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
     needsBody: false,
   });
   if (preamble instanceof Response) return preamble;
@@ -301,44 +342,52 @@ export async function handleZenGoModels(request: Request, env: Env): Promise<Res
 // --- Nvidia NIM (OpenAI-compatible endpoint) ---
 
 export const handleNvidiaChat = createStreamProxyHandler({
-  name: 'Nvidia NIM API', logTag: 'api/nvidia/chat',
+  name: 'Nvidia NIM API',
+  logTag: 'api/nvidia/chat',
   upstreamUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
   timeoutMs: 120_000,
   maxOutputTokens: 8_192,
   buildAuth: standardAuth('NVIDIA_API_KEY'),
-  keyMissingError: 'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
+  keyMissingError:
+    'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
   timeoutError: 'Nvidia NIM request timed out after 120 seconds',
 });
 
 export const handleNvidiaModels = createJsonProxyHandler({
-  name: 'Nvidia NIM API', logTag: 'api/nvidia/models',
+  name: 'Nvidia NIM API',
+  logTag: 'api/nvidia/models',
   upstreamUrl: 'https://integrate.api.nvidia.com/v1/models',
   method: 'GET',
   timeoutMs: 30_000,
   buildAuth: standardAuth('NVIDIA_API_KEY'),
-  keyMissingError: 'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
+  keyMissingError:
+    'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
   timeoutError: 'Nvidia NIM model list timed out after 30 seconds',
 });
 
 // --- Blackbox AI ---
 
 export const handleBlackboxChat = createStreamProxyHandler({
-  name: 'Blackbox AI API', logTag: 'api/blackbox/chat',
+  name: 'Blackbox AI API',
+  logTag: 'api/blackbox/chat',
   upstreamUrl: 'https://api.blackbox.ai/chat/completions',
   timeoutMs: 120_000,
   maxOutputTokens: 8_192,
   buildAuth: standardAuth('BLACKBOX_API_KEY'),
-  keyMissingError: 'Blackbox AI API key not configured. Add it in Settings or set BLACKBOX_API_KEY on the Worker.',
+  keyMissingError:
+    'Blackbox AI API key not configured. Add it in Settings or set BLACKBOX_API_KEY on the Worker.',
   timeoutError: 'Blackbox AI request timed out after 120 seconds',
 });
 
 export const handleBlackboxModels = createJsonProxyHandler({
-  name: 'Blackbox AI API', logTag: 'api/blackbox/models',
+  name: 'Blackbox AI API',
+  logTag: 'api/blackbox/models',
   upstreamUrl: 'https://api.blackbox.ai/models',
   method: 'GET',
   timeoutMs: 30_000,
   buildAuth: standardAuth('BLACKBOX_API_KEY'),
-  keyMissingError: 'Blackbox AI API key not configured. Add it in Settings or set BLACKBOX_API_KEY on the Worker.',
+  keyMissingError:
+    'Blackbox AI API key not configured. Add it in Settings or set BLACKBOX_API_KEY on the Worker.',
   timeoutError: 'Blackbox AI model list timed out after 30 seconds',
 });
 
@@ -397,12 +446,36 @@ export function createExperimentalModelsHandler(
   };
 }
 
-export const handleAzureChat = createExperimentalStreamProxyHandler('azure', 'Azure OpenAI', 'api/azure/chat');
-export const handleAzureModels = createExperimentalModelsHandler('azure', 'Azure OpenAI', 'api/azure/models');
-export const handleBedrockChat = createExperimentalStreamProxyHandler('bedrock', 'AWS Bedrock', 'api/bedrock/chat');
-export const handleBedrockModels = createExperimentalModelsHandler('bedrock', 'AWS Bedrock', 'api/bedrock/models');
-export const handleLegacyVertexChat = createExperimentalStreamProxyHandler('vertex', 'Google Vertex', 'api/vertex/chat');
-export const handleLegacyVertexModels = createExperimentalModelsHandler('vertex', 'Google Vertex', 'api/vertex/models');
+export const handleAzureChat = createExperimentalStreamProxyHandler(
+  'azure',
+  'Azure OpenAI',
+  'api/azure/chat',
+);
+export const handleAzureModels = createExperimentalModelsHandler(
+  'azure',
+  'Azure OpenAI',
+  'api/azure/models',
+);
+export const handleBedrockChat = createExperimentalStreamProxyHandler(
+  'bedrock',
+  'AWS Bedrock',
+  'api/bedrock/chat',
+);
+export const handleBedrockModels = createExperimentalModelsHandler(
+  'bedrock',
+  'AWS Bedrock',
+  'api/bedrock/models',
+);
+export const handleLegacyVertexChat = createExperimentalStreamProxyHandler(
+  'vertex',
+  'Google Vertex',
+  'api/vertex/chat',
+);
+export const handleLegacyVertexModels = createExperimentalModelsHandler(
+  'vertex',
+  'Google Vertex',
+  'api/vertex/models',
+);
 
 export async function handleVertexChat(request: Request, env: Env): Promise<Response> {
   if (!hasVertexNativeCredentials(request)) {
@@ -411,7 +484,8 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
 
   const preamble = await runPreamble(request, env, {
     buildAuth: buildVertexPreambleAuth,
-    keyMissingError: 'Google Vertex service account not configured. Add it in Advanced AI settings.',
+    keyMissingError:
+      'Google Vertex service account not configured. Add it in Advanced AI settings.',
     needsBody: true,
   });
   if (preamble instanceof Response) return preamble;
@@ -438,16 +512,20 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
   if (!nativeConfig.ok) return nativeConfig.response;
 
   const transport = getVertexModelTransport(model);
-  const upstreamUrl = transport === 'anthropic'
-    ? buildVertexAnthropicEndpoint(
-      nativeConfig.config.serviceAccount.projectId,
-      nativeConfig.config.region,
-      model,
-    )
-    : `${buildVertexOpenApiBaseUrl(nativeConfig.config.serviceAccount.projectId, nativeConfig.config.region)}/chat/completions`;
-  const upstreamBody = transport === 'anthropic'
-    ? JSON.stringify(buildAnthropicMessagesRequest(parsedRequest, { anthropicVersion: 'vertex-2023-10-16' }))
-    : normalizedRequest.value.bodyText;
+  const upstreamUrl =
+    transport === 'anthropic'
+      ? buildVertexAnthropicEndpoint(
+          nativeConfig.config.serviceAccount.projectId,
+          nativeConfig.config.region,
+          model,
+        )
+      : `${buildVertexOpenApiBaseUrl(nativeConfig.config.serviceAccount.projectId, nativeConfig.config.region)}/chat/completions`;
+  const upstreamBody =
+    transport === 'anthropic'
+      ? JSON.stringify(
+          buildAnthropicMessagesRequest(parsedRequest, { anthropicVersion: 'vertex-2023-10-16' }),
+        )
+      : normalizedRequest.value.bodyText;
 
   wlog('info', 'request', {
     requestId,
@@ -468,7 +546,7 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
       upstream = await fetch(upstreamUrl, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
           [REQUEST_ID_HEADER]: requestId,
         },
@@ -504,7 +582,7 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
         headers: {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
+          Connection: 'keep-alive',
           [REQUEST_ID_HEADER]: requestId,
         },
       });
@@ -515,7 +593,7 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
       headers: {
         'Content-Type': upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
+        Connection: 'keep-alive',
         [REQUEST_ID_HEADER]: requestId,
         'X-Accel-Buffering': 'no',
       },
@@ -563,12 +641,14 @@ export async function handleVertexModels(request: Request, env: Env): Promise<Re
 // --- Ollama Web Search proxy ---
 
 export const handleOllamaSearch = createJsonProxyHandler({
-  name: 'Ollama search', logTag: 'api/ollama/search',
+  name: 'Ollama search',
+  logTag: 'api/ollama/search',
   upstreamUrl: 'https://ollama.com/api/web_search',
   method: 'POST',
   timeoutMs: 30_000,
   buildAuth: standardAuth('OLLAMA_API_KEY'),
-  keyMissingError: 'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
+  keyMissingError:
+    'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama search timed out after 30 seconds',
 });
 
@@ -588,7 +668,10 @@ export async function handleTavilySearch(request: Request, env: Env): Promise<Re
 
   const apiKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!apiKey) {
-    return Response.json({ error: 'Missing Tavily API key in Authorization header' }, { status: 401 });
+    return Response.json(
+      { error: 'Missing Tavily API key in Authorization header' },
+      { status: 401 },
+    );
   }
 
   let query: string;
@@ -628,7 +711,11 @@ export async function handleTavilySearch(request: Request, env: Env): Promise<Re
 
     if (!upstream.ok) {
       const errBody = await upstream.text().catch(() => '');
-      wlog('error', 'upstream_error', { route: 'api/search/tavily', status: upstream.status, body: errBody.slice(0, 200) });
+      wlog('error', 'upstream_error', {
+        route: 'api/search/tavily',
+        status: upstream.status,
+        body: errBody.slice(0, 200),
+      });
       return Response.json(
         { error: `Tavily returned ${upstream.status}: ${errBody.slice(0, 200)}` },
         { status: upstream.status },
@@ -665,7 +752,9 @@ export async function handleTavilySearch(request: Request, env: Env): Promise<Re
  * The lite page (html.duckduckgo.com/html/) has a simple, stable structure
  * designed for low-bandwidth clients. We extract titles, URLs, and snippets.
  */
-export function parseDuckDuckGoHTML(html: string): { title: string; url: string; content: string }[] {
+export function parseDuckDuckGoHTML(
+  html: string,
+): { title: string; url: string; content: string }[] {
   const results: { title: string; url: string; content: string }[] = [];
 
   // Match result blocks: <a class="result__a" href="URL">TITLE</a>
@@ -735,14 +824,11 @@ export async function handleFreeSearch(request: Request, env: Env): Promise<Resp
     let upstream: Response;
 
     try {
-      upstream = await fetch(
-        `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
-        {
-          method: 'GET',
-          headers: { 'User-Agent': 'Push/1.0 (AI Coding Assistant)' },
-          signal: controller.signal,
-        },
-      );
+      upstream = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+        method: 'GET',
+        headers: { 'User-Agent': 'Push/1.0 (AI Coding Assistant)' },
+        signal: controller.signal,
+      });
     } finally {
       clearTimeout(timeoutId);
     }

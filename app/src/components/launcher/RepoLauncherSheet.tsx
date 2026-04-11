@@ -1,4 +1,10 @@
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { LauncherHomeContent } from './LauncherHomeContent';
 import type { LauncherSandboxSession } from './RepoLauncherPanel';
 import type { RepoAppearance } from '@/lib/repo-appearance';
@@ -86,35 +92,43 @@ export function RepoLauncherSheet({
                 onResumeConversation(chatId);
                 onOpenChange(false);
               }}
-              onPublishToGitHub={onPublishToGitHub
-                ? async (args) => {
-                    await onPublishToGitHub(args);
-                    onOpenChange(false);
-                  }
-                : undefined}
+              onPublishToGitHub={
+                onPublishToGitHub
+                  ? async (args) => {
+                      await onPublishToGitHub(args);
+                      onOpenChange(false);
+                    }
+                  : undefined
+              }
               onDisconnect={() => {
                 onDisconnect();
                 onOpenChange(false);
               }}
-              onStartWorkspace={onStartWorkspace
-                ? () => {
-                    onStartWorkspace();
-                    onOpenChange(false);
-                  }
-                : undefined}
-              onStartChat={onStartChat
-                ? () => {
-                    onStartChat();
-                    onOpenChange(false);
-                  }
-                : undefined}
+              onStartWorkspace={
+                onStartWorkspace
+                  ? () => {
+                      onStartWorkspace();
+                      onOpenChange(false);
+                    }
+                  : undefined
+              }
+              onStartChat={
+                onStartChat
+                  ? () => {
+                      onStartChat();
+                      onOpenChange(false);
+                    }
+                  : undefined
+              }
               sandboxSession={sandboxSession}
-              onResumeSandbox={sandboxSession
-                ? () => {
-                    onResumeSandbox?.();
-                    onOpenChange(false);
-                  }
-                : undefined}
+              onResumeSandbox={
+                sandboxSession
+                  ? () => {
+                      onResumeSandbox?.();
+                      onOpenChange(false);
+                    }
+                  : undefined
+              }
               user={user}
               mode={mode}
             />

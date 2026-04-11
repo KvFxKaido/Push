@@ -35,18 +35,50 @@ export interface InvalidVertexServiceAccountResult {
 }
 
 export type VertexRegionValidationResult = VertexRegionResult | InvalidVertexRegionResult;
-export type VertexServiceAccountValidationResult = VertexServiceAccountResult | InvalidVertexServiceAccountResult;
+export type VertexServiceAccountValidationResult =
+  | VertexServiceAccountResult
+  | InvalidVertexServiceAccountResult;
 
 export const VERTEX_DEFAULT_REGION = 'global';
 
 export const VERTEX_MODEL_OPTIONS: VertexModelOption[] = [
   { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', transport: 'openapi', family: 'gemini' },
-  { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', transport: 'openapi', family: 'gemini' },
-  { id: 'google/gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', transport: 'openapi', family: 'gemini' },
-  { id: 'claude-sonnet-4-5@20250929', label: 'Claude Sonnet 4.5', transport: 'anthropic', family: 'claude' },
-  { id: 'claude-haiku-4-5@20251001', label: 'Claude Haiku 4.5', transport: 'anthropic', family: 'claude' },
-  { id: 'claude-sonnet-4@20250514', label: 'Claude Sonnet 4', transport: 'anthropic', family: 'claude' },
-  { id: 'claude-opus-4-1@20250805', label: 'Claude Opus 4.1', transport: 'anthropic', family: 'claude' },
+  {
+    id: 'google/gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash',
+    transport: 'openapi',
+    family: 'gemini',
+  },
+  {
+    id: 'google/gemini-2.5-flash-lite',
+    label: 'Gemini 2.5 Flash-Lite',
+    transport: 'openapi',
+    family: 'gemini',
+  },
+  {
+    id: 'claude-sonnet-4-5@20250929',
+    label: 'Claude Sonnet 4.5',
+    transport: 'anthropic',
+    family: 'claude',
+  },
+  {
+    id: 'claude-haiku-4-5@20251001',
+    label: 'Claude Haiku 4.5',
+    transport: 'anthropic',
+    family: 'claude',
+  },
+  {
+    id: 'claude-sonnet-4@20250514',
+    label: 'Claude Sonnet 4',
+    transport: 'anthropic',
+    family: 'claude',
+  },
+  {
+    id: 'claude-opus-4-1@20250805',
+    label: 'Claude Opus 4.1',
+    transport: 'anthropic',
+    family: 'claude',
+  },
 ];
 
 export const VERTEX_DEFAULT_MODEL = VERTEX_MODEL_OPTIONS[0]?.id ?? 'google/gemini-2.5-pro';
@@ -57,7 +89,9 @@ function normalizeMultilinePem(value: string): string {
   return value.replace(/\r\n/g, '\n').trim();
 }
 
-export function normalizeVertexRegion(rawValue: string | null | undefined): VertexRegionValidationResult {
+export function normalizeVertexRegion(
+  rawValue: string | null | undefined,
+): VertexRegionValidationResult {
   const value = (rawValue || '').trim();
   if (!value) {
     return { ok: false, error: 'Region is required.' };
@@ -68,7 +102,10 @@ export function normalizeVertexRegion(rawValue: string | null | undefined): Vert
   }
 
   if (!/^[a-z]+(?:-[a-z0-9]+)+$/.test(value)) {
-    return { ok: false, error: 'Region must be "global" or a valid Google Cloud location like us-east5.' };
+    return {
+      ok: false,
+      error: 'Region must be "global" or a valid Google Cloud location like us-east5.',
+    };
   }
 
   return { ok: true, normalized: value };
@@ -97,7 +134,8 @@ export function parseVertexServiceAccount(
   const type = typeof record.type === 'string' ? record.type.trim() : '';
   const projectId = typeof record.project_id === 'string' ? record.project_id.trim() : '';
   const clientEmail = typeof record.client_email === 'string' ? record.client_email.trim() : '';
-  const privateKey = typeof record.private_key === 'string' ? normalizeMultilinePem(record.private_key) : '';
+  const privateKey =
+    typeof record.private_key === 'string' ? normalizeMultilinePem(record.private_key) : '';
 
   if (type !== 'service_account') {
     return { ok: false, error: 'JSON must be a Google service account credential.' };
@@ -159,7 +197,9 @@ export function encodeVertexServiceAccountHeader(rawValue: string | null | undef
   return btoa(parsed.normalized);
 }
 
-export function decodeVertexServiceAccountHeader(rawValue: string | null | undefined): VertexServiceAccountValidationResult {
+export function decodeVertexServiceAccountHeader(
+  rawValue: string | null | undefined,
+): VertexServiceAccountValidationResult {
   const trimmed = (rawValue || '').trim();
   if (!trimmed) {
     return { ok: false, error: 'Missing Vertex service account header.' };
@@ -176,6 +216,10 @@ export function buildVertexOpenApiBaseUrl(projectId: string, region: string): st
   return `https://aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${region}/endpoints/openapi`;
 }
 
-export function buildVertexAnthropicEndpoint(projectId: string, region: string, model: string): string {
+export function buildVertexAnthropicEndpoint(
+  projectId: string,
+  region: string,
+  model: string,
+): string {
   return `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/anthropic/models/${model}:streamRawPredict`;
 }

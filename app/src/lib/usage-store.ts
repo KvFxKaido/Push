@@ -28,7 +28,8 @@ export async function loadUsageEntries(): Promise<UsageEntry[]> {
     if (!Array.isArray(parsed)) return [];
     const entries = parsed.filter(
       (e: unknown): e is UsageEntry =>
-        typeof e === 'object' && e !== null &&
+        typeof e === 'object' &&
+        e !== null &&
         typeof (e as UsageEntry).timestamp === 'number' &&
         Number.isFinite((e as UsageEntry).timestamp) &&
         typeof (e as UsageEntry).model === 'string' &&

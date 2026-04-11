@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  getContextMetrics,
-  recordContextMetric,
-  resetContextMetrics,
-} from './context-metrics';
+import { getContextMetrics, recordContextMetric, resetContextMetrics } from './context-metrics';
 
 describe('context-metrics', () => {
   beforeEach(() => {
@@ -66,9 +62,24 @@ describe('context-metrics', () => {
   });
 
   it('tracks maxContextSeen across multiple events', () => {
-    recordContextMetric({ phase: 'summarization', beforeTokens: 90000, afterTokens: 80000, provider: 'ollama' });
-    recordContextMetric({ phase: 'summarization', beforeTokens: 120000, afterTokens: 85000, provider: 'ollama' });
-    recordContextMetric({ phase: 'summarization', beforeTokens: 95000, afterTokens: 82000, provider: 'ollama' });
+    recordContextMetric({
+      phase: 'summarization',
+      beforeTokens: 90000,
+      afterTokens: 80000,
+      provider: 'ollama',
+    });
+    recordContextMetric({
+      phase: 'summarization',
+      beforeTokens: 120000,
+      afterTokens: 85000,
+      provider: 'ollama',
+    });
+    recordContextMetric({
+      phase: 'summarization',
+      beforeTokens: 95000,
+      afterTokens: 82000,
+      provider: 'ollama',
+    });
 
     const snapshot = getContextMetrics();
     expect(snapshot.maxContextSeen).toBe(120000);
@@ -77,8 +88,19 @@ describe('context-metrics', () => {
   });
 
   it('accumulates across providers', () => {
-    recordContextMetric({ phase: 'summarization', beforeTokens: 90000, afterTokens: 80000, provider: 'openrouter' });
-    recordContextMetric({ phase: 'digest_drop', beforeTokens: 100000, afterTokens: 85000, provider: 'zen', messagesDropped: 4 });
+    recordContextMetric({
+      phase: 'summarization',
+      beforeTokens: 90000,
+      afterTokens: 80000,
+      provider: 'openrouter',
+    });
+    recordContextMetric({
+      phase: 'digest_drop',
+      beforeTokens: 100000,
+      afterTokens: 85000,
+      provider: 'zen',
+      messagesDropped: 4,
+    });
 
     const snapshot = getContextMetrics();
     expect(snapshot.totalEvents).toBe(2);
@@ -96,7 +118,12 @@ describe('context-metrics', () => {
   });
 
   it('returns a defensive copy from getContextMetrics', () => {
-    recordContextMetric({ phase: 'summarization', beforeTokens: 90000, afterTokens: 80000, provider: 'ollama' });
+    recordContextMetric({
+      phase: 'summarization',
+      beforeTokens: 90000,
+      afterTokens: 80000,
+      provider: 'ollama',
+    });
 
     const snapshot = getContextMetrics();
     snapshot.totalEvents = 99;
@@ -110,7 +137,13 @@ describe('context-metrics', () => {
   });
 
   it('resets all metrics', () => {
-    recordContextMetric({ phase: 'summarization', beforeTokens: 90000, afterTokens: 80000, provider: 'ollama', cause: 'mixed' });
+    recordContextMetric({
+      phase: 'summarization',
+      beforeTokens: 90000,
+      afterTokens: 80000,
+      provider: 'ollama',
+      cause: 'mixed',
+    });
     resetContextMetrics();
 
     const snapshot = getContextMetrics();
@@ -122,7 +155,12 @@ describe('context-metrics', () => {
   });
 
   it('clamps negative savings to zero', () => {
-    recordContextMetric({ phase: 'summarization', beforeTokens: 80000, afterTokens: 90000, provider: 'ollama' });
+    recordContextMetric({
+      phase: 'summarization',
+      beforeTokens: 80000,
+      afterTokens: 90000,
+      provider: 'ollama',
+    });
 
     const snapshot = getContextMetrics();
     expect(snapshot.totalTokensSaved).toBe(0);

@@ -1,4 +1,10 @@
-import type { AIProviderType, ModelCapabilities, ModelCapabilitySupport, HarnessProfile, HarnessProfileSettings } from '@/types';
+import type {
+  AIProviderType,
+  ModelCapabilities,
+  ModelCapabilitySupport,
+  HarnessProfile,
+  HarnessProfileSettings,
+} from '@/types';
 import { computeAdaptiveProfile, logAdaptiveProfile } from './harness-profiles';
 
 type CapabilityRule = {
@@ -106,11 +112,17 @@ function mergeCapabilities(
   };
 }
 
-function matchesProvider(ruleProviders: CapabilityRule['providers'], provider: AIProviderType): boolean {
+function matchesProvider(
+  ruleProviders: CapabilityRule['providers'],
+  provider: AIProviderType,
+): boolean {
   return ruleProviders === 'any' || ruleProviders.includes(provider);
 }
 
-export function getModelCapabilities(provider: AIProviderType, modelId: string | null | undefined): ModelCapabilities {
+export function getModelCapabilities(
+  provider: AIProviderType,
+  modelId: string | null | undefined,
+): ModelCapabilities {
   const trimmedModelId = modelId?.trim();
   if (!trimmedModelId) return DEFAULT_MODEL_CAPABILITIES;
 
@@ -169,17 +181,28 @@ function formatCapabilitySupportLabel(support: ModelCapabilitySupport): string {
 
 function formatProviderLabel(provider: AIProviderType): string {
   switch (provider) {
-    case 'ollama': return 'Ollama';
-    case 'openrouter': return 'OpenRouter';
-    case 'zen': return 'OpenCode Zen';
-    case 'nvidia': return 'Nvidia NIM';
-    case 'blackbox': return 'Blackbox AI';
-    case 'kilocode': return 'Kilo Code';
-    case 'azure': return 'Azure OpenAI';
-    case 'bedrock': return 'AWS Bedrock';
-    case 'vertex': return 'Google Vertex';
-    case 'demo': return 'Demo';
-    default: return provider;
+    case 'ollama':
+      return 'Ollama';
+    case 'openrouter':
+      return 'OpenRouter';
+    case 'zen':
+      return 'OpenCode Zen';
+    case 'nvidia':
+      return 'Nvidia NIM';
+    case 'blackbox':
+      return 'Blackbox AI';
+    case 'kilocode':
+      return 'Kilo Code';
+    case 'azure':
+      return 'Azure OpenAI';
+    case 'bedrock':
+      return 'AWS Bedrock';
+    case 'vertex':
+      return 'Google Vertex';
+    case 'demo':
+      return 'Demo';
+    default:
+      return provider;
   }
 }
 
@@ -209,11 +232,17 @@ export function buildModelCapabilityAwarenessBlock(
 
   if (options?.hasImageAttachments) {
     if (capabilities.visionInput === 'supported') {
-      lines.push('- The current conversation includes image attachments, and this model can inspect them.');
+      lines.push(
+        '- The current conversation includes image attachments, and this model can inspect them.',
+      );
     } else if (capabilities.visionInput === 'unsupported') {
-      lines.push('- The current conversation includes image attachments, but this model cannot inspect them. Explain the limitation instead of delegating and pretending the images were understood.');
+      lines.push(
+        '- The current conversation includes image attachments, but this model cannot inspect them. Explain the limitation instead of delegating and pretending the images were understood.',
+      );
     } else {
-      lines.push('- The current conversation includes image attachments, but support is unverified. Be explicit if you cannot confidently interpret the images.');
+      lines.push(
+        '- The current conversation includes image attachments, but support is unverified. Be explicit if you cannot confidently interpret the images.',
+      );
     }
   }
 

@@ -107,9 +107,7 @@ export type AfterModelResult =
  * - deny:  block the tool call with a reason (matches existing PreToolUseResult shape)
  * - null:  passthrough, allow execution
  */
-export type BeforeToolResult =
-  | { action: 'deny'; reason: string }
-  | null;
+export type BeforeToolResult = { action: 'deny'; reason: string } | null;
 
 /**
  * Result from an afterToolExec hook.
@@ -289,10 +287,7 @@ export class TurnPolicyRegistry {
         ? [
             {
               matcher: /.*/,
-              hook: async (
-                toolName: string,
-                args: Record<string, unknown>,
-              ) => {
+              hook: async (toolName: string, args: Record<string, unknown>) => {
                 const result = await this.evaluateBeforeTool(toolName, args, ctx);
                 if (result?.action === 'deny') {
                   return { decision: 'deny' as const, reason: result.reason };

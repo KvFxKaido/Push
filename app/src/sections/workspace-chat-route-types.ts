@@ -37,7 +37,11 @@ export interface ChatRouteWorkspaceProps {
   resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
   setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
   clearRepoAppearance: (repoFullName: string) => void;
-  handleWorkspacePromotion: (repo: ActiveRepo, branch?: string, sandboxIdOverride?: string | null) => void;
+  handleWorkspacePromotion: (
+    repo: ActiveRepo,
+    branch?: string,
+    sandboxIdOverride?: string | null,
+  ) => void;
   sandbox: {
     sandboxId: string | null;
     status: SandboxStatus;
@@ -67,7 +71,11 @@ export interface ChatRouteWorkspaceProps {
 
 export interface ChatRouteConversationProps {
   messages: ChatMessage[];
-  sendMessage: (message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => Promise<void> | void;
+  sendMessage: (
+    message: string,
+    attachments?: AttachmentData[],
+    options?: ChatSendOptions,
+  ) => Promise<void> | void;
   agentStatus: AgentStatus;
   agentEvents: AgentStatusEvent[];
   runEvents: RunEvent[];
@@ -87,7 +95,12 @@ export interface ChatRouteConversationProps {
   clearMemoryByRepo: () => void;
   clearMemoryByBranch: () => void;
   regenerateLastResponse: () => Promise<void> | void;
-  editMessageAndResend: (messageId: string, text: string, attachments?: AttachmentData[], options?: ChatSendOptions) => Promise<void> | void;
+  editMessageAndResend: (
+    messageId: string,
+    text: string,
+    attachments?: AttachmentData[],
+    options?: ChatSendOptions,
+  ) => Promise<void> | void;
   handleCardAction: (action: CardAction) => void;
   contextUsage: { used: number; max: number; percent: number };
   abortStream: (options?: { clearQueuedFollowUps?: boolean }) => void;
@@ -192,12 +205,11 @@ export interface ChatRouteProfileProps {
   handleChatInstructionsBlur: () => void;
 }
 
-export type ChatRouteProps =
-  & ChatRouteWorkspaceProps
-  & ChatRouteConversationProps
-  & ChatRouteRepositoryProps
-  & ChatRouteCatalogProps
-  & ChatRouteWorkspaceDataProps
-  & ChatRouteAuthProps
-  & ChatRouteUiStateProps
-  & ChatRouteProfileProps;
+export type ChatRouteProps = ChatRouteWorkspaceProps &
+  ChatRouteConversationProps &
+  ChatRouteRepositoryProps &
+  ChatRouteCatalogProps &
+  ChatRouteWorkspaceDataProps &
+  ChatRouteAuthProps &
+  ChatRouteUiStateProps &
+  ChatRouteProfileProps;

@@ -15,15 +15,17 @@ import { useWorkspaceSandboxController } from '@/hooks/useWorkspaceSandboxContro
 import { perfMark } from '@/lib/perf-marks';
 import { useWorkspaceSessionBridge } from './useWorkspaceSessionBridge';
 import { getDefaultMemoryStore } from '@/lib/context-memory-store';
-import type {
-  ActiveRepo,
-  RepoWithActivity,
-  WorkspaceScreenProps,
-} from '@/types';
+import type { ActiveRepo, RepoWithActivity, WorkspaceScreenProps } from '@/types';
 
-const FileBrowser = lazy(() => import('./FileBrowser').then((module) => ({ default: module.FileBrowser })));
-const ChatSurfaceRoute = lazy(() => import('./ChatSurfaceRoute').then((module) => ({ default: module.ChatSurfaceRoute })));
-const WorkspaceChatRoute = lazy(() => import('./WorkspaceChatRoute').then((module) => ({ default: module.WorkspaceChatRoute })));
+const FileBrowser = lazy(() =>
+  import('./FileBrowser').then((module) => ({ default: module.FileBrowser })),
+);
+const ChatSurfaceRoute = lazy(() =>
+  import('./ChatSurfaceRoute').then((module) => ({ default: module.ChatSurfaceRoute })),
+);
+const WorkspaceChatRoute = lazy(() =>
+  import('./WorkspaceChatRoute').then((module) => ({ default: module.WorkspaceChatRoute })),
+);
 
 const workspaceRouteFallback = <div className="h-dvh bg-[#000]" />;
 
@@ -57,13 +59,8 @@ export function WorkspaceSessionScreen({
     installApp,
     setInstallationIdManually,
   } = auth;
-  const {
-    onDisconnect,
-    onSelectRepo,
-    onStartScratchWorkspace,
-    onStartChat,
-    onEndWorkspace,
-  } = navigation;
+  const { onDisconnect, onSelectRepo, onStartScratchWorkspace, onStartChat, onEndWorkspace } =
+    navigation;
   const { pendingResumeChatId, onConversationIndexChange } = homeBridge;
 
   const isScratch = workspaceSession.kind === 'scratch';
@@ -72,30 +69,39 @@ export function WorkspaceSessionScreen({
   const scratchpad = useScratchpad(workspaceRepo?.full_name ?? null);
   const sandbox = useSandbox(
     isChat ? null : isScratch ? '' : (workspaceRepo?.full_name ?? null),
-    isChat ? null : isScratch ? 'main' : (workspaceRepo?.current_branch || workspaceRepo?.default_branch || null),
+    isChat
+      ? null
+      : isScratch
+        ? 'main'
+        : workspaceRepo?.current_branch || workspaceRepo?.default_branch || null,
   );
   const catalog = useModelCatalog();
 
-  const handleWorkspacePromotion = useCallback((repo: ActiveRepo, branch?: string, sandboxIdOverride?: string | null) => {
-    const promotedRepo = branch && branch !== repo.default_branch
-      ? { ...repo, current_branch: branch }
-      : repo;
+  const handleWorkspacePromotion = useCallback(
+    (repo: ActiveRepo, branch?: string, sandboxIdOverride?: string | null) => {
+      const promotedRepo =
+        branch && branch !== repo.default_branch ? { ...repo, current_branch: branch } : repo;
 
-    sandbox.rebindSessionRepo(repo.full_name, branch ?? repo.default_branch);
-    setActiveRepo(promotedRepo);
-    onWorkspaceSessionChange({
-      id: workspaceSession.id,
-      kind: 'repo',
-      repo: promotedRepo,
-      sandboxId: sandboxIdOverride ?? sandbox.sandboxId,
-    });
-  }, [onWorkspaceSessionChange, sandbox, setActiveRepo, workspaceSession.id]);
+      sandbox.rebindSessionRepo(repo.full_name, branch ?? repo.default_branch);
+      setActiveRepo(promotedRepo);
+      onWorkspaceSessionChange({
+        id: workspaceSession.id,
+        kind: 'repo',
+        repo: promotedRepo,
+        sandboxId: sandboxIdOverride ?? sandbox.sandboxId,
+      });
+    },
+    [onWorkspaceSessionChange, sandbox, setActiveRepo, workspaceSession.id],
+  );
 
   const skipBranchTeardownRef = useRef(false);
-  const handleSandboxBranchSwitch = useCallback((branch: string) => {
-    skipBranchTeardownRef.current = true;
-    setCurrentBranch(branch);
-  }, [setCurrentBranch]);
+  const handleSandboxBranchSwitch = useCallback(
+    (branch: string) => {
+      skipBranchTeardownRef.current = true;
+      setCurrentBranch(branch);
+    },
+    [setCurrentBranch],
+  );
 
   const {
     messages,
@@ -165,7 +171,13 @@ export function WorkspaceSessionScreen({
 
   // Synchronously set workspace mode so createNewChat tags conversations correctly
   // during workspace transitions (before the async useProjectInstructions effect fires).
-  setWorkspaceMode(workspaceSession.kind === 'chat' ? 'chat' : workspaceSession.kind === 'scratch' ? 'scratch' : 'repo');
+  setWorkspaceMode(
+    workspaceSession.kind === 'chat'
+      ? 'chat'
+      : workspaceSession.kind === 'scratch'
+        ? 'scratch'
+        : 'repo',
+  );
 
   useEffect(() => {
     perfMark(workspaceSession.kind === 'chat' ? 'surface:chat' : 'surface:workspace');
@@ -175,19 +187,25 @@ export function WorkspaceSessionScreen({
     if (pendingResumeChatId) return;
 
     const activeConversation = conversations[activeChatId];
-    const workspaceMode = workspaceSession.kind === 'chat'
-      ? 'chat'
-      : workspaceSession.kind === 'scratch'
-      ? 'scratch'
-      : 'repo';
+    const workspaceMode =
+      workspaceSession.kind === 'chat'
+        ? 'chat'
+        : workspaceSession.kind === 'scratch'
+          ? 'scratch'
+          : 'repo';
     const repoFullName = workspaceRepo?.full_name ?? null;
 
-    if (activeConversation && conversationBelongsToWorkspace(activeConversation, repoFullName, workspaceMode)) {
+    if (
+      activeConversation &&
+      conversationBelongsToWorkspace(activeConversation, repoFullName, workspaceMode)
+    ) {
       return;
     }
 
     const matchingConversations = Object.values(conversations)
-      .filter((conversation) => conversationBelongsToWorkspace(conversation, repoFullName, workspaceMode))
+      .filter((conversation) =>
+        conversationBelongsToWorkspace(conversation, repoFullName, workspaceMode),
+      )
       .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
 
     if (matchingConversations.length > 0) {
@@ -218,12 +236,16 @@ export function WorkspaceSessionScreen({
 
   const clearMemoryByRepo = useCallback(() => {
     if (!workspaceRepo?.full_name) return;
-    void Promise.resolve(getDefaultMemoryStore().clearByRepo(workspaceRepo.full_name)).catch((e: unknown) => console.warn('[Settings] Failed to clear memory by repo', e));
+    void Promise.resolve(getDefaultMemoryStore().clearByRepo(workspaceRepo.full_name)).catch(
+      (e: unknown) => console.warn('[Settings] Failed to clear memory by repo', e),
+    );
   }, [workspaceRepo]);
 
   const clearMemoryByBranch = useCallback(() => {
     if (!workspaceRepo?.full_name || !workspaceRepo.current_branch) return;
-    void Promise.resolve(getDefaultMemoryStore().clearByBranch(workspaceRepo.full_name, workspaceRepo.current_branch)).catch((e: unknown) => console.warn('[Settings] Failed to clear memory by branch', e));
+    void Promise.resolve(
+      getDefaultMemoryStore().clearByBranch(workspaceRepo.full_name, workspaceRepo.current_branch),
+    ).catch((e: unknown) => console.warn('[Settings] Failed to clear memory by branch', e));
   }, [workspaceRepo]);
   const {
     selectedChatProvider,
@@ -330,19 +352,22 @@ export function WorkspaceSessionScreen({
     copyAllowlistCommand,
   } = useWorkspacePreferences(validatedUser?.login);
 
-  const handleSelectRepoFromDrawer = useCallback((repo: RepoWithActivity, branch?: string) => {
-    onSelectRepo(repo, branch);
-  }, [onSelectRepo]);
+  const handleSelectRepoFromDrawer = useCallback(
+    (repo: RepoWithActivity, branch?: string) => {
+      onSelectRepo(repo, branch);
+    },
+    [onSelectRepo],
+  );
 
   if (showFileBrowser && sandbox.sandboxId) {
     return (
       <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
         <Suspense
-          fallback={(
+          fallback={
             <div className="flex flex-1 items-center justify-center text-sm text-push-fg-dim">
               Loading workspace files...
             </div>
-          )}
+          }
         >
           <FileBrowser
             sandboxId={sandbox.sandboxId}
@@ -505,15 +530,9 @@ export function WorkspaceSessionScreen({
   return (
     <Suspense fallback={workspaceRouteFallback}>
       {workspaceSession.kind === 'chat' ? (
-        <ChatSurfaceRoute
-          key={workspaceSession.id}
-          {...routeProps}
-        />
+        <ChatSurfaceRoute key={workspaceSession.id} {...routeProps} />
       ) : (
-        <WorkspaceChatRoute
-          key={workspaceSession.id}
-          {...routeProps}
-        />
+        <WorkspaceChatRoute key={workspaceSession.id} {...routeProps} />
       )}
     </Suspense>
   );

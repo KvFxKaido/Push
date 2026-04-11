@@ -89,40 +89,49 @@ export function useProjectInstructions(
   const [creatingAgentsMd, setCreatingAgentsMd] = useState(false);
   const [creatingAgentsMdWithAI, setCreatingAgentsMdWithAI] = useState(false);
 
-  const applyEffectiveInstructions = useCallback((rawContent: string | null) => {
-    const effective = buildEffectiveProjectInstructions(activeRepo?.full_name, rawContent);
-    setAgentsMdContent(effective);
-    setAgentsMd(effective);
-  }, [activeRepo?.full_name, setAgentsMd]);
+  const applyEffectiveInstructions = useCallback(
+    (rawContent: string | null) => {
+      const effective = buildEffectiveProjectInstructions(activeRepo?.full_name, rawContent);
+      setAgentsMdContent(effective);
+      setAgentsMd(effective);
+    },
+    [activeRepo?.full_name, setAgentsMd],
+  );
 
   // Helpers
-  const refreshProjectInstructionsFromSandbox = useCallback(async (sandboxId: string): Promise<string | null> => {
-    return syncProjectInstructionsFromSandbox(sandboxId, {
-      applyEffectiveInstructions,
-      setInstructionFilenameState,
-      setInstructionFilename,
-    });
-  }, [applyEffectiveInstructions, setInstructionFilename]);
+  const refreshProjectInstructionsFromSandbox = useCallback(
+    async (sandboxId: string): Promise<string | null> => {
+      return syncProjectInstructionsFromSandbox(sandboxId, {
+        applyEffectiveInstructions,
+        setInstructionFilenameState,
+        setInstructionFilename,
+      });
+    },
+    [applyEffectiveInstructions, setInstructionFilename],
+  );
 
-  const autoCommitAgentsMdInSandbox = useCallback(async (sandboxId: string): Promise<{ ok: boolean; message: string }> => {
-    const commitResult = await execInSandbox(
-      sandboxId,
-      `cd /workspace && if [ ! -d .git ]; then git init >/dev/null 2>&1; fi && git add AGENTS.md && if git diff --cached --quiet; then echo "__PUSH_NO_CHANGES__"; else git commit -m "Add project instructions"; fi`,
-      undefined,
-      { markWorkspaceMutated: true },
-    );
+  const autoCommitAgentsMdInSandbox = useCallback(
+    async (sandboxId: string): Promise<{ ok: boolean; message: string }> => {
+      const commitResult = await execInSandbox(
+        sandboxId,
+        `cd /workspace && if [ ! -d .git ]; then git init >/dev/null 2>&1; fi && git add AGENTS.md && if git diff --cached --quiet; then echo "__PUSH_NO_CHANGES__"; else git commit -m "Add project instructions"; fi`,
+        undefined,
+        { markWorkspaceMutated: true },
+      );
 
-    if (commitResult.exitCode !== 0) {
-      const detail = commitResult.stderr || commitResult.stdout || 'unknown git error';
-      return { ok: false, message: `AGENTS.md created, but commit failed: ${detail}` };
-    }
+      if (commitResult.exitCode !== 0) {
+        const detail = commitResult.stderr || commitResult.stdout || 'unknown git error';
+        return { ok: false, message: `AGENTS.md created, but commit failed: ${detail}` };
+      }
 
-    if ((commitResult.stdout || '').includes('__PUSH_NO_CHANGES__')) {
-      return { ok: true, message: 'AGENTS.md already up to date in git.' };
-    }
+      if ((commitResult.stdout || '').includes('__PUSH_NO_CHANGES__')) {
+        return { ok: true, message: 'AGENTS.md already up to date in git.' };
+      }
 
-    return { ok: true, message: 'AGENTS.md created and committed.' };
-  }, []);
+      return { ok: true, message: 'AGENTS.md created and committed.' };
+    },
+    [],
+  );
 
   // Phase A — GitHub API fetch (immediate)
   useEffect(() => {
@@ -154,7 +163,9 @@ export function useProjectInstructions(
         setProjectInstructionsChecked(true);
         setProjectInstructionsCheckFailed(true);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [activeRepo, applyEffectiveInstructions, setAgentsMd, setInstructionFilename]);
 
   // Phase B — Sandbox upgrade (overrides Phase A when sandbox is ready)
@@ -174,11 +185,12 @@ export function useProjectInstructions(
         if (cancelled) return;
         setInstructionFilename(filename);
       },
-    })
-      .catch(() => {
-        // Sandbox read failed — keep Phase A content
-      });
-    return () => { cancelled = true; };
+    }).catch(() => {
+      // Sandbox read failed — keep Phase A content
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [sandbox.status, sandbox.sandboxId, applyEffectiveInstructions, setInstructionFilename]);
 
   // Build workspace context
@@ -191,18 +203,20 @@ export function useProjectInstructions(
     if (workspaceSession.kind === 'chat') {
       // Chat mode — plain conversation. No repo or sandbox, but web_search is
       // available so the assistant can ground answers on fresh information.
-      const description = 'You are in chat mode — a plain conversation with no repository context and no sandbox.'
-        + ' You have one tool: web_search, for looking up current information when the user asks about fresh topics, recent releases, or real-time facts.'
-        + ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.';
+      const description =
+        'You are in chat mode — a plain conversation with no repository context and no sandbox.' +
+        ' You have one tool: web_search, for looking up current information when the user asks about fresh topics, recent releases, or real-time facts.' +
+        ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.';
       setWorkspaceContext({ description, includeGitHubTools: false, mode: 'chat' });
       return;
     }
     if (workspaceSession.kind === 'scratch') {
       // Scratch workspace — provide workspace description, no GitHub tools
-      const description = 'You are working in an ephemeral workspace at /workspace with no GitHub repo connected.'
-        + ' You have full access to the sandbox filesystem and can create, edit, and run files freely.'
-        + ' Nothing is saved or committed unless the user explicitly downloads their work.'
-        + ' Be a collaborative thinking partner: surface assumptions, propose structure, iterate freely.';
+      const description =
+        'You are working in an ephemeral workspace at /workspace with no GitHub repo connected.' +
+        ' You have full access to the sandbox filesystem and can create, edit, and run files freely.' +
+        ' Nothing is saved or committed unless the user explicitly downloads their work.' +
+        ' Be a collaborative thinking partner: surface assumptions, propose structure, iterate freely.';
       setWorkspaceContext({ description, includeGitHubTools: false, mode: 'scratch' });
       return;
     }
@@ -225,7 +239,10 @@ export function useProjectInstructions(
     try {
       let id = sandbox.sandboxId;
       if (!id) {
-        id = await sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch);
+        id = await sandbox.start(
+          activeRepo.full_name,
+          activeRepo.current_branch || activeRepo.default_branch,
+        );
       }
       if (!id) {
         toast.error('Sandbox is not ready yet. Try again in a moment.');
@@ -265,7 +282,14 @@ export function useProjectInstructions(
     } finally {
       setCreatingAgentsMd(false);
     }
-  }, [activeRepo, creatingAgentsMd, sandbox, refreshProjectInstructionsFromSandbox, autoCommitAgentsMdInSandbox, setShowFileBrowser]);
+  }, [
+    activeRepo,
+    creatingAgentsMd,
+    sandbox,
+    refreshProjectInstructionsFromSandbox,
+    autoCommitAgentsMdInSandbox,
+    setShowFileBrowser,
+  ]);
 
   // Create AGENTS.md with AI
   const handleCreateAgentsMdWithAI = useCallback(async () => {
@@ -286,13 +310,17 @@ export function useProjectInstructions(
       await sendMessage(prompt);
       const id = sandbox.sandboxId;
       if (!id) {
-        toast.warning('AGENTS.md draft may be ready, but sandbox session is unavailable to refresh context.');
+        toast.warning(
+          'AGENTS.md draft may be ready, but sandbox session is unavailable to refresh context.',
+        );
         return;
       }
 
       const refreshed = await refreshProjectInstructionsFromSandbox(id);
       if (!refreshed) {
-        toast.warning('AGENTS.md was not detected after AI run. You can retry or use Create Template.');
+        toast.warning(
+          'AGENTS.md was not detected after AI run. You can retry or use Create Template.',
+        );
         return;
       }
 
@@ -306,7 +334,17 @@ export function useProjectInstructions(
     } finally {
       setCreatingAgentsMdWithAI(false);
     }
-  }, [activeRepo, creatingAgentsMdWithAI, isStreaming, markSnapshotActivity, sendMessage, sandbox.sandboxId, refreshProjectInstructionsFromSandbox, autoCommitAgentsMdInSandbox, setShowFileBrowser]);
+  }, [
+    activeRepo,
+    creatingAgentsMdWithAI,
+    isStreaming,
+    markSnapshotActivity,
+    sendMessage,
+    sandbox.sandboxId,
+    refreshProjectInstructionsFromSandbox,
+    autoCommitAgentsMdInSandbox,
+    setShowFileBrowser,
+  ]);
 
   return {
     agentsMdContent,

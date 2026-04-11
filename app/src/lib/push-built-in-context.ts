@@ -77,5 +77,5 @@ export function buildEffectiveProjectInstructions(
   if (builtIn && repoText) {
     return `${builtIn}\n\n# Repo Instruction File\n\n${repoText}`;
   }
-  return builtIn || (repoText || null);
+  return builtIn || repoText || null;
 }

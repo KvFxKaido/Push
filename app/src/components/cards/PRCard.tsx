@@ -1,7 +1,12 @@
 import { MergeShieldIcon, PRThreadIcon } from '@/components/icons/push-custom-icons';
 import type { PRCardData } from '@/types';
 import { useExpandable } from '@/hooks/useExpandable';
-import { CARD_SHELL_CLASS, CARD_BADGE_SUCCESS, CARD_BADGE_ERROR, CARD_BADGE_INFO } from '@/lib/utils';
+import {
+  CARD_SHELL_CLASS,
+  CARD_BADGE_SUCCESS,
+  CARD_BADGE_ERROR,
+  CARD_BADGE_INFO,
+} from '@/lib/utils';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
 
 const statusConfig = {
@@ -21,18 +26,16 @@ export function PRCard({ data }: { data: PRCardData }) {
         <Icon className="h-4 w-4 mt-0.5 shrink-0 text-push-fg-secondary" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium text-push-fg leading-tight">
-              {data.title}
-            </span>
+            <span className="text-sm font-medium text-push-fg leading-tight">{data.title}</span>
             <span className="text-push-sm text-push-fg-dim font-mono">#{data.number}</span>
           </div>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <span className={`inline-flex items-center gap-1 text-push-xs font-medium px-1.5 py-0.5 rounded-full ${color}`}>
+            <span
+              className={`inline-flex items-center gap-1 text-push-xs font-medium px-1.5 py-0.5 rounded-full ${color}`}
+            >
               {label}
             </span>
-            <span className="text-push-sm text-push-fg-dim">
-              by {data.author}
-            </span>
+            <span className="text-push-sm text-push-fg-dim">by {data.author}</span>
             <span className="text-push-sm text-push-fg-dim">
               {new Date(data.createdAt).toLocaleDateString()}
             </span>
@@ -44,7 +47,9 @@ export function PRCard({ data }: { data: PRCardData }) {
       <div className="px-3 pb-2 flex items-center gap-3 text-push-sm">
         <span className="text-push-status-success font-mono">+{data.additions}</span>
         <span className="text-push-status-error font-mono">-{data.deletions}</span>
-        <span className="text-push-fg-dim">{data.changedFiles} file{data.changedFiles !== 1 ? 's' : ''}</span>
+        <span className="text-push-fg-dim">
+          {data.changedFiles} file{data.changedFiles !== 1 ? 's' : ''}
+        </span>
         <span className="text-push-fg-dim font-mono text-push-xs">
           {data.branch} → {data.baseBranch}
         </span>
@@ -67,7 +72,9 @@ export function PRCard({ data }: { data: PRCardData }) {
             className="w-full px-3 py-1.5 flex items-center gap-1 text-push-sm text-push-fg-dim hover:text-push-fg-secondary transition-colors"
           >
             <ExpandChevron expanded={filesExpanded} />
-            <span>{data.files.length} file{data.files.length !== 1 ? 's' : ''} changed</span>
+            <span>
+              {data.files.length} file{data.files.length !== 1 ? 's' : ''} changed
+            </span>
           </button>
           <ExpandableCardPanel
             expanded={filesExpanded}

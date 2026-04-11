@@ -8,12 +8,7 @@
 
 import { useState, useCallback } from 'react';
 import { X, Save, FileCode, Lock, Pencil } from 'lucide-react';
-import {
-  Sheet,
-  SheetContent,
-  SheetTitle,
-  SheetDescription,
-} from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { useCodeMirror } from '@/hooks/useCodeMirror';
 import type { EditorCardData, CardAction } from '@/types';
 import { CARD_BADGE_INFO, CARD_BUTTON_CLASS, CARD_ICON_BUTTON_CLASS } from '@/lib/utils';
@@ -66,7 +61,17 @@ export function EditorPanel({
     });
     // The parent will handle the actual write — we optimistically show saved state
     setTimeout(() => setSaving(false), 1000);
-  }, [onAction, messageId, cardIndex, data.path, data.sandboxId, data.version, data.workspaceRevision, editedContent, isDirty]);
+  }, [
+    onAction,
+    messageId,
+    cardIndex,
+    data.path,
+    data.sandboxId,
+    data.version,
+    data.workspaceRevision,
+    editedContent,
+    isDirty,
+  ]);
 
   const filename = data.path.split('/').pop() || data.path;
 
@@ -92,9 +97,7 @@ export function EditorPanel({
           </button>
 
           <FileCode className="h-3.5 w-3.5 text-push-fg-secondary shrink-0" />
-          <span className="text-push-base text-push-fg font-mono truncate flex-1">
-            {data.path}
-          </span>
+          <span className="text-push-base text-push-fg font-mono truncate flex-1">{data.path}</span>
 
           {/* Mode badge */}
           {editable ? (
@@ -103,7 +106,9 @@ export function EditorPanel({
               Edit
             </span>
           ) : (
-            <span className={`${CARD_BADGE_INFO} flex shrink-0 items-center gap-1 px-2 py-0.5 text-push-xs`}>
+            <span
+              className={`${CARD_BADGE_INFO} flex shrink-0 items-center gap-1 px-2 py-0.5 text-push-xs`}
+            >
               <Lock className="h-2.5 w-2.5" />
               Read-only
             </span>
@@ -129,7 +134,10 @@ export function EditorPanel({
         </div>
 
         {/* CodeMirror editor fills remaining space */}
-        <div ref={containerRef} className="flex-1 overflow-hidden [&_.cm-editor]:h-full [&_.cm-scroller]:!overflow-auto" />
+        <div
+          ref={containerRef}
+          className="flex-1 overflow-hidden [&_.cm-editor]:h-full [&_.cm-scroller]:!overflow-auto"
+        />
       </SheetContent>
     </Sheet>
   );

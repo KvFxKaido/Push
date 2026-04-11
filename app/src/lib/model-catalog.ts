@@ -6,7 +6,12 @@ import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
-import { compareProviderModelIds, NVIDIA_MODELS, OPENROUTER_MODELS, PROVIDER_URLS } from './providers';
+import {
+  compareProviderModelIds,
+  NVIDIA_MODELS,
+  OPENROUTER_MODELS,
+  PROVIDER_URLS,
+} from './providers';
 import { asRecord } from './utils';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
@@ -53,7 +58,8 @@ const OPENCODE_PRIORITY_MODELS = [
   'glm-5',
   'openai/gpt-5.1-codex-mini',
 ] as const;
-const IMAGE_GENERATION_MODEL_FAMILY_REGEX = /nanobanana|(?:^|\/)gpt-image(?:$|[-./:_])|(?:^|\/)imagen(?:$|[-./:_])|(?:^|\/)seedream(?:$|[-./:_])|(?:^|\/)recraft(?:$|[-./:_])|(?:^|\/)(?:black-forest-labs\/)?flux(?:$|[-./:_])/i;
+const IMAGE_GENERATION_MODEL_FAMILY_REGEX =
+  /nanobanana|(?:^|\/)gpt-image(?:$|[-./:_])|(?:^|\/)imagen(?:$|[-./:_])|(?:^|\/)seedream(?:$|[-./:_])|(?:^|\/)recraft(?:$|[-./:_])|(?:^|\/)(?:black-forest-labs\/)?flux(?:$|[-./:_])/i;
 
 export interface OpenRouterCatalogModel {
   id: string;
@@ -122,7 +128,10 @@ function parseOpenRouterModalityString(value: unknown): {
   };
 }
 
-function readCachedModelsDevOpenRouterMetadata(): Record<string, ModelsDevOpenRouterMetadata> | null {
+function readCachedModelsDevOpenRouterMetadata(): Record<
+  string,
+  ModelsDevOpenRouterMetadata
+> | null {
   return readCachedModelsDevMetadata<ModelsDevOpenRouterMetadata>(MODELS_DEV_OPENROUTER_CACHE_KEY);
 }
 
@@ -194,7 +203,9 @@ const EMPTY_CAPABILITIES: ResolvedModelCapabilities = {
   contextLimit: 0,
 };
 
-function resolveFromOpenRouterMetadata(meta: ModelsDevOpenRouterMetadata): ResolvedModelCapabilities {
+function resolveFromOpenRouterMetadata(
+  meta: ModelsDevOpenRouterMetadata,
+): ResolvedModelCapabilities {
   return {
     reasoning: meta.reasoning,
     toolCall: meta.toolCall,
@@ -227,16 +238,22 @@ export function getModelCapabilities(provider: string, modelId: string): Resolve
   }
 
   if (provider === 'blackbox') {
-    const metadata = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY);
+    const metadata = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(
+      MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY,
+    );
     const baseId = blackboxBaseId(modelId);
     const meta = metadata?.[modelId] ?? metadata?.[baseId];
     return meta ? resolveFromProviderMetadata(meta) : EMPTY_CAPABILITIES;
   }
 
-  const cacheKey = provider === 'nvidia' ? MODELS_DEV_NVIDIA_CACHE_KEY
-    : provider === 'ollama' ? MODELS_DEV_OLLAMA_CACHE_KEY
-    : provider === 'zen' ? MODELS_DEV_OPENCODE_CACHE_KEY
-    : null;
+  const cacheKey =
+    provider === 'nvidia'
+      ? MODELS_DEV_NVIDIA_CACHE_KEY
+      : provider === 'ollama'
+        ? MODELS_DEV_OLLAMA_CACHE_KEY
+        : provider === 'zen'
+          ? MODELS_DEV_OPENCODE_CACHE_KEY
+          : null;
 
   if (!cacheKey) return EMPTY_CAPABILITIES;
 
@@ -282,13 +299,17 @@ export function filterModelByContext(
       console.warn(`[model-catalog] Allowed ${modelId} with missing contextLimit (fail-open)`);
       return { allowed: true };
     }
-    console.debug(`[model-catalog] Rejected ${modelId}: missing contextLimit (metadata unavailable)`);
+    console.debug(
+      `[model-catalog] Rejected ${modelId}: missing contextLimit (metadata unavailable)`,
+    );
     return { allowed: false };
   }
 
   // Must meet minimum threshold
   if (contextLimit < MIN_CONTEXT_TOKENS) {
-    console.debug(`[model-catalog] Rejected ${modelId}: contextLimit ${contextLimit} < ${MIN_CONTEXT_TOKENS}`);
+    console.debug(
+      `[model-catalog] Rejected ${modelId}: contextLimit ${contextLimit} < ${MIN_CONTEXT_TOKENS}`,
+    );
     return { allowed: false };
   }
 
@@ -296,14 +317,16 @@ export function filterModelByContext(
 }
 export function formatModelCapabilityHints(caps: ResolvedModelCapabilities): string {
   const icons: string[] = [];
-  if (caps.reasoning) icons.push('⚡');  // reasoning/thinking
-  if (caps.vision) icons.push('👁');     // vision input
-  if (caps.imageGen) icons.push('🎨');   // image generation
-  if (caps.toolCall) icons.push('⚙');    // tool/function calling
+  if (caps.reasoning) icons.push('⚡'); // reasoning/thinking
+  if (caps.vision) icons.push('👁'); // vision input
+  if (caps.imageGen) icons.push('🎨'); // image generation
+  if (caps.toolCall) icons.push('⚙'); // tool/function calling
   return icons.join(' ');
 }
 
-function writeCachedModelsDevOpenRouterMetadata(models: Record<string, ModelsDevOpenRouterMetadata>): void {
+function writeCachedModelsDevOpenRouterMetadata(
+  models: Record<string, ModelsDevOpenRouterMetadata>,
+): void {
   writeCachedModelsDevMetadata(MODELS_DEV_OPENROUTER_CACHE_KEY, models);
 }
 
@@ -345,7 +368,10 @@ function readCachedModelsDevMetadata<TModel>(storageKey: string): Record<string,
   }
 }
 
-function writeCachedModelsDevMetadata<TModel>(storageKey: string, models: Record<string, TModel>): void {
+function writeCachedModelsDevMetadata<TModel>(
+  storageKey: string,
+  models: Record<string, TModel>,
+): void {
   const fetchedAt = Date.now();
   metadataMemCache.set(storageKey, {
     fetchedAt,
@@ -403,12 +429,16 @@ function mergeProviderMetadata(
     structuredOutput: current.structuredOutput || incoming.structuredOutput,
     openWeights: current.openWeights || incoming.openWeights,
     inputModalities: Array.from(new Set([...current.inputModalities, ...incoming.inputModalities])),
-    outputModalities: Array.from(new Set([...current.outputModalities, ...incoming.outputModalities])),
+    outputModalities: Array.from(
+      new Set([...current.outputModalities, ...incoming.outputModalities]),
+    ),
     contextLimit: Math.max(current.contextLimit, incoming.contextLimit),
   };
 }
 
-function extractAllModelsDevProviderMetadata(payload: unknown): Record<string, ModelsDevProviderMetadata> {
+function extractAllModelsDevProviderMetadata(
+  payload: unknown,
+): Record<string, ModelsDevProviderMetadata> {
   const root = asRecord(payload);
   if (!root) return {};
 
@@ -453,7 +483,9 @@ async function fetchModelsDevProviderMetadata(
   }
 }
 
-function extractModelsDevOpenRouterMetadata(payload: unknown): Record<string, ModelsDevOpenRouterMetadata> {
+function extractModelsDevOpenRouterMetadata(
+  payload: unknown,
+): Record<string, ModelsDevOpenRouterMetadata> {
   const root = asRecord(payload);
   const provider = root ? asRecord(root.openrouter) : null;
   const models = provider ? asRecord(provider.models) : null;
@@ -480,7 +512,9 @@ function extractModelsDevOpenRouterMetadata(payload: unknown): Record<string, Mo
   return entries;
 }
 
-async function fetchModelsDevOpenRouterMetadata(): Promise<Record<string, ModelsDevOpenRouterMetadata>> {
+async function fetchModelsDevOpenRouterMetadata(): Promise<
+  Record<string, ModelsDevOpenRouterMetadata>
+> {
   const cached = readCachedModelsDevOpenRouterMetadata();
   if (cached) return cached;
 
@@ -515,12 +549,18 @@ async function fetchModelsDevOllamaMetadata(): Promise<Record<string, ModelsDevP
   return fetchModelsDevProviderMetadata('ollama-cloud', MODELS_DEV_OLLAMA_CACHE_KEY);
 }
 
-async function fetchModelsDevOpencodeMetadata(): Promise<Record<string, ModelsDevProviderMetadata>> {
+async function fetchModelsDevOpencodeMetadata(): Promise<
+  Record<string, ModelsDevProviderMetadata>
+> {
   return fetchModelsDevProviderMetadata('opencode', MODELS_DEV_OPENCODE_CACHE_KEY);
 }
 
-async function fetchModelsDevGlobalProviderMetadata(): Promise<Record<string, ModelsDevProviderMetadata>> {
-  const cached = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY);
+async function fetchModelsDevGlobalProviderMetadata(): Promise<
+  Record<string, ModelsDevProviderMetadata>
+> {
+  const cached = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(
+    MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY,
+  );
   if (cached) return cached;
 
   const controller = new AbortController();
@@ -563,9 +603,14 @@ export function parseOpenRouterCatalog(payload: unknown): OpenRouterCatalogModel
 
     models.push({
       id: record.id.trim(),
-      name: typeof record.name === 'string' && record.name.trim() ? record.name.trim() : record.id.trim(),
-      inputModalities: inputModalities.length > 0 ? inputModalities : fallbackModalities.inputModalities,
-      outputModalities: outputModalities.length > 0 ? outputModalities : fallbackModalities.outputModalities,
+      name:
+        typeof record.name === 'string' && record.name.trim()
+          ? record.name.trim()
+          : record.id.trim(),
+      inputModalities:
+        inputModalities.length > 0 ? inputModalities : fallbackModalities.inputModalities,
+      outputModalities:
+        outputModalities.length > 0 ? outputModalities : fallbackModalities.outputModalities,
       supportedParameters: normalizeStringArray(record.supported_parameters),
       contextLength:
         typeof topProvider?.context_length === 'number'
@@ -602,8 +647,10 @@ export function buildCuratedOpenRouterModelList(
     // Priority models bypass context filter but still check if it's a text chat model
     const meta = metadataById?.[id] ?? metadataById?.[baseId];
     // When metadata is available, exclude image-output-only models
-    if (meta?.outputModalities?.includes('image') && !meta.outputModalities?.includes('text')) return false;
-    const contextLimit = meta?.contextLimit ?? modelsById[id]?.contextLength ?? modelsById[baseId]?.contextLength;
+    if (meta?.outputModalities?.includes('image') && !meta.outputModalities?.includes('text'))
+      return false;
+    const contextLimit =
+      meta?.contextLimit ?? modelsById[id]?.contextLength ?? modelsById[baseId]?.contextLength;
     const filterResult = filterModelByContext(id, contextLimit, prioritySet);
     return filterResult.allowed;
   });
@@ -612,7 +659,11 @@ export function buildCuratedOpenRouterModelList(
 function isProviderTextChatModel(id: string, metadata?: ModelsDevProviderMetadata): boolean {
   // Check for image output or non-text-only modalities
   if (metadata?.outputModalities?.includes('image')) return false;
-  if ((metadata?.outputModalities?.length ?? 0) > 0 && !metadata?.outputModalities?.includes('text')) return false;
+  if (
+    (metadata?.outputModalities?.length ?? 0) > 0 &&
+    !metadata?.outputModalities?.includes('text')
+  )
+    return false;
 
   const normalized = id.toLowerCase();
   if (IMAGE_GENERATION_MODEL_FAMILY_REGEX.test(normalized)) return false;
@@ -644,7 +695,7 @@ export function buildCuratedNvidiaModelList(
 
   const preferred = NVIDIA_PRIORITY_MODELS.filter((id) => candidates.includes(id));
   const rest = candidates
-    .filter((id) => !prioritySet.has(id as typeof NVIDIA_PRIORITY_MODELS[number]))
+    .filter((id) => !prioritySet.has(id as (typeof NVIDIA_PRIORITY_MODELS)[number]))
     .sort((a, b) => a.localeCompare(b));
 
   return [...preferred, ...rest].slice(0, NVIDIA_MAX_CURATED_MODELS);
@@ -675,7 +726,7 @@ export function buildCuratedOllamaModelList(
 
   const preferred = OLLAMA_PRIORITY_MODELS.filter((id) => candidates.includes(id));
   const rest = candidates
-    .filter((id) => !prioritySet.has(id as typeof OLLAMA_PRIORITY_MODELS[number]))
+    .filter((id) => !prioritySet.has(id as (typeof OLLAMA_PRIORITY_MODELS)[number]))
     .sort((a, b) => a.localeCompare(b));
 
   return [...preferred, ...rest].slice(0, OLLAMA_MAX_CURATED_MODELS);
@@ -690,7 +741,8 @@ function blackboxBaseId(id: string): string {
   return id.trim().replace(/^blackboxai\//i, '');
 }
 
-const BLACKBOX_NON_CHAT_FAMILY_REGEX = /animatediff|(?:^|[-_/:.])svd(?:$|[-_/:.])|mochi(?:$|[-_/:.])|hunyuan(?:$|[-_/:.])|(?:^|[-_/:.])lora(?:$|[-_/:.])|gemini-flash-edit/i;
+const BLACKBOX_NON_CHAT_FAMILY_REGEX =
+  /animatediff|(?:^|[-_/:.])svd(?:$|[-_/:.])|mochi(?:$|[-_/:.])|hunyuan(?:$|[-_/:.])|(?:^|[-_/:.])lora(?:$|[-_/:.])|gemini-flash-edit/i;
 
 const BLACKBOX_ALIAS_PROVIDER_PREFIXES: Array<[RegExp, string]> = [
   [/^claude\b/i, 'anthropic'],
@@ -747,7 +799,10 @@ function prefersBlackboxModelId(nextId: string, currentId: string): boolean {
 
   const nextLabel = normalizeBlackboxAliasLeaf(nextBase);
   const currentLabel = normalizeBlackboxAliasLeaf(currentBase);
-  if (nextLabel !== currentLabel) return nextLabel.localeCompare(currentLabel, undefined, { numeric: true, sensitivity: 'base' }) < 0;
+  if (nextLabel !== currentLabel)
+    return (
+      nextLabel.localeCompare(currentLabel, undefined, { numeric: true, sensitivity: 'base' }) < 0
+    );
 
   return nextBase.localeCompare(currentBase, undefined, { numeric: true, sensitivity: 'base' }) < 0;
 }
@@ -821,7 +876,7 @@ export function buildCuratedOpencodeModelList(
 
   const preferred = OPENCODE_PRIORITY_MODELS.filter((id) => candidates.includes(id));
   const rest = candidates
-    .filter((id) => !prioritySet.has(id as typeof OPENCODE_PRIORITY_MODELS[number]))
+    .filter((id) => !prioritySet.has(id as (typeof OPENCODE_PRIORITY_MODELS)[number]))
     .sort((a, b) => a.localeCompare(b));
 
   return [...preferred, ...rest].slice(0, OPENCODE_MAX_CURATED_MODELS);
@@ -921,7 +976,9 @@ export async function fetchOllamaModels(): Promise<string[]> {
     return curated;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`Ollama model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
+      throw new Error(
+        `Ollama model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+      );
     }
     throw err;
   } finally {
@@ -949,7 +1006,9 @@ export async function fetchOpenRouterModels(): Promise<string[]> {
 
     if (!catalogRes.ok) {
       const detail = await catalogRes.text().catch(() => '');
-      throw new Error(`OpenRouter model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`);
+      throw new Error(
+        `OpenRouter model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`,
+      );
     }
 
     const payload = (await catalogRes.json()) as unknown;
@@ -962,7 +1021,9 @@ export async function fetchOpenRouterModels(): Promise<string[]> {
       .map((m) => m.id);
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`OpenRouter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
+      throw new Error(
+        `OpenRouter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+      );
     }
     throw err;
   } finally {
@@ -990,7 +1051,9 @@ export async function fetchZenModels(): Promise<string[]> {
 
     if (!catalogRes.ok) {
       const detail = await catalogRes.text().catch(() => '');
-      throw new Error(`OpenCode Zen model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`);
+      throw new Error(
+        `OpenCode Zen model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`,
+      );
     }
 
     const payload = (await catalogRes.json()) as unknown;
@@ -1001,7 +1064,9 @@ export async function fetchZenModels(): Promise<string[]> {
     return curated;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`OpenCode Zen model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
+      throw new Error(
+        `OpenCode Zen model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+      );
     }
     throw err;
   } finally {
@@ -1029,7 +1094,9 @@ export async function fetchNvidiaModels(): Promise<string[]> {
 
     if (!catalogRes.ok) {
       const detail = await catalogRes.text().catch(() => '');
-      throw new Error(`Nvidia NIM model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`);
+      throw new Error(
+        `Nvidia NIM model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`,
+      );
     }
 
     const payload = (await catalogRes.json()) as unknown;
@@ -1040,7 +1107,9 @@ export async function fetchNvidiaModels(): Promise<string[]> {
     return curated;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`Nvidia NIM model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
+      throw new Error(
+        `Nvidia NIM model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+      );
     }
     throw err;
   } finally {
@@ -1068,7 +1137,9 @@ export async function fetchBlackboxModels(): Promise<string[]> {
 
     if (!catalogRes.ok) {
       const detail = await catalogRes.text().catch(() => '');
-      throw new Error(`Blackbox AI model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`);
+      throw new Error(
+        `Blackbox AI model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`,
+      );
     }
 
     const payload = (await catalogRes.json()) as unknown;
@@ -1079,7 +1150,9 @@ export async function fetchBlackboxModels(): Promise<string[]> {
     return curated;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`Blackbox AI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
+      throw new Error(
+        `Blackbox AI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+      );
     }
     throw err;
   } finally {
@@ -1108,11 +1181,14 @@ export async function fetchKilocodeModels(): Promise<string[]> {
     }
 
     const payload = (await res.json()) as unknown;
-    return normalizeModelList(payload)
-      .sort((left, right) => compareProviderModelIds('kilocode', left, right));
+    return normalizeModelList(payload).sort((left, right) =>
+      compareProviderModelIds('kilocode', left, right),
+    );
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`Kilo Code model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
+      throw new Error(
+        `Kilo Code model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+      );
     }
     throw err;
   } finally {
@@ -1141,11 +1217,14 @@ export async function fetchOpenAdapterModels(): Promise<string[]> {
     }
 
     const payload = (await res.json()) as unknown;
-    return normalizeModelList(payload)
-      .sort((left, right) => compareProviderModelIds('openadapter', left, right));
+    return normalizeModelList(payload).sort((left, right) =>
+      compareProviderModelIds('openadapter', left, right),
+    );
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`OpenAdapter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`);
+      throw new Error(
+        `OpenAdapter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+      );
     }
     throw err;
   } finally {

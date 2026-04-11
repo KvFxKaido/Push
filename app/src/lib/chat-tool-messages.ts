@@ -1,14 +1,5 @@
-import type {
-  AIProviderType,
-  ChatCard,
-  ChatMessage,
-  ToolMeta,
-} from '@/types';
-import {
-  estimateContextTokens,
-  getContextBudget,
-  type ActiveProvider,
-} from './orchestrator';
+import type { AIProviderType, ChatCard, ChatMessage, ToolMeta } from '@/types';
+import { estimateContextTokens, getContextBudget, type ActiveProvider } from './orchestrator';
 import { fileLedger } from './file-awareness-ledger';
 import { getSandboxEnvironment } from './sandbox-client';
 import type { AnyToolCall } from './tool-dispatch';
@@ -72,16 +63,16 @@ export function buildToolResultMetaLine(
   const contextKb = Math.round(contextChars / 1024);
   const contextTokens = estimateContextTokens(apiMessages as ChatMessage[]);
   const budget = getContextBudget(provider, model || undefined);
-  const contextPressurePct = budget.maxTokens > 0
-    ? Math.max(0, Math.round((contextTokens / budget.maxTokens) * 100))
-    : 0;
-  const contextPressure = contextPressurePct >= 95
-    ? 'critical'
-    : contextPressurePct >= 80
-      ? 'high'
-      : contextPressurePct >= 60
-        ? 'elevated'
-        : 'low';
+  const contextPressurePct =
+    budget.maxTokens > 0 ? Math.max(0, Math.round((contextTokens / budget.maxTokens) * 100)) : 0;
+  const contextPressure =
+    contextPressurePct >= 95
+      ? 'critical'
+      : contextPressurePct >= 80
+        ? 'high'
+        : contextPressurePct >= 60
+          ? 'elevated'
+          : 'low';
 
   const parts = [
     `[meta] round=${round} ctx=${contextKb}kb tok=${Math.round(contextTokens / 1000)}k/${Math.round(

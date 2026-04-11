@@ -39,41 +39,49 @@ import {
   getZenGoMode,
 } from './providers';
 import type { PreferredProvider } from './providers';
-import { buildExperimentalProxyHeaders, normalizeExperimentalBaseUrl } from './experimental-providers';
+import {
+  buildExperimentalProxyHeaders,
+  normalizeExperimentalBaseUrl,
+} from './experimental-providers';
 import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
 import { streamSSEChat } from './orchestrator';
-import {
-  parseProviderError,
-  hasFinishReason,
-} from './orchestrator-streaming';
-import type {
-  StreamProviderConfig,
-  StreamUsage,
-  ChunkMetadata,
-} from './orchestrator-streaming';
+import { parseProviderError, hasFinishReason } from './orchestrator-streaming';
+import type { StreamProviderConfig, StreamUsage, ChunkMetadata } from './orchestrator-streaming';
 
 // ---------------------------------------------------------------------------
 // Error / helper functions
 // ---------------------------------------------------------------------------
 
 /** Build a standard set of timeout error messages for a provider. */
-function buildErrorMessages(name: string, connectHint = 'server may be down.'): StreamProviderConfig['errorMessages'] {
+function buildErrorMessages(
+  name: string,
+  connectHint = 'server may be down.',
+): StreamProviderConfig['errorMessages'] {
   return {
     keyMissing: `${name} API key not configured`,
     connect: (s) => `${name} API didn't respond within ${s}s — ${connectHint}`,
     idle: (s) => `${name} API stream stalled — no data for ${s}s.`,
-    stall: (s) => `${name} API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
+    stall: (s) =>
+      `${name} API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
     total: (s) => `${name} API response exceeded ${s}s total time limit.`,
     network: `Cannot reach ${name} — network error. Check your connection.`,
   };
 }
 
 /** Standard timeout config used by most providers. */
-const STANDARD_TIMEOUTS = { connectTimeoutMs: 30_000, idleTimeoutMs: 60_000, stallTimeoutMs: 60_000, totalTimeoutMs: 180_000 } as const;
+const STANDARD_TIMEOUTS = {
+  connectTimeoutMs: 30_000,
+  idleTimeoutMs: 60_000,
+  stallTimeoutMs: 60_000,
+  totalTimeoutMs: 180_000,
+} as const;
 
 interface ProviderStreamEntry {
   getKey: () => string | null;
-  buildConfig: (apiKey: string, modelOverride?: string) => Promise<StreamProviderConfig> | StreamProviderConfig;
+  buildConfig: (
+    apiKey: string,
+    modelOverride?: string,
+  ) => Promise<StreamProviderConfig> | StreamProviderConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +108,8 @@ function buildExperimentalStreamConfig(
     ...STANDARD_TIMEOUTS,
     errorMessages: buildErrorMessages(name),
     parseError: (p, f) => parseProviderError(p, f, true),
-    checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+    checkFinishReason: (c) =>
+      hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
     providerType: provider,
     extraHeaders: headers,
     shouldResetStallOnReasoning: true,
@@ -149,7 +158,8 @@ function buildVertexStreamConfig(modelOverride?: string): StreamProviderConfig {
     ...STANDARD_TIMEOUTS,
     errorMessages: buildErrorMessages('Google Vertex'),
     parseError: (p, f) => parseProviderError(p, f, true),
-    checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+    checkFinishReason: (c) =>
+      hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
     providerType: 'vertex',
     extraHeaders: {
       'X-Push-Vertex-Service-Account': encodedServiceAccount,
@@ -176,7 +186,8 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       totalTimeoutMs: 180_000,
       errorMessages: buildErrorMessages('Ollama Cloud', 'server may be cold-starting.'),
       parseError: (p, f) => parseProviderError(p, f),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls', 'function_call']),
+      checkFinishReason: (c) =>
+        hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls', 'function_call']),
       shouldResetStallOnReasoning: true,
       providerType: 'ollama',
     }),
@@ -198,7 +209,8 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
         ...STANDARD_TIMEOUTS,
         errorMessages: buildErrorMessages('OpenRouter'),
         parseError: (p, f) => parseProviderError(p, f, true),
-        checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+        checkFinishReason: (c) =>
+          hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
         providerType: 'openrouter',
         shouldResetStallOnReasoning: useReasoning,
         bodyTransform: (body) => ({
@@ -220,7 +232,8 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('OpenCode Zen'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+      checkFinishReason: (c) =>
+        hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       providerType: 'zen',
     }),
   },
@@ -234,7 +247,8 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('Nvidia NIM'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+      checkFinishReason: (c) =>
+        hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       providerType: 'nvidia',
     }),
   },
@@ -248,7 +262,8 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('Blackbox AI'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+      checkFinishReason: (c) =>
+        hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       shouldResetStallOnReasoning: true,
       providerType: 'blackbox',
     }),
@@ -263,7 +278,8 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('Kilo Code'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+      checkFinishReason: (c) =>
+        hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       providerType: 'kilocode',
     }),
   },
@@ -277,29 +293,32 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       ...STANDARD_TIMEOUTS,
       errorMessages: buildErrorMessages('OpenAdapter'),
       parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) => hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+      checkFinishReason: (c) =>
+        hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
       providerType: 'openadapter',
     }),
   },
   azure: {
     getKey: getAzureKey,
-    buildConfig: (apiKey, modelOverride) => buildExperimentalStreamConfig(
-      'azure',
-      'Azure OpenAI',
-      apiKey,
-      getAzureBaseUrl(),
-      modelOverride || getAzureModelName(),
-    ),
+    buildConfig: (apiKey, modelOverride) =>
+      buildExperimentalStreamConfig(
+        'azure',
+        'Azure OpenAI',
+        apiKey,
+        getAzureBaseUrl(),
+        modelOverride || getAzureModelName(),
+      ),
   },
   bedrock: {
     getKey: getBedrockKey,
-    buildConfig: (apiKey, modelOverride) => buildExperimentalStreamConfig(
-      'bedrock',
-      'AWS Bedrock',
-      apiKey,
-      getBedrockBaseUrl(),
-      modelOverride || getBedrockModelName(),
-    ),
+    buildConfig: (apiKey, modelOverride) =>
+      buildExperimentalStreamConfig(
+        'bedrock',
+        'AWS Bedrock',
+        apiKey,
+        getBedrockBaseUrl(),
+        modelOverride || getBedrockModelName(),
+      ),
   },
   vertex: {
     getKey: getVertexKey,
@@ -335,7 +354,11 @@ async function streamProviderChat(
 
   const apiKey = entry.getKey();
   if (!apiKey) {
-    onError(new Error(`${providerType.charAt(0).toUpperCase() + providerType.slice(1)} API key not configured`));
+    onError(
+      new Error(
+        `${providerType.charAt(0).toUpperCase() + providerType.slice(1)} API key not configured`,
+      ),
+    );
     return;
   }
 
@@ -348,8 +371,19 @@ async function streamProviderChat(
   }
 
   return streamSSEChat(
-    config, messages, onToken, onDone, onError, onThinkingToken,
-    workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal, undefined, onPreCompact,
+    config,
+    messages,
+    onToken,
+    onDone,
+    onError,
+    onThinkingToken,
+    workspaceContext,
+    hasSandbox,
+    systemPromptOverride,
+    scratchpadContent,
+    signal,
+    undefined,
+    onPreCompact,
   );
 }
 
@@ -373,12 +407,16 @@ export type StreamChatFn = (
 ) => Promise<void>;
 
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
-export const streamOpenRouterChat: StreamChatFn = (...args) => streamProviderChat('openrouter', ...args);
+export const streamOpenRouterChat: StreamChatFn = (...args) =>
+  streamProviderChat('openrouter', ...args);
 export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
 export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
-export const streamBlackboxChat: StreamChatFn = (...args) => streamProviderChat('blackbox', ...args);
-export const streamKilocodeChat: StreamChatFn = (...args) => streamProviderChat('kilocode', ...args);
-export const streamOpenAdapterChat: StreamChatFn = (...args) => streamProviderChat('openadapter', ...args);
+export const streamBlackboxChat: StreamChatFn = (...args) =>
+  streamProviderChat('blackbox', ...args);
+export const streamKilocodeChat: StreamChatFn = (...args) =>
+  streamProviderChat('kilocode', ...args);
+export const streamOpenAdapterChat: StreamChatFn = (...args) =>
+  streamProviderChat('openadapter', ...args);
 export const streamAzureChat: StreamChatFn = (...args) => streamProviderChat('azure', ...args);
 export const streamBedrockChat: StreamChatFn = (...args) => streamProviderChat('bedrock', ...args);
 export const streamVertexChat: StreamChatFn = (...args) => streamProviderChat('vertex', ...args);
@@ -408,14 +446,30 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   blackbox: () => Boolean(getBlackboxKey()),
   kilocode: () => Boolean(getKilocodeKey()),
   openadapter: () => Boolean(getOpenAdapterKey()),
-  azure: () => Boolean(getAzureKey() && normalizeExperimentalBaseUrl('azure', getAzureBaseUrl()).ok && getAzureModelName()),
-  bedrock: () => Boolean(getBedrockKey() && normalizeExperimentalBaseUrl('bedrock', getBedrockBaseUrl()).ok && getBedrockModelName()),
+  azure: () =>
+    Boolean(
+      getAzureKey() &&
+        normalizeExperimentalBaseUrl('azure', getAzureBaseUrl()).ok &&
+        getAzureModelName(),
+    ),
+  bedrock: () =>
+    Boolean(
+      getBedrockKey() &&
+        normalizeExperimentalBaseUrl('bedrock', getBedrockBaseUrl()).ok &&
+        getBedrockModelName(),
+    ),
   vertex: () => {
     const mode = getVertexMode();
     if (mode === 'native') {
-      return Boolean(getVertexKey() && normalizeVertexRegion(getVertexRegion()).ok && getVertexModelName());
+      return Boolean(
+        getVertexKey() && normalizeVertexRegion(getVertexRegion()).ok && getVertexModelName(),
+      );
     }
-    return Boolean(getVertexKey() && normalizeExperimentalBaseUrl('vertex', getVertexBaseUrl()).ok && getVertexModelName());
+    return Boolean(
+      getVertexKey() &&
+        normalizeExperimentalBaseUrl('vertex', getVertexBaseUrl()).ok &&
+        getVertexModelName(),
+    );
   },
 };
 
@@ -424,7 +478,13 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
  * Neutral ordering — no provider is favoured.
  */
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'ollama', 'openrouter', 'zen', 'nvidia', 'blackbox', 'kilocode', 'openadapter',
+  'ollama',
+  'openrouter',
+  'zen',
+  'nvidia',
+  'blackbox',
+  'kilocode',
+  'openadapter',
 ];
 
 /**
@@ -468,17 +528,28 @@ export function getActiveProvider(): ActiveProvider {
  */
 export function getProviderStreamFn(provider: ActiveProvider) {
   switch (provider) {
-    case 'ollama':  return { providerType: 'ollama' as const,  streamFn: streamOllamaChat };
-    case 'openrouter': return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
-    case 'zen': return { providerType: 'zen' as const, streamFn: streamZenChat };
-    case 'nvidia': return { providerType: 'nvidia' as const, streamFn: streamNvidiaChat };
-    case 'blackbox': return { providerType: 'blackbox' as const, streamFn: streamBlackboxChat };
-    case 'kilocode': return { providerType: 'kilocode' as const, streamFn: streamKilocodeChat };
-    case 'openadapter': return { providerType: 'openadapter' as const, streamFn: streamOpenAdapterChat };
-    case 'azure': return { providerType: 'azure' as const, streamFn: streamAzureChat };
-    case 'bedrock': return { providerType: 'bedrock' as const, streamFn: streamBedrockChat };
-    case 'vertex': return { providerType: 'vertex' as const, streamFn: streamVertexChat };
-    default:        return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
+    case 'ollama':
+      return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
+    case 'openrouter':
+      return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
+    case 'zen':
+      return { providerType: 'zen' as const, streamFn: streamZenChat };
+    case 'nvidia':
+      return { providerType: 'nvidia' as const, streamFn: streamNvidiaChat };
+    case 'blackbox':
+      return { providerType: 'blackbox' as const, streamFn: streamBlackboxChat };
+    case 'kilocode':
+      return { providerType: 'kilocode' as const, streamFn: streamKilocodeChat };
+    case 'openadapter':
+      return { providerType: 'openadapter' as const, streamFn: streamOpenAdapterChat };
+    case 'azure':
+      return { providerType: 'azure' as const, streamFn: streamAzureChat };
+    case 'bedrock':
+      return { providerType: 'bedrock' as const, streamFn: streamBedrockChat };
+    case 'vertex':
+      return { providerType: 'vertex' as const, streamFn: streamVertexChat };
+    default:
+      return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
   }
 }
 

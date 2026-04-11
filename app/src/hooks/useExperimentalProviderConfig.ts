@@ -59,7 +59,10 @@ function createExperimentalProviderConfig(
   const activeDeploymentStorageKey = `${provider}_active_deployment`;
 
   const getLegacySelectedDeployment = () => {
-    const deployments = parseStoredExperimentalDeployments(provider, safeStorageGet(deploymentsStorageKey));
+    const deployments = parseStoredExperimentalDeployments(
+      provider,
+      safeStorageGet(deploymentsStorageKey),
+    );
     if (deployments.length === 0) return null;
     const storedId = safeStorageGet(activeDeploymentStorageKey);
     if (storedId) {
@@ -69,8 +72,10 @@ function createExperimentalProviderConfig(
   };
 
   const getKey = () => safeStorageGet(keyStorageKey) || env.key?.trim() || null;
-  const getStoredBaseUrl = () => safeStorageGet(baseUrlStorageKey) || getLegacySelectedDeployment()?.baseUrl || '';
-  const getStoredModel = () => safeStorageGet(modelStorageKey) || getLegacySelectedDeployment()?.model || '';
+  const getStoredBaseUrl = () =>
+    safeStorageGet(baseUrlStorageKey) || getLegacySelectedDeployment()?.baseUrl || '';
+  const getStoredModel = () =>
+    safeStorageGet(modelStorageKey) || getLegacySelectedDeployment()?.model || '';
 
   const getBaseUrl = () => {
     const stored = getStoredBaseUrl() || env.baseUrl?.trim() || '';
@@ -88,9 +93,14 @@ function createExperimentalProviderConfig(
       const [key, setKeyState] = useState<string | null>(() => getKey());
       const [baseUrl, setBaseUrlState] = useState<string>(() => getBaseUrl());
       const [model, setModelState] = useState<string>(() => getModel());
-      const [deployments, setDeploymentsState] = useState<ExperimentalDeployment[]>(() => parseStoredExperimentalDeployments(provider, safeStorageGet(deploymentsStorageKey)));
+      const [deployments, setDeploymentsState] = useState<ExperimentalDeployment[]>(() =>
+        parseStoredExperimentalDeployments(provider, safeStorageGet(deploymentsStorageKey)),
+      );
       const [activeDeploymentId, setActiveDeploymentIdState] = useState<string | null>(() => {
-        const savedDeployments = parseStoredExperimentalDeployments(provider, safeStorageGet(deploymentsStorageKey));
+        const savedDeployments = parseStoredExperimentalDeployments(
+          provider,
+          safeStorageGet(deploymentsStorageKey),
+        );
         if (savedDeployments.length === 0) return null;
         const storedId = safeStorageGet(activeDeploymentStorageKey);
         if (storedId && savedDeployments.some((deployment) => deployment.id === storedId)) {
@@ -100,15 +110,19 @@ function createExperimentalProviderConfig(
         return savedDeployments.find((deployment) => deployment.model === currentModel)?.id ?? null;
       });
 
-      const syncActiveDeployment = useCallback((nextModel: string, nextDeployments: ExperimentalDeployment[]) => {
-        const matchingId = nextDeployments.find((deployment) => deployment.model === nextModel.trim())?.id ?? null;
-        if (matchingId) {
-          safeStorageSet(activeDeploymentStorageKey, matchingId);
-        } else {
-          safeStorageRemove(activeDeploymentStorageKey);
-        }
-        setActiveDeploymentIdState(matchingId);
-      }, []);
+      const syncActiveDeployment = useCallback(
+        (nextModel: string, nextDeployments: ExperimentalDeployment[]) => {
+          const matchingId =
+            nextDeployments.find((deployment) => deployment.model === nextModel.trim())?.id ?? null;
+          if (matchingId) {
+            safeStorageSet(activeDeploymentStorageKey, matchingId);
+          } else {
+            safeStorageRemove(activeDeploymentStorageKey);
+          }
+          setActiveDeploymentIdState(matchingId);
+        },
+        [],
+      );
 
       const persistDeployments = useCallback((nextDeployments: ExperimentalDeployment[]) => {
         const limited = nextDeployments.slice(0, MAX_EXPERIMENTAL_DEPLOYMENTS);
@@ -148,13 +162,16 @@ function createExperimentalProviderConfig(
         setBaseUrlState(normalized.ok ? normalized.normalized : nextBaseUrl.trim());
       }, []);
 
-      const setModel = useCallback((value: string) => {
-        const trimmed = value.trim();
-        if (!trimmed) return;
-        safeStorageSet(modelStorageKey, trimmed);
-        setModelState(trimmed);
-        syncActiveDeployment(trimmed, deployments);
-      }, [deployments, syncActiveDeployment]);
+      const setModel = useCallback(
+        (value: string) => {
+          const trimmed = value.trim();
+          if (!trimmed) return;
+          safeStorageSet(modelStorageKey, trimmed);
+          setModelState(trimmed);
+          syncActiveDeployment(trimmed, deployments);
+        },
+        [deployments, syncActiveDeployment],
+      );
 
       const clearModel = useCallback(() => {
         safeStorageRemove(modelStorageKey);
@@ -163,50 +180,61 @@ function createExperimentalProviderConfig(
         syncActiveDeployment(nextModel, deployments);
       }, [deployments, syncActiveDeployment]);
 
-      const saveDeployment = useCallback((rawModel: string) => {
-        const normalized = normalizeExperimentalDeployment(provider, { model: rawModel });
-        if (!normalized) return false;
+      const saveDeployment = useCallback(
+        (rawModel: string) => {
+          const normalized = normalizeExperimentalDeployment(provider, { model: rawModel });
+          if (!normalized) return false;
 
-        const existing = deployments.find((deployment) => deployment.model === normalized.model);
-        if (!existing && deployments.length >= MAX_EXPERIMENTAL_DEPLOYMENTS) {
-          return false;
-        }
+          const existing = deployments.find((deployment) => deployment.model === normalized.model);
+          if (!existing && deployments.length >= MAX_EXPERIMENTAL_DEPLOYMENTS) {
+            return false;
+          }
 
-        const selected = existing ?? normalized;
-        const nextDeployments = existing
-          ? deployments
-          : persistDeployments([...deployments, selected]);
+          const selected = existing ?? normalized;
+          const nextDeployments = existing
+            ? deployments
+            : persistDeployments([...deployments, selected]);
 
-        safeStorageSet(modelStorageKey, selected.model);
-        safeStorageSet(activeDeploymentStorageKey, selected.id);
-        setModelState(selected.model);
-        setActiveDeploymentIdState(selected.id);
-        if (existing) {
-          setDeploymentsState(nextDeployments);
-        }
-        return true;
-      }, [deployments, persistDeployments]);
+          safeStorageSet(modelStorageKey, selected.model);
+          safeStorageSet(activeDeploymentStorageKey, selected.id);
+          setModelState(selected.model);
+          setActiveDeploymentIdState(selected.id);
+          if (existing) {
+            setDeploymentsState(nextDeployments);
+          }
+          return true;
+        },
+        [deployments, persistDeployments],
+      );
 
-      const selectDeployment = useCallback((id: string) => {
-        const selected = deployments.find((deployment) => deployment.id === id);
-        if (!selected) return;
-        safeStorageSet(modelStorageKey, selected.model);
-        safeStorageSet(activeDeploymentStorageKey, selected.id);
-        setModelState(selected.model);
-        setActiveDeploymentIdState(selected.id);
-      }, [deployments]);
+      const selectDeployment = useCallback(
+        (id: string) => {
+          const selected = deployments.find((deployment) => deployment.id === id);
+          if (!selected) return;
+          safeStorageSet(modelStorageKey, selected.model);
+          safeStorageSet(activeDeploymentStorageKey, selected.id);
+          setModelState(selected.model);
+          setActiveDeploymentIdState(selected.id);
+        },
+        [deployments],
+      );
 
-      const removeDeployment = useCallback((id: string) => {
-        const nextDeployments = persistDeployments(deployments.filter((deployment) => deployment.id !== id));
-        if (activeDeploymentId !== id) {
+      const removeDeployment = useCallback(
+        (id: string) => {
+          const nextDeployments = persistDeployments(
+            deployments.filter((deployment) => deployment.id !== id),
+          );
+          if (activeDeploymentId !== id) {
+            syncActiveDeployment(model, nextDeployments);
+            return;
+          }
+
+          safeStorageRemove(activeDeploymentStorageKey);
+          setActiveDeploymentIdState(null);
           syncActiveDeployment(model, nextDeployments);
-          return;
-        }
-
-        safeStorageRemove(activeDeploymentStorageKey);
-        setActiveDeploymentIdState(null);
-        syncActiveDeployment(model, nextDeployments);
-      }, [activeDeploymentId, deployments, model, persistDeployments, syncActiveDeployment]);
+        },
+        [activeDeploymentId, deployments, model, persistDeployments, syncActiveDeployment],
+      );
 
       const clearDeployments = useCallback(() => {
         safeStorageRemove(activeDeploymentStorageKey);
@@ -235,7 +263,7 @@ function createExperimentalProviderConfig(
         hasModel,
         isConfigured: hasKey && hasBaseUrl && hasModel,
         deploymentLimitReached: deployments.length >= MAX_EXPERIMENTAL_DEPLOYMENTS,
-        baseUrlError: baseUrlValidation.ok ? null : (baseUrl ? baseUrlValidation.error : null),
+        baseUrlError: baseUrlValidation.ok ? null : baseUrl ? baseUrlValidation.error : null,
         setKey,
         clearKey,
         setBaseUrl,

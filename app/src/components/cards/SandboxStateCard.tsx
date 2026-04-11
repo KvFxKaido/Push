@@ -7,7 +7,11 @@ import {
   CARD_BUTTON_CLASS,
   CARD_PANEL_SUBTLE_CLASS,
 } from '@/lib/utils';
-import { BranchWaveIcon, FilesStackIcon, RepoLedgerIcon } from '@/components/icons/push-custom-icons';
+import {
+  BranchWaveIcon,
+  FilesStackIcon,
+  RepoLedgerIcon,
+} from '@/components/icons/push-custom-icons';
 
 interface SandboxStateCardProps {
   data: SandboxStateCardData;
@@ -27,13 +31,22 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
           <span className="text-push-base text-push-fg font-medium truncate">Workspace Status</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className={`text-push-xs px-1.5 py-0.5 rounded-full ${hasChanges ? CARD_BADGE_WARNING : CARD_BADGE_SUCCESS}`}>
+          <span
+            className={`text-push-xs px-1.5 py-0.5 rounded-full ${hasChanges ? CARD_BADGE_WARNING : CARD_BADGE_SUCCESS}`}
+          >
             {hasChanges ? `${data.changedFiles} changed` : 'clean'}
           </span>
           {onAction && messageId && typeof cardIndex === 'number' && (
             <button
               type="button"
-              onClick={() => onAction({ type: 'sandbox-state-refresh', messageId, cardIndex, sandboxId: data.sandboxId })}
+              onClick={() =>
+                onAction({
+                  type: 'sandbox-state-refresh',
+                  messageId,
+                  cardIndex,
+                  sandboxId: data.sandboxId,
+                })
+              }
               className={`${CARD_BUTTON_CLASS} h-7 px-2.5 text-push-2xs`}
               title="Refresh workspace status"
             >
@@ -50,7 +63,9 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
           <span className="font-mono">{data.branch}</span>
         </div>
         {data.statusLine && (
-          <div className="text-push-xs text-push-fg-muted font-mono truncate">{data.statusLine}</div>
+          <div className="text-push-xs text-push-fg-muted font-mono truncate">
+            {data.statusLine}
+          </div>
         )}
         <div className="grid grid-cols-2 gap-2 text-push-sm">
           <div className={`${CARD_PANEL_SUBTLE_CLASS} px-2.5 py-1.5 text-push-fg-secondary`}>
@@ -59,7 +74,9 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
           <div className={`${CARD_PANEL_SUBTLE_CLASS} px-2.5 py-1.5 text-push-fg-secondary`}>
             <span className="text-push-fg-muted">Unstaged:</span> {data.unstagedFiles}
           </div>
-          <div className={`${CARD_PANEL_SUBTLE_CLASS} col-span-2 px-2.5 py-1.5 text-push-fg-secondary`}>
+          <div
+            className={`${CARD_PANEL_SUBTLE_CLASS} col-span-2 px-2.5 py-1.5 text-push-fg-secondary`}
+          >
             <span className="text-push-fg-muted">Untracked:</span> {data.untrackedFiles}
           </div>
         </div>
@@ -72,7 +89,10 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
             </div>
             <div className="space-y-0.5">
               {data.preview.map((line, idx) => (
-                <div key={`${line}-${idx}`} className="text-push-xs text-push-fg-secondary font-mono truncate">
+                <div
+                  key={`${line}-${idx}`}
+                  className="text-push-xs text-push-fg-secondary font-mono truncate"
+                >
                   {line}
                 </div>
               ))}

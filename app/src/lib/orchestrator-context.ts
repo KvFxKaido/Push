@@ -67,10 +67,7 @@ function normalizeModelName(model?: string): string {
   return (model || '').trim().toLowerCase();
 }
 
-export function getContextBudget(
-  provider?: AIProviderType,
-  model?: string,
-): ContextBudget {
+export function getContextBudget(provider?: AIProviderType, model?: string): ContextBudget {
   const normalizedModel = normalizeModelName(model);
   // GPT-5.4 models get a large-context profile, but with a conservative target
   // to avoid turning long sessions into runaway expensive prompts.
@@ -91,10 +88,10 @@ export function getContextBudget(
 
   // Ollama, OpenRouter, or Zen running a Gemini model — full 1M budget
   if (
-    (provider === 'ollama'
-      || provider === 'openrouter'
-      || provider === 'zen'
-      || provider === 'vertex') &&
+    (provider === 'ollama' ||
+      provider === 'openrouter' ||
+      provider === 'zen' ||
+      provider === 'vertex') &&
     normalizedModel.includes('gemini')
   ) {
     return GEMINI_CONTEXT_BUDGET;
@@ -176,7 +173,8 @@ export function estimateMessageTokens(msg: ChatMessage): number {
   if (msg.thinking) tokens += estimateTokens(msg.thinking);
   if (msg.attachments) {
     for (const att of msg.attachments) {
-      if (att.type === 'image') tokens += 1000; // rough estimate for vision
+      if (att.type === 'image')
+        tokens += 1000; // rough estimate for vision
       else tokens += estimateTokens(att.content);
     }
   }

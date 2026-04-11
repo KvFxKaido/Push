@@ -39,15 +39,16 @@ afterEach(() => {
 
 describe('sandbox-session', () => {
   it('keys repo sessions by repo and branch', () => {
-    expect(buildSandboxSessionStorageKey('owner/repo', 'main'))
-      .toBe('sandbox_session:repo%3Aowner%2Frepo:main');
-    expect(buildSandboxSessionStorageKey('owner/repo', 'feature/test'))
-      .toBe('sandbox_session:repo%3Aowner%2Frepo:feature%2Ftest');
+    expect(buildSandboxSessionStorageKey('owner/repo', 'main')).toBe(
+      'sandbox_session:repo%3Aowner%2Frepo:main',
+    );
+    expect(buildSandboxSessionStorageKey('owner/repo', 'feature/test')).toBe(
+      'sandbox_session:repo%3Aowner%2Frepo:feature%2Ftest',
+    );
   });
 
   it('uses a dedicated scratch key', () => {
-    expect(buildSandboxSessionStorageKey('', 'main'))
-      .toBe('sandbox_session:__scratch__:main');
+    expect(buildSandboxSessionStorageKey('', 'main')).toBe('sandbox_session:__scratch__:main');
   });
 
   it('returns null for repo sessions without a branch', () => {
@@ -74,7 +75,9 @@ describe('sandbox-session', () => {
 
     expect(loadSandboxSession('owner/repo', 'main')).toEqual(legacy);
     expect(localStorage.removeItem).toHaveBeenCalledWith('sandbox_session');
-    expect(localStorage.getItem('sandbox_session:repo%3Aowner%2Frepo:main')).toBe(JSON.stringify(legacy));
+    expect(localStorage.getItem('sandbox_session:repo%3Aowner%2Frepo:main')).toBe(
+      JSON.stringify(legacy),
+    );
   });
 
   it('does not migrate legacy session data across branches', () => {
@@ -109,6 +112,8 @@ describe('sandbox-session', () => {
     localStorage.setItem(key!, JSON.stringify(createSession({ sandboxId: 'sb-newer' })));
 
     expect(clearSandboxSessionByStorageKey(key, 'sb-older')).toBe(false);
-    expect(localStorage.getItem(key!)).toBe(JSON.stringify(createSession({ sandboxId: 'sb-newer' })));
+    expect(localStorage.getItem(key!)).toBe(
+      JSON.stringify(createSession({ sandboxId: 'sb-newer' })),
+    );
   });
 });

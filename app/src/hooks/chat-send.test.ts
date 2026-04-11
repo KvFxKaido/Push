@@ -39,7 +39,9 @@ function makeConversation(messages: ChatMessage[]): Record<string, Conversation>
   };
 }
 
-function makeVerificationState(overrides: Partial<VerificationRuntimeState> = {}): VerificationRuntimeState {
+function makeVerificationState(
+  overrides: Partial<VerificationRuntimeState> = {},
+): VerificationRuntimeState {
   return {
     policyName: 'Test',
     backendTouched: false,
@@ -113,20 +115,12 @@ describe('chat-send', () => {
       usageHandlerRef: { current: usageHandler },
     });
 
-    mockStreamChat.mockImplementation(
-      (
-        _messages,
-        onToken,
-        onDone,
-        _onError,
-        onThinkingToken,
-      ) => {
-        onThinkingToken?.('Need to inspect');
-        onToken('Hello');
-        onToken(' world');
-        onDone({ inputTokens: 11, outputTokens: 7 });
-      },
-    );
+    mockStreamChat.mockImplementation((_messages, onToken, onDone, _onError, onThinkingToken) => {
+      onThinkingToken?.('Need to inspect');
+      onToken('Hello');
+      onToken(' world');
+      onDone({ inputTokens: 11, outputTokens: 7 });
+    });
 
     const result = await streamAssistantRound(
       0,
@@ -234,19 +228,20 @@ describe('chat-send', () => {
     };
     const dirtyRef = { current: new Set<string>() };
     const ctx = makeLoopContext(conversationsRef, dirtyRef, {
-      getVerificationState: () => makeVerificationState({
-        requirements: [
-          {
-            id: 'typecheck',
-            label: 'Run typecheck before claiming done',
-            scope: 'always',
-            kind: 'command',
-            command: 'npx tsc --noEmit',
-            status: 'pending',
-            updatedAt: 1,
-          },
-        ],
-      }),
+      getVerificationState: () =>
+        makeVerificationState({
+          requirements: [
+            {
+              id: 'typecheck',
+              label: 'Run typecheck before claiming done',
+              scope: 'always',
+              kind: 'command',
+              command: 'npx tsc --noEmit',
+              status: 'pending',
+              updatedAt: 1,
+            },
+          ],
+        }),
     });
 
     const result = await processAssistantTurn(
@@ -279,7 +274,14 @@ describe('chat-send', () => {
       0,
       '```json\n{"tool":"sandbox_exec","args":{"command":"rm -rf /workspace/tmp-cache"}}\n```',
       '',
-      [makeMessage({ id: 'user-1', role: 'user', content: 'Clean up the workspace', status: 'done' })],
+      [
+        makeMessage({
+          id: 'user-1',
+          role: 'user',
+          content: 'Clean up the workspace',
+          status: 'done',
+        }),
+      ],
       ctx,
       { diagnosisRetries: 0, recoveryAttempted: false },
     );
@@ -288,7 +290,9 @@ describe('chat-send', () => {
     expect(result.loopCompletedNormally).toBe(false);
     expect(result.nextApiMessages.at(-1)?.content).toContain('Approval Required');
     expect(result.nextApiMessages.at(-1)?.content).toContain('ask_user');
-    expect(conversationsRef.current['chat-1'].messages.at(-1)?.content).toContain('Approval Required');
+    expect(conversationsRef.current['chat-1'].messages.at(-1)?.content).toContain(
+      'Approval Required',
+    );
   });
 
   it('appends post-tool inject messages to the conversation and next round context', async () => {
@@ -348,7 +352,9 @@ describe('chat-send', () => {
     expect(result.loopAction).toBe('continue');
     expect(result.loopCompletedNormally).toBe(false);
     expect(result.nextApiMessages.at(-1)?.content).toContain('Stop tool use and summarize');
-    expect(conversationsRef.current['chat-1'].messages.at(-1)?.content).toContain('Stop tool use and summarize');
+    expect(conversationsRef.current['chat-1'].messages.at(-1)?.content).toContain(
+      'Stop tool use and summarize',
+    );
     expect(ctx.updateAgentStatus).toHaveBeenCalledWith(
       expect.objectContaining({ phase: 'Policy halt' }),
       { chatId: 'chat-1' },
@@ -364,17 +370,18 @@ describe('chat-send', () => {
     // Delegation result is present in conversation
     const apiMessages: ChatMessage[] = [
       makeMessage({ id: 'user-1', role: 'user', content: 'Fix the auth bug', status: 'done' }),
-      makeMessage({ id: 'tool-result', role: 'user', content: '[Tool Result — delegate_coder]\nModified 3 files.', status: 'done' }),
+      makeMessage({
+        id: 'tool-result',
+        role: 'user',
+        content: '[Tool Result — delegate_coder]\nModified 3 files.',
+        status: 'done',
+      }),
     ];
 
-    const result = await processAssistantTurn(
-      0,
-      'The task is done.',
-      '',
-      apiMessages,
-      ctx,
-      { diagnosisRetries: 0, recoveryAttempted: false },
-    );
+    const result = await processAssistantTurn(0, 'The task is done.', '', apiMessages, ctx, {
+      diagnosisRetries: 0,
+      recoveryAttempted: false,
+    });
 
     // Should complete normally — grounded by delegation result
     expect(result.loopAction).toBe('break');

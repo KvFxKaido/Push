@@ -14,7 +14,9 @@ function getInitialExpanded(defaultExpanded: boolean, collapseOnMobile: boolean)
 export function useExpandable(defaultExpanded = false, options: UseExpandableOptions = {}) {
   const { collapseOnMobile = false } = options;
   const isMobile = useIsMobile();
-  const [expanded, setExpandedState] = useState(() => getInitialExpanded(defaultExpanded, collapseOnMobile));
+  const [expanded, setExpandedState] = useState(() =>
+    getInitialExpanded(defaultExpanded, collapseOnMobile),
+  );
   const hasUserInteractedRef = useRef(false);
   const previousIsMobileRef = useRef(isMobile);
 

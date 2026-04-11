@@ -63,7 +63,11 @@ export function extractProviderErrorDetailFromText(
   if (!trimmed) return fallback;
 
   try {
-    return extractProviderErrorDetail(JSON.parse(trimmed), trimmed.slice(0, 200), includeTopLevelMessage);
+    return extractProviderErrorDetail(
+      JSON.parse(trimmed),
+      trimmed.slice(0, 200),
+      includeTopLevelMessage,
+    );
   } catch {
     return normalizeWhitespace(trimmed.slice(0, 200)) || fallback;
   }
@@ -147,7 +151,12 @@ export function formatVertexProviderHttpError(
   const detail = extractProviderErrorDetailFromText(bodyText);
   const lower = detail.toLowerCase();
 
-  if (status === 429 || lower.includes('quota') || lower.includes('rate') || lower.includes('throttle')) {
+  if (
+    status === 429 ||
+    lower.includes('quota') ||
+    lower.includes('rate') ||
+    lower.includes('throttle')
+  ) {
     return `Google Vertex is rate limited or out of quota. Check Vertex quotas, region capacity, and billing.${buildDetailSuffix(detail)}`;
   }
 

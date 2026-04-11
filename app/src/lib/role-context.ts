@@ -1,7 +1,4 @@
-import type {
-  DelegationEnvelope,
-  ExplorerDelegationEnvelope,
-} from '@/types';
+import type { DelegationEnvelope, ExplorerDelegationEnvelope } from '@/types';
 import { buildDelegationBrief as buildSharedDelegationBrief } from '@push/lib/delegation-brief';
 export {
   buildAuditorContextBlock,

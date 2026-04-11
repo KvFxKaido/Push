@@ -38,17 +38,13 @@ describe('Orchestrator Policy — ungrounded completion', () => {
   });
 
   it('passes through completion claims grounded by delegation result', async () => {
-    const messages = [
-      makeMsg('[Coder completed — 5 rounds, 2 files changed]'),
-    ];
+    const messages = [makeMsg('[Coder completed — 5 rounds, 2 files changed]')];
     const response = 'The task is done.';
     expect(await guard(response, messages, ctx)).toBeNull();
   });
 
   it('passes through completion claims grounded by real tool-result delegation markers', async () => {
-    const messages = [
-      makeMsg('[Tool Result — delegate_coder]\nModified 3 files.'),
-    ];
+    const messages = [makeMsg('[Tool Result — delegate_coder]\nModified 3 files.')];
     const response = 'The task is done.';
     expect(await guard(response, messages, ctx)).toBeNull();
   });
@@ -77,9 +73,7 @@ describe('Orchestrator Policy — ungrounded completion', () => {
   });
 
   it('passes through when recent messages have acceptance criteria', async () => {
-    const messages = [
-      makeMsg('[Acceptance Criteria] 3/3 passed'),
-    ];
+    const messages = [makeMsg('[Acceptance Criteria] 3/3 passed')];
     const response = 'The implementation is completed.';
     expect(await guard(response, messages, ctx)).toBeNull();
   });

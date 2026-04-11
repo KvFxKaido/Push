@@ -16,8 +16,16 @@ import {
 } from './workspace-chat-route-builders';
 import type { ChatRouteProps } from './workspace-chat-route-types';
 
-const WorkspaceHubSheet = lazy(() => import('@/components/chat/WorkspaceHubSheet').then((module) => ({ default: module.WorkspaceHubSheet })));
-const RepoLauncherSheet = lazy(() => import('@/components/launcher/RepoLauncherSheet').then((module) => ({ default: module.RepoLauncherSheet })));
+const WorkspaceHubSheet = lazy(() =>
+  import('@/components/chat/WorkspaceHubSheet').then((module) => ({
+    default: module.WorkspaceHubSheet,
+  })),
+);
+const RepoLauncherSheet = lazy(() =>
+  import('@/components/launcher/RepoLauncherSheet').then((module) => ({
+    default: module.RepoLauncherSheet,
+  })),
+);
 
 export function ChatSurfaceRoute(props: ChatRouteProps) {
   const {
@@ -158,12 +166,15 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     markSnapshotActivity: snapshots.markSnapshotActivity,
   });
 
-  const handleWorkspaceHubOpenChangeWithMount = useCallback((open: boolean) => {
-    if (open) {
-      setWorkspaceHubMounted(true);
-    }
-    handleWorkspaceHubOpenChange(open);
-  }, [handleWorkspaceHubOpenChange]);
+  const handleWorkspaceHubOpenChangeWithMount = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setWorkspaceHubMounted(true);
+      }
+      handleWorkspaceHubOpenChange(open);
+    },
+    [handleWorkspaceHubOpenChange],
+  );
 
   const openWorkspaceHubWithMount = useCallback(() => {
     setWorkspaceHubMounted(true);
@@ -175,25 +186,28 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     openLauncher();
   }, [openLauncher]);
 
-  const setLauncherOpenWithMount = useCallback((open: boolean) => {
-    if (open) {
-      setLauncherSheetMounted(true);
-    }
-    setIsLauncherOpen(open);
-  }, [setIsLauncherOpen]);
+  const setLauncherOpenWithMount = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setLauncherSheetMounted(true);
+      }
+      setIsLauncherOpen(open);
+    },
+    [setIsLauncherOpen],
+  );
 
   const chatsDrawerOffset = 'min(86vw, 24rem)';
   const workspaceHubOffset = '94vw';
   const chatShellTransform = isChatsDrawerOpen
     ? `translateX(${chatsDrawerOffset})`
     : isWorkspaceHubOpen
-    ? `translateX(-${workspaceHubOffset})`
-    : 'translateX(0px)';
+      ? `translateX(-${workspaceHubOffset})`
+      : 'translateX(0px)';
   const chatShellShadow = isChatsDrawerOpen
     ? 'shadow-[-24px_0_56px_rgba(0,0,0,0.42)]'
     : isWorkspaceHubOpen
-    ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
-    : '';
+      ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
+      : '';
 
   const settingsAuth = buildSettingsAuth(props, handleDisconnectRequest);
   const settingsProfile = buildSettingsProfile(props);
@@ -354,9 +368,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
 
       {launcherSheetMounted && (
         <Suspense fallback={null}>
-          <RepoLauncherSheet
-            {...repoLauncherProps}
-          />
+          <RepoLauncherSheet {...repoLauncherProps} />
         </Suspense>
       )}
 

@@ -20,8 +20,12 @@ let fakeStorage: Record<string, string> = {};
 
 vi.mock('./safe-storage', () => ({
   safeStorageGet: (key: string) => fakeStorage[key] ?? null,
-  safeStorageRemove: (key: string) => { delete fakeStorage[key]; },
-  safeStorageSet: (key: string, value: string) => { fakeStorage[key] = value; },
+  safeStorageRemove: (key: string) => {
+    delete fakeStorage[key];
+  },
+  safeStorageSet: (key: string, value: string) => {
+    fakeStorage[key] = value;
+  },
 }));
 
 // Import after mocks are installed
@@ -66,8 +70,16 @@ describe('migrateConversationsToIndexedDB', () => {
       makeMessage({
         content: 'Here is the status',
         cards: [
-          { type: 'sandbox-state', data: {} } as unknown as ChatMessage['cards'] extends (infer U)[] | undefined ? U : never,
-          { type: 'diff-preview', data: {} } as unknown as ChatMessage['cards'] extends (infer U)[] | undefined ? U : never,
+          { type: 'sandbox-state', data: {} } as unknown as ChatMessage['cards'] extends
+            | (infer U)[]
+            | undefined
+            ? U
+            : never,
+          { type: 'diff-preview', data: {} } as unknown as ChatMessage['cards'] extends
+            | (infer U)[]
+            | undefined
+            ? U
+            : never,
         ],
       }),
     ]);
@@ -87,7 +99,11 @@ describe('migrateConversationsToIndexedDB', () => {
         role: 'assistant',
         content: 'Sandbox attached on `abc123`.',
         cards: [
-          { type: 'sandbox-state', data: {} } as unknown as ChatMessage['cards'] extends (infer U)[] | undefined ? U : never,
+          { type: 'sandbox-state', data: {} } as unknown as ChatMessage['cards'] extends
+            | (infer U)[]
+            | undefined
+            ? U
+            : never,
         ],
       }),
       makeMessage({ role: 'user', content: 'do something' }),
@@ -137,9 +153,7 @@ describe('migrateConversationsToIndexedDB', () => {
   });
 
   it('returns existing IndexedDB data when already migrated', async () => {
-    const existing = makeConversation('c1', [
-      makeMessage({ content: 'from idb' }),
-    ]);
+    const existing = makeConversation('c1', [makeMessage({ content: 'from idb' })]);
     mockGetAll.mockResolvedValue([existing]);
 
     const result = await migrateConversationsToIndexedDB();

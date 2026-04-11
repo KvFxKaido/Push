@@ -6,10 +6,19 @@ export function categorizeSandboxError(raw: string): { title: string; detail: st
   if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('inactivity')) {
     return { title: 'Sandbox timed out', detail: 'The container stopped responding.' };
   }
-  if (lower.includes('unreachable') || lower.includes('connection refused') || lower.includes('econnrefused')) {
+  if (
+    lower.includes('unreachable') ||
+    lower.includes('connection refused') ||
+    lower.includes('econnrefused')
+  ) {
     return { title: 'Sandbox unreachable', detail: 'Could not connect to the container.' };
   }
-  if (lower.includes('token') || lower.includes('auth') || lower.includes('403') || lower.includes('permission')) {
+  if (
+    lower.includes('token') ||
+    lower.includes('auth') ||
+    lower.includes('403') ||
+    lower.includes('permission')
+  ) {
     return { title: 'Authentication error', detail: 'Check your GitHub token in Settings.' };
   }
   if (lower.includes('memory') || lower.includes('oom')) {

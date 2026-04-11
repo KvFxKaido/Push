@@ -115,20 +115,40 @@ describe('collectAdaptationSignals', () => {
   it('drills into model-specific metrics when modelId is provided', () => {
     mockToolCallMetrics = {
       count: 5,
-      reasons: { truncated: 2, validation_failed: 1, malformed_json: 1, natural_language_intent: 1 },
+      reasons: {
+        truncated: 2,
+        validation_failed: 1,
+        malformed_json: 1,
+        natural_language_intent: 1,
+      },
       byProvider: {
         openrouter: {
           count: 5,
-          reasons: { truncated: 2, validation_failed: 1, malformed_json: 1, natural_language_intent: 1 },
+          reasons: {
+            truncated: 2,
+            validation_failed: 1,
+            malformed_json: 1,
+            natural_language_intent: 1,
+          },
           byModel: {
             'claude-sonnet': {
               count: 3,
-              reasons: { truncated: 1, validation_failed: 1, malformed_json: 1, natural_language_intent: 0 },
+              reasons: {
+                truncated: 1,
+                validation_failed: 1,
+                malformed_json: 1,
+                natural_language_intent: 0,
+              },
               byTool: {},
             },
             'gpt-4o': {
               count: 2,
-              reasons: { truncated: 1, validation_failed: 0, malformed_json: 0, natural_language_intent: 1 },
+              reasons: {
+                truncated: 1,
+                validation_failed: 0,
+                malformed_json: 0,
+                natural_language_intent: 1,
+              },
               byTool: {},
             },
           },
@@ -144,11 +164,21 @@ describe('collectAdaptationSignals', () => {
   it('uses provider-level metrics when modelId is omitted', () => {
     mockToolCallMetrics = {
       count: 4,
-      reasons: { truncated: 2, validation_failed: 1, malformed_json: 1, natural_language_intent: 0 },
+      reasons: {
+        truncated: 2,
+        validation_failed: 1,
+        malformed_json: 1,
+        natural_language_intent: 0,
+      },
       byProvider: {
         openrouter: {
           count: 4,
-          reasons: { truncated: 2, validation_failed: 1, malformed_json: 1, natural_language_intent: 0 },
+          reasons: {
+            truncated: 2,
+            validation_failed: 1,
+            malformed_json: 1,
+            natural_language_intent: 0,
+          },
           byModel: {},
         },
       },
@@ -195,15 +225,30 @@ describe('computeAdaptiveProfile', () => {
   it('enables planner when malformed call count exceeds threshold', () => {
     mockToolCallMetrics = {
       count: THRESHOLDS.MALFORMED_CALL_ESCALATION,
-      reasons: { truncated: 0, validation_failed: THRESHOLDS.MALFORMED_CALL_ESCALATION, malformed_json: 0, natural_language_intent: 0 },
+      reasons: {
+        truncated: 0,
+        validation_failed: THRESHOLDS.MALFORMED_CALL_ESCALATION,
+        malformed_json: 0,
+        natural_language_intent: 0,
+      },
       byProvider: {
         openrouter: {
           count: THRESHOLDS.MALFORMED_CALL_ESCALATION,
-          reasons: { truncated: 0, validation_failed: THRESHOLDS.MALFORMED_CALL_ESCALATION, malformed_json: 0, natural_language_intent: 0 },
+          reasons: {
+            truncated: 0,
+            validation_failed: THRESHOLDS.MALFORMED_CALL_ESCALATION,
+            malformed_json: 0,
+            natural_language_intent: 0,
+          },
           byModel: {
             'some-model': {
               count: THRESHOLDS.MALFORMED_CALL_ESCALATION,
-              reasons: { truncated: 0, validation_failed: THRESHOLDS.MALFORMED_CALL_ESCALATION, malformed_json: 0, natural_language_intent: 0 },
+              reasons: {
+                truncated: 0,
+                validation_failed: THRESHOLDS.MALFORMED_CALL_ESCALATION,
+                malformed_json: 0,
+                natural_language_intent: 0,
+              },
               byTool: {},
             },
           },
@@ -216,9 +261,7 @@ describe('computeAdaptiveProfile', () => {
     expect(result.wasAdapted).toBe(true);
     expect(result.adaptedProfile.plannerRequired).toBe(true);
     expect(result.adaptedProfile.maxCoderRounds).toBe(20);
-    expect(result.adaptationReasons).toContainEqual(
-      expect.stringContaining('Enable planner'),
-    );
+    expect(result.adaptationReasons).toContainEqual(expect.stringContaining('Enable planner'));
     expect(result.adaptationReasons).toContainEqual(
       expect.stringContaining('Reduce max rounds to 20'),
     );
@@ -227,15 +270,30 @@ describe('computeAdaptiveProfile', () => {
   it('does not re-enable planner on heavy profile (already enabled)', () => {
     mockToolCallMetrics = {
       count: 5,
-      reasons: { truncated: 0, validation_failed: 5, malformed_json: 0, natural_language_intent: 0 },
+      reasons: {
+        truncated: 0,
+        validation_failed: 5,
+        malformed_json: 0,
+        natural_language_intent: 0,
+      },
       byProvider: {
         openrouter: {
           count: 5,
-          reasons: { truncated: 0, validation_failed: 5, malformed_json: 0, natural_language_intent: 0 },
+          reasons: {
+            truncated: 0,
+            validation_failed: 5,
+            malformed_json: 0,
+            natural_language_intent: 0,
+          },
           byModel: {
             'some-model': {
               count: 5,
-              reasons: { truncated: 0, validation_failed: 5, malformed_json: 0, natural_language_intent: 0 },
+              reasons: {
+                truncated: 0,
+                validation_failed: 5,
+                malformed_json: 0,
+                natural_language_intent: 0,
+              },
               byTool: {},
             },
           },
@@ -254,11 +312,21 @@ describe('computeAdaptiveProfile', () => {
   it('reduces maxCoderRounds on high truncation', () => {
     mockToolCallMetrics = {
       count: 2,
-      reasons: { truncated: THRESHOLDS.TRUNCATION_ESCALATION, validation_failed: 0, malformed_json: 0, natural_language_intent: 0 },
+      reasons: {
+        truncated: THRESHOLDS.TRUNCATION_ESCALATION,
+        validation_failed: 0,
+        malformed_json: 0,
+        natural_language_intent: 0,
+      },
       byProvider: {
         zen: {
           count: 2,
-          reasons: { truncated: THRESHOLDS.TRUNCATION_ESCALATION, validation_failed: 0, malformed_json: 0, natural_language_intent: 0 },
+          reasons: {
+            truncated: THRESHOLDS.TRUNCATION_ESCALATION,
+            validation_failed: 0,
+            malformed_json: 0,
+            natural_language_intent: 0,
+          },
           byModel: {},
         },
       },
@@ -268,19 +336,27 @@ describe('computeAdaptiveProfile', () => {
 
     expect(result.wasAdapted).toBe(true);
     expect(result.adaptedProfile.maxCoderRounds).toBe(25); // 30 - 5
-    expect(result.adaptationReasons).toContainEqual(
-      expect.stringContaining('truncated outputs'),
-    );
+    expect(result.adaptationReasons).toContainEqual(expect.stringContaining('truncated outputs'));
   });
 
   it('clamps maxCoderRounds to floor of 15 on truncation', () => {
     mockToolCallMetrics = {
       count: 3,
-      reasons: { truncated: 3, validation_failed: 0, malformed_json: 0, natural_language_intent: 0 },
+      reasons: {
+        truncated: 3,
+        validation_failed: 0,
+        malformed_json: 0,
+        natural_language_intent: 0,
+      },
       byProvider: {
         zen: {
           count: 3,
-          reasons: { truncated: 3, validation_failed: 0, malformed_json: 0, natural_language_intent: 0 },
+          reasons: {
+            truncated: 3,
+            validation_failed: 0,
+            malformed_json: 0,
+            natural_language_intent: 0,
+          },
           byModel: {},
         },
       },
@@ -311,9 +387,7 @@ describe('computeAdaptiveProfile', () => {
 
     expect(result.wasAdapted).toBe(true);
     expect(result.adaptedProfile.contextResetsEnabled).toBe(true);
-    expect(result.adaptationReasons).toContainEqual(
-      expect.stringContaining('compression events'),
-    );
+    expect(result.adaptationReasons).toContainEqual(expect.stringContaining('compression events'));
   });
 
   it('does not re-enable context resets when already enabled', () => {
@@ -325,7 +399,9 @@ describe('computeAdaptiveProfile', () => {
     const result = computeAdaptiveProfile({ ...HEAVY_BASE }, 'openrouter');
 
     // contextResetsEnabled is already true on heavy, so no adaptation for this signal
-    const contextResetReasons = result.adaptationReasons.filter(r => r.includes('context resets'));
+    const contextResetReasons = result.adaptationReasons.filter((r) =>
+      r.includes('context resets'),
+    );
     expect(contextResetReasons).toHaveLength(0);
   });
 
@@ -346,9 +422,7 @@ describe('computeAdaptiveProfile', () => {
 
     expect(result.wasAdapted).toBe(true);
     expect(result.adaptedProfile.maxCoderRounds).toBe(25); // 30 - 5
-    expect(result.adaptationReasons).toContainEqual(
-      expect.stringContaining('edit error rate'),
-    );
+    expect(result.adaptationReasons).toContainEqual(expect.stringContaining('edit error rate'));
   });
 
   it('enables context resets on high stale edit rate', () => {
@@ -368,20 +442,28 @@ describe('computeAdaptiveProfile', () => {
 
     expect(result.wasAdapted).toBe(true);
     expect(result.adaptedProfile.contextResetsEnabled).toBe(true);
-    expect(result.adaptationReasons).toContainEqual(
-      expect.stringContaining('edit stale rate'),
-    );
+    expect(result.adaptationReasons).toContainEqual(expect.stringContaining('edit stale rate'));
   });
 
   it('applies multiple adaptations simultaneously', () => {
     // Trigger malformed calls + context pressure + edit errors at once
     mockToolCallMetrics = {
       count: 5,
-      reasons: { truncated: 3, validation_failed: 2, malformed_json: 0, natural_language_intent: 0 },
+      reasons: {
+        truncated: 3,
+        validation_failed: 2,
+        malformed_json: 0,
+        natural_language_intent: 0,
+      },
       byProvider: {
         openrouter: {
           count: 5,
-          reasons: { truncated: 3, validation_failed: 2, malformed_json: 0, natural_language_intent: 0 },
+          reasons: {
+            truncated: 3,
+            validation_failed: 2,
+            malformed_json: 0,
+            natural_language_intent: 0,
+          },
           byModel: {},
         },
       },
@@ -442,7 +524,12 @@ describe('logAdaptiveProfile', () => {
       adaptationReasons: [],
       signals: {
         malformedCallCount: 0,
-        malformedReasons: { truncated: 0, validationFailed: 0, malformedJson: 0, naturalLanguageIntent: 0 },
+        malformedReasons: {
+          truncated: 0,
+          validationFailed: 0,
+          malformedJson: 0,
+          naturalLanguageIntent: 0,
+        },
         contextPressureEvents: 0,
         contextTokensSaved: 0,
         editErrorRate: 0,
@@ -464,7 +551,12 @@ describe('logAdaptiveProfile', () => {
       adaptationReasons: ['Enable planner: 4 malformed tool calls'],
       signals: {
         malformedCallCount: 4,
-        malformedReasons: { truncated: 0, validationFailed: 4, malformedJson: 0, naturalLanguageIntent: 0 },
+        malformedReasons: {
+          truncated: 0,
+          validationFailed: 4,
+          malformedJson: 0,
+          naturalLanguageIntent: 0,
+        },
         contextPressureEvents: 0,
         contextTokensSaved: 0,
         editErrorRate: 0,

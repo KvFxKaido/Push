@@ -6,27 +6,132 @@ import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
 
 // --- Lazy-loaded card components (code-split) ---
-const PRCard = lazyWithRecovery(toDefaultExport(() => import('./PRCard'), (module) => module.PRCard));
-const PRListCard = lazyWithRecovery(toDefaultExport(() => import('./PRListCard'), (module) => module.PRListCard));
-const CommitListCard = lazyWithRecovery(toDefaultExport(() => import('./CommitListCard'), (module) => module.CommitListCard));
-const FileCard = lazyWithRecovery(toDefaultExport(() => import('./FileCard'), (module) => module.FileCard));
-const BranchListCard = lazyWithRecovery(toDefaultExport(() => import('./BranchListCard'), (module) => module.BranchListCard));
-const FileListCard = lazyWithRecovery(toDefaultExport(() => import('./FileListCard'), (module) => module.FileListCard));
-const SandboxCard = lazyWithRecovery(toDefaultExport(() => import('./SandboxCard'), (module) => module.SandboxCard));
-const CommitReviewCard = lazyWithRecovery(toDefaultExport(() => import('./CommitReviewCard'), (module) => module.CommitReviewCard));
-const CIStatusCard = lazyWithRecovery(toDefaultExport(() => import('./CIStatusCard'), (module) => module.CIStatusCard));
-const EditorCard = lazyWithRecovery(toDefaultExport(() => import('./EditorCard'), (module) => module.EditorCard));
-const FileSearchCard = lazyWithRecovery(toDefaultExport(() => import('./FileSearchCard'), (module) => module.FileSearchCard));
-const CommitFilesCard = lazyWithRecovery(toDefaultExport(() => import('./CommitFilesCard'), (module) => module.CommitFilesCard));
-const TestResultsCard = lazyWithRecovery(toDefaultExport(() => import('./TestResultsCard'), (module) => module.TestResultsCard));
-const TypeCheckCard = lazyWithRecovery(toDefaultExport(() => import('./TypeCheckCard'), (module) => module.TypeCheckCard));
-const SandboxDownloadCard = lazyWithRecovery(toDefaultExport(() => import('./SandboxDownloadCard'), (module) => module.SandboxDownloadCard));
-const WorkflowRunsCard = lazyWithRecovery(toDefaultExport(() => import('./WorkflowRunsCard'), (module) => module.WorkflowRunsCard));
-const WorkflowLogsCard = lazyWithRecovery(toDefaultExport(() => import('./WorkflowLogsCard'), (module) => module.WorkflowLogsCard));
-const WebSearchCard = lazyWithRecovery(toDefaultExport(() => import('./WebSearchCard'), (module) => module.WebSearchCard));
-const DelegationResultCard = lazyWithRecovery(toDefaultExport(() => import('./DelegationResultCard'), (module) => module.DelegationResultCard));
-const CoderProgressCard = lazyWithRecovery(toDefaultExport(() => import('./CoderProgressCard'), (module) => module.CoderProgressCard));
-const AskUserCard = lazyWithRecovery(toDefaultExport(() => import('./AskUserCard'), (module) => module.AskUserCard));
+const PRCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./PRCard'),
+    (module) => module.PRCard,
+  ),
+);
+const PRListCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./PRListCard'),
+    (module) => module.PRListCard,
+  ),
+);
+const CommitListCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./CommitListCard'),
+    (module) => module.CommitListCard,
+  ),
+);
+const FileCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./FileCard'),
+    (module) => module.FileCard,
+  ),
+);
+const BranchListCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./BranchListCard'),
+    (module) => module.BranchListCard,
+  ),
+);
+const FileListCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./FileListCard'),
+    (module) => module.FileListCard,
+  ),
+);
+const SandboxCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./SandboxCard'),
+    (module) => module.SandboxCard,
+  ),
+);
+const CommitReviewCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./CommitReviewCard'),
+    (module) => module.CommitReviewCard,
+  ),
+);
+const CIStatusCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./CIStatusCard'),
+    (module) => module.CIStatusCard,
+  ),
+);
+const EditorCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./EditorCard'),
+    (module) => module.EditorCard,
+  ),
+);
+const FileSearchCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./FileSearchCard'),
+    (module) => module.FileSearchCard,
+  ),
+);
+const CommitFilesCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./CommitFilesCard'),
+    (module) => module.CommitFilesCard,
+  ),
+);
+const TestResultsCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./TestResultsCard'),
+    (module) => module.TestResultsCard,
+  ),
+);
+const TypeCheckCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./TypeCheckCard'),
+    (module) => module.TypeCheckCard,
+  ),
+);
+const SandboxDownloadCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./SandboxDownloadCard'),
+    (module) => module.SandboxDownloadCard,
+  ),
+);
+const WorkflowRunsCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./WorkflowRunsCard'),
+    (module) => module.WorkflowRunsCard,
+  ),
+);
+const WorkflowLogsCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./WorkflowLogsCard'),
+    (module) => module.WorkflowLogsCard,
+  ),
+);
+const WebSearchCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./WebSearchCard'),
+    (module) => module.WebSearchCard,
+  ),
+);
+const DelegationResultCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./DelegationResultCard'),
+    (module) => module.DelegationResultCard,
+  ),
+);
+const CoderProgressCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./CoderProgressCard'),
+    (module) => module.CoderProgressCard,
+  ),
+);
+const AskUserCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('./AskUserCard'),
+    (module) => module.AskUserCard,
+  ),
+);
 
 interface CardRendererProps {
   card: ChatCard;
@@ -64,7 +169,9 @@ class CardErrorBoundary extends Component<CardErrorBoundaryProps, CardErrorBound
   render() {
     if (this.state.hasError) {
       return (
-        <div className={`${CARD_PANEL_CLASS} border-amber-500/20 bg-[linear-gradient(180deg,rgba(52,40,15,0.2)_0%,rgba(24,18,7,0.4)_100%)] px-3 py-2 text-xs text-amber-300`}>
+        <div
+          className={`${CARD_PANEL_CLASS} border-amber-500/20 bg-[linear-gradient(180deg,rgba(52,40,15,0.2)_0%,rgba(24,18,7,0.4)_100%)] px-3 py-2 text-xs text-amber-300`}
+        >
           Card failed to load. Refresh Push to fetch the latest assets.
         </div>
       );
@@ -79,43 +186,63 @@ class CardErrorBoundary extends Component<CardErrorBoundaryProps, CardErrorBound
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const DATA_ONLY_CARDS: Record<string, ComponentType<{ data: any }>> = {
-  'pr':                  PRCard,
-  'pr-list':             PRListCard,
-  'commit-list':         CommitListCard,
-  'file':                FileCard,
-  'branch-list':         BranchListCard,
-  'file-list':           FileListCard,
-  'sandbox':             SandboxCard,
-  'diff-preview':        DiffPreviewCard,
-  'audit-verdict':       AuditVerdictCard,
-  'file-search':         FileSearchCard,
-  'commit-files':        CommitFilesCard,
-  'test-results':        TestResultsCard,
-  'type-check':          TypeCheckCard,
-  'sandbox-download':    SandboxDownloadCard,
-  'workflow-runs':       WorkflowRunsCard,
-  'workflow-logs':       WorkflowLogsCard,
-  'web-search':          WebSearchCard,
-  'delegation-result':   DelegationResultCard,
-  'coder-progress':      CoderProgressCard,
+  pr: PRCard,
+  'pr-list': PRListCard,
+  'commit-list': CommitListCard,
+  file: FileCard,
+  'branch-list': BranchListCard,
+  'file-list': FileListCard,
+  sandbox: SandboxCard,
+  'diff-preview': DiffPreviewCard,
+  'audit-verdict': AuditVerdictCard,
+  'file-search': FileSearchCard,
+  'commit-files': CommitFilesCard,
+  'test-results': TestResultsCard,
+  'type-check': TypeCheckCard,
+  'sandbox-download': SandboxDownloadCard,
+  'workflow-runs': WorkflowRunsCard,
+  'workflow-logs': WorkflowLogsCard,
+  'web-search': WebSearchCard,
+  'delegation-result': DelegationResultCard,
+  'coder-progress': CoderProgressCard,
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const ACTION_CARDS: Record<string, ComponentType<{ data: any; messageId: string; cardIndex: number; onAction?: (action: CardAction) => void }>> = {
+const ACTION_CARDS: Record<
+  string,
+  ComponentType<{
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    data: any;
+    messageId: string;
+    cardIndex: number;
+    onAction?: (action: CardAction) => void;
+  }>
+> = {
   'commit-review': CommitReviewCard,
-  'ci-status':     CIStatusCard,
-  'editor':        EditorCard,
-  'ask-user':      AskUserCard,
+  'ci-status': CIStatusCard,
+  editor: EditorCard,
+  'ask-user': AskUserCard,
 };
 
 // ---------------------------------------------------------------------------
 
-function renderCard(card: ChatCard, messageId?: string, cardIndex?: number, onAction?: (action: CardAction) => void) {
+function renderCard(
+  card: ChatCard,
+  messageId?: string,
+  cardIndex?: number,
+  onAction?: (action: CardAction) => void,
+) {
   if (card.type === 'sandbox-state') return null;
 
   const ActionComp = ACTION_CARDS[card.type];
   if (ActionComp) {
-    return <ActionComp data={card.data} messageId={messageId || ''} cardIndex={cardIndex ?? 0} onAction={onAction} />;
+    return (
+      <ActionComp
+        data={card.data}
+        messageId={messageId || ''}
+        cardIndex={cardIndex ?? 0}
+        onAction={onAction}
+      />
+    );
   }
 
   const DataComp = DATA_ONLY_CARDS[card.type];

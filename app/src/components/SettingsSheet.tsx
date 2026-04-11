@@ -1,11 +1,6 @@
 import { useState } from 'react';
 import { Trash2, RefreshCw, Loader2, Check, Plus, ChevronDown } from 'lucide-react';
-import {
-  Sheet,
-  SheetContent,
-  SheetTitle,
-  SheetDescription,
-} from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { SettingsSectionContent } from '@/components/SettingsSectionContent';
 import type { AIProviderType, SandboxStateCardData } from '@/types';
@@ -44,7 +39,8 @@ const SETTINGS_TAB_META: Record<SettingsTabKey, { title: string; description: st
   },
 };
 
-const SETTINGS_SELECT_CLASS = 'rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 [color-scheme:dark] [background-color:#121926] [&>option]:bg-[#121926] [&>option]:text-push-fg';
+const SETTINGS_SELECT_CLASS =
+  'rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 [color-scheme:dark] [background-color:#121926] [&>option]:bg-[#121926] [&>option]:text-push-fg';
 
 // ── Prop groups ──────────────────────────────────────────────────────
 
@@ -380,7 +376,9 @@ export function ProviderKeySection({
               className={`flex-1 rounded-md px-2 py-1 text-xs font-mono disabled:opacity-50 ${SETTINGS_SELECT_CLASS}`}
             >
               {model.options.length === 0 ? (
-                <option value={model.value}>{model.labelTransform ? model.labelTransform(model.value) : model.value}</option>
+                <option value={model.value}>
+                  {model.labelTransform ? model.labelTransform(model.value) : model.value}
+                </option>
               ) : (
                 model.options.map((m) => (
                   <option key={m} value={m}>
@@ -398,16 +396,16 @@ export function ProviderKeySection({
                 aria-label={`Refresh ${label} models`}
                 title={`Refresh ${label} models`}
               >
-                {refresh.loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                {refresh.loading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
               </button>
             )}
           </div>
         )}
-        {refresh?.error && (
-          <p className="text-xs text-amber-400">
-            {refresh.error}
-          </p>
-        )}
+        {refresh?.error && <p className="text-xs text-amber-400">{refresh.error}</p>}
         {refresh?.updatedAt && (
           <p className="text-xs text-push-fg-dim">
             Updated {new Date(refresh.updatedAt).toLocaleTimeString()}
@@ -418,11 +416,7 @@ export function ProviderKeySection({
             This chat keeps using {model.lockedModel}. New chats will use your updated default.
           </p>
         )}
-        {savedHint && (
-          <p className="text-xs text-push-fg-dim">
-            {savedHint}
-          </p>
-        )}
+        {savedHint && <p className="text-xs text-push-fg-dim">{savedHint}</p>}
       </div>
     );
   }
@@ -456,9 +450,7 @@ export function ProviderKeySection({
       >
         {saveLabel}
       </Button>
-      <p className="text-xs text-push-fg-dim">
-        {hint}
-      </p>
+      <p className="text-xs text-push-fg-dim">{hint}</p>
     </div>
   );
 }
@@ -502,9 +494,13 @@ export function ExperimentalProviderSection({
     ? normalizeExperimentalBaseUrl(backendId, nextBaseUrl)
     : null;
   const draftBaseUrlError = nextBaseUrl
-    ? (resolvedBaseUrlValidation && !resolvedBaseUrlValidation.ok ? resolvedBaseUrlValidation.error : null)
+    ? resolvedBaseUrlValidation && !resolvedBaseUrlValidation.ok
+      ? resolvedBaseUrlValidation.error
+      : null
     : baseUrlError;
-  const [isAddDeploymentExpanded, setIsAddDeploymentExpanded] = useState(() => deployments.length === 0);
+  const [isAddDeploymentExpanded, setIsAddDeploymentExpanded] = useState(
+    () => deployments.length === 0,
+  );
   const isAddDeploymentOpen = deployments.length === 0 || isAddDeploymentExpanded;
   const saveCurrentBaseUrl = () => {
     if (!nextBaseUrl || draftBaseUrlError) return;
@@ -541,11 +537,11 @@ export function ExperimentalProviderSection({
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-push-fg">{label}</span>
-            <span className={`rounded-full px-2 py-0.5 text-push-2xs uppercase tracking-wide ${
-              configured
-                ? 'bg-emerald-500/10 text-emerald-400'
-                : 'bg-amber-500/10 text-amber-300'
-            }`}>
+            <span
+              className={`rounded-full px-2 py-0.5 text-push-2xs uppercase tracking-wide ${
+                configured ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-300'
+              }`}
+            >
               {configured ? 'Connected' : 'Bring your own'}
             </span>
           </div>
@@ -586,7 +582,9 @@ export function ExperimentalProviderSection({
           >
             Save key
           </Button>
-          {hasKey && <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>}
+          {hasKey && (
+            <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>
+          )}
         </div>
       </div>
 
@@ -637,7 +635,9 @@ export function ExperimentalProviderSection({
             })}
           </div>
         ) : configured ? (
-          <p className="text-xs text-push-fg-dim">No saved deployments yet. Add this one if you want to reuse it later.</p>
+          <p className="text-xs text-push-fg-dim">
+            No saved deployments yet. Add this one if you want to reuse it later.
+          </p>
         ) : (
           <p className="text-xs text-push-fg-dim">No saved deployments yet.</p>
         )}
@@ -668,7 +668,9 @@ export function ExperimentalProviderSection({
           >
             Save base URL
           </Button>
-          {baseUrl && <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>}
+          {baseUrl && (
+            <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>
+          )}
         </div>
       </div>
 
@@ -684,12 +686,16 @@ export function ExperimentalProviderSection({
               <Plus className="h-3.5 w-3.5" />
               Add deployment
             </span>
-            <ChevronDown className={`h-4 w-4 transition-transform ${isAddDeploymentOpen ? 'rotate-180' : ''}`} />
+            <ChevronDown
+              className={`h-4 w-4 transition-transform ${isAddDeploymentOpen ? 'rotate-180' : ''}`}
+            />
           </button>
           {isAddDeploymentOpen && (
             <div className="mt-3 space-y-3">
               <div className="space-y-1.5">
-                <label className="text-push-xs font-medium text-push-fg-secondary">Deployment / model</label>
+                <label className="text-push-xs font-medium text-push-fg-secondary">
+                  Deployment / model
+                </label>
                 <input
                   type="text"
                   value={modelInput}
@@ -718,7 +724,9 @@ export function ExperimentalProviderSection({
           <p className="text-push-xs text-push-fg-secondary">Active now</p>
           <p className="truncate text-sm text-push-fg">{model}</p>
           {baseUrl && (
-            <p className="truncate text-push-xs text-push-fg-dim">{formatExperimentalDeploymentTarget(baseUrl)}</p>
+            <p className="truncate text-push-xs text-push-fg-dim">
+              {formatExperimentalDeploymentTarget(baseUrl)}
+            </p>
           )}
         </div>
       )}
@@ -773,16 +781,17 @@ export function VertexProviderSection({
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-push-fg">Google Vertex</span>
-            <span className={`rounded-full px-2 py-0.5 text-push-2xs uppercase tracking-wide ${
-              configured
-                ? 'bg-emerald-500/10 text-emerald-400'
-                : 'bg-amber-500/10 text-amber-300'
-            }`}>
+            <span
+              className={`rounded-full px-2 py-0.5 text-push-2xs uppercase tracking-wide ${
+                configured ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-300'
+              }`}
+            >
               {configured ? 'Connected' : 'Bring your own'}
             </span>
           </div>
           <p className="text-xs text-push-fg-dim">
-            Bring your own Google service account, pick a region, and Push will route Gemini and Claude through Vertex for you.
+            Bring your own Google service account, pick a region, and Push will route Gemini and
+            Claude through Vertex for you.
           </p>
         </div>
         <button
@@ -797,12 +806,18 @@ export function VertexProviderSection({
       </div>
 
       <div className="space-y-1.5">
-        <label className="text-push-xs font-medium text-push-fg-secondary">Service account JSON</label>
+        <label className="text-push-xs font-medium text-push-fg-secondary">
+          Service account JSON
+        </label>
         <textarea
           rows={6}
           value={keyInput}
           onChange={(e) => setKeyInput(e.target.value)}
-          placeholder={hasKey ? 'Service account JSON saved locally' : 'Paste the full Google service account JSON'}
+          placeholder={
+            hasKey
+              ? 'Service account JSON saved locally'
+              : 'Paste the full Google service account JSON'
+          }
           className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 font-mono resize-y"
         />
         <div className="flex gap-2">
@@ -819,7 +834,9 @@ export function VertexProviderSection({
           >
             Save service account
           </Button>
-          {hasKey && <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>}
+          {hasKey && (
+            <span className="self-center text-push-xs text-push-fg-dim">Stored locally</span>
+          )}
         </div>
         {keyError && <p className="text-xs text-amber-400">{keyError}</p>}
         {projectId && (
@@ -844,7 +861,7 @@ export function VertexProviderSection({
               variant="ghost"
               size="sm"
               onClick={() => setRegion((regionInput || region).trim())}
-              disabled={!((regionInput || region).trim())}
+              disabled={!(regionInput || region).trim()}
               className="text-push-fg-secondary hover:text-push-fg"
             >
               Save region
@@ -861,7 +878,10 @@ export function VertexProviderSection({
           {regionError ? (
             <p className="text-xs text-amber-400">{regionError}</p>
           ) : (
-            <p className="text-xs text-push-fg-dim">Use <span className="font-mono">global</span> unless you need a region-specific deployment.</p>
+            <p className="text-xs text-push-fg-dim">
+              Use <span className="font-mono">global</span> unless you need a region-specific
+              deployment.
+            </p>
           )}
         </div>
 
@@ -876,7 +896,9 @@ export function VertexProviderSection({
             className={`w-full ${SETTINGS_SELECT_CLASS}`}
           >
             {modelOptions.map((option) => (
-              <option key={option} value={option}>{option}</option>
+              <option key={option} value={option}>
+                {option}
+              </option>
             ))}
           </select>
           <input
@@ -891,7 +913,7 @@ export function VertexProviderSection({
               variant="ghost"
               size="sm"
               onClick={() => setModel((modelInput || model).trim())}
-              disabled={!((modelInput || model).trim())}
+              disabled={!(modelInput || model).trim()}
               className="text-push-fg-secondary hover:text-push-fg"
             >
               Save model
@@ -916,7 +938,8 @@ export function VertexProviderSection({
         </p>
         {hasLegacyConfig && (
           <p className="mt-1 text-push-2xs text-amber-400">
-            Legacy raw-endpoint Vertex config is still present and will be used only if no service account is saved.
+            Legacy raw-endpoint Vertex config is still present and will be used only if no service
+            account is saved.
           </p>
         )}
       </div>
@@ -954,65 +977,75 @@ export function SettingsSheet({
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 rounded-tr-2xl bg-gradient-to-b from-white/[0.03] to-transparent" />
 
         <div className="relative flex h-dvh flex-col overflow-hidden rounded-r-2xl">
-        {/* Header */}
-        <header className="shrink-0 border-b border-push-edge px-4 pt-4 pb-3">
-          <div className="rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.015))] px-3 py-3 shadow-[0_16px_30px_rgba(0,0,0,0.24)]">
-            <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-push-edge bg-push-surface/80 text-push-fg shadow-[0_10px_22px_rgba(0,0,0,0.22)]">
-                <ActiveTabIcon className="h-4.5 w-4.5" />
+          {/* Header */}
+          <header className="shrink-0 border-b border-push-edge px-4 pt-4 pb-3">
+            <div className="rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.015))] px-3 py-3 shadow-[0_16px_30px_rgba(0,0,0,0.24)]">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-push-edge bg-push-surface/80 text-push-fg shadow-[0_10px_22px_rgba(0,0,0,0.22)]">
+                  <ActiveTabIcon className="h-4.5 w-4.5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-push-2xs uppercase tracking-[0.24em] text-push-fg-dim">
+                    Control center
+                  </p>
+                  <p className="mt-1 text-base font-semibold text-push-fg">{tabMeta.title}</p>
+                  <p className="mt-0.5 text-push-xs text-push-fg-dim">{tabMeta.description}</p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-push-2xs uppercase tracking-[0.24em] text-push-fg-dim">Control center</p>
-                <p className="mt-1 text-base font-semibold text-push-fg">{tabMeta.title}</p>
-                <p className="mt-0.5 text-push-xs text-push-fg-dim">{tabMeta.description}</p>
+            </div>
+          </header>
+
+          {/* Tab bar */}
+          <div className="shrink-0 border-b border-push-edge px-3 py-3">
+            <div className="rounded-2xl border border-push-edge bg-[#0b1017]/85 p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.22)]">
+              <div className="grid grid-cols-3 gap-1.5">
+                {(
+                  [
+                    ['you', 'You'],
+                    ['workspace', 'Workspace'],
+                    ['ai', 'AI'],
+                  ] as const
+                ).map(([key, label]) => {
+                  const Icon = SETTINGS_SECTION_ICONS[key];
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setSettingsTab(key)}
+                      className={`flex min-h-[48px] items-center justify-center gap-2 rounded-xl px-2 text-push-xs font-medium transition-all ${
+                        settingsTab === key
+                          ? 'border border-push-edge-hover bg-push-grad-input text-push-fg shadow-[0_12px_24px_rgba(0,0,0,0.32),0_2px_6px_rgba(0,0,0,0.18)]'
+                          : 'border border-transparent text-push-fg-dim hover:border-[#1f2a3a] hover:bg-[#0c1018] hover:text-push-fg-secondary'
+                      }`}
+                    >
+                      <span
+                        className={`flex h-7 w-7 items-center justify-center rounded-full border ${
+                          settingsTab === key
+                            ? 'border-push-edge-hover bg-white/6'
+                            : 'border-transparent bg-transparent'
+                        }`}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                      </span>
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
-        </header>
 
-        {/* Tab bar */}
-        <div className="shrink-0 border-b border-push-edge px-3 py-3">
-          <div className="rounded-2xl border border-push-edge bg-[#0b1017]/85 p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.22)]">
-            <div className="grid grid-cols-3 gap-1.5">
-            {([['you', 'You'], ['workspace', 'Workspace'], ['ai', 'AI']] as const).map(([key, label]) => {
-              const Icon = SETTINGS_SECTION_ICONS[key];
-              return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setSettingsTab(key)}
-                className={`flex min-h-[48px] items-center justify-center gap-2 rounded-xl px-2 text-push-xs font-medium transition-all ${
-                  settingsTab === key
-                    ? 'border border-push-edge-hover bg-push-grad-input text-push-fg shadow-[0_12px_24px_rgba(0,0,0,0.32),0_2px_6px_rgba(0,0,0,0.18)]'
-                    : 'border border-transparent text-push-fg-dim hover:border-[#1f2a3a] hover:bg-[#0c1018] hover:text-push-fg-secondary'
-                }`}
-              >
-                <span className={`flex h-7 w-7 items-center justify-center rounded-full border ${
-                  settingsTab === key
-                    ? 'border-push-edge-hover bg-white/6'
-                    : 'border-transparent bg-transparent'
-                }`}>
-                  <Icon className="h-3.5 w-3.5" />
-                </span>
-                {label}
-              </button>
-            );
-            })}
-            </div>
+          <div className="flex-1 overflow-y-auto">
+            <SettingsSectionContent
+              settingsTab={settingsTab}
+              auth={auth}
+              profile={profile}
+              ai={ai}
+              workspace={workspace}
+              data={data}
+              onDismiss={() => onOpenChange(false)}
+            />
           </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          <SettingsSectionContent
-            settingsTab={settingsTab}
-            auth={auth}
-            profile={profile}
-            ai={ai}
-            workspace={workspace}
-            data={data}
-            onDismiss={() => onOpenChange(false)}
-          />
-        </div>
         </div>
       </SheetContent>
     </Sheet>

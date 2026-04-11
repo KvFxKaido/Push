@@ -1,8 +1,5 @@
 import type { AIProviderType, AIProviderConfig, AIModel, AgentRole } from '@/types';
-import {
-  getAzureModelName,
-  getBedrockModelName,
-} from '@/hooks/useExperimentalProviderConfig';
+import { getAzureModelName, getBedrockModelName } from '@/hooks/useExperimentalProviderConfig';
 import { getVertexModelName } from '@/hooks/useVertexConfig';
 import { getModelCapabilities } from './model-capabilities';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
@@ -43,17 +40,47 @@ function providerUrl(devPath: string, prodPath: string): string {
 }
 
 export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: string }> = {
-  ollama:     { chat: providerUrl('/ollama/v1/chat/completions',                '/api/ollama/chat'),     models: providerUrl('/ollama/v1/models',                '/api/ollama/models')     },
-  openrouter: { chat: providerUrl('/openrouter/api/v1/chat/completions',    '/api/openrouter/chat'), models: providerUrl('/openrouter/api/v1/models',        '/api/openrouter/models') },
-  zen:        { chat: providerUrl('/opencode/zen/v1/chat/completions',          '/api/zen/chat'),        models: providerUrl('/opencode/zen/v1/models',          '/api/zen/models')        },
-  nvidia:     { chat: providerUrl('/nvidia/v1/chat/completions',                '/api/nvidia/chat'),     models: providerUrl('/nvidia/v1/models',                '/api/nvidia/models')     },
-  blackbox:   { chat: providerUrl('/blackbox/chat/completions',                '/api/blackbox/chat'),   models: providerUrl('/blackbox/models',                 '/api/blackbox/models')   },
-  azure:      { chat: providerUrl('/api/azure/chat',                              '/api/azure/chat'),      models: providerUrl('/api/azure/models',                '/api/azure/models')      },
-  bedrock:    { chat: providerUrl('/api/bedrock/chat',                            '/api/bedrock/chat'),    models: providerUrl('/api/bedrock/models',              '/api/bedrock/models')    },
-  vertex:     { chat: providerUrl('/api/vertex/chat',                             '/api/vertex/chat'),     models: providerUrl('/api/vertex/models',               '/api/vertex/models')     },
-  demo:       { chat: '',                                                                                models: ''                                                                        },
-  kilocode:    { chat: providerUrl('/api/kilocode/chat',                            '/api/kilocode/chat'),    models: providerUrl('/api/kilocode/models',              '/api/kilocode/models')    },
-  openadapter: { chat: providerUrl('/api/openadapter/chat',                         '/api/openadapter/chat'), models: providerUrl('/api/openadapter/models',           '/api/openadapter/models') },
+  ollama: {
+    chat: providerUrl('/ollama/v1/chat/completions', '/api/ollama/chat'),
+    models: providerUrl('/ollama/v1/models', '/api/ollama/models'),
+  },
+  openrouter: {
+    chat: providerUrl('/openrouter/api/v1/chat/completions', '/api/openrouter/chat'),
+    models: providerUrl('/openrouter/api/v1/models', '/api/openrouter/models'),
+  },
+  zen: {
+    chat: providerUrl('/opencode/zen/v1/chat/completions', '/api/zen/chat'),
+    models: providerUrl('/opencode/zen/v1/models', '/api/zen/models'),
+  },
+  nvidia: {
+    chat: providerUrl('/nvidia/v1/chat/completions', '/api/nvidia/chat'),
+    models: providerUrl('/nvidia/v1/models', '/api/nvidia/models'),
+  },
+  blackbox: {
+    chat: providerUrl('/blackbox/chat/completions', '/api/blackbox/chat'),
+    models: providerUrl('/blackbox/models', '/api/blackbox/models'),
+  },
+  azure: {
+    chat: providerUrl('/api/azure/chat', '/api/azure/chat'),
+    models: providerUrl('/api/azure/models', '/api/azure/models'),
+  },
+  bedrock: {
+    chat: providerUrl('/api/bedrock/chat', '/api/bedrock/chat'),
+    models: providerUrl('/api/bedrock/models', '/api/bedrock/models'),
+  },
+  vertex: {
+    chat: providerUrl('/api/vertex/chat', '/api/vertex/chat'),
+    models: providerUrl('/api/vertex/models', '/api/vertex/models'),
+  },
+  demo: { chat: '', models: '' },
+  kilocode: {
+    chat: providerUrl('/api/kilocode/chat', '/api/kilocode/chat'),
+    models: providerUrl('/api/kilocode/models', '/api/kilocode/models'),
+  },
+  openadapter: {
+    chat: providerUrl('/api/openadapter/chat', '/api/openadapter/chat'),
+    models: providerUrl('/api/openadapter/models', '/api/openadapter/models'),
+  },
 };
 
 // Experimental direct-deployment defaults — only used as placeholders before the user
@@ -114,7 +141,10 @@ function normalizeProviderModelId(provider: AIProviderType | string, modelId: st
   return trimmed;
 }
 
-export function getModelDisplayGroupKey(provider: AIProviderType | string, modelId: string): string {
+export function getModelDisplayGroupKey(
+  provider: AIProviderType | string,
+  modelId: string,
+): string {
   const normalized = normalizeProviderModelId(provider, modelId);
   const slash = normalized.indexOf('/');
   if (slash > 0) return normalized.slice(0, slash);
@@ -126,7 +156,10 @@ export function getModelDisplayGroupLabel(groupKey: string): string {
   return MODEL_ROUTE_PROVIDER_LABELS[groupKey] || groupKey;
 }
 
-export function getModelDisplayLeafName(provider: AIProviderType | string, modelId: string): string {
+export function getModelDisplayLeafName(
+  provider: AIProviderType | string,
+  modelId: string,
+): string {
   const normalized = normalizeProviderModelId(provider, modelId);
   const slash = normalized.indexOf('/');
   return slash > 0 ? normalized.slice(slash + 1) : normalized;
@@ -147,15 +180,24 @@ export function compareProviderModelIds(
 ): number {
   const leftGroup = getModelDisplayGroupLabel(getModelDisplayGroupKey(provider, left));
   const rightGroup = getModelDisplayGroupLabel(getModelDisplayGroupKey(provider, right));
-  const groupDiff = leftGroup.localeCompare(rightGroup, undefined, { numeric: true, sensitivity: 'base' });
+  const groupDiff = leftGroup.localeCompare(rightGroup, undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
   if (groupDiff !== 0) return groupDiff;
 
-  const leafDiff = getModelDisplayLeafName(provider, left)
-    .localeCompare(getModelDisplayLeafName(provider, right), undefined, { numeric: true, sensitivity: 'base' });
+  const leafDiff = getModelDisplayLeafName(provider, left).localeCompare(
+    getModelDisplayLeafName(provider, right),
+    undefined,
+    { numeric: true, sensitivity: 'base' },
+  );
   if (leafDiff !== 0) return leafDiff;
 
-  return normalizeProviderModelId(provider, left)
-    .localeCompare(normalizeProviderModelId(provider, right), undefined, { numeric: true, sensitivity: 'base' });
+  return normalizeProviderModelId(provider, left).localeCompare(
+    normalizeProviderModelId(provider, right),
+    undefined,
+    { numeric: true, sensitivity: 'base' },
+  );
 }
 
 /** Build the standard role model set for a provider. */
@@ -187,7 +229,8 @@ export const PROVIDERS: AIProviderConfig[] = [
   {
     type: 'openrouter',
     name: 'OpenRouter',
-    description: 'OpenRouter — Access 50+ models including Claude, GPT-4, Gemini, with optional BYOK routing via your OpenRouter account',
+    description:
+      'OpenRouter — Access 50+ models including Claude, GPT-4, Gemini, with optional BYOK routing via your OpenRouter account',
     envKey: 'VITE_OPENROUTER_API_KEY',
     envUrl: 'https://openrouter.ai',
     models: makeRoleModels(OPENROUTER_DEFAULT_MODEL, 'OpenRouter', 'openrouter', 200_000),
@@ -235,7 +278,8 @@ export const PROVIDERS: AIProviderConfig[] = [
   {
     type: 'azure',
     name: 'Azure OpenAI',
-    description: 'Experimental private connector for direct Azure OpenAI and Azure AI Foundry deployments',
+    description:
+      'Experimental private connector for direct Azure OpenAI and Azure AI Foundry deployments',
     envKey: 'VITE_AZURE_OPENAI_API_KEY',
     envUrl: 'https://your-resource.services.ai.azure.com/api/projects/PROJECT',
     models: makeRoleModels(AZURE_DEFAULT_MODEL, 'Azure OpenAI', 'azure', 200_000),
@@ -251,7 +295,8 @@ export const PROVIDERS: AIProviderConfig[] = [
   {
     type: 'vertex',
     name: 'Google Vertex',
-    description: 'Experimental private connector for Google Vertex using service-account auth with Gemini OpenAPI and Claude partner-model routing',
+    description:
+      'Experimental private connector for Google Vertex using service-account auth with Gemini OpenAPI and Claude partner-model routing',
     envKey: 'VITE_VERTEX_SERVICE_ACCOUNT_JSON',
     envUrl: 'global',
     models: makeRoleModels(VERTEX_DEFAULT_MODEL, 'Google Vertex', 'vertex', 1_000_000),
@@ -371,10 +416,7 @@ export function getModelNameForProvider(provider: string): string | undefined {
   return (MODEL_NAME_GETTERS as Record<string, (() => string) | undefined>)[provider]?.();
 }
 
-export function getModelForRole(
-  type: AIProviderType,
-  role: AgentRole,
-): AIModel | undefined {
+export function getModelForRole(type: AIProviderType, role: AgentRole): AIModel | undefined {
   const provider = getProvider(type);
   const model = provider?.models.find((m) => m.role === role);
   if (!model) return undefined;
@@ -411,17 +453,18 @@ export type PreferredProvider =
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
   if (
-    stored === 'ollama'
-    || stored === 'openrouter'
-    || stored === 'zen'
-    || stored === 'nvidia'
-    || stored === 'blackbox'
-    || stored === 'azure'
-    || stored === 'bedrock'
-    || stored === 'vertex'
-    || stored === 'kilocode'
-    || stored === 'openadapter'
-  ) return stored;
+    stored === 'ollama' ||
+    stored === 'openrouter' ||
+    stored === 'zen' ||
+    stored === 'nvidia' ||
+    stored === 'blackbox' ||
+    stored === 'azure' ||
+    stored === 'bedrock' ||
+    stored === 'vertex' ||
+    stored === 'kilocode' ||
+    stored === 'openadapter'
+  )
+    return stored;
   return null;
 }
 
@@ -443,17 +486,18 @@ const LAST_USED_PROVIDER_KEY = 'last_used_provider';
 export function getLastUsedProvider(): PreferredProvider | null {
   const stored = safeStorageGet(LAST_USED_PROVIDER_KEY);
   if (
-    stored === 'ollama'
-    || stored === 'openrouter'
-    || stored === 'zen'
-    || stored === 'nvidia'
-    || stored === 'blackbox'
-    || stored === 'azure'
-    || stored === 'bedrock'
-    || stored === 'vertex'
-    || stored === 'kilocode'
-    || stored === 'openadapter'
-  ) return stored;
+    stored === 'ollama' ||
+    stored === 'openrouter' ||
+    stored === 'zen' ||
+    stored === 'nvidia' ||
+    stored === 'blackbox' ||
+    stored === 'azure' ||
+    stored === 'bedrock' ||
+    stored === 'vertex' ||
+    stored === 'kilocode' ||
+    stored === 'openadapter'
+  )
+    return stored;
   return null;
 }
 

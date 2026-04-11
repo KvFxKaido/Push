@@ -45,12 +45,15 @@ export function useApiKeyConfig(
 ): ApiKeyHookResult {
   const [key, setKeyState] = useState<string | null>(() => getter());
 
-  const setKey = useCallback((newKey: string) => {
-    const trimmed = newKey.trim();
-    if (!trimmed) return;
-    safeStorageSet(storageKey, trimmed);
-    setKeyState(trimmed);
-  }, [storageKey]);
+  const setKey = useCallback(
+    (newKey: string) => {
+      const trimmed = newKey.trim();
+      if (!trimmed) return;
+      safeStorageSet(storageKey, trimmed);
+      setKeyState(trimmed);
+    },
+    [storageKey],
+  );
 
   const clearKey = useCallback(() => {
     safeStorageRemove(storageKey);
@@ -86,14 +89,17 @@ export function useApiKeyWithModelConfig(
     return normalizeModel ? normalizeModel(stored) : stored;
   });
 
-  const setModel = useCallback((newModel: string) => {
-    const trimmed = newModel.trim();
-    if (!trimmed) return;
-    const normalized = normalizeModel ? normalizeModel(trimmed) : trimmed;
-    if (!normalized) return;
-    safeStorageSet(modelStorageKey, normalized);
-    setModelState(normalized);
-  }, [modelStorageKey, normalizeModel]);
+  const setModel = useCallback(
+    (newModel: string) => {
+      const trimmed = newModel.trim();
+      if (!trimmed) return;
+      const normalized = normalizeModel ? normalizeModel(trimmed) : trimmed;
+      if (!normalized) return;
+      safeStorageSet(modelStorageKey, normalized);
+      setModelState(normalized);
+    },
+    [modelStorageKey, normalizeModel],
+  );
 
   return { key, setKey, clearKey, hasKey, model, setModel };
 }

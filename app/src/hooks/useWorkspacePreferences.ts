@@ -2,7 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { useUserProfile } from '@/hooks/useUserProfile';
 import { getApprovalMode, setApprovalMode, type ApprovalMode } from '@/lib/approval-mode';
 import { getContextMode, setContextMode, type ContextMode } from '@/lib/orchestrator';
-import { getSandboxStartMode, setSandboxStartMode, type SandboxStartMode } from '@/lib/sandbox-start-mode';
+import {
+  getSandboxStartMode,
+  setSandboxStartMode,
+  type SandboxStartMode,
+} from '@/lib/sandbox-start-mode';
 
 const TOOL_ACTIVITY_STORAGE_KEY = 'push:workspace:show-tool-activity';
 const ALLOWLIST_SECRET_COMMAND = 'npx wrangler secret put GITHUB_ALLOWED_INSTALLATION_IDS';
@@ -18,7 +22,9 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem(TOOL_ACTIVITY_STORAGE_KEY) === '1';
   });
-  const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() => getSandboxStartMode());
+  const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() =>
+    getSandboxStartMode(),
+  );
   const [contextMode, setContextModeState] = useState<ContextMode>(() => getContextMode());
   const [approvalMode, setApprovalModeState] = useState<ApprovalMode>(() => getApprovalMode());
 

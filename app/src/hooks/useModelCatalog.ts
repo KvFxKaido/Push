@@ -177,7 +177,10 @@ export interface ModelCatalog {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function includeSelectedModel(models: string[], selectedModel: string | null | undefined): string[] {
+function includeSelectedModel(
+  models: string[],
+  selectedModel: string | null | undefined,
+): string[] {
   if (!selectedModel) return [...models];
   const available = new Set(models);
   if (available.has(selectedModel)) return [...models];
@@ -222,22 +225,26 @@ export function useModelCatalog(): ModelCatalog {
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
 
   // Active backend state
-  const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() => getPreferredProvider());
+  const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() =>
+    getPreferredProvider(),
+  );
   const activeProviderLabel = getActiveProvider();
 
   // Available providers (filtered by key presence)
-  const availableProviders = ([
-    ['ollama', 'Ollama', ollamaCfg.hasKey],
-    ['openrouter', 'OpenRouter', openRouterCfg.hasKey],
-    ['zen', 'OpenCode Zen', zenCfg.hasKey],
-    ['nvidia', 'Nvidia NIM', nvidiaCfg.hasKey],
-    ['blackbox', 'Blackbox AI', blackboxCfg.hasKey],
-    ['kilocode', 'Kilo Code', kilocodeCfg.hasKey],
-    ['openadapter', 'OpenAdapter', openAdapterCfg.hasKey],
-    ['azure', 'Azure OpenAI', azureCfg.isConfigured],
-    ['bedrock', 'AWS Bedrock', bedrockCfg.isConfigured],
-    ['vertex', 'Google Vertex', vertexCfg.isConfigured],
-  ] as const).filter(([, , has]) => has);
+  const availableProviders = (
+    [
+      ['ollama', 'Ollama', ollamaCfg.hasKey],
+      ['openrouter', 'OpenRouter', openRouterCfg.hasKey],
+      ['zen', 'OpenCode Zen', zenCfg.hasKey],
+      ['nvidia', 'Nvidia NIM', nvidiaCfg.hasKey],
+      ['blackbox', 'Blackbox AI', blackboxCfg.hasKey],
+      ['kilocode', 'Kilo Code', kilocodeCfg.hasKey],
+      ['openadapter', 'OpenAdapter', openAdapterCfg.hasKey],
+      ['azure', 'Azure OpenAI', azureCfg.isConfigured],
+      ['bedrock', 'AWS Bedrock', bedrockCfg.isConfigured],
+      ['vertex', 'Google Vertex', vertexCfg.isConfigured],
+    ] as const
+  ).filter(([, , has]) => has);
 
   // ----- Per-provider model lists -----
 
@@ -274,38 +281,44 @@ export function useModelCatalog(): ModelCatalog {
   const [openAdapterUpdatedAt, setOpenAdapterUpdatedAt] = useState<number | null>(null);
 
   // Generic refresh helper
-  const refreshModels = useCallback(async (params: {
-    hasKey: boolean;
-    isLoading: boolean;
-    setLoading: (v: boolean) => void;
-    setError: (v: string | null) => void;
-    setModels: (m: string[]) => void;
-    setUpdatedAt: (v: number) => void;
-    fetchModels: () => Promise<string[]>;
-    emptyMessage: string;
-    failureMessage: string;
-  }) => {
-    if (!params.hasKey || params.isLoading) return;
-    params.setLoading(true);
-    params.setError(null);
-    try {
-      const models = await params.fetchModels();
-      params.setModels(models);
-      params.setUpdatedAt(Date.now());
-      if (models.length === 0) params.setError(params.emptyMessage);
-    } catch (err) {
-      params.setError(err instanceof Error ? err.message : params.failureMessage);
-    } finally {
-      params.setLoading(false);
-    }
-  }, []);
+  const refreshModels = useCallback(
+    async (params: {
+      hasKey: boolean;
+      isLoading: boolean;
+      setLoading: (v: boolean) => void;
+      setError: (v: string | null) => void;
+      setModels: (m: string[]) => void;
+      setUpdatedAt: (v: number) => void;
+      fetchModels: () => Promise<string[]>;
+      emptyMessage: string;
+      failureMessage: string;
+    }) => {
+      if (!params.hasKey || params.isLoading) return;
+      params.setLoading(true);
+      params.setError(null);
+      try {
+        const models = await params.fetchModels();
+        params.setModels(models);
+        params.setUpdatedAt(Date.now());
+        if (models.length === 0) params.setError(params.emptyMessage);
+      } catch (err) {
+        params.setError(err instanceof Error ? err.message : params.failureMessage);
+      } finally {
+        params.setLoading(false);
+      }
+    },
+    [],
+  );
 
   // Per-provider refresh callbacks
   const refreshOllamaModels = useCallback(async () => {
     await refreshModels({
-      hasKey: ollamaCfg.hasKey, isLoading: ollamaLoading,
-      setLoading: setOllamaLoading, setError: setOllamaError,
-      setModels: setOllamaModelList, setUpdatedAt: setOllamaUpdatedAt,
+      hasKey: ollamaCfg.hasKey,
+      isLoading: ollamaLoading,
+      setLoading: setOllamaLoading,
+      setError: setOllamaError,
+      setModels: setOllamaModelList,
+      setUpdatedAt: setOllamaUpdatedAt,
       fetchModels: fetchOllamaModels,
       emptyMessage: 'No models returned by Ollama.',
       failureMessage: 'Failed to load Ollama models.',
@@ -314,9 +327,12 @@ export function useModelCatalog(): ModelCatalog {
 
   const refreshOpenRouterModels = useCallback(async () => {
     await refreshModels({
-      hasKey: openRouterCfg.hasKey, isLoading: openRouterLoading,
-      setLoading: setOpenRouterLoading, setError: setOpenRouterError,
-      setModels: setOpenRouterModelList, setUpdatedAt: setOpenRouterUpdatedAt,
+      hasKey: openRouterCfg.hasKey,
+      isLoading: openRouterLoading,
+      setLoading: setOpenRouterLoading,
+      setError: setOpenRouterError,
+      setModels: setOpenRouterModelList,
+      setUpdatedAt: setOpenRouterUpdatedAt,
       fetchModels: fetchOpenRouterModels,
       emptyMessage: 'No models returned by OpenRouter.',
       failureMessage: 'Failed to load OpenRouter models.',
@@ -325,9 +341,12 @@ export function useModelCatalog(): ModelCatalog {
 
   const refreshZenStandardModels = useCallback(async () => {
     await refreshModels({
-      hasKey: zenCfg.hasKey, isLoading: zenLoading,
-      setLoading: setZenLoading, setError: setZenError,
-      setModels: setZenModelList, setUpdatedAt: setZenUpdatedAt,
+      hasKey: zenCfg.hasKey,
+      isLoading: zenLoading,
+      setLoading: setZenLoading,
+      setError: setZenError,
+      setModels: setZenModelList,
+      setUpdatedAt: setZenUpdatedAt,
       fetchModels: fetchZenModels,
       emptyMessage: 'No models returned by OpenCode Zen.',
       failureMessage: 'Failed to load OpenCode Zen models.',
@@ -344,9 +363,12 @@ export function useModelCatalog(): ModelCatalog {
 
   const refreshNvidiaModels = useCallback(async () => {
     await refreshModels({
-      hasKey: nvidiaCfg.hasKey, isLoading: nvidiaLoading,
-      setLoading: setNvidiaLoading, setError: setNvidiaError,
-      setModels: setNvidiaModelList, setUpdatedAt: setNvidiaUpdatedAt,
+      hasKey: nvidiaCfg.hasKey,
+      isLoading: nvidiaLoading,
+      setLoading: setNvidiaLoading,
+      setError: setNvidiaError,
+      setModels: setNvidiaModelList,
+      setUpdatedAt: setNvidiaUpdatedAt,
       fetchModels: fetchNvidiaModels,
       emptyMessage: 'No models returned by Nvidia NIM.',
       failureMessage: 'Failed to load Nvidia NIM models.',
@@ -355,9 +377,12 @@ export function useModelCatalog(): ModelCatalog {
 
   const refreshBlackboxModels = useCallback(async () => {
     await refreshModels({
-      hasKey: blackboxCfg.hasKey, isLoading: blackboxLoading,
-      setLoading: setBlackboxLoading, setError: setBlackboxError,
-      setModels: setBlackboxModelList, setUpdatedAt: setBlackboxUpdatedAt,
+      hasKey: blackboxCfg.hasKey,
+      isLoading: blackboxLoading,
+      setLoading: setBlackboxLoading,
+      setError: setBlackboxError,
+      setModels: setBlackboxModelList,
+      setUpdatedAt: setBlackboxUpdatedAt,
       fetchModels: fetchBlackboxModels,
       emptyMessage: 'No models returned by Blackbox AI.',
       failureMessage: 'Failed to load Blackbox AI models.',
@@ -366,9 +391,12 @@ export function useModelCatalog(): ModelCatalog {
 
   const refreshKilocodeModels = useCallback(async () => {
     await refreshModels({
-      hasKey: kilocodeCfg.hasKey, isLoading: kilocodeLoading,
-      setLoading: setKilocodeLoading, setError: setKilocodeError,
-      setModels: setKilocodeModelList, setUpdatedAt: setKilocodeUpdatedAt,
+      hasKey: kilocodeCfg.hasKey,
+      isLoading: kilocodeLoading,
+      setLoading: setKilocodeLoading,
+      setError: setKilocodeError,
+      setModels: setKilocodeModelList,
+      setUpdatedAt: setKilocodeUpdatedAt,
       fetchModels: fetchKilocodeModels,
       emptyMessage: 'No models returned by Kilo Code.',
       failureMessage: 'Failed to load Kilo Code models.',
@@ -377,9 +405,12 @@ export function useModelCatalog(): ModelCatalog {
 
   const refreshOpenAdapterModels = useCallback(async () => {
     await refreshModels({
-      hasKey: openAdapterCfg.hasKey, isLoading: openAdapterLoading,
-      setLoading: setOpenAdapterLoading, setError: setOpenAdapterError,
-      setModels: setOpenAdapterModelList, setUpdatedAt: setOpenAdapterUpdatedAt,
+      hasKey: openAdapterCfg.hasKey,
+      isLoading: openAdapterLoading,
+      setLoading: setOpenAdapterLoading,
+      setError: setOpenAdapterError,
+      setModels: setOpenAdapterModelList,
+      setUpdatedAt: setOpenAdapterUpdatedAt,
       fetchModels: fetchOpenAdapterModels,
       emptyMessage: 'No models returned by OpenAdapter.',
       failureMessage: 'Failed to load OpenAdapter models.',
@@ -389,54 +420,221 @@ export function useModelCatalog(): ModelCatalog {
   // Auto-fetch models when key becomes available.
   // The active provider fetches immediately; all others are deferred via
   // requestIdleCallback (or a short setTimeout) so startup isn't blocked.
-  useEffect(() => scheduleAutoFetch(
-    shouldAutoFetchProviderModels({ hasKey: ollamaCfg.hasKey, modelCount: ollamaModelList.length, loading: ollamaLoading, error: ollamaError }),
-    activeProviderLabel === 'ollama',
-    () => { void refreshOllamaModels(); },
-  ), [activeProviderLabel, ollamaCfg.hasKey, ollamaError, ollamaLoading, ollamaModelList.length, refreshOllamaModels]);
-  useEffect(() => scheduleAutoFetch(
-    shouldAutoFetchProviderModels({ hasKey: openRouterCfg.hasKey, modelCount: openRouterModelList.length, loading: openRouterLoading, error: openRouterError }),
-    activeProviderLabel === 'openrouter',
-    () => { void refreshOpenRouterModels(); },
-  ), [activeProviderLabel, openRouterCfg.hasKey, openRouterError, openRouterLoading, openRouterModelList.length, refreshOpenRouterModels]);
-  useEffect(() => scheduleAutoFetch(
-    !zenCfg.goMode && shouldAutoFetchProviderModels({ hasKey: zenCfg.hasKey, modelCount: zenModelList.length, loading: zenLoading, error: zenError }),
-    activeProviderLabel === 'zen',
-    () => { void refreshZenStandardModels(); },
-  ), [activeProviderLabel, refreshZenStandardModels, zenCfg.goMode, zenCfg.hasKey, zenError, zenLoading, zenModelList.length]);
-  useEffect(() => scheduleAutoFetch(
-    shouldAutoFetchProviderModels({ hasKey: nvidiaCfg.hasKey, modelCount: nvidiaModelList.length, loading: nvidiaLoading, error: nvidiaError }),
-    activeProviderLabel === 'nvidia',
-    () => { void refreshNvidiaModels(); },
-  ), [activeProviderLabel, nvidiaCfg.hasKey, nvidiaError, nvidiaLoading, nvidiaModelList.length, refreshNvidiaModels]);
-  useEffect(() => scheduleAutoFetch(
-    shouldAutoFetchProviderModels({ hasKey: blackboxCfg.hasKey, modelCount: blackboxModelList.length, loading: blackboxLoading, error: blackboxError }),
-    activeProviderLabel === 'blackbox',
-    () => { void refreshBlackboxModels(); },
-  ), [activeProviderLabel, blackboxCfg.hasKey, blackboxError, blackboxLoading, blackboxModelList.length, refreshBlackboxModels]);
-  useEffect(() => scheduleAutoFetch(
-    shouldAutoFetchProviderModels({ hasKey: kilocodeCfg.hasKey, modelCount: kilocodeModelList.length, loading: kilocodeLoading, error: kilocodeError }),
-    activeProviderLabel === 'kilocode',
-    () => { void refreshKilocodeModels(); },
-  ), [activeProviderLabel, kilocodeCfg.hasKey, kilocodeError, kilocodeLoading, kilocodeModelList.length, refreshKilocodeModels]);
-  useEffect(() => scheduleAutoFetch(
-    shouldAutoFetchProviderModels({ hasKey: openAdapterCfg.hasKey, modelCount: openAdapterModelList.length, loading: openAdapterLoading, error: openAdapterError }),
-    activeProviderLabel === 'openadapter',
-    () => { void refreshOpenAdapterModels(); },
-  ), [activeProviderLabel, openAdapterCfg.hasKey, openAdapterError, openAdapterLoading, openAdapterModelList.length, refreshOpenAdapterModels]);
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: ollamaCfg.hasKey,
+          modelCount: ollamaModelList.length,
+          loading: ollamaLoading,
+          error: ollamaError,
+        }),
+        activeProviderLabel === 'ollama',
+        () => {
+          void refreshOllamaModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      ollamaCfg.hasKey,
+      ollamaError,
+      ollamaLoading,
+      ollamaModelList.length,
+      refreshOllamaModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: openRouterCfg.hasKey,
+          modelCount: openRouterModelList.length,
+          loading: openRouterLoading,
+          error: openRouterError,
+        }),
+        activeProviderLabel === 'openrouter',
+        () => {
+          void refreshOpenRouterModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      openRouterCfg.hasKey,
+      openRouterError,
+      openRouterLoading,
+      openRouterModelList.length,
+      refreshOpenRouterModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        !zenCfg.goMode &&
+          shouldAutoFetchProviderModels({
+            hasKey: zenCfg.hasKey,
+            modelCount: zenModelList.length,
+            loading: zenLoading,
+            error: zenError,
+          }),
+        activeProviderLabel === 'zen',
+        () => {
+          void refreshZenStandardModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      refreshZenStandardModels,
+      zenCfg.goMode,
+      zenCfg.hasKey,
+      zenError,
+      zenLoading,
+      zenModelList.length,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: nvidiaCfg.hasKey,
+          modelCount: nvidiaModelList.length,
+          loading: nvidiaLoading,
+          error: nvidiaError,
+        }),
+        activeProviderLabel === 'nvidia',
+        () => {
+          void refreshNvidiaModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      nvidiaCfg.hasKey,
+      nvidiaError,
+      nvidiaLoading,
+      nvidiaModelList.length,
+      refreshNvidiaModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: blackboxCfg.hasKey,
+          modelCount: blackboxModelList.length,
+          loading: blackboxLoading,
+          error: blackboxError,
+        }),
+        activeProviderLabel === 'blackbox',
+        () => {
+          void refreshBlackboxModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      blackboxCfg.hasKey,
+      blackboxError,
+      blackboxLoading,
+      blackboxModelList.length,
+      refreshBlackboxModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: kilocodeCfg.hasKey,
+          modelCount: kilocodeModelList.length,
+          loading: kilocodeLoading,
+          error: kilocodeError,
+        }),
+        activeProviderLabel === 'kilocode',
+        () => {
+          void refreshKilocodeModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      kilocodeCfg.hasKey,
+      kilocodeError,
+      kilocodeLoading,
+      kilocodeModelList.length,
+      refreshKilocodeModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: openAdapterCfg.hasKey,
+          modelCount: openAdapterModelList.length,
+          loading: openAdapterLoading,
+          error: openAdapterError,
+        }),
+        activeProviderLabel === 'openadapter',
+        () => {
+          void refreshOpenAdapterModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      openAdapterCfg.hasKey,
+      openAdapterError,
+      openAdapterLoading,
+      openAdapterModelList.length,
+      refreshOpenAdapterModels,
+    ],
+  );
 
   // Clear models when key is removed
-  useEffect(() => { if (!ollamaCfg.hasKey) { setOllamaModelList([]); setOllamaError(null); setOllamaUpdatedAt(null); } }, [ollamaCfg.hasKey]);
-  useEffect(() => { if (!openRouterCfg.hasKey) { setOpenRouterModelList([]); setOpenRouterError(null); setOpenRouterUpdatedAt(null); } }, [openRouterCfg.hasKey]);
+  useEffect(() => {
+    if (!ollamaCfg.hasKey) {
+      setOllamaModelList([]);
+      setOllamaError(null);
+      setOllamaUpdatedAt(null);
+    }
+  }, [ollamaCfg.hasKey]);
+  useEffect(() => {
+    if (!openRouterCfg.hasKey) {
+      setOpenRouterModelList([]);
+      setOpenRouterError(null);
+      setOpenRouterUpdatedAt(null);
+    }
+  }, [openRouterCfg.hasKey]);
   useEffect(() => {
     if (!zenCfg.hasKey) {
-      setZenModelList([]); setZenError(null); setZenUpdatedAt(null); setZenLoading(false);
+      setZenModelList([]);
+      setZenError(null);
+      setZenUpdatedAt(null);
+      setZenLoading(false);
     }
   }, [zenCfg.hasKey]);
-  useEffect(() => { if (!nvidiaCfg.hasKey) { setNvidiaModelList([]); setNvidiaError(null); setNvidiaUpdatedAt(null); } }, [nvidiaCfg.hasKey]);
-  useEffect(() => { if (!blackboxCfg.hasKey) { setBlackboxModelList([]); setBlackboxError(null); setBlackboxUpdatedAt(null); } }, [blackboxCfg.hasKey]);
-  useEffect(() => { if (!kilocodeCfg.hasKey) { setKilocodeModelList([]); setKilocodeError(null); setKilocodeUpdatedAt(null); } }, [kilocodeCfg.hasKey]);
-  useEffect(() => { if (!openAdapterCfg.hasKey) { setOpenAdapterModelList([]); setOpenAdapterError(null); setOpenAdapterUpdatedAt(null); } }, [openAdapterCfg.hasKey]);
+  useEffect(() => {
+    if (!nvidiaCfg.hasKey) {
+      setNvidiaModelList([]);
+      setNvidiaError(null);
+      setNvidiaUpdatedAt(null);
+    }
+  }, [nvidiaCfg.hasKey]);
+  useEffect(() => {
+    if (!blackboxCfg.hasKey) {
+      setBlackboxModelList([]);
+      setBlackboxError(null);
+      setBlackboxUpdatedAt(null);
+    }
+  }, [blackboxCfg.hasKey]);
+  useEffect(() => {
+    if (!kilocodeCfg.hasKey) {
+      setKilocodeModelList([]);
+      setKilocodeError(null);
+      setKilocodeUpdatedAt(null);
+    }
+  }, [kilocodeCfg.hasKey]);
+  useEffect(() => {
+    if (!openAdapterCfg.hasKey) {
+      setOpenAdapterModelList([]);
+      setOpenAdapterError(null);
+      setOpenAdapterUpdatedAt(null);
+    }
+  }, [openAdapterCfg.hasKey]);
 
   const kilocodeSelectedModel = kilocodeCfg.model;
   const setKilocodeModel = kilocodeCfg.setModel;
@@ -469,20 +667,42 @@ export function useModelCatalog(): ModelCatalog {
   const activeZenUpdatedAt = zenCfg.goMode ? null : zenUpdatedAt;
 
   // Model option lists (ensure selected model is always included)
-  const ollamaModelOptions = useMemo(() => includeSelectedModel(ollamaModelList, ollamaCfg.model), [ollamaModelList, ollamaCfg.model]);
+  const ollamaModelOptions = useMemo(
+    () => includeSelectedModel(ollamaModelList, ollamaCfg.model),
+    [ollamaModelList, ollamaCfg.model],
+  );
   const openRouterModelOptions = useMemo(
-    () => includeSelectedModel(openRouterModelList.length > 0 ? openRouterModelList : OPENROUTER_MODELS, openRouterCfg.model),
+    () =>
+      includeSelectedModel(
+        openRouterModelList.length > 0 ? openRouterModelList : OPENROUTER_MODELS,
+        openRouterCfg.model,
+      ),
     [openRouterCfg.model, openRouterModelList],
   );
   const zenModelOptions = useMemo(
-    () => includeSelectedModel(
-      activeZenModelList.length > 0 ? activeZenModelList : (zenCfg.goMode ? ZEN_GO_MODELS : ZEN_MODELS),
-      zenCfg.model,
-    ),
+    () =>
+      includeSelectedModel(
+        activeZenModelList.length > 0
+          ? activeZenModelList
+          : zenCfg.goMode
+            ? ZEN_GO_MODELS
+            : ZEN_MODELS,
+        zenCfg.model,
+      ),
     [activeZenModelList, zenCfg.goMode, zenCfg.model],
   );
-  const nvidiaModelOptions = useMemo(() => includeSelectedModel(nvidiaModelList, nvidiaCfg.model), [nvidiaModelList, nvidiaCfg.model]);
-  const blackboxModelOptions = useMemo(() => includeSelectedModel(blackboxModelList.length > 0 ? blackboxModelList : BLACKBOX_MODELS, blackboxCfg.model), [blackboxModelList, blackboxCfg.model]);
+  const nvidiaModelOptions = useMemo(
+    () => includeSelectedModel(nvidiaModelList, nvidiaCfg.model),
+    [nvidiaModelList, nvidiaCfg.model],
+  );
+  const blackboxModelOptions = useMemo(
+    () =>
+      includeSelectedModel(
+        blackboxModelList.length > 0 ? blackboxModelList : BLACKBOX_MODELS,
+        blackboxCfg.model,
+      ),
+    [blackboxModelList, blackboxCfg.model],
+  );
   const kilocodeModelOptions = useMemo(() => {
     const selectedModel = normalizeKilocodeModelName(kilocodeSelectedModel);
     if (kilocodeModelList.length > 0) {
@@ -492,17 +712,83 @@ export function useModelCatalog(): ModelCatalog {
     }
     return includeSelectedModel(KILOCODE_MODELS, selectedModel);
   }, [kilocodeModelList, kilocodeSelectedModel]);
-  const openAdapterModelOptions = useMemo(() => includeSelectedModel(openAdapterModelList.length > 0 ? openAdapterModelList : OPENADAPTER_MODELS, openAdapterCfg.model), [openAdapterModelList, openAdapterCfg.model]);
-  const vertexModelOptions = useMemo(() => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model), [vertexCfg.modelOptions, vertexCfg.model]);
+  const openAdapterModelOptions = useMemo(
+    () =>
+      includeSelectedModel(
+        openAdapterModelList.length > 0 ? openAdapterModelList : OPENADAPTER_MODELS,
+        openAdapterCfg.model,
+      ),
+    [openAdapterModelList, openAdapterCfg.model],
+  );
+  const vertexModelOptions = useMemo(
+    () => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model),
+    [vertexCfg.modelOptions, vertexCfg.model],
+  );
 
   return {
-    ollama: { setKey: ollamaCfg.setKey, clearKey: ollamaCfg.clearKey, hasKey: ollamaCfg.hasKey, model: ollamaCfg.model, setModel: ollamaCfg.setModel, keyInput: ollamaKeyInput, setKeyInput: setOllamaKeyInput },
-    openRouter: { setKey: openRouterCfg.setKey, clearKey: openRouterCfg.clearKey, hasKey: openRouterCfg.hasKey, model: openRouterCfg.model, setModel: openRouterCfg.setModel, keyInput: openRouterKeyInput, setKeyInput: setOpenRouterKeyInput },
-    zen: { setKey: zenCfg.setKey, clearKey: zenCfg.clearKey, hasKey: zenCfg.hasKey, model: zenCfg.model, setModel: zenCfg.setModel, keyInput: zenKeyInput, setKeyInput: setZenKeyInput },
-    nvidia: { setKey: nvidiaCfg.setKey, clearKey: nvidiaCfg.clearKey, hasKey: nvidiaCfg.hasKey, model: nvidiaCfg.model, setModel: nvidiaCfg.setModel, keyInput: nvidiaKeyInput, setKeyInput: setNvidiaKeyInput },
-    blackbox: { setKey: blackboxCfg.setKey, clearKey: blackboxCfg.clearKey, hasKey: blackboxCfg.hasKey, model: blackboxCfg.model, setModel: blackboxCfg.setModel, keyInput: blackboxKeyInput, setKeyInput: setBlackboxKeyInput },
-    kilocode: { setKey: kilocodeCfg.setKey, clearKey: kilocodeCfg.clearKey, hasKey: kilocodeCfg.hasKey, model: kilocodeCfg.model, setModel: kilocodeCfg.setModel, keyInput: kilocodeKeyInput, setKeyInput: setKilocodeKeyInput },
-    openadapter: { setKey: openAdapterCfg.setKey, clearKey: openAdapterCfg.clearKey, hasKey: openAdapterCfg.hasKey, model: openAdapterCfg.model, setModel: openAdapterCfg.setModel, keyInput: openAdapterKeyInput, setKeyInput: setOpenAdapterKeyInput },
+    ollama: {
+      setKey: ollamaCfg.setKey,
+      clearKey: ollamaCfg.clearKey,
+      hasKey: ollamaCfg.hasKey,
+      model: ollamaCfg.model,
+      setModel: ollamaCfg.setModel,
+      keyInput: ollamaKeyInput,
+      setKeyInput: setOllamaKeyInput,
+    },
+    openRouter: {
+      setKey: openRouterCfg.setKey,
+      clearKey: openRouterCfg.clearKey,
+      hasKey: openRouterCfg.hasKey,
+      model: openRouterCfg.model,
+      setModel: openRouterCfg.setModel,
+      keyInput: openRouterKeyInput,
+      setKeyInput: setOpenRouterKeyInput,
+    },
+    zen: {
+      setKey: zenCfg.setKey,
+      clearKey: zenCfg.clearKey,
+      hasKey: zenCfg.hasKey,
+      model: zenCfg.model,
+      setModel: zenCfg.setModel,
+      keyInput: zenKeyInput,
+      setKeyInput: setZenKeyInput,
+    },
+    nvidia: {
+      setKey: nvidiaCfg.setKey,
+      clearKey: nvidiaCfg.clearKey,
+      hasKey: nvidiaCfg.hasKey,
+      model: nvidiaCfg.model,
+      setModel: nvidiaCfg.setModel,
+      keyInput: nvidiaKeyInput,
+      setKeyInput: setNvidiaKeyInput,
+    },
+    blackbox: {
+      setKey: blackboxCfg.setKey,
+      clearKey: blackboxCfg.clearKey,
+      hasKey: blackboxCfg.hasKey,
+      model: blackboxCfg.model,
+      setModel: blackboxCfg.setModel,
+      keyInput: blackboxKeyInput,
+      setKeyInput: setBlackboxKeyInput,
+    },
+    kilocode: {
+      setKey: kilocodeCfg.setKey,
+      clearKey: kilocodeCfg.clearKey,
+      hasKey: kilocodeCfg.hasKey,
+      model: kilocodeCfg.model,
+      setModel: kilocodeCfg.setModel,
+      keyInput: kilocodeKeyInput,
+      setKeyInput: setKilocodeKeyInput,
+    },
+    openadapter: {
+      setKey: openAdapterCfg.setKey,
+      clearKey: openAdapterCfg.clearKey,
+      hasKey: openAdapterCfg.hasKey,
+      model: openAdapterCfg.model,
+      setModel: openAdapterCfg.setModel,
+      keyInput: openAdapterKeyInput,
+      setKeyInput: setOpenAdapterKeyInput,
+    },
     azure: {
       keyInput: azureKeyInput,
       setKeyInput: setAzureKeyInput,
@@ -580,7 +866,13 @@ export function useModelCatalog(): ModelCatalog {
       hasLegacyConfig: vertexCfg.hasLegacyConfig,
       isConfigured: vertexCfg.isConfigured,
     },
-    tavily: { setKey: tavilyCfg.setKey, clearKey: tavilyCfg.clearKey, hasKey: tavilyCfg.hasKey, keyInput: tavilyKeyInput, setKeyInput: setTavilyKeyInput },
+    tavily: {
+      setKey: tavilyCfg.setKey,
+      clearKey: tavilyCfg.clearKey,
+      hasKey: tavilyCfg.hasKey,
+      keyInput: tavilyKeyInput,
+      setKeyInput: setTavilyKeyInput,
+    },
 
     activeBackend,
     setActiveBackend,
@@ -589,13 +881,48 @@ export function useModelCatalog(): ModelCatalog {
     setPreferredProvider,
     clearPreferredProvider,
 
-    ollamaModels: { models: ollamaModelList, loading: ollamaLoading, error: ollamaError, updatedAt: ollamaUpdatedAt },
-    openRouterModels: { models: openRouterModelList, loading: openRouterLoading, error: openRouterError, updatedAt: openRouterUpdatedAt },
-    zenModels: { models: activeZenModelList, loading: activeZenLoading, error: activeZenError, updatedAt: activeZenUpdatedAt },
-    nvidiaModels: { models: nvidiaModelList, loading: nvidiaLoading, error: nvidiaError, updatedAt: nvidiaUpdatedAt },
-    blackboxModels: { models: blackboxModelList, loading: blackboxLoading, error: blackboxError, updatedAt: blackboxUpdatedAt },
-    kilocodeModels: { models: kilocodeModelList, loading: kilocodeLoading, error: kilocodeError, updatedAt: kilocodeUpdatedAt },
-    openAdapterModels: { models: openAdapterModelList, loading: openAdapterLoading, error: openAdapterError, updatedAt: openAdapterUpdatedAt },
+    ollamaModels: {
+      models: ollamaModelList,
+      loading: ollamaLoading,
+      error: ollamaError,
+      updatedAt: ollamaUpdatedAt,
+    },
+    openRouterModels: {
+      models: openRouterModelList,
+      loading: openRouterLoading,
+      error: openRouterError,
+      updatedAt: openRouterUpdatedAt,
+    },
+    zenModels: {
+      models: activeZenModelList,
+      loading: activeZenLoading,
+      error: activeZenError,
+      updatedAt: activeZenUpdatedAt,
+    },
+    nvidiaModels: {
+      models: nvidiaModelList,
+      loading: nvidiaLoading,
+      error: nvidiaError,
+      updatedAt: nvidiaUpdatedAt,
+    },
+    blackboxModels: {
+      models: blackboxModelList,
+      loading: blackboxLoading,
+      error: blackboxError,
+      updatedAt: blackboxUpdatedAt,
+    },
+    kilocodeModels: {
+      models: kilocodeModelList,
+      loading: kilocodeLoading,
+      error: kilocodeError,
+      updatedAt: kilocodeUpdatedAt,
+    },
+    openAdapterModels: {
+      models: openAdapterModelList,
+      loading: openAdapterLoading,
+      error: openAdapterError,
+      updatedAt: openAdapterUpdatedAt,
+    },
 
     ollamaModelOptions,
     openRouterModelOptions,

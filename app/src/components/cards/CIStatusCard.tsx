@@ -1,6 +1,12 @@
 import { RefreshCw, Activity } from 'lucide-react';
 import type { CIStatusCardData, CICheck, CardAction } from '@/types';
-import { CARD_SHELL_CLASS, CARD_BUTTON_CLASS, CARD_PANEL_SUBTLE_CLASS, ciStatusColor, ciStatusBg } from '@/lib/utils';
+import {
+  CARD_SHELL_CLASS,
+  CARD_BUTTON_CLASS,
+  CARD_PANEL_SUBTLE_CLASS,
+  ciStatusColor,
+  ciStatusBg,
+} from '@/lib/utils';
 import { getCheckTone, renderCheckToneIcon } from './ci-status-helpers';
 
 interface CIStatusCardProps {
@@ -22,11 +28,10 @@ const overallColor = (overall: CIStatusCardData['overall']) => ciStatusColor(ove
 const overallBg = (overall: CIStatusCardData['overall']) => ciStatusBg(overall);
 
 function checkIcon(check: CICheck) {
-  return renderCheckToneIcon(
-    getCheckTone(check.status, check.conclusion),
-    'h-3 w-3 shrink-0',
-    { neutralClassName: 'text-push-fg-dim', unknownClassName: 'text-push-fg-dim' },
-  );
+  return renderCheckToneIcon(getCheckTone(check.status, check.conclusion), 'h-3 w-3 shrink-0', {
+    neutralClassName: 'text-push-fg-dim',
+    unknownClassName: 'text-push-fg-dim',
+  });
 }
 
 export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusCardProps) {
@@ -39,9 +44,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${overallBg(data.overall)}`}>
         {overallIcon(data.overall)}
-        <span className={`text-sm font-medium ${overallColor(data.overall)}`}>
-          CI Status
-        </span>
+        <span className={`text-sm font-medium ${overallColor(data.overall)}`}>CI Status</span>
         <span className="ml-auto text-push-xs text-push-fg-dim">
           {data.overall === 'no-checks' ? 'No checks' : data.overall.toUpperCase()}
         </span>
@@ -51,7 +54,10 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
       {data.checks.length > 0 ? (
         <div className="px-3 py-2 space-y-1">
           {data.checks.map((check, i) => (
-            <div key={i} className={`${CARD_PANEL_SUBTLE_CLASS} flex min-h-[24px] items-center gap-2 px-2.5 py-2`}>
+            <div
+              key={i}
+              className={`${CARD_PANEL_SUBTLE_CLASS} flex min-h-[24px] items-center gap-2 px-2.5 py-2`}
+            >
               {checkIcon(check)}
               <span className="text-push-sm text-push-fg-secondary truncate flex-1">
                 {check.name}
@@ -67,9 +73,7 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
       ) : (
         <div className="px-3 py-3">
           <div className={`${CARD_PANEL_SUBTLE_CLASS} px-3 py-3`}>
-            <p className="text-push-sm text-push-fg-dim">
-              No CI checks configured for this repo.
-            </p>
+            <p className="text-push-sm text-push-fg-dim">No CI checks configured for this repo.</p>
           </div>
         </div>
       )}
@@ -78,11 +82,13 @@ export function CIStatusCard({ data, messageId, cardIndex, onAction }: CIStatusC
       {hasInProgress && (
         <div className="px-3 pb-3">
           <button
-            onClick={() => onAction?.({
-              type: 'ci-refresh',
-              messageId,
-              cardIndex,
-            })}
+            onClick={() =>
+              onAction?.({
+                type: 'ci-refresh',
+                messageId,
+                cardIndex,
+              })
+            }
             className={`${CARD_BUTTON_CLASS} h-11 w-full`}
             style={{ minHeight: '44px' }}
           >

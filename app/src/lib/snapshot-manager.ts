@@ -153,7 +153,8 @@ export async function saveSnapshotToIndexedDB(
     try {
       await writeWithRetention(1);
     } catch (retryErr) {
-      const retryQuotaError = retryErr instanceof DOMException && retryErr.name === 'QuotaExceededError';
+      const retryQuotaError =
+        retryErr instanceof DOMException && retryErr.name === 'QuotaExceededError';
       if (retryQuotaError) {
         throw new Error('Snapshot is too large for local browser storage quota.');
       }
@@ -173,7 +174,7 @@ export async function saveSnapshotToIndexedDB(
 export async function getLatestSnapshotBlob(sessionId?: string): Promise<Blob | null> {
   return withStore('readonly', async (store) => {
     const index = store.index(CREATED_AT_INDEX);
-    const all = await requestToPromise(index.getAll()) as SnapshotRecord[];
+    const all = (await requestToPromise(index.getAll())) as SnapshotRecord[];
     const filtered = sessionId ? all.filter((r) => r.sessionId === sessionId) : all;
     if (filtered.length === 0) return null;
     const latest = filtered.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
@@ -184,7 +185,7 @@ export async function getLatestSnapshotBlob(sessionId?: string): Promise<Blob | 
 export async function getLatestSnapshotMeta(sessionId?: string): Promise<SnapshotMeta | null> {
   return withStore('readonly', async (store) => {
     const index = store.index(CREATED_AT_INDEX);
-    const all = await requestToPromise(index.getAll()) as SnapshotRecord[];
+    const all = (await requestToPromise(index.getAll())) as SnapshotRecord[];
     const filtered = sessionId ? all.filter((r) => r.sessionId === sessionId) : all;
     if (filtered.length === 0) return null;
     const latest = filtered.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));

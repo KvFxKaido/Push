@@ -199,7 +199,8 @@ export function HubDiffTab({
     let rafB: number | null = null;
     const rafA = requestAnimationFrame(() => {
       rafB = requestAnimationFrame(() => {
-        const lineKey = jumpTargetLine !== undefined ? file.lineKeyByNewLine.get(jumpTargetLine) ?? null : null;
+        const lineKey =
+          jumpTargetLine !== undefined ? (file.lineKeyByNewLine.get(jumpTargetLine) ?? null) : null;
         const targetEl = lineKey ? lineRefs.current.get(lineKey) : null;
         const fallbackEl = sectionRefs.current.get(jumpTargetPath) ?? null;
         (targetEl ?? fallbackEl)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -228,9 +229,13 @@ export function HubDiffTab({
           className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-9 px-3 text-push-fg-secondary`}
         >
           <HubControlGlow />
-          {(startingSandbox || sandboxStatus === 'creating') && <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />}
+          {(startingSandbox || sandboxStatus === 'creating') && (
+            <Loader2 className="relative z-10 h-3.5 w-3.5 animate-spin" />
+          )}
           <span className="relative z-10">
-            {startingSandbox || sandboxStatus === 'creating' ? 'Starting sandbox...' : 'Start sandbox'}
+            {startingSandbox || sandboxStatus === 'creating'
+              ? 'Starting sandbox...'
+              : 'Start sandbox'}
           </span>
         </button>
       </div>
@@ -288,8 +293,12 @@ export function HubDiffTab({
                 <span className="max-w-[100px] truncate">{filename}</span>
                 {(fd.additions > 0 || fd.deletions > 0) && (
                   <span className="flex items-center gap-0.5">
-                    {fd.additions > 0 && <span className="font-mono text-push-status-success">+{fd.additions}</span>}
-                    {fd.deletions > 0 && <span className="font-mono text-push-status-error">-{fd.deletions}</span>}
+                    {fd.additions > 0 && (
+                      <span className="font-mono text-push-status-success">+{fd.additions}</span>
+                    )}
+                    {fd.deletions > 0 && (
+                      <span className="font-mono text-push-status-error">-{fd.deletions}</span>
+                    )}
                   </span>
                 )}
               </button>
@@ -335,8 +344,12 @@ export function HubDiffTab({
                       {fd.path}
                     </span>
                     <span className="flex shrink-0 items-center gap-1.5 text-push-xs font-mono">
-                      {fd.additions > 0 && <span className="text-push-status-success">+{fd.additions}</span>}
-                      {fd.deletions > 0 && <span className="text-push-status-error">-{fd.deletions}</span>}
+                      {fd.additions > 0 && (
+                        <span className="text-push-status-success">+{fd.additions}</span>
+                      )}
+                      {fd.deletions > 0 && (
+                        <span className="text-push-status-error">-{fd.deletions}</span>
+                      )}
                     </span>
                   </button>
                   {/* Diff lines */}
@@ -349,7 +362,11 @@ export function HubDiffTab({
                             if (el) lineRefs.current.set(line.key, el);
                             else lineRefs.current.delete(line.key);
                           }}
-                          className={highlightedLineKey === line.key ? 'rounded-md ring-1 ring-push-accent/50 bg-push-accent/5' : ''}
+                          className={
+                            highlightedLineKey === line.key
+                              ? 'rounded-md ring-1 ring-push-accent/50 bg-push-accent/5'
+                              : ''
+                          }
                         >
                           <DiffLine line={line.text} index={i} />
                         </div>

@@ -10,14 +10,11 @@ function makeOutcome(overrides: Partial<DelegationOutcome> = {}): DelegationOutc
   return {
     agent: 'coder',
     status: 'complete',
-    summary: '**Done:** Implemented the auth refresh fix.\n**Changed:** src/auth.ts, src/auth.test.ts\n**Verified:** npm test -- auth passed\n**Open:** nothing',
+    summary:
+      '**Done:** Implemented the auth refresh fix.\n**Changed:** src/auth.ts, src/auth.test.ts\n**Verified:** npm test -- auth passed\n**Open:** nothing',
     evidence: [],
-    checks: [
-      { id: 'auth-tests', passed: true, exitCode: 0, output: 'ok' },
-    ],
-    gateVerdicts: [
-      { gate: 'auditor', outcome: 'passed', summary: 'Looks complete.' },
-    ],
+    checks: [{ id: 'auth-tests', passed: true, exitCode: 0, output: 'ok' }],
+    gateVerdicts: [{ gate: 'auditor', outcome: 'passed', summary: 'Looks complete.' }],
     missingRequirements: [],
     nextRequiredAction: null,
     rounds: 4,
@@ -60,15 +57,34 @@ describe('delegation-result helpers', () => {
 
   it('keeps only actionable delegated cards inline in chat', () => {
     const cards = [
-      { type: 'test-results', data: { framework: 'npm', output: '', exitCode: 0, durationMs: 1, total: 1, passed: 1, failed: 0, skipped: 0, truncated: false } },
-      { type: 'diff-preview', data: { diff: 'diff --git', filesChanged: 1, additions: 1, deletions: 0, truncated: false } },
-      { type: 'audit-verdict', data: { verdict: 'safe', summary: 'ok', risks: [], filesReviewed: 1 } },
-      { type: 'ask-user', data: { question: 'Need input?', options: [{ id: 'yes', label: 'Yes' }] } },
+      {
+        type: 'test-results',
+        data: {
+          framework: 'npm',
+          output: '',
+          exitCode: 0,
+          durationMs: 1,
+          total: 1,
+          passed: 1,
+          failed: 0,
+          skipped: 0,
+          truncated: false,
+        },
+      },
+      {
+        type: 'diff-preview',
+        data: { diff: 'diff --git', filesChanged: 1, additions: 1, deletions: 0, truncated: false },
+      },
+      {
+        type: 'audit-verdict',
+        data: { verdict: 'safe', summary: 'ok', risks: [], filesReviewed: 1 },
+      },
+      {
+        type: 'ask-user',
+        data: { question: 'Need input?', options: [{ id: 'yes', label: 'Yes' }] },
+      },
     ] as ChatCard[];
 
-    expect(filterDelegationCardsForInlineDisplay(cards)).toEqual([
-      cards[2],
-      cards[3],
-    ]);
+    expect(filterDelegationCardsForInlineDisplay(cards)).toEqual([cards[2], cards[3]]);
   });
 });

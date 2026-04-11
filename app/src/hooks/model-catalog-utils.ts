@@ -19,7 +19,10 @@ export function scheduleAutoFetch(
   fn: () => void,
 ): (() => void) | undefined {
   if (!shouldFetch) return;
-  if (isActive) { fn(); return; }
+  if (isActive) {
+    fn();
+    return;
+  }
 
   if (typeof requestIdleCallback !== 'undefined') {
     const id = requestIdleCallback(() => fn(), { timeout: 3000 });

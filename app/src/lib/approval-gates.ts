@@ -182,8 +182,7 @@ export function createDefaultApprovalGates(): ApprovalGateRegistry {
       if (ledger.isToolAllowed(toolName)) return 'allowed';
       return 'blocked';
     },
-    blockedReason:
-      'This tool requires capabilities not declared for this run.',
+    blockedReason: 'This tool requires capabilities not declared for this run.',
     recoveryPath:
       'The agent should use only tools within its declared capability set, or the delegation should be re-issued with broader capabilities.',
   });

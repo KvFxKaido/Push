@@ -29,9 +29,17 @@ describe('tool-call-metrics', () => {
     expect(snapshot.reasons.malformed_json).toBe(1);
     expect(snapshot.reasons.validation_failed).toBe(1);
     expect(snapshot.byProvider.openrouter.count).toBe(2);
-    expect(snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6:nitro'].count).toBe(2);
-    expect(snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6:nitro'].byTool.sandbox_exec).toBe(1);
-    expect(snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6:nitro'].byTool.sandbox_read_file).toBe(1);
+    expect(snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6:nitro'].count).toBe(
+      2,
+    );
+    expect(
+      snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6:nitro'].byTool
+        .sandbox_exec,
+    ).toBe(1);
+    expect(
+      snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6:nitro'].byTool
+        .sandbox_read_file,
+    ).toBe(1);
   });
 
   it('falls back to unknown labels when provider/model/tool are missing', () => {
@@ -42,7 +50,9 @@ describe('tool-call-metrics', () => {
     const snapshot = getMalformedToolCallMetrics();
     expect(snapshot.count).toBe(1);
     expect(snapshot.reasons.truncated).toBe(1);
-    expect(snapshot.byProvider['unknown-provider'].byModel['unknown-model'].byTool['unknown-tool']).toBe(1);
+    expect(
+      snapshot.byProvider['unknown-provider'].byModel['unknown-model'].byTool['unknown-tool'],
+    ).toBe(1);
   });
 
   it('returns a defensive copy from getMalformedToolCallMetrics', () => {
@@ -55,10 +65,15 @@ describe('tool-call-metrics', () => {
 
     const snapshot = getMalformedToolCallMetrics();
     snapshot.byProvider.openrouter.count = 99;
-    snapshot.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6:nitro'].byTool.sandbox_write_file = 42;
+    snapshot.byProvider.openrouter.byModel[
+      'anthropic/claude-sonnet-4.6:nitro'
+    ].byTool.sandbox_write_file = 42;
 
     const fresh = getMalformedToolCallMetrics();
     expect(fresh.byProvider.openrouter.count).toBe(1);
-    expect(fresh.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6:nitro'].byTool.sandbox_write_file).toBe(1);
+    expect(
+      fresh.byProvider.openrouter.byModel['anthropic/claude-sonnet-4.6:nitro'].byTool
+        .sandbox_write_file,
+    ).toBe(1);
   });
 });

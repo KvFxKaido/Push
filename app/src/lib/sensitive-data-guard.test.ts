@@ -31,13 +31,15 @@ describe('filterSensitiveDirectoryEntries', () => {
 
 describe('redactSensitiveText', () => {
   it('redacts token-like secrets and private keys', () => {
-    const result = redactSensitiveText([
-      'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456',
-      'OPENAI=sk-abcdefghijklmnopqrstuvwxyz123456',
-      '-----BEGIN PRIVATE KEY-----',
-      'topsecret',
-      '-----END PRIVATE KEY-----',
-    ].join('\n'));
+    const result = redactSensitiveText(
+      [
+        'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456',
+        'OPENAI=sk-abcdefghijklmnopqrstuvwxyz123456',
+        '-----BEGIN PRIVATE KEY-----',
+        'topsecret',
+        '-----END PRIVATE KEY-----',
+      ].join('\n'),
+    );
 
     expect(result.redacted).toBe(true);
     expect(result.text).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz123456');

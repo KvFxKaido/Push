@@ -93,22 +93,28 @@ const mockState = vi.hoisted(() => {
     replaceAllConversations: vi.fn(async (convs: Record<string, Conversation>) => {
       void convs;
     }),
-    safeStorageGet: vi.fn<(key: string, area?: 'local' | 'session') => string | null>((key: string, area?: 'local' | 'session') => {
-      void key;
-      void area;
-      return null;
-    }),
-    safeStorageSet: vi.fn<(key: string, value: string, area?: 'local' | 'session') => boolean>((key: string, value: string, area?: 'local' | 'session') => {
-      void key;
-      void value;
-      void area;
-      return true;
-    }),
-    safeStorageRemove: vi.fn<(key: string, area?: 'local' | 'session') => boolean>((key: string, area?: 'local' | 'session') => {
-      void key;
-      void area;
-      return true;
-    }),
+    safeStorageGet: vi.fn<(key: string, area?: 'local' | 'session') => string | null>(
+      (key: string, area?: 'local' | 'session') => {
+        void key;
+        void area;
+        return null;
+      },
+    ),
+    safeStorageSet: vi.fn<(key: string, value: string, area?: 'local' | 'session') => boolean>(
+      (key: string, value: string, area?: 'local' | 'session') => {
+        void key;
+        void value;
+        void area;
+        return true;
+      },
+    ),
+    safeStorageRemove: vi.fn<(key: string, area?: 'local' | 'session') => boolean>(
+      (key: string, area?: 'local' | 'session') => {
+        void key;
+        void area;
+        return true;
+      },
+    ),
     onboardingProps: null as OnboardingProps | null,
     homeProps: null as HomeProps | null,
     workspaceProps: null as WorkspaceScreenProps | null,
@@ -136,16 +142,20 @@ vi.mock('@/hooks/useRepoAppearance', () => ({
 
 vi.mock('@/lib/conversation-store', () => ({
   migrateConversationsToIndexedDB: () => mockState.migrateConversationsToIndexedDB(),
-  replaceAllConversations: (convs: Record<string, Conversation>) => mockState.replaceAllConversations(convs),
+  replaceAllConversations: (convs: Record<string, Conversation>) =>
+    mockState.replaceAllConversations(convs),
 }));
 
 vi.mock('@/lib/safe-storage', async () => {
   const actual = await vi.importActual<typeof import('@/lib/safe-storage')>('@/lib/safe-storage');
   return {
     ...actual,
-    safeStorageGet: (key: string, area?: 'local' | 'session') => mockState.safeStorageGet(key, area),
-    safeStorageSet: (key: string, value: string, area?: 'local' | 'session') => mockState.safeStorageSet(key, value, area),
-    safeStorageRemove: (key: string, area?: 'local' | 'session') => mockState.safeStorageRemove(key, area),
+    safeStorageGet: (key: string, area?: 'local' | 'session') =>
+      mockState.safeStorageGet(key, area),
+    safeStorageSet: (key: string, value: string, area?: 'local' | 'session') =>
+      mockState.safeStorageSet(key, value, area),
+    safeStorageRemove: (key: string, area?: 'local' | 'session') =>
+      mockState.safeStorageRemove(key, area),
   };
 });
 
@@ -243,22 +253,28 @@ describe('App auth and shell integration', () => {
     mockState.replaceAllConversations = vi.fn(async (convs: Record<string, Conversation>) => {
       void convs;
     });
-    mockState.safeStorageGet = vi.fn<(key: string, area?: 'local' | 'session') => string | null>((key: string, area?: 'local' | 'session') => {
-      void key;
-      void area;
-      return null;
-    });
-    mockState.safeStorageSet = vi.fn<(key: string, value: string, area?: 'local' | 'session') => boolean>((key: string, value: string, area?: 'local' | 'session') => {
+    mockState.safeStorageGet = vi.fn<(key: string, area?: 'local' | 'session') => string | null>(
+      (key: string, area?: 'local' | 'session') => {
+        void key;
+        void area;
+        return null;
+      },
+    );
+    mockState.safeStorageSet = vi.fn<
+      (key: string, value: string, area?: 'local' | 'session') => boolean
+    >((key: string, value: string, area?: 'local' | 'session') => {
       void key;
       void value;
       void area;
       return true;
     });
-    mockState.safeStorageRemove = vi.fn<(key: string, area?: 'local' | 'session') => boolean>((key: string, area?: 'local' | 'session') => {
-      void key;
-      void area;
-      return true;
-    });
+    mockState.safeStorageRemove = vi.fn<(key: string, area?: 'local' | 'session') => boolean>(
+      (key: string, area?: 'local' | 'session') => {
+        void key;
+        void area;
+        return true;
+      },
+    );
     mockState.onboardingProps = null;
     mockState.homeProps = null;
     mockState.workspaceProps = null;
@@ -384,11 +400,11 @@ describe('App auth and shell integration', () => {
       patToken: 'ghp_test',
       validatedUser: user,
     };
-    mockState.safeStorageGet = vi.fn((key: string) => (
+    mockState.safeStorageGet = vi.fn((key: string) =>
       key === 'workspace_session'
         ? JSON.stringify({ id: 'workspace-scratch-1', kind: 'scratch', sandboxId: null })
-        : null
-    ));
+        : null,
+    );
 
     const html = await renderApp();
 

@@ -88,7 +88,13 @@ export function makeConversationOps(
     appendMessage(chatId, msg);
   }
 
-  return { appendMessage, replaceLastAssistantContent, markConversationMeta, markDirty, injectAssistantMessage };
+  return {
+    appendMessage,
+    replaceLastAssistantContent,
+    markConversationMeta,
+    markDirty,
+    injectAssistantMessage,
+  };
 }
 
 export type ConversationOps = ReturnType<typeof makeConversationOps>;

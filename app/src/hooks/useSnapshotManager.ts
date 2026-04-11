@@ -38,16 +38,21 @@ export function formatSnapshotAge(timestamp: number): string {
 }
 
 export function isSnapshotStale(createdAt: number): boolean {
-  return (Date.now() - createdAt) > SNAPSHOT_STALE_MS;
+  return Date.now() - createdAt > SNAPSHOT_STALE_MS;
 }
 
 export function snapshotStagePercent(stage: HydrateProgress['stage']): number {
   switch (stage) {
-    case 'uploading': return 20;
-    case 'restoring': return 60;
-    case 'validating': return 85;
-    case 'done': return 100;
-    default: return 0;
+    case 'uploading':
+      return 20;
+    case 'restoring':
+      return 60;
+    case 'validating':
+      return 85;
+    case 'done':
+      return 100;
+    default:
+      return 0;
   }
 }
 
@@ -69,7 +74,11 @@ export interface SnapshotManager {
 interface BuildWorkspaceScratchActionsOptions {
   snapshots: Pick<
     SnapshotManager,
-    'latestSnapshot' | 'snapshotSaving' | 'snapshotRestoring' | 'captureSnapshot' | 'handleRestoreFromSnapshot'
+    | 'latestSnapshot'
+    | 'snapshotSaving'
+    | 'snapshotRestoring'
+    | 'captureSnapshot'
+    | 'handleRestoreFromSnapshot'
   >;
   sandboxStatus: SandboxStatus;
   downloadingWorkspace: boolean;
@@ -84,7 +93,9 @@ export function buildWorkspaceScratchActions({
   onDownloadWorkspace,
   emptyStateText,
 }: BuildWorkspaceScratchActionsOptions): WorkspaceScratchActions {
-  const snapshotAgeLabel = snapshots.latestSnapshot ? formatSnapshotAge(snapshots.latestSnapshot.createdAt) : 'recently';
+  const snapshotAgeLabel = snapshots.latestSnapshot
+    ? formatSnapshotAge(snapshots.latestSnapshot.createdAt)
+    : 'recently';
   const snapshotIsStale = snapshots.latestSnapshot
     ? isSnapshotStale(snapshots.latestSnapshot.createdAt)
     : false;
@@ -96,8 +107,13 @@ export function buildWorkspaceScratchActions({
         : `Latest snapshot ${snapshotAgeLabel}`
       : emptyStateText,
     tone: snapshotIsStale ? 'stale' : 'default',
-    canSaveSnapshot: sandboxStatus === 'ready' && !snapshots.snapshotSaving && !snapshots.snapshotRestoring,
-    canRestoreSnapshot: Boolean(snapshots.latestSnapshot) && !snapshots.snapshotSaving && !snapshots.snapshotRestoring && sandboxStatus !== 'creating',
+    canSaveSnapshot:
+      sandboxStatus === 'ready' && !snapshots.snapshotSaving && !snapshots.snapshotRestoring,
+    canRestoreSnapshot:
+      Boolean(snapshots.latestSnapshot) &&
+      !snapshots.snapshotSaving &&
+      !snapshots.snapshotRestoring &&
+      sandboxStatus !== 'creating',
     canDownloadWorkspace: sandboxStatus === 'ready' && !downloadingWorkspace,
     snapshotSaving: snapshots.snapshotSaving,
     snapshotRestoring: snapshots.snapshotRestoring,
@@ -131,7 +147,9 @@ export function useSnapshotManager(
   const [latestSnapshot, setLatestSnapshot] = useState<SnapshotMeta | null>(null);
   const [snapshotSaving, setSnapshotSaving] = useState(false);
   const [snapshotRestoring, setSnapshotRestoring] = useState(false);
-  const [snapshotRestoreProgress, setSnapshotRestoreProgress] = useState<HydrateProgress | null>(null);
+  const [snapshotRestoreProgress, setSnapshotRestoreProgress] = useState<HydrateProgress | null>(
+    null,
+  );
 
   const snapshotLastActivityRef = useRef<number>(Date.now());
   const snapshotLastSavedAtRef = useRef<number>(0);
@@ -151,34 +169,37 @@ export function useSnapshotManager(
     }
   }, [sessionId]);
 
-  const captureSnapshot = useCallback(async (reason: 'manual' | 'interval' | 'idle') => {
-    if (!sandbox.sandboxId || sandbox.status !== 'ready') return false;
-    const now = Date.now();
-    if (reason !== 'manual' && (now - snapshotLastSavedAtRef.current) < SNAPSHOT_MIN_GAP_MS) {
-      return false;
-    }
+  const captureSnapshot = useCallback(
+    async (reason: 'manual' | 'interval' | 'idle') => {
+      if (!sandbox.sandboxId || sandbox.status !== 'ready') return false;
+      const now = Date.now();
+      if (reason !== 'manual' && now - snapshotLastSavedAtRef.current < SNAPSHOT_MIN_GAP_MS) {
+        return false;
+      }
 
-    setSnapshotSaving(true);
-    try {
-      const blob = await createSnapshot('/workspace', sandbox.sandboxId);
-      const label = `workspace-${new Date().toISOString()}`;
-      await saveSnapshotToIndexedDB(label, blob, sessionId);
-      snapshotLastSavedAtRef.current = Date.now();
-      await refreshLatestSnapshot();
-      if (reason === 'manual') {
-        toast.success('Snapshot saved');
+      setSnapshotSaving(true);
+      try {
+        const blob = await createSnapshot('/workspace', sandbox.sandboxId);
+        const label = `workspace-${new Date().toISOString()}`;
+        await saveSnapshotToIndexedDB(label, blob, sessionId);
+        snapshotLastSavedAtRef.current = Date.now();
+        await refreshLatestSnapshot();
+        if (reason === 'manual') {
+          toast.success('Snapshot saved');
+        }
+        return true;
+      } catch (err) {
+        if (reason === 'manual') {
+          const message = err instanceof Error ? err.message : 'Snapshot save failed';
+          toast.error(message);
+        }
+        return false;
+      } finally {
+        setSnapshotSaving(false);
       }
-      return true;
-    } catch (err) {
-      if (reason === 'manual') {
-        const message = err instanceof Error ? err.message : 'Snapshot save failed';
-        toast.error(message);
-      }
-      return false;
-    } finally {
-      setSnapshotSaving(false);
-    }
-  }, [sandbox.sandboxId, sandbox.status, sessionId, refreshLatestSnapshot]);
+    },
+    [sandbox.sandboxId, sandbox.status, sessionId, refreshLatestSnapshot],
+  );
 
   const handleRestoreFromSnapshot = useCallback(async () => {
     if (snapshotRestoring) return;
@@ -192,20 +213,31 @@ export function useSnapshotManager(
     if (!targetSandboxId) {
       targetSandboxId = isScratch
         ? await sandbox.start('', 'main')
-        : (activeRepo ? await sandbox.start(activeRepo.full_name, activeRepo.current_branch || activeRepo.default_branch) : null);
+        : activeRepo
+          ? await sandbox.start(
+              activeRepo.full_name,
+              activeRepo.current_branch || activeRepo.default_branch,
+            )
+          : null;
     }
     if (!targetSandboxId) {
       toast.error('Sandbox is not ready');
       return;
     }
 
-    const shouldProceed = !sandbox.sandboxId || window.confirm('Restore will overwrite files in /workspace. Continue?');
+    const shouldProceed =
+      !sandbox.sandboxId || window.confirm('Restore will overwrite files in /workspace. Continue?');
     if (!shouldProceed) return;
 
     setSnapshotRestoring(true);
     setSnapshotRestoreProgress({ stage: 'uploading', message: 'Uploading snapshot...' });
     try {
-      const result = await hydrateSnapshot(blob, '/workspace', targetSandboxId, setSnapshotRestoreProgress);
+      const result = await hydrateSnapshot(
+        blob,
+        '/workspace',
+        targetSandboxId,
+        setSnapshotRestoreProgress,
+      );
       if (!result.ok) {
         toast.error(result.error || 'Restore failed');
         return;

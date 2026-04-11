@@ -8,12 +8,14 @@ import {
 
 function createEventStreamResponse(lines: string[]): Response {
   const encoder = new TextEncoder();
-  return new Response(new ReadableStream({
-    start(controller) {
-      controller.enqueue(encoder.encode(lines.join('\n')));
-      controller.close();
-    },
-  }));
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(lines.join('\n')));
+        controller.close();
+      },
+    }),
+  );
 }
 
 describe('buildAnthropicMessagesRequest', () => {
@@ -52,7 +54,9 @@ describe('buildAnthropicMessagesRequest', () => {
       stream: true,
     };
 
-    expect(buildAnthropicMessagesRequest(request, { anthropicVersion: 'vertex-2023-10-16' })).toMatchObject({
+    expect(
+      buildAnthropicMessagesRequest(request, { anthropicVersion: 'vertex-2023-10-16' }),
+    ).toMatchObject({
       anthropic_version: 'vertex-2023-10-16',
     });
   });
@@ -76,12 +80,17 @@ describe('createAnthropicTranslatedStream', () => {
     expect(payloads.at(-1)).toBe('[DONE]');
     const jsonPayloads = payloads
       .filter((line) => line !== '[DONE]')
-      .map((line) => JSON.parse(line) as {
-        choices: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
-        usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
-      });
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            choices: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+            usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+          },
+      );
 
-    expect(jsonPayloads.some((payload) => payload.choices[0]?.delta?.content === 'Hello')).toBe(true);
+    expect(jsonPayloads.some((payload) => payload.choices[0]?.delta?.content === 'Hello')).toBe(
+      true,
+    );
     expect(jsonPayloads.some((payload) => payload.choices[0]?.finish_reason === 'stop')).toBe(true);
     expect(jsonPayloads.some((payload) => payload.usage?.total_tokens === 16)).toBe(true);
   });

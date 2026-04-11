@@ -24,7 +24,7 @@ function getAvailableProvider(
   isProviderAvailable: (provider: ActiveProvider) => boolean,
 ): ActiveProvider | null {
   if (!provider || provider === 'demo') return null;
-  return isProviderAvailable(provider as ActiveProvider) ? provider as ActiveProvider : null;
+  return isProviderAvailable(provider as ActiveProvider) ? (provider as ActiveProvider) : null;
 }
 
 export function resolveProviderSpecificModel(
@@ -39,9 +39,16 @@ export function resolveProviderSpecificModel(
 export function resolveChatProviderSelection(
   input: ChatProviderSelectionInput,
 ): ChatProviderSelectionResult {
-  const availableExistingProvider = getAvailableProvider(input.existingProvider, input.isProviderAvailable);
-  const availableRequestedProvider = getAvailableProvider(input.requestedProvider, input.isProviderAvailable);
-  const provider = availableExistingProvider || availableRequestedProvider || input.fallbackProvider;
+  const availableExistingProvider = getAvailableProvider(
+    input.existingProvider,
+    input.isProviderAvailable,
+  );
+  const availableRequestedProvider = getAvailableProvider(
+    input.requestedProvider,
+    input.isProviderAvailable,
+  );
+  const provider =
+    availableExistingProvider || availableRequestedProvider || input.fallbackProvider;
 
   const existingModel = resolveProviderSpecificModel(
     provider,

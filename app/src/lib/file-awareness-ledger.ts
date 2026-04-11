@@ -46,7 +46,11 @@ export type FileState =
   | { kind: 'partial_read'; ranges: LineRange[]; symbols: SymbolRead[] }
   | { kind: 'fully_read'; readAtRound: number; symbols?: SymbolRead[] }
   | { kind: 'model_authored'; createdAtRound: number }
-  | { kind: 'stale'; previousState: Exclude<FileState, { kind: 'stale' }>; staleSinceRound: number };
+  | {
+      kind: 'stale';
+      previousState: Exclude<FileState, { kind: 'stale' }>;
+      staleSinceRound: number;
+    };
 
 /** Per-file mutation provenance, tracked separately from read/stale state. */
 export interface MutationProvenance {
@@ -54,9 +58,7 @@ export interface MutationProvenance {
   modifiedAtRound: number;
 }
 
-export type EditGuardVerdict =
-  | { allowed: true }
-  | { allowed: false; reason: string };
+export type EditGuardVerdict = { allowed: true } | { allowed: false; reason: string };
 
 // ---------------------------------------------------------------------------
 // Metrics
@@ -124,13 +126,13 @@ function mergeRanges(ranges: LineRange[]): LineRange[] {
 
 /** Language-agnostic regex patterns for structural signatures. */
 const SIGNATURE_PATTERNS: RegExp[] = [
-  /^[ \t]*(?:export\s+)?(?:async\s+)?function\s+(\w+)/gm,         // JS/TS functions
-  /^[ \t]*(?:export\s+)?class\s+(\w+)/gm,                          // JS/TS classes
-  /^[ \t]*(?:export\s+)?interface\s+(\w+)/gm,                      // TS interfaces
-  /^[ \t]*(?:export\s+)?type\s+(\w+)\s*=/gm,                       // TS type aliases
-  /^[ \t]*export\s+default\s+(?:function\s+)?(\w+)?/gm,            // default exports
-  /^[ \t]*def\s+(\w+)/gm,                                           // Python functions
-  /^[ \t]*class\s+(\w+)\s*[:(]/gm,                                  // Python classes
+  /^[ \t]*(?:export\s+)?(?:async\s+)?function\s+(\w+)/gm, // JS/TS functions
+  /^[ \t]*(?:export\s+)?class\s+(\w+)/gm, // JS/TS classes
+  /^[ \t]*(?:export\s+)?interface\s+(\w+)/gm, // TS interfaces
+  /^[ \t]*(?:export\s+)?type\s+(\w+)\s*=/gm, // TS type aliases
+  /^[ \t]*export\s+default\s+(?:function\s+)?(\w+)?/gm, // default exports
+  /^[ \t]*def\s+(\w+)/gm, // Python functions
+  /^[ \t]*class\s+(\w+)\s*[:(]/gm, // Python classes
 ];
 
 /**
@@ -166,7 +168,10 @@ export function extractSignatures(content: string): string | null {
  * Extract structural signatures from content WITH line numbers.
  * Used to populate the ledger with symbol information for semantic edit guard.
  */
-export function extractSignaturesWithLines(content: string, contentStartLine: number = 1): SymbolRead[] {
+export function extractSignaturesWithLines(
+  content: string,
+  contentStartLine: number = 1,
+): SymbolRead[] {
   const symbols: SymbolRead[] = [];
   const seen = new Set<string>(); // deduplicate by name+kind
 
@@ -282,8 +287,8 @@ export class FileAwarenessLedger {
     }
 
     if (isFullRead) {
-      this.entries.set(key, { 
-        kind: 'fully_read', 
+      this.entries.set(key, {
+        kind: 'fully_read',
         readAtRound: this.currentRound,
         symbols: newSymbols.length > 0 ? newSymbols : undefined,
       });
@@ -292,15 +297,15 @@ export class FileAwarenessLedger {
 
     // Range or truncated read — compute the range covered
     const start = opts.startLine ?? 1;
-    const end = opts.endLine ?? (opts.totalLines ?? 999_999);
+    const end = opts.endLine ?? opts.totalLines ?? 999_999;
 
     const newRange: LineRange = { start, end };
 
     if (base?.kind === 'partial_read') {
       const combined = mergeRanges([...base.ranges, newRange]);
       const combinedSymbols = deduplicateSymbols([...base.symbols, ...newSymbols]);
-      this.entries.set(key, { 
-        kind: 'partial_read', 
+      this.entries.set(key, {
+        kind: 'partial_read',
         ranges: combined,
         symbols: combinedSymbols,
       });
@@ -309,16 +314,16 @@ export class FileAwarenessLedger {
       if (newSymbols.length > 0) {
         const existingSymbols = base.symbols ?? [];
         const mergedSymbols = deduplicateSymbols([...existingSymbols, ...newSymbols]);
-        this.entries.set(key, { 
-          kind: 'fully_read', 
+        this.entries.set(key, {
+          kind: 'fully_read',
           readAtRound: base.readAtRound,
           symbols: mergedSymbols,
         });
       }
       return;
     } else {
-      this.entries.set(key, { 
-        kind: 'partial_read', 
+      this.entries.set(key, {
+        kind: 'partial_read',
         ranges: [newRange],
         symbols: newSymbols,
       });
@@ -369,7 +374,11 @@ export class FileAwarenessLedger {
    * Only includes files whose ledger state indicates they were written (model_authored or stale),
    * so provenance doesn't persist after git reset or when git reports dirty=false.
    */
-  getDirtyFilesWithProvenance(): Array<{ path: string; modifiedBy: ModifiedBy; modifiedAtRound: number }> {
+  getDirtyFilesWithProvenance(): Array<{
+    path: string;
+    modifiedBy: ModifiedBy;
+    modifiedAtRound: number;
+  }> {
     const result: Array<{ path: string; modifiedBy: ModifiedBy; modifiedAtRound: number }> = [];
     for (const [path, prov] of this.provenance.entries()) {
       const state = this.entries.get(path);
@@ -538,7 +547,7 @@ export class FileAwarenessLedger {
     this._metrics.checksTotal++;
 
     // Check if all edit symbols have been read (match by name+kind for precision)
-    const readSymbolKeys = new Set(readSymbols.map(s => `${s.kind}:${s.name}`));
+    const readSymbolKeys = new Set(readSymbols.map((s) => `${s.kind}:${s.name}`));
     const unknownSymbols: string[] = [];
 
     for (const editSym of editSymbols) {
@@ -677,7 +686,7 @@ export class FileAwarenessLedger {
       } else if (state.kind === 'model_authored') {
         parts.push(`${path} (authored)`);
       } else if (state.kind === 'partial_read') {
-        const rangeStr = state.ranges.map(r => `${r.start}-${r.end}`).join(', ');
+        const rangeStr = state.ranges.map((r) => `${r.start}-${r.end}`).join(', ');
         parts.push(`${path} (lines ${rangeStr})`);
       }
     }

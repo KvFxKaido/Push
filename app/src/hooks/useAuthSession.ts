@@ -29,12 +29,16 @@ function toNullableString(value: string): string | null {
   return value.trim() ? value : null;
 }
 
-export function buildAuthSession(patAuth: PatAuthState, appAuth: AppAuthState, disconnect: () => void): GitHubAuthSession {
+export function buildAuthSession(
+  patAuth: PatAuthState,
+  appAuth: AppAuthState,
+  disconnect: () => void,
+): GitHubAuthSession {
   const patToken = toNullableString(patAuth.token);
   const token = toNullableString(appAuth.token) ?? patToken;
 
   return {
-    status: appAuth.isAppAuth ? 'app' : (patToken ? 'pat' : 'signed_out'),
+    status: appAuth.isAppAuth ? 'app' : patToken ? 'pat' : 'signed_out',
     token,
     patToken,
     validatedUser: appAuth.validatedUser ?? patAuth.validatedUser,

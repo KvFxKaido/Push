@@ -45,9 +45,7 @@ function AttachmentChip({
   return (
     <div
       className={`relative flex items-center gap-2 rounded-lg border px-2 py-1.5 shrink-0 ${
-        isError
-          ? 'border-red-500/30 bg-red-500/10'
-          : 'border-push-edge bg-push-surface'
+        isError ? 'border-red-500/30 bg-red-500/10' : 'border-push-edge bg-push-surface'
       }`}
     >
       {/* Thumbnail or icon */}
@@ -65,9 +63,7 @@ function AttachmentChip({
 
       {/* Filename and size */}
       <div className="flex flex-col min-w-0">
-        <span className="text-xs text-push-fg truncate max-w-[120px]">
-          {attachment.filename}
-        </span>
+        <span className="text-xs text-push-fg truncate max-w-[120px]">{attachment.filename}</span>
         <span className="text-push-2xs text-push-fg-dim">
           {isError ? attachment.error : formatFileSize(attachment.sizeBytes)}
         </span>

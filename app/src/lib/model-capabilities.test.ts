@@ -7,7 +7,9 @@ import {
 
 describe('getModelCapabilities', () => {
   it('marks Claude OpenRouter models as vision-capable', () => {
-    expect(getModelCapabilities('openrouter', 'anthropic/claude-sonnet-4.6:nitro').visionInput).toBe('supported');
+    expect(
+      getModelCapabilities('openrouter', 'anthropic/claude-sonnet-4.6:nitro').visionInput,
+    ).toBe('supported');
   });
 
   it('marks Imagen-family models as image-generation capable', () => {
@@ -36,28 +38,26 @@ describe('buildModelCapabilityAwarenessBlock', () => {
     expect(block).toContain('Provider: OpenRouter');
     expect(block).toContain('Model: anthropic/claude-sonnet-4.6:nitro');
     expect(block).toContain('Vision / image attachments: supported');
-    expect(block).toContain('Delegated Coder and Explorer runs inherit this same chat-locked provider/model by default.');
-    expect(block).toContain('current conversation includes image attachments, and this model can inspect them');
+    expect(block).toContain(
+      'Delegated Coder and Explorer runs inherit this same chat-locked provider/model by default.',
+    );
+    expect(block).toContain(
+      'current conversation includes image attachments, and this model can inspect them',
+    );
     expect(block).toContain('Push tool use is prompt-engineered.');
   });
 
   it('flags unsupported image inspection explicitly', () => {
-    const block = buildModelCapabilityAwarenessBlock(
-      'demo',
-      'demo',
-      { hasImageAttachments: true },
-    );
+    const block = buildModelCapabilityAwarenessBlock('demo', 'demo', { hasImageAttachments: true });
 
     expect(block).toContain('Vision / image attachments: unsupported');
     expect(block).toContain('this model cannot inspect them');
   });
 
   it('marks unknown image support as unverified', () => {
-    const block = buildModelCapabilityAwarenessBlock(
-      'zen',
-      'big-pickle',
-      { hasImageAttachments: true },
-    );
+    const block = buildModelCapabilityAwarenessBlock('zen', 'big-pickle', {
+      hasImageAttachments: true,
+    });
 
     expect(block).toContain('Vision / image attachments: unverified');
     expect(block).toContain('support is unverified');
@@ -65,11 +65,9 @@ describe('buildModelCapabilityAwarenessBlock', () => {
   });
 
   it('formats Kilo Code with a human-readable provider label', () => {
-    const block = buildModelCapabilityAwarenessBlock(
-      'kilocode',
-      'google/gemini-3-flash-preview',
-      { hasImageAttachments: true },
-    );
+    const block = buildModelCapabilityAwarenessBlock('kilocode', 'google/gemini-3-flash-preview', {
+      hasImageAttachments: true,
+    });
 
     expect(block).toContain('Provider: Kilo Code');
   });

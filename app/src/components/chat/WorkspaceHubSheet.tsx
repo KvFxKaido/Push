@@ -1,4 +1,14 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type SVGProps,
+} from 'react';
 import {
   Check,
   ChevronDown,
@@ -14,11 +24,27 @@ import {
 } from 'lucide-react';
 import { categorizeSandboxError } from '@/lib/sandbox-error-utils';
 import { toast } from 'sonner';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { runAuditor } from '@/lib/auditor-agent';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
-import { execInSandbox, getSandboxDiff, readFromSandbox, writeToSandbox } from '@/lib/sandbox-client';
-import { deriveBranchNameFromCommitMessage, getBranchSuggestionPrefix, normalizeSuggestedBranchName, sanitizeBranchName } from '@/lib/branch-names';
+import {
+  execInSandbox,
+  getSandboxDiff,
+  readFromSandbox,
+  writeToSandbox,
+} from '@/lib/sandbox-client';
+import {
+  deriveBranchNameFromCommitMessage,
+  getBranchSuggestionPrefix,
+  normalizeSuggestedBranchName,
+  sanitizeBranchName,
+} from '@/lib/branch-names';
 import { parseDiffStats } from '@/lib/diff-utils';
 import { getActiveProvider, getProviderStreamFn } from '@/lib/orchestrator';
 import { getModelForRole, type PreferredProvider } from '@/lib/providers';
@@ -48,9 +74,15 @@ import {
 } from '@/components/icons/push-custom-icons';
 import { PublishToGitHubSheet } from '@/components/repo/PublishToGitHubSheet';
 import { HubNotesTab, HubConsoleTab, HubFilesTab, HubDiffTab } from './hub-tabs';
-const HubPRsTab = lazy(() => import('./hub-tabs/HubPRsTab').then((m) => ({ default: m.HubPRsTab })));
-const HubReviewTab = lazy(() => import('./hub-tabs/HubReviewTab').then((m) => ({ default: m.HubReviewTab })));
-const HubSettingsTab = lazy(() => import('./hub-tabs/HubSettingsTab').then((m) => ({ default: m.HubSettingsTab })));
+const HubPRsTab = lazy(() =>
+  import('./hub-tabs/HubPRsTab').then((m) => ({ default: m.HubPRsTab })),
+);
+const HubReviewTab = lazy(() =>
+  import('./hub-tabs/HubReviewTab').then((m) => ({ default: m.HubReviewTab })),
+);
+const HubSettingsTab = lazy(() =>
+  import('./hub-tabs/HubSettingsTab').then((m) => ({ default: m.HubSettingsTab })),
+);
 import type {
   SettingsAIProps,
   SettingsAuthProps,
@@ -77,7 +109,15 @@ import type {
 
 type HubTab = 'notes' | 'console' | 'files' | 'diff' | 'prs' | 'review' | 'settings';
 
-type CommitPhase = 'idle' | 'fetching-diff' | 'branching' | 'auditing' | 'committing' | 'pushing' | 'success' | 'error';
+type CommitPhase =
+  | 'idle'
+  | 'fetching-diff'
+  | 'branching'
+  | 'auditing'
+  | 'committing'
+  | 'pushing'
+  | 'success'
+  | 'error';
 type CommitTargetMode = 'current' | 'new';
 type DiffViewMode = 'working-tree' | 'review-github' | 'review-sandbox';
 
@@ -171,7 +211,11 @@ interface WorkspaceHubSheetProps {
 // Constants
 // ---------------------------------------------------------------------------
 
-const TABS_WITH_CONSOLE: Array<{ key: HubTab; label: string; icon: ComponentType<SVGProps<SVGSVGElement>> }> = [
+const TABS_WITH_CONSOLE: Array<{
+  key: HubTab;
+  label: string;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
+}> = [
   { key: 'notes', label: 'Notes', icon: NotebookPadIcon },
   { key: 'console', label: 'Console', icon: ConsoleTraceIcon },
   { key: 'files', label: 'Files', icon: FilesStackIcon },
@@ -241,10 +285,11 @@ function normalizeSuggestedCommitMessage(raw: string): string {
   const fenceMatch = text.match(/```(?:text)?\s*\n?([\s\S]*?)\n?\s*```/i);
   if (fenceMatch) text = fenceMatch[1].trim();
 
-  const firstLine = text
-    .split('\n')
-    .map((line) => line.trim())
-    .find((line) => line.length > 0) || '';
+  const firstLine =
+    text
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) || '';
 
   let candidate = firstLine
     .replace(/^[-*]\s*/, '')
@@ -370,21 +415,25 @@ export function WorkspaceHubSheet({
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
   const tabs = useMemo(() => {
     if (workspaceMode === 'chat') {
-      return (showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE)
-        .filter((tab) => CHAT_MODE_TABS.has(tab.key));
+      return (showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE).filter((tab) =>
+        CHAT_MODE_TABS.has(tab.key),
+      );
     }
     const baseTabs = showToolActivity ? TABS_WITH_CONSOLE : TABS_WITHOUT_CONSOLE;
     return baseTabs.filter((tab) => capabilities.canBrowsePullRequests || tab.key !== 'prs');
   }, [capabilities.canBrowsePullRequests, showToolActivity, workspaceMode]);
-  const fallbackTab = (workspaceMode === 'chat'
-    ? 'settings'
-    : tabs.find((tab) => tab.key === 'files')?.key ?? tabs[0]?.key ?? 'settings') as HubTab;
+  const fallbackTab = (
+    workspaceMode === 'chat'
+      ? 'settings'
+      : (tabs.find((tab) => tab.key === 'files')?.key ?? tabs[0]?.key ?? 'settings')
+  ) as HubTab;
   const activeTabIndex = tabs.findIndex((tab) => tab.key === activeTab);
   const showActionBar =
     activeTab === 'files' ||
     (activeTab === 'diff' && reviewDiffSelection?.mode !== 'review-github');
   const showCommitBar = showActionBar && capabilities.canCommitAndPush;
-  const showScratchActionBar = showActionBar && workspaceMode === 'scratch' && Boolean(scratchActions);
+  const showScratchActionBar =
+    showActionBar && workspaceMode === 'scratch' && Boolean(scratchActions);
 
   const blockedByProtectMain = Boolean(
     protectMainEnabled &&
@@ -412,28 +461,31 @@ export function WorkspaceHubSheet({
     setDiffLoading(loading);
   }, []);
 
-  const handleOpenReviewDiff = useCallback((payload: {
-    diffData: DiffPreviewCardData;
-    label: string;
-    mode: Exclude<DiffViewMode, 'working-tree'>;
-    target?: { path: string; line?: number };
-  }) => {
-    setReviewDiffSelection({
-      data: payload.diffData,
-      label: payload.label,
-      mode: payload.mode,
-    });
-    setDiffJumpTarget(
-      payload.target
-        ? {
-            path: payload.target.path,
-            ...(payload.target.line !== undefined ? { line: payload.target.line } : {}),
-            requestKey: Date.now(),
-          }
-        : null,
-    );
-    setActiveTab('diff');
-  }, []);
+  const handleOpenReviewDiff = useCallback(
+    (payload: {
+      diffData: DiffPreviewCardData;
+      label: string;
+      mode: Exclude<DiffViewMode, 'working-tree'>;
+      target?: { path: string; line?: number };
+    }) => {
+      setReviewDiffSelection({
+        data: payload.diffData,
+        label: payload.label,
+        mode: payload.mode,
+      });
+      setDiffJumpTarget(
+        payload.target
+          ? {
+              path: payload.target.path,
+              ...(payload.target.line !== undefined ? { line: payload.target.line } : {}),
+              requestKey: Date.now(),
+            }
+          : null,
+      );
+      setActiveTab('diff');
+    },
+    [],
+  );
 
   const handleClearReviewDiff = useCallback(() => {
     setReviewDiffSelection(null);
@@ -446,7 +498,9 @@ export function WorkspaceHubSheet({
       setActiveTab(fallbackTab);
       return;
     }
-    setActiveTab(tabs.some((tab) => tab.key === externalTabRequest.tab) ? externalTabRequest.tab : fallbackTab);
+    setActiveTab(
+      tabs.some((tab) => tab.key === externalTabRequest.tab) ? externalTabRequest.tab : fallbackTab,
+    );
   }, [externalTabRequest, fallbackTab, showToolActivity, tabs]);
 
   useEffect(() => {
@@ -501,185 +555,196 @@ export function WorkspaceHubSheet({
     }
   }, [sandboxId, scratchpadContent]);
 
-  const runCommitAndPush = useCallback(async (target: CommitPushTarget) => {
-    if (!sandboxId) {
-      toast.error('Sandbox is not ready.');
-      return;
-    }
+  const runCommitAndPush = useCallback(
+    async (target: CommitPushTarget) => {
+      if (!sandboxId) {
+        toast.error('Sandbox is not ready.');
+        return;
+      }
 
-    const message = commitMessage.replace(/[\r\n]+/g, ' ').trim();
-    if (!message) {
-      toast.error('Commit message is required.');
-      return;
-    }
+      const message = commitMessage.replace(/[\r\n]+/g, ' ').trim();
+      if (!message) {
+        toast.error('Commit message is required.');
+        return;
+      }
 
-    if (target.mode === 'current' && blockedByProtectMain) {
-      toast.error(`Protected branch: commits to "${branchProps.defaultBranch}" are blocked.`);
-      return;
-    }
+      if (target.mode === 'current' && blockedByProtectMain) {
+        toast.error(`Protected branch: commits to "${branchProps.defaultBranch}" are blocked.`);
+        return;
+      }
 
-    if (getActiveProvider() === 'demo') {
-      setCommitPhase('error');
-      setCommitError('No AI provider configured. Add an API key in Settings to enable the Auditor.');
-      return;
-    }
+      if (getActiveProvider() === 'demo') {
+        setCommitPhase('error');
+        setCommitError(
+          'No AI provider configured. Add an API key in Settings to enable the Auditor.',
+        );
+        return;
+      }
 
-    const safeMessage = escapeSingleQuotes(message);
-    const targetBranchName = target.mode === 'new' ? target.branchName : currentBranchName;
+      const safeMessage = escapeSingleQuotes(message);
+      const targetBranchName = target.mode === 'new' ? target.branchName : currentBranchName;
 
-    setCommitError(null);
-    try {
-      if (target.mode === 'new' && target.branchName) {
-        setCommitPhase('branching');
-        const switchResult = await execInSandbox(
+      setCommitError(null);
+      try {
+        if (target.mode === 'new' && target.branchName) {
+          setCommitPhase('branching');
+          const switchResult = await execInSandbox(
+            sandboxId,
+            `cd /workspace && if git show-ref --verify --quiet refs/heads/${target.branchName}; then echo "__PUSH_BRANCH_EXISTS_LOCAL__"; exit 10; fi && if git ls-remote --exit-code --heads origin ${target.branchName} >/dev/null 2>&1; then echo "__PUSH_BRANCH_EXISTS_REMOTE__"; exit 11; fi && git switch -c ${target.branchName}`,
+            undefined,
+            { markWorkspaceMutated: true },
+          );
+
+          if (switchResult.exitCode !== 0) {
+            const output = `${switchResult.stdout}\n${switchResult.stderr}`;
+            if (
+              output.includes('__PUSH_BRANCH_EXISTS_LOCAL__') ||
+              output.includes('__PUSH_BRANCH_EXISTS_REMOTE__')
+            ) {
+              setCommitPhase('error');
+              setCommitError(`Branch "${target.branchName}" already exists.`);
+              return;
+            }
+
+            const detail = switchResult.stderr || switchResult.stdout || 'Unknown git error';
+            setCommitPhase('error');
+            setCommitError(`Branch switch failed: ${detail}`);
+            return;
+          }
+
+          onSandboxBranchSwitch(target.branchName);
+        }
+
+        // Phase: Fetching diff
+        setCommitPhase('fetching-diff');
+        const diffResult = await getSandboxDiff(sandboxId);
+        if (!diffResult.diff) {
+          setCommitPhase('error');
+          setCommitError('Nothing to commit — no changes detected.');
+          return;
+        }
+
+        // Phase: Auditing
+        setCommitPhase('auditing');
+        let fileContexts: AuditorFileContext[] = [];
+        try {
+          const filePaths = parseDiffStats(diffResult.diff).fileNames;
+          fileContexts = await fetchAuditorFileContexts(filePaths, async (path) => {
+            const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
+            if (result.error) return null;
+            return { content: result.content, truncated: result.truncated };
+          });
+        } catch {
+          // Degrade gracefully — proceed with diff-only
+        }
+        const auditResult = await runAuditor(
+          diffResult.diff,
+          () => {},
+          {
+            repoFullName,
+            activeBranch: targetBranchName,
+            defaultBranch: branchProps.defaultBranch,
+            source: 'working-tree-commit',
+            sourceLabel:
+              target.mode === 'new'
+                ? `Working tree commit after branching to ${targetBranchName}`
+                : `Working tree commit on ${targetBranchName}`,
+            projectInstructions,
+          },
+          undefined,
+          {
+            providerOverride: lockedProvider || undefined,
+            modelOverride: lockedModel || undefined,
+          },
+          fileContexts,
+        );
+        if (auditResult.verdict === 'unsafe') {
+          setCommitPhase('error');
+          setCommitError(`Commit blocked by Auditor: ${auditResult.card.summary}`);
+          return;
+        }
+
+        // Phase: Committing
+        setCommitPhase('committing');
+        const commitResult = await execInSandbox(
           sandboxId,
-          `cd /workspace && if git show-ref --verify --quiet refs/heads/${target.branchName}; then echo "__PUSH_BRANCH_EXISTS_LOCAL__"; exit 10; fi && if git ls-remote --exit-code --heads origin ${target.branchName} >/dev/null 2>&1; then echo "__PUSH_BRANCH_EXISTS_REMOTE__"; exit 11; fi && git switch -c ${target.branchName}`,
+          `cd /workspace && git add -A && if git diff --cached --quiet; then echo "__PUSH_NO_CHANGES__"; else git commit -m '${safeMessage}'; fi`,
           undefined,
           { markWorkspaceMutated: true },
         );
 
-        if (switchResult.exitCode !== 0) {
-          const output = `${switchResult.stdout}\n${switchResult.stderr}`;
-          if (output.includes('__PUSH_BRANCH_EXISTS_LOCAL__') || output.includes('__PUSH_BRANCH_EXISTS_REMOTE__')) {
-            setCommitPhase('error');
-            setCommitError(`Branch "${target.branchName}" already exists.`);
-            return;
-          }
-
-          const detail = switchResult.stderr || switchResult.stdout || 'Unknown git error';
+        if (commitResult.exitCode !== 0) {
+          const detail = commitResult.stderr || commitResult.stdout || 'Unknown git error';
           setCommitPhase('error');
-          setCommitError(`Branch switch failed: ${detail}`);
+          setCommitError(`Commit failed: ${detail}`);
           return;
         }
 
-        onSandboxBranchSwitch(target.branchName);
-      }
-
-      // Phase: Fetching diff
-      setCommitPhase('fetching-diff');
-      const diffResult = await getSandboxDiff(sandboxId);
-      if (!diffResult.diff) {
-        setCommitPhase('error');
-        setCommitError('Nothing to commit — no changes detected.');
-        return;
-      }
-
-      // Phase: Auditing
-      setCommitPhase('auditing');
-      let fileContexts: AuditorFileContext[] = [];
-      try {
-        const filePaths = parseDiffStats(diffResult.diff).fileNames;
-        fileContexts = await fetchAuditorFileContexts(
-          filePaths,
-          async (path) => {
-            const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
-            if (result.error) return null;
-            return { content: result.content, truncated: result.truncated };
-          },
-        );
-      } catch {
-        // Degrade gracefully — proceed with diff-only
-      }
-      const auditResult = await runAuditor(diffResult.diff, () => {}, {
-        repoFullName,
-        activeBranch: targetBranchName,
-        defaultBranch: branchProps.defaultBranch,
-        source: 'working-tree-commit',
-        sourceLabel: target.mode === 'new'
-          ? `Working tree commit after branching to ${targetBranchName}`
-          : `Working tree commit on ${targetBranchName}`,
-        projectInstructions,
-      }, undefined, {
-        providerOverride: lockedProvider || undefined,
-        modelOverride: lockedModel || undefined,
-      }, fileContexts);
-      if (auditResult.verdict === 'unsafe') {
-        setCommitPhase('error');
-        setCommitError(`Commit blocked by Auditor: ${auditResult.card.summary}`);
-        return;
-      }
-
-      // Phase: Committing
-      setCommitPhase('committing');
-      const commitResult = await execInSandbox(
-        sandboxId,
-        `cd /workspace && git add -A && if git diff --cached --quiet; then echo "__PUSH_NO_CHANGES__"; else git commit -m '${safeMessage}'; fi`,
-        undefined,
-        { markWorkspaceMutated: true },
-      );
-
-      if (commitResult.exitCode !== 0) {
-        const detail = commitResult.stderr || commitResult.stdout || 'Unknown git error';
-        setCommitPhase('error');
-        setCommitError(`Commit failed: ${detail}`);
-        return;
-      }
-
-      if ((commitResult.stdout || '').includes('__PUSH_NO_CHANGES__')) {
-        setCommitPhase('error');
-        setCommitError('Nothing to commit — no staged changes.');
-        return;
-      }
-
-      // Phase: Pushing
-      setCommitPhase('pushing');
-      const pushCommand = target.mode === 'new' && target.branchName
-        ? `cd /workspace && git push -u origin HEAD:refs/heads/${target.branchName}`
-        : 'cd /workspace && git push origin HEAD';
-      const pushResult = await execInSandbox(
-        sandboxId,
-        pushCommand,
-        undefined,
-        { markWorkspaceMutated: true },
-      );
-      if (pushResult.exitCode !== 0) {
-        const detail = pushResult.stderr || pushResult.stdout || 'Unknown git error';
-        setCommitPhase('error');
-        setCommitError(`Push failed: ${detail}`);
-        return;
-      }
-
-      // Success
-      setCommitPhase('success');
-      toast.success(`Committed & pushed to ${targetBranchName}.`);
-      if (target.mode === 'new') {
-        branchProps.onRefreshBranches();
-      }
-
-      // Refresh diff data
-      try {
-        const freshDiff = await getSandboxDiff(sandboxId);
-        if (freshDiff.diff) {
-          const stats = parseDiffStats(freshDiff.diff);
-          setDiffData({
-            diff: freshDiff.diff,
-            filesChanged: stats.filesChanged,
-            additions: stats.additions,
-            deletions: stats.deletions,
-            truncated: freshDiff.truncated,
-          });
-        } else {
-          setDiffData(null);
+        if ((commitResult.stdout || '').includes('__PUSH_NO_CHANGES__')) {
+          setCommitPhase('error');
+          setCommitError('Nothing to commit — no staged changes.');
+          return;
         }
-      } catch {
-        // Best effort
+
+        // Phase: Pushing
+        setCommitPhase('pushing');
+        const pushCommand =
+          target.mode === 'new' && target.branchName
+            ? `cd /workspace && git push -u origin HEAD:refs/heads/${target.branchName}`
+            : 'cd /workspace && git push origin HEAD';
+        const pushResult = await execInSandbox(sandboxId, pushCommand, undefined, {
+          markWorkspaceMutated: true,
+        });
+        if (pushResult.exitCode !== 0) {
+          const detail = pushResult.stderr || pushResult.stdout || 'Unknown git error';
+          setCommitPhase('error');
+          setCommitError(`Push failed: ${detail}`);
+          return;
+        }
+
+        // Success
+        setCommitPhase('success');
+        toast.success(`Committed & pushed to ${targetBranchName}.`);
+        if (target.mode === 'new') {
+          branchProps.onRefreshBranches();
+        }
+
+        // Refresh diff data
+        try {
+          const freshDiff = await getSandboxDiff(sandboxId);
+          if (freshDiff.diff) {
+            const stats = parseDiffStats(freshDiff.diff);
+            setDiffData({
+              diff: freshDiff.diff,
+              filesChanged: stats.filesChanged,
+              additions: stats.additions,
+              deletions: stats.deletions,
+              truncated: freshDiff.truncated,
+            });
+          } else {
+            setDiffData(null);
+          }
+        } catch {
+          // Best effort
+        }
+      } catch (err) {
+        setCommitPhase('error');
+        setCommitError(err instanceof Error ? err.message : 'Commit failed');
       }
-    } catch (err) {
-      setCommitPhase('error');
-      setCommitError(err instanceof Error ? err.message : 'Commit failed');
-    }
-  }, [
-    sandboxId,
-    commitMessage,
-    blockedByProtectMain,
-    branchProps,
-    currentBranchName,
-    lockedModel,
-    lockedProvider,
-    onSandboxBranchSwitch,
-    projectInstructions,
-    repoFullName,
-  ]);
+    },
+    [
+      sandboxId,
+      commitMessage,
+      blockedByProtectMain,
+      branchProps,
+      currentBranchName,
+      lockedModel,
+      lockedProvider,
+      onSandboxBranchSwitch,
+      projectInstructions,
+      repoFullName,
+    ],
+  );
 
   const suggestCommitMessage = useCallback(async () => {
     if (!sandboxId) {
@@ -794,7 +859,9 @@ export function WorkspaceHubSheet({
         '```diff',
         diffSnippet,
         '```',
-      ].filter(Boolean).join('\n');
+      ]
+        .filter(Boolean)
+        .join('\n');
 
       const llmMessages: ChatMessage[] = [
         {
@@ -878,10 +945,13 @@ export function WorkspaceHubSheet({
   ]);
 
   // ---- Branch switching with confirmation ----
-  const handleBranchSwitch = useCallback((branch: string) => {
-    if (branch === branchProps.currentBranch) return;
-    setSwitchConfirmBranch(branch);
-  }, [branchProps.currentBranch]);
+  const handleBranchSwitch = useCallback(
+    (branch: string) => {
+      if (branch === branchProps.currentBranch) return;
+      setSwitchConfirmBranch(branch);
+    },
+    [branchProps.currentBranch],
+  );
 
   const confirmBranchSwitch = useCallback(() => {
     if (!switchConfirmBranch) return;
@@ -890,15 +960,18 @@ export function WorkspaceHubSheet({
     setBranchDropdownOpen(false);
   }, [switchConfirmBranch, branchProps]);
 
-  const handleDeleteBranch = useCallback(async (branchName: string) => {
-    setDeletingBranch(branchName);
-    try {
-      await branchProps.onDeleteBranch(branchName);
-      setPendingDeleteBranch(null);
-    } finally {
-      setDeletingBranch((prev) => (prev === branchName ? null : prev));
-    }
-  }, [branchProps]);
+  const handleDeleteBranch = useCallback(
+    async (branchName: string) => {
+      setDeletingBranch(branchName);
+      try {
+        await branchProps.onDeleteBranch(branchName);
+        setPendingDeleteBranch(null);
+      } finally {
+        setDeletingBranch((prev) => (prev === branchName ? null : prev));
+      }
+    },
+    [branchProps],
+  );
 
   // ---- Effects ----
   useEffect(() => {
@@ -1005,9 +1078,7 @@ export function WorkspaceHubSheet({
                   <span className="truncate text-push-xs text-push-fg-dim">
                     {repoName || 'Workspace'}
                   </span>
-                  {workspaceMode === 'scratch' && (
-                    <span className={HUB_TAG_CLASS}>ephemeral</span>
-                  )}
+                  {workspaceMode === 'scratch' && <span className={HUB_TAG_CLASS}>ephemeral</span>}
                   {capabilities.canManageBranches && branchProps.currentBranch && (
                     <div className="relative">
                       <button
@@ -1024,18 +1095,32 @@ export function WorkspaceHubSheet({
                         <span className={`${HUB_CONTROL_TEXT_CLASS} max-w-[92px] truncate`}>
                           {branchProps.currentBranch}
                         </span>
-                        <ChevronDown className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3 transition-transform ${branchDropdownOpen ? 'rotate-180' : ''}`} />
+                        <ChevronDown
+                          className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3 transition-transform ${branchDropdownOpen ? 'rotate-180' : ''}`}
+                        />
                       </button>
 
                       {/* Branch dropdown */}
                       {branchDropdownOpen && (
                         <>
-                          <div className="fixed inset-0 z-40" onClick={() => { setBranchDropdownOpen(false); setPendingDeleteBranch(null); setSwitchConfirmBranch(null); }} />
-                          <div className={`absolute left-0 top-full z-50 mt-2 w-[248px] overflow-hidden ${HUB_PANEL_SURFACE_CLASS}`}>
+                          <div
+                            className="fixed inset-0 z-40"
+                            onClick={() => {
+                              setBranchDropdownOpen(false);
+                              setPendingDeleteBranch(null);
+                              setSwitchConfirmBranch(null);
+                            }}
+                          />
+                          <div
+                            className={`absolute left-0 top-full z-50 mt-2 w-[248px] overflow-hidden ${HUB_PANEL_SURFACE_CLASS}`}
+                          >
                             {/* Branch actions */}
                             {isOnMain ? (
                               <button
-                                onClick={() => { setBranchDropdownOpen(false); branchProps.onShowBranchCreate(); }}
+                                onClick={() => {
+                                  setBranchDropdownOpen(false);
+                                  branchProps.onShowBranchCreate();
+                                }}
                                 className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-push-fg-secondary transition-colors hover:bg-white/[0.04]"
                               >
                                 <BranchWaveIcon className="h-3.5 w-3.5" />
@@ -1043,7 +1128,10 @@ export function WorkspaceHubSheet({
                               </button>
                             ) : (
                               <button
-                                onClick={() => { setBranchDropdownOpen(false); branchProps.onShowMergeFlow(); }}
+                                onClick={() => {
+                                  setBranchDropdownOpen(false);
+                                  branchProps.onShowMergeFlow();
+                                }}
                                 className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-emerald-300 transition-colors hover:bg-white/[0.04]"
                               >
                                 <MergeShieldIcon className="h-3.5 w-3.5" />
@@ -1058,18 +1146,21 @@ export function WorkspaceHubSheet({
                               disabled={branchProps.branchesLoading}
                               className="flex w-full items-center gap-2 px-3 py-2 text-push-xs text-push-fg-dim transition-colors hover:bg-white/[0.04] hover:text-push-fg-secondary disabled:opacity-50"
                             >
-                              <RefreshCw className={`h-3 w-3 ${branchProps.branchesLoading ? 'animate-spin' : ''}`} />
+                              <RefreshCw
+                                className={`h-3 w-3 ${branchProps.branchesLoading ? 'animate-spin' : ''}`}
+                              />
                               Refresh branches
                             </button>
                             <div className="border-t border-push-edge/80" />
 
                             {/* Branch list */}
                             <div className="max-h-[260px] overflow-y-auto py-1">
-                              {branchProps.branchesLoading && branchProps.availableBranches.length === 0 && (
-                                <div className="flex items-center gap-2 px-3 py-2 text-xs text-push-fg-dim">
-                                  <Loader2 className="h-3 w-3 animate-spin" /> Loading...
-                                </div>
-                              )}
+                              {branchProps.branchesLoading &&
+                                branchProps.availableBranches.length === 0 && (
+                                  <div className="flex items-center gap-2 px-3 py-2 text-xs text-push-fg-dim">
+                                    <Loader2 className="h-3 w-3 animate-spin" /> Loading...
+                                  </div>
+                                )}
                               {branchProps.availableBranches.map((branch) => {
                                 const isActive = branch.name === branchProps.currentBranch;
                                 const canDelete = !isActive && !branch.isDefault;
@@ -1085,7 +1176,9 @@ export function WorkspaceHubSheet({
                                         isActive ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]'
                                       }`}
                                     >
-                                      <span className={`min-w-0 flex-1 truncate text-xs ${isActive ? 'text-push-fg' : 'text-push-fg-secondary'}`}>
+                                      <span
+                                        className={`min-w-0 flex-1 truncate text-xs ${isActive ? 'text-push-fg' : 'text-push-fg-secondary'}`}
+                                      >
                                         {branch.name}
                                       </span>
                                       {branch.isDefault && (
@@ -1098,7 +1191,10 @@ export function WorkspaceHubSheet({
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           if (isDeletingThis || deletingBranch) return;
-                                          if (!isDeletePending) { setPendingDeleteBranch(branch.name); return; }
+                                          if (!isDeletePending) {
+                                            setPendingDeleteBranch(branch.name);
+                                            return;
+                                          }
                                           void handleDeleteBranch(branch.name);
                                         }}
                                         className={`flex w-full items-center gap-2 px-3 py-1.5 text-push-xs ${
@@ -1107,8 +1203,16 @@ export function WorkspaceHubSheet({
                                             : 'text-push-fg-dim transition-colors hover:bg-white/[0.03] hover:text-red-300'
                                         }`}
                                       >
-                                        {isDeletingThis ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                                        {isDeletingThis ? 'Deleting...' : isDeletePending ? 'Confirm delete' : 'Delete'}
+                                        {isDeletingThis ? (
+                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                        ) : (
+                                          <Trash2 className="h-3 w-3" />
+                                        )}
+                                        {isDeletingThis
+                                          ? 'Deleting...'
+                                          : isDeletePending
+                                            ? 'Confirm delete'
+                                            : 'Delete'}
                                       </button>
                                     )}
                                   </div>
@@ -1134,14 +1238,13 @@ export function WorkspaceHubSheet({
                 </button>
               </div>
             </div>
-
           </header>
 
           {/* Sandbox status strip */}
           {sandboxStatus !== 'ready' && (
             <div className="flex items-center justify-between gap-2 border-b border-push-edge px-3 py-2">
               <div className="min-w-0 flex items-center gap-2">
-                {(sandboxStatus === 'creating' || sandboxStatus === 'reconnecting') ? (
+                {sandboxStatus === 'creating' || sandboxStatus === 'reconnecting' ? (
                   <Loader2 className="h-3 w-3 flex-shrink-0 animate-spin text-push-fg-dim" />
                 ) : sandboxStatus === 'error' ? (
                   <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-red-400" />
@@ -1149,9 +1252,15 @@ export function WorkspaceHubSheet({
                   <SandboxCubeIcon className="h-3 w-3 flex-shrink-0 text-push-fg-dim" />
                 )}
                 <span className="min-w-0 truncate text-push-xs">
-                  {sandboxStatus === 'reconnecting' && <span className="text-push-fg-dim">Reconnecting…</span>}
-                  {sandboxStatus === 'creating' && <span className="text-push-fg-dim">Starting sandbox…</span>}
-                  {sandboxStatus === 'idle' && <span className="text-push-fg-dim">Sandbox not running</span>}
+                  {sandboxStatus === 'reconnecting' && (
+                    <span className="text-push-fg-dim">Reconnecting…</span>
+                  )}
+                  {sandboxStatus === 'creating' && (
+                    <span className="text-push-fg-dim">Starting sandbox…</span>
+                  )}
+                  {sandboxStatus === 'idle' && (
+                    <span className="text-push-fg-dim">Sandbox not running</span>
+                  )}
                   {sandboxStatus === 'error' && (
                     <span className="text-red-400">
                       {sandboxError ? categorizeSandboxError(sandboxError).title : 'Sandbox error'}
@@ -1195,7 +1304,8 @@ export function WorkspaceHubSheet({
             <div className="border-b border-push-edge px-3 py-2.5">
               <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-3`}>
                 <p className="text-xs text-push-fg-secondary">
-                  Switch to <span className="font-medium text-push-fg">{switchConfirmBranch}</span>? This will restart your sandbox.
+                  Switch to <span className="font-medium text-push-fg">{switchConfirmBranch}</span>?
+                  This will restart your sandbox.
                 </p>
                 <div className="mt-3 flex items-center gap-2">
                   <button
@@ -1219,7 +1329,9 @@ export function WorkspaceHubSheet({
 
           {/* Tab bar */}
           <div className="border-b border-push-edge px-2 py-2">
-            <div className={`grid gap-1 ${tabs.length >= 7 || tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
+            <div
+              className={`grid gap-1 ${tabs.length >= 7 || tabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}
+            >
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const active = tab.key === activeTab;
@@ -1250,14 +1362,18 @@ export function WorkspaceHubSheet({
                   value={commitMessage}
                   onChange={(e) => setCommitMessage(e.target.value)}
                   placeholder="Commit message"
-                  disabled={commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error'}
+                  disabled={
+                    commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error'
+                  }
                   className={`${HUB_MATERIAL_INPUT_CLASS} min-w-0 flex-1`}
                 />
                 <button
                   onClick={() => void suggestCommitMessage()}
                   disabled={
                     suggestingCommitMessage ||
-                    (commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error') ||
+                    (commitPhase !== 'idle' &&
+                      commitPhase !== 'success' &&
+                      commitPhase !== 'error') ||
                     !sandboxReady
                   }
                   title="Suggest commit message from current diff"
@@ -1281,19 +1397,23 @@ export function WorkspaceHubSheet({
                     openCommitTargetSheet();
                   }}
                   disabled={
-                    (commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error') ||
+                    (commitPhase !== 'idle' &&
+                      commitPhase !== 'success' &&
+                      commitPhase !== 'error') ||
                     !sandboxReady
                   }
                   className={`relative flex h-8 items-center gap-1.5 rounded-full border px-3 text-push-xs transition-all disabled:opacity-50 ${
                     commitPhase === 'success'
                       ? 'border-emerald-500/35 bg-[linear-gradient(180deg,rgba(18,64,48,0.78)_0%,rgba(10,34,27,0.9)_100%)] text-emerald-300 shadow-[0_12px_30px_rgba(0,0,0,0.32),0_2px_8px_rgba(0,0,0,0.18)]'
                       : commitPhase === 'error'
-                      ? 'border-red-500/35 bg-[linear-gradient(180deg,rgba(78,24,24,0.72)_0%,rgba(36,12,12,0.88)_100%)] text-red-300 shadow-[0_12px_30px_rgba(0,0,0,0.32),0_2px_8px_rgba(0,0,0,0.18)]'
-                      : `${HUB_MATERIAL_BUTTON_CLASS} text-push-fg-dim`
+                        ? 'border-red-500/35 bg-[linear-gradient(180deg,rgba(78,24,24,0.72)_0%,rgba(36,12,12,0.88)_100%)] text-red-300 shadow-[0_12px_30px_rgba(0,0,0,0.32),0_2px_8px_rgba(0,0,0,0.18)]'
+                        : `${HUB_MATERIAL_BUTTON_CLASS} text-push-fg-dim`
                   }`}
                 >
                   <HubControlGlow />
-                  {commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error' ? (
+                  {commitPhase !== 'idle' &&
+                  commitPhase !== 'success' &&
+                  commitPhase !== 'error' ? (
                     <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 animate-spin`} />
                   ) : commitPhase === 'success' ? (
                     <Check className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5`} />
@@ -1304,8 +1424,8 @@ export function WorkspaceHubSheet({
                     {commitPhase === 'idle'
                       ? 'Commit & Push…'
                       : commitPhase === 'success' || commitPhase === 'error'
-                      ? 'Reset'
-                      : PHASE_LABELS[commitPhase]}
+                        ? 'Reset'
+                        : PHASE_LABELS[commitPhase]}
                   </span>
                 </button>
               </div>
@@ -1325,8 +1445,12 @@ export function WorkspaceHubSheet({
             <div className="border-b border-push-edge px-3 py-2">
               <div className="space-y-2">
                 <div className="min-w-0">
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-push-fg-dim">Sandbox Actions</p>
-                  <p className={`mt-1 truncate text-push-xs ${scratchActions.tone === 'stale' ? 'text-amber-300' : 'text-push-fg-dim'}`}>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-push-fg-dim">
+                    Sandbox Actions
+                  </p>
+                  <p
+                    className={`mt-1 truncate text-push-xs ${scratchActions.tone === 'stale' ? 'text-amber-300' : 'text-push-fg-dim'}`}
+                  >
                     {scratchActions.statusText}
                   </p>
                 </div>
@@ -1380,7 +1504,9 @@ export function WorkspaceHubSheet({
                       title="Create a GitHub repository from this workspace"
                     >
                       <HubControlGlow />
-                      <PushOrbitIcon className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 text-push-fg-dim`} />
+                      <PushOrbitIcon
+                        className={`${HUB_CONTROL_TEXT_CLASS} h-3.5 w-3.5 text-push-fg-dim`}
+                      />
                       <span className={HUB_CONTROL_TEXT_CLASS}>Publish</span>
                     </button>
                   )}
@@ -1460,7 +1586,13 @@ export function WorkspaceHubSheet({
             )}
 
             {reviewTabMounted && (
-              <div className={activeTab === 'review' ? 'flex h-full min-h-0 flex-col' : 'hidden h-full min-h-0 flex-col'}>
+              <div
+                className={
+                  activeTab === 'review'
+                    ? 'flex h-full min-h-0 flex-col'
+                    : 'hidden h-full min-h-0 flex-col'
+                }
+              >
                 <Suspense fallback={null}>
                   <HubReviewTab
                     sandboxId={sandboxId}
@@ -1520,7 +1652,9 @@ export function WorkspaceHubSheet({
               </SheetHeader>
 
               <div className="space-y-4 px-4 pt-4">
-                <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-3 ${commitTargetMode === 'current' ? 'border-push-edge-hover' : ''}`}>
+                <div
+                  className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-3 ${commitTargetMode === 'current' ? 'border-push-edge-hover' : ''}`}
+                >
                   <button
                     onClick={() => {
                       if (blockedByProtectMain) return;
@@ -1553,7 +1687,9 @@ export function WorkspaceHubSheet({
                   )}
                 </div>
 
-                <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-3 ${commitTargetMode === 'new' ? 'border-push-edge-hover' : ''}`}>
+                <div
+                  className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-3 ${commitTargetMode === 'new' ? 'border-push-edge-hover' : ''}`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <button
                       onClick={() => {
@@ -1573,7 +1709,8 @@ export function WorkspaceHubSheet({
                         <span className={HUB_TAG_CLASS}>from {currentBranchName}</span>
                       </div>
                       <p className="mt-1 text-xs text-push-fg-dim">
-                        Create a new branch from the current working tree, then commit and push there.
+                        Create a new branch from the current working tree, then commit and push
+                        there.
                       </p>
                     </button>
                     <span className={HUB_TAG_CLASS}>
@@ -1614,17 +1751,19 @@ export function WorkspaceHubSheet({
                     </button>
                   </div>
 
-                  {newBranchName && sanitizedNewBranchName !== newBranchName.toLowerCase().trim() && (
-                    <p className="mt-2 text-push-xs text-push-fg-dim">
-                      Will create: <span className="font-mono text-push-fg-secondary">{sanitizedNewBranchName || `${branchSuggestionPrefix}/update-workspace`}</span>
-                    </p>
-                  )}
+                  {newBranchName &&
+                    sanitizedNewBranchName !== newBranchName.toLowerCase().trim() && (
+                      <p className="mt-2 text-push-xs text-push-fg-dim">
+                        Will create:{' '}
+                        <span className="font-mono text-push-fg-secondary">
+                          {sanitizedNewBranchName || `${branchSuggestionPrefix}/update-workspace`}
+                        </span>
+                      </p>
+                    )}
                 </div>
 
                 <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} px-3 py-2.5`}>
-                  <p className="text-push-xs text-push-fg-dim">
-                    Commit message
-                  </p>
+                  <p className="text-push-xs text-push-fg-dim">Commit message</p>
                   <p className="mt-1 truncate text-sm text-push-fg-secondary">
                     {commitMessage.trim() || 'Enter a commit message in the bar above first.'}
                   </p>

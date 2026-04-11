@@ -21,18 +21,12 @@ import {
 interface PublishToGitHubSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (args: {
-    repoName: string;
-    description?: string;
-    isPrivate: boolean;
-  }) => Promise<void>;
+  onSubmit: (args: { repoName: string; description?: string; isPrivate: boolean }) => Promise<void>;
 }
 
-const ACTION_BUTTON_CLASS =
-  `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 flex-1 gap-2 px-3 text-sm disabled:opacity-60`;
+const ACTION_BUTTON_CLASS = `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 flex-1 gap-2 px-3 text-sm disabled:opacity-60`;
 
-const VISIBILITY_OPTION_CLASS =
-  `${HUB_PANEL_SUBTLE_SURFACE_CLASS} flex cursor-pointer items-start gap-3 px-3.5 py-3 transition-all duration-200`;
+const VISIBILITY_OPTION_CLASS = `${HUB_PANEL_SUBTLE_SURFACE_CLASS} flex cursor-pointer items-start gap-3 px-3.5 py-3 transition-all duration-200`;
 
 const ERROR_PANEL_CLASS =
   'rounded-[18px] border border-red-500/20 bg-[linear-gradient(180deg,rgba(70,23,23,0.18)_0%,rgba(31,11,11,0.34)_100%)] px-3.5 py-3';
@@ -44,11 +38,7 @@ function cleanToolMessage(message: string): string {
     .trim();
 }
 
-export function PublishToGitHubSheet({
-  open,
-  onOpenChange,
-  onSubmit,
-}: PublishToGitHubSheetProps) {
+export function PublishToGitHubSheet({ open, onOpenChange, onSubmit }: PublishToGitHubSheetProps) {
   const [repoName, setRepoName] = useState('');
   const [description, setDescription] = useState('');
   const [visibility, setVisibility] = useState<'private' | 'public'>('private');
@@ -66,12 +56,15 @@ export function PublishToGitHubSheet({
     setError(null);
   }, []);
 
-  const handleOpenChange = useCallback((next: boolean) => {
-    if (next) {
-      resetState();
-    }
-    onOpenChange(next);
-  }, [onOpenChange, resetState]);
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (next) {
+        resetState();
+      }
+      onOpenChange(next);
+    },
+    [onOpenChange, resetState],
+  );
 
   const handleSubmit = useCallback(async () => {
     if (!isValid || submitting) return;
@@ -93,7 +86,16 @@ export function PublishToGitHubSheet({
     } finally {
       setSubmitting(false);
     }
-  }, [description, isValid, onOpenChange, onSubmit, resetState, submitting, trimmedRepoName, visibility]);
+  }, [
+    description,
+    isValid,
+    onOpenChange,
+    onSubmit,
+    resetState,
+    submitting,
+    trimmedRepoName,
+    visibility,
+  ]);
 
   const handleCancel = useCallback(() => {
     resetState();
@@ -219,7 +221,8 @@ export function PublishToGitHubSheet({
 
           <div className="rounded-[18px] border border-push-edge bg-black/20 px-3.5 py-3">
             <p className="text-xs text-push-fg-dim">
-              Push will create the repository first, then try to push the current workspace branch. If there are no commits yet, the repository will still be created and connected.
+              Push will create the repository first, then try to push the current workspace branch.
+              If there are no commits yet, the repository will still be created and connected.
             </p>
           </div>
 

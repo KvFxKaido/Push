@@ -69,7 +69,10 @@ export async function fetchAuditorFileContexts(
   const candidates = filePaths
     .map((path) => ({ path, classification: classifyFilePath(path) }))
     .filter((c) => ELIGIBLE_CLASSIFICATIONS.has(c.classification))
-    .sort((a, b) => CLASSIFICATION_PRIORITY[a.classification] - CLASSIFICATION_PRIORITY[b.classification]);
+    .sort(
+      (a, b) =>
+        CLASSIFICATION_PRIORITY[a.classification] - CLASSIFICATION_PRIORITY[b.classification],
+    );
 
   if (candidates.length === 0) return [];
 

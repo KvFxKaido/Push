@@ -8,7 +8,7 @@ import {
 } from '@/components/chat/hub-styles';
 
 const SANDBOX_LIFETIME_MS = 30 * 60 * 1000; // 30 min (Modal container policy)
-const WARNING_THRESHOLD_MS = 5 * 60 * 1000;  // Warn at 5 min remaining
+const WARNING_THRESHOLD_MS = 5 * 60 * 1000; // Warn at 5 min remaining
 
 interface SandboxExpiryBannerProps {
   createdAt: number | null;
@@ -27,13 +27,21 @@ function formatRemaining(ms: number): string {
   return `${min}:${sec.toString().padStart(2, '0')}`;
 }
 
-export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRestart, onWarningThresholdReached }: SandboxExpiryBannerProps) {
+export function SandboxExpiryBanner({
+  createdAt,
+  sandboxId,
+  sandboxStatus,
+  onRestart,
+  onWarningThresholdReached,
+}: SandboxExpiryBannerProps) {
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
   const [downloading, setDownloading] = useState(false);
   const warningFiredRef = useRef(false);
 
   // Reset the one-shot flag when the sandbox changes (new session).
-  useEffect(() => { warningFiredRef.current = false; }, [sandboxId]);
+  useEffect(() => {
+    warningFiredRef.current = false;
+  }, [sandboxId]);
 
   // Tick every second to update countdown
   useEffect(() => {
@@ -87,12 +95,16 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
   // Expired
   if (remainingMs <= 0) {
     return (
-      <div className={`mx-3 mt-5 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-red-500/25`}>
+      <div
+        className={`mx-3 mt-5 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-red-500/25`}
+      >
         <div className="flex min-w-0 items-center gap-2">
           <Clock className="h-4 w-4 flex-shrink-0 text-red-400" />
           <div className="min-w-0">
             <p className="text-xs font-medium text-red-300">Workspace runtime expired</p>
-            <p className="text-push-2xs text-red-400/70">This temporary workspace runtime is no longer available.</p>
+            <p className="text-push-2xs text-red-400/70">
+              This temporary workspace runtime is no longer available.
+            </p>
           </div>
         </div>
         <button
@@ -110,7 +122,9 @@ export function SandboxExpiryBanner({ createdAt, sandboxId, sandboxStatus, onRes
   // Warning zone (5 min remaining)
   if (remainingMs <= WARNING_THRESHOLD_MS) {
     return (
-      <div className={`mx-3 mt-5 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-amber-500/25`}>
+      <div
+        className={`mx-3 mt-5 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-amber-500/25`}
+      >
         <div className="flex min-w-0 items-center gap-2">
           <Clock className="h-4 w-4 flex-shrink-0 text-amber-400" />
           <div className="min-w-0">

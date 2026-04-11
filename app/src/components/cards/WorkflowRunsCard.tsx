@@ -21,16 +21,16 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
     <div className={CARD_SHELL_CLASS}>
       {/* Header */}
       <div className={`px-3 py-2.5 flex items-center gap-2 ${checkToneBgClass(headerTone)}`}>
-        {data.runs.length === 0
-          ? <Play className="h-4 w-4 shrink-0 text-push-fg-dim" />
-          : renderCheckToneIcon(headerTone, 'h-4 w-4 shrink-0')}
+        {data.runs.length === 0 ? (
+          <Play className="h-4 w-4 shrink-0 text-push-fg-dim" />
+        ) : (
+          renderCheckToneIcon(headerTone, 'h-4 w-4 shrink-0')
+        )}
         <span className={`text-sm font-medium ${checkToneColorClass(headerTone)}`}>
           Workflow Runs
         </span>
         {data.workflow && (
-          <span className="text-push-xs text-push-fg-dim truncate">
-            {data.workflow}
-          </span>
+          <span className="text-push-xs text-push-fg-dim truncate">{data.workflow}</span>
         )}
         <span className="ml-auto text-push-xs text-push-fg-dim">
           {data.runs.length} run{data.runs.length !== 1 ? 's' : ''}
@@ -41,8 +41,16 @@ export function WorkflowRunsCard({ data }: WorkflowRunsCardProps) {
       {data.runs.length > 0 ? (
         <div className="px-3 py-2 space-y-1.5">
           {data.runs.map((run) => (
-            <div key={run.id} className={`${CARD_PANEL_SUBTLE_CLASS} flex min-h-[28px] items-start gap-2 px-2.5 py-2`}>
-              <div className="mt-0.5">{renderCheckToneIcon(getCheckTone(run.status, run.conclusion), 'h-3.5 w-3.5 shrink-0')}</div>
+            <div
+              key={run.id}
+              className={`${CARD_PANEL_SUBTLE_CLASS} flex min-h-[28px] items-start gap-2 px-2.5 py-2`}
+            >
+              <div className="mt-0.5">
+                {renderCheckToneIcon(
+                  getCheckTone(run.status, run.conclusion),
+                  'h-3.5 w-3.5 shrink-0',
+                )}
+              </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="text-push-base text-push-fg truncate">

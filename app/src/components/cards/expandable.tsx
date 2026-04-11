@@ -35,13 +35,7 @@ export function ExpandableCardPanel({
   if (!expanded) return null;
 
   return (
-    <div
-      className={cn(
-        'expand-in',
-        bordered && 'border-t border-push-edge',
-        className,
-      )}
-    >
+    <div className={cn('expand-in', bordered && 'border-t border-push-edge', className)}>
       {children}
     </div>
   );

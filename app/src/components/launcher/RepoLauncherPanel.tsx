@@ -65,11 +65,9 @@ type RepoBranchOption = {
   isProtected: boolean;
 };
 
-const LAUNCHER_CARD_CLASS =
-  `${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3.5 transition-all duration-200 hover:border-push-edge-hover`;
+const LAUNCHER_CARD_CLASS = `${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3.5 transition-all duration-200 hover:border-push-edge-hover`;
 
-const LAUNCHER_ACTION_BUTTON_CLASS =
-  `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-8 flex-1 justify-center px-2.5`;
+const LAUNCHER_ACTION_BUTTON_CLASS = `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-8 flex-1 justify-center px-2.5`;
 const SANDBOX_SESSION_LIFETIME_MS = 30 * 60 * 1000;
 const SANDBOX_SESSION_WARNING_MS = 5 * 60 * 1000;
 
@@ -135,9 +133,15 @@ export function RepoLauncherPanel({
   const [showAllRepos, setShowAllRepos] = useState(false);
   const [search, setSearch] = useState('');
   const [openRepoBranchMenu, setOpenRepoBranchMenu] = useState<string | null>(null);
-  const [repoBranchesByRepo, setRepoBranchesByRepo] = useState<Record<string, RepoBranchOption[]>>({});
-  const [repoBranchLoadingByRepo, setRepoBranchLoadingByRepo] = useState<Record<string, boolean>>({});
-  const [repoBranchErrorByRepo, setRepoBranchErrorByRepo] = useState<Record<string, string | null>>({});
+  const [repoBranchesByRepo, setRepoBranchesByRepo] = useState<Record<string, RepoBranchOption[]>>(
+    {},
+  );
+  const [repoBranchLoadingByRepo, setRepoBranchLoadingByRepo] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [repoBranchErrorByRepo, setRepoBranchErrorByRepo] = useState<Record<string, string | null>>(
+    {},
+  );
   const [branchCreateRepo, setBranchCreateRepo] = useState<RepoWithActivity | null>(null);
   const [sandboxRemainingMs, setSandboxRemainingMs] = useState<number | null>(null);
   const [appearanceRepo, setAppearanceRepoState] = useState<RepoWithActivity | null>(null);
@@ -160,25 +164,31 @@ export function RepoLauncherPanel({
     return () => window.clearInterval(intervalId);
   }, [sandboxSession?.createdAt, sandboxSession?.status]);
 
-  const loadBranchesForRepo = useCallback(async (repoFullName: string, force: boolean = false) => {
-    if (!force && (repoBranchLoadingByRepo[repoFullName] || repoBranchesByRepo[repoFullName]?.length)) {
-      return;
-    }
-    setRepoBranchLoadingByRepo((prev) => ({ ...prev, [repoFullName]: true }));
-    setRepoBranchErrorByRepo((prev) => ({ ...prev, [repoFullName]: null }));
-    try {
-      const { branches } = await fetchRepoBranches(repoFullName, 300);
-      setRepoBranchesByRepo((prev) => ({ ...prev, [repoFullName]: branches }));
-    } catch (err) {
-      setRepoBranchesByRepo((prev) => ({ ...prev, [repoFullName]: [] }));
-      setRepoBranchErrorByRepo((prev) => ({
-        ...prev,
-        [repoFullName]: err instanceof Error ? err.message : 'Failed to load branches',
-      }));
-    } finally {
-      setRepoBranchLoadingByRepo((prev) => ({ ...prev, [repoFullName]: false }));
-    }
-  }, [repoBranchLoadingByRepo, repoBranchesByRepo]);
+  const loadBranchesForRepo = useCallback(
+    async (repoFullName: string, force: boolean = false) => {
+      if (
+        !force &&
+        (repoBranchLoadingByRepo[repoFullName] || repoBranchesByRepo[repoFullName]?.length)
+      ) {
+        return;
+      }
+      setRepoBranchLoadingByRepo((prev) => ({ ...prev, [repoFullName]: true }));
+      setRepoBranchErrorByRepo((prev) => ({ ...prev, [repoFullName]: null }));
+      try {
+        const { branches } = await fetchRepoBranches(repoFullName, 300);
+        setRepoBranchesByRepo((prev) => ({ ...prev, [repoFullName]: branches }));
+      } catch (err) {
+        setRepoBranchesByRepo((prev) => ({ ...prev, [repoFullName]: [] }));
+        setRepoBranchErrorByRepo((prev) => ({
+          ...prev,
+          [repoFullName]: err instanceof Error ? err.message : 'Failed to load branches',
+        }));
+      } finally {
+        setRepoBranchLoadingByRepo((prev) => ({ ...prev, [repoFullName]: false }));
+      }
+    },
+    [repoBranchLoadingByRepo, repoBranchesByRepo],
+  );
 
   const repoChatMeta = useMemo(() => {
     const meta = new Map<string, RepoChatMeta>();
@@ -264,11 +274,13 @@ export function RepoLauncherPanel({
   const sandboxResumeMeta = useMemo(() => {
     if (!sandboxSession || sandboxSession.status === 'idle') return null;
     if (sandboxSession.status === 'ready') {
-      const isWarning = sandboxRemainingMs !== null && sandboxRemainingMs <= SANDBOX_SESSION_WARNING_MS;
+      const isWarning =
+        sandboxRemainingMs !== null && sandboxRemainingMs <= SANDBOX_SESSION_WARNING_MS;
       return {
-        detail: sandboxRemainingMs !== null
-          ? `Sandbox session active - ${formatRemainingDuration(Math.max(sandboxRemainingMs, 0))} left`
-          : 'Sandbox session active',
+        detail:
+          sandboxRemainingMs !== null
+            ? `Sandbox session active - ${formatRemainingDuration(Math.max(sandboxRemainingMs, 0))} left`
+            : 'Sandbox session active',
         detailClass: isWarning ? 'text-amber-300' : 'text-emerald-300',
       };
     }
@@ -290,222 +302,229 @@ export function RepoLauncherPanel({
     };
   }, [sandboxRemainingMs, sandboxSession]);
 
-  const renderRepoButton = useCallback((repo: RepoWithActivity) => {
-    const chatMeta = repoChatMeta.get(repo.full_name);
-    const isActiveRepo = activeRepo?.full_name === repo.full_name;
-    const activeBranch = isActiveRepo ? activeRepo?.current_branch : undefined;
-    const branchOptions = (() => {
-      const loaded = repoBranchesByRepo[repo.full_name] || [];
-      if (loaded.some((branch) => branch.name === repo.default_branch)) return loaded;
-      return [
-        {
-          name: repo.default_branch,
-          isDefault: true,
-          isProtected: false,
-        },
-        ...loaded,
-      ];
-    })();
-    const isBranchMenuOpen = openRepoBranchMenu === repo.full_name;
-    const branchesLoading = Boolean(repoBranchLoadingByRepo[repo.full_name]);
-    const branchesError = repoBranchErrorByRepo[repo.full_name] || null;
+  const renderRepoButton = useCallback(
+    (repo: RepoWithActivity) => {
+      const chatMeta = repoChatMeta.get(repo.full_name);
+      const isActiveRepo = activeRepo?.full_name === repo.full_name;
+      const activeBranch = isActiveRepo ? activeRepo?.current_branch : undefined;
+      const branchOptions = (() => {
+        const loaded = repoBranchesByRepo[repo.full_name] || [];
+        if (loaded.some((branch) => branch.name === repo.default_branch)) return loaded;
+        return [
+          {
+            name: repo.default_branch,
+            isDefault: true,
+            isProtected: false,
+          },
+          ...loaded,
+        ];
+      })();
+      const isBranchMenuOpen = openRepoBranchMenu === repo.full_name;
+      const branchesLoading = Boolean(repoBranchLoadingByRepo[repo.full_name]);
+      const branchesError = repoBranchErrorByRepo[repo.full_name] || null;
 
-    return (
-      <div
-        key={repo.id}
-        className={LAUNCHER_CARD_CLASS}
-      >
-        <div className="relative">
-          <button
-            onClick={() => onSelectRepo(repo)}
-            className="flex w-full flex-col gap-1.5 pr-10 text-left"
-          >
-            <div className="flex items-center gap-2">
-              <RepoAppearanceBadge
-                appearance={resolveRepoAppearance(repo.full_name)}
-                className="h-6 w-6 shrink-0 rounded-md"
-                iconClassName="h-3.5 w-3.5"
-              />
-              <span className="truncate text-sm font-medium text-push-fg">
-                {repo.name}
-              </span>
-              {repo.private && (
-                <Lock className="h-3 w-3 shrink-0 text-[#52525b]" />
-              )}
-              {repo.activity.has_new_activity && (
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-push-accent" />
-              )}
-            </div>
-
-            {activeBranch && activeBranch !== repo.default_branch && (
-              <span className={`${HUB_TAG_CLASS} w-fit gap-1 text-push-xs text-[#9db8df]`}>
-                <BranchWaveIcon className="h-3 w-3" />
-                <span className="max-w-[160px] truncate">{activeBranch}</span>
-              </span>
-            )}
-
-            {repo.description && (
-              <p className="line-clamp-1 text-xs text-[#788396]">
-                {repo.description}
-              </p>
-            )}
-
-            <div className="flex items-center gap-3 text-xs text-push-fg-dim">
-              {repo.language && (
-                <span className="flex items-center gap-1">
-                  <span
-                    className="inline-block h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: LANG_COLORS[repo.language] || '#8b8b8b' }}
-                  />
-                  {repo.language}
-                </span>
-              )}
-              {repo.activity.open_prs > 0 && (
-                <span className={`${HUB_TAG_CLASS} gap-1 text-[#58a6ff]`}>
-                  <PRThreadIcon className="h-3 w-3" />
-                  {repo.activity.open_prs}
-                </span>
-              )}
-              {repo.activity.recent_commits > 0 && (
-                <span className="flex items-center gap-1">
-                  <CommitPulseIcon className="h-3 w-3" />
-                  {repo.activity.recent_commits}
-                </span>
-              )}
-              {chatMeta && (
-                <span className={`${HUB_TAG_CLASS} gap-1 text-[#84bfff]`}>
-                  <HistoryStackIcon className="h-3 w-3" />
-                  {chatMeta.chatCount}
-                </span>
-              )}
-              <span>{timeAgo(repo.pushed_at)}</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setAppearanceRepoState(repo)}
-            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} absolute right-0 top-0 h-8 w-8 justify-center px-0 text-push-fg-secondary`}
-            aria-label={`Customize ${repo.name}`}
-            title="Customize repo"
-          >
-            <HubControlGlow />
-            <Palette className="relative z-10 h-3.5 w-3.5" />
-          </button>
-        </div>
-
-        <div className="mt-2 flex items-center gap-2">
-          <button
-            onClick={() => setBranchCreateRepo(repo)}
-            className={LAUNCHER_ACTION_BUTTON_CLASS}
-          >
-            <HubControlGlow />
-            <BranchWaveIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-dim" />
-            <span className="relative z-10">Create branch</span>
-          </button>
-
-          <DropdownMenu
-            open={isBranchMenuOpen}
-            onOpenChange={(open) => {
-              setOpenRepoBranchMenu(open ? repo.full_name : null);
-              if (open) {
-                void loadBranchesForRepo(repo.full_name);
-              }
-            }}
-          >
-            <DropdownMenuTrigger asChild>
-              <button className={`${LAUNCHER_ACTION_BUTTON_CLASS} justify-between text-[#9db8df]`}>
-                <HubControlGlow />
-                <span className="relative z-10 inline-flex min-w-0 items-center gap-1">
-                  <BranchWaveIcon className="h-3 w-3 text-push-fg-dim" />
-                  <span className="truncate">Open on branch</span>
-                </span>
-                <span className="relative z-10 truncate text-push-xs text-[#788396]">{repo.default_branch}</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              sideOffset={8}
-              className={`w-[240px] ${HUB_PANEL_SURFACE_CLASS}`}
+      return (
+        <div key={repo.id} className={LAUNCHER_CARD_CLASS}>
+          <div className="relative">
+            <button
+              onClick={() => onSelectRepo(repo)}
+              className="flex w-full flex-col gap-1.5 pr-10 text-left"
             >
-              <DropdownMenuLabel className="px-3 py-1.5 text-push-2xs font-medium uppercase tracking-wider text-push-fg-dim">
-                {repo.name} Branches
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator className="bg-push-edge" />
+              <div className="flex items-center gap-2">
+                <RepoAppearanceBadge
+                  appearance={resolveRepoAppearance(repo.full_name)}
+                  className="h-6 w-6 shrink-0 rounded-md"
+                  iconClassName="h-3.5 w-3.5"
+                />
+                <span className="truncate text-sm font-medium text-push-fg">{repo.name}</span>
+                {repo.private && <Lock className="h-3 w-3 shrink-0 text-[#52525b]" />}
+                {repo.activity.has_new_activity && (
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-push-accent" />
+                )}
+              </div>
 
-              {branchesLoading && (
-                <DropdownMenuItem disabled className="mx-1 flex items-center gap-2 rounded-full px-3 py-2 text-xs text-push-fg-dim">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Loading branches...
-                </DropdownMenuItem>
+              {activeBranch && activeBranch !== repo.default_branch && (
+                <span className={`${HUB_TAG_CLASS} w-fit gap-1 text-push-xs text-[#9db8df]`}>
+                  <BranchWaveIcon className="h-3 w-3" />
+                  <span className="max-w-[160px] truncate">{activeBranch}</span>
+                </span>
               )}
 
-              {!branchesLoading && branchesError && (
-                <>
-                  <DropdownMenuItem disabled className="mx-1 rounded-full px-3 py-2 text-xs text-red-400">
-                    Failed to load branches
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={(event) => {
-                      event.preventDefault();
-                      void loadBranchesForRepo(repo.full_name, true);
-                    }}
-                    className="mx-1 rounded-full px-3 py-2 text-xs text-push-link focus:bg-white/[0.04]"
-                  >
-                    Retry
-                  </DropdownMenuItem>
-                </>
+              {repo.description && (
+                <p className="line-clamp-1 text-xs text-[#788396]">{repo.description}</p>
               )}
 
-              {!branchesLoading && !branchesError && branchOptions.length === 0 && (
-                <DropdownMenuItem disabled className="mx-1 rounded-full px-3 py-2 text-xs text-push-fg-dim">
-                  No branches found
-                </DropdownMenuItem>
-              )}
-
-              {!branchesLoading && !branchesError && branchOptions.map((branch) => (
-                <DropdownMenuItem
-                  key={branch.name}
-                  onSelect={() => onSelectRepo(repo, branch.name)}
-                  className="mx-1 flex items-center gap-2 rounded-full px-3 py-2 focus:bg-white/[0.04]"
-                >
-                  <span className="min-w-0 flex-1 truncate text-xs text-push-fg-secondary">
-                    {branch.name}
+              <div className="flex items-center gap-3 text-xs text-push-fg-dim">
+                {repo.language && (
+                  <span className="flex items-center gap-1">
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: LANG_COLORS[repo.language] || '#8b8b8b' }}
+                    />
+                    {repo.language}
                   </span>
-                  {branch.isDefault && (
-                    <span className={`${HUB_TAG_CLASS} text-[#58a6ff]`}>
-                      default
-                    </span>
-                  )}
-                  {branch.isProtected && (
-                    <span className={`${HUB_TAG_CLASS} text-[#fca5a5]`}>
-                      protected
-                    </span>
-                  )}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                )}
+                {repo.activity.open_prs > 0 && (
+                  <span className={`${HUB_TAG_CLASS} gap-1 text-[#58a6ff]`}>
+                    <PRThreadIcon className="h-3 w-3" />
+                    {repo.activity.open_prs}
+                  </span>
+                )}
+                {repo.activity.recent_commits > 0 && (
+                  <span className="flex items-center gap-1">
+                    <CommitPulseIcon className="h-3 w-3" />
+                    {repo.activity.recent_commits}
+                  </span>
+                )}
+                {chatMeta && (
+                  <span className={`${HUB_TAG_CLASS} gap-1 text-[#84bfff]`}>
+                    <HistoryStackIcon className="h-3 w-3" />
+                    {chatMeta.chatCount}
+                  </span>
+                )}
+                <span>{timeAgo(repo.pushed_at)}</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAppearanceRepoState(repo)}
+              className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} absolute right-0 top-0 h-8 w-8 justify-center px-0 text-push-fg-secondary`}
+              aria-label={`Customize ${repo.name}`}
+              title="Customize repo"
+            >
+              <HubControlGlow />
+              <Palette className="relative z-10 h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              onClick={() => setBranchCreateRepo(repo)}
+              className={LAUNCHER_ACTION_BUTTON_CLASS}
+            >
+              <HubControlGlow />
+              <BranchWaveIcon className="relative z-10 h-3.5 w-3.5 text-push-fg-dim" />
+              <span className="relative z-10">Create branch</span>
+            </button>
+
+            <DropdownMenu
+              open={isBranchMenuOpen}
+              onOpenChange={(open) => {
+                setOpenRepoBranchMenu(open ? repo.full_name : null);
+                if (open) {
+                  void loadBranchesForRepo(repo.full_name);
+                }
+              }}
+            >
+              <DropdownMenuTrigger asChild>
+                <button
+                  className={`${LAUNCHER_ACTION_BUTTON_CLASS} justify-between text-[#9db8df]`}
+                >
+                  <HubControlGlow />
+                  <span className="relative z-10 inline-flex min-w-0 items-center gap-1">
+                    <BranchWaveIcon className="h-3 w-3 text-push-fg-dim" />
+                    <span className="truncate">Open on branch</span>
+                  </span>
+                  <span className="relative z-10 truncate text-push-xs text-[#788396]">
+                    {repo.default_branch}
+                  </span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                sideOffset={8}
+                className={`w-[240px] ${HUB_PANEL_SURFACE_CLASS}`}
+              >
+                <DropdownMenuLabel className="px-3 py-1.5 text-push-2xs font-medium uppercase tracking-wider text-push-fg-dim">
+                  {repo.name} Branches
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator className="bg-push-edge" />
+
+                {branchesLoading && (
+                  <DropdownMenuItem
+                    disabled
+                    className="mx-1 flex items-center gap-2 rounded-full px-3 py-2 text-xs text-push-fg-dim"
+                  >
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Loading branches...
+                  </DropdownMenuItem>
+                )}
+
+                {!branchesLoading && branchesError && (
+                  <>
+                    <DropdownMenuItem
+                      disabled
+                      className="mx-1 rounded-full px-3 py-2 text-xs text-red-400"
+                    >
+                      Failed to load branches
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={(event) => {
+                        event.preventDefault();
+                        void loadBranchesForRepo(repo.full_name, true);
+                      }}
+                      className="mx-1 rounded-full px-3 py-2 text-xs text-push-link focus:bg-white/[0.04]"
+                    >
+                      Retry
+                    </DropdownMenuItem>
+                  </>
+                )}
+
+                {!branchesLoading && !branchesError && branchOptions.length === 0 && (
+                  <DropdownMenuItem
+                    disabled
+                    className="mx-1 rounded-full px-3 py-2 text-xs text-push-fg-dim"
+                  >
+                    No branches found
+                  </DropdownMenuItem>
+                )}
+
+                {!branchesLoading &&
+                  !branchesError &&
+                  branchOptions.map((branch) => (
+                    <DropdownMenuItem
+                      key={branch.name}
+                      onSelect={() => onSelectRepo(repo, branch.name)}
+                      className="mx-1 flex items-center gap-2 rounded-full px-3 py-2 focus:bg-white/[0.04]"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-xs text-push-fg-secondary">
+                        {branch.name}
+                      </span>
+                      {branch.isDefault && (
+                        <span className={`${HUB_TAG_CLASS} text-[#58a6ff]`}>default</span>
+                      )}
+                      {branch.isProtected && (
+                        <span className={`${HUB_TAG_CLASS} text-[#fca5a5]`}>protected</span>
+                      )}
+                    </DropdownMenuItem>
+                  ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
-      </div>
-    );
-  }, [
-    activeRepo,
-    loadBranchesForRepo,
-    onSelectRepo,
-    openRepoBranchMenu,
-    repoBranchErrorByRepo,
-    repoBranchLoadingByRepo,
-    repoBranchesByRepo,
-    repoChatMeta,
-    resolveRepoAppearance,
-  ]);
+      );
+    },
+    [
+      activeRepo,
+      loadBranchesForRepo,
+      onSelectRepo,
+      openRepoBranchMenu,
+      repoBranchErrorByRepo,
+      repoBranchLoadingByRepo,
+      repoBranchesByRepo,
+      repoChatMeta,
+      resolveRepoAppearance,
+    ],
+  );
 
   return (
     <>
       <div className="space-y-4">
         {error && (
-          <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-red-500/20 bg-red-500/5 px-3 py-2`}>
+          <div
+            className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-red-500/20 bg-red-500/5 px-3 py-2`}
+          >
             <p className="text-xs text-red-200">
               Couldn&apos;t load repositories from GitHub: {error}
             </p>
@@ -528,9 +547,7 @@ export function RepoLauncherPanel({
                 >
                   <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-[#c4b5fd]" />
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-push-fg">
-                      {conv.title}
-                    </p>
+                    <p className="truncate text-sm font-medium text-push-fg">{conv.title}</p>
                     <p className="mt-0.5 text-push-xs text-push-fg-dim">
                       {timeAgoWithAgo(conv.lastMessageAt)}
                     </p>
@@ -585,13 +602,19 @@ export function RepoLauncherPanel({
         )}
 
         {/* ---- Action buttons ---- */}
-        <div className={`grid gap-2 ${
-          mode === 'chat'
-            ? (onStartWorkspace ? 'grid-cols-2' : 'grid-cols-1')
-            : (onStartWorkspace && onStartChat) ? 'grid-cols-3'
-            : (onStartWorkspace || onStartChat) ? 'grid-cols-2'
-            : 'grid-cols-1'
-        }`}>
+        <div
+          className={`grid gap-2 ${
+            mode === 'chat'
+              ? onStartWorkspace
+                ? 'grid-cols-2'
+                : 'grid-cols-1'
+              : (onStartWorkspace && onStartChat)
+                ? 'grid-cols-3'
+                : onStartWorkspace || onStartChat
+                  ? 'grid-cols-2'
+                  : 'grid-cols-1'
+          }`}
+        >
           {mode !== 'chat' && onStartChat && (
             <button
               onClick={onStartChat}
@@ -632,7 +655,9 @@ export function RepoLauncherPanel({
               <Loader2 className="h-5 w-5 animate-spin text-[#52525b]" />
             </div>
           ) : recentRepos.length === 0 ? (
-            <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} space-y-3 border-dashed px-3 py-4 text-center text-xs text-[#788396]`}>
+            <div
+              className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} space-y-3 border-dashed px-3 py-4 text-center text-xs text-[#788396]`}
+            >
               <p>No repositories yet.</p>
               {onPublishToGitHub && (
                 <button
@@ -647,9 +672,7 @@ export function RepoLauncherPanel({
               )}
             </div>
           ) : (
-            <div className="space-y-1.5 stagger-in">
-              {recentRepos.map(renderRepoButton)}
-            </div>
+            <div className="space-y-1.5 stagger-in">{recentRepos.map(renderRepoButton)}</div>
           )}
         </section>
 
@@ -666,13 +689,13 @@ export function RepoLauncherPanel({
               />
             </div>
             {filteredRepos.length === 0 ? (
-              <div className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-dashed px-3 py-4 text-center text-xs text-[#788396]`}>
+              <div
+                className={`${HUB_PANEL_SUBTLE_SURFACE_CLASS} border-dashed px-3 py-4 text-center text-xs text-[#788396]`}
+              >
                 No repos match your search.
               </div>
             ) : (
-              <div className="space-y-1.5 stagger-in">
-                {filteredRepos.map(renderRepoButton)}
-              </div>
+              <div className="space-y-1.5 stagger-in">{filteredRepos.map(renderRepoButton)}</div>
             )}
           </section>
         )}

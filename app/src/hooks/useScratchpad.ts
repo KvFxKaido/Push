@@ -25,9 +25,7 @@ export interface ScratchpadMemory {
 }
 
 function getStorageKey(repoFullName: string | null): string {
-  return repoFullName
-    ? `push-scratchpad:${repoFullName}`
-    : GLOBAL_STORAGE_KEY;
+  return repoFullName ? `push-scratchpad:${repoFullName}` : GLOBAL_STORAGE_KEY;
 }
 
 function readStoredScratchpadContent(repoFullName: string | null): string {
@@ -44,15 +42,11 @@ export interface ScratchpadState {
 }
 
 function getMemoryStorageKey(repoFullName: string | null): string {
-  return repoFullName
-    ? `${MEMORY_STORAGE_KEY}:${repoFullName}`
-    : `${MEMORY_STORAGE_KEY}:global`;
+  return repoFullName ? `${MEMORY_STORAGE_KEY}:${repoFullName}` : `${MEMORY_STORAGE_KEY}:global`;
 }
 
 function getActiveMemoryKey(repoFullName: string | null): string {
-  return repoFullName
-    ? `${ACTIVE_MEMORY_KEY}:${repoFullName}`
-    : `${ACTIVE_MEMORY_KEY}:global`;
+  return repoFullName ? `${ACTIVE_MEMORY_KEY}:${repoFullName}` : `${ACTIVE_MEMORY_KEY}:global`;
 }
 
 function createMemoryId(): string {
@@ -72,7 +66,7 @@ function validateMemories(data: unknown): ScratchpadMemory[] {
       typeof item.id === 'string' &&
       typeof item.name === 'string' &&
       typeof item.content === 'string' &&
-      typeof item.updatedAt === 'number'
+      typeof item.updatedAt === 'number',
   );
 }
 
@@ -214,18 +208,24 @@ export function useScratchpad(repoFullName: string | null = null) {
   const open = useCallback(() => setIsOpen(true), []);
   const close = useCallback(() => setIsOpen(false), []);
 
-  const detachActiveMemoryIfNeeded = useCallback((nextContent: string) => {
-    if (!activeMemoryId) return;
-    const activeMemory = memories.find((memory) => memory.id === activeMemoryId);
-    if (!activeMemory || activeMemory.content !== nextContent) {
-      setActiveMemoryId(null);
-    }
-  }, [activeMemoryId, memories]);
+  const detachActiveMemoryIfNeeded = useCallback(
+    (nextContent: string) => {
+      if (!activeMemoryId) return;
+      const activeMemory = memories.find((memory) => memory.id === activeMemoryId);
+      if (!activeMemory || activeMemory.content !== nextContent) {
+        setActiveMemoryId(null);
+      }
+    },
+    [activeMemoryId, memories],
+  );
 
-  const setContent = useCallback((nextContent: string) => {
-    setContentState(nextContent);
-    detachActiveMemoryIfNeeded(nextContent);
-  }, [detachActiveMemoryIfNeeded]);
+  const setContent = useCallback(
+    (nextContent: string) => {
+      setContentState(nextContent);
+      detachActiveMemoryIfNeeded(nextContent);
+    },
+    [detachActiveMemoryIfNeeded],
+  );
 
   const clear = useCallback(() => {
     setContentState('');
@@ -234,20 +234,26 @@ export function useScratchpad(repoFullName: string | null = null) {
     }
   }, [activeMemoryId]);
 
-  const append = useCallback((text: string) => {
-    setContentState((prev) => {
-      const trimmed = prev.trim();
-      return trimmed ? `${trimmed}\n\n${text}` : text;
-    });
-    if (activeMemoryId) {
-      setActiveMemoryId(null);
-    }
-  }, [activeMemoryId]);
+  const append = useCallback(
+    (text: string) => {
+      setContentState((prev) => {
+        const trimmed = prev.trim();
+        return trimmed ? `${trimmed}\n\n${text}` : text;
+      });
+      if (activeMemoryId) {
+        setActiveMemoryId(null);
+      }
+    },
+    [activeMemoryId],
+  );
 
-  const replace = useCallback((text: string) => {
-    setContentState(text);
-    detachActiveMemoryIfNeeded(text);
-  }, [detachActiveMemoryIfNeeded]);
+  const replace = useCallback(
+    (text: string) => {
+      setContentState(text);
+      detachActiveMemoryIfNeeded(text);
+    },
+    [detachActiveMemoryIfNeeded],
+  );
 
   const saveMemory = useCallback(
     (name: string) => {
@@ -259,9 +265,7 @@ export function useScratchpad(repoFullName: string | null = null) {
         const existing = prev.find((memory) => memory.name === trimmed);
         if (existing) {
           const updated = prev.map((memory) =>
-            memory.id === existing.id
-              ? { ...memory, content, updatedAt: now }
-              : memory
+            memory.id === existing.id ? { ...memory, content, updatedAt: now } : memory,
           );
           setActiveMemoryId(existing.id);
           return updated;
@@ -301,16 +305,19 @@ export function useScratchpad(repoFullName: string | null = null) {
     [memories, repoFullName],
   );
 
-  const deleteMemory = useCallback((id: string) => {
-    const wasActive = activeMemoryId === id;
-    setMemories((prev) => prev.filter((memory) => memory.id !== id));
-    if (wasActive) {
-      setContentState(readStoredScratchpadContent(repoFullName));
-      setActiveMemoryId(null);
-      return;
-    }
-    setActiveMemoryId((prev) => (prev === id ? null : prev));
-  }, [activeMemoryId, repoFullName]);
+  const deleteMemory = useCallback(
+    (id: string) => {
+      const wasActive = activeMemoryId === id;
+      setMemories((prev) => prev.filter((memory) => memory.id !== id));
+      if (wasActive) {
+        setContentState(readStoredScratchpadContent(repoFullName));
+        setActiveMemoryId(null);
+        return;
+      }
+      setActiveMemoryId((prev) => (prev === id ? null : prev));
+    },
+    [activeMemoryId, repoFullName],
+  );
 
   const hasContent = content.trim().length > 0;
 

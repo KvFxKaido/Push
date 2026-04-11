@@ -4,10 +4,17 @@ import type {
   VerificationRequirementStatus,
   VerificationRuntimeState,
 } from '@/types';
-import { extractCommandRules, type VerificationPolicy, type VerificationRule } from './verification-policy';
+import {
+  extractCommandRules,
+  type VerificationPolicy,
+  type VerificationRule,
+} from './verification-policy';
 
 export type VerificationBoundary = 'completion' | 'commit';
-export type VerificationGateOutcome = Exclude<VerificationRequirementStatus, 'pending' | 'not_applicable'>;
+export type VerificationGateOutcome = Exclude<
+  VerificationRequirementStatus,
+  'pending' | 'not_applicable'
+>;
 export type VerificationMutationSource = 'coder' | 'tool';
 
 export interface VerificationEvaluation {
@@ -30,7 +37,10 @@ function commandsMatch(requiredCommand: string | undefined, executedCommand: str
   return executed === required || executed.includes(required);
 }
 
-function initialRuleStatus(rule: VerificationRule, backendTouched: boolean): VerificationRequirementStatus {
+function initialRuleStatus(
+  rule: VerificationRule,
+  backendTouched: boolean,
+): VerificationRequirementStatus {
   if (rule.kind === 'gate') return 'not_applicable';
   if (rule.scope === 'backend' && !backendTouched) return 'not_applicable';
   return 'pending';
@@ -130,16 +140,18 @@ export function hydrateVerificationRuntimeState(
   timestamp = Date.now(),
 ): VerificationRuntimeState {
   const backendTouched = existing?.backendTouched ?? false;
-  const previousById = new Map(existing?.requirements.map((requirement) => [requirement.id, requirement]) ?? []);
+  const previousById = new Map(
+    existing?.requirements.map((requirement) => [requirement.id, requirement]) ?? [],
+  );
 
   const requirements = policy.rules.map((rule) => {
     const previous = previousById.get(rule.id);
     if (
-      !previous
-      || previous.kind !== rule.kind
-      || previous.scope !== rule.scope
-      || previous.command !== rule.command
-      || previous.gate !== rule.gate
+      !previous ||
+      previous.kind !== rule.kind ||
+      previous.scope !== rule.scope ||
+      previous.command !== rule.command ||
+      previous.gate !== rule.gate
     ) {
       return toRequirementState(rule, timestamp, backendTouched);
     }
@@ -223,9 +235,19 @@ export function recordVerificationMutation(
 
     if (requirement.kind === 'gate') {
       if (options.source === 'coder') {
-        return withTimestamp(requirement, 'pending', 'Pending post-coder gate evaluation.', timestamp);
+        return withTimestamp(
+          requirement,
+          'pending',
+          'Pending post-coder gate evaluation.',
+          timestamp,
+        );
       }
-      return withTimestamp(requirement, 'not_applicable', 'No coder gate required after direct tool mutation.', timestamp);
+      return withTimestamp(
+        requirement,
+        'not_applicable',
+        'No coder gate required after direct tool mutation.',
+        timestamp,
+      );
     }
 
     return requirement;
@@ -247,11 +269,11 @@ export function activateVerificationGate(
 ): VerificationRuntimeState {
   return {
     ...state,
-    requirements: state.requirements.map((requirement) => (
+    requirements: state.requirements.map((requirement) =>
       requirement.kind === 'gate' && requirement.gate === gate
         ? withTimestamp(requirement, 'pending', detail, timestamp)
-        : requirement
-    )),
+        : requirement,
+    ),
     lastUpdatedAt: timestamp,
   };
 }
@@ -265,11 +287,11 @@ export function recordVerificationGateResult(
 ): VerificationRuntimeState {
   return {
     ...state,
-    requirements: state.requirements.map((requirement) => (
+    requirements: state.requirements.map((requirement) =>
       requirement.kind === 'gate' && requirement.gate === gate
         ? withTimestamp(requirement, outcome, detail, timestamp)
-        : requirement
-    )),
+        : requirement,
+    ),
     lastUpdatedAt: timestamp,
   };
 }
@@ -284,11 +306,7 @@ export function recordVerificationCommandResult(
   timestamp = Date.now(),
 ): VerificationRuntimeState {
   const outcome: VerificationRequirementStatus =
-    options.exitCode === 0
-      ? 'passed'
-      : options.exitCode < 0
-        ? 'inconclusive'
-        : 'failed';
+    options.exitCode === 0 ? 'passed' : options.exitCode < 0 ? 'inconclusive' : 'failed';
 
   const requirements = state.requirements.map((requirement) => {
     if (requirement.kind !== 'command') return requirement;
@@ -322,13 +340,9 @@ export function evaluateVerificationState(
 function summarizeRequirement(requirement: VerificationRequirementState): string {
   switch (requirement.kind) {
     case 'command':
-      return requirement.command
-        ? `Run \`${requirement.command}\``
-        : requirement.label;
+      return requirement.command ? `Run \`${requirement.command}\`` : requirement.label;
     case 'gate':
-      return requirement.gate
-        ? `Satisfy the ${requirement.gate} gate`
-        : requirement.label;
+      return requirement.gate ? `Satisfy the ${requirement.gate} gate` : requirement.label;
     default:
       return requirement.label;
   }
@@ -343,11 +357,7 @@ export function formatVerificationBlock(
       ? 'Runtime verification blocked the commit flow because these requirements are still unmet:'
       : 'Runtime verification blocked the completion claim because these requirements are still unmet:';
 
-  const lines = [
-    '[VERIFICATION_BLOCK]',
-    heading,
-    '',
-  ];
+  const lines = ['[VERIFICATION_BLOCK]', heading, ''];
 
   for (const requirement of evaluation.missing) {
     lines.push(
@@ -358,6 +368,10 @@ export function formatVerificationBlock(
     }
   }
 
-  lines.push('', 'Continue the work until the runtime requirements are satisfied.', '[/VERIFICATION_BLOCK]');
+  lines.push(
+    '',
+    'Continue the work until the runtime requirements are satisfied.',
+    '[/VERIFICATION_BLOCK]',
+  );
   return lines.join('\n');
 }

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { SystemPromptBuilder, PROMPT_SECTION_IDS, diffSnapshots, formatSnapshotDiff } from './system-prompt-builder';
+import {
+  SystemPromptBuilder,
+  PROMPT_SECTION_IDS,
+  diffSnapshots,
+  formatSnapshotDiff,
+} from './system-prompt-builder';
 
 describe('SystemPromptBuilder', () => {
   it('builds empty string when no sections are set', () => {
@@ -7,9 +12,7 @@ describe('SystemPromptBuilder', () => {
   });
 
   it('builds a single section', () => {
-    const result = new SystemPromptBuilder()
-      .set('identity', 'You are a coding assistant.')
-      .build();
+    const result = new SystemPromptBuilder().set('identity', 'You are a coding assistant.').build();
     expect(result).toBe('You are a coding assistant.');
   });
 
@@ -26,16 +29,14 @@ describe('SystemPromptBuilder', () => {
 
   it('allows custom priority override', () => {
     const result = new SystemPromptBuilder()
-      .set('guidelines', 'Guidelines.', 5)  // override to come before identity
+      .set('guidelines', 'Guidelines.', 5) // override to come before identity
       .set('identity', 'Identity.', 10)
       .build();
     expect(result).toBe('Guidelines.\n\nIdentity.');
   });
 
   it('trims content', () => {
-    const result = new SystemPromptBuilder()
-      .set('identity', '  Hello  ')
-      .build();
+    const result = new SystemPromptBuilder().set('identity', '  Hello  ').build();
     expect(result).toBe('Hello');
   });
 
@@ -60,9 +61,7 @@ describe('SystemPromptBuilder', () => {
   });
 
   it('removes section when set to empty', () => {
-    const builder = new SystemPromptBuilder()
-      .set('identity', 'Hello')
-      .set('identity', '');
+    const builder = new SystemPromptBuilder().set('identity', 'Hello').set('identity', '');
     expect(builder.has('identity')).toBe(false);
   });
 
@@ -75,9 +74,7 @@ describe('SystemPromptBuilder', () => {
   });
 
   it('append creates section when missing', () => {
-    const result = new SystemPromptBuilder()
-      .append('identity', 'Created via append.')
-      .build();
+    const result = new SystemPromptBuilder().append('identity', 'Created via append.').build();
     expect(result).toBe('Created via append.');
   });
 
@@ -98,9 +95,7 @@ describe('SystemPromptBuilder', () => {
   });
 
   it('prepend creates section when missing', () => {
-    const result = new SystemPromptBuilder()
-      .prepend('voice', 'New voice section.')
-      .build();
+    const result = new SystemPromptBuilder().prepend('voice', 'New voice section.').build();
     expect(result).toBe('New voice section.');
   });
 
@@ -114,16 +109,15 @@ describe('SystemPromptBuilder', () => {
   });
 
   it('get returns content or undefined', () => {
-    const builder = new SystemPromptBuilder()
-      .set('identity', 'Hello');
+    const builder = new SystemPromptBuilder().set('identity', 'Hello');
     expect(builder.get('identity')).toBe('Hello');
     expect(builder.get('voice')).toBeUndefined();
   });
 
   it('sizes returns char counts per section', () => {
     const sizes = new SystemPromptBuilder()
-      .set('identity', 'Hello')     // 5 chars
-      .set('voice', 'Hi there')     // 8 chars
+      .set('identity', 'Hello') // 5 chars
+      .set('voice', 'Hi there') // 8 chars
       .sizes();
     expect(sizes).toEqual({ identity: 5, voice: 8 });
   });
@@ -277,7 +271,9 @@ describe('diffSnapshots', () => {
 
 describe('formatSnapshotDiff', () => {
   it('returns null when nothing changed', () => {
-    expect(formatSnapshotDiff({ added: [], removed: [], changed: [], unchanged: ['identity'] })).toBeNull();
+    expect(
+      formatSnapshotDiff({ added: [], removed: [], changed: [], unchanged: ['identity'] }),
+    ).toBeNull();
   });
 
   it('formats added/changed/removed compactly', () => {

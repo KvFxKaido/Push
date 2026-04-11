@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { createDefaultApprovalGates, describeToolCapabilities, buildCapabilityApprovalPrompt } from './approval-gates';
+import {
+  createDefaultApprovalGates,
+  describeToolCapabilities,
+  buildCapabilityApprovalPrompt,
+} from './approval-gates';
 import { CapabilityLedger } from './capabilities';
 import type { ToolHookContext } from '@/types';
 

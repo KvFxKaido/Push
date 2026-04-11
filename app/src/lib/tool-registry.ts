@@ -67,7 +67,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Fetching from GitHub...',
     protocolSignature: 'repo_grep(repo, path, pattern, branch?)',
     protocolDescription: 'Search within a single GitHub file with line context',
-    exampleJson: '{"tool": "repo_grep", "args": {"repo": "owner/repo", "path": "src/app.ts", "pattern": "buildPrompt"}}',
+    exampleJson:
+      '{"tool": "repo_grep", "args": {"repo": "owner/repo", "path": "src/app.ts", "pattern": "buildPrompt"}}',
   },
   {
     canonicalName: 'list_directory',
@@ -127,7 +128,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Fetching from GitHub...',
     protocolSignature: 'workflow_run(repo, workflow, ref?, inputs?)',
     protocolDescription: 'Trigger a workflow_dispatch event',
-    exampleJson: '{"tool": "workflow_run", "args": {"repo": "owner/repo", "workflow": "deploy.yml"}}',
+    exampleJson:
+      '{"tool": "workflow_run", "args": {"repo": "owner/repo", "workflow": "deploy.yml"}}',
   },
   {
     canonicalName: 'get_workflow_runs',
@@ -157,7 +159,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Fetching from GitHub...',
     protocolSignature: 'pr_create(repo, title, body, head, base)',
     protocolDescription: 'Create a pull request',
-    exampleJson: '{"tool": "pr_create", "args": {"repo": "owner/repo", "title": "Add feature", "body": "Summary", "head": "feature-branch", "base": "main"}}',
+    exampleJson:
+      '{"tool": "pr_create", "args": {"repo": "owner/repo", "title": "Add feature", "body": "Summary", "head": "feature-branch", "base": "main"}}',
   },
   {
     canonicalName: 'merge_pr',
@@ -177,7 +180,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Fetching from GitHub...',
     protocolSignature: 'branch_delete(repo, branch_name)',
     protocolDescription: 'Delete a branch',
-    exampleJson: '{"tool": "branch_delete", "args": {"repo": "owner/repo", "branch_name": "feature-branch"}}',
+    exampleJson:
+      '{"tool": "branch_delete", "args": {"repo": "owner/repo", "branch_name": "feature-branch"}}',
   },
   {
     canonicalName: 'check_pr_mergeable',
@@ -197,7 +201,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Fetching from GitHub...',
     protocolSignature: 'pr_find(repo, head_branch, base_branch?)',
     protocolDescription: 'Find an open PR for a branch',
-    exampleJson: '{"tool": "pr_find", "args": {"repo": "owner/repo", "head_branch": "feature-branch"}}',
+    exampleJson:
+      '{"tool": "pr_find", "args": {"repo": "owner/repo", "head_branch": "feature-branch"}}',
   },
   {
     canonicalName: 'delegate_coder',
@@ -205,9 +210,11 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     source: 'delegate',
     readOnly: false,
     statusLabel: 'Delegating to Coder...',
-    protocolSignature: 'coder(task?, tasks?, files?, acceptanceCriteria?, declaredCapabilities?, intent?, deliverable?, knownContext?, constraints?)',
+    protocolSignature:
+      'coder(task?, tasks?, files?, acceptanceCriteria?, declaredCapabilities?, intent?, deliverable?, knownContext?, constraints?)',
     protocolDescription: 'Delegate coding work to the Coder agent',
-    exampleJson: '{"tool": "coder", "args": {"task": "Implement the requested change", "files": ["src/app.ts"], "declaredCapabilities": ["repo:read", "repo:write", "sandbox:test"], "deliverable": "Ship the fix with passing tests", "knownContext": ["Explorer found the bug in src/app.ts:84"]}}',
+    exampleJson:
+      '{"tool": "coder", "args": {"task": "Implement the requested change", "files": ["src/app.ts"], "declaredCapabilities": ["repo:read", "repo:write", "sandbox:test"], "deliverable": "Ship the fix with passing tests", "knownContext": ["Explorer found the bug in src/app.ts:84"]}}',
   },
   {
     canonicalName: 'delegate_explorer',
@@ -217,7 +224,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Delegating to Explorer...',
     protocolSignature: 'explorer(task, files?, intent?, deliverable?, knownContext?, constraints?)',
     protocolDescription: 'Delegate read-only investigation to the Explorer agent',
-    exampleJson: '{"tool": "explorer", "args": {"task": "Trace the auth flow", "files": ["src/auth.ts"], "deliverable": "Return the refresh trigger with file and line references"}}',
+    exampleJson:
+      '{"tool": "explorer", "args": {"task": "Trace the auth flow", "files": ["src/auth.ts"], "deliverable": "Return the refresh trigger with file and line references"}}',
   },
   {
     canonicalName: 'plan_tasks',
@@ -226,8 +234,10 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     readOnly: false,
     statusLabel: 'Executing task graph...',
     protocolSignature: 'plan_tasks(tasks)',
-    protocolDescription: 'Execute a dependency-aware task graph with parallel Explorer and sequential Coder dispatch',
-    exampleJson: '{"tool": "plan_tasks", "args": {"tasks": [{"id": "explore-auth", "agent": "explorer", "task": "Trace auth flow", "files": ["src/auth.ts"], "dependsOn": []}, {"id": "fix-auth", "agent": "coder", "task": "Fix the auth bug", "dependsOn": ["explore-auth"], "deliverable": "Auth tests pass"}]}}',
+    protocolDescription:
+      'Execute a dependency-aware task graph with parallel Explorer and sequential Coder dispatch',
+    exampleJson:
+      '{"tool": "plan_tasks", "args": {"tasks": [{"id": "explore-auth", "agent": "explorer", "task": "Trace auth flow", "files": ["src/auth.ts"], "dependsOn": []}, {"id": "fix-auth", "agent": "coder", "task": "Fix the auth bug", "dependsOn": ["explore-auth"], "deliverable": "Auth tests pass"}]}}',
   },
   {
     canonicalName: 'sandbox_exec',
@@ -279,7 +289,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Sandbox operation...',
     protocolSignature: 'edit_range(path, start_line, end_line, content, expected_version?)',
     protocolDescription: 'Replace a contiguous line range',
-    exampleJson: '{"tool": "edit_range", "args": {"path": "/workspace/src/app.ts", "start_line": 10, "end_line": 12, "content": "replacement"}}',
+    exampleJson:
+      '{"tool": "edit_range", "args": {"path": "/workspace/src/app.ts", "start_line": 10, "end_line": 12, "content": "replacement"}}',
   },
   {
     canonicalName: 'sandbox_search_replace',
@@ -289,7 +300,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Sandbox operation...',
     protocolSignature: 'replace(path, search, replace, expected_version?)',
     protocolDescription: 'Replace a unique substring match in one file',
-    exampleJson: '{"tool": "replace", "args": {"path": "/workspace/src/app.ts", "search": "oldValue", "replace": "newValue"}}',
+    exampleJson:
+      '{"tool": "replace", "args": {"path": "/workspace/src/app.ts", "search": "oldValue", "replace": "newValue"}}',
   },
   {
     canonicalName: 'sandbox_edit_file',
@@ -299,7 +311,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Sandbox operation...',
     protocolSignature: 'edit(path, edits, expected_version?)',
     protocolDescription: 'Edit a file using hashline refs',
-    exampleJson: '{"tool": "edit", "args": {"path": "/workspace/src/app.ts", "edits": [{"op": "replace_line", "ref": "abc1234", "content": "replacement"}]}}',
+    exampleJson:
+      '{"tool": "edit", "args": {"path": "/workspace/src/app.ts", "edits": [{"op": "replace_line", "ref": "abc1234", "content": "replacement"}]}}',
   },
   {
     canonicalName: 'sandbox_write_file',
@@ -309,7 +322,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Writing file...',
     protocolSignature: 'write(path, content, expected_version?)',
     protocolDescription: 'Write or overwrite a file in the sandbox',
-    exampleJson: '{"tool": "write", "args": {"path": "/workspace/src/app.ts", "content": "file content"}}',
+    exampleJson:
+      '{"tool": "write", "args": {"path": "/workspace/src/app.ts", "content": "file content"}}',
   },
   {
     canonicalName: 'sandbox_list_dir',
@@ -380,7 +394,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     readOnly: false,
     statusLabel: 'Sandbox operation...',
     protocolSignature: 'verify()',
-    protocolDescription: 'Install dependencies if needed, then run available typecheck/test commands',
+    protocolDescription:
+      'Install dependencies if needed, then run available typecheck/test commands',
     exampleJson: '{"tool": "verify", "args": {}}',
   },
   {
@@ -431,7 +446,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Sandbox operation...',
     protocolSignature: 'patch(edits, dryRun?, diagnostics?, checks?, rollbackOnFailure?)',
     protocolDescription: 'Apply a multi-file hashline or line-range patchset transactionally',
-    exampleJson: '{"tool": "patch", "args": {"edits": [{"path": "/workspace/src/app.ts", "start_line": 10, "end_line": 12, "content": "replacement"}]}}',
+    exampleJson:
+      '{"tool": "patch", "args": {"edits": [{"path": "/workspace/src/app.ts", "start_line": 10, "end_line": 12, "content": "replacement"}]}}',
   },
   {
     canonicalName: 'set_scratchpad',
@@ -481,7 +497,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     statusLabel: 'Processing...',
     protocolSignature: 'ask(question, options, multiSelect?)',
     protocolDescription: 'Ask the user a structured question with options',
-    exampleJson: '{"tool": "ask", "args": {"question": "Which option?", "options": [{"id": "a", "label": "Option A"}]}}',
+    exampleJson:
+      '{"tool": "ask", "args": {"question": "Which option?", "options": [{"id": "a", "label": "Option A"}]}}',
   },
 ] as const;
 
@@ -546,8 +563,7 @@ export function getToolCanonicalNames(options?: {
   source?: ToolRegistrySource;
   readOnly?: boolean;
 }): string[] {
-  return TOOL_SPECS
-    .filter((spec) => (options?.source ? spec.source === options.source : true))
+  return TOOL_SPECS.filter((spec) => (options?.source ? spec.source === options.source : true))
     .filter((spec) => (options?.readOnly !== undefined ? spec.readOnly === options.readOnly : true))
     .map((spec) => spec.canonicalName);
 }
@@ -556,19 +572,18 @@ export function getToolPublicNames(options?: {
   source?: ToolRegistrySource;
   readOnly?: boolean;
 }): string[] {
-  return TOOL_SPECS
-    .filter((spec) => (options?.source ? spec.source === options.source : true))
+  return TOOL_SPECS.filter((spec) => (options?.source ? spec.source === options.source : true))
     .filter((spec) => (options?.readOnly !== undefined ? spec.readOnly === options.readOnly : true))
     .map((spec) => spec.publicName);
 }
 
-export function getRecognizedToolNames(options?: {
-  source?: ToolRegistrySource;
-}): string[] {
+export function getRecognizedToolNames(options?: { source?: ToolRegistrySource }): string[] {
   if (!options?.source) return [...KNOWN_TOOL_INPUT_NAMES];
-  return TOOL_SPECS
-    .filter((spec) => spec.source === options.source)
-    .flatMap((spec) => [spec.canonicalName, spec.publicName, ...(spec.aliases ?? [])]);
+  return TOOL_SPECS.filter((spec) => spec.source === options.source).flatMap((spec) => [
+    spec.canonicalName,
+    spec.publicName,
+    ...(spec.aliases ?? []),
+  ]);
 }
 
 export function escapeToolNameForRegex(name: string): string {

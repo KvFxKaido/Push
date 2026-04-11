@@ -1,27 +1,18 @@
 const CACHE_NAME = 'push-v6';
-const urlsToCache = [
-  '/',
-  '/index.html',
-  '/manifest.json'
-];
+const urlsToCache = ['/', '/index.html', '/manifest.json'];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(urlsToCache))
-  );
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(urlsToCache)));
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((names) =>
-      Promise.all(
-        names
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
-      )
-    )
+    caches
+      .keys()
+      .then((names) =>
+        Promise.all(names.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name))),
+      ),
   );
   self.clients.claim();
 });
@@ -32,13 +23,13 @@ self.addEventListener('fetch', (event) => {
 
   // Never cache API calls
   if (
-    request.url.includes('/api/')
-    || request.url.includes('/ollama/')
-    || request.url.includes('/mistral/')
-    || request.url.includes('/openrouter/')
-    || request.url.includes('/zai/')
-    || request.url.includes('/google/')
-    || request.url.includes('/opencode/')
+    request.url.includes('/api/') ||
+    request.url.includes('/ollama/') ||
+    request.url.includes('/mistral/') ||
+    request.url.includes('/openrouter/') ||
+    request.url.includes('/zai/') ||
+    request.url.includes('/google/') ||
+    request.url.includes('/opencode/')
   ) {
     return;
   }
@@ -58,7 +49,7 @@ self.addEventListener('fetch', (event) => {
           }
           return response;
         })
-        .catch(() => caches.match(request).then((cached) => cached || caches.match('/index.html')))
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('/index.html'))),
     );
     return;
   }
@@ -66,15 +57,17 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(request).then((cached) => {
       // Return cached, but also fetch fresh in background
-      const fetched = fetch(request).then((response) => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-        }
-        return response;
-      }).catch(() => cached);
+      const fetched = fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
+          return response;
+        })
+        .catch(() => cached);
 
       return cached || fetched;
-    })
+    }),
   );
 });

@@ -47,7 +47,12 @@ describe('resolveHarnessSettings', () => {
   beforeEach(() => {
     metricsState.toolCallMetrics = {
       count: 0,
-      reasons: { truncated: 0, validation_failed: 0, malformed_json: 0, natural_language_intent: 0 },
+      reasons: {
+        truncated: 0,
+        validation_failed: 0,
+        malformed_json: 0,
+        natural_language_intent: 0,
+      },
       byProvider: {},
     };
     metricsState.contextMetrics = {
@@ -76,15 +81,30 @@ describe('resolveHarnessSettings', () => {
   it('returns adapted settings instead of the base profile when thresholds are hit', () => {
     metricsState.toolCallMetrics = {
       count: 3,
-      reasons: { truncated: 0, validation_failed: 3, malformed_json: 0, natural_language_intent: 0 },
+      reasons: {
+        truncated: 0,
+        validation_failed: 3,
+        malformed_json: 0,
+        natural_language_intent: 0,
+      },
       byProvider: {
         openrouter: {
           count: 3,
-          reasons: { truncated: 0, validation_failed: 3, malformed_json: 0, natural_language_intent: 0 },
+          reasons: {
+            truncated: 0,
+            validation_failed: 3,
+            malformed_json: 0,
+            natural_language_intent: 0,
+          },
           byModel: {
             'openai/gpt-4o': {
               count: 3,
-              reasons: { truncated: 0, validation_failed: 3, malformed_json: 0, natural_language_intent: 0 },
+              reasons: {
+                truncated: 0,
+                validation_failed: 3,
+                malformed_json: 0,
+                natural_language_intent: 0,
+              },
               byTool: {},
             },
           },

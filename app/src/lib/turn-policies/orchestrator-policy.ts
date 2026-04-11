@@ -24,45 +24,48 @@ export function responseClaimsCompletion(response: string): boolean {
 
   // Must contain completion language
   const hasCompletionClaim =
-    /\b(done|completed|finished|implemented|all\s+changes?\s+(are|have been)\s+made)\b/i.test(trimmed);
+    /\b(done|completed|finished|implemented|all\s+changes?\s+(are|have been)\s+made)\b/i.test(
+      trimmed,
+    );
   if (!hasCompletionClaim) return false;
 
   // Check if this is a question or conditional
-  const isConditional =
-    /\b(if|would you|shall I|should I|do you want|let me know)\b/i.test(trimmed);
+  const isConditional = /\b(if|would you|shall I|should I|do you want|let me know)\b/i.test(
+    trimmed,
+  );
   if (isConditional) return false;
 
   return true;
 }
 
-function detectUngroundedCompletion(
-  response: string,
-  messages: readonly ChatMessage[],
-): boolean {
+function detectUngroundedCompletion(response: string, messages: readonly ChatMessage[]): boolean {
   const trimmed = response.trim();
 
   if (!responseClaimsCompletion(trimmed)) return false;
 
   // Look for grounding evidence in the response itself
   const hasArtifactInResponse =
-    /\b(PR|pull request|commit|merge|branch|diff|sandbox_diff|sandbox_prepare_commit|sandbox_push)\b/i.test(trimmed)
-    || /\b(file|\.ts|\.js|\.py)\b.*\b(modified|created|updated|changed)\b/i.test(trimmed)
-    || /\b(modified|created|updated|changed)\b.*\b(file|\.ts|\.js|\.py)\b/i.test(trimmed);
+    /\b(PR|pull request|commit|merge|branch|diff|sandbox_diff|sandbox_prepare_commit|sandbox_push)\b/i.test(
+      trimmed,
+    ) ||
+    /\b(file|\.ts|\.js|\.py)\b.*\b(modified|created|updated|changed)\b/i.test(trimmed) ||
+    /\b(modified|created|updated|changed)\b.*\b(file|\.ts|\.js|\.py)\b/i.test(trimmed);
   if (hasArtifactInResponse) return false;
 
   // Look for delegation results in recent messages (last 6)
   const recent = messages.slice(-6);
-  const hasDelegationResult = recent.some((m) =>
-    m.role === 'user'
-    && (m.content.includes('[Tool Result — delegate_coder]')
-      || m.content.includes('[Tool Result — delegate_explorer]')
-      || m.content.includes('[TOOL_RESULT')
-      || m.content.includes('[Coder completed')
-      || m.content.includes('[CODER_RESULT]')
-      || m.content.includes('[Explorer completed')
-      || m.content.includes('[EXPLORER_RESULT]')
-      || m.content.includes('sandbox_diff')
-      || m.content.includes('Acceptance Criteria]')),
+  const hasDelegationResult = recent.some(
+    (m) =>
+      m.role === 'user' &&
+      (m.content.includes('[Tool Result — delegate_coder]') ||
+        m.content.includes('[Tool Result — delegate_explorer]') ||
+        m.content.includes('[TOOL_RESULT') ||
+        m.content.includes('[Coder completed') ||
+        m.content.includes('[CODER_RESULT]') ||
+        m.content.includes('[Explorer completed') ||
+        m.content.includes('[EXPLORER_RESULT]') ||
+        m.content.includes('sandbox_diff') ||
+        m.content.includes('Acceptance Criteria]')),
   );
   if (hasDelegationResult) return false;
 

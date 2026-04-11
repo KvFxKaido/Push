@@ -16,8 +16,17 @@ import { getToolPublicName, getToolPublicNames } from './tool-registry';
 import { buildModelCapabilityAwarenessBlock } from './model-capabilities';
 import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
 import { buildSessionCapabilityBlock } from './workspace-context';
-import { SystemPromptBuilder, diffSnapshots, formatSnapshotDiff, type PromptSnapshot } from './system-prompt-builder';
-import { SHARED_SAFETY_SECTION, SHARED_OPERATIONAL_CONSTRAINTS, ORCHESTRATOR_SIGNAL_EFFICIENCY } from './system-prompt-sections';
+import {
+  SystemPromptBuilder,
+  diffSnapshots,
+  formatSnapshotDiff,
+  type PromptSnapshot,
+} from './system-prompt-builder';
+import {
+  SHARED_SAFETY_SECTION,
+  SHARED_OPERATIONAL_CONSTRAINTS,
+  ORCHESTRATOR_SIGNAL_EFFICIENCY,
+} from './system-prompt-sections';
 import {
   getPushTracer,
   injectTraceHeaders,
@@ -37,8 +46,6 @@ export {
 
 import type { StreamProviderConfig, StreamUsage, ChunkMetadata } from './orchestrator-streaming';
 import type { ActiveProvider } from './orchestrator-provider-routing';
-
-
 
 // --- Imports from extracted modules ---
 import {
@@ -92,7 +99,10 @@ function buildContextDigest(removed: ChatMessage[]): string {
 /**
  * Classify what caused summarization pressure: tool output, long messages, or a mix.
  */
-function classifySummarizationCause(messages: ChatMessage[], recentBoundary: number): SummarizationCause {
+function classifySummarizationCause(
+  messages: ChatMessage[],
+  recentBoundary: number,
+): SummarizationCause {
   let toolResults = 0;
   let longMessages = 0;
 
@@ -147,7 +157,7 @@ function manageContext(
   });
 
   // Find first user message index (to pin it)
-  const firstUserIdx = messages.findIndex(m => m.role === 'user' && !m.isToolResult);
+  const firstUserIdx = messages.findIndex((m) => m.role === 'user' && !m.isToolResult);
 
   // Phase 1: Summarize old verbose content (walk from oldest to newest, skip recent tail)
   const result = [...messages];
@@ -160,7 +170,7 @@ function manageContext(
     const summarized = compactChatMessage(msg);
     const after = estimateMessageTokens(summarized);
     result[i] = summarized;
-    currentTokens -= (before - after);
+    currentTokens -= before - after;
   }
 
   // Phase 2: Remove oldest non-pinned messages with a digest fallback.
@@ -168,8 +178,16 @@ function manageContext(
   // for Gemini this means we summarize at 88K but only drop at 800K.
   if (currentTokens <= budget.targetTokens) {
     const cause = classifySummarizationCause(messages, recentBoundary);
-    recordContextMetric({ phase: 'summarization', beforeTokens: totalTokens, afterTokens: currentTokens, provider, cause });
-    console.log(`[Push] Context managed via summarization: ${totalTokens} → ${currentTokens} tokens`);
+    recordContextMetric({
+      phase: 'summarization',
+      beforeTokens: totalTokens,
+      afterTokens: currentTokens,
+      provider,
+      cause,
+    });
+    console.log(
+      `[Push] Context managed via summarization: ${totalTokens} → ${currentTokens} tokens`,
+    );
     return result;
   }
 
@@ -185,7 +203,12 @@ function manageContext(
     if (protectedIdx.has(i) || toRemove.has(i)) continue;
 
     // Keep tool call/result paired for coherence.
-    if (result[i].isToolCall && i + 1 < result.length && result[i + 1]?.isToolResult && !protectedIdx.has(i + 1)) {
+    if (
+      result[i].isToolCall &&
+      i + 1 < result.length &&
+      result[i + 1]?.isToolResult &&
+      !protectedIdx.has(i + 1)
+    ) {
       toRemove.add(i);
       toRemove.add(i + 1);
       removed.push(result[i], result[i + 1]);
@@ -242,14 +265,28 @@ function manageContext(
       hardResult.splice(1, 1);
     }
     const hardAfter = estimateContextTokens(hardResult);
-    recordContextMetric({ phase: 'hard_trim', beforeTokens: totalTokens, afterTokens: hardAfter, provider, messagesDropped: messages.length - hardResult.length });
+    recordContextMetric({
+      phase: 'hard_trim',
+      beforeTokens: totalTokens,
+      afterTokens: hardAfter,
+      provider,
+      messagesDropped: messages.length - hardResult.length,
+    });
     console.log(`[Push] Context managed (hard fallback): ${totalTokens} → ${hardAfter} tokens`);
     return hardResult;
   }
 
   const keptTokens = estimateContextTokens(kept);
-  recordContextMetric({ phase: 'digest_drop', beforeTokens: totalTokens, afterTokens: keptTokens, provider, messagesDropped: toRemove.size });
-  console.log(`[Push] Context managed with digest: ${totalTokens} → ${keptTokens} tokens (${messages.length} → ${kept.length} messages)`);
+  recordContextMetric({
+    phase: 'digest_drop',
+    beforeTokens: totalTokens,
+    afterTokens: keptTokens,
+    provider,
+    messagesDropped: toRemove.size,
+  });
+  console.log(
+    `[Push] Context managed with digest: ${totalTokens} → ${keptTokens} tokens (${messages.length} → ${kept.length} messages)`,
+  );
   return kept;
 }
 
@@ -298,11 +335,11 @@ function buildOrchestratorToolInstructions(): string {
 
 You can emit multiple tool calls in one response. The runtime splits them into parallel reads and an optional trailing mutation:
 - Read-only calls (${[
-  ...getToolPublicNames({ source: 'github', readOnly: true }),
-  ...getToolPublicNames({ source: 'sandbox', readOnly: true }),
-  getToolPublicName('web_search'),
-  getToolPublicName('read_scratchpad'),
-].join(', ')}) execute in parallel.
+    ...getToolPublicNames({ source: 'github', readOnly: true }),
+    ...getToolPublicNames({ source: 'sandbox', readOnly: true }),
+    getToolPublicName('web_search'),
+    getToolPublicName('read_scratchpad'),
+  ].join(', ')}) execute in parallel.
 - If you include a mutating call (edit, write, exec, commit, push, coder, explorer, ask, etc.), place it LAST — it runs after all reads complete.
 - Maximum 6 parallel read-only calls per turn. If you need more, split across turns.
 
@@ -469,8 +506,13 @@ export const ORCHESTRATOR_SYSTEM_PROMPT = buildOrchestratorBasePrompt();
  */
 const _lastPromptSnapshots = new Map<string, PromptSnapshot>();
 
-function getPromptSnapshotKey(messages: ChatMessage[], workspaceContext?: WorkspaceContext): string {
-  const firstUserMessage = messages.find((message) => message.role === 'user' && !message.isToolResult);
+function getPromptSnapshotKey(
+  messages: ChatMessage[],
+  workspaceContext?: WorkspaceContext,
+): string {
+  const firstUserMessage = messages.find(
+    (message) => message.role === 'user' && !message.isToolResult,
+  );
   if (firstUserMessage) {
     return `user:${firstUserMessage.id}`;
   }
@@ -484,7 +526,7 @@ function getPromptSnapshotKey(messages: ChatMessage[], workspaceContext?: Worksp
 interface LLMMessageContentText {
   type: 'text';
   text: string;
-  cache_control?: { type: "ephemeral" };
+  cache_control?: { type: 'ephemeral' };
 }
 
 interface LLMMessageContentImage {
@@ -539,7 +581,8 @@ export function buildUserIdentityBlock(profile?: UserProfile): string {
   }
   if (hasBio) {
     // Escape delimiter-breaking attempts (same pattern as scratchpad)
-    const escaped = profile.bio.trim()
+    const escaped = profile.bio
+      .trim()
       .replace(/\[USER IDENTITY\]/gi, '[USER IDENTITY\u200B]')
       .replace(/\[\/USER IDENTITY\]/gi, '[/USER IDENTITY\u200B]');
     lines.push(`Context: ${escaped}`);
@@ -583,19 +626,24 @@ function toLLMMessages(
     const profile = getUserProfile();
     const identityBlock = buildUserIdentityBlock(profile);
     const approvalBlock = buildApprovalModeBlock(getApprovalMode());
-    const chatInstructionsBlock = workspaceContext?.mode === 'chat'
-      ? buildChatInstructionsBlock(profile)
-      : '';
-    builder.set('user_context', [identityBlock, chatInstructionsBlock, approvalBlock].filter(Boolean).join('\n\n'));
+    const chatInstructionsBlock =
+      workspaceContext?.mode === 'chat' ? buildChatInstructionsBlock(profile) : '';
+    builder.set(
+      'user_context',
+      [identityBlock, chatInstructionsBlock, approvalBlock].filter(Boolean).join('\n\n'),
+    );
 
     // Model capability awareness
     if (providerType && providerModel) {
       const hasImageAttachments = messages.some((message) =>
         Boolean(message.attachments?.some((attachment) => attachment.type === 'image')),
       );
-      builder.set('capabilities', buildModelCapabilityAwarenessBlock(providerType, providerModel, {
-        hasImageAttachments,
-      }));
+      builder.set(
+        'capabilities',
+        buildModelCapabilityAwarenessBlock(providerType, providerModel, {
+          hasImageAttachments,
+        }),
+      );
     }
 
     // Workspace description + GitHub tool protocol
@@ -612,7 +660,9 @@ function toLLMMessages(
     }
 
     // Session-level verification policy (from workspace context)
-    const verificationPolicyBlock = formatVerificationPolicyBlock(workspaceContext?.verificationPolicy);
+    const verificationPolicyBlock = formatVerificationPolicyBlock(
+      workspaceContext?.verificationPolicy,
+    );
     if (verificationPolicyBlock) {
       builder.append('guidelines', verificationPolicyBlock);
     }
@@ -673,8 +723,13 @@ function toLLMMessages(
   const cacheable = providerType === 'openrouter';
   const llmMessages: LLMMessage[] = [
     cacheable
-      ? { role: "system", content: [{ type: "text", text: systemContent, cache_control: { type: "ephemeral" } }] as LLMMessageContent[] }
-      : { role: "system", content: systemContent },
+      ? {
+          role: 'system',
+          content: [
+            { type: 'text', text: systemContent, cache_control: { type: 'ephemeral' } },
+          ] as LLMMessageContent[],
+        }
+      : { role: 'system', content: systemContent },
   ];
 
   // Smart context management — summarize old messages instead of dropping
@@ -730,15 +785,17 @@ function toLLMMessages(
   // Active for providers that support cache_control (OpenRouter, Mistral).
   if (cacheable && llmMessages.length > 0) {
     for (let i = llmMessages.length - 1; i >= 0; i--) {
-      if (llmMessages[i].role === "user") {
+      if (llmMessages[i].role === 'user') {
         const lastMsg = llmMessages[i];
-        if (typeof lastMsg.content === "string") {
-          lastMsg.content = [{ type: "text", text: lastMsg.content, cache_control: { type: "ephemeral" } }];
+        if (typeof lastMsg.content === 'string') {
+          lastMsg.content = [
+            { type: 'text', text: lastMsg.content, cache_control: { type: 'ephemeral' } },
+          ];
         } else if (Array.isArray(lastMsg.content)) {
           // Already an array (e.g. from attachments), tag the last part
           const lastPart = lastMsg.content[lastMsg.content.length - 1];
-          if (lastPart.type === "text") {
-            lastPart.cache_control = { type: "ephemeral" };
+          if (lastPart.type === 'text') {
+            lastPart.cache_control = { type: 'ephemeral' };
           }
         }
         break;
@@ -843,7 +900,7 @@ function createChunkedEmitter(
   emit: (chunk: string, meta?: ChunkMetadata) => void,
   options?: { minChunkSize?: number; flushIntervalMs?: number },
 ): ChunkedEmitter {
-  const MIN_CHUNK_SIZE = options?.minChunkSize ?? 4;  // Min chars before emitting
+  const MIN_CHUNK_SIZE = options?.minChunkSize ?? 4; // Min chars before emitting
   const FLUSH_INTERVAL_MS = options?.flushIntervalMs ?? 50; // Max time to hold tokens
 
   let buffer = '';
@@ -904,7 +961,6 @@ interface AutoRetryConfig {
   backoffMs?: number;
 }
 
-
 export async function streamSSEChat(
   config: StreamProviderConfig,
   messages: ChatMessage[],
@@ -922,7 +978,7 @@ export async function streamSSEChat(
 ): Promise<void> {
   const maxAttempts = autoRetry?.maxAttempts ?? 1;
   const backoffMs = autoRetry?.backoffMs ?? 1000;
-  
+
   let lastError: Error | undefined;
   let tokensEmitted = false;
 
@@ -936,15 +992,29 @@ export async function streamSSEChat(
     tokensEmitted = false;
     try {
       return await streamSSEChatOnce(
-        config, messages, trackedOnToken, onDone, onError, onThinkingToken,
-        workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, signal, onPreCompact,
+        config,
+        messages,
+        trackedOnToken,
+        onDone,
+        onError,
+        onThinkingToken,
+        workspaceContext,
+        hasSandbox,
+        systemPromptOverride,
+        scratchpadContent,
+        signal,
+        onPreCompact,
       );
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
 
       // Don't retry on auth errors or user aborts
-      if (lastError.message.includes('key') || lastError.message.includes('auth') ||
-          lastError.message.includes('Unauthorized') || signal?.aborted) {
+      if (
+        lastError.message.includes('key') ||
+        lastError.message.includes('auth') ||
+        lastError.message.includes('Unauthorized') ||
+        signal?.aborted
+      ) {
         throw lastError;
       }
 
@@ -955,13 +1025,14 @@ export async function streamSSEChat(
       }
 
       // Check if this is a timeout error worth retrying
-      const isTimeout = lastError.message.includes('timeout') ||
-                        lastError.message.includes('stall') ||
-                        lastError.message.includes('no data');
+      const isTimeout =
+        lastError.message.includes('timeout') ||
+        lastError.message.includes('stall') ||
+        lastError.message.includes('no data');
 
       if (attempt < maxAttempts && isTimeout) {
         console.log(`[Push] Retry attempt ${attempt}/${maxAttempts} after ${backoffMs}ms...`);
-        await new Promise(r => setTimeout(r, backoffMs * attempt));
+        await new Promise((r) => setTimeout(r, backoffMs * attempt));
         continue;
       }
 
@@ -1005,356 +1076,382 @@ async function streamSSEChatOnce(
   } = config;
 
   const tracer = getPushTracer('push.model');
-  return tracer.startActiveSpan('model.stream', {
-    kind: SpanKind.CLIENT,
-    attributes: {
-      'push.provider': providerType || 'unknown',
-      'push.model': model,
-      'push.message_count': messages.length,
-      'push.has_sandbox': Boolean(hasSandbox),
-      'push.workspace_mode': workspaceContext?.mode || 'unknown',
+  return tracer.startActiveSpan(
+    'model.stream',
+    {
+      kind: SpanKind.CLIENT,
+      attributes: {
+        'push.provider': providerType || 'unknown',
+        'push.model': model,
+        'push.message_count': messages.length,
+        'push.has_sandbox': Boolean(hasSandbox),
+        'push.workspace_mode': workspaceContext?.mode || 'unknown',
+      },
     },
-  }, async (span) => {
-  const controller = new AbortController();
-  type AbortReason = 'connect' | 'idle' | 'user' | 'stall' | 'total' | null;
-  let abortReason: AbortReason = null;
+    async (span) => {
+      const controller = new AbortController();
+      type AbortReason = 'connect' | 'idle' | 'user' | 'stall' | 'total' | null;
+      let abortReason: AbortReason = null;
 
-  const onExternalAbort = () => {
-    abortReason = 'user';
-    controller.abort();
-  };
-  signal?.addEventListener('abort', onExternalAbort);
-
-  // Timers
-  let connectTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
-    abortReason = 'connect';
-    controller.abort();
-  }, connectTimeoutMs);
-
-  let totalTimer: ReturnType<typeof setTimeout> | undefined;
-  if (totalTimeoutMs) {
-    totalTimer = setTimeout(() => {
-      abortReason = 'total';
-      controller.abort();
-    }, totalTimeoutMs);
-  }
-
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  const resetIdleTimer = () => {
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      abortReason = 'idle';
-      controller.abort();
-    }, idleTimeoutMs);
-  };
-
-  let stallTimer: ReturnType<typeof setTimeout> | undefined;
-  const resetStallTimer = () => {
-    if (!stallTimeoutMs) return;
-    clearTimeout(stallTimer);
-    stallTimer = setTimeout(() => {
-      abortReason = 'stall';
-      controller.abort();
-    }, stallTimeoutMs);
-  };
-
-  let chunkCount = 0;
-  let contentChars = 0;
-  let thinkingChars = 0;
-  let nativeToolCallCount = 0;
-
-  const finishSuccess = (spanUsage?: StreamUsage) => {
-    setSpanAttributes(span, {
-      'push.abort_reason': abortReason || undefined,
-      'push.stream.chunk_count': chunkCount,
-      'push.stream.content_chars': contentChars,
-      'push.stream.thinking_chars': thinkingChars,
-      'push.stream.native_tool_call_count': nativeToolCallCount,
-      'push.usage.input_tokens': spanUsage?.inputTokens,
-      'push.usage.output_tokens': spanUsage?.outputTokens,
-      'push.usage.total_tokens': spanUsage?.totalTokens,
-    });
-    span.setStatus({ code: SpanStatusCode.OK });
-  };
-
-  try {
-    const requestUrl = apiUrlOverride || apiUrl;
-    const requestId = createRequestId('chat');
-    setSpanAttributes(span, {
-      'push.request_id': requestId,
-      'push.request_url': requestUrl,
-    });
-    console.log(`[Push] POST ${requestUrl} (model: ${model}, request: ${requestId})`);
-
-    let requestBody: Record<string, unknown> = {
-      model,
-      messages: toLLMMessages(messages, workspaceContext, hasSandbox, systemPromptOverride, scratchpadContent, providerType, model, onPreCompact),
-      stream: true,
-    };
-
-    if (bodyTransform) {
-      requestBody = bodyTransform(requestBody);
-    }
-
-      const requestHeaders: Record<string, string> = {
-        'Content-Type': 'application/json',
-        [REQUEST_ID_HEADER]: requestId,
-        ...(extraHeaders ?? {}),
+      const onExternalAbort = () => {
+        abortReason = 'user';
+        controller.abort();
       };
-      if (authHeader !== null) {
-        requestHeaders.Authorization = authHeader ?? `Bearer ${apiKey}`;
+      signal?.addEventListener('abort', onExternalAbort);
+
+      // Timers
+      let connectTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+        abortReason = 'connect';
+        controller.abort();
+      }, connectTimeoutMs);
+
+      let totalTimer: ReturnType<typeof setTimeout> | undefined;
+      if (totalTimeoutMs) {
+        totalTimer = setTimeout(() => {
+          abortReason = 'total';
+          controller.abort();
+        }, totalTimeoutMs);
       }
-      injectTraceHeaders(requestHeaders);
 
-      const response = await fetch(requestUrl, {
-        method: 'POST',
-        headers: requestHeaders,
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      const resetIdleTimer = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          abortReason = 'idle';
+          controller.abort();
+        }, idleTimeoutMs);
+      };
 
-    clearTimeout(connectTimer);
-    connectTimer = undefined;
-    resetIdleTimer();
-    if (stallTimeoutMs) resetStallTimer();
+      let stallTimer: ReturnType<typeof setTimeout> | undefined;
+      const resetStallTimer = () => {
+        if (!stallTimeoutMs) return;
+        clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => {
+          abortReason = 'stall';
+          controller.abort();
+        }, stallTimeoutMs);
+      };
 
-    if (!response.ok) {
-      span.setAttribute('http.response.status_code', response.status);
-      const body = await response.text().catch(() => '');
-      let detail = '';
+      let chunkCount = 0;
+      let contentChars = 0;
+      let thinkingChars = 0;
+      let nativeToolCallCount = 0;
+
+      const finishSuccess = (spanUsage?: StreamUsage) => {
+        setSpanAttributes(span, {
+          'push.abort_reason': abortReason || undefined,
+          'push.stream.chunk_count': chunkCount,
+          'push.stream.content_chars': contentChars,
+          'push.stream.thinking_chars': thinkingChars,
+          'push.stream.native_tool_call_count': nativeToolCallCount,
+          'push.usage.input_tokens': spanUsage?.inputTokens,
+          'push.usage.output_tokens': spanUsage?.outputTokens,
+          'push.usage.total_tokens': spanUsage?.totalTokens,
+        });
+        span.setStatus({ code: SpanStatusCode.OK });
+      };
+
       try {
-        const parsed = JSON.parse(body);
-        detail = parseError(parsed, body.slice(0, 200));
-      } catch {
-        detail = body ? body.slice(0, 200) : 'empty body';
-      }
-      // Strip HTML error pages (e.g. Cloudflare 403/503 pages) — show a clean message instead
-      if (/<\s*html[\s>]/i.test(detail) || /<\s*!doctype/i.test(detail)) {
-        detail = `HTTP ${response.status} (the server returned an HTML error page instead of JSON)`;
-      }
-      console.error(`[Push] ${name} error: ${response.status}`, detail);
-      const alreadyPrefixed = detail.toLowerCase().startsWith(name.toLowerCase());
-      throw new Error(alreadyPrefixed ? detail : `${name} ${response.status}: ${detail}`);
-    }
+        const requestUrl = apiUrlOverride || apiUrl;
+        const requestId = createRequestId('chat');
+        setSpanAttributes(span, {
+          'push.request_id': requestId,
+          'push.request_url': requestUrl,
+        });
+        console.log(`[Push] POST ${requestUrl} (model: ${model}, request: ${requestId})`);
 
-    span.setAttribute('http.response.status_code', response.status);
+        let requestBody: Record<string, unknown> = {
+          model,
+          messages: toLLMMessages(
+            messages,
+            workspaceContext,
+            hasSandbox,
+            systemPromptOverride,
+            scratchpadContent,
+            providerType,
+            model,
+            onPreCompact,
+          ),
+          stream: true,
+        };
 
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('No response body');
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-    const chunker = createChunkedEmitter(onToken);
-    const parser = createThinkTokenParser((token) => chunker.push(token), onThinkingToken);
-    let usage: StreamUsage | undefined;
-
-    // Compatibility bridge: some providers may emit OpenAI-style `delta.tool_calls`
-    // even when we are not sending `tools[]` (prompt-engineered mode). Accumulate
-    // those deltas and re-emit them as our fenced JSON tool blocks so the existing
-    // text-based tool dispatch path still works.
-    // Only tool names in KNOWN_TOOL_NAMES are converted — anything else (e.g.
-    // Google Gemini's internal "node_source") is silently dropped to prevent
-    // leaking raw API data into the chat.
-
-    const pendingNativeToolCalls = new Map<number, { name: string; args: string }>();
-    const flushNativeToolCalls = () => {
-      if (pendingNativeToolCalls.size === 0) return;
-      for (const [, tc] of pendingNativeToolCalls) {
-        if (!tc.name && !tc.args) continue;
-        if (tc.name) {
-          // Only convert tool calls that match our prompt-engineered tool
-          // protocol.  Unknown names (e.g. Gemini's "node_source") are
-          // internal model machinery — drop them regardless of payload size.
-          if (!KNOWN_TOOL_NAMES.has(tc.name)) {
-            console.warn(`[Push] Native tool call "${tc.name}" is not a known tool — dropped`);
-            continue;
-          }
-          try {
-            const parsedArgs = tc.args ? JSON.parse(tc.args) : {};
-            parser.push(`\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: parsedArgs })}\n\`\`\`\n`);
-          } catch {
-            // If arguments are malformed/incomplete, still emit a tool shell so
-            // malformed-call diagnostics can guide the model to retry.
-            parser.push(`\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: {} })}\n\`\`\`\n`);
-          }
-        } else if (tc.args) {
-          // No function name — never push raw args directly to the parser.
-          // That leaks unformatted API data into the chat output.
-          console.warn('[Push] Native tool call with no function name — args dropped:', tc.args.slice(0, 200));
+        if (bodyTransform) {
+          requestBody = bodyTransform(requestBody);
         }
-      }
-      pendingNativeToolCalls.clear();
-    };
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+        const requestHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          [REQUEST_ID_HEADER]: requestId,
+          ...(extraHeaders ?? {}),
+        };
+        if (authHeader !== null) {
+          requestHeaders.Authorization = authHeader ?? `Bearer ${apiKey}`;
+        }
+        injectTraceHeaders(requestHeaders);
 
-      chunkCount++;
-      resetIdleTimer();
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+        const response = await fetch(requestUrl, {
+          method: 'POST',
+          headers: requestHeaders,
+          body: JSON.stringify(requestBody),
+          signal: controller.signal,
+        });
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
+        clearTimeout(connectTimer);
+        connectTimer = undefined;
+        resetIdleTimer();
+        if (stallTimeoutMs) resetStallTimer();
 
-        if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
-          flushNativeToolCalls();
-          parser.flush();
-          chunker.flush();
-          finishSuccess(usage);
-          onDone(usage);
+        if (!response.ok) {
+          span.setAttribute('http.response.status_code', response.status);
+          const body = await response.text().catch(() => '');
+          let detail = '';
+          try {
+            const parsed = JSON.parse(body);
+            detail = parseError(parsed, body.slice(0, 200));
+          } catch {
+            detail = body ? body.slice(0, 200) : 'empty body';
+          }
+          // Strip HTML error pages (e.g. Cloudflare 403/503 pages) — show a clean message instead
+          if (/<\s*html[\s>]/i.test(detail) || /<\s*!doctype/i.test(detail)) {
+            detail = `HTTP ${response.status} (the server returned an HTML error page instead of JSON)`;
+          }
+          console.error(`[Push] ${name} error: ${response.status}`, detail);
+          const alreadyPrefixed = detail.toLowerCase().startsWith(name.toLowerCase());
+          throw new Error(alreadyPrefixed ? detail : `${name} ${response.status}: ${detail}`);
+        }
+
+        span.setAttribute('http.response.status_code', response.status);
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('No response body');
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        const chunker = createChunkedEmitter(onToken);
+        const parser = createThinkTokenParser((token) => chunker.push(token), onThinkingToken);
+        let usage: StreamUsage | undefined;
+
+        // Compatibility bridge: some providers may emit OpenAI-style `delta.tool_calls`
+        // even when we are not sending `tools[]` (prompt-engineered mode). Accumulate
+        // those deltas and re-emit them as our fenced JSON tool blocks so the existing
+        // text-based tool dispatch path still works.
+        // Only tool names in KNOWN_TOOL_NAMES are converted — anything else (e.g.
+        // Google Gemini's internal "node_source") is silently dropped to prevent
+        // leaking raw API data into the chat.
+
+        const pendingNativeToolCalls = new Map<number, { name: string; args: string }>();
+        const flushNativeToolCalls = () => {
+          if (pendingNativeToolCalls.size === 0) return;
+          for (const [, tc] of pendingNativeToolCalls) {
+            if (!tc.name && !tc.args) continue;
+            if (tc.name) {
+              // Only convert tool calls that match our prompt-engineered tool
+              // protocol.  Unknown names (e.g. Gemini's "node_source") are
+              // internal model machinery — drop them regardless of payload size.
+              if (!KNOWN_TOOL_NAMES.has(tc.name)) {
+                console.warn(`[Push] Native tool call "${tc.name}" is not a known tool — dropped`);
+                continue;
+              }
+              try {
+                const parsedArgs = tc.args ? JSON.parse(tc.args) : {};
+                parser.push(
+                  `\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: parsedArgs })}\n\`\`\`\n`,
+                );
+              } catch {
+                // If arguments are malformed/incomplete, still emit a tool shell so
+                // malformed-call diagnostics can guide the model to retry.
+                parser.push(
+                  `\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: {} })}\n\`\`\`\n`,
+                );
+              }
+            } else if (tc.args) {
+              // No function name — never push raw args directly to the parser.
+              // That leaks unformatted API data into the chat output.
+              console.warn(
+                '[Push] Native tool call with no function name — args dropped:',
+                tc.args.slice(0, 200),
+              );
+            }
+          }
+          pendingNativeToolCalls.clear();
+        };
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          chunkCount++;
+          resetIdleTimer();
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+
+            if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
+              flushNativeToolCalls();
+              parser.flush();
+              chunker.flush();
+              finishSuccess(usage);
+              onDone(usage);
+              return;
+            }
+
+            if (!trimmed.startsWith('data:')) continue;
+            const jsonStr = trimmed[5] === ' ' ? trimmed.slice(6) : trimmed.slice(5);
+
+            try {
+              const parsed = JSON.parse(jsonStr);
+
+              if (parsed.usage) {
+                usage = {
+                  inputTokens: parsed.usage.prompt_tokens || 0,
+                  outputTokens: parsed.usage.completion_tokens || 0,
+                  totalTokens: parsed.usage.total_tokens || 0,
+                };
+                const cacheWrite = parsed.usage.cache_creation_input_tokens;
+                const cacheRead = parsed.usage.cache_read_input_tokens;
+                if (cacheWrite || cacheRead) {
+                  console.log(
+                    `[Push] cache — write: ${cacheWrite ?? 0} tokens, read: ${cacheRead ?? 0} tokens`,
+                  );
+                }
+              }
+
+              const choice = parsed.choices?.[0];
+              if (!choice) continue;
+
+              const reasoningToken = choice.delta?.reasoning_content;
+              if (reasoningToken) {
+                thinkingChars += reasoningToken.length;
+                onThinkingToken?.(reasoningToken);
+                if (shouldResetStallOnReasoning) resetStallTimer();
+              }
+
+              const rawToken = choice.delta?.content;
+              if (rawToken) {
+                // Strip model chat-template control tokens (e.g. <|start|>, <|im_end|>,
+                // <|call|>) that some models leak into the content stream.
+                const token = rawToken.replace(/<\|[a-z_]+\|>/gi, '');
+                if (token) {
+                  contentChars += token.length;
+                  parser.push(token);
+                }
+                if (stallTimeoutMs) resetStallTimer();
+              }
+
+              // Some providers may emit native tool call deltas even in prompt-engineered mode.
+              const toolCalls = choice.delta?.tool_calls;
+              if (toolCalls) {
+                for (const tc of toolCalls) {
+                  const idx = typeof tc.index === 'number' ? tc.index : 0;
+                  const fnCall = tc.function;
+                  if (!fnCall) continue;
+                  if (!pendingNativeToolCalls.has(idx)) {
+                    pendingNativeToolCalls.set(idx, { name: '', args: '' });
+                    nativeToolCallCount++;
+                    console.log(
+                      `[Push] Native tool call delta detected (idx=${idx}, name=${fnCall.name || '(none)'})`,
+                    );
+                  }
+                  const entry = pendingNativeToolCalls.get(idx)!;
+                  if (typeof fnCall.name === 'string') entry.name = fnCall.name;
+                  if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
+                }
+                if (stallTimeoutMs) resetStallTimer();
+              }
+
+              if (checkFinishReason(choice)) {
+                flushNativeToolCalls();
+                parser.flush();
+                chunker.flush();
+                finishSuccess(usage);
+                onDone(usage);
+                return;
+              }
+            } catch {
+              // Skip malformed SSE data
+            }
+          }
+        }
+
+        flushNativeToolCalls();
+        parser.flush();
+        chunker.flush();
+        finishSuccess(usage);
+        onDone(usage);
+      } catch (err) {
+        clearTimeout(connectTimer);
+        clearTimeout(idleTimer);
+        clearTimeout(stallTimer);
+        clearTimeout(totalTimer);
+        signal?.removeEventListener('abort', onExternalAbort);
+
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          if (abortReason === 'user') {
+            setSpanAttributes(span, {
+              'push.abort_reason': abortReason,
+              'push.cancelled': true,
+            });
+            onDone();
+            return;
+          }
+          let timeoutMsg: string;
+          if (abortReason === 'connect') {
+            timeoutMsg = errorMessages.connect(Math.round(connectTimeoutMs / 1000));
+          } else if (abortReason === 'stall') {
+            timeoutMsg =
+              errorMessages.stall?.(Math.round(stallTimeoutMs! / 1000)) ??
+              errorMessages.idle(Math.round(idleTimeoutMs / 1000));
+          } else if (abortReason === 'total') {
+            timeoutMsg =
+              errorMessages.total?.(Math.round(totalTimeoutMs! / 1000)) ??
+              errorMessages.idle(Math.round(idleTimeoutMs / 1000));
+          } else {
+            timeoutMsg = errorMessages.idle(Math.round(idleTimeoutMs / 1000));
+          }
+          recordSpanError(span, new Error(timeoutMsg), {
+            'push.abort_reason': abortReason || undefined,
+            'push.stream.chunk_count': chunkCount,
+            'push.stream.content_chars': contentChars,
+            'push.stream.thinking_chars': thinkingChars,
+            'push.stream.native_tool_call_count': nativeToolCallCount,
+          });
+          console.error(`[Push] ${name} timeout (${abortReason}):`, timeoutMsg);
+          onError(new Error(timeoutMsg));
           return;
         }
 
-        if (!trimmed.startsWith('data:')) continue;
-        const jsonStr = trimmed[5] === ' ' ? trimmed.slice(6) : trimmed.slice(5);
-
-        try {
-          const parsed = JSON.parse(jsonStr);
-
-          if (parsed.usage) {
-            usage = {
-              inputTokens: parsed.usage.prompt_tokens || 0,
-              outputTokens: parsed.usage.completion_tokens || 0,
-              totalTokens: parsed.usage.total_tokens || 0,
-            };
-            const cacheWrite = parsed.usage.cache_creation_input_tokens;
-            const cacheRead = parsed.usage.cache_read_input_tokens;
-            if (cacheWrite || cacheRead) {
-              console.log(`[Push] cache — write: ${cacheWrite ?? 0} tokens, read: ${cacheRead ?? 0} tokens`);
-            }
-          }
-
-          const choice = parsed.choices?.[0];
-          if (!choice) continue;
-
-          const reasoningToken = choice.delta?.reasoning_content;
-          if (reasoningToken) {
-            thinkingChars += reasoningToken.length;
-            onThinkingToken?.(reasoningToken);
-            if (shouldResetStallOnReasoning) resetStallTimer();
-          }
-
-          const rawToken = choice.delta?.content;
-          if (rawToken) {
-            // Strip model chat-template control tokens (e.g. <|start|>, <|im_end|>,
-            // <|call|>) that some models leak into the content stream.
-            const token = rawToken.replace(/<\|[a-z_]+\|>/gi, '');
-            if (token) {
-              contentChars += token.length;
-              parser.push(token);
-            }
-            if (stallTimeoutMs) resetStallTimer();
-          }
-
-          // Some providers may emit native tool call deltas even in prompt-engineered mode.
-          const toolCalls = choice.delta?.tool_calls;
-          if (toolCalls) {
-            for (const tc of toolCalls) {
-              const idx = typeof tc.index === 'number' ? tc.index : 0;
-              const fnCall = tc.function;
-              if (!fnCall) continue;
-              if (!pendingNativeToolCalls.has(idx)) {
-                pendingNativeToolCalls.set(idx, { name: '', args: '' });
-                nativeToolCallCount++;
-                console.log(`[Push] Native tool call delta detected (idx=${idx}, name=${fnCall.name || '(none)'})`);
-              }
-              const entry = pendingNativeToolCalls.get(idx)!;
-              if (typeof fnCall.name === 'string') entry.name = fnCall.name;
-              if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
-            }
-            if (stallTimeoutMs) resetStallTimer();
-          }
-
-          if (checkFinishReason(choice)) {
-            flushNativeToolCalls();
-            parser.flush();
-            chunker.flush();
-            finishSuccess(usage);
-            onDone(usage);
-            return;
-          }
-        } catch {
-          // Skip malformed SSE data
-        }
-      }
-    }
-
-    flushNativeToolCalls();
-    parser.flush();
-    chunker.flush();
-    finishSuccess(usage);
-    onDone(usage);
-  } catch (err) {
-    clearTimeout(connectTimer);
-    clearTimeout(idleTimer);
-    clearTimeout(stallTimer);
-    clearTimeout(totalTimer);
-    signal?.removeEventListener('abort', onExternalAbort);
-
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      if (abortReason === 'user') {
-        setSpanAttributes(span, {
-          'push.abort_reason': abortReason,
-          'push.cancelled': true,
+        const msg = err instanceof Error ? err.message : String(err);
+        recordSpanError(span, err, {
+          'push.abort_reason': abortReason || undefined,
+          'push.stream.chunk_count': chunkCount,
+          'push.stream.content_chars': contentChars,
+          'push.stream.thinking_chars': thinkingChars,
+          'push.stream.native_tool_call_count': nativeToolCallCount,
         });
-        onDone();
-        return;
+        console.error(`[Push] ${name} chat error:`, msg);
+        if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+          onError(new Error(errorMessages.network));
+        } else {
+          onError(err instanceof Error ? err : new Error(msg));
+        }
+      } finally {
+        clearTimeout(connectTimer);
+        clearTimeout(idleTimer);
+        clearTimeout(stallTimer);
+        clearTimeout(totalTimer);
+        signal?.removeEventListener('abort', onExternalAbort);
+        span.end();
       }
-      let timeoutMsg: string;
-      if (abortReason === 'connect') {
-        timeoutMsg = errorMessages.connect(Math.round(connectTimeoutMs / 1000));
-      } else if (abortReason === 'stall') {
-        timeoutMsg = errorMessages.stall?.(Math.round(stallTimeoutMs! / 1000)) ?? errorMessages.idle(Math.round(idleTimeoutMs / 1000));
-      } else if (abortReason === 'total') {
-        timeoutMsg = errorMessages.total?.(Math.round(totalTimeoutMs! / 1000)) ?? errorMessages.idle(Math.round(idleTimeoutMs / 1000));
-      } else {
-        timeoutMsg = errorMessages.idle(Math.round(idleTimeoutMs / 1000));
-      }
-      recordSpanError(span, new Error(timeoutMsg), {
-        'push.abort_reason': abortReason || undefined,
-        'push.stream.chunk_count': chunkCount,
-        'push.stream.content_chars': contentChars,
-        'push.stream.thinking_chars': thinkingChars,
-        'push.stream.native_tool_call_count': nativeToolCallCount,
-      });
-      console.error(`[Push] ${name} timeout (${abortReason}):`, timeoutMsg);
-      onError(new Error(timeoutMsg));
-      return;
-    }
+    },
+  );
 
-    const msg = err instanceof Error ? err.message : String(err);
-    recordSpanError(span, err, {
-      'push.abort_reason': abortReason || undefined,
-      'push.stream.chunk_count': chunkCount,
-      'push.stream.content_chars': contentChars,
-      'push.stream.thinking_chars': thinkingChars,
-      'push.stream.native_tool_call_count': nativeToolCallCount,
-    });
-    console.error(`[Push] ${name} chat error:`, msg);
-    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-      onError(new Error(errorMessages.network));
-    } else {
-      onError(err instanceof Error ? err : new Error(msg));
-    }
-  } finally {
-    clearTimeout(connectTimer);
-    clearTimeout(idleTimer);
-    clearTimeout(stallTimer);
-    clearTimeout(totalTimer);
-    signal?.removeEventListener('abort', onExternalAbort);
-    span.end();
-  }
-  });
-
-
-// ---------------------------------------------------------------------------
-// Provider streaming — consolidated via registry + factory
-// ---------------------------------------------------------------------------
-
+  // ---------------------------------------------------------------------------
+  // Provider streaming — consolidated via registry + factory
+  // ---------------------------------------------------------------------------
 }

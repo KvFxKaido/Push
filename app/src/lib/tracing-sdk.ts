@@ -17,9 +17,7 @@ import type { PushTracingConfig } from './tracing';
 export function bootstrapTracing(config: PushTracingConfig): void {
   const spanProcessors = [];
   if (config.endpoint) {
-    spanProcessors.push(
-      new BatchSpanProcessor(new OTLPTraceExporter({ url: config.endpoint })),
-    );
+    spanProcessors.push(new BatchSpanProcessor(new OTLPTraceExporter({ url: config.endpoint })));
   }
   if (config.consoleExporter) {
     spanProcessors.push(new SimpleSpanProcessor(new ConsoleSpanExporter()));

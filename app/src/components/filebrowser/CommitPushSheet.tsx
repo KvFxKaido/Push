@@ -10,12 +10,7 @@
  */
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import {
-  Loader2,
-  CheckCircle2,
-  AlertCircle,
-  Sparkles,
-} from 'lucide-react';
+import { Loader2, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';
 import {
   Sheet,
   SheetContent,
@@ -39,9 +34,9 @@ interface CommitPushSheetProps {
 
 const PHASE_LABELS: Record<string, string> = {
   'fetching-diff': 'Getting diff…',
-  'auditing': 'Auditor reviewing…',
-  'committing': 'Committing…',
-  'pushing': 'Pushing to remote…',
+  auditing: 'Auditor reviewing…',
+  committing: 'Committing…',
+  pushing: 'Pushing to remote…',
 };
 
 /**
@@ -50,22 +45,34 @@ const PHASE_LABELS: Record<string, string> = {
  */
 function generateCommitMessage(diff: DiffPreviewCardData): string {
   const { filesChanged, additions, deletions } = diff;
-  
+
   // Infer type from file patterns in diff
   let type = 'update';
   const diffLower = diff.diff.toLowerCase();
-  
+
   if (diffLower.includes('fix') || diffLower.includes('bug') || diffLower.includes('hotfix')) {
     type = 'fix';
   } else if (diffLower.includes('feat') || diffLower.includes('add') || diffLower.includes('new')) {
     type = 'feat';
-  } else if (diffLower.includes('refactor') || diffLower.includes('clean') || diffLower.includes('extract')) {
+  } else if (
+    diffLower.includes('refactor') ||
+    diffLower.includes('clean') ||
+    diffLower.includes('extract')
+  ) {
     type = 'refactor';
   } else if (diffLower.includes('test') || diffLower.includes('spec')) {
     type = 'test';
-  } else if (diffLower.includes('docs') || diffLower.includes('readme') || diffLower.includes('.md')) {
+  } else if (
+    diffLower.includes('docs') ||
+    diffLower.includes('readme') ||
+    diffLower.includes('.md')
+  ) {
     type = 'docs';
-  } else if (diffLower.includes('style') || diffLower.includes('css') || diffLower.includes('format')) {
+  } else if (
+    diffLower.includes('style') ||
+    diffLower.includes('css') ||
+    diffLower.includes('format')
+  ) {
     type = 'style';
   }
 
@@ -90,7 +97,7 @@ function generateCommitMessage(diff: DiffPreviewCardData): string {
 
   // Build message
   let message = `${type}${scope ? `(${scope})` : ''}: `;
-  
+
   if (filesChanged === 1) {
     const fileName = fileMatch ? fileMatch[1].split('/').pop() : 'file';
     message += `update ${fileName}`;
@@ -177,7 +184,7 @@ export function CommitPushSheet({
 
   // Auto-fill commit message when first entering review phase
   const [hasAutoFilled, setHasAutoFilled] = useState(false);
-  
+
   useEffect(() => {
     if (phase === 'reviewing' && suggestedMessage && !hasAutoFilled && !commitMessage) {
       setCommitMessage(suggestedMessage);
@@ -187,13 +194,16 @@ export function CommitPushSheet({
   }, [phase, suggestedMessage, hasAutoFilled, commitMessage, setCommitMessage]);
 
   // Reset when sheet closes
-  const handleOpenChange = useCallback((nextOpen: boolean) => {
-    if (!nextOpen) {
-      reset();
-      setHasAutoFilled(false);
-    }
-    onOpenChange(nextOpen);
-  }, [reset, onOpenChange]);
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (!nextOpen) {
+        reset();
+        setHasAutoFilled(false);
+      }
+      onOpenChange(nextOpen);
+    },
+    [reset, onOpenChange],
+  );
 
   // Fetch diff when sheet opens
   useEffect(() => {
@@ -219,7 +229,11 @@ export function CommitPushSheet({
     }
   };
 
-  const isSpinnerPhase = phase === 'fetching-diff' || phase === 'auditing' || phase === 'committing' || phase === 'pushing';
+  const isSpinnerPhase =
+    phase === 'fetching-diff' ||
+    phase === 'auditing' ||
+    phase === 'committing' ||
+    phase === 'pushing';
 
   // Dynamic padding to account for keyboard
   const bottomPadding = Math.max(keyboardHeight, 0);
@@ -232,9 +246,7 @@ export function CommitPushSheet({
         style={{ paddingBottom: bottomPadding > 0 ? bottomPadding : undefined }}
       >
         <SheetHeader className="pb-2">
-          <SheetTitle className="text-[#fafafa] text-sm font-medium">
-            Commit &amp; Push
-          </SheetTitle>
+          <SheetTitle className="text-[#fafafa] text-sm font-medium">Commit &amp; Push</SheetTitle>
           <SheetDescription className="sr-only">
             Review changes, enter a commit message, and push the current branch to remote.
           </SheetDescription>

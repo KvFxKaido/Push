@@ -35,7 +35,11 @@ export const REPO_APPEARANCE_ICON_OPTIONS: Array<{ id: RepoAppearanceIconId; lab
   { id: 'docs-leaf', label: 'Docs' },
 ];
 
-export const REPO_APPEARANCE_COLOR_OPTIONS: Array<{ id: RepoAppearanceColorId; label: string; hex: string }> = [
+export const REPO_APPEARANCE_COLOR_OPTIONS: Array<{
+  id: RepoAppearanceColorId;
+  label: string;
+  hex: string;
+}> = [
   { id: 'slate', label: 'Slate', hex: '#94a3b8' },
   { id: 'sky', label: 'Sky', hex: '#7dd3fc' },
   { id: 'teal', label: 'Teal', hex: '#5eead4' },
@@ -46,8 +50,12 @@ export const REPO_APPEARANCE_COLOR_OPTIONS: Array<{ id: RepoAppearanceColorId; l
   { id: 'indigo', label: 'Indigo', hex: '#a5b4fc' },
 ];
 
-const ICON_ID_SET = new Set<RepoAppearanceIconId>(REPO_APPEARANCE_ICON_OPTIONS.map((option) => option.id));
-const COLOR_ID_SET = new Set<RepoAppearanceColorId>(REPO_APPEARANCE_COLOR_OPTIONS.map((option) => option.id));
+const ICON_ID_SET = new Set<RepoAppearanceIconId>(
+  REPO_APPEARANCE_ICON_OPTIONS.map((option) => option.id),
+);
+const COLOR_ID_SET = new Set<RepoAppearanceColorId>(
+  REPO_APPEARANCE_COLOR_OPTIONS.map((option) => option.id),
+);
 
 export function isRepoAppearanceIconId(value: unknown): value is RepoAppearanceIconId {
   return typeof value === 'string' && ICON_ID_SET.has(value as RepoAppearanceIconId);
@@ -70,9 +78,12 @@ export function coerceRepoAppearance(value: unknown): RepoAppearance | null {
 }
 
 export function getRepoAppearanceColorHex(colorId: RepoAppearanceColorId): string {
-  return REPO_APPEARANCE_COLOR_OPTIONS.find((option) => option.id === colorId)?.hex
-    ?? REPO_APPEARANCE_COLOR_OPTIONS.find((option) => option.id === DEFAULT_REPO_APPEARANCE.color)?.hex
-    ?? '#94a3b8';
+  return (
+    REPO_APPEARANCE_COLOR_OPTIONS.find((option) => option.id === colorId)?.hex ??
+    REPO_APPEARANCE_COLOR_OPTIONS.find((option) => option.id === DEFAULT_REPO_APPEARANCE.color)
+      ?.hex ??
+    '#94a3b8'
+  );
 }
 
 export function hexToRgba(hex: string, alpha: number): string {

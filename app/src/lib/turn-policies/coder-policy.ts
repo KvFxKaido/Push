@@ -23,11 +23,13 @@ import { isVerificationPhase } from '../turn-policy';
 const DRIFT_NON_ASCII_RATIO_THRESHOLD = 0.3;
 
 function hasCodeSignals(text: string): boolean {
-  return /\{\s*"tool"\s*:/.test(text)
-    || /```/.test(text)
-    || /\/workspace\//.test(text)
-    || /\.[tj]sx?\b|\.py\b|\.json\b/.test(text)
-    || /sandbox_|coder_checkpoint|coder_update_state/.test(text);
+  return (
+    /\{\s*"tool"\s*:/.test(text) ||
+    /```/.test(text) ||
+    /\/workspace\//.test(text) ||
+    /\.[tj]sx?\b|\.py\b|\.json\b/.test(text) ||
+    /sandbox_|coder_checkpoint|coder_update_state/.test(text)
+  );
 }
 
 /**
@@ -219,14 +221,16 @@ export function createCoderPolicy(): TurnPolicy {
         // - Acceptance criteria results
         // - Explicit "blocked" / "cannot" language
         const hasArtifactEvidence =
-          /\b(modified|created|updated|deleted|wrote|edited|changed)\b.*\b(file|\.ts|\.js|\.py|\.json|\.css)\b/i.test(trimmed)
-          || /sandbox_diff|sandbox_prepare_commit/.test(trimmed)
-          || /acceptance\s+criteria/i.test(trimmed)
-          || /\[Acceptance Criteria\]/i.test(trimmed);
+          /\b(modified|created|updated|deleted|wrote|edited|changed)\b.*\b(file|\.ts|\.js|\.py|\.json|\.css)\b/i.test(
+            trimmed,
+          ) ||
+          /sandbox_diff|sandbox_prepare_commit/.test(trimmed) ||
+          /acceptance\s+criteria/i.test(trimmed) ||
+          /\[Acceptance Criteria\]/i.test(trimmed);
 
         const hasBlockedReport =
-          /\b(blocked|cannot|unable|impossible|not possible|stuck)\b/i.test(trimmed)
-          && trimmed.length > 50;
+          /\b(blocked|cannot|unable|impossible|not possible|stuck)\b/i.test(trimmed) &&
+          trimmed.length > 50;
 
         if (hasArtifactEvidence || hasBlockedReport) return null;
 

@@ -5,11 +5,7 @@
  * and the TOOL_PROTOCOL prompt text injected into LLM system prompts.
  */
 
-import type {
-  AcceptanceCriterion,
-  CoderDelegationArgs,
-  ExplorerDelegationArgs,
-} from '@/types';
+import type { AcceptanceCriterion, CoderDelegationArgs, ExplorerDelegationArgs } from '@/types';
 import { ALL_CAPABILITIES, type Capability } from './capabilities';
 import { asRecord, detectToolFromText } from './utils';
 import {
@@ -26,7 +22,10 @@ export type ToolCall =
   | { tool: 'fetch_pr'; args: { repo: string; pr: number } }
   | { tool: 'list_prs'; args: { repo: string; state?: string } }
   | { tool: 'list_commits'; args: { repo: string; count?: number } }
-  | { tool: 'read_file'; args: { repo: string; path: string; branch?: string; start_line?: number; end_line?: number } }
+  | {
+      tool: 'read_file';
+      args: { repo: string; path: string; branch?: string; start_line?: number; end_line?: number };
+    }
   | { tool: 'grep_file'; args: { repo: string; path: string; pattern: string; branch?: string } }
   | { tool: 'list_directory'; args: { repo: string; path?: string; branch?: string } }
   | { tool: 'list_branches'; args: { repo: string } }
@@ -35,10 +34,19 @@ export type ToolCall =
   | { tool: 'fetch_checks'; args: { repo: string; ref?: string } }
   | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } }
   | { tool: 'list_commit_files'; args: { repo: string; ref: string } }
-  | { tool: 'trigger_workflow'; args: { repo: string; workflow: string; ref?: string; inputs?: Record<string, string> } }
-  | { tool: 'get_workflow_runs'; args: { repo: string; workflow?: string; branch?: string; status?: string; count?: number } }
+  | {
+      tool: 'trigger_workflow';
+      args: { repo: string; workflow: string; ref?: string; inputs?: Record<string, string> };
+    }
+  | {
+      tool: 'get_workflow_runs';
+      args: { repo: string; workflow?: string; branch?: string; status?: string; count?: number };
+    }
   | { tool: 'get_workflow_logs'; args: { repo: string; run_id: number } }
-  | { tool: 'create_pr'; args: { repo: string; title: string; body: string; head: string; base: string } }
+  | {
+      tool: 'create_pr';
+      args: { repo: string; title: string; body: string; head: string; base: string };
+    }
   | { tool: 'merge_pr'; args: { repo: string; pr_number: number; merge_method?: string } }
   | { tool: 'delete_branch'; args: { repo: string; branch_name: string } }
   | { tool: 'check_pr_mergeable'; args: { repo: string; pr_number: number } }
@@ -70,7 +78,12 @@ const KNOWN_CAPABILITIES = new Set<Capability>(ALL_CAPABILITIES);
 /** Parse a positive integer arg (1-based line numbers). Returns undefined if absent, null if invalid. */
 function asPositiveInt(value: unknown): number | undefined | null {
   if (value === undefined || value === null) return undefined;
-  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim().length > 0 ? Number(value) : Number.NaN;
+  const n =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN;
   if (!Number.isInteger(n) || n < 1) return null;
   return n;
 }
@@ -96,17 +109,26 @@ function validateToolCall(parsed: unknown): ToolCall | null {
     return { tool: 'list_prs', args: { repo, state: asString(args.state) } };
   }
   if (tool === 'list_commits' && repo) {
-    return { tool: 'list_commits', args: { repo, count: args.count !== undefined ? Number(args.count) : undefined } };
+    return {
+      tool: 'list_commits',
+      args: { repo, count: args.count !== undefined ? Number(args.count) : undefined },
+    };
   }
   if (tool === 'read_file' && repo && asString(args.path)) {
     const startLine = asPositiveInt(args.start_line);
     const endLine = asPositiveInt(args.end_line);
     if (startLine === null || endLine === null) return null;
     if (startLine !== undefined && endLine !== undefined && startLine > endLine) return null;
-    return { tool: 'read_file', args: { repo, path: asString(args.path)!, branch, start_line: startLine, end_line: endLine } };
+    return {
+      tool: 'read_file',
+      args: { repo, path: asString(args.path)!, branch, start_line: startLine, end_line: endLine },
+    };
   }
   if (tool === 'grep_file' && repo && asString(args.path) && asString(args.pattern)) {
-    return { tool: 'grep_file', args: { repo, path: asString(args.path)!, pattern: asString(args.pattern)!, branch } };
+    return {
+      tool: 'grep_file',
+      args: { repo, path: asString(args.path)!, pattern: asString(args.pattern)!, branch },
+    };
   }
   if (tool === 'list_directory' && repo) {
     return { tool: 'list_directory', args: { repo, path: asString(args.path), branch } };
@@ -123,20 +145,24 @@ function validateToolCall(parsed: unknown): ToolCall | null {
     const knownContext = asTrimmedStringArray(args.knownContext);
     const constraints = asTrimmedStringArray(args.constraints);
     const declaredCapabilities = Array.isArray(args.declaredCapabilities)
-      ? (args.declaredCapabilities as unknown[])
-        .filter((entry): entry is Capability => typeof entry === 'string' && KNOWN_CAPABILITIES.has(entry as Capability))
+      ? (args.declaredCapabilities as unknown[]).filter(
+          (entry): entry is Capability =>
+            typeof entry === 'string' && KNOWN_CAPABILITIES.has(entry as Capability),
+        )
       : undefined;
     let acceptanceCriteria: AcceptanceCriterion[] | undefined;
     if (Array.isArray(args.acceptanceCriteria)) {
-      acceptanceCriteria = (args.acceptanceCriteria as unknown[]).filter((c): c is AcceptanceCriterion => {
-        const cr = asRecord(c);
-        return !!cr && typeof cr.id === 'string' && typeof cr.check === 'string';
-      }).map(c => ({
-        id: c.id,
-        check: c.check,
-        exitCode: typeof c.exitCode === 'number' ? c.exitCode : undefined,
-        description: typeof c.description === 'string' ? c.description : undefined,
-      }));
+      acceptanceCriteria = (args.acceptanceCriteria as unknown[])
+        .filter((c): c is AcceptanceCriterion => {
+          const cr = asRecord(c);
+          return !!cr && typeof cr.id === 'string' && typeof cr.check === 'string';
+        })
+        .map((c) => ({
+          id: c.id,
+          check: c.check,
+          exitCode: typeof c.exitCode === 'number' ? c.exitCode : undefined,
+          description: typeof c.description === 'string' ? c.description : undefined,
+        }));
       if (acceptanceCriteria.length === 0) acceptanceCriteria = undefined;
     }
     if (task || (tasks && tasks.length > 0)) {
@@ -151,7 +177,10 @@ function validateToolCall(parsed: unknown): ToolCall | null {
           deliverable,
           knownContext: knownContext && knownContext.length > 0 ? knownContext : undefined,
           constraints: constraints && constraints.length > 0 ? constraints : undefined,
-          declaredCapabilities: declaredCapabilities && declaredCapabilities.length > 0 ? declaredCapabilities : undefined,
+          declaredCapabilities:
+            declaredCapabilities && declaredCapabilities.length > 0
+              ? declaredCapabilities
+              : undefined,
         },
       };
     }
@@ -181,7 +210,10 @@ function validateToolCall(parsed: unknown): ToolCall | null {
     return { tool: 'fetch_checks', args: { repo, ref: asString(args.ref) } };
   }
   if (tool === 'search_files' && repo && asString(args.query)) {
-    return { tool: 'search_files', args: { repo, query: asString(args.query)!, path: asString(args.path), branch } };
+    return {
+      tool: 'search_files',
+      args: { repo, query: asString(args.query)!, path: asString(args.path), branch },
+    };
   }
   if (tool === 'list_commit_files' && repo && asString(args.ref)) {
     return { tool: 'list_commit_files', args: { repo, ref: asString(args.ref)! } };
@@ -191,22 +223,54 @@ function validateToolCall(parsed: unknown): ToolCall | null {
     const rawInputs = asRecord(args.inputs);
     if (rawInputs) {
       inputs = Object.fromEntries(
-        Object.entries(rawInputs).filter(([, v]) => typeof v === 'string') as Array<[string, string]>,
+        Object.entries(rawInputs).filter(([, v]) => typeof v === 'string') as Array<
+          [string, string]
+        >,
       );
     }
-    return { tool: 'trigger_workflow', args: { repo, workflow: asString(args.workflow)!, ref: asString(args.ref), inputs } };
+    return {
+      tool: 'trigger_workflow',
+      args: { repo, workflow: asString(args.workflow)!, ref: asString(args.ref), inputs },
+    };
   }
   if (tool === 'get_workflow_runs' && repo) {
-    return { tool: 'get_workflow_runs', args: { repo, workflow: asString(args.workflow), branch, status: asString(args.status), count: args.count !== undefined ? Number(args.count) : undefined } };
+    return {
+      tool: 'get_workflow_runs',
+      args: {
+        repo,
+        workflow: asString(args.workflow),
+        branch,
+        status: asString(args.status),
+        count: args.count !== undefined ? Number(args.count) : undefined,
+      },
+    };
   }
   if (tool === 'get_workflow_logs' && repo && args.run_id !== undefined) {
     return { tool: 'get_workflow_logs', args: { repo, run_id: Number(args.run_id) } };
   }
-  if (tool === 'create_pr' && repo && asString(args.title) && asString(args.head) && asString(args.base)) {
-    return { tool: 'create_pr', args: { repo, title: asString(args.title)!, body: asString(args.body) ?? '', head: asString(args.head)!, base: asString(args.base)! } };
+  if (
+    tool === 'create_pr' &&
+    repo &&
+    asString(args.title) &&
+    asString(args.head) &&
+    asString(args.base)
+  ) {
+    return {
+      tool: 'create_pr',
+      args: {
+        repo,
+        title: asString(args.title)!,
+        body: asString(args.body) ?? '',
+        head: asString(args.head)!,
+        base: asString(args.base)!,
+      },
+    };
   }
   if (tool === 'merge_pr' && repo && args.pr_number !== undefined) {
-    return { tool: 'merge_pr', args: { repo, pr_number: Number(args.pr_number), merge_method: asString(args.merge_method) } };
+    return {
+      tool: 'merge_pr',
+      args: { repo, pr_number: Number(args.pr_number), merge_method: asString(args.merge_method) },
+    };
   }
   if (tool === 'delete_branch' && repo && asString(args.branch_name)) {
     return { tool: 'delete_branch', args: { repo, branch_name: asString(args.branch_name)! } };
@@ -215,7 +279,14 @@ function validateToolCall(parsed: unknown): ToolCall | null {
     return { tool: 'check_pr_mergeable', args: { repo, pr_number: Number(args.pr_number) } };
   }
   if (tool === 'find_existing_pr' && repo && asString(args.head_branch)) {
-    return { tool: 'find_existing_pr', args: { repo, head_branch: asString(args.head_branch)!, base_branch: asString(args.base_branch) } };
+    return {
+      tool: 'find_existing_pr',
+      args: {
+        repo,
+        head_branch: asString(args.head_branch)!,
+        base_branch: asString(args.base_branch),
+      },
+    };
   }
   return null;
 }
@@ -239,11 +310,16 @@ export function detectToolCall(text: string): ToolCall | null {
 
 // --- Protocol prompt text ---
 
-const GITHUB_TOOL_LINES = [...getToolProtocolEntries('github'), ...getToolProtocolEntries('delegate')]
+const GITHUB_TOOL_LINES = [
+  ...getToolProtocolEntries('github'),
+  ...getToolProtocolEntries('delegate'),
+]
   .map((spec) => `- ${spec.protocolSignature} — ${spec.protocolDescription}`)
   .join('\n');
 
-const GITHUB_READ_ONLY_TOOL_NAMES = getToolPublicNames({ source: 'github', readOnly: true }).join(', ');
+const GITHUB_READ_ONLY_TOOL_NAMES = getToolPublicNames({ source: 'github', readOnly: true }).join(
+  ', ',
+);
 const GITHUB_MUTATING_TOOL_NAMES = [
   ...getToolPublicNames({ source: 'github', readOnly: false }),
   ...getToolPublicNames({ source: 'delegate' }),

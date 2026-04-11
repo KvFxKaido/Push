@@ -26,7 +26,10 @@ import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet } from '@/lib/safe-storage';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { symbolLedger } from '@/lib/symbol-persistence-ledger';
-import { clearFileVersionCache, clearSandboxWorkspaceRevision } from '@/lib/sandbox-file-version-cache';
+import {
+  clearFileVersionCache,
+  clearSandboxWorkspaceRevision,
+} from '@/lib/sandbox-file-version-cache';
 import { getActiveGitHubToken, APP_TOKEN_STORAGE_KEY } from '@/lib/github-auth';
 import {
   buildSandboxSessionStorageKey,
@@ -124,7 +127,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           setActiveSandboxEnvironment(saved.sandboxId);
           setStatus('ready');
           // Hydrate the symbol persistence ledger scoped to repo+branch on reconnect
-          const symbolKey = saved.repoFullName ? `${saved.repoFullName}:${saved.branch || 'main'}` : 'scratch';
+          const symbolKey = saved.repoFullName
+            ? `${saved.repoFullName}:${saved.branch || 'main'}`
+            : 'scratch';
           symbolLedger.setRepo(symbolKey);
           void symbolLedger.hydrate();
           // Fire-and-forget environment probe on reconnect
@@ -297,7 +302,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   const createdAt = useMemo(() => {
     const saved = loadSandboxSession(activeRepoFullName, activeBranch);
     return saved?.createdAt ?? null;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRepoFullName, activeBranch, sandboxId]);
 
   /**
@@ -314,7 +319,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
     try {
       const result = await execInSandbox(id, 'true');
-      
+
       if (sandboxIdRef.current !== id) return false;
 
       if (result.exitCode === 0) {
@@ -406,7 +411,6 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       }
     };
   }, [status, sandboxId, refresh]);
-
 
   return {
     sandboxId,

@@ -3,10 +3,7 @@ import { resolveTracingConfigFromInputs } from './tracing';
 
 describe('resolveTracingConfigFromInputs', () => {
   it('stays disabled when no exporter is configured', () => {
-    const config = resolveTracingConfigFromInputs(
-      { DEV: false, MODE: 'production' },
-      () => null,
-    );
+    const config = resolveTracingConfigFromInputs({ DEV: false, MODE: 'production' }, () => null);
 
     expect(config).toEqual({
       enabled: false,

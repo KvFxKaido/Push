@@ -9,12 +9,8 @@
     "skipLibCheck": true,
 
     "paths": {
-      "@/*": [
-        "./src/*"
-      ],
-      "@push/lib/*": [
-        "../lib/*"
-      ]
+      "@/*": ["./src/*"],
+      "@push/lib/*": ["../lib/*"]
     },
     /* Bundler mode */
     "moduleResolution": "bundler",

@@ -68,11 +68,9 @@ export function AskUserCard({ data, messageId, cardIndex, onAction }: AskUserCar
   };
 
   const toggleMulti = (optionId: string) => {
-    setSelectedIds((prev) => (
-      prev.includes(optionId)
-        ? prev.filter((id) => id !== optionId)
-        : [...prev, optionId]
-    ));
+    setSelectedIds((prev) =>
+      prev.includes(optionId) ? prev.filter((id) => id !== optionId) : [...prev, optionId],
+    );
   };
 
   return (
@@ -83,7 +81,9 @@ export function AskUserCard({ data, messageId, cardIndex, onAction }: AskUserCar
         ) : (
           <HelpCircle className="h-4 w-4 shrink-0 text-push-link" />
         )}
-        <span className={`text-sm font-medium ${hasResponse ? 'text-push-status-success' : 'text-push-fg'}`}>
+        <span
+          className={`text-sm font-medium ${hasResponse ? 'text-push-status-success' : 'text-push-fg'}`}
+        >
           {hasResponse ? 'Response recorded' : 'Input needed'}
         </span>
       </div>
@@ -126,11 +126,15 @@ export function AskUserCard({ data, messageId, cardIndex, onAction }: AskUserCar
                   style={{ minHeight: '44px' }}
                 >
                   <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${selected ? 'bg-push-accent' : 'bg-push-fg-dim/50'}`} />
+                    <span
+                      className={`mt-1 h-2 w-2 shrink-0 rounded-full ${selected ? 'bg-push-accent' : 'bg-push-fg-dim/50'}`}
+                    />
                     <span className="min-w-0 flex-1">
                       <span className="block text-push-sm text-inherit">{option.label}</span>
                       {option.description && (
-                        <span className="mt-0.5 block text-push-xs text-push-fg-dim">{option.description}</span>
+                        <span className="mt-0.5 block text-push-xs text-push-fg-dim">
+                          {option.description}
+                        </span>
                       )}
                     </span>
                   </div>

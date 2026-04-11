@@ -12,7 +12,8 @@ export const ONLY_BRACKETS_RE = /^[\[{}\],\s]*$/;
 
 const BRACED_TOOL_OBJECT_START = /\{\s*["']?tool["']?\s*:\s*(?:["'][^"'\n]*["']|[^,\n{}]+)/s;
 const BRACELESS_QUOTED_TOOL_START = /(?:^|\n)\s*["']tool["']\s*:\s*["'][^"'\n]*["']/s;
-const BRACELESS_TOOL_WITH_ARGS_OBJECT = /(?:^|\n)\s*["']?tool["']?\s*:\s*["'][^"'\n]*["']\s*,\s*["']?args["']?\s*:\s*\{/s;
+const BRACELESS_TOOL_WITH_ARGS_OBJECT =
+  /(?:^|\n)\s*["']?tool["']?\s*:\s*["'][^"'\n]*["']\s*,\s*["']?args["']?\s*:\s*\{/s;
 
 // Native tool-call echo: some providers emit both delta.content and
 // delta.tool_calls for the same invocation.  The bridge converts native calls
@@ -166,15 +167,9 @@ export function stripToolCallPayload(content: string): string {
   // for the same invocation.  The bridge converts native calls into fenced JSON
   // (stripped above), but the echoed text fragment remains without the {"tool": " prefix.
   // Build the stripping regex from the shared detection constant so both stay in sync.
-  stripped = stripped.replace(
-    new RegExp(NATIVE_TOOL_ECHO_RE.source + '[\\s\\S]*$', 'i'),
-    '',
-  );
+  stripped = stripped.replace(new RegExp(NATIVE_TOOL_ECHO_RE.source + '[\\s\\S]*$', 'i'), '');
 
-  stripped = stripped.replace(
-    new RegExp(ORPHANED_JSON_TAIL_RE.source),
-    '',
-  );
+  stripped = stripped.replace(new RegExp(ORPHANED_JSON_TAIL_RE.source), '');
 
   // After all stripping, if only brackets/braces/commas/whitespace remain, return empty.
   // This catches array-wrapped tool calls like [\n  {"tool":...}\n] where the inner

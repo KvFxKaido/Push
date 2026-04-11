@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Copy, Download, Check } from 'lucide-react';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
-import {
-  HUB_MATERIAL_PILL_BUTTON_CLASS,
-  HubControlGlow,
-} from '@/components/chat/hub-styles';
-import type { AgentStatusEvent, AgentStatusSource, ChatMessage, RunEvent, RunEventSubagent } from '@/types';
+import { HUB_MATERIAL_PILL_BUTTON_CLASS, HubControlGlow } from '@/components/chat/hub-styles';
+import type {
+  AgentStatusEvent,
+  AgentStatusSource,
+  ChatMessage,
+  RunEvent,
+  RunEventSubagent,
+} from '@/types';
 
 interface HubConsoleTabProps {
   messages: ChatMessage[];
@@ -75,7 +78,10 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
         } else {
           const toolCall = detectAnyToolCall(m.content);
           if (toolCall) {
-            const args = JSON.stringify((toolCall.call as { args?: unknown }).args ?? '').slice(0, 280);
+            const args = JSON.stringify((toolCall.call as { args?: unknown }).args ?? '').slice(
+              0,
+              280,
+            );
             items.push({
               type: 'call',
               content: `> ${(toolCall.call as { tool?: string }).tool}: ${args}`,
@@ -100,9 +106,10 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
         case 'assistant.turn_end':
           items.push({
             type: 'lifecycle',
-            content: event.outcome === 'steered'
-              ? `Turn ${event.round + 1} steered`
-              : `Turn ${event.round + 1} ${event.outcome}`,
+            content:
+              event.outcome === 'steered'
+                ? `Turn ${event.round + 1} steered`
+                : `Turn ${event.round + 1} ${event.outcome}`,
             timestamp: event.timestamp,
           });
           break;
@@ -211,7 +218,9 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
         case 'user.follow_up_steered':
           items.push({
             type: 'lifecycle',
-            content: event.replacedPending ? 'Updated steering request' : 'Steering request captured',
+            content: event.replacedPending
+              ? 'Updated steering request'
+              : 'Steering request captured',
             detail: event.preview,
             timestamp: event.timestamp,
           });
@@ -320,23 +329,24 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
                 log.type === 'call'
                   ? 'text-push-fg-secondary'
                   : log.type === 'malformed'
-                  ? 'text-amber-400'
-                  : log.type === 'result'
-                  ? 'ml-2 border-l border-push-edge pl-2 text-push-fg-dim'
-                  : log.type === 'lifecycle'
-                  ? 'ml-2 border-l border-push-edge/70 pl-2 text-[#9edbaf]'
-                  : 'ml-2 border-l border-push-edge/70 pl-2 text-[#86c5ff]'
+                    ? 'text-amber-400'
+                    : log.type === 'result'
+                      ? 'ml-2 border-l border-push-edge pl-2 text-push-fg-dim'
+                      : log.type === 'lifecycle'
+                        ? 'ml-2 border-l border-push-edge/70 pl-2 text-[#9edbaf]'
+                        : 'ml-2 border-l border-push-edge/70 pl-2 text-[#86c5ff]'
               }
             >
               {log.type === 'status' && log.source ? `[${getSourceLabel(log.source)}] ` : ''}
               {log.type === 'lifecycle' ? '[Lifecycle] ' : ''}
               {log.content}
-              {(log.type === 'status' || log.type === 'lifecycle' || log.type === 'malformed') && log.detail ? ` — ${log.detail}` : ''}
+              {(log.type === 'status' || log.type === 'lifecycle' || log.type === 'malformed') &&
+              log.detail
+                ? ` — ${log.detail}`
+                : ''}
             </div>
           ))}
-          {logs.length === 0 && (
-            <p className="text-push-fg-dim">No console logs yet.</p>
-          )}
+          {logs.length === 0 && <p className="text-push-fg-dim">No console logs yet.</p>}
         </div>
       </div>
     </div>

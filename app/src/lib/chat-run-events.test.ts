@@ -73,18 +73,22 @@ describe('chat-run-events', () => {
       expect(shouldPersistRunEvent(event)).toBe(false);
     });
 
-    expect(shouldPersistRunEvent({
-      type: 'assistant.turn_end',
-      round: 0,
-      outcome: 'completed',
-    })).toBe(true);
-    expect(shouldPersistRunEvent({
-      type: 'task_graph.task_completed',
-      executionId: 'graph-1',
-      taskId: 'fix-auth',
-      agent: 'coder',
-      summary: 'Patched auth flow.',
-    })).toBe(true);
+    expect(
+      shouldPersistRunEvent({
+        type: 'assistant.turn_end',
+        round: 0,
+        outcome: 'completed',
+      }),
+    ).toBe(true);
+    expect(
+      shouldPersistRunEvent({
+        type: 'task_graph.task_completed',
+        executionId: 'graph-1',
+        taskId: 'fix-auth',
+        agent: 'coder',
+        summary: 'Patched auth flow.',
+      }),
+    ).toBe(true);
   });
 
   it('merges persisted and live streams in timestamp order', () => {

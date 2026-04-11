@@ -1,6 +1,15 @@
 import { useRef, useEffect, useMemo, useState, useCallback, memo } from 'react';
 import { ArrowDown, RotateCcw, X } from 'lucide-react';
-import type { ChatMessage, AgentStatus, ActiveRepo, CardAction, RunCheckpoint, LoopPhase, CIStatus, QuickPrompt } from '@/types';
+import type {
+  ChatMessage,
+  AgentStatus,
+  ActiveRepo,
+  CardAction,
+  RunCheckpoint,
+  LoopPhase,
+  CIStatus,
+  QuickPrompt,
+} from '@/types';
 import { MessageBubble } from './MessageBubble';
 import { AgentStatusBar } from './AgentStatusBar';
 import { CIStatusBanner } from './CIStatusBanner';
@@ -12,16 +21,20 @@ import {
   HubControlGlow,
 } from '@/components/chat/hub-styles';
 
-
 // --- Resume Banner (Resumable Sessions Phase 2) ---
 
 function phaseLabel(phase: LoopPhase): string {
   switch (phase) {
-    case 'streaming_llm': return 'mid-response';
-    case 'executing_tools': return 'mid-tool-execution';
-    case 'delegating_coder': return 'during Coder delegation';
-    case 'delegating_explorer': return 'during Explorer delegation';
-    case 'executing_task_graph': return 'during task graph execution';
+    case 'streaming_llm':
+      return 'mid-response';
+    case 'executing_tools':
+      return 'mid-tool-execution';
+    case 'delegating_coder':
+      return 'during Coder delegation';
+    case 'delegating_explorer':
+      return 'during Explorer delegation';
+    case 'executing_task_graph':
+      return 'during task graph execution';
   }
 }
 
@@ -48,7 +61,10 @@ function ResumeBanner({
     const timer = setInterval(() => setAgeLabel(formatCheckpointAge(checkpoint.savedAt)), 30_000);
     // Fire the first update asynchronously via setTimeout(0)
     const initial = setTimeout(() => setAgeLabel(formatCheckpointAge(checkpoint.savedAt)), 0);
-    return () => { clearInterval(timer); clearTimeout(initial); };
+    return () => {
+      clearInterval(timer);
+      clearTimeout(initial);
+    };
   }, [checkpoint.savedAt]);
 
   return (
@@ -56,7 +72,9 @@ function ResumeBanner({
       className={`mx-4 mt-5 mb-1 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-amber-500/25`}
     >
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-amber-200">Session interrupted {phaseLabel(checkpoint.phase)}</p>
+        <p className="text-xs font-medium text-amber-200">
+          Session interrupted {phaseLabel(checkpoint.phase)}
+        </p>
         <p className="text-push-xs text-amber-200/60 mt-0.5">
           Round {checkpoint.round + 1} &middot; {ageLabel}
           {checkpoint.coderDelegationActive ? ' &middot; Coder was active' : ''}
@@ -106,52 +124,58 @@ interface ChatContainerProps {
  * it is actively streaming). This avoids re-running the map/callback
  * computation for every streaming chunk when only the final message changes.
  */
-const SettledMessageList = memo(function SettledMessageList({
-  messages,
-  onCardAction,
-  onPin,
-  onEditUserMessage,
-  regeneratableAssistantMessageId,
-  onRegenerateLastResponse,
-}: {
-  messages: ChatMessage[];
-  onCardAction?: (action: CardAction) => void;
-  onPin?: (content: string, messageId: string) => void;
-  onEditUserMessage?: (messageId: string) => void;
-  regeneratableAssistantMessageId: string | null;
-  onRegenerateLastResponse?: () => void;
-}) {
-  return (
-    <>
-      {messages.map((msg) => (
-        <MessageBubble
-          key={msg.id}
-          message={msg}
-          onCardAction={onCardAction}
-          onPin={onPin}
-          onEdit={msg.role === 'user' && !msg.isToolResult ? onEditUserMessage : undefined}
-          canRegenerate={msg.id === regeneratableAssistantMessageId}
-          onRegenerate={msg.id === regeneratableAssistantMessageId ? onRegenerateLastResponse : undefined}
-        />
-      ))}
-    </>
-  );
-}, (prevProps, nextProps) => {
-  if (prevProps.messages.length !== nextProps.messages.length) return false;
-  if (prevProps.onCardAction !== nextProps.onCardAction) return false;
-  if (prevProps.onPin !== nextProps.onPin) return false;
-  if (prevProps.onEditUserMessage !== nextProps.onEditUserMessage) return false;
-  if (prevProps.regeneratableAssistantMessageId !== nextProps.regeneratableAssistantMessageId) return false;
-  if (prevProps.onRegenerateLastResponse !== nextProps.onRegenerateLastResponse) return false;
-
-  for (let index = 0; index < prevProps.messages.length; index++) {
-    if (prevProps.messages[index] !== nextProps.messages[index]) {
+const SettledMessageList = memo(
+  function SettledMessageList({
+    messages,
+    onCardAction,
+    onPin,
+    onEditUserMessage,
+    regeneratableAssistantMessageId,
+    onRegenerateLastResponse,
+  }: {
+    messages: ChatMessage[];
+    onCardAction?: (action: CardAction) => void;
+    onPin?: (content: string, messageId: string) => void;
+    onEditUserMessage?: (messageId: string) => void;
+    regeneratableAssistantMessageId: string | null;
+    onRegenerateLastResponse?: () => void;
+  }) {
+    return (
+      <>
+        {messages.map((msg) => (
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            onCardAction={onCardAction}
+            onPin={onPin}
+            onEdit={msg.role === 'user' && !msg.isToolResult ? onEditUserMessage : undefined}
+            canRegenerate={msg.id === regeneratableAssistantMessageId}
+            onRegenerate={
+              msg.id === regeneratableAssistantMessageId ? onRegenerateLastResponse : undefined
+            }
+          />
+        ))}
+      </>
+    );
+  },
+  (prevProps, nextProps) => {
+    if (prevProps.messages.length !== nextProps.messages.length) return false;
+    if (prevProps.onCardAction !== nextProps.onCardAction) return false;
+    if (prevProps.onPin !== nextProps.onPin) return false;
+    if (prevProps.onEditUserMessage !== nextProps.onEditUserMessage) return false;
+    if (prevProps.regeneratableAssistantMessageId !== nextProps.regeneratableAssistantMessageId)
       return false;
-    }
-  }
+    if (prevProps.onRegenerateLastResponse !== nextProps.onRegenerateLastResponse) return false;
 
-  return true;
-});
+    for (let index = 0; index < prevProps.messages.length; index++) {
+      if (prevProps.messages[index] !== nextProps.messages[index]) {
+        return false;
+      }
+    }
+
+    return true;
+  },
+);
 
 const AUTO_SCROLL_THRESHOLD_PX = 150;
 const AT_BOTTOM_THRESHOLD_PX = 48;
@@ -204,18 +228,16 @@ function EmptyState({
           </>
         )}
         {isChat && (
-          <h2 className="mb-3 text-lg font-semibold text-[#fafafa]">
-            Start a conversation
-          </h2>
+          <h2 className="mb-3 text-lg font-semibold text-[#fafafa]">Start a conversation</h2>
         )}
         <p className="text-sm leading-relaxed text-push-fg-secondary">
           {isChat
             ? 'Think through ideas, ask questions, or plan your next move.'
             : activeRepo
-            ? `Focused on ${activeRepo.full_name}. Ask about PRs, recent changes, or the codebase.`
-            : hasSandbox
-            ? 'Ephemeral workspace — write code, run commands, and prototype ideas from scratch.'
-            : 'AI coding agent with direct repo access. Review PRs, explore codebases, and ship changes — all from here.'}
+              ? `Focused on ${activeRepo.full_name}. Ask about PRs, recent changes, or the codebase.`
+              : hasSandbox
+                ? 'Ephemeral workspace — write code, run commands, and prototype ideas from scratch.'
+                : 'AI coding agent with direct repo access. Review PRs, explore codebases, and ship changes — all from here.'}
         </p>
         {suggestions.length > 0 && (
           <div className="mt-6 flex flex-col gap-2.5 stagger-in">
@@ -252,7 +274,6 @@ export function ChatContainer({
   onEditUserMessage,
   onRegenerateLastResponse,
 }: ChatContainerProps) {
-
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -260,7 +281,8 @@ export function ChatContainer({
   const lastMessageContent = messages.length > 0 ? messages[messages.length - 1]?.content : '';
 
   const updateBottomState = useCallback((container: HTMLDivElement) => {
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
     setIsAtBottom(distanceFromBottom <= AT_BOTTOM_THRESHOLD_PX);
   }, []);
 
@@ -293,15 +315,16 @@ export function ChatContainer({
     const previousLastMessage = lastMessageRef.current;
 
     // Check if this is a new message (not just content update)
-    const isNewMessage = lastMessage &&
-      (!previousLastMessage || lastMessage.id !== previousLastMessage.id);
+    const isNewMessage =
+      lastMessage && (!previousLastMessage || lastMessage.id !== previousLastMessage.id);
 
     // Always scroll to bottom when user sends a new message
     if (isNewMessage && lastMessage.role === 'user') {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     } else {
       // For assistant messages (streaming), only scroll if user is near bottom
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
       if (distanceFromBottom < AUTO_SCROLL_THRESHOLD_PX) {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
       }
@@ -344,13 +367,20 @@ export function ChatContainer({
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
         {interruptedCheckpoint && onResumeRun && onDismissResume && (
-          <ResumeBanner checkpoint={interruptedCheckpoint} onResume={onResumeRun} onDismiss={onDismissResume} />
+          <ResumeBanner
+            checkpoint={interruptedCheckpoint}
+            onResume={onResumeRun}
+            onDismiss={onDismissResume}
+          />
         )}
-        {ciStatus && onDiagnoseCI && (
-          <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />
-        )}
+        {ciStatus && onDiagnoseCI && <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />}
 
-        <EmptyState activeRepo={activeRepo} hasSandbox={hasSandbox} isChat={isChat} onSuggestion={onSuggestion} />
+        <EmptyState
+          activeRepo={activeRepo}
+          hasSandbox={hasSandbox}
+          isChat={isChat}
+          onSuggestion={onSuggestion}
+        />
       </div>
     );
   }
@@ -358,16 +388,15 @@ export function ChatContainer({
   return (
     <div className="flex flex-1 flex-col overflow-hidden relative">
       {interruptedCheckpoint && onResumeRun && onDismissResume && (
-        <ResumeBanner checkpoint={interruptedCheckpoint} onResume={onResumeRun} onDismiss={onDismissResume} />
+        <ResumeBanner
+          checkpoint={interruptedCheckpoint}
+          onResume={onResumeRun}
+          onDismiss={onDismissResume}
+        />
       )}
-      {ciStatus && onDiagnoseCI && (
-        <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />
-      )}
+      {ciStatus && onDiagnoseCI && <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />}
 
-      <div
-        ref={containerRef}
-        className="flex-1 overflow-y-auto overscroll-contain"
-      >
+      <div ref={containerRef} className="flex-1 overflow-y-auto overscroll-contain">
         <div className="flex-1" />
         <div className="py-4 space-y-1.5">
           {settledMessages.length > 0 && (
@@ -386,9 +415,17 @@ export function ChatContainer({
               message={activeMessage}
               onCardAction={onCardAction}
               onPin={onPin}
-              onEdit={activeMessage.role === 'user' && !activeMessage.isToolResult ? onEditUserMessage : undefined}
+              onEdit={
+                activeMessage.role === 'user' && !activeMessage.isToolResult
+                  ? onEditUserMessage
+                  : undefined
+              }
               canRegenerate={activeMessage.id === regeneratableAssistantMessageId}
-              onRegenerate={activeMessage.id === regeneratableAssistantMessageId ? onRegenerateLastResponse : undefined}
+              onRegenerate={
+                activeMessage.id === regeneratableAssistantMessageId
+                  ? onRegenerateLastResponse
+                  : undefined
+              }
             />
           )}
           <AgentStatusBar status={agentStatus} />
@@ -418,7 +455,6 @@ export function ChatContainer({
       >
         <ArrowDown size={18} />
       </button>
-
     </div>
   );
 }

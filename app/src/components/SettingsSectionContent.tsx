@@ -29,7 +29,8 @@ import {
 import type { PreferredProvider } from '@/lib/providers';
 import type { AIProviderType } from '@/types';
 
-const SECTION_CARD_CLASS = 'space-y-3 rounded-2xl border border-push-edge bg-push-surface/55 p-4 shadow-[0_14px_28px_rgba(0,0,0,0.18)]';
+const SECTION_CARD_CLASS =
+  'space-y-3 rounded-2xl border border-push-edge bg-push-surface/55 p-4 shadow-[0_14px_28px_rgba(0,0,0,0.18)]';
 
 function PrivateConnectorsDisclosure({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -41,12 +42,16 @@ function PrivateConnectorsDisclosure({ children }: { children: React.ReactNode }
         className="flex w-full items-center justify-between text-left text-sm font-medium text-push-fg"
       >
         Private connectors (experimental)
-        <ChevronDown className={`h-4 w-4 shrink-0 text-push-fg-dim transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-push-fg-dim transition-transform ${open ? 'rotate-180' : ''}`}
+        />
       </button>
       {open && (
         <div className="mt-3 space-y-3">
           <p className="text-xs text-push-fg-dim">
-            Direct Azure/Bedrock connectors use one shared API key and base URL per provider, plus saved deployment/model entries on top. Vertex still uses a Google-native service-account setup so Gemini and Claude can share one provider entry.
+            Direct Azure/Bedrock connectors use one shared API key and base URL per provider, plus
+            saved deployment/model entries on top. Vertex still uses a Google-native service-account
+            setup so Gemini and Claude can share one provider entry.
           </p>
           {children}
         </div>
@@ -77,14 +82,24 @@ export function SettingsSectionContent({
   const tcMetrics = getMalformedToolCallMetrics();
   const ctxMetrics = getContextMetrics();
   const guardMetrics = fileLedger.getMetrics();
-  const [expandedBuiltInProviders, setExpandedBuiltInProviders] = useState<Record<BuiltInSettingsProviderId, boolean>>(() => {
-    const activeBuiltIn = BUILT_IN_SETTINGS_PROVIDER_ORDER.find((providerId) => providerId === ai.activeBackend);
-    const fallbackOpen = activeBuiltIn
-      ?? BUILT_IN_SETTINGS_PROVIDER_ORDER.find((providerId) => ai.builtInProviders[providerId].hasKey)
-      ?? 'blackbox';
+  const [expandedBuiltInProviders, setExpandedBuiltInProviders] = useState<
+    Record<BuiltInSettingsProviderId, boolean>
+  >(() => {
+    const activeBuiltIn = BUILT_IN_SETTINGS_PROVIDER_ORDER.find(
+      (providerId) => providerId === ai.activeBackend,
+    );
+    const fallbackOpen =
+      activeBuiltIn ??
+      BUILT_IN_SETTINGS_PROVIDER_ORDER.find(
+        (providerId) => ai.builtInProviders[providerId].hasKey,
+      ) ??
+      'blackbox';
 
     return Object.fromEntries(
-      BUILT_IN_SETTINGS_PROVIDER_ORDER.map((providerId) => [providerId, providerId === fallbackOpen]),
+      BUILT_IN_SETTINGS_PROVIDER_ORDER.map((providerId) => [
+        providerId,
+        providerId === fallbackOpen,
+      ]),
     ) as Record<BuiltInSettingsProviderId, boolean>;
   });
 
@@ -96,10 +111,10 @@ export function SettingsSectionContent({
   };
 
   return (
-        <div className="flex flex-col gap-6 px-3 pt-2 pb-8">
-          {/* ── You tab ── */}
-          {settingsTab === 'you' && (
-          <>
+    <div className="flex flex-col gap-6 px-3 pt-2 pb-8">
+      {/* ── You tab ── */}
+      {settingsTab === 'you' && (
+        <>
           <div className="rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.015))] px-4 py-4 shadow-[0_16px_30px_rgba(0,0,0,0.2)]">
             <p className="text-sm font-medium text-push-fg">Personalize Push</p>
             <p className="mt-1 text-xs text-push-fg-dim">
@@ -110,9 +125,7 @@ export function SettingsSectionContent({
           {/* GitHub Connection */}
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-push-fg">
-                GitHub connection
-              </label>
+              <label className="text-sm font-medium text-push-fg">GitHub connection</label>
               <div className="flex items-center gap-1.5">
                 <div
                   className={`h-2 w-2 rounded-full ${
@@ -164,7 +177,9 @@ export function SettingsSectionContent({
                             className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 font-mono"
                             onKeyDown={async (e) => {
                               if (e.key === 'Enter' && auth.installIdInput.trim()) {
-                                const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
+                                const success = await auth.setInstallationIdManually(
+                                  auth.installIdInput.trim(),
+                                );
                                 if (success) {
                                   auth.setInstallIdInput('');
                                   auth.setShowInstallIdInput(false);
@@ -178,7 +193,9 @@ export function SettingsSectionContent({
                               size="sm"
                               onClick={async () => {
                                 if (auth.installIdInput.trim()) {
-                                  const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
+                                  const success = await auth.setInstallationIdManually(
+                                    auth.installIdInput.trim(),
+                                  );
                                   if (success) {
                                     auth.setInstallIdInput('');
                                     auth.setShowInstallIdInput(false);
@@ -244,7 +261,9 @@ export function SettingsSectionContent({
                             <div className="text-push-xs text-push-fg-muted">
                               <p>Ask the deployment admin to run:</p>
                               <div className="mt-1 flex items-center gap-2">
-                                <code className="font-mono text-push-fg-secondary">{auth.allowlistSecretCmd}</code>
+                                <code className="font-mono text-push-fg-secondary">
+                                  {auth.allowlistSecretCmd}
+                                </code>
                                 <button
                                   type="button"
                                   onClick={auth.copyAllowlistCommand}
@@ -282,7 +301,9 @@ export function SettingsSectionContent({
                     className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 font-mono"
                     onKeyDown={async (e) => {
                       if (e.key === 'Enter' && auth.installIdInput.trim()) {
-                        const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
+                        const success = await auth.setInstallationIdManually(
+                          auth.installIdInput.trim(),
+                        );
                         if (success) {
                           auth.setInstallIdInput('');
                           auth.setShowInstallIdInput(false);
@@ -296,7 +317,9 @@ export function SettingsSectionContent({
                       size="sm"
                       onClick={async () => {
                         if (auth.installIdInput.trim()) {
-                          const success = await auth.setInstallationIdManually(auth.installIdInput.trim());
+                          const success = await auth.setInstallationIdManually(
+                            auth.installIdInput.trim(),
+                          );
                           if (success) {
                             auth.setInstallIdInput('');
                             auth.setShowInstallIdInput(false);
@@ -327,7 +350,9 @@ export function SettingsSectionContent({
                         <div className="text-push-xs text-push-fg-muted">
                           <p>Ask the deployment admin to run:</p>
                           <div className="mt-1 flex items-center gap-2">
-                            <code className="font-mono text-push-fg-secondary">{auth.allowlistSecretCmd}</code>
+                            <code className="font-mono text-push-fg-secondary">
+                              {auth.allowlistSecretCmd}
+                            </code>
                             <button
                               type="button"
                               onClick={auth.copyAllowlistCommand}
@@ -344,7 +369,8 @@ export function SettingsSectionContent({
               ) : (
                 <>
                   <p className="text-xs leading-relaxed text-push-fg-dim">
-                    Connect GitHub to browse repos, inspect PRs, and work from a repo-backed workspace.
+                    Connect GitHub to browse repos, inspect PRs, and work from a repo-backed
+                    workspace.
                   </p>
                   <Button
                     variant="ghost"
@@ -383,7 +409,9 @@ export function SettingsSectionContent({
                         <div className="text-push-xs text-push-fg-muted">
                           <p>Ask the deployment admin to run:</p>
                           <div className="mt-1 flex items-center gap-2">
-                            <code className="font-mono text-push-fg-secondary">{auth.allowlistSecretCmd}</code>
+                            <code className="font-mono text-push-fg-secondary">
+                              {auth.allowlistSecretCmd}
+                            </code>
                             <button
                               type="button"
                               onClick={auth.copyAllowlistCommand}
@@ -403,13 +431,9 @@ export function SettingsSectionContent({
 
           {/* About You */}
           <div className={SECTION_CARD_CLASS}>
-            <label className="text-sm font-medium text-push-fg">
-              About you
-            </label>
+            <label className="text-sm font-medium text-push-fg">About you</label>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-push-fg-secondary">
-                Name
-              </label>
+              <label className="text-xs font-medium text-push-fg-secondary">Name</label>
               <input
                 type="text"
                 value={profile.displayNameDraft}
@@ -422,9 +446,7 @@ export function SettingsSectionContent({
 
             {profile.validatedUser && (
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-push-fg-secondary">
-                  GitHub
-                </label>
+                <label className="text-xs font-medium text-push-fg-secondary">GitHub</label>
                 <div className="text-xs text-push-fg-secondary font-mono">
                   @{profile.profile.githubLogin || profile.validatedUser.login}
                 </div>
@@ -432,9 +454,7 @@ export function SettingsSectionContent({
             )}
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-push-fg-secondary">
-                Working style
-              </label>
+              <label className="text-xs font-medium text-push-fg-secondary">Working style</label>
               <textarea
                 value={profile.bioDraft}
                 onChange={(e) => profile.setBioDraft(e.target.value.slice(0, 300))}
@@ -444,9 +464,7 @@ export function SettingsSectionContent({
                 placeholder="Anything helpful to know about how you like to work"
                 className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50 resize-none"
               />
-              <p className="text-push-2xs text-push-fg-dim">
-                {profile.bioDraft.length}/300
-              </p>
+              <p className="text-push-2xs text-push-fg-dim">{profile.bioDraft.length}/300</p>
             </div>
 
             <div className="space-y-1.5">
@@ -454,7 +472,8 @@ export function SettingsSectionContent({
                 Chat instructions
               </label>
               <p className="text-push-2xs text-push-fg-dim">
-                Guidance for plain chat mode. Workspace and repo conversations use project instructions instead.
+                Guidance for plain chat mode. Workspace and repo conversations use project
+                instructions instead.
               </p>
               <textarea
                 value={profile.chatInstructionsDraft}
@@ -486,26 +505,30 @@ export function SettingsSectionContent({
               </Button>
             )}
           </div>
-          </>
-          )}
+        </>
+      )}
 
-          {/* ── Workspace tab ── */}
-          {settingsTab === 'workspace' && (<>
+      {/* ── Workspace tab ── */}
+      {settingsTab === 'workspace' && (
+        <>
           <div className="rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.015))] px-4 py-4 shadow-[0_16px_30px_rgba(0,0,0,0.2)]">
             <p className="text-sm font-medium text-push-fg">Shape how the workspace behaves</p>
             <p className="mt-1 text-xs text-push-fg-dim">
-              Tune approval behavior, long-chat behavior, runtime warm-up, and branch safety without changing your overall flow.
+              Tune approval behavior, long-chat behavior, runtime warm-up, and branch safety without
+              changing your overall flow.
             </p>
           </div>
 
           {/* Approval Mode */}
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-push-fg">
-                Approval mode
-              </label>
+              <label className="text-sm font-medium text-push-fg">Approval mode</label>
               <span className="text-xs text-push-fg-secondary">
-                {workspace.approvalMode === 'supervised' ? 'Supervised' : workspace.approvalMode === 'autonomous' ? 'Autonomous' : 'Full auto'}
+                {workspace.approvalMode === 'supervised'
+                  ? 'Supervised'
+                  : workspace.approvalMode === 'autonomous'
+                    ? 'Autonomous'
+                    : 'Full auto'}
               </span>
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -555,9 +578,7 @@ export function SettingsSectionContent({
           {/* Context Mode */}
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-push-fg">
-                Long-chat behavior
-              </label>
+              <label className="text-sm font-medium text-push-fg">Long-chat behavior</label>
               <span className="text-xs text-push-fg-secondary">
                 {workspace.contextMode === 'graceful' ? 'Keep chats steady' : 'Keep everything'}
               </span>
@@ -596,11 +617,13 @@ export function SettingsSectionContent({
           {/* Sandbox Start Mode */}
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-push-fg">
-                Runtime warm-up
-              </label>
+              <label className="text-sm font-medium text-push-fg">Runtime warm-up</label>
               <span className="text-xs text-push-fg-secondary">
-                {workspace.sandboxStartMode === 'off' ? 'Manual' : workspace.sandboxStartMode === 'smart' ? 'Smart' : 'Always'}
+                {workspace.sandboxStartMode === 'off'
+                  ? 'Manual'
+                  : workspace.sandboxStartMode === 'smart'
+                    ? 'Smart'
+                    : 'Always'}
               </span>
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -639,16 +662,15 @@ export function SettingsSectionContent({
               </button>
             </div>
             <p className="text-push-xs text-push-fg-secondary">
-              Smart starts a runtime when a prompt looks code-heavy. Always starts one on every message.
+              Smart starts a runtime when a prompt looks code-heavy. Always starts one on every
+              message.
             </p>
           </div>
 
           {/* Show Tool Activity */}
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-push-fg">
-                Console in hub
-              </label>
+              <label className="text-sm font-medium text-push-fg">Console in hub</label>
               <span className="text-xs text-push-fg-secondary">
                 {workspace.showToolActivity ? 'Visible' : 'Hidden'}
               </span>
@@ -685,9 +707,7 @@ export function SettingsSectionContent({
           {/* Protect Main */}
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-push-fg">
-                Protect Main
-              </label>
+              <label className="text-sm font-medium text-push-fg">Protect Main</label>
               <span className="text-xs text-push-fg-secondary">
                 {workspace.protectMainGlobal ? 'On' : 'Off'}
               </span>
@@ -771,19 +791,27 @@ export function SettingsSectionContent({
           {workspace.sandboxStatus !== 'idle' && (
             <div className={SECTION_CARD_CLASS}>
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-push-fg">
-                  Runtime status
-                </label>
+                <label className="text-sm font-medium text-push-fg">Runtime status</label>
                 <div className="flex items-center gap-1.5">
-                  <div className={`h-2 w-2 rounded-full ${
-                    workspace.sandboxStatus === 'ready' ? 'bg-emerald-500' :
-                    workspace.sandboxStatus === 'creating' ? 'bg-amber-500 animate-pulse' :
-                    workspace.sandboxStatus === 'error' ? 'bg-red-500' : 'bg-push-fg-dim'
-                  }`} />
+                  <div
+                    className={`h-2 w-2 rounded-full ${
+                      workspace.sandboxStatus === 'ready'
+                        ? 'bg-emerald-500'
+                        : workspace.sandboxStatus === 'creating'
+                          ? 'bg-amber-500 animate-pulse'
+                          : workspace.sandboxStatus === 'error'
+                            ? 'bg-red-500'
+                            : 'bg-push-fg-dim'
+                    }`}
+                  />
                   <span className="text-xs text-push-fg-secondary">
-                    {workspace.sandboxStatus === 'ready' ? 'Running' :
-                     workspace.sandboxStatus === 'creating' ? 'Warming up...' :
-                     workspace.sandboxStatus === 'error' ? 'Error' : 'Idle'}
+                    {workspace.sandboxStatus === 'ready'
+                      ? 'Running'
+                      : workspace.sandboxStatus === 'creating'
+                        ? 'Warming up...'
+                        : workspace.sandboxStatus === 'error'
+                          ? 'Error'
+                          : 'Idle'}
                   </span>
                 </div>
               </div>
@@ -793,19 +821,27 @@ export function SettingsSectionContent({
                   <div className="px-3 py-2 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <BranchWaveIcon className="h-3.5 w-3.5 text-push-fg-muted" />
-                      <span className="text-xs text-push-fg-secondary font-mono truncate">{workspace.sandboxState.branch}</span>
+                      <span className="text-xs text-push-fg-secondary font-mono truncate">
+                        {workspace.sandboxState.branch}
+                      </span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className={`text-push-xs px-1.5 py-0.5 rounded-full ${
-                        workspace.sandboxState.changedFiles > 0
-                          ? 'bg-amber-500/15 text-amber-500'
-                          : 'bg-emerald-500/15 text-emerald-500'
-                      }`}>
-                        {workspace.sandboxState.changedFiles > 0 ? `${workspace.sandboxState.changedFiles} changed` : 'clean'}
+                      <span
+                        className={`text-push-xs px-1.5 py-0.5 rounded-full ${
+                          workspace.sandboxState.changedFiles > 0
+                            ? 'bg-amber-500/15 text-amber-500'
+                            : 'bg-emerald-500/15 text-emerald-500'
+                        }`}
+                      >
+                        {workspace.sandboxState.changedFiles > 0
+                          ? `${workspace.sandboxState.changedFiles} changed`
+                          : 'clean'}
                       </span>
                       <button
                         type="button"
-                        onClick={() => workspace.sandboxId && workspace.fetchSandboxState(workspace.sandboxId)}
+                        onClick={() =>
+                          workspace.sandboxId && workspace.fetchSandboxState(workspace.sandboxId)
+                        }
                         disabled={workspace.sandboxStateLoading}
                         className="inline-flex items-center gap-1 rounded border border-push-edge px-1.5 py-0.5 text-push-2xs text-push-fg-secondary hover:text-push-fg hover:border-push-edge-hover disabled:opacity-50"
                         title="Refresh workspace status"
@@ -822,14 +858,32 @@ export function SettingsSectionContent({
                   {workspace.sandboxState.changedFiles > 0 && (
                     <div className="px-3 pb-2 space-y-1.5">
                       <div className="flex gap-3 text-push-xs text-push-fg-muted">
-                        <span>Staged: <span className="text-push-fg-secondary">{workspace.sandboxState.stagedFiles}</span></span>
-                        <span>Unstaged: <span className="text-push-fg-secondary">{workspace.sandboxState.unstagedFiles}</span></span>
-                        <span>Untracked: <span className="text-push-fg-secondary">{workspace.sandboxState.untrackedFiles}</span></span>
+                        <span>
+                          Staged:{' '}
+                          <span className="text-push-fg-secondary">
+                            {workspace.sandboxState.stagedFiles}
+                          </span>
+                        </span>
+                        <span>
+                          Unstaged:{' '}
+                          <span className="text-push-fg-secondary">
+                            {workspace.sandboxState.unstagedFiles}
+                          </span>
+                        </span>
+                        <span>
+                          Untracked:{' '}
+                          <span className="text-push-fg-secondary">
+                            {workspace.sandboxState.untrackedFiles}
+                          </span>
+                        </span>
                       </div>
                       {workspace.sandboxState.preview.length > 0 && (
                         <div className="rounded border border-push-edge bg-push-surface p-1.5 space-y-0.5">
                           {workspace.sandboxState.preview.map((line, idx) => (
-                            <div key={`${line}-${idx}`} className="text-push-2xs text-push-fg-secondary font-mono truncate">
+                            <div
+                              key={`${line}-${idx}`}
+                              className="text-push-2xs text-push-fg-secondary font-mono truncate"
+                            >
                               {line}
                             </div>
                           ))}
@@ -840,7 +894,9 @@ export function SettingsSectionContent({
 
                   <div className="px-3 pb-2 text-push-2xs text-push-fg-dim">
                     {new Date(workspace.sandboxState.fetchedAt).toLocaleTimeString()}
-                    <span className="font-mono ml-1.5">{workspace.sandboxState.sandboxId.slice(0, 12)}...</span>
+                    <span className="font-mono ml-1.5">
+                      {workspace.sandboxState.sandboxId.slice(0, 12)}...
+                    </span>
                   </div>
                 </div>
               )}
@@ -850,11 +906,12 @@ export function SettingsSectionContent({
               )}
             </div>
           )}
+        </>
+      )}
 
-          </>)}
-
-          {/* ── AI tab ── */}
-          {settingsTab === 'ai' && (<>
+      {/* ── AI tab ── */}
+      {settingsTab === 'ai' && (
+        <>
           <div className="rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.015))] px-4 py-4 shadow-[0_16px_30px_rgba(0,0,0,0.2)]">
             <p className="text-sm font-medium text-push-fg">Set your defaults once</p>
             <p className="mt-1 text-xs text-push-fg-dim">
@@ -864,9 +921,7 @@ export function SettingsSectionContent({
 
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-push-fg">
-                New chat defaults
-              </label>
+              <label className="text-sm font-medium text-push-fg">New chat defaults</label>
               <div className="flex items-center gap-1.5">
                 <div
                   className={`h-2 w-2 rounded-full ${
@@ -875,10 +930,7 @@ export function SettingsSectionContent({
                 />
                 <span className="text-xs text-push-fg-secondary">
                   <span className="inline-flex items-center gap-1.5">
-                    <ProviderIcon
-                      provider={ai.activeBackend ?? ai.activeProviderLabel}
-                      size={12}
-                    />
+                    <ProviderIcon provider={ai.activeBackend ?? ai.activeProviderLabel} size={12} />
                     {ai.activeBackend
                       ? `${PROVIDER_LABELS[ai.activeBackend]} for new chats`
                       : `${PROVIDER_LABELS[ai.activeProviderLabel] || 'Offline'} on auto`}
@@ -900,7 +952,8 @@ export function SettingsSectionContent({
                 </p>
                 {ai.lockedModel && (
                   <p className="text-xs text-push-fg-muted mt-0.5">
-                    Current chat model: <span className="font-mono text-push-fg-secondary">{ai.lockedModel}</span>
+                    Current chat model:{' '}
+                    <span className="font-mono text-push-fg-secondary">{ai.lockedModel}</span>
                   </p>
                 )}
               </div>
@@ -963,10 +1016,15 @@ export function SettingsSectionContent({
               const meta = BUILT_IN_SETTINGS_PROVIDER_META[providerId];
               const label = PROVIDER_LABELS[providerId];
               const expanded = expandedBuiltInProviders[providerId] ?? false;
-              const modelLabel = meta.labelTransform ? meta.labelTransform(provider.model) : provider.model;
+              const modelLabel = meta.labelTransform
+                ? meta.labelTransform(provider.model)
+                : provider.model;
 
               return (
-                <div key={providerId} className="space-y-2 rounded-2xl border border-push-edge bg-push-surface/35 p-3">
+                <div
+                  key={providerId}
+                  className="space-y-2 rounded-2xl border border-push-edge bg-push-surface/35 p-3"
+                >
                   <button
                     type="button"
                     onClick={() => toggleBuiltInProvider(providerId)}
@@ -984,7 +1042,9 @@ export function SettingsSectionContent({
                         </p>
                       </div>
                     </div>
-                    <ChevronDown className={`h-4 w-4 shrink-0 text-push-fg-dim transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-push-fg-dim transition-transform ${expanded ? 'rotate-180' : ''}`}
+                    />
                   </button>
                   {expanded && (
                     <>
@@ -1033,7 +1093,6 @@ export function SettingsSectionContent({
                 </div>
               );
             })}
-
           </div>
 
           <PrivateConnectorsDisclosure>
@@ -1112,9 +1171,7 @@ export function SettingsSectionContent({
           {/* Web Search (Tavily) */}
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-push-fg">
-                Web Search
-              </label>
+              <label className="text-sm font-medium text-push-fg">Web Search</label>
               <span className="text-xs text-push-fg-dim">Optional</span>
             </div>
             <div className="space-y-2">
@@ -1138,50 +1195,68 @@ export function SettingsSectionContent({
 
           {/* Edit Guard Diagnostics */}
           <div className={SECTION_CARD_CLASS}>
-            <label className="text-sm font-medium text-push-fg">
-              Edit Guard Diagnostics
-            </label>
+            <label className="text-sm font-medium text-push-fg">Edit Guard Diagnostics</label>
             {guardMetrics.checksTotal === 0 && guardMetrics.autoExpandAttempts === 0 ? (
               <p className="text-xs text-push-fg-dim">No edit-guard activity this session.</p>
             ) : (
               <div className="space-y-2">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                   <span className="text-xs text-push-fg-secondary">Checks</span>
-                  <span className="text-xs text-push-fg-dim text-right">{guardMetrics.checksTotal}</span>
+                  <span className="text-xs text-push-fg-dim text-right">
+                    {guardMetrics.checksTotal}
+                  </span>
                   <span className="text-xs text-push-fg-secondary">Allowed</span>
-                  <span className="text-xs text-push-fg-dim text-right">{guardMetrics.allowedTotal}</span>
+                  <span className="text-xs text-push-fg-dim text-right">
+                    {guardMetrics.allowedTotal}
+                  </span>
                   <span className="text-xs text-push-fg-secondary">Blocked</span>
-                  <span className="text-xs text-push-fg-dim text-right">{guardMetrics.blockedTotal}</span>
+                  <span className="text-xs text-push-fg-dim text-right">
+                    {guardMetrics.blockedTotal}
+                  </span>
                   <span className="text-xs text-push-fg-secondary">Auto-expand</span>
                   <span className="text-xs text-push-fg-dim text-right">
                     {guardMetrics.autoExpandSuccesses}/{guardMetrics.autoExpandAttempts}
                   </span>
                   <span className="text-xs text-push-fg-secondary">Symbols read</span>
-                  <span className="text-xs text-push-fg-dim text-right">{guardMetrics.symbolsReadTotal}</span>
+                  <span className="text-xs text-push-fg-dim text-right">
+                    {guardMetrics.symbolsReadTotal}
+                  </span>
                   <span className="text-xs text-push-fg-secondary">Symbol warnings softened</span>
-                  <span className="text-xs text-push-fg-dim text-right">{guardMetrics.symbolWarningsSoftened}</span>
+                  <span className="text-xs text-push-fg-dim text-right">
+                    {guardMetrics.symbolWarningsSoftened}
+                  </span>
                 </div>
                 {(guardMetrics.blockedTotal > 0 || guardMetrics.symbolWarningsSoftened > 0) && (
                   <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="text-push-xs text-push-fg-dim">Never read blocks</span>
-                      <span className="text-push-xs text-push-fg-dim">{guardMetrics.blockedByNeverRead}</span>
+                      <span className="text-push-xs text-push-fg-dim">
+                        {guardMetrics.blockedByNeverRead}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-push-xs text-push-fg-dim">Stale blocks</span>
-                      <span className="text-push-xs text-push-fg-dim">{guardMetrics.blockedByStale}</span>
+                      <span className="text-push-xs text-push-fg-dim">
+                        {guardMetrics.blockedByStale}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-push-xs text-push-fg-dim">Partial-read blocks</span>
-                      <span className="text-push-xs text-push-fg-dim">{guardMetrics.blockedByPartialRead}</span>
+                      <span className="text-push-xs text-push-fg-dim">
+                        {guardMetrics.blockedByPartialRead}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-push-xs text-push-fg-dim">Unknown-symbol blocks</span>
-                      <span className="text-push-xs text-push-fg-dim">{guardMetrics.blockedByUnknownSymbol}</span>
+                      <span className="text-push-xs text-push-fg-dim">
+                        {guardMetrics.blockedByUnknownSymbol}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-push-xs text-push-fg-dim">Symbol auto-expands</span>
-                      <span className="text-push-xs text-push-fg-dim">{guardMetrics.symbolAutoExpands}</span>
+                      <span className="text-push-xs text-push-fg-dim">
+                        {guardMetrics.symbolAutoExpands}
+                      </span>
                     </div>
                   </div>
                 )}
@@ -1191,18 +1266,20 @@ export function SettingsSectionContent({
 
           {/* Tool Call Diagnostics */}
           <div className={SECTION_CARD_CLASS}>
-            <label className="text-sm font-medium text-push-fg">
-              Tool Call Diagnostics
-            </label>
+            <label className="text-sm font-medium text-push-fg">Tool Call Diagnostics</label>
             {tcMetrics.count === 0 ? (
               <p className="text-xs text-push-fg-dim">No malformed tool calls this session.</p>
             ) : (
               <div className="space-y-2">
                 <p className="text-xs text-push-fg-secondary">
-                  {tcMetrics.count} malformed {tcMetrics.count === 1 ? 'call' : 'calls'} detected this session
+                  {tcMetrics.count} malformed {tcMetrics.count === 1 ? 'call' : 'calls'} detected
+                  this session
                 </p>
                 {Object.entries(tcMetrics.byProvider).map(([provider, pm]) => (
-                  <div key={provider} className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1.5">
+                  <div
+                    key={provider}
+                    className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1.5"
+                  >
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium text-push-fg-secondary">
                         {PROVIDER_LABELS[provider as AIProviderType] ?? provider}
@@ -1212,7 +1289,9 @@ export function SettingsSectionContent({
                     {Object.entries(pm.byModel).map(([model, mm]) => (
                       <div key={model} className="space-y-0.5 pl-2 border-l border-push-edge">
                         <div className="flex items-center justify-between">
-                          <span className="text-push-xs text-push-fg-dim truncate max-w-[160px]">{model}</span>
+                          <span className="text-push-xs text-push-fg-dim truncate max-w-[160px]">
+                            {model}
+                          </span>
                           <span className="text-push-xs text-push-fg-dim">{mm.count}</span>
                         </div>
                         {(Object.entries(mm.reasons) as [string, number][])
@@ -1220,11 +1299,15 @@ export function SettingsSectionContent({
                           .map(([reason, n]) => (
                             <div key={reason} className="flex items-center justify-between pl-2">
                               <span className="text-push-2xs text-push-fg-dim">
-                                {reason === 'truncated' ? 'Truncated' :
-                                 reason === 'validation_failed' ? 'Invalid schema' :
-                                 reason === 'malformed_json' ? 'Malformed JSON' :
-                                 reason === 'natural_language_intent' ? 'NL intent' :
-                                 reason}
+                                {reason === 'truncated'
+                                  ? 'Truncated'
+                                  : reason === 'validation_failed'
+                                    ? 'Invalid schema'
+                                    : reason === 'malformed_json'
+                                      ? 'Malformed JSON'
+                                      : reason === 'natural_language_intent'
+                                        ? 'NL intent'
+                                        : reason}
                               </span>
                               <span className="text-push-2xs text-push-fg-dim">{n}</span>
                             </div>
@@ -1239,53 +1322,67 @@ export function SettingsSectionContent({
 
           {/* Context Diagnostics */}
           <div className={SECTION_CARD_CLASS}>
-            <label className="text-sm font-medium text-push-fg">
-              Context Diagnostics
-            </label>
+            <label className="text-sm font-medium text-push-fg">Context Diagnostics</label>
             {ctxMetrics.totalEvents === 0 ? (
-              <p className="text-xs text-push-fg-dim">No context compression events this session.</p>
+              <p className="text-xs text-push-fg-dim">
+                No context compression events this session.
+              </p>
             ) : (
               <div className="space-y-2">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                   <span className="text-xs text-push-fg-secondary">Events</span>
-                  <span className="text-xs text-push-fg-dim text-right">{ctxMetrics.totalEvents}</span>
+                  <span className="text-xs text-push-fg-dim text-right">
+                    {ctxMetrics.totalEvents}
+                  </span>
                   <span className="text-xs text-push-fg-secondary">Tokens saved</span>
-                  <span className="text-xs text-push-fg-dim text-right">{ctxMetrics.totalTokensSaved.toLocaleString()}</span>
+                  <span className="text-xs text-push-fg-dim text-right">
+                    {ctxMetrics.totalTokensSaved.toLocaleString()}
+                  </span>
                   <span className="text-xs text-push-fg-secondary">Largest reduction</span>
-                  <span className="text-xs text-push-fg-dim text-right">{ctxMetrics.largestReduction.toLocaleString()}</span>
+                  <span className="text-xs text-push-fg-dim text-right">
+                    {ctxMetrics.largestReduction.toLocaleString()}
+                  </span>
                   <span className="text-xs text-push-fg-secondary">Max context seen</span>
-                  <span className="text-xs text-push-fg-dim text-right">{ctxMetrics.maxContextSeen.toLocaleString()}</span>
+                  <span className="text-xs text-push-fg-dim text-right">
+                    {ctxMetrics.maxContextSeen.toLocaleString()}
+                  </span>
                 </div>
                 {/* Phase breakdown */}
                 <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
-                  {([
+                  {[
                     ['Summarization', ctxMetrics.summarization] as const,
                     ['Digest + drop', ctxMetrics.digestDrop] as const,
                     ['Hard trim', ctxMetrics.hardTrim] as const,
-                  ]).filter(([, p]) => p.count > 0).map(([label, p]) => (
-                    <div key={label} className="flex items-center justify-between">
-                      <span className="text-push-xs text-push-fg-dim">{label}</span>
-                      <span className="text-push-xs text-push-fg-dim">
-                        {p.count}× · {(p.totalBefore - p.totalAfter).toLocaleString()} saved
-                        {p.messagesDropped > 0 ? ` · ${p.messagesDropped} msgs dropped` : ''}
-                      </span>
-                    </div>
-                  ))}
+                  ]
+                    .filter(([, p]) => p.count > 0)
+                    .map(([label, p]) => (
+                      <div key={label} className="flex items-center justify-between">
+                        <span className="text-push-xs text-push-fg-dim">{label}</span>
+                        <span className="text-push-xs text-push-fg-dim">
+                          {p.count}× · {(p.totalBefore - p.totalAfter).toLocaleString()} saved
+                          {p.messagesDropped > 0 ? ` · ${p.messagesDropped} msgs dropped` : ''}
+                        </span>
+                      </div>
+                    ))}
                 </div>
                 {/* Summarization causes */}
-                {Object.values(ctxMetrics.summarizationCauses).some(c => c > 0) && (
+                {Object.values(ctxMetrics.summarizationCauses).some((c) => c > 0) && (
                   <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
-                    <span className="text-push-xs text-push-fg-secondary font-medium">Summarization causes</span>
-                    {([
+                    <span className="text-push-xs text-push-fg-secondary font-medium">
+                      Summarization causes
+                    </span>
+                    {[
                       ['Tool output', ctxMetrics.summarizationCauses.tool_output] as const,
                       ['Long message', ctxMetrics.summarizationCauses.long_message] as const,
                       ['Mixed', ctxMetrics.summarizationCauses.mixed] as const,
-                    ]).filter(([, c]) => c > 0).map(([label, count]) => (
-                      <div key={label} className="flex items-center justify-between">
-                        <span className="text-push-xs text-push-fg-dim">{label}</span>
-                        <span className="text-push-xs text-push-fg-dim">{count}×</span>
-                      </div>
-                    ))}
+                    ]
+                      .filter(([, c]) => c > 0)
+                      .map(([label, count]) => (
+                        <div key={label} className="flex items-center justify-between">
+                          <span className="text-push-xs text-push-fg-dim">{label}</span>
+                          <span className="text-push-xs text-push-fg-dim">{count}×</span>
+                        </div>
+                      ))}
                   </div>
                 )}
                 {/* Provider breakdown */}
@@ -1309,11 +1406,10 @@ export function SettingsSectionContent({
 
           {/* Danger Zone */}
           <div className="space-y-3 pt-2 border-t border-push-edge">
-            <label className="text-sm font-medium text-push-fg">
-              Data
-            </label>
+            <label className="text-sm font-medium text-push-fg">Data</label>
             <p className="text-xs text-push-fg-dim">
-              Context memory is stored locally in your browser to help the agent remember facts across conversations. You can clear it below.
+              Context memory is stored locally in your browser to help the agent remember facts
+              across conversations. You can clear it below.
             </p>
             <div className="space-y-1.5 pt-1">
               <Button
@@ -1361,8 +1457,8 @@ export function SettingsSectionContent({
               )}
             </div>
           </div>
-          </>)}
-        </div>
-
+        </>
+      )}
+    </div>
   );
 }

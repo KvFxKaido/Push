@@ -17,7 +17,8 @@ function assistantMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
 describe('MessageBubble', () => {
   it('hides malformed assistant messages with no cards', () => {
     const message = assistantMessage({
-      content: 'workspace/app && npm audit fix && npx vitest run src/lib/orchestrator.test.ts && npm audit --json","workdir":"/workspace"}}',
+      content:
+        'workspace/app && npm audit fix && npx vitest run src/lib/orchestrator.test.ts && npm audit --json","workdir":"/workspace"}}',
       isMalformed: true,
     });
 
@@ -32,7 +33,8 @@ describe('MessageBubble', () => {
     } as unknown as ChatCard;
 
     const message = assistantMessage({
-      content: 'workspace/app && npm audit fix && npx vitest run src/lib/orchestrator.test.ts && npm audit --json","workdir":"/workspace"}}',
+      content:
+        'workspace/app && npm audit fix && npx vitest run src/lib/orchestrator.test.ts && npm audit --json","workdir":"/workspace"}}',
       isMalformed: true,
       cards: [legacyCard],
     });

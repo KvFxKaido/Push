@@ -28,7 +28,11 @@ function getOAuthRedirectUri(): string {
   if (configured) {
     // Normalize via URL constructor so trailing-slash handling matches the fallback path
     // and GitHub's registered callback URL.
-    try { return new URL(configured).toString(); } catch { return configured; }
+    try {
+      return new URL(configured).toString();
+    } catch {
+      return configured;
+    }
   }
   return new URL('/', window.location.origin).toString();
 }

@@ -66,9 +66,9 @@ function auditCoalesceKey(
     runtimeContext,
     hookResult: hookResult
       ? {
-        exitCode: hookResult.exitCode,
-        output: hookResult.output,
-      }
+          exitCode: hookResult.exitCode,
+          output: hookResult.output,
+        }
       : null,
     // Compact fingerprint — discriminates by path, size, and truncation without
     // serializing up to 60KB of file content into the Map key.
@@ -148,7 +148,8 @@ export async function runAuditor(
   fileContexts?: AuditorFileContext[],
 ): Promise<AuditResult> {
   const provider = (options?.providerOverride || getActiveProvider()) as string;
-  const modelId = options?.modelOverride?.trim() || getModelForRole(provider as ActiveProvider, 'auditor')?.id;
+  const modelId =
+    options?.modelOverride?.trim() || getModelForRole(provider as ActiveProvider, 'auditor')?.id;
   const key = auditCoalesceKey(
     diff,
     provider,
@@ -169,13 +170,20 @@ export async function runAuditor(
 
   const run = (async () => {
     const runtimeContext = await buildAuditorRuntimeContext(diff, context);
-    return runAuditorCore(diff, (phase) => {
-      broadcastAuditStatus(key, phase);
-    }, hookResult, {
-      ...options,
-      providerOverride: provider as ActiveProvider,
-      modelOverride: modelId,
-    }, runtimeContext, fileContexts);
+    return runAuditorCore(
+      diff,
+      (phase) => {
+        broadcastAuditStatus(key, phase);
+      },
+      hookResult,
+      {
+        ...options,
+        providerOverride: provider as ActiveProvider,
+        modelOverride: modelId,
+      },
+      runtimeContext,
+      fileContexts,
+    );
   })();
   pendingAudits.set(key, run);
   run.finally(() => {
@@ -204,14 +212,17 @@ async function runAuditorCore(
       card: {
         verdict: 'unsafe',
         summary: 'No AI provider configured. Cannot run Auditor.',
-        risks: [{ level: 'high', description: 'Add an API key in Settings — defaulting to UNSAFE' }],
+        risks: [
+          { level: 'high', description: 'Add an API key in Settings — defaulting to UNSAFE' },
+        ],
         filesReviewed,
       },
     };
   }
 
   const { streamFn } = getProviderStreamFn(activeProvider);
-  const auditorModelId = options?.modelOverride?.trim() || getModelForRole(activeProvider, 'auditor')?.id; // undefined falls back to provider default
+  const auditorModelId =
+    options?.modelOverride?.trim() || getModelForRole(activeProvider, 'auditor')?.id; // undefined falls back to provider default
   const contextBlock = runtimeContext ?? '';
   const systemPrompt = new SystemPromptBuilder()
     .set('identity', AUDITOR_SYSTEM_PROMPT)
@@ -227,9 +238,10 @@ async function runAuditorCore(
   // Build [FILE HINTS] block from the chunked diff (not the raw diff) so the
   // model only sees classifications for files whose hunks are actually included.
   const fileHintPaths = [...chunkedDiff.matchAll(/^diff --git a\/.+ b\/(.+)$/gm)].map((m) => m[1]);
-  const fileHintsBlock = fileHintPaths.length > 0
-    ? `[FILE HINTS]\n${fileHintPaths.map((p) => `- ${p}: ${classifyFilePath(p)}`).join('\n')}\n[/FILE HINTS]\n\n`
-    : '';
+  const fileHintsBlock =
+    fileHintPaths.length > 0
+      ? `[FILE HINTS]\n${fileHintPaths.map((p) => `- ${p}: ${classifyFilePath(p)}`).join('\n')}\n[/FILE HINTS]\n\n`
+      : '';
 
   const fileContextBlock = formatFileContextBlock(fileContexts ?? []);
 
@@ -253,7 +265,7 @@ async function runAuditorCore(
         onError,
         undefined, // no thinking tokens
         undefined, // no workspace context
-        false,     // no sandbox
+        false, // no sandbox
         auditorModelId,
         systemPrompt,
       );
@@ -316,7 +328,9 @@ async function runAuditorCore(
       card: {
         verdict: 'unsafe',
         summary: 'Auditor returned invalid response. Defaulting to UNSAFE.',
-        risks: [{ level: 'high', description: 'Could not parse Auditor verdict — blocking commit' }],
+        risks: [
+          { level: 'high', description: 'Could not parse Auditor verdict — blocking commit' },
+        ],
         filesReviewed,
       },
     };
@@ -382,7 +396,10 @@ export async function runAuditorEvaluation(
     coderMaxRounds?: number;
     criteriaResults?: { id: string; passed: boolean; output: string }[];
     verificationPolicy?: VerificationPolicy;
-    memoryScope?: Pick<MemoryScope, 'repoFullName' | 'branch' | 'chatId' | 'taskGraphId' | 'taskId'> | null;
+    memoryScope?: Pick<
+      MemoryScope,
+      'repoFullName' | 'branch' | 'chatId' | 'taskGraphId' | 'taskId'
+    > | null;
   },
 ): Promise<EvaluationResult> {
   // Fail-safe default
@@ -425,21 +442,28 @@ export async function runAuditorEvaluation(
   if (workingMemory) {
     // Reuse the canonical formatCoderState to ensure all fields (including
     // assumptions, observations, etc.) are included in the evaluation context.
-    sections.push(`[WORKING MEMORY]\n${formatCoderState(workingMemory, options?.coderRounds || 0)}\n[/WORKING MEMORY]`);
+    sections.push(
+      `[WORKING MEMORY]\n${formatCoderState(workingMemory, options?.coderRounds || 0)}\n[/WORKING MEMORY]`,
+    );
   }
 
   if (options?.coderRounds !== undefined && options?.coderMaxRounds !== undefined) {
     const hitCap = options.coderRounds >= options.coderMaxRounds;
-    sections.push(`[EXECUTION INFO]\nRounds used: ${options.coderRounds}/${options.coderMaxRounds}${hitCap ? ' (HIT ROUND CAP — may be premature termination)' : ''}\n[/EXECUTION INFO]`);
+    sections.push(
+      `[EXECUTION INFO]\nRounds used: ${options.coderRounds}/${options.coderMaxRounds}${hitCap ? ' (HIT ROUND CAP — may be premature termination)' : ''}\n[/EXECUTION INFO]`,
+    );
   }
 
   if (options?.criteriaResults?.length) {
-    const passed = options.criteriaResults.filter(r => r.passed).length;
+    const passed = options.criteriaResults.filter((r) => r.passed).length;
     const total = options.criteriaResults.length;
-    const lines = options.criteriaResults.map(r =>
-      `  ${r.passed ? 'PASS' : 'FAIL'} ${r.id}${r.passed ? '' : `: ${r.output.slice(0, 200)}`}`,
+    const lines = options.criteriaResults.map(
+      (r) =>
+        `  ${r.passed ? 'PASS' : 'FAIL'} ${r.id}${r.passed ? '' : `: ${r.output.slice(0, 200)}`}`,
     );
-    sections.push(`[ACCEPTANCE CRITERIA] ${passed}/${total} passed\n${lines.join('\n')}\n[/ACCEPTANCE CRITERIA]`);
+    sections.push(
+      `[ACCEPTANCE CRITERIA] ${passed}/${total} passed\n${lines.join('\n')}\n[/ACCEPTANCE CRITERIA]`,
+    );
   }
 
   // Session-level verification policy — gives the auditor awareness of
@@ -450,8 +474,11 @@ export async function runAuditorEvaluation(
   }
 
   if (diff) {
-    const truncatedDiff = diff.length > 15_000 ? diff.slice(0, 15_000) + '\n[diff truncated]' : diff;
-    sections.push(`[SANDBOX DIFF]\n\`\`\`diff\n${truncatedDiff.replace(/`/g, '\\`')}\n\`\`\`\n[/SANDBOX DIFF]`);
+    const truncatedDiff =
+      diff.length > 15_000 ? diff.slice(0, 15_000) + '\n[diff truncated]' : diff;
+    sections.push(
+      `[SANDBOX DIFF]\n\`\`\`diff\n${truncatedDiff.replace(/`/g, '\\`')}\n\`\`\`\n[/SANDBOX DIFF]`,
+    );
   }
 
   const messages: ChatMessage[] = [
@@ -496,18 +523,24 @@ export async function runAuditorEvaluation(
     }
 
     const parsed = asRecord(JSON.parse(jsonStr));
-    const verdict: 'complete' | 'incomplete' = parsed?.verdict === 'complete' ? 'complete' : 'incomplete';
+    const verdict: 'complete' | 'incomplete' =
+      parsed?.verdict === 'complete' ? 'complete' : 'incomplete';
     const summary = typeof parsed?.summary === 'string' ? parsed.summary : 'No summary provided';
     const gaps = Array.isArray(parsed?.gaps)
       ? (parsed.gaps as unknown[]).filter((g): g is string => typeof g === 'string')
       : [];
     const confidence: 'high' | 'medium' | 'low' =
-      parsed?.confidence === 'high' || parsed?.confidence === 'medium' || parsed?.confidence === 'low'
+      parsed?.confidence === 'high' ||
+      parsed?.confidence === 'medium' ||
+      parsed?.confidence === 'low'
         ? parsed.confidence
         : 'low';
 
     return { verdict, summary, gaps, confidence };
   } catch {
-    return { ...INCOMPLETE_DEFAULT, summary: 'Evaluator returned invalid response. Defaulting to incomplete.' };
+    return {
+      ...INCOMPLETE_DEFAULT,
+      summary: 'Evaluator returned invalid response. Defaulting to incomplete.',
+    };
   }
 }

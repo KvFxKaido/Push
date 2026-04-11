@@ -29,11 +29,9 @@ interface BranchCreateSheetProps {
   setCurrentBranch: (branch: string) => void;
 }
 
-const BRANCH_ACTION_BUTTON_CLASS =
-  `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 flex-1 text-sm text-push-fg-secondary`;
+const BRANCH_ACTION_BUTTON_CLASS = `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 flex-1 text-sm text-push-fg-secondary`;
 
-const BRANCH_OPTION_CLASS =
-  `${HUB_PANEL_SUBTLE_SURFACE_CLASS} flex cursor-pointer items-start gap-3 px-3.5 py-3 transition-all duration-200`;
+const BRANCH_OPTION_CLASS = `${HUB_PANEL_SUBTLE_SURFACE_CLASS} flex cursor-pointer items-start gap-3 px-3.5 py-3 transition-all duration-200`;
 
 const BRANCH_SUCCESS_PANEL_CLASS =
   'rounded-[18px] border border-emerald-500/20 bg-[linear-gradient(180deg,rgba(17,61,42,0.18)_0%,rgba(8,28,20,0.34)_100%)] px-3.5 py-3';
@@ -41,7 +39,12 @@ const BRANCH_SUCCESS_PANEL_CLASS =
 const BRANCH_DANGER_PANEL_CLASS =
   'rounded-[18px] border border-red-500/20 bg-[linear-gradient(180deg,rgba(70,23,23,0.18)_0%,rgba(31,11,11,0.34)_100%)] px-3.5 py-3';
 
-function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }: BranchCreateSheetProps) {
+function BranchCreateSheet({
+  open,
+  onOpenChange,
+  activeRepo,
+  setCurrentBranch,
+}: BranchCreateSheetProps) {
   const [branchName, setBranchName] = useState('');
   const [afterCreate, setAfterCreate] = useState<'switch' | 'stay'>('switch');
   const [creating, setCreating] = useState(false);
@@ -94,7 +97,16 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
     } finally {
       setCreating(false);
     }
-  }, [isValid, creating, activeRepo.full_name, sanitized, fromBranch, afterCreate, setCurrentBranch, onOpenChange]);
+  }, [
+    isValid,
+    creating,
+    activeRepo.full_name,
+    sanitized,
+    fromBranch,
+    afterCreate,
+    setCurrentBranch,
+    onOpenChange,
+  ]);
 
   const handleCancel = useCallback(() => {
     setBranchName('');
@@ -104,15 +116,18 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
   }, [onOpenChange]);
 
   // Reset state when sheet opens
-  const handleOpenChange = useCallback((next: boolean) => {
-    if (next) {
-      setBranchName('');
-      setError(null);
-      setSuccess(null);
-      setAfterCreate('switch');
-    }
-    onOpenChange(next);
-  }, [onOpenChange]);
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (next) {
+        setBranchName('');
+        setError(null);
+        setSuccess(null);
+        setAfterCreate('switch');
+      }
+      onOpenChange(next);
+    },
+    [onOpenChange],
+  );
 
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -153,11 +168,13 @@ function BranchCreateSheet({ open, onOpenChange, activeRepo, setCurrentBranch }:
               spellCheck={false}
             />
             {/* Show sanitized preview if it differs from raw input */}
-            {branchName && sanitized !== branchName.toLowerCase().trim() && sanitized.length > 0 && (
-              <p className="text-push-xs text-push-fg-dim">
-                Will create: <span className="text-push-fg-muted font-mono">{sanitized}</span>
-              </p>
-            )}
+            {branchName &&
+              sanitized !== branchName.toLowerCase().trim() &&
+              sanitized.length > 0 && (
+                <p className="text-push-xs text-push-fg-dim">
+                  Will create: <span className="text-push-fg-muted font-mono">{sanitized}</span>
+                </p>
+              )}
             {branchName && sanitized.length === 0 && (
               <p className="text-push-xs text-red-400">
                 Branch name contains only invalid characters.
