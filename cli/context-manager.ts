@@ -83,13 +83,12 @@ export function estimateContextTokens(messages: Message[]): number {
 // ---------------------------------------------------------------------------
 // Budget resolution
 // ---------------------------------------------------------------------------
-
-const DEFAULT_BUDGET: ContextBudget = { targetTokens: 88_000, maxTokens: 100_000 };
+const DEFAULT_BUDGET: ContextBudget = { targetTokens: 60_000, maxTokens: 100_000 };
 // Gemini models (1M context window) — Ollama, OpenRouter, and Zen with Gemini models
-const GEMINI_BUDGET: ContextBudget = { targetTokens: 900_000, maxTokens: 950_000 };
+const GEMINI_BUDGET: ContextBudget = { targetTokens: 600_000, maxTokens: 950_000 };
 
 export function getContextBudget(providerId: string, model: string): ContextBudget {
-  // Ollama, OpenRouter, or Zen running a Gemini model — full 1M budget
+  // Ollama, OpenRouter, or Zen running a Gemini model — using a conservative budget within 1M limit
   const normalized: string = (model || '').trim().toLowerCase();
   if (
     (providerId === 'ollama' || providerId === 'openrouter' || providerId === 'zen') &&
@@ -161,43 +160,31 @@ function summarizeVerboseMessage(msg: Message): Message {
 // ---------------------------------------------------------------------------
 
 function buildContextDigest(removed: Message[]): string {
-  const points: string[] = [];
-
-  for (const msg of removed) {
-    if (points.length >= 18) break;
-
-    if (isToolResultMessage(msg)) {
-      // Extract tool name from JSON payload if possible
-      const toolMatch: RegExpMatchArray | null = toContentString(msg.content).match(
-        /"tool"\s*:\s*"([^"]+)"/,
-      );
-      const toolName: string = toolMatch ? toolMatch[1] : 'unknown';
-      points.push(`- Tool result: ${toolName}`);
-      continue;
-    }
-
-    if (isParseErrorMessage(msg)) {
-      points.push('- Parse error feedback for malformed tool call');
-      continue;
-    }
-
-    const firstLine: string =
-      toContentString(msg.content)
-        .split('\n')
-        .map((l) => l.trim())
-        .find(Boolean) || '';
-    if (!firstLine) continue;
-    const snippet: string = firstLine.length > 200 ? firstLine.slice(0, 200) + '...' : firstLine;
-    points.push(`- ${msg.role === 'user' ? 'User' : 'Assistant'}: ${snippet}`);
+  // Guard: empty case returns simple message (like the old implementation)
+  if (removed.length === 0) {
+    return [
+      '[CONTEXT DIGEST]',
+      'Earlier context trimmed for token budget.',
+      '[/CONTEXT DIGEST]',
+    ].join('\n');
   }
 
-  if (points.length === 0) {
-    points.push('- Earlier context trimmed for token budget.');
-  }
+  // Limit to recent 20 messages to avoid unbounded digest growth
+  const recent = removed.slice(-20);
+
+  // Build points: normalize whitespace and extract first semantic line only
+  const points: string[] = recent.map((msg) => {
+    // Get full content and normalize: replace newlines with spaces
+    const fullContent = toContentString(msg.content).replace(/[\r\n]+/g, ' ').trim();
+    // Extract first ~200 chars as snippet
+    const snippet =
+      fullContent.length > 200 ? fullContent.slice(0, 200) + '...' : fullContent;
+    return `- ${msg.role === 'user' ? 'User' : 'Assistant'}: ${snippet}`;
+  });
 
   return [
     '[CONTEXT DIGEST]',
-    'Earlier messages were condensed to fit the context budget.',
+    'Earlier messages were condensed to fit the context budget:',
     ...points,
     '[/CONTEXT DIGEST]',
   ].join('\n');
