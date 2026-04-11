@@ -56,30 +56,73 @@ import { handleGitHubTools } from './src/worker/worker-github-tools';
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'worker');
-    const requestWithId = withRequestIdOnRequest(request, requestId);
-    const url = new URL(requestWithId.url);
-    const exactRoute = matchExactApiRoute(url.pathname, request.method);
-    if (exactRoute) {
-      return withRequestIdOnResponse(await exactRoute.handler(requestWithId, env), requestId);
-    }
+    try {
+      const requestWithId = withRequestIdOnRequest(request, requestId);
+      const url = new URL(requestWithId.url);
+      const exactRoute = matchExactApiRoute(url.pathname, request.method);
+      if (exactRoute) {
+        return withRequestIdOnResponse(await exactRoute.handler(requestWithId, env), requestId);
+      }
 
-    // API route: sandbox proxy to Modal
-    if (url.pathname.startsWith('/api/sandbox/') && request.method === 'POST') {
-      const route = url.pathname.replace('/api/sandbox/', '');
+      // API route: sandbox proxy to Modal
+      if (url.pathname.startsWith('/api/sandbox/') && request.method === 'POST') {
+        const route = url.pathname.replace('/api/sandbox/', '');
+        return withRequestIdOnResponse(
+          await handleSandbox(requestWithId, env, url, route),
+          requestId,
+        );
+      }
+
+      // SPA fallback: serve index.html for non-file paths
+      // (actual static files like .js/.css are already served by the [assets] layer)
       return withRequestIdOnResponse(
-        await handleSandbox(requestWithId, env, url, route),
+        await env.ASSETS.fetch(new Request(new URL('/index.html', requestWithId.url))),
         requestId,
       );
+    } catch (err) {
+      return handleUncaughtFetchError(err, request, requestId);
     }
-
-    // SPA fallback: serve index.html for non-file paths
-    // (actual static files like .js/.css are already served by the [assets] layer)
-    return withRequestIdOnResponse(
-      await env.ASSETS.fetch(new Request(new URL('/index.html', requestWithId.url))),
-      requestId,
-    );
   },
 };
+
+// ---------------------------------------------------------------------------
+// Top-level error handler
+// ---------------------------------------------------------------------------
+
+/**
+ * Last-resort handler for anything that escapes a route handler. Logs a
+ * structured line so the OTLP collector / wrangler tail can pick it up, then
+ * returns a 500 carrying the request ID so the client can correlate.
+ */
+function handleUncaughtFetchError(err: unknown, request: Request, requestId: string): Response {
+  const message = err instanceof Error ? err.message : String(err);
+  const stack = err instanceof Error ? err.stack : undefined;
+  // Single-line JSON keeps this parseable by structured log sinks.
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      source: 'worker.fetch',
+      request_id: requestId,
+      url: request.url,
+      method: request.method,
+      error: message,
+      ...(stack ? { stack } : {}),
+    }),
+  );
+  return new Response(
+    JSON.stringify({
+      error: 'Internal Server Error',
+      request_id: requestId,
+    }),
+    {
+      status: 500,
+      headers: {
+        'content-type': 'application/json',
+        [REQUEST_ID_HEADER]: requestId,
+      },
+    },
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Request ID helpers
