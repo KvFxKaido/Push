@@ -1,14 +1,16 @@
 #!/bin/sh
-cd app || exit 1
-
+# Biome lives at the repo root and lints the entire monorepo in one pass.
 # Use the explicit local binary instead of `npx --no-install` so a stale
 # or missing node_modules can't silently fall back to a different `biome`
 # package from the registry. Fail loudly with actionable guidance if the
 # dependency isn't installed.
 if [ ! -x ./node_modules/.bin/biome ]; then
-  echo "[pre-commit] @biomejs/biome is not installed in app/node_modules." >&2
-  echo "[pre-commit] Run 'npm install' in app/ before committing." >&2
+  echo "[pre-commit] @biomejs/biome is not installed in the root node_modules." >&2
+  echo "[pre-commit] Run 'npm install' at the repo root before committing." >&2
   exit 1
 fi
 
-./node_modules/.bin/biome check --staged --no-errors-on-unmatched && npm run lint
+./node_modules/.bin/biome check --staged --no-errors-on-unmatched || exit 1
+
+# ESLint still lives in app/ because its config depends on app-only plugins.
+cd app && npm run lint

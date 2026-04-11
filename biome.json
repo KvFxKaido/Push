@@ -11,10 +11,16 @@
       "!**/dist",
       "!**/node_modules",
       "!**/coverage",
+      "!**/__pycache__",
       "!**/*.min.js",
       "!**/*.min.css",
       "!**/*.css",
-      "!src/components/ui/**"
+      "!.claude/**",
+      "!.playwright-cli/**",
+      "!.push/**",
+      "!.wrangler/**",
+      "!app/src/components/ui/**",
+      "!sandbox/**"
     ]
   },
   "formatter": {
