@@ -63,7 +63,9 @@ export const SESSION_ID_RE = /^sess_[a-z0-9]+_[a-f0-9]{6}$/;
 
 export function validateSessionId(sessionId: unknown): string {
   if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) {
-    throw new Error(`Invalid session id: ${typeof sessionId === 'string' ? sessionId : typeof sessionId}`);
+    throw new Error(
+      `Invalid session id: ${typeof sessionId === 'string' ? sessionId : typeof sessionId}`,
+    );
   }
   return sessionId;
 }
@@ -150,10 +152,18 @@ export async function saveSessionState(state: SessionState): Promise<void> {
   attachSessionRoot(state, root);
   state.updatedAt = Date.now();
   await ensureSessionDir(state.sessionId, root);
-  await fs.writeFile(getStatePathInRoot(root, state.sessionId), JSON.stringify(state, null, 2), { encoding: 'utf8', mode: 0o600 });
+  await fs.writeFile(getStatePathInRoot(root, state.sessionId), JSON.stringify(state, null, 2), {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
 }
 
-export async function appendSessionEvent(state: SessionState, type: string, payload: unknown, runId: string | null = null): Promise<void> {
+export async function appendSessionEvent(
+  state: SessionState,
+  type: string,
+  payload: unknown,
+  runId: string | null = null,
+): Promise<void> {
   const root = getStateSessionRoot(state);
   attachSessionRoot(state, root);
   state.eventSeq += 1;
@@ -169,7 +179,10 @@ export async function appendSessionEvent(state: SessionState, type: string, payl
     payload,
   };
   await ensureSessionDir(state.sessionId, root);
-  await fs.appendFile(getEventsPathInRoot(root, state.sessionId), `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 });
+  await fs.appendFile(getEventsPathInRoot(root, state.sessionId), `${JSON.stringify(event)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
 }
 
 async function resolveSessionRootForRead(sessionId: string): Promise<string | null> {
@@ -188,10 +201,15 @@ async function resolveSessionRootForRead(sessionId: string): Promise<string | nu
 
 export async function loadSessionState(sessionId: string): Promise<SessionState> {
   validateSessionId(sessionId);
-  const root = await resolveSessionRootForRead(sessionId) || path.resolve(getSessionRoot());
+  const root = (await resolveSessionRootForRead(sessionId)) || path.resolve(getSessionRoot());
   const raw = await fs.readFile(getStatePathInRoot(root, sessionId), 'utf8');
   const parsed: unknown = JSON.parse(raw);
-  if (!parsed || typeof parsed !== 'object' || (parsed as SessionState).sessionId !== sessionId || !Array.isArray((parsed as SessionState).messages)) {
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    (parsed as SessionState).sessionId !== sessionId ||
+    !Array.isArray((parsed as SessionState).messages)
+  ) {
     throw new Error(`Invalid session state: ${sessionId}`);
   }
   attachSessionRoot(parsed, root);
@@ -200,11 +218,15 @@ export async function loadSessionState(sessionId: string): Promise<SessionState>
 
 export async function loadSessionEvents(sessionId: string): Promise<SessionEvent[]> {
   validateSessionId(sessionId);
-  const root = await resolveSessionRootForRead(sessionId) || path.resolve(getSessionRoot());
+  const root = (await resolveSessionRootForRead(sessionId)) || path.resolve(getSessionRoot());
   const eventsPath = getEventsPathInRoot(root, sessionId);
   try {
     const raw = await fs.readFile(eventsPath, 'utf8');
-    return raw.trim().split('\n').filter(Boolean).map((line: string) => JSON.parse(line) as SessionEvent);
+    return raw
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line: string) => JSON.parse(line) as SessionEvent);
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw err;
@@ -222,7 +244,11 @@ export async function deleteSession(sessionId: string): Promise<number> {
       await fs.rm(dir, { recursive: true, force: false });
       deleted += 1;
     } catch (err: unknown) {
-      if (err && ((err as NodeJS.ErrnoException).code === 'ENOENT' || (err as NodeJS.ErrnoException).code === 'ENOTDIR')) {
+      if (
+        err &&
+        ((err as NodeJS.ErrnoException).code === 'ENOENT' ||
+          (err as NodeJS.ErrnoException).code === 'ENOTDIR')
+      ) {
         continue;
       }
       throw err;
@@ -237,7 +263,11 @@ export async function deleteSession(sessionId: string): Promise<number> {
 // finishes. If pushd crashes mid-run, the marker survives on disk and lets
 // the next startup detect interrupted sessions.
 
-export async function writeRunMarker(sessionId: string, runId: string, metadata: Record<string, unknown> = {}): Promise<void> {
+export async function writeRunMarker(
+  sessionId: string,
+  runId: string,
+  metadata: Record<string, unknown> = {},
+): Promise<void> {
   validateSessionId(sessionId);
   const root = getSessionRoot();
   await ensureSessionDir(sessionId, root);
@@ -275,7 +305,11 @@ export async function readRunMarker(sessionId: string): Promise<RunMarker | null
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
       // Malformed JSON (e.g. partial write during crash) — clean up and skip
       if (err instanceof SyntaxError) {
-        try { await fs.unlink(markerPath); } catch { /* ignore */ }
+        try {
+          await fs.unlink(markerPath);
+        } catch {
+          /* ignore */
+        }
         continue;
       }
       throw err;
@@ -350,7 +384,8 @@ export async function listSessions(): Promise<SessionListEntry[]> {
           provider: typeof stateObj.provider === 'string' ? stateObj.provider : 'unknown',
           model: typeof stateObj.model === 'string' ? stateObj.model : 'unknown',
           cwd: typeof stateObj.cwd === 'string' ? stateObj.cwd : '',
-          sessionName: typeof stateObj.sessionName === 'string' ? (stateObj.sessionName as string).trim() : '',
+          sessionName:
+            typeof stateObj.sessionName === 'string' ? (stateObj.sessionName as string).trim() : '',
         };
 
         const existing = byId.get(sessionId);

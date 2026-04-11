@@ -83,10 +83,7 @@ export function classifyFilePath(path: string): FileClassification {
     return 'fixture';
   }
   // Test files
-  if (
-    /(?:^|\/)(?:__tests__|tests?)\//i.test(lower) ||
-    /\.(?:test|spec)\./i.test(lower)
-  ) {
+  if (/(?:^|\/)(?:__tests__|tests?)\//i.test(lower) || /\.(?:test|spec)\./i.test(lower)) {
     return 'test';
   }
   // Tooling / scripts

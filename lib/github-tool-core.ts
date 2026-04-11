@@ -89,7 +89,15 @@ export interface GitHubCoreWorkflowRunItem {
   id: number;
   name: string;
   status: 'queued' | 'in_progress' | 'completed' | 'waiting' | 'requested' | 'pending';
-  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | 'neutral'
+    | null;
   branch: string;
   event: string;
   createdAt: string;
@@ -109,14 +117,30 @@ export interface GitHubCoreWorkflowRunsCardData {
 export interface GitHubCoreWorkflowJobStep {
   name: string;
   status: 'queued' | 'in_progress' | 'completed';
-  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | 'neutral'
+    | null;
   number: number;
 }
 
 export interface GitHubCoreWorkflowJob {
   name: string;
   status: 'queued' | 'in_progress' | 'completed' | 'waiting';
-  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | 'neutral'
+    | null;
   steps: GitHubCoreWorkflowJobStep[];
   htmlUrl: string;
 }
@@ -171,7 +195,15 @@ export interface GitHubCoreFileSearchCardData {
 export interface GitHubCoreCICheck {
   name: string;
   status: 'queued' | 'in_progress' | 'completed';
-  conclusion: 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | null;
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'neutral'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | null;
   detailsUrl?: string;
 }
 
@@ -208,17 +240,29 @@ export type GitHubCoreToolCall =
   | { tool: 'fetch_pr'; args: { repo: string; pr: number } }
   | { tool: 'list_prs'; args: { repo: string; state?: string } }
   | { tool: 'list_commits'; args: { repo: string; count?: number } }
-  | { tool: 'read_file'; args: { repo: string; path: string; branch?: string; start_line?: number; end_line?: number } }
+  | {
+      tool: 'read_file';
+      args: { repo: string; path: string; branch?: string; start_line?: number; end_line?: number };
+    }
   | { tool: 'grep_file'; args: { repo: string; path: string; pattern: string; branch?: string } }
   | { tool: 'list_directory'; args: { repo: string; path?: string; branch?: string } }
   | { tool: 'list_branches'; args: { repo: string; maxBranches?: number } }
   | { tool: 'fetch_checks'; args: { repo: string; ref?: string } }
   | { tool: 'search_files'; args: { repo: string; query: string; path?: string; branch?: string } }
   | { tool: 'list_commit_files'; args: { repo: string; ref: string } }
-  | { tool: 'trigger_workflow'; args: { repo: string; workflow: string; ref?: string; inputs?: Record<string, string> } }
-  | { tool: 'get_workflow_runs'; args: { repo: string; workflow?: string; branch?: string; status?: string; count?: number } }
+  | {
+      tool: 'trigger_workflow';
+      args: { repo: string; workflow: string; ref?: string; inputs?: Record<string, string> };
+    }
+  | {
+      tool: 'get_workflow_runs';
+      args: { repo: string; workflow?: string; branch?: string; status?: string; count?: number };
+    }
   | { tool: 'get_workflow_logs'; args: { repo: string; run_id: number } }
-  | { tool: 'create_pr'; args: { repo: string; title: string; body: string; head: string; base: string } }
+  | {
+      tool: 'create_pr';
+      args: { repo: string; title: string; body: string; head: string; base: string };
+    }
   | { tool: 'merge_pr'; args: { repo: string; pr_number: number; merge_method?: string } }
   | { tool: 'delete_branch'; args: { repo: string; branch_name: string } }
   | { tool: 'check_pr_mergeable'; args: { repo: string; pr_number: number } }
@@ -475,13 +519,15 @@ function getRepoOwner(repo: string): string {
   return repo.split('/')[0] || '';
 }
 
-function normalizeWorkflowRunStatus(status: string | undefined): GitHubCoreWorkflowRunItem['status'] {
-  return status === 'queued'
-    || status === 'in_progress'
-    || status === 'completed'
-    || status === 'waiting'
-    || status === 'requested'
-    || status === 'pending'
+function normalizeWorkflowRunStatus(
+  status: string | undefined,
+): GitHubCoreWorkflowRunItem['status'] {
+  return status === 'queued' ||
+    status === 'in_progress' ||
+    status === 'completed' ||
+    status === 'waiting' ||
+    status === 'requested' ||
+    status === 'pending'
     ? status
     : 'completed';
 }
@@ -489,43 +535,43 @@ function normalizeWorkflowRunStatus(status: string | undefined): GitHubCoreWorkf
 function normalizeWorkflowConclusion(
   value: string | null | undefined,
 ): GitHubCoreWorkflowRunItem['conclusion'] {
-  return value === null
-    || value === undefined
-    || value === 'success'
-    || value === 'failure'
-    || value === 'cancelled'
-    || value === 'skipped'
-    || value === 'timed_out'
-    || value === 'action_required'
-    || value === 'neutral'
-    ? value ?? null
+  return value === null ||
+    value === undefined ||
+    value === 'success' ||
+    value === 'failure' ||
+    value === 'cancelled' ||
+    value === 'skipped' ||
+    value === 'timed_out' ||
+    value === 'action_required' ||
+    value === 'neutral'
+    ? (value ?? null)
     : null;
 }
 
 function normalizeWorkflowJobStatus(status: string): GitHubCoreWorkflowJob['status'] {
-  return status === 'queued'
-    || status === 'in_progress'
-    || status === 'completed'
-    || status === 'waiting'
+  return status === 'queued' ||
+    status === 'in_progress' ||
+    status === 'completed' ||
+    status === 'waiting'
     ? status
     : 'completed';
 }
 
 function normalizeWorkflowStepStatus(status: string): GitHubCoreWorkflowJobStep['status'] {
-  return status === 'queued'
-    || status === 'in_progress'
-    || status === 'completed'
+  return status === 'queued' || status === 'in_progress' || status === 'completed'
     ? status
     : 'completed';
 }
 
 async function fetchRepoDefaultBranch(runtime: GitHubCoreRuntime, repo: string): Promise<string> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
-  const repoRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}`), { headers });
+  const repoRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}`), {
+    headers,
+  });
   if (!repoRes.ok) {
     throw new Error(formatGitHubError(repoRes.status, `repo info for ${repo}`));
   }
-  const repoData = await repoRes.json() as { default_branch?: string };
+  const repoData = (await repoRes.json()) as { default_branch?: string };
   return repoData.default_branch || 'main';
 }
 
@@ -549,7 +595,10 @@ export async function fetchRepoBranchesData(
   const maxPages = Math.max(1, Math.ceil(maxBranches / pageSize));
   const all: RepoBranchApi[] = [];
   let pageCount = 0;
-  let nextUrl: string | null = buildGitHubApiUrl(runtime, `/repos/${repo}/branches?per_page=${pageSize}&page=1`);
+  let nextUrl: string | null = buildGitHubApiUrl(
+    runtime,
+    `/repos/${repo}/branches?per_page=${pageSize}&page=1`,
+  );
 
   while (nextUrl && pageCount < maxPages && all.length < maxBranches) {
     const res = await runtime.githubFetch(nextUrl, { headers });
@@ -615,11 +664,14 @@ export async function executeFetchPRTool(
 ): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
 
-  const prRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}`), { headers });
+  const prRes = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}`),
+    { headers },
+  );
   if (!prRes.ok) {
     throw new Error(formatGitHubError(prRes.status, `PR #${pr} on ${repo}`));
   }
-  const prData = await prRes.json() as {
+  const prData = (await prRes.json()) as {
     merged?: boolean;
     state: 'open' | 'closed';
     title: string;
@@ -644,9 +696,12 @@ export async function executeFetchPRTool(
 
   for (const issue of linkedIssues) {
     try {
-      const issueRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/issues/${issue.number}`), { headers });
+      const issueRes = await runtime.githubFetch(
+        buildGitHubApiUrl(runtime, `/repos/${repo}/issues/${issue.number}`),
+        { headers },
+      );
       if (issueRes.ok) {
-        const issueData = await issueRes.json() as { title?: string };
+        const issueData = (await issueRes.json()) as { title?: string };
         issue.title = issueData.title;
       }
     } catch {
@@ -656,9 +711,12 @@ export async function executeFetchPRTool(
 
   let branchCommits: Array<{ sha: string; message: string; author: string }> = [];
   try {
-    const commitsRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/commits`), { headers });
+    const commitsRes = await runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/commits`),
+      { headers },
+    );
     if (commitsRes.ok) {
-      const commitsData = await commitsRes.json() as Array<{
+      const commitsData = (await commitsRes.json()) as Array<{
         sha: string;
         commit?: { message?: string; author?: { name?: string } };
         author?: { login?: string };
@@ -673,9 +731,12 @@ export async function executeFetchPRTool(
     // Best-effort enrichment only.
   }
 
-  const diffRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}`), {
-    headers: runtime.buildHeaders(DIFF_ACCEPT),
-  });
+  const diffRes = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}`),
+    {
+      headers: runtime.buildHeaders(DIFF_ACCEPT),
+    },
+  );
   let diff = '';
   if (diffRes.ok) {
     diff = await diffRes.text();
@@ -684,11 +745,14 @@ export async function executeFetchPRTool(
     }
   }
 
-  const filesRes = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/files`), { headers });
+  const filesRes = await runtime.githubFetch(
+    buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${pr}/files`),
+    { headers },
+  );
   let filesData: GitHubCorePRFile[] = [];
   let filesSummary = '';
   if (filesRes.ok) {
-    const files = await filesRes.json() as GitHubCorePRFile[];
+    const files = (await filesRes.json()) as GitHubCorePRFile[];
     filesData = files.slice(0, 20).map((file) => ({
       filename: file.filename,
       status: file.status,
@@ -721,7 +785,7 @@ export async function executeFetchPRTool(
 
   if (linkedIssues.length > 0) {
     lines.push(
-      `\nLinked Issues:\n${linkedIssues.map((issue) => issue.title ? `  #${issue.number}: ${issue.title}` : `  #${issue.number}`).join('\n')}`,
+      `\nLinked Issues:\n${linkedIssues.map((issue) => (issue.title ? `  #${issue.number}: ${issue.title}` : `  #${issue.number}`)).join('\n')}`,
     );
   }
 
@@ -750,7 +814,11 @@ export async function executeFetchPRTool(
     branch: prData.head.ref,
     baseBranch: prData.base.ref,
     createdAt: prData.created_at,
-    description: prData.body ? (prData.body.length > 300 ? `${prData.body.slice(0, 300)}...` : prData.body) : undefined,
+    description: prData.body
+      ? prData.body.length > 300
+        ? `${prData.body.slice(0, 300)}...`
+        : prData.body
+      : undefined,
     files: filesData.length > 0 ? filesData : undefined,
   };
 
@@ -775,7 +843,7 @@ export async function executeListPRsTool(
     throw new Error(formatGitHubError(res.status, `PRs on ${repo}`));
   }
 
-  const prs = await res.json() as PullRequestListApi[];
+  const prs = (await res.json()) as PullRequestListApi[];
   if (prs.length === 0) {
     return { text: `[Tool Result — list_prs]\nNo ${state} PRs found on ${repo}.` };
   }
@@ -789,7 +857,9 @@ export async function executeListPRsTool(
   for (const prItem of prs) {
     const age = new Date(prItem.created_at).toLocaleDateString();
     lines.push(`  #${prItem.number} — ${prItem.title}`);
-    lines.push(`    by ${prItem.user.login} | +${prItem.additions || '?'} -${prItem.deletions || '?'} | ${age}`);
+    lines.push(
+      `    by ${prItem.user.login} | +${prItem.additions || '?'} -${prItem.deletions || '?'} | ${age}`,
+    );
     prItems.push({
       number: prItem.number,
       title: prItem.title,
@@ -821,7 +891,7 @@ export async function executeListCommitsTool(
     throw new Error(formatGitHubError(res.status, `commits on ${repo}`));
   }
 
-  const commits = await res.json() as CommitListApi[];
+  const commits = (await res.json()) as CommitListApi[];
   if (commits.length === 0) {
     return { text: `[Tool Result — list_commits]\nNo commits found on ${repo}.` };
   }
@@ -861,12 +931,14 @@ export async function executeReadFileTool(
   }
 
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
-  const res = await runtime.githubFetch(buildContentsApiUrl(runtime, repo, path, branch), { headers });
+  const res = await runtime.githubFetch(buildContentsApiUrl(runtime, repo, path, branch), {
+    headers,
+  });
   if (!res.ok) {
     throw new Error(formatGitHubError(res.status, `${path} on ${repo}`, branch));
   }
 
-  const data = await res.json() as RepoFileContentApi | RepoContentEntryApi[];
+  const data = (await res.json()) as RepoFileContentApi | RepoContentEntryApi[];
   if (Array.isArray(data)) {
     const entries = data
       .map((entry) => `  ${entry.type === 'dir' ? 'DIR' : 'FILE'} ${entry.name || 'unknown'}`)
@@ -909,7 +981,12 @@ export async function executeReadFileTool(
       .map((line, index) => `${String(rangeStart + index).padStart(padWidth)}\t${line}`)
       .join('\n');
     const rangeDisplayLines = numberedContent.split('\n');
-    const truncatedRange = truncateDisplayLines(safeRangeLines, rangeDisplayLines, rangeStart, READ_FILE_RANGE_CHAR_LIMIT);
+    const truncatedRange = truncateDisplayLines(
+      safeRangeLines,
+      rangeDisplayLines,
+      rangeStart,
+      READ_FILE_RANGE_CHAR_LIMIT,
+    );
     const truncated = truncatedRange.truncated;
     let displayContent = truncatedRange.displayLines.join('\n');
     if (truncated) {
@@ -949,12 +1026,18 @@ export async function executeReadFileTool(
   const safeFull = runtime.redactSensitiveText(fullContent);
   let content = safeFull.text;
   const fullSourceLines = safeFull.text.split('\n');
-  const truncatedFull = truncateDisplayLines(fullSourceLines, fullSourceLines, 1, READ_FILE_FULL_CHAR_LIMIT);
+  const truncatedFull = truncateDisplayLines(
+    fullSourceLines,
+    fullSourceLines,
+    1,
+    READ_FILE_FULL_CHAR_LIMIT,
+  );
   const truncated = truncatedFull.truncated;
   if (truncated) {
     const totalLines = fullSourceLines.length;
-    content = truncatedFull.displayLines.join('\n')
-      + `\n\n[...truncated at ${READ_FILE_FULL_CHAR_LIMIT / 1000}K chars — file has ${totalLines} lines. Use read_file with start_line/end_line to continue from line ${truncatedFull.truncatedAtLine}, search_files to find content, or grep_file for pattern matching.]`;
+    content =
+      truncatedFull.displayLines.join('\n') +
+      `\n\n[...truncated at ${READ_FILE_FULL_CHAR_LIMIT / 1000}K chars — file has ${totalLines} lines. Use read_file with start_line/end_line to continue from line ${truncatedFull.truncatedAtLine}, search_files to find content, or grep_file for pattern matching.]`;
   }
   const fullTruncationLines = buildReadTruncationLines(
     truncatedFull.truncatedAtLine,
@@ -994,12 +1077,14 @@ export async function executeGrepFileTool(
   }
 
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
-  const res = await runtime.githubFetch(buildContentsApiUrl(runtime, repo, path, branch), { headers });
+  const res = await runtime.githubFetch(buildContentsApiUrl(runtime, repo, path, branch), {
+    headers,
+  });
   if (!res.ok) {
     throw new Error(formatGitHubError(res.status, `${path} on ${repo}`, branch));
   }
 
-  const data = await res.json() as RepoFileContentApi | RepoContentEntryApi[];
+  const data = (await res.json()) as RepoFileContentApi | RepoContentEntryApi[];
   if (Array.isArray(data)) {
     return {
       text: `[Tool Error] "${path}" is a directory. grep_file only works on individual files. Use search_files to search across a directory.`,
@@ -1056,7 +1141,9 @@ export async function executeGrepFileTool(
     if (matchLineNums.has(num)) matchesShown += 1;
     if (matchesShown > MAX_OUTPUT_MATCHES && !matchLineNums.has(num)) continue;
     if (matchesShown > MAX_OUTPUT_MATCHES) {
-      outputLines.push(`\n[...truncated — showing first ${MAX_OUTPUT_MATCHES} of ${matchLineNums.size} matches]`);
+      outputLines.push(
+        `\n[...truncated — showing first ${MAX_OUTPUT_MATCHES} of ${matchLineNums.size} matches]`,
+      );
       break;
     }
     if (num > prevNum + 1 && outputLines.length > 0) {
@@ -1120,14 +1207,16 @@ export async function executeListDirectoryTool(
     throw new Error(formatGitHubError(res.status, `path "${path || '/'}" on ${repo}`, branch));
   }
 
-  const data = await res.json() as RepoContentEntryApi[] | RepoFileContentApi;
+  const data = (await res.json()) as RepoContentEntryApi[] | RepoFileContentApi;
   if (!Array.isArray(data)) {
-    return { text: `[Tool Error] "${path}" is a file, not a directory. Use read_file to read its contents.` };
+    return {
+      text: `[Tool Error] "${path}" is a file, not a directory. Use read_file to read its contents.`,
+    };
   }
 
   const normalizedEntries = data.map((entry) => ({
     name: entry.name || '',
-    type: entry.type === 'dir' ? 'directory' as const : 'file' as const,
+    type: entry.type === 'dir' ? ('directory' as const) : ('file' as const),
     size: entry.size,
     path: buildDirectoryEntryPath(path, entry.name || ''),
   }));
@@ -1147,7 +1236,9 @@ export async function executeListDirectoryTool(
     `[Tool Result — list_directory]`,
     `Directory: ${path || '/'} on ${repo}${branch ? ` (branch: ${branch})` : ''}`,
     `${dirs.length} directories, ${files.length} files\n`,
-    hiddenCount > 0 ? `(${hiddenCount} sensitive entr${hiddenCount === 1 ? 'y' : 'ies'} hidden)\n` : '',
+    hiddenCount > 0
+      ? `(${hiddenCount} sensitive entr${hiddenCount === 1 ? 'y' : 'ies'} hidden)\n`
+      : '',
   ];
 
   for (const dir of dirs) {
@@ -1188,7 +1279,7 @@ async function fetchCIStatusSummary(
   let overall: GitHubCoreCIOverallStatus = 'no-checks';
 
   if (checkRunsRes.ok) {
-    const data = await checkRunsRes.json() as {
+    const data = (await checkRunsRes.json()) as {
       check_runs?: Array<{
         name?: string;
         status?: string;
@@ -1213,20 +1304,21 @@ async function fetchCIStatusSummary(
       { headers },
     );
     if (statusRes.ok) {
-      const statusData = await statusRes.json() as {
+      const statusData = (await statusRes.json()) as {
         statuses?: Array<{ context?: string; state?: string; target_url?: string }>;
       };
       if (statusData.statuses && statusData.statuses.length > 0) {
         checks = statusData.statuses.map((statusItem) => ({
           name: statusItem.context || 'unknown-check',
           status: 'completed' as const,
-          conclusion: statusItem.state === 'success'
-            ? 'success'
-            : statusItem.state === 'failure' || statusItem.state === 'error'
-              ? 'failure'
-              : statusItem.state === 'pending'
-                ? null
-                : 'neutral',
+          conclusion:
+            statusItem.state === 'success'
+              ? 'success'
+              : statusItem.state === 'failure' || statusItem.state === 'error'
+                ? 'failure'
+                : statusItem.state === 'pending'
+                  ? null
+                  : 'neutral',
           detailsUrl: statusItem.target_url,
         }));
         for (const check of checks) {
@@ -1242,7 +1334,14 @@ async function fetchCIStatusSummary(
     overall = 'no-checks';
   } else if (checks.some((check) => check.status !== 'completed')) {
     overall = 'pending';
-  } else if (checks.every((check) => check.conclusion === 'success' || check.conclusion === 'skipped' || check.conclusion === 'neutral')) {
+  } else if (
+    checks.every(
+      (check) =>
+        check.conclusion === 'success' ||
+        check.conclusion === 'skipped' ||
+        check.conclusion === 'neutral',
+    )
+  ) {
     overall = 'success';
   } else if (checks.some((check) => check.conclusion === 'failure')) {
     overall = 'failure';
@@ -1277,13 +1376,14 @@ export async function executeFetchChecksTool(
     lines.push('No CI checks configured for this repo.');
   } else {
     for (const check of checks) {
-      const icon = check.conclusion === 'success'
-        ? '✓'
-        : check.conclusion === 'failure'
-          ? '✗'
-          : check.status !== 'completed'
-            ? '⏳'
-            : '—';
+      const icon =
+        check.conclusion === 'success'
+          ? '✓'
+          : check.conclusion === 'failure'
+            ? '✗'
+            : check.status !== 'completed'
+              ? '⏳'
+              : '—';
       lines.push(`  ${icon} ${check.name}: ${check.conclusion || check.status}`);
     }
   }
@@ -1306,7 +1406,7 @@ export async function executeListCommitFilesTool(
     throw new Error(formatGitHubError(res.status, `commit ${ref} on ${repo}`));
   }
 
-  const commit = await res.json() as CommitDetailsApi;
+  const commit = (await res.json()) as CommitDetailsApi;
   const files = commit.files || [];
   const lines: string[] = [
     `[Tool Result — list_commit_files]`,
@@ -1382,7 +1482,10 @@ export async function executeTriggerWorkflowTool(
   }
 
   const res = await runtime.githubFetch(
-    buildGitHubApiUrl(runtime, `/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`),
+    buildGitHubApiUrl(
+      runtime,
+      `/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,
+    ),
     {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
@@ -1391,10 +1494,14 @@ export async function executeTriggerWorkflowTool(
   );
 
   if (res.status === 404) {
-    throw new Error(`Workflow "${workflow}" not found on ${repo}. Use get_workflow_runs to see available workflows.`);
+    throw new Error(
+      `Workflow "${workflow}" not found on ${repo}. Use get_workflow_runs to see available workflows.`,
+    );
   }
   if (res.status === 422) {
-    throw new Error(`Workflow "${workflow}" does not have a workflow_dispatch trigger, or the inputs are invalid.`);
+    throw new Error(
+      `Workflow "${workflow}" does not have a workflow_dispatch trigger, or the inputs are invalid.`,
+    );
   }
   if (!res.ok) {
     throw new Error(formatGitHubError(res.status, `triggering workflow "${workflow}" on ${repo}`));
@@ -1421,7 +1528,10 @@ export async function executeGetWorkflowRunsTool(
   const perPage = Math.max(1, Math.min(count || 10, 20));
 
   let url = workflow
-    ? buildGitHubApiUrl(runtime, `/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}/runs?per_page=${perPage}`)
+    ? buildGitHubApiUrl(
+        runtime,
+        `/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}/runs?per_page=${perPage}`,
+      )
     : buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs?per_page=${perPage}`);
   if (branch) url += `&branch=${encodeURIComponent(branch)}`;
   if (status) url += `&status=${encodeURIComponent(status)}`;
@@ -1431,7 +1541,7 @@ export async function executeGetWorkflowRunsTool(
     throw new Error(formatGitHubError(res.status, `workflow runs on ${repo}`));
   }
 
-  const data = await res.json() as { total_count?: number; workflow_runs?: WorkflowRunApi[] };
+  const data = (await res.json()) as { total_count?: number; workflow_runs?: WorkflowRunApi[] };
   const runs: GitHubCoreWorkflowRunItem[] = (data.workflow_runs || []).map((run) => ({
     id: run.id,
     name: run.name,
@@ -1447,7 +1557,9 @@ export async function executeGetWorkflowRunsTool(
   }));
 
   if (runs.length === 0) {
-    return { text: `[Tool Result — get_workflow_runs]\nNo workflow runs found on ${repo}${workflow ? ` for "${workflow}"` : ''}.` };
+    return {
+      text: `[Tool Result — get_workflow_runs]\nNo workflow runs found on ${repo}${workflow ? ` for "${workflow}"` : ''}.`,
+    };
   }
 
   const lines: string[] = [
@@ -1456,15 +1568,18 @@ export async function executeGetWorkflowRunsTool(
   ];
 
   for (const run of runs) {
-    const icon = run.conclusion === 'success'
-      ? '✓'
-      : run.conclusion === 'failure'
-        ? '✗'
-        : run.status !== 'completed'
-          ? '⏳'
-          : '—';
+    const icon =
+      run.conclusion === 'success'
+        ? '✓'
+        : run.conclusion === 'failure'
+          ? '✗'
+          : run.status !== 'completed'
+            ? '⏳'
+            : '—';
     lines.push(`  ${icon} #${run.runNumber} ${run.name}`);
-    lines.push(`    ${run.branch} | ${run.event} | ${run.actor} | ${new Date(run.createdAt).toLocaleDateString()}`);
+    lines.push(
+      `    ${run.branch} | ${run.event} | ${run.actor} | ${new Date(run.createdAt).toLocaleDateString()}`,
+    );
   }
 
   return {
@@ -1489,18 +1604,23 @@ export async function executeGetWorkflowLogsTool(
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
 
   const [runRes, jobsRes] = await Promise.all([
-    runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs/${runId}`), { headers }),
-    runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs/${runId}/jobs?per_page=50`), { headers }),
+    runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs/${runId}`), {
+      headers,
+    }),
+    runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/actions/runs/${runId}/jobs?per_page=50`),
+      { headers },
+    ),
   ]);
 
   if (!runRes.ok) {
     throw new Error(formatGitHubError(runRes.status, `workflow run #${runId} on ${repo}`));
   }
 
-  const runData = await runRes.json() as WorkflowRunDetailsApi;
+  const runData = (await runRes.json()) as WorkflowRunDetailsApi;
   let jobsData: WorkflowJobApi[] = [];
   if (jobsRes.ok) {
-    const parsed = await jobsRes.json() as { jobs?: WorkflowJobApi[] };
+    const parsed = (await jobsRes.json()) as { jobs?: WorkflowJobApi[] };
     jobsData = parsed.jobs || [];
   }
 
@@ -1526,22 +1646,24 @@ export async function executeGetWorkflowLogsTool(
   ];
 
   for (const job of jobs) {
-    const icon = job.conclusion === 'success'
-      ? '✓'
-      : job.conclusion === 'failure'
-        ? '✗'
-        : job.status !== 'completed'
-          ? '⏳'
-          : '—';
-    lines.push(`  ${icon} ${job.name} — ${job.conclusion || job.status}`);
-    for (const step of job.steps) {
-      const stepIcon = step.conclusion === 'success'
+    const icon =
+      job.conclusion === 'success'
         ? '✓'
-        : step.conclusion === 'failure'
+        : job.conclusion === 'failure'
           ? '✗'
-          : step.status !== 'completed'
+          : job.status !== 'completed'
             ? '⏳'
             : '—';
+    lines.push(`  ${icon} ${job.name} — ${job.conclusion || job.status}`);
+    for (const step of job.steps) {
+      const stepIcon =
+        step.conclusion === 'success'
+          ? '✓'
+          : step.conclusion === 'failure'
+            ? '✗'
+            : step.status !== 'completed'
+              ? '⏳'
+              : '—';
       lines.push(`      ${stepIcon} ${step.number}. ${step.name}`);
     }
   }
@@ -1573,17 +1695,17 @@ export async function executeCreatePRTool(
   base: string,
 ): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
-  const res = await runtime.githubFetch(
-    buildGitHubApiUrl(runtime, `/repos/${repo}/pulls`),
-    {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, body, head, base }),
-    },
-  );
+  const res = await runtime.githubFetch(buildGitHubApiUrl(runtime, `/repos/${repo}/pulls`), {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, body, head, base }),
+  });
 
   if (res.status === 422) {
-    const errorData = await res.json().catch(() => null) as { errors?: Array<{ message?: string }>; message?: string } | null;
+    const errorData = (await res.json().catch(() => null)) as {
+      errors?: Array<{ message?: string }>;
+      message?: string;
+    } | null;
     const detail = errorData?.errors?.[0]?.message || errorData?.message || 'Validation failed';
     throw new Error(`Could not create PR: ${detail}`);
   }
@@ -1591,7 +1713,7 @@ export async function executeCreatePRTool(
     throw new Error(formatGitHubError(res.status, `creating PR on ${repo}`));
   }
 
-  const prData = await res.json() as { number: number; title: string; html_url: string };
+  const prData = (await res.json()) as { number: number; title: string; html_url: string };
   return {
     text: [
       `[Tool Result — create_pr]`,
@@ -1621,25 +1743,30 @@ export async function executeMergePRTool(
   );
 
   if (res.status === 405) {
-    const errorData = await res.json().catch(() => null) as { message?: string } | null;
-    const reason = errorData?.message || 'PR cannot be merged (checks may be failing, or conflicts exist).';
+    const errorData = (await res.json().catch(() => null)) as { message?: string } | null;
+    const reason =
+      errorData?.message || 'PR cannot be merged (checks may be failing, or conflicts exist).';
     throw new Error(`Cannot merge PR #${prNumber}: ${reason}`);
   }
   if (res.status === 409) {
-    throw new Error(`Merge conflict on PR #${prNumber}. The head branch is out of date or has conflicts.`);
+    throw new Error(
+      `Merge conflict on PR #${prNumber}. The head branch is out of date or has conflicts.`,
+    );
   }
   if (!res.ok) {
     throw new Error(formatGitHubError(res.status, `merging PR #${prNumber} on ${repo}`));
   }
 
-  const data = await res.json() as { sha?: string; message?: string };
+  const data = (await res.json()) as { sha?: string; message?: string };
   return {
     text: [
       `[Tool Result — merge_pr]`,
       `PR #${prNumber} merged on ${repo} via ${method}.`,
       `Merge SHA: ${data.sha?.slice(0, 7) || 'unknown'}`,
       data.message ? `Message: ${data.message}` : '',
-    ].filter(Boolean).join('\n'),
+    ]
+      .filter(Boolean)
+      .join('\n'),
   };
 }
 
@@ -1658,17 +1785,18 @@ export async function executeDeleteBranchTool(
   );
 
   if (res.status === 422) {
-    throw new Error(`Branch "${branchName}" not found on ${repo}. Use list_branches to see available branches.`);
+    throw new Error(
+      `Branch "${branchName}" not found on ${repo}. Use list_branches to see available branches.`,
+    );
   }
   if (!res.ok) {
     throw new Error(formatGitHubError(res.status, `deleting branch "${branchName}" on ${repo}`));
   }
 
   return {
-    text: [
-      `[Tool Result — delete_branch]`,
-      `Branch "${branchName}" deleted from ${repo}.`,
-    ].join('\n'),
+    text: [`[Tool Result — delete_branch]`, `Branch "${branchName}" deleted from ${repo}.`].join(
+      '\n',
+    ),
   };
 }
 
@@ -1686,7 +1814,7 @@ export async function executeCheckPRMergeableTool(
     throw new Error(formatGitHubError(prRes.status, `PR #${prNumber} on ${repo}`));
   }
 
-  const prData = await prRes.json() as PullRequestMergeabilityApi;
+  const prData = (await prRes.json()) as PullRequestMergeabilityApi;
   const headSha = prData.head?.sha;
   let ciOverall: GitHubCoreCIOverallStatus | 'unknown' = 'unknown';
   let ciChecks: GitHubCoreCICheck[] = [];
@@ -1713,13 +1841,14 @@ export async function executeCheckPRMergeableTool(
   if (ciChecks.length > 0) {
     lines.push('');
     for (const check of ciChecks) {
-      const icon = check.conclusion === 'success'
-        ? '✓'
-        : check.conclusion === 'failure'
-          ? '✗'
-          : check.status !== 'completed'
-            ? '⏳'
-            : '—';
+      const icon =
+        check.conclusion === 'success'
+          ? '✓'
+          : check.conclusion === 'failure'
+            ? '✗'
+            : check.status !== 'completed'
+              ? '⏳'
+              : '—';
       lines.push(`  ${icon} ${check.name}: ${check.conclusion || check.status}`);
     }
   }
@@ -1729,11 +1858,11 @@ export async function executeCheckPRMergeableTool(
   lines.push(
     canMerge
       ? 'This PR is eligible for merge.'
-      : 'This PR is NOT currently eligible for merge.'
-        + (prData.mergeable === false ? ' There are merge conflicts.' : '')
-        + (ciOverall === 'failure' ? ' CI checks are failing.' : '')
-        + (ciOverall === 'pending' ? ' CI checks are still running.' : '')
-        + (prData.state !== 'open' ? ` PR state is "${prData.state}".` : ''),
+      : 'This PR is NOT currently eligible for merge.' +
+          (prData.mergeable === false ? ' There are merge conflicts.' : '') +
+          (ciOverall === 'failure' ? ' CI checks are failing.' : '') +
+          (ciOverall === 'pending' ? ' CI checks are still running.' : '') +
+          (prData.state !== 'open' ? ` PR state is "${prData.state}".` : ''),
   );
 
   return { text: lines.join('\n') };
@@ -1764,7 +1893,7 @@ export async function executeFindExistingPRTool(
     throw new Error(formatGitHubError(res.status, `searching PRs on ${repo}`));
   }
 
-  const prs = await res.json() as Array<{
+  const prs = (await res.json()) as Array<{
     number: number;
     title: string;
     html_url: string;
@@ -1809,7 +1938,10 @@ export async function executeSearchFilesTool(
   let searchQuery = `${query} repo:${repo}`;
   if (path) searchQuery += ` path:${path}`;
 
-  let searchUrl = buildGitHubApiUrl(runtime, `/search/code?q=${encodeURIComponent(searchQuery)}&per_page=25`);
+  let searchUrl = buildGitHubApiUrl(
+    runtime,
+    `/search/code?q=${encodeURIComponent(searchQuery)}&per_page=25`,
+  );
   if (branch) searchUrl += `&ref=${encodeURIComponent(branch)}`;
 
   const res = await runtime.githubFetch(searchUrl, { headers });
@@ -1820,19 +1952,25 @@ export async function executeSearchFilesTool(
     if (res.status === 403) {
       let detail = '';
       try {
-        const errBody = await res.json() as { message?: string };
+        const errBody = (await res.json()) as { message?: string };
         detail = errBody.message || '';
       } catch {
         // ignore parse errors
       }
 
       if (detail.toLowerCase().includes('rate limit')) {
-        throw new Error(`GitHub API rate limit exceeded for code search. Wait a moment and retry.\n${detail}`);
+        throw new Error(
+          `GitHub API rate limit exceeded for code search. Wait a moment and retry.\n${detail}`,
+        );
       }
       if (!headers.Authorization) {
-        throw new Error('Code search requires authentication — connect your GitHub account in Settings or set a Personal Access Token.');
+        throw new Error(
+          'Code search requires authentication — connect your GitHub account in Settings or set a Personal Access Token.',
+        );
       }
-      throw new Error(`Code search forbidden (403) — your token may lack the required scope. GitHub says: ${detail || 'no details provided'}`);
+      throw new Error(
+        `Code search forbidden (403) — your token may lack the required scope. GitHub says: ${detail || 'no details provided'}`,
+      );
     }
     if (res.status === 422) {
       throw new Error('Invalid search query. Try a simpler pattern.');
@@ -1840,7 +1978,7 @@ export async function executeSearchFilesTool(
     throw new Error(`GitHub code search returned ${res.status}`);
   }
 
-  const data = await res.json() as {
+  const data = (await res.json()) as {
     total_count?: number;
     items?: Array<{
       path?: string;
@@ -1855,7 +1993,9 @@ export async function executeSearchFilesTool(
       hints.push(`Path is scoped to "${path}". Try without a path filter to search the full repo.`);
     }
     if (branch) {
-      hints.push(`GitHub code search primarily indexes the default branch. Results for branch "${branch}" may be incomplete.`);
+      hints.push(
+        `GitHub code search primarily indexes the default branch. Results for branch "${branch}" may be incomplete.`,
+      );
     }
     if (hints.length === 0) {
       hints.push('Try a shorter or more generic search term — partial words work well.');
@@ -1922,7 +2062,9 @@ export async function executeSearchFilesTool(
     `[Tool Result — search_files]`,
     `Found ${totalCount} file${totalCount !== 1 ? 's' : ''} matching "${query}"${path ? ` in ${path}` : ''}`,
     truncated ? `(showing first 25 results)\n` : '\n',
-    hiddenResults > 0 ? `(${hiddenResults} sensitive result${hiddenResults === 1 ? '' : 's'} hidden)\n` : '',
+    hiddenResults > 0
+      ? `(${hiddenResults} sensitive result${hiddenResults === 1 ? '' : 's'} hidden)\n`
+      : '',
     redactedResults ? 'Redactions: secret-like values hidden.\n' : '',
   ];
 
@@ -1968,7 +2110,9 @@ export async function executeSearchFilesTool(
 
   if (byFile.size > 0) {
     lines.push('');
-    lines.push('Tip: Use grep_file(repo, path, pattern) to search within a specific file with line numbers and context.');
+    lines.push(
+      'Tip: Use grep_file(repo, path, pattern) to search within a specific file with line numbers and context.',
+    );
   }
 
   const cardData: GitHubCoreFileSearchCardData = {
@@ -1995,9 +2139,22 @@ export async function executeGitHubCoreTool(
     case 'list_commits':
       return executeListCommitsTool(runtime, call.args.repo, call.args.count);
     case 'read_file':
-      return executeReadFileTool(runtime, call.args.repo, call.args.path, call.args.branch, call.args.start_line, call.args.end_line);
+      return executeReadFileTool(
+        runtime,
+        call.args.repo,
+        call.args.path,
+        call.args.branch,
+        call.args.start_line,
+        call.args.end_line,
+      );
     case 'grep_file':
-      return executeGrepFileTool(runtime, call.args.repo, call.args.path, call.args.pattern, call.args.branch);
+      return executeGrepFileTool(
+        runtime,
+        call.args.repo,
+        call.args.path,
+        call.args.pattern,
+        call.args.branch,
+      );
     case 'list_directory':
       return executeListDirectoryTool(runtime, call.args.repo, call.args.path, call.args.branch);
     case 'list_branches':
@@ -2005,24 +2162,60 @@ export async function executeGitHubCoreTool(
     case 'fetch_checks':
       return executeFetchChecksTool(runtime, call.args.repo, call.args.ref);
     case 'search_files':
-      return executeSearchFilesTool(runtime, call.args.repo, call.args.query, call.args.path, call.args.branch);
+      return executeSearchFilesTool(
+        runtime,
+        call.args.repo,
+        call.args.query,
+        call.args.path,
+        call.args.branch,
+      );
     case 'list_commit_files':
       return executeListCommitFilesTool(runtime, call.args.repo, call.args.ref);
     case 'trigger_workflow':
-      return executeTriggerWorkflowTool(runtime, call.args.repo, call.args.workflow, call.args.ref, call.args.inputs);
+      return executeTriggerWorkflowTool(
+        runtime,
+        call.args.repo,
+        call.args.workflow,
+        call.args.ref,
+        call.args.inputs,
+      );
     case 'get_workflow_runs':
-      return executeGetWorkflowRunsTool(runtime, call.args.repo, call.args.workflow, call.args.branch, call.args.status, call.args.count);
+      return executeGetWorkflowRunsTool(
+        runtime,
+        call.args.repo,
+        call.args.workflow,
+        call.args.branch,
+        call.args.status,
+        call.args.count,
+      );
     case 'get_workflow_logs':
       return executeGetWorkflowLogsTool(runtime, call.args.repo, call.args.run_id);
     case 'create_pr':
-      return executeCreatePRTool(runtime, call.args.repo, call.args.title, call.args.body, call.args.head, call.args.base);
+      return executeCreatePRTool(
+        runtime,
+        call.args.repo,
+        call.args.title,
+        call.args.body,
+        call.args.head,
+        call.args.base,
+      );
     case 'merge_pr':
-      return executeMergePRTool(runtime, call.args.repo, call.args.pr_number, call.args.merge_method);
+      return executeMergePRTool(
+        runtime,
+        call.args.repo,
+        call.args.pr_number,
+        call.args.merge_method,
+      );
     case 'delete_branch':
       return executeDeleteBranchTool(runtime, call.args.repo, call.args.branch_name);
     case 'check_pr_mergeable':
       return executeCheckPRMergeableTool(runtime, call.args.repo, call.args.pr_number);
     case 'find_existing_pr':
-      return executeFindExistingPRTool(runtime, call.args.repo, call.args.head_branch, call.args.base_branch);
+      return executeFindExistingPRTool(
+        runtime,
+        call.args.repo,
+        call.args.head_branch,
+        call.args.base_branch,
+      );
   }
 }

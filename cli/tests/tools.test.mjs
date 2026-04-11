@@ -19,7 +19,8 @@ import {
 
 describe('detectToolCall', () => {
   it('parses a fenced JSON tool call', () => {
-    const text = 'Let me read that file.\n```json\n{"tool":"read_file","args":{"path":"foo.txt"}}\n```';
+    const text =
+      'Let me read that file.\n```json\n{"tool":"read_file","args":{"path":"foo.txt"}}\n```';
     const result = detectToolCall(text);
     assert.deepEqual(result, { tool: 'read_file', args: { path: 'foo.txt' } });
   });
@@ -56,7 +57,8 @@ describe('detectToolCall', () => {
   });
 
   it('picks the first valid tool call from multiple fences', () => {
-    const text = '```json\n{"config": true}\n```\n\n```json\n{"tool":"exec","args":{"command":"pwd"}}\n```';
+    const text =
+      '```json\n{"config": true}\n```\n\n```json\n{"tool":"exec","args":{"command":"pwd"}}\n```';
     const result = detectToolCall(text);
     assert.deepEqual(result, { tool: 'exec', args: { command: 'pwd' } });
   });
@@ -126,17 +128,11 @@ describe('ensureInsideWorkspace', () => {
   });
 
   it('rejects empty path', async () => {
-    await assert.rejects(
-      () => ensureInsideWorkspace(root, ''),
-      /path is required/,
-    );
+    await assert.rejects(() => ensureInsideWorkspace(root, ''), /path is required/);
   });
 
   it('rejects whitespace-only path', async () => {
-    await assert.rejects(
-      () => ensureInsideWorkspace(root, '   '),
-      /path is required/,
-    );
+    await assert.rejects(() => ensureInsideWorkspace(root, '   '), /path is required/);
   });
 
   it('allows absolute path inside workspace', async () => {
@@ -165,9 +161,16 @@ describe('ensureInsideWorkspace symlink', () => {
     await fs.writeFile(path.join(workspace, 'inner', 'safe.txt'), 'ok', 'utf8');
     // Create an external dir with a secret file
     await fs.mkdir(path.join(workspace, '..', 'push-external-secret'), { recursive: true });
-    await fs.writeFile(path.join(workspace, '..', 'push-external-secret', 'data.txt'), 'SECRET', 'utf8');
+    await fs.writeFile(
+      path.join(workspace, '..', 'push-external-secret', 'data.txt'),
+      'SECRET',
+      'utf8',
+    );
     // Symlink inside workspace pointing outside
-    await fs.symlink(path.join(workspace, '..', 'push-external-secret'), path.join(workspace, 'escape'));
+    await fs.symlink(
+      path.join(workspace, '..', 'push-external-secret'),
+      path.join(workspace, 'escape'),
+    );
     // Symlink inside workspace pointing to another location inside
     await fs.symlink(path.join(workspace, 'inner'), path.join(workspace, 'safe-link'));
   });
@@ -217,7 +220,7 @@ describe('list_dir symlink reporting', () => {
     const result = await executeToolCall({ tool: 'list_dir', args: { path: '.' } }, workspace);
     assert.equal(result.ok, true);
     const lines = result.text.split('\n');
-    const symLine = lines.find(l => l.includes('link-to-file'));
+    const symLine = lines.find((l) => l.includes('link-to-file'));
     assert.ok(symLine, 'should contain link-to-file entry');
     assert.ok(symLine.startsWith('l '), `expected "l " prefix, got: ${symLine}`);
   });
@@ -332,14 +335,17 @@ describe('edit_file hashline flow', () => {
       assert.ok(match);
 
       const ref = `${match[1]}:${match[2]}`;
-      const edit = await executeToolCall({
-        tool: 'edit_file',
-        args: {
-          path: rel,
-          expected_version: read.meta.version,
-          edits: [{ op: 'replace_line', ref, content: 'ALPHA' }],
+      const edit = await executeToolCall(
+        {
+          tool: 'edit_file',
+          args: {
+            path: rel,
+            expected_version: read.meta.version,
+            edits: [{ op: 'replace_line', ref, content: 'ALPHA' }],
+          },
         },
-      }, root);
+        root,
+      );
 
       assert.equal(edit.ok, true);
       const updated = await fs.readFile(abs, 'utf8');
@@ -361,14 +367,17 @@ describe('edit_file hashline flow', () => {
 
       await fs.writeFile(abs, 'changed\ncontent\n', 'utf8');
 
-      const edit = await executeToolCall({
-        tool: 'edit_file',
-        args: {
-          path: rel,
-          expected_version: read.meta.version,
-          edits: [{ op: 'replace_line', ref: '1:xxxxxxx', content: 'nope' }],
+      const edit = await executeToolCall(
+        {
+          tool: 'edit_file',
+          args: {
+            path: rel,
+            expected_version: read.meta.version,
+            edits: [{ op: 'replace_line', ref: '1:xxxxxxx', content: 'nope' }],
+          },
         },
-      }, root);
+        root,
+      );
 
       assert.equal(edit.ok, false);
       assert.equal(edit.structuredError.code, 'STALE_WRITE');
@@ -392,16 +401,19 @@ describe('edit_file hashline flow', () => {
       assert.ok(match);
       const ref = `${match[1]}:${match[2]}`;
 
-      const edit = await executeToolCall({
-        tool: 'edit_file',
-        args: {
-          path: rel,
-          edits: [
-            { op: 'replace_line', ref, content: 'BETA-1' },
-            { op: 'replace_line', ref, content: 'BETA-2' },
-          ],
+      const edit = await executeToolCall(
+        {
+          tool: 'edit_file',
+          args: {
+            path: rel,
+            edits: [
+              { op: 'replace_line', ref, content: 'BETA-1' },
+              { op: 'replace_line', ref, content: 'BETA-2' },
+            ],
+          },
         },
-      }, root);
+        root,
+      );
 
       assert.equal(edit.ok, true);
       assert.equal(edit.meta.warnings, 1);
@@ -466,11 +478,9 @@ describe('exec headless hardening', () => {
   it('allows exec with approvalFn (interactive backward compat)', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-'));
     try {
-      const result = await executeToolCall(
-        { tool: 'exec', args: { command: 'echo safe' } },
-        root,
-        { approvalFn: async () => true },
-      );
+      const result = await executeToolCall({ tool: 'exec', args: { command: 'echo safe' } }, root, {
+        approvalFn: async () => true,
+      });
       assert.equal(result.ok, true);
       assert.ok(result.text.includes('safe'));
     } finally {
@@ -603,7 +613,9 @@ describe('safe command exec bypass', () => {
         { tool: 'exec', args: { command: 'rm -rf node_modules' } },
         root,
         {
-          approvalFn: async () => { throw new Error('should not be called'); },
+          approvalFn: async () => {
+            throw new Error('should not be called');
+          },
         },
       );
       // rm -rf node_modules is safe — should not trigger approvalFn
@@ -619,7 +631,9 @@ describe('safe command exec bypass', () => {
       const result = await executeToolCall(
         { tool: 'exec', args: { command: 'rm -rf node_modules' } },
         root,
-        { /* no approvalFn, no allowExec */ },
+        {
+          /* no approvalFn, no allowExec */
+        },
       );
       assert.equal(result.ok, false);
       assert.ok(result.text.includes('headless'));
@@ -637,7 +651,9 @@ describe('safe command exec bypass', () => {
         { tool: 'exec', args: { command: 'chmod 777 chmod-target.txt' } },
         root,
         {
-          approvalFn: async () => { throw new Error('should not be called'); },
+          approvalFn: async () => {
+            throw new Error('should not be called');
+          },
           allowExec: true,
           safeExecPatterns: ['chmod 777'],
         },
@@ -645,7 +661,7 @@ describe('safe command exec bypass', () => {
       // chmod 777 matches user-defined prefix — should not prompt
       assert.equal(result.ok, true);
       const stat = await fs.stat(target);
-      assert.equal((stat.mode & 0o777), 0o777);
+      assert.equal(stat.mode & 0o777, 0o777);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -679,7 +695,10 @@ describe('exec session tools', () => {
       let running = true;
       for (let i = 0; i < 30 && running; i++) {
         const poll = await executeToolCall(
-          { tool: 'exec_poll', args: { session_id: sessionId, from_seq: fromSeq, max_chars: 4096 } },
+          {
+            tool: 'exec_poll',
+            args: { session_id: sessionId, from_seq: fromSeq, max_chars: 4096 },
+          },
           root,
         );
         assert.equal(poll.ok, true);
@@ -729,10 +748,7 @@ describe('lsp_diagnostics tool', () => {
       // Create a file but no project marker
       await fs.writeFile(path.join(root, 'random.txt'), 'hello');
 
-      const result = await executeToolCall(
-        { tool: 'lsp_diagnostics', args: {} },
-        root,
-      );
+      const result = await executeToolCall({ tool: 'lsp_diagnostics', args: {} }, root);
 
       assert.equal(result.ok, false);
       assert.ok(result.structuredError);
@@ -746,24 +762,27 @@ describe('lsp_diagnostics tool', () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-diag-ts-'));
     try {
       // Create a tsconfig.json
-      await fs.writeFile(path.join(root, 'tsconfig.json'), JSON.stringify({
-        compilerOptions: {
-          strict: true,
-          noEmit: true,
-        },
-        include: ['*.ts'],
-      }));
+      await fs.writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            noEmit: true,
+          },
+          include: ['*.ts'],
+        }),
+      );
 
       // Create a TypeScript file with a type error
-      await fs.writeFile(path.join(root, 'test.ts'), `
+      await fs.writeFile(
+        path.join(root, 'test.ts'),
+        `
         const x: string = 42;
         console.log(x);
-      `);
-
-      const result = await executeToolCall(
-        { tool: 'lsp_diagnostics', args: {} },
-        root,
+      `,
       );
+
+      const result = await executeToolCall({ tool: 'lsp_diagnostics', args: {} }, root);
 
       // Should detect the type error (if tsc is available)
       // If tsc is not installed, we get DIAGNOSTIC_TOOL_NOT_FOUND
@@ -774,7 +793,7 @@ describe('lsp_diagnostics tool', () => {
       } else {
         assert.ok(
           result.structuredError.code === 'DIAGNOSTIC_TOOL_NOT_FOUND' ||
-          result.structuredError.code === 'DIAGNOSTIC_FAILED'
+            result.structuredError.code === 'DIAGNOSTIC_FAILED',
         );
       }
     } finally {
@@ -785,10 +804,13 @@ describe('lsp_diagnostics tool', () => {
   it('filters diagnostics to specific file', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-diag-filter-'));
     try {
-      await fs.writeFile(path.join(root, 'tsconfig.json'), JSON.stringify({
-        compilerOptions: { strict: true, noEmit: true },
-        include: ['*.ts'],
-      }));
+      await fs.writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: { strict: true, noEmit: true },
+          include: ['*.ts'],
+        }),
+      );
 
       await fs.writeFile(path.join(root, 'a.ts'), `const x: string = 42;`);
       await fs.writeFile(path.join(root, 'b.ts'), `const y: number = 'wrong';`);
@@ -804,9 +826,11 @@ describe('lsp_diagnostics tool', () => {
         // (This depends on tsc behavior with single-file filtering)
         assert.ok(result.meta);
       } else {
-        assert.ok(['DIAGNOSTIC_TOOL_NOT_FOUND', 'DIAGNOSTIC_FAILED', 'UNSUPPORTED_PROJECT_TYPE'].includes(
-          result.structuredError?.code
-        ));
+        assert.ok(
+          ['DIAGNOSTIC_TOOL_NOT_FOUND', 'DIAGNOSTIC_FAILED', 'UNSUPPORTED_PROJECT_TYPE'].includes(
+            result.structuredError?.code,
+          ),
+        );
       }
     } finally {
       await fs.rm(root, { recursive: true, force: true });
@@ -816,29 +840,36 @@ describe('lsp_diagnostics tool', () => {
   it('returns empty diagnostics for clean TypeScript project', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-diag-clean-'));
     try {
-      await fs.writeFile(path.join(root, 'tsconfig.json'), JSON.stringify({
-        compilerOptions: { strict: true, noEmit: true },
-        include: ['*.ts'],
-      }));
-
-      // Valid TypeScript
-      await fs.writeFile(path.join(root, 'clean.ts'), `
-        const greeting: string = 'hello';
-        console.log(greeting);
-      `);
-
-      const result = await executeToolCall(
-        { tool: 'lsp_diagnostics', args: {} },
-        root,
+      await fs.writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: { strict: true, noEmit: true },
+          include: ['*.ts'],
+        }),
       );
 
+      // Valid TypeScript
+      await fs.writeFile(
+        path.join(root, 'clean.ts'),
+        `
+        const greeting: string = 'hello';
+        console.log(greeting);
+      `,
+      );
+
+      const result = await executeToolCall({ tool: 'lsp_diagnostics', args: {} }, root);
+
       if (result.ok) {
-        assert.ok(result.text.includes('No diagnostics') || result.meta.errors > 0 || result.meta.warnings > 0);
+        assert.ok(
+          result.text.includes('No diagnostics') ||
+            result.meta.errors > 0 ||
+            result.meta.warnings > 0,
+        );
       } else {
         // tsc might not be installed
-        assert.ok(['DIAGNOSTIC_TOOL_NOT_FOUND', 'DIAGNOSTIC_FAILED'].includes(
-          result.structuredError?.code
-        ));
+        assert.ok(
+          ['DIAGNOSTIC_TOOL_NOT_FOUND', 'DIAGNOSTIC_FAILED'].includes(result.structuredError?.code),
+        );
       }
     } finally {
       await fs.rm(root, { recursive: true, force: true });

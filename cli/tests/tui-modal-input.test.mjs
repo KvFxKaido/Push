@@ -24,7 +24,10 @@ describe('getListNavigationAction', () => {
     assert.deepEqual(getListNavigationAction({ name: 'down' }), { type: 'move', delta: 1 });
     assert.deepEqual(getListNavigationAction({ name: 'escape' }), { type: 'cancel' });
     assert.deepEqual(getListNavigationAction({ name: 'return' }), { type: 'confirm' });
-    assert.deepEqual(getListNavigationAction({ name: '', ch: '4' }), { type: 'select_index', index: 3 });
+    assert.deepEqual(getListNavigationAction({ name: '', ch: '4' }), {
+      type: 'select_index',
+      index: 3,
+    });
   });
 
   it('supports optional vim navigation', () => {
@@ -73,4 +76,3 @@ describe('applySingleLineEditKey', () => {
     assert.equal(cancel.text, 'abc');
   });
 });
-

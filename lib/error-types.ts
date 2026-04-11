@@ -45,13 +45,36 @@ export function classifyError(error: string, context?: string): StructuredToolEr
   if (lower.includes('content not found') || lower.includes('search string not found')) {
     return { type: 'EDIT_CONTENT_NOT_FOUND', retryable: false, message: error, detail: context };
   }
-  if (lower.includes('no such file') || lower.includes('enoent') || lower.includes('not found') || lower.includes('does not exist')) {
+  if (
+    lower.includes('no such file') ||
+    lower.includes('enoent') ||
+    lower.includes('not found') ||
+    lower.includes('does not exist')
+  ) {
     return { type: 'FILE_NOT_FOUND', retryable: false, message: error, detail: context };
   }
   // Health-check failures must be matched before the generic timeout check so
   // "health check timed out" is classified as SANDBOX_UNREACHABLE, not EXEC_TIMEOUT.
-  if (lower.includes('sandbox_unreachable') || lower.includes('modal_network_error') || lower.includes('cannot connect') || lower.includes('modal_error') || lower.includes('sandbox unavailable') || lower.includes('container error') || lower.includes('container_error') || lower.includes('no longer reachable') || lower.includes('internal server error') || lower.includes('health check failed') || lower.includes('health check timed out')) {
-    const transient = lower.includes('internal server error') || lower.includes('container error') || lower.includes('container_error') || lower.includes('modal_network_error') || lower.includes('modal_error') || lower.includes('health check');
+  if (
+    lower.includes('sandbox_unreachable') ||
+    lower.includes('modal_network_error') ||
+    lower.includes('cannot connect') ||
+    lower.includes('modal_error') ||
+    lower.includes('sandbox unavailable') ||
+    lower.includes('container error') ||
+    lower.includes('container_error') ||
+    lower.includes('no longer reachable') ||
+    lower.includes('internal server error') ||
+    lower.includes('health check failed') ||
+    lower.includes('health check timed out')
+  ) {
+    const transient =
+      lower.includes('internal server error') ||
+      lower.includes('container error') ||
+      lower.includes('container_error') ||
+      lower.includes('modal_network_error') ||
+      lower.includes('modal_error') ||
+      lower.includes('health check');
     return { type: 'SANDBOX_UNREACHABLE', retryable: transient, message: error, detail: context };
   }
   if (lower.includes('timed out') || lower.includes('timeout') || lower.includes('modal_timeout')) {
@@ -96,9 +119,5 @@ export function classifyError(error: string, context?: string): StructuredToolEr
  * Format a structured error into the text block injected into tool results.
  */
 export function formatStructuredError(err: StructuredToolError, baseText: string): string {
-  return [
-    baseText,
-    `error_type: ${err.type}`,
-    `retryable: ${err.retryable}`,
-  ].join('\n');
+  return [baseText, `error_type: ${err.type}`, `retryable: ${err.retryable}`].join('\n');
 }

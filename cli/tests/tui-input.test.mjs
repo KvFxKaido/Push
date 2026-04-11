@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseKey, splitRawInputChunk, createKeybindMap, createComposer, createInputHistory } from '../tui-input.ts';
+import {
+  parseKey,
+  splitRawInputChunk,
+  createKeybindMap,
+  createComposer,
+  createInputHistory,
+} from '../tui-input.ts';
 
 // ─── parseKey ───────────────────────────────────────────────────
 
@@ -474,7 +480,7 @@ describe('createComposer', () => {
     c.setText('hello world');
     c.moveHome();
     c.moveWordRight(); // at col 6
-    c.moveLeft();      // col 5 (the space)
+    c.moveLeft(); // col 5 (the space)
     c.moveWordLeft();
     assert.equal(c.getCursor().col, 0);
   });
@@ -483,14 +489,15 @@ describe('createComposer', () => {
     const c = createComposer();
     c.setText('abc\ndef');
     c.moveHome(); // line 0, col 0
-    c.moveEnd();  // line 0, col 3 (we're on line 1 after setText, so reset)
+    c.moveEnd(); // line 0, col 3 (we're on line 1 after setText, so reset)
     // Need to set up properly
     const c2 = createComposer();
     c2.insertChar('abc');
     c2.insertNewline();
     c2.insertChar('def');
     // cursor at line 1, col 3
-    c2.moveUp(); c2.moveEnd(); // line 0, col 3
+    c2.moveUp();
+    c2.moveEnd(); // line 0, col 3
     c2.moveWordRight(); // should wrap to line 1, col 0
     assert.equal(c2.getCursor().line, 1);
     assert.equal(c2.getCursor().col, 0);
@@ -551,7 +558,8 @@ describe('createComposer', () => {
   it('killWordBackward from middle of word', () => {
     const c = createComposer();
     c.setText('hello world');
-    c.moveLeft(); c.moveLeft(); // col 9, in "world"
+    c.moveLeft();
+    c.moveLeft(); // col 9, in "world"
     const killed = c.killWordBackward();
     assert.equal(killed, 'wor');
     assert.equal(c.getText(), 'hello ld');

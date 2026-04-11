@@ -59,7 +59,7 @@ export function moveCursorCircular(cursor: number, length: number, delta: number
   if (!Number.isFinite(length) || length <= 0) return 0;
   const base = Number.isFinite(cursor) ? cursor : 0;
   const step = Number.isFinite(delta) ? delta : 0;
-  return ((base + step) % length + length) % length;
+  return (((base + step) % length) + length) % length;
 }
 
 /**
@@ -73,11 +73,7 @@ export function moveCursorCircular(cursor: number, length: number, delta: number
  */
 export function getListNavigationAction(
   key: KeyEvent | null | undefined,
-  {
-    allowEscape = true,
-    allowNumbers = true,
-    allowVim = false,
-  }: ListNavigationOptions = {},
+  { allowEscape = true, allowNumbers = true, allowVim = false }: ListNavigationOptions = {},
 ): ListNavigationAction | null {
   if (!key) return null;
 

@@ -11,40 +11,28 @@ describe('shared working-memory helpers', () => {
     const state = createWorkingMemory();
     state.plan = 'Investigate auth failure';
 
-    assert.equal(
-      shouldInjectCoderStateOnToolResult(state, null, 1, 2_000, 120_000, null),
-      true,
-    );
+    assert.equal(shouldInjectCoderStateOnToolResult(state, null, 1, 2_000, 120_000, null), true);
   });
 
   it('does not reinject unchanged state under low pressure before cadence', () => {
     const state = createWorkingMemory();
     state.plan = 'Fix regression';
 
-    assert.equal(
-      shouldInjectCoderStateOnToolResult(state, state, 3, 2_000, 120_000, 2),
-      false,
-    );
+    assert.equal(shouldInjectCoderStateOnToolResult(state, state, 3, 2_000, 120_000, 2), false);
   });
 
   it('reinjects unchanged state under elevated context pressure', () => {
     const state = createWorkingMemory();
     state.plan = 'Fix regression';
 
-    assert.equal(
-      shouldInjectCoderStateOnToolResult(state, state, 3, 90_000, 120_000, 2),
-      true,
-    );
+    assert.equal(shouldInjectCoderStateOnToolResult(state, state, 3, 90_000, 120_000, 2), true);
   });
 
   it('reinjects unchanged state on the long-task cadence', () => {
     const state = createWorkingMemory();
     state.plan = 'Fix regression';
 
-    assert.equal(
-      shouldInjectCoderStateOnToolResult(state, state, 10, 2_000, 120_000, 4),
-      true,
-    );
+    assert.equal(shouldInjectCoderStateOnToolResult(state, state, 10, 2_000, 120_000, 4), true);
   });
 
   it('formats a compact state delta when only one field changed', () => {

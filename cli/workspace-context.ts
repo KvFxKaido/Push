@@ -6,7 +6,14 @@ import { execFile } from 'node:child_process';
 const execFileAsync = promisify(execFile);
 
 const IGNORED_ENTRIES = new Set([
-  '.git', 'node_modules', '.push', '__pycache__', '.next', 'dist', 'build', '.cache',
+  '.git',
+  'node_modules',
+  '.push',
+  '__pycache__',
+  '.next',
+  'dist',
+  'build',
+  '.cache',
 ]);
 
 const MAX_TREE_ENTRIES = 40;
@@ -83,13 +90,16 @@ async function getTree(cwd: string): Promise<string[]> {
     const entries: Dirent[] = await fs.readdir(cwd, { withFileTypes: true });
     const filtered: Dirent[] = entries.filter((e: Dirent) => !IGNORED_ENTRIES.has(e.name));
 
-    const dirs: string[] = filtered.filter((e: Dirent) => e.isDirectory()).map((e: Dirent) => e.name).sort();
-    const files: string[] = filtered.filter((e: Dirent) => !e.isDirectory()).map((e: Dirent) => e.name).sort();
+    const dirs: string[] = filtered
+      .filter((e: Dirent) => e.isDirectory())
+      .map((e: Dirent) => e.name)
+      .sort();
+    const files: string[] = filtered
+      .filter((e: Dirent) => !e.isDirectory())
+      .map((e: Dirent) => e.name)
+      .sort();
 
-    const combined: string[] = [
-      ...dirs.map((d) => `  d ${d}/`),
-      ...files.map((f) => `  f ${f}`),
-    ];
+    const combined: string[] = [...dirs.map((d) => `  d ${d}/`), ...files.map((f) => `  f ${f}`)];
 
     return combined.slice(0, MAX_TREE_ENTRIES);
   } catch {
@@ -105,7 +115,9 @@ async function summarizePackageJson(cwd: string): Promise<string | null> {
     const pkg: Record<string, unknown> = JSON.parse(raw);
     const name: string = (pkg.name as string) || '(unnamed)';
     const version: string = (pkg.version as string) || '(no version)';
-    const depCount: number = Object.keys((pkg.dependencies as Record<string, unknown>) || {}).length;
+    const depCount: number = Object.keys(
+      (pkg.dependencies as Record<string, unknown>) || {},
+    ).length;
     return `package.json \u2014 ${name}@${version}, ${depCount} dependencies`;
   } catch {
     return null;
@@ -202,9 +214,10 @@ export async function buildWorkspaceSnapshot(cwd: string): Promise<string> {
 
     if (gitInfo) {
       const dirtyCount: number = gitInfo.dirtyFiles.length;
-      const branchLine: string = dirtyCount > 0
-        ? `Branch: ${gitInfo.branch} (${dirtyCount} dirty file${dirtyCount === 1 ? '' : 's'})`
-        : `Branch: ${gitInfo.branch}`;
+      const branchLine: string =
+        dirtyCount > 0
+          ? `Branch: ${gitInfo.branch} (${dirtyCount} dirty file${dirtyCount === 1 ? '' : 's'})`
+          : `Branch: ${gitInfo.branch}`;
       parts.push(branchLine);
 
       if (dirtyCount > 0) {
@@ -261,9 +274,13 @@ export async function loadMemory(cwd: string): Promise<string | null> {
         const content = typeof e.content === 'string' ? e.content.trim() : '';
         if (!type || !content) continue;
         const rawTags = Array.isArray(e.tags) ? e.tags : [];
-        const tags = rawTags.filter((t: unknown): t is string => typeof t === 'string' && t.trim().length > 0);
+        const tags = rawTags.filter(
+          (t: unknown): t is string => typeof t === 'string' && t.trim().length > 0,
+        );
         const rawFiles = Array.isArray(e.files) ? e.files : [];
-        const files = rawFiles.filter((f: unknown): f is string => typeof f === 'string' && f.trim().length > 0);
+        const files = rawFiles.filter(
+          (f: unknown): f is string => typeof f === 'string' && f.trim().length > 0,
+        );
         const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
         const fileStr = files.length > 0 ? ` (${files.join(', ')})` : '';
         lines.push(`- [${type}] ${content}${tagStr}${fileStr}`);
@@ -272,7 +289,9 @@ export async function loadMemory(cwd: string): Promise<string | null> {
         parts.push('[Structured Memory]\n' + lines.join('\n'));
       }
     }
-  } catch { /* no structured memory */ }
+  } catch {
+    /* no structured memory */
+  }
 
   // Load free-text memory (memory.md)
   try {
@@ -284,7 +303,9 @@ export async function loadMemory(cwd: string): Promise<string | null> {
     if (content.trim()) {
       parts.push(content.trim());
     }
-  } catch { /* no free-text memory */ }
+  } catch {
+    /* no free-text memory */
+  }
 
   return parts.length > 0 ? parts.join('\n\n') : null;
 }

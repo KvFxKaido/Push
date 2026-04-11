@@ -61,7 +61,14 @@ interface SessionEntry {
 export async function aggregateStats(filter: StatsFilter = {}): Promise<AggregateResult> {
   const sessions: SessionEntry[] = await listSessions();
   const providers: Record<string, ProviderStats> = {};
-  const totals: TotalStats = { sessions: 0, runs: 0, rounds: 0, toolCalls: 0, toolErrors: 0, malformedCalls: 0 };
+  const totals: TotalStats = {
+    sessions: 0,
+    runs: 0,
+    rounds: 0,
+    toolCalls: 0,
+    toolErrors: 0,
+    malformedCalls: 0,
+  };
 
   for (const session of sessions) {
     if (filter.provider && session.provider !== filter.provider) continue;
@@ -69,7 +76,7 @@ export async function aggregateStats(filter: StatsFilter = {}): Promise<Aggregat
 
     let events: SessionEvent[];
     try {
-      events = await loadSessionEvents(session.sessionId) as SessionEvent[];
+      events = (await loadSessionEvents(session.sessionId)) as SessionEvent[];
     } catch {
       continue;
     }
@@ -158,29 +165,44 @@ export function formatStats({ providers, totals }: AggregateResult): string {
   }
 
   lines.push(`Total: ${totals.sessions} sessions, ${totals.runs} runs, ${totals.rounds} rounds`);
-  const errCount = totals.toolErrors > 0 ? fmt.yellow(String(totals.toolErrors)) : String(totals.toolErrors);
-  const malCount = totals.malformedCalls > 0 ? fmt.yellow(String(totals.malformedCalls)) : String(totals.malformedCalls);
-  lines.push(`${fmt.dim('Tool calls:')} ${totals.toolCalls} ${fmt.dim('|')} ${fmt.dim('Errors:')} ${errCount} ${fmt.dim('|')} ${fmt.dim('Malformed:')} ${malCount}`);
+  const errCount =
+    totals.toolErrors > 0 ? fmt.yellow(String(totals.toolErrors)) : String(totals.toolErrors);
+  const malCount =
+    totals.malformedCalls > 0
+      ? fmt.yellow(String(totals.malformedCalls))
+      : String(totals.malformedCalls);
+  lines.push(
+    `${fmt.dim('Tool calls:')} ${totals.toolCalls} ${fmt.dim('|')} ${fmt.dim('Errors:')} ${errCount} ${fmt.dim('|')} ${fmt.dim('Malformed:')} ${malCount}`,
+  );
   lines.push('');
 
   const keys = Object.keys(providers).sort();
   for (const key of keys) {
     const p = providers[key];
     lines.push(`${fmt.bold('─ ' + key)}`);
-    lines.push(`  ${fmt.dim('Sessions:')} ${p.sessions} ${fmt.dim('|')} ${fmt.dim('Runs:')} ${p.runs} ${fmt.dim('|')} ${fmt.dim('Rounds:')} ${p.rounds}`);
+    lines.push(
+      `  ${fmt.dim('Sessions:')} ${p.sessions} ${fmt.dim('|')} ${fmt.dim('Runs:')} ${p.runs} ${fmt.dim('|')} ${fmt.dim('Rounds:')} ${p.rounds}`,
+    );
     const avgRounds = p.runs > 0 ? (p.rounds / p.runs).toFixed(1) : '-';
     lines.push(`  ${fmt.dim('Avg rounds/run:')} ${avgRounds}`);
     const pErr = p.toolErrors > 0 ? fmt.yellow(String(p.toolErrors)) : String(p.toolErrors);
-    const pMal = p.malformedCalls > 0 ? fmt.yellow(String(p.malformedCalls)) : String(p.malformedCalls);
-    lines.push(`  ${fmt.dim('Tool calls:')} ${p.toolCalls} ${fmt.dim('|')} ${fmt.dim('Errors:')} ${pErr} ${fmt.dim('|')} ${fmt.dim('Malformed:')} ${pMal}`);
+    const pMal =
+      p.malformedCalls > 0 ? fmt.yellow(String(p.malformedCalls)) : String(p.malformedCalls);
+    lines.push(
+      `  ${fmt.dim('Tool calls:')} ${p.toolCalls} ${fmt.dim('|')} ${fmt.dim('Errors:')} ${pErr} ${fmt.dim('|')} ${fmt.dim('Malformed:')} ${pMal}`,
+    );
 
     if (Object.keys(p.outcomes).length > 0) {
-      const outcomeStr = Object.entries(p.outcomes).map(([k, v]) => `${k}:${v}`).join(', ');
+      const outcomeStr = Object.entries(p.outcomes)
+        .map(([k, v]) => `${k}:${v}`)
+        .join(', ');
       lines.push(`  ${fmt.dim('Outcomes:')} ${outcomeStr}`);
     }
 
     if (Object.keys(p.malformedReasons).length > 0) {
-      const reasonStr = Object.entries(p.malformedReasons).map(([k, v]) => `${k}:${v}`).join(', ');
+      const reasonStr = Object.entries(p.malformedReasons)
+        .map(([k, v]) => `${k}:${v}`)
+        .join(', ');
       lines.push(`  ${fmt.dim('Malformed reasons:')} ${reasonStr}`);
     }
 

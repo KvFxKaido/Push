@@ -1,13 +1,7 @@
 import type { LoopPhase, RunEventSubagent } from './runtime-contract';
 
 /** All phases a run can be in, including lifecycle bookends beyond LoopPhase. */
-export type RunEnginePhase =
-  | 'idle'
-  | 'starting'
-  | LoopPhase
-  | 'completed'
-  | 'aborted'
-  | 'failed';
+export type RunEnginePhase = 'idle' | 'starting' | LoopPhase | 'completed' | 'aborted' | 'failed';
 
 /**
  * Every state transition the web/CLI run loop can take, expressed as a
@@ -63,19 +57,14 @@ export function phaseForDelegationAgent(agent: RunEventSubagent): RunEnginePhase
 
 export function isLoopPhase(phase: RunEnginePhase): phase is LoopPhase {
   return (
-    phase === 'streaming_llm'
-    || phase === 'executing_tools'
-    || phase === 'delegating_coder'
-    || phase === 'delegating_explorer'
-    || phase === 'executing_task_graph'
+    phase === 'streaming_llm' ||
+    phase === 'executing_tools' ||
+    phase === 'delegating_coder' ||
+    phase === 'delegating_explorer' ||
+    phase === 'executing_task_graph'
   );
 }
 
 export function isTerminalRunEnginePhase(phase: RunEnginePhase): boolean {
-  return (
-    phase === 'idle'
-    || phase === 'completed'
-    || phase === 'aborted'
-    || phase === 'failed'
-  );
+  return phase === 'idle' || phase === 'completed' || phase === 'aborted' || phase === 'failed';
 }

@@ -69,7 +69,10 @@ describe('aggregateStats', () => {
     process.env.PUSH_SESSION_DIR = path.join(tmpDir, 'sessions');
 
     // Create two sessions with different providers
-    for (const [provider, model] of [['ollama', 'gemini-3-flash-preview'], ['openrouter', 'anthropic/claude-sonnet-4.6']]) {
+    for (const [provider, model] of [
+      ['ollama', 'gemini-3-flash-preview'],
+      ['openrouter', 'anthropic/claude-sonnet-4.6'],
+    ]) {
       const sessionId = makeSessionId();
       const state = {
         sessionId,

@@ -14,14 +14,16 @@ export interface ContextMemoryStore {
   writeMany(records: MemoryRecord[]): void | Promise<void>;
   get(id: string): MemoryRecord | undefined | Promise<MemoryRecord | undefined>;
   list(predicate?: (record: MemoryRecord) => boolean): MemoryRecord[] | Promise<MemoryRecord[]>;
-  update(id: string, patch: Partial<MemoryRecord>): MemoryRecord | undefined | Promise<MemoryRecord | undefined>;
+  update(
+    id: string,
+    patch: Partial<MemoryRecord>,
+  ): MemoryRecord | undefined | Promise<MemoryRecord | undefined>;
   remove(id: string): void | Promise<void>;
   clear(): void | Promise<void>;
   clearByRepo(repoFullName: string): void | Promise<void>;
   clearByBranch(repoFullName: string, branch: string): void | Promise<void>;
   pruneExpired(now?: number): number | Promise<number>;
   size(): number | Promise<number>;
-
 }
 
 export function createInMemoryStore(): ContextMemoryStore {

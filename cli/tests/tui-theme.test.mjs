@@ -1,8 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createTheme, detectColorTier, detectUnicode,
-  TOKENS, GLYPHS_UNICODE, GLYPHS_ASCII,
+  createTheme,
+  detectColorTier,
+  detectUnicode,
+  TOKENS,
+  GLYPHS_UNICODE,
+  GLYPHS_ASCII,
 } from '../tui-theme.ts';
 
 // ─── detectColorTier ────────────────────────────────────────────
@@ -28,11 +32,20 @@ describe('detectUnicode', () => {
 describe('TOKENS', () => {
   it('has all required design tokens from Visual Language Spec', () => {
     const required = [
-      'bg.base', 'bg.panel',
-      'fg.primary', 'fg.secondary', 'fg.muted', 'fg.dim',
-      'border.default', 'border.hover',
-      'accent.primary', 'accent.secondary', 'accent.link',
-      'state.success', 'state.warn', 'state.error',
+      'bg.base',
+      'bg.panel',
+      'fg.primary',
+      'fg.secondary',
+      'fg.muted',
+      'fg.dim',
+      'border.default',
+      'border.hover',
+      'accent.primary',
+      'accent.secondary',
+      'accent.link',
+      'state.success',
+      'state.warn',
+      'state.error',
     ];
     for (const token of required) {
       assert.ok(TOKENS[token], `Missing token: ${token}`);

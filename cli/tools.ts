@@ -28,14 +28,38 @@ const TAVILY_API_KEY_ENV_VARS = ['PUSH_TAVILY_API_KEY', 'TAVILY_API_KEY', 'VITE_
 const OLLAMA_API_KEY_ENV_VARS = ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'];
 const WEB_SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 
-const READ_ONLY_TOOLS = new Set(['read_file', 'list_dir', 'search_files', 'web_search', 'read_symbols', 'read_symbol', 'git_status', 'git_diff', 'lsp_diagnostics', 'exec_poll', 'exec_list_sessions']);
+const READ_ONLY_TOOLS = new Set([
+  'read_file',
+  'list_dir',
+  'search_files',
+  'web_search',
+  'read_symbols',
+  'read_symbol',
+  'git_status',
+  'git_diff',
+  'lsp_diagnostics',
+  'exec_poll',
+  'exec_list_sessions',
+]);
 
 // Shared symbol-detection patterns used by read_symbols and read_symbol
 const SYMBOL_PATTERNS = [
-  { pat: /^\s*(export\s+)?(default\s+)?(async\s+)?function\s+(\w+)/, kind: 'function', nameGroup: 4 },
+  {
+    pat: /^\s*(export\s+)?(default\s+)?(async\s+)?function\s+(\w+)/,
+    kind: 'function',
+    nameGroup: 4,
+  },
   { pat: /^\s*(export\s+)?(default\s+)?class\s+(\w+)/, kind: 'class', nameGroup: 3 },
-  { pat: /^\s*(export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(/, kind: 'function', nameGroup: 2 },
-  { pat: /^\s*(export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function/, kind: 'function', nameGroup: 2 },
+  {
+    pat: /^\s*(export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(/,
+    kind: 'function',
+    nameGroup: 2,
+  },
+  {
+    pat: /^\s*(export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function/,
+    kind: 'function',
+    nameGroup: 2,
+  },
   { pat: /^\s*def\s+(\w+)/, kind: 'function', nameGroup: 1 },
   { pat: /^\s*(async\s+)?fn\s+(\w+)/, kind: 'function', nameGroup: 2 },
   { pat: /^\s*func\s+(\w+)/, kind: 'function', nameGroup: 1 },
@@ -241,7 +265,10 @@ function appendSessionChunk(session, text, source = 'stdout') {
   session.totalChars += text.length;
   session.updatedAt = Date.now();
 
-  while (session.chunks.length > MAX_EXEC_SESSION_CHUNKS || session.totalChars > MAX_EXEC_SESSION_OUTPUT_CHARS) {
+  while (
+    session.chunks.length > MAX_EXEC_SESSION_CHUNKS ||
+    session.totalChars > MAX_EXEC_SESSION_OUTPUT_CHARS
+  ) {
     const removed = session.chunks.shift();
     if (!removed) break;
     session.totalChars -= removed.text.length;
@@ -364,7 +391,8 @@ function normalizeSignal(rawSignal) {
   const value = typeof rawSignal === 'string' ? rawSignal.trim().toUpperCase() : '';
   if (!value) return 'SIGTERM';
   const normalized = value.startsWith('SIG') ? value : `SIG${value}`;
-  if (normalized === 'SIGTERM' || normalized === 'SIGINT' || normalized === 'SIGKILL') return normalized;
+  if (normalized === 'SIGTERM' || normalized === 'SIGINT' || normalized === 'SIGKILL')
+    return normalized;
   throw new Error('signal must be SIGTERM, SIGINT, or SIGKILL');
 }
 
@@ -380,9 +408,10 @@ function pruneExecSessions() {
 async function guardExecCommand(command, options = {}, mode = 'exec') {
   const execMode = options.execMode ?? 'auto';
   const operationLabel = mode === 'exec_start' ? 'exec_start' : 'exec';
-  const blockedMessage = mode === 'exec_start'
-    ? 'Blocked: exec_start is disabled in headless mode. Use --allow-exec to enable.'
-    : 'Blocked: exec is disabled in headless mode. Use --allow-exec to enable.';
+  const blockedMessage =
+    mode === 'exec_start'
+      ? 'Blocked: exec_start is disabled in headless mode. Use --allow-exec to enable.'
+      : 'Blocked: exec is disabled in headless mode. Use --allow-exec to enable.';
 
   // In headless mode (no approvalFn), block command execution unless --allow-exec or yolo
   if (!options.approvalFn && !options.allowExec && execMode !== 'yolo') {
@@ -478,15 +507,27 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
   ensureCleanupHooks();
 
   const isLocalSandbox = process.env.PUSH_LOCAL_SANDBOX === 'true';
-  const canUseScriptTty = ttyRequested && !isLocalSandbox && await hasScriptBinary();
+  const canUseScriptTty = ttyRequested && !isLocalSandbox && (await hasScriptBinary());
 
-  const bin = isLocalSandbox
-    ? 'docker'
-    : (canUseScriptTty ? 'script' : '/bin/bash');
+  const bin = isLocalSandbox ? 'docker' : canUseScriptTty ? 'script' : '/bin/bash';
 
   const args = isLocalSandbox
-    ? ['run', '--rm', '-i', '-v', `${workspaceRoot}:/workspace`, '-w', '/workspace', 'push-sandbox', 'bash', '-lc', command]
-    : (canUseScriptTty ? ['-q', '-f', '-c', command, '/dev/null'] : ['-lc', command]);
+    ? [
+        'run',
+        '--rm',
+        '-i',
+        '-v',
+        `${workspaceRoot}:/workspace`,
+        '-w',
+        '/workspace',
+        'push-sandbox',
+        'bash',
+        '-lc',
+        command,
+      ]
+    : canUseScriptTty
+      ? ['-q', '-f', '-c', command, '/dev/null']
+      : ['-lc', command];
 
   const child = spawn(bin, args, {
     cwd: workspaceRoot,
@@ -500,7 +541,7 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
     command,
     cwd: workspaceRoot,
     ttyRequested: Boolean(ttyRequested),
-    ttyMode: canUseScriptTty ? 'script' : (ttyRequested ? 'pipe_fallback' : 'pipe'),
+    ttyMode: canUseScriptTty ? 'script' : ttyRequested ? 'pipe_fallback' : 'pipe',
     running: true,
     closed: false,
     timedOut: false,
@@ -520,7 +561,11 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
   const timeoutTimer = setTimeout(() => {
     if (!session.running) return;
     session.timedOut = true;
-    appendSessionChunk(session, `\n[push] session timed out after ${timeoutMs}ms, terminating...\n`, 'meta');
+    appendSessionChunk(
+      session,
+      `\n[push] session timed out after ${timeoutMs}ms, terminating...\n`,
+      'meta',
+    );
     stopSessionProcess(session, 'SIGTERM');
     setTimeout(() => {
       if (session.running) stopSessionProcess(session, 'SIGKILL');
@@ -543,7 +588,9 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
   });
 
   child.on('close', (code, signal) => {
-    markSessionClosed(session, typeof code === 'number' ? code : 1, signal, { timedOut: session.timedOut });
+    markSessionClosed(session, typeof code === 'number' ? code : 1, signal, {
+      timedOut: session.timedOut,
+    });
   });
 
   EXEC_SESSIONS.set(sessionId, session);
@@ -646,10 +693,10 @@ function truncateReadFileOutput(renderedText, rawContent, startLine, max = MAX_T
   const preview = renderedLines.slice(0, keptCount).join('\n');
   return {
     text:
-      `${preview}\n\n[truncated]\n`
-      + `truncated_at_line: ${truncatedAtLine}\n`
-      + `remaining_bytes: ${remainingBytes}\n`
-      + `showing ${keptCount}/${renderedLines.length} lines — continue with start_line=${truncatedAtLine}`,
+      `${preview}\n\n[truncated]\n` +
+      `truncated_at_line: ${truncatedAtLine}\n` +
+      `remaining_bytes: ${remainingBytes}\n` +
+      `showing ${keptCount}/${renderedLines.length} lines — continue with start_line=${truncatedAtLine}`,
     truncated: true,
     truncatedAtLine,
     remainingBytes,
@@ -675,7 +722,11 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function parseToolCallCandidate(candidate: string): { ok: true; call: { tool: string; args: Record<string, unknown> } } | { ok: false; reason: string } {
+function parseToolCallCandidate(
+  candidate: string,
+):
+  | { ok: true; call: { tool: string; args: Record<string, unknown> } }
+  | { ok: false; reason: string } {
   let parsed;
   try {
     parsed = JSON.parse(candidate);
@@ -711,7 +762,10 @@ function isLikelyToolCallCandidate(candidate) {
   return /"tool"\s*:/.test(trimmed);
 }
 
-export function detectAllToolCalls(text: string): { calls: { tool: string; args: Record<string, unknown> }[]; malformed: { reason: string; sample: string }[] } {
+export function detectAllToolCalls(text: string): {
+  calls: { tool: string; args: Record<string, unknown> }[];
+  malformed: { reason: string; sample: string }[];
+} {
   const calls: { tool: string; args: Record<string, unknown> }[] = [];
   const malformed: { reason: string; sample: string }[] = [];
 
@@ -834,28 +888,30 @@ function classifyToolError(err) {
 
 async function executeSearch(pattern, searchRoot, maxResults) {
   try {
-    const { stdout } = await execFileAsync('rg', [
-      '--line-number',
-      '--no-heading',
-      '--color',
-      'never',
-      '--max-count',
-      String(maxResults),
-      pattern,
-      searchRoot,
-    ], { maxBuffer: 2_000_000 });
+    const { stdout } = await execFileAsync(
+      'rg',
+      [
+        '--line-number',
+        '--no-heading',
+        '--color',
+        'never',
+        '--max-count',
+        String(maxResults),
+        pattern,
+        searchRoot,
+      ],
+      { maxBuffer: 2_000_000 },
+    );
     return stdout.trim() || 'No matches';
   } catch (err) {
     if (err.code === 1) return (err.stdout || '').trim() || 'No matches';
     if (err.code === 'ENOENT') {
       try {
-        const { stdout } = await execFileAsync('grep', [
-          '-RIn',
-          '--binary-files=without-match',
-          '--',
-          pattern,
-          searchRoot,
-        ], { maxBuffer: 2_000_000 });
+        const { stdout } = await execFileAsync(
+          'grep',
+          ['-RIn', '--binary-files=without-match', '--', pattern, searchRoot],
+          { maxBuffer: 2_000_000 },
+        );
         return stdout.trim() || 'No matches';
       } catch (grepErr) {
         if (grepErr.code === 1) return (grepErr.stdout || '').trim() || 'No matches';
@@ -899,7 +955,11 @@ function resolveOllamaApiKey(options = {}, { allowAnyProvider = false } = {}) {
   const providerId = resolveProviderId(options);
   if (!allowAnyProvider && providerId !== 'ollama') return '';
 
-  if (providerId === 'ollama' && typeof options.providerApiKey === 'string' && options.providerApiKey.trim()) {
+  if (
+    providerId === 'ollama' &&
+    typeof options.providerApiKey === 'string' &&
+    options.providerApiKey.trim()
+  ) {
     return options.providerApiKey.trim();
   }
 
@@ -970,7 +1030,8 @@ function parseDuckDuckGoHTML(html, maxResults) {
     links.push({ title, url });
   }
 
-  const snippetRegex = /<(?:a|div)[^>]*class=["'][^"']*result__snippet[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div)>/gi;
+  const snippetRegex =
+    /<(?:a|div)[^>]*class=["'][^"']*result__snippet[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div)>/gi;
   while ((match = snippetRegex.exec(html)) !== null) {
     snippets.push(stripHtml(match[1]));
   }
@@ -992,19 +1053,26 @@ function parseJsonWebSearchResults(payload, maxResults) {
 
   for (const entry of rawResults) {
     if (!entry || typeof entry !== 'object') continue;
-    const title = typeof entry.title === 'string'
-      ? entry.title.trim()
-      : (typeof entry.name === 'string' ? entry.name.trim() : '');
-    const url = typeof entry.url === 'string'
-      ? entry.url.trim()
-      : (typeof entry.link === 'string' ? entry.link.trim() : '');
-    const content = typeof entry.content === 'string'
-      ? entry.content.trim()
-      : (
-          typeof entry.snippet === 'string'
-            ? entry.snippet.trim()
-            : (typeof entry.description === 'string' ? entry.description.trim() : '')
-        );
+    const title =
+      typeof entry.title === 'string'
+        ? entry.title.trim()
+        : typeof entry.name === 'string'
+          ? entry.name.trim()
+          : '';
+    const url =
+      typeof entry.url === 'string'
+        ? entry.url.trim()
+        : typeof entry.link === 'string'
+          ? entry.link.trim()
+          : '';
+    const content =
+      typeof entry.content === 'string'
+        ? entry.content.trim()
+        : typeof entry.snippet === 'string'
+          ? entry.snippet.trim()
+          : typeof entry.description === 'string'
+            ? entry.description.trim()
+            : '';
     if (!title || !/^https?:\/\//i.test(url)) continue;
     results.push({ title, url, content });
     if (results.length >= maxResults) break;
@@ -1075,7 +1143,9 @@ async function executeTavilyWebSearch(query, maxResults, apiKey, signal) {
 
     if (!response.ok) {
       const errBody = await response.text().catch(() => '');
-      throw new Error(`Tavily returned ${response.status}${errBody ? `: ${errBody.slice(0, 200)}` : ''}`);
+      throw new Error(
+        `Tavily returned ${response.status}${errBody ? `: ${errBody.slice(0, 200)}` : ''}`,
+      );
     }
 
     const payload = await response.json();
@@ -1105,7 +1175,7 @@ async function executeOllamaWebSearch(query, maxResults, apiKey, signal) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({ query }),
       signal: AbortSignal.any(signals),
@@ -1113,7 +1183,9 @@ async function executeOllamaWebSearch(query, maxResults, apiKey, signal) {
 
     if (!response.ok) {
       const errBody = await response.text().catch(() => '');
-      throw new Error(`Ollama search returned ${response.status}${errBody ? `: ${errBody.slice(0, 200)}` : ''}`);
+      throw new Error(
+        `Ollama search returned ${response.status}${errBody ? `: ${errBody.slice(0, 200)}` : ''}`,
+      );
     }
 
     const payload = await response.json();
@@ -1208,7 +1280,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
   try {
     switch (call.tool) {
       case 'read_file': {
-        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const filePath = await ensureInsideWorkspace(
+          workspaceRoot,
+          asString(call.args.path, 'path'),
+        );
         const raw = await fs.readFile(filePath, 'utf8');
         const startLine = asOptionalNumber(call.args.start_line);
         const endLine = asOptionalNumber(call.args.end_line);
@@ -1216,7 +1291,11 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const rendered = renderAnchoredRange(raw, startLine, endLine);
         const rawLines = String(raw).split(/\r?\n/);
         const relevantRaw = rawLines.slice(rendered.startLine - 1, rendered.endLine).join('\n');
-        const truncatedRead = truncateReadFileOutput(rendered.text || '<empty file>', relevantRaw, rendered.startLine);
+        const truncatedRead = truncateReadFileOutput(
+          rendered.text || '<empty file>',
+          relevantRaw,
+          rendered.startLine,
+        );
         return {
           ok: true,
           text: truncatedRead.text,
@@ -1242,7 +1321,13 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const mapped = entries
           .map((entry) => ({
             name: entry.name,
-            type: entry.isSymbolicLink() ? 'symlink' : entry.isDirectory() ? 'dir' : entry.isFile() ? 'file' : 'other',
+            type: entry.isSymbolicLink()
+              ? 'symlink'
+              : entry.isDirectory()
+                ? 'dir'
+                : entry.isFile()
+                  ? 'file'
+                  : 'other',
           }))
           .sort((a, b) => {
             if (a.type === b.type) return a.name.localeCompare(b.name);
@@ -1252,7 +1337,9 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           })
           .slice(0, 300);
         const prefixMap = { dir: 'd', file: 'f', symlink: 'l', other: 'f' };
-        const text = mapped.map((entry) => `${prefixMap[entry.type] || 'f'} ${entry.name}`).join('\n');
+        const text = mapped
+          .map((entry) => `${prefixMap[entry.type] || 'f'} ${entry.name}`)
+          .join('\n');
         return {
           ok: true,
           text: text || '<empty directory>',
@@ -1263,8 +1350,15 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       case 'search_files': {
         const pattern = asString(call.args.pattern, 'pattern').trim();
         if (!pattern) throw new Error('pattern cannot be empty');
-        const searchPath = typeof call.args.path === 'string' ? await ensureInsideWorkspace(workspaceRoot, call.args.path) : workspaceRoot;
-        const maxResults = clamp(asOptionalNumber(call.args.max_results) ?? DEFAULT_SEARCH_RESULTS, 1, 1000);
+        const searchPath =
+          typeof call.args.path === 'string'
+            ? await ensureInsideWorkspace(workspaceRoot, call.args.path)
+            : workspaceRoot;
+        const maxResults = clamp(
+          asOptionalNumber(call.args.max_results) ?? DEFAULT_SEARCH_RESULTS,
+          1,
+          1000,
+        );
         const output = await executeSearch(pattern, searchPath, maxResults);
         return {
           ok: true,
@@ -1276,7 +1370,11 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       case 'web_search': {
         const query = asString(call.args.query, 'query').trim();
         if (!query) throw new Error('query must be a non-empty string');
-        const maxResults = clamp(asOptionalNumber(call.args.max_results) ?? DEFAULT_WEB_SEARCH_RESULTS, 1, MAX_WEB_SEARCH_RESULTS);
+        const maxResults = clamp(
+          asOptionalNumber(call.args.max_results) ?? DEFAULT_WEB_SEARCH_RESULTS,
+          1,
+          MAX_WEB_SEARCH_RESULTS,
+        );
         const backend = resolveWebSearchBackend(options);
         const sourceHint = resolveWebSearchSourceHint(options);
 
@@ -1349,7 +1447,11 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
       case 'exec': {
         const command = asString(call.args.command, 'command');
-        const timeoutMs = clamp(asOptionalNumber(call.args.timeout_ms) ?? DEFAULT_EXEC_TIMEOUT_MS, 1_000, MAX_EXEC_TIMEOUT_MS);
+        const timeoutMs = clamp(
+          asOptionalNumber(call.args.timeout_ms) ?? DEFAULT_EXEC_TIMEOUT_MS,
+          1_000,
+          MAX_EXEC_TIMEOUT_MS,
+        );
         const guard = await guardExecCommand(command, options, 'exec');
         if (!guard.ok) {
           return guard.result;
@@ -1358,8 +1460,19 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         try {
           const isLocalSandbox = process.env.PUSH_LOCAL_SANDBOX === 'true';
           const bin = isLocalSandbox ? 'docker' : '/bin/bash';
-          const args = isLocalSandbox 
-            ? ['run', '--rm', '-v', `${workspaceRoot}:/workspace`, '-w', '/workspace', 'push-sandbox', 'bash', '-lc', command]
+          const args = isLocalSandbox
+            ? [
+                'run',
+                '--rm',
+                '-v',
+                `${workspaceRoot}:/workspace`,
+                '-w',
+                '/workspace',
+                'push-sandbox',
+                'bash',
+                '-lc',
+                command,
+              ]
             : ['-lc', command];
           const execOpts = {
             cwd: workspaceRoot,
@@ -1378,13 +1491,25 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           const exitCode = typeof err.code === 'number' ? err.code : 1;
           return {
             ok: false,
-            text: truncateText(formatExecOutput(err.stdout || '', err.stderr || err.message, exitCode, Boolean(err.killed))),
+            text: truncateText(
+              formatExecOutput(
+                err.stdout || '',
+                err.stderr || err.message,
+                exitCode,
+                Boolean(err.killed),
+              ),
+            ),
             structuredError: {
               code: err.killed ? 'EXEC_TIMEOUT' : 'EXEC_FAILED',
               message: err.killed ? 'Command timed out' : `Command exited with code ${exitCode}`,
               retryable: true,
             },
-            meta: { command, timeout_ms: timeoutMs, exit_code: exitCode, timed_out: Boolean(err.killed) },
+            meta: {
+              command,
+              timeout_ms: timeoutMs,
+              exit_code: exitCode,
+              timed_out: Boolean(err.killed),
+            },
           };
         }
       }
@@ -1441,7 +1566,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         );
         const collected = collectSessionOutput(session, fromSeq, maxChars);
         const latestSeq = session.nextSeq;
-        const historyTruncated = fromSeq < (session.firstAvailableSeq - 1);
+        const historyTruncated = fromSeq < session.firstAvailableSeq - 1;
         const output = collected.text || '<no new output>';
         const status = formatSessionStatus(session);
 
@@ -1577,7 +1702,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'write_file': {
-        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const filePath = await ensureInsideWorkspace(
+          workspaceRoot,
+          asString(call.args.path, 'path'),
+        );
         const content = asString(call.args.content, 'content');
         await backupFile(filePath, workspaceRoot);
         await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -1585,12 +1713,19 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         return {
           ok: true,
           text: `Wrote ${content.length} bytes to ${path.relative(workspaceRoot, filePath) || '.'}`,
-          meta: { path: filePath, bytes: content.length, version: calculateContentVersion(content) },
+          meta: {
+            path: filePath,
+            bytes: content.length,
+            version: calculateContentVersion(content),
+          },
         };
       }
 
       case 'edit_file': {
-        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const filePath = await ensureInsideWorkspace(
+          workspaceRoot,
+          asString(call.args.path, 'path'),
+        );
         const edits = Array.isArray(call.args.edits) ? call.args.edits : null;
         if (!edits) throw new Error('edits must be an array');
 
@@ -1624,12 +1759,17 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           const center = line - 1; // 0-indexed
           const start = Math.max(0, center - 3);
           const end = Math.min(afterLines.length, center + 4);
-          return afterLines.slice(start, end).map((l, i) => `${start + i + 1}| ${l}`).join('\n');
+          return afterLines
+            .slice(start, end)
+            .map((l, i) => `${start + i + 1}| ${l}`)
+            .join('\n');
         });
-        const previewText = previews.length > 0 ? `\n\nContext after edits:\n${previews.join('\n---\n')}` : '';
-        const warningText = applied.warnings.length > 0
-          ? `\n\nWarnings:\n${applied.warnings.map((warning) => `- ${warning}`).join('\n')}`
-          : '';
+        const previewText =
+          previews.length > 0 ? `\n\nContext after edits:\n${previews.join('\n---\n')}` : '';
+        const warningText =
+          applied.warnings.length > 0
+            ? `\n\nWarnings:\n${applied.warnings.map((warning) => `- ${warning}`).join('\n')}`
+            : '';
 
         return {
           ok: true,
@@ -1645,7 +1785,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'read_symbols': {
-        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const filePath = await ensureInsideWorkspace(
+          workspaceRoot,
+          asString(call.args.path, 'path'),
+        );
         const content = await fs.readFile(filePath, 'utf8');
         const lines = content.split('\n');
         const symbols = [];
@@ -1657,9 +1800,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             }
           }
         });
-        const text = symbols.length > 0
-          ? symbols.map(s => `${s.line}| [${s.kind}] ${s.text}`).join('\n')
-          : 'No symbols found';
+        const text =
+          symbols.length > 0
+            ? symbols.map((s) => `${s.line}| [${s.kind}] ${s.text}`).join('\n')
+            : 'No symbols found';
         return {
           ok: true,
           text: truncateText(text),
@@ -1668,7 +1812,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'read_symbol': {
-        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const filePath = await ensureInsideWorkspace(
+          workspaceRoot,
+          asString(call.args.path, 'path'),
+        );
         const symbolName = asString(call.args.symbol, 'symbol').trim();
         if (!symbolName) throw new Error('symbol cannot be empty');
         const content = await fs.readFile(filePath, 'utf8');
@@ -1688,13 +1835,20 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         });
 
         // Find the target symbol
-        const targetIdx = symbolStarts.findIndex(s => s.name === symbolName);
+        const targetIdx = symbolStarts.findIndex((s) => s.name === symbolName);
         if (targetIdx === -1) {
-          const available = symbolStarts.map(s => s.name).filter(Boolean).join(', ');
+          const available = symbolStarts
+            .map((s) => s.name)
+            .filter(Boolean)
+            .join(', ');
           return {
             ok: false,
             text: `Symbol "${symbolName}" not found.${available ? ` Available: ${available}` : ''}`,
-            structuredError: { code: 'SYMBOL_NOT_FOUND', message: `Symbol "${symbolName}" not found`, retryable: false },
+            structuredError: {
+              code: 'SYMBOL_NOT_FOUND',
+              message: `Symbol "${symbolName}" not found`,
+              retryable: false,
+            },
           };
         }
 
@@ -1731,57 +1885,91 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
       case 'git_status': {
         try {
-          const { stdout } = await execFileAsync('git', ['status', '--porcelain=v1', '--branch'], { cwd: workspaceRoot });
+          const { stdout } = await execFileAsync('git', ['status', '--porcelain=v1', '--branch'], {
+            cwd: workspaceRoot,
+          });
           const lines = stdout.trim().split('\n');
           const branchLine = lines[0] || '';
           const branchMatch = branchLine.match(/^## (.+?)(?:\.\.\.(.+?))?(?:\s+\[(.+)\])?$/);
           const branch = branchMatch ? branchMatch[1] : 'unknown';
-          const tracking = branchMatch ? (branchMatch[2] || null) : null;
+          const tracking = branchMatch ? branchMatch[2] || null : null;
           const aheadBehind = branchMatch?.[3] || null;
-          const changes = lines.slice(1).filter(l => l.trim()).map(l => {
-            const xy = l.slice(0, 2);
-            return {
-              status: xy.trim(),
-              path: l.slice(3),
-              staged: xy[0] !== ' ' && xy[0] !== '?',
-              unstaged: xy[1] !== ' ' && xy[1] !== '?',
-            };
-          });
-          const staged = changes.filter(c => c.staged);
-          const unstaged = changes.filter(c => c.unstaged);
-          const untracked = changes.filter(c => c.status === '??');
+          const changes = lines
+            .slice(1)
+            .filter((l) => l.trim())
+            .map((l) => {
+              const xy = l.slice(0, 2);
+              return {
+                status: xy.trim(),
+                path: l.slice(3),
+                staged: xy[0] !== ' ' && xy[0] !== '?',
+                unstaged: xy[1] !== ' ' && xy[1] !== '?',
+              };
+            });
+          const staged = changes.filter((c) => c.staged);
+          const unstaged = changes.filter((c) => c.unstaged);
+          const untracked = changes.filter((c) => c.status === '??');
 
           // Build structured text for clearer agent reasoning
-          const sections = [`Branch: ${branch}${tracking ? ` → ${tracking}` : ''}${aheadBehind ? ` [${aheadBehind}]` : ''}`];
-          if (staged.length) sections.push(`Staged (${staged.length}): ${staged.map(c => c.path).join(', ')}`);
-          if (unstaged.length) sections.push(`Unstaged (${unstaged.length}): ${unstaged.map(c => c.path).join(', ')}`);
-          if (untracked.length) sections.push(`Untracked (${untracked.length}): ${untracked.map(c => c.path).join(', ')}`);
+          const sections = [
+            `Branch: ${branch}${tracking ? ` → ${tracking}` : ''}${aheadBehind ? ` [${aheadBehind}]` : ''}`,
+          ];
+          if (staged.length)
+            sections.push(`Staged (${staged.length}): ${staged.map((c) => c.path).join(', ')}`);
+          if (unstaged.length)
+            sections.push(
+              `Unstaged (${unstaged.length}): ${unstaged.map((c) => c.path).join(', ')}`,
+            );
+          if (untracked.length)
+            sections.push(
+              `Untracked (${untracked.length}): ${untracked.map((c) => c.path).join(', ')}`,
+            );
           if (!changes.length) sections.push('Clean working tree');
 
           return {
             ok: true,
             text: sections.join('\n'),
-            meta: { branch, tracking, aheadBehind, changedFiles: changes.length, staged: staged.length, unstaged: unstaged.length, untracked: untracked.length },
+            meta: {
+              branch,
+              tracking,
+              aheadBehind,
+              changedFiles: changes.length,
+              staged: staged.length,
+              unstaged: unstaged.length,
+              untracked: untracked.length,
+            },
           };
         } catch (err) {
-          return { ok: false, text: `git status failed: ${err.message}`, structuredError: { code: 'GIT_ERROR', message: err.message, retryable: false } };
+          return {
+            ok: false,
+            text: `git status failed: ${err.message}`,
+            structuredError: { code: 'GIT_ERROR', message: err.message, retryable: false },
+          };
         }
       }
 
       case 'git_diff': {
-        const diffPath = call.args.path ? await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path')) : null;
+        const diffPath = call.args.path
+          ? await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'))
+          : null;
         const staged = call.args.staged === true;
         const gitArgs = ['diff', '--stat'];
         if (staged) gitArgs.push('--staged');
         if (diffPath) gitArgs.push('--', diffPath);
         try {
           // Get stat summary
-          const { stdout: statOut } = await execFileAsync('git', gitArgs, { cwd: workspaceRoot, maxBuffer: 2_000_000 });
+          const { stdout: statOut } = await execFileAsync('git', gitArgs, {
+            cwd: workspaceRoot,
+            maxBuffer: 2_000_000,
+          });
           // Get full diff
           const fullArgs = ['diff'];
           if (staged) fullArgs.push('--staged');
           if (diffPath) fullArgs.push('--', diffPath);
-          const { stdout: diffOut } = await execFileAsync('git', fullArgs, { cwd: workspaceRoot, maxBuffer: 2_000_000 });
+          const { stdout: diffOut } = await execFileAsync('git', fullArgs, {
+            cwd: workspaceRoot,
+            maxBuffer: 2_000_000,
+          });
 
           // Parse stat lines to extract file-level summary
           const statLines = statOut.trim().split('\n');
@@ -1808,7 +1996,11 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             },
           };
         } catch (err) {
-          return { ok: false, text: `git diff failed: ${err.message}`, structuredError: { code: 'GIT_ERROR', message: err.message, retryable: false } };
+          return {
+            ok: false,
+            text: `git diff failed: ${err.message}`,
+            structuredError: { code: 'GIT_ERROR', message: err.message, retryable: false },
+          };
         }
       }
 
@@ -1817,7 +2009,9 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const paths = Array.isArray(call.args.paths) ? call.args.paths : [];
 
         // This is a mutating operation — validate paths are inside workspace
-        const resolvedPaths = await Promise.all(paths.map(p => ensureInsideWorkspace(workspaceRoot, p)));
+        const resolvedPaths = await Promise.all(
+          paths.map((p) => ensureInsideWorkspace(workspaceRoot, p)),
+        );
 
         try {
           // Stage specified files, or all if none specified
@@ -1828,10 +2022,14 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             await execFileAsync('git', ['add', '-A', '--', '.', ':!.push'], { cwd: workspaceRoot });
           }
 
-          const { stdout } = await execFileAsync('git', ['commit', '-m', message], { cwd: workspaceRoot });
+          const { stdout } = await execFileAsync('git', ['commit', '-m', message], {
+            cwd: workspaceRoot,
+          });
 
           // Get the commit SHA
-          const { stdout: sha } = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd: workspaceRoot });
+          const { stdout: sha } = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], {
+            cwd: workspaceRoot,
+          });
 
           return {
             ok: true,
@@ -1839,12 +2037,19 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             meta: { sha: sha.trim(), message, filesStaged: resolvedPaths.length || 'all' },
           };
         } catch (err) {
-          return { ok: false, text: `git commit failed: ${err.message}`, structuredError: { code: 'GIT_ERROR', message: err.message, retryable: true } };
+          return {
+            ok: false,
+            text: `git commit failed: ${err.message}`,
+            structuredError: { code: 'GIT_ERROR', message: err.message, retryable: true },
+          };
         }
       }
 
       case 'undo_edit': {
-        const filePath = await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
+        const filePath = await ensureInsideWorkspace(
+          workspaceRoot,
+          asString(call.args.path, 'path'),
+        );
         const backupDir = path.join(workspaceRoot, '.push', 'backups');
         const relative = path.relative(workspaceRoot, filePath).replace(/\//g, '__');
         const prefix = `${relative}.`;
@@ -1853,16 +2058,32 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         try {
           entries = await fs.readdir(backupDir);
         } catch {
-          return { ok: false, text: `No backups found for ${call.args.path}`, structuredError: { code: 'NO_BACKUP', message: 'Backup directory does not exist', retryable: false } };
+          return {
+            ok: false,
+            text: `No backups found for ${call.args.path}`,
+            structuredError: {
+              code: 'NO_BACKUP',
+              message: 'Backup directory does not exist',
+              retryable: false,
+            },
+          };
         }
 
         const matches = entries
-          .filter(e => e.startsWith(prefix) && e.endsWith('.bak'))
+          .filter((e) => e.startsWith(prefix) && e.endsWith('.bak'))
           .sort()
           .reverse();
 
         if (matches.length === 0) {
-          return { ok: false, text: `No backups found for ${call.args.path}`, structuredError: { code: 'NO_BACKUP', message: 'No matching backup files', retryable: false } };
+          return {
+            ok: false,
+            text: `No backups found for ${call.args.path}`,
+            structuredError: {
+              code: 'NO_BACKUP',
+              message: 'No matching backup files',
+              retryable: false,
+            },
+          };
         }
 
         const backupPath = path.join(backupDir, matches[0]);
@@ -1886,12 +2107,20 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             return {
               ok: false,
               text: `Invalid memory type "${entryType}". Use one of: ${VALID_TYPES.join(', ')}`,
-              structuredError: { code: 'INVALID_MEMORY_TYPE', message: `Invalid type: ${entryType}`, retryable: false },
+              structuredError: {
+                code: 'INVALID_MEMORY_TYPE',
+                message: `Invalid type: ${entryType}`,
+                retryable: false,
+              },
             };
           }
           const content = asString(call.args.content, 'content').slice(0, 500);
-          const tags = Array.isArray(call.args.tags) ? call.args.tags.filter(t => typeof t === 'string').slice(0, 5) : [];
-          const files = Array.isArray(call.args.files) ? call.args.files.filter(f => typeof f === 'string').slice(0, 10) : [];
+          const tags = Array.isArray(call.args.tags)
+            ? call.args.tags.filter((t) => typeof t === 'string').slice(0, 5)
+            : [];
+          const files = Array.isArray(call.args.files)
+            ? call.args.files.filter((f) => typeof f === 'string').slice(0, 10)
+            : [];
 
           const memoryJsonPath = path.join(memoryDir, 'memory.json');
           let entries = [];
@@ -1899,7 +2128,9 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             const raw = await fs.readFile(memoryJsonPath, 'utf8');
             entries = JSON.parse(raw);
             if (!Array.isArray(entries)) entries = [];
-          } catch { /* no existing file */ }
+          } catch {
+            /* no existing file */
+          }
 
           entries.push({ type: entryType, content, tags, files, date: new Date().toISOString() });
           // Keep max 50 entries, drop oldest
@@ -1924,7 +2155,9 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'lsp_diagnostics': {
-        const specificPath = call.args.path ? await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path')) : null;
+        const specificPath = call.args.path
+          ? await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'))
+          : null;
         const result = await runDiagnostics(workspaceRoot, specificPath);
 
         if (result.error) {
@@ -1950,16 +2183,20 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           };
         }
 
-        const errors = diagnostics.filter(d => d.severity === 'error');
-        const warnings = diagnostics.filter(d => d.severity === 'warning');
+        const errors = diagnostics.filter((d) => d.severity === 'error');
+        const warnings = diagnostics.filter((d) => d.severity === 'warning');
 
         // Format diagnostics for readable output
         const formatted = diagnostics
           .slice(0, 50) // Limit to first 50 to avoid flooding context
-          .map(d => `${d.file}:${d.line}:${d.col} [${d.severity}] ${d.code ? `(${d.code}) ` : ''}${d.message}`)
+          .map(
+            (d) =>
+              `${d.file}:${d.line}:${d.col} [${d.severity}] ${d.code ? `(${d.code}) ` : ''}${d.message}`,
+          )
           .join('\n');
 
-        const moreMsg = diagnostics.length > 50 ? `\n\n...and ${diagnostics.length - 50} more issues` : '';
+        const moreMsg =
+          diagnostics.length > 50 ? `\n\n...and ${diagnostics.length - 50} more issues` : '';
 
         return {
           ok: true,

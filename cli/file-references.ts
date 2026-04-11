@@ -111,11 +111,15 @@ function parseReferenceToken(token: string): ParsedReference | null {
   };
 }
 
-export function parseFileReferences(text: string, options: ParseFileReferencesOptions = {}): ParseFileReferencesResult {
+export function parseFileReferences(
+  text: string,
+  options: ParseFileReferencesOptions = {},
+): ParseFileReferencesResult {
   const source: string = String(text || '');
-  const maxCount: number = Number.isInteger(options.maxCount) && (options.maxCount as number) > 0
-    ? (options.maxCount as number)
-    : MAX_FILE_REFERENCE_COUNT;
+  const maxCount: number =
+    Number.isInteger(options.maxCount) && (options.maxCount as number) > 0
+      ? (options.maxCount as number)
+      : MAX_FILE_REFERENCE_COUNT;
 
   const refs: ParsedReference[] = [];
   const seen = new Set<string>();
@@ -181,12 +185,14 @@ function buildFileReferenceBlock({ resolved, errors, skippedDueToLimit }: BuildB
 
   for (const err of errors) {
     parts.push('[FILE_REFERENCE_ERROR]');
-    parts.push(JSON.stringify({
-      reference: `@${err.token}`,
-      path: err.path,
-      code: err.code,
-      message: err.message,
-    }));
+    parts.push(
+      JSON.stringify({
+        reference: `@${err.token}`,
+        path: err.path,
+        code: err.code,
+        message: err.message,
+      }),
+    );
     parts.push('[/FILE_REFERENCE_ERROR]');
   }
 
@@ -207,7 +213,10 @@ function classifyReferenceError(err: unknown): string {
  * Resolve @file[:line[-end]] references and build a synthetic user message block.
  * Returns `message: null` when no references were found.
  */
-export async function buildFileReferenceContextMessage(text: string, workspaceRoot: string): Promise<FileReferenceContextResult> {
+export async function buildFileReferenceContextMessage(
+  text: string,
+  workspaceRoot: string,
+): Promise<FileReferenceContextResult> {
   const { refs, skippedDueToLimit } = parseFileReferences(text);
   if (refs.length === 0) {
     return {
@@ -279,11 +288,13 @@ export async function appendUserMessageWithFileReferences(
 ): Promise<FileReferenceContextResult> {
   state.messages.push({ role: 'user', content: messageText });
 
-  const referenceSourceText: string = typeof options.referenceSourceText === 'string'
-    ? options.referenceSourceText
-    : messageText;
+  const referenceSourceText: string =
+    typeof options.referenceSourceText === 'string' ? options.referenceSourceText : messageText;
 
-  const refs: FileReferenceContextResult = await buildFileReferenceContextMessage(referenceSourceText, workspaceRoot);
+  const refs: FileReferenceContextResult = await buildFileReferenceContextMessage(
+    referenceSourceText,
+    workspaceRoot,
+  );
   if (refs.message) {
     state.messages.push({ role: 'user', content: refs.message });
   }

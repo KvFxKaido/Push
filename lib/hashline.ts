@@ -82,7 +82,7 @@ export async function calculateLineHash(line: string, length: number = 7): Promi
     const msgUint8 = new TextEncoder().encode(trimmed);
     const hashBuffer = await webCrypto.subtle.digest('SHA-256', msgUint8);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
     return hashHex.slice(0, clampHashLength(length));
   }
 
@@ -106,7 +106,7 @@ export function calculateLineHashSync(line: string, length: number = 7): string 
 export function adaptiveHashDisplayLength(fullHashes: string[], minLength: number = 7): number {
   if (fullHashes.length <= 10) return minLength;
   for (let len = minLength; len <= 10; len++) {
-    const sliced = fullHashes.map(h => h.slice(0, len));
+    const sliced = fullHashes.map((h) => h.slice(0, len));
     if (new Set(sliced).size / sliced.length >= 0.95) return len;
   }
   return 10;
@@ -126,7 +126,10 @@ export async function calculateContentVersion(content: string): Promise<string> 
     const msgUint8 = new TextEncoder().encode(str);
     const hashBuffer = await webCrypto.subtle.digest('SHA-256', msgUint8);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
+    return hashArray
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+      .slice(0, 12);
   }
 
   return fallbackHashHex(str).slice(0, 12);
@@ -145,7 +148,7 @@ function parseRef(ref: string): { lineNo: number | null; hash: string } {
 }
 
 async function batchHashLines(lines: string[]): Promise<string[]> {
-  return Promise.all(lines.map(l => calculateLineHash(l, 12)));
+  return Promise.all(lines.map((l) => calculateLineHash(l, 12)));
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +190,9 @@ export function resolveHashlineRefs(
     if (parsed.lineNo !== null) {
       const idx = parsed.lineNo - 1;
       if (idx < 0 || idx >= lines.length) {
-        resolved.push({ error: `Line-qualified ref "${edit.ref}": line ${parsed.lineNo} is out of range (file has ${lines.length} lines).` });
+        resolved.push({
+          error: `Line-qualified ref "${edit.ref}": line ${parsed.lineNo} is out of range (file has ${lines.length} lines).`,
+        });
         continue;
       }
       if (!hashCache[idx].startsWith(parsed.hash)) {
@@ -202,8 +207,8 @@ export function resolveHashlineRefs(
     }
 
     const matches = hashCache
-      .map((h, i) => h.startsWith(parsed.hash) ? i : -1)
-      .filter(i => i !== -1);
+      .map((h, i) => (h.startsWith(parsed.hash) ? i : -1))
+      .filter((i) => i !== -1);
 
     if (matches.length === 0) {
       resolved.push({ error: `Reference "${edit.ref}" not found.` });
@@ -220,25 +225,27 @@ export function resolveHashlineRefs(
           group.push(idx);
           distinctGroups.set(lh, group);
         }
-        const candidateGroups = [...distinctGroups.entries()].filter(([lh]) => lh.startsWith(parsed.hash));
-          if (candidateGroups.length === 1 && candidateGroups[0][1].length === 1) {
-            resolved.push({ index: candidateGroups[0][1][0], edit });
-          } else {
-            const MAX_DIAGNOSTIC_LINES = 5;
-            const diagnostics: string[] = [];
-            const retryRefs: string[] = [];
-            for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
-              const idx = matches[k];
-              diagnostics.push(`  L${idx + 1}: ${hashCache[idx]} "${snippetOf(idx)}"`);
-              retryRefs.push(`"${idx + 1}:${hashCache[idx].slice(0, parsed.hash.length)}"`);
-            }
-            if (matches.length > MAX_DIAGNOSTIC_LINES) {
-              diagnostics.push(`  ... and ${matches.length - MAX_DIAGNOSTIC_LINES} more`);
-            }
-            resolved.push({
-            error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches). Retry with a line-qualified ref such as ${retryRefs.join(', ')}:\n${diagnostics.join('\n')}`,
-            });
+        const candidateGroups = [...distinctGroups.entries()].filter(([lh]) =>
+          lh.startsWith(parsed.hash),
+        );
+        if (candidateGroups.length === 1 && candidateGroups[0][1].length === 1) {
+          resolved.push({ index: candidateGroups[0][1][0], edit });
+        } else {
+          const MAX_DIAGNOSTIC_LINES = 5;
+          const diagnostics: string[] = [];
+          const retryRefs: string[] = [];
+          for (let k = 0; k < Math.min(matches.length, MAX_DIAGNOSTIC_LINES); k++) {
+            const idx = matches[k];
+            diagnostics.push(`  L${idx + 1}: ${hashCache[idx]} "${snippetOf(idx)}"`);
+            retryRefs.push(`"${idx + 1}:${hashCache[idx].slice(0, parsed.hash.length)}"`);
           }
+          if (matches.length > MAX_DIAGNOSTIC_LINES) {
+            diagnostics.push(`  ... and ${matches.length - MAX_DIAGNOSTIC_LINES} more`);
+          }
+          resolved.push({
+            error: `Reference "${edit.ref}" is ambiguous (${matches.length} matches). Retry with a line-qualified ref such as ${retryRefs.join(', ')}:\n${diagnostics.join('\n')}`,
+          });
+        }
       } else {
         // Even at max hash length, lines are identical — suggest line-qualified refs
         const MAX_DIAGNOSTIC_LINES = 5;
@@ -302,7 +309,9 @@ export function applyResolvedHashlineEdits(
     }
 
     if (replacedOriginalIndices.has(r.index) && r.edit.op === 'replace_line') {
-      warnings.push(`Line ${r.index + 1} was already replaced by a prior op in this batch — the second replace targets the mutated content, which is usually unintended.`);
+      warnings.push(
+        `Line ${r.index + 1} was already replaced by a prior op in this batch — the second replace targets the mutated content, which is usually unintended.`,
+      );
     }
 
     // Offset adjustment logic (honors array order for same-line inserts/deletes).
@@ -311,7 +320,8 @@ export function applyResolvedHashlineEdits(
     for (const prior of applied) {
       if (prior.op === 'insert_after') {
         if (r.index > prior.originalIndex) adjustedIdx += prior.linesAdded;
-        else if (r.index === prior.originalIndex && r.edit.op === 'insert_after') adjustedIdx += prior.linesAdded;
+        else if (r.index === prior.originalIndex && r.edit.op === 'insert_after')
+          adjustedIdx += prior.linesAdded;
       } else if (prior.op === 'insert_before' && r.index >= prior.originalIndex) {
         adjustedIdx += prior.linesAdded;
       } else if (prior.op === 'replace_line') {
@@ -355,7 +365,13 @@ export function applyResolvedHashlineEdits(
     appliedCount++;
     if (edit.op === 'delete_line') deletedOriginalIndices.add(r.index);
     if (edit.op === 'replace_line') replacedOriginalIndices.add(r.index);
-    applied.push({ originalIndex: r.index, op: edit.op, edit, linesAdded, adjustedLine: adjustedIdx + 1 });
+    applied.push({
+      originalIndex: r.index,
+      op: edit.op,
+      edit,
+      linesAdded,
+      adjustedLine: adjustedIdx + 1,
+    });
   }
 
   return {
@@ -364,8 +380,13 @@ export function applyResolvedHashlineEdits(
     failed: failedCount,
     errors,
     warnings,
-    resolvedLines: applied.map(a => a.originalIndex + 1),
-    appliedDetails: applied.map(({ originalIndex, op, adjustedLine, linesAdded }) => ({ originalIndex, op, adjustedLine, linesAdded })),
+    resolvedLines: applied.map((a) => a.originalIndex + 1),
+    appliedDetails: applied.map(({ originalIndex, op, adjustedLine, linesAdded }) => ({
+      originalIndex,
+      op,
+      adjustedLine,
+      linesAdded,
+    })),
   };
 }
 
@@ -375,7 +396,10 @@ export function applyResolvedHashlineEdits(
  * Thin async wrapper: hashes lines via the runtime crypto backend,
  * then delegates to the shared sync resolve → apply pipeline.
  */
-export async function applyHashlineEdits(originalContent: string, edits: HashlineOp[]): Promise<HashlineEditResult> {
+export async function applyHashlineEdits(
+  originalContent: string,
+  edits: HashlineOp[],
+): Promise<HashlineEditResult> {
   const resultLines = originalContent.split('\n');
   const hashCache = await batchHashLines(resultLines);
   const resolved = resolveHashlineRefs(hashCache, resultLines, edits);
@@ -386,9 +410,9 @@ export async function applyHashlineEdits(originalContent: string, edits: Hashlin
  * Render content with anchored line numbers and hashes.
  */
 export async function renderAnchoredRange(
-  content: string, 
-  startLine: number = 1, 
-  endLine: number | null = null
+  content: string,
+  startLine: number = 1,
+  endLine: number | null = null,
 ): Promise<{ text: string; startLine: number; endLine: number; totalLines: number }> {
   const lines = String(content).split(/\r?\n/);
   const totalLines = lines.length || 1;

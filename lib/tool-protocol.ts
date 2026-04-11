@@ -34,7 +34,12 @@ export interface JsonSyntaxDiagnosis {
  * description of the first syntax error found.
  */
 export function diagnoseJsonSyntaxError(text: string): JsonSyntaxDiagnosis | null {
-  try { JSON.parse(text); return null; } catch { /* expected */ }
+  try {
+    JSON.parse(text);
+    return null;
+  } catch {
+    /* expected */
+  }
 
   const trimmed = text.trim();
   if (trimmed.length === 0) {
@@ -61,9 +66,18 @@ export function diagnoseJsonSyntaxError(text: string): JsonSyntaxDiagnosis | nul
 
   for (let i = 0; i < trimmed.length; i++) {
     const ch = trimmed[i];
-    if (escaped) { escaped = false; continue; }
-    if (ch === '\\' && inString) { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
     if (ch === '{' || ch === '[') depth++;
     if (ch === '}' || ch === ']') depth--;
@@ -157,20 +171,46 @@ function replacePythonLiterals(text: string): string {
   let i = 0;
   while (i < text.length) {
     const ch = text[i];
-    if (escaped) { result += ch; escaped = false; i++; continue; }
-    if (ch === '\\' && inString) { result += ch; escaped = true; i++; continue; }
-    if (ch === '"') { inString = !inString; result += ch; i++; continue; }
-    if (inString) { result += ch; i++; continue; }
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      i++;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      result += ch;
+      escaped = true;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      result += ch;
+      i++;
+      continue;
+    }
+    if (inString) {
+      result += ch;
+      i++;
+      continue;
+    }
     if (text.startsWith('True', i) && !/\w/.test(text[i + 4] || '')) {
-      result += 'true'; i += 4; continue;
+      result += 'true';
+      i += 4;
+      continue;
     }
     if (text.startsWith('False', i) && !/\w/.test(text[i + 5] || '')) {
-      result += 'false'; i += 5; continue;
+      result += 'false';
+      i += 5;
+      continue;
     }
     if (text.startsWith('None', i) && !/\w/.test(text[i + 4] || '')) {
-      result += 'null'; i += 4; continue;
+      result += 'null';
+      i += 4;
+      continue;
     }
-    result += ch; i++;
+    result += ch;
+    i++;
   }
   return result;
 }
@@ -195,14 +235,27 @@ function tryAutoCloseJson(text: string): JsonRecord | null {
   let inString = false;
   let escaped = false;
   for (const ch of text) {
-    if (escaped) { escaped = false; continue; }
-    if (ch === '\\' && inString) { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
     if (ch === '{') stack.push('{');
     if (ch === '[') stack.push('[');
-    if (ch === '}') { if (stack.length && stack[stack.length - 1] === '{') stack.pop(); }
-    if (ch === ']') { if (stack.length && stack[stack.length - 1] === '[') stack.pop(); }
+    if (ch === '}') {
+      if (stack.length && stack[stack.length - 1] === '{') stack.pop();
+    }
+    if (ch === ']') {
+      if (stack.length && stack[stack.length - 1] === '[') stack.pop();
+    }
   }
 
   if (stack.length === 0 || stack.length > 3) return null;
@@ -241,9 +294,18 @@ export function detectTruncatedToolCall(text: string): { toolName: string } | nu
   let escaped = false;
 
   for (const ch of remainder) {
-    if (escaped) { escaped = false; continue; }
-    if (ch === '\\' && inString) { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
     if (ch === '{') depth++;
     if (ch === '}') depth--;
@@ -279,14 +341,26 @@ export function extractBareToolJsonObjects(text: string): unknown[] {
 
     for (let j = braceIdx; j < text.length; j++) {
       const ch = text[j];
-      if (escaped) { escaped = false; continue; }
-      if (ch === '\\' && inString) { escaped = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\' && inString) {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
       if (inString) continue;
       if (ch === '{') depth++;
       if (ch === '}') {
         depth--;
-        if (depth === 0) { end = j; break; }
+        if (depth === 0) {
+          end = j;
+          break;
+        }
       }
     }
 
@@ -329,7 +403,8 @@ export function detectToolFromText<T>(
   text: string,
   validate: (parsed: unknown) => T | null,
 ): T | null {
-  const fenceRegex = /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
+  const fenceRegex =
+    /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
   let match;
 
   while ((match = fenceRegex.exec(text)) !== null) {
@@ -377,7 +452,8 @@ export function stableJsonStringify(value: unknown): string {
 
 function normalizeJsonValue(value: unknown): unknown {
   if (value === null) return null;
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
+    return value;
   if (Array.isArray(value)) {
     return value.map((item) => {
       const normalized = normalizeJsonValue(item);
@@ -463,9 +539,18 @@ export function findFollowingBrace(text: string, pos: number): number {
   let escaped = false;
   for (let i = pos; i < searchEnd; i++) {
     const ch = text[i];
-    if (escaped) { escaped = false; continue; }
-    if (ch === '\\' && inString) { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
     if (inString) continue;
     if (ch === '{') depth++;
     if (ch === '}') {

@@ -54,7 +54,8 @@ export function filterSensitiveDirectoryEntries<T extends { name: string; path?:
   let hiddenCount = 0;
 
   for (const entry of entries) {
-    const entryPath = entry.path ?? `${normalizePath(directoryPath).replace(/\/$/, '')}/${entry.name}`;
+    const entryPath =
+      entry.path ?? `${normalizePath(directoryPath).replace(/\/$/, '')}/${entry.name}`;
     if (isSensitivePath(entryPath)) {
       hiddenCount += 1;
       continue;
@@ -102,8 +103,14 @@ export function redactSensitiveText(text: string): { text: string; redacted: boo
   apply(/\bsk-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED API KEY]');
   apply(/\bAIza[0-9A-Za-z\-_]{20,}\b/g, '[REDACTED GOOGLE API KEY]');
   apply(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED AWS ACCESS KEY]');
-  apply(/\b(Bearer)\s+[A-Za-z0-9._~+/-]{20,}\b/gi, (_substring, scheme) => `${scheme} [REDACTED TOKEN]`);
-  apply(/((?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY)\s*[:=]\s*)([A-Za-z0-9/+=]{20,})/g, (_substring, prefix) => `${prefix}[REDACTED]`);
+  apply(
+    /\b(Bearer)\s+[A-Za-z0-9._~+/-]{20,}\b/gi,
+    (_substring, scheme) => `${scheme} [REDACTED TOKEN]`,
+  );
+  apply(
+    /((?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY)\s*[:=]\s*)([A-Za-z0-9/+=]{20,})/g,
+    (_substring, prefix) => `${prefix}[REDACTED]`,
+  );
 
   return { text: next, redacted };
 }

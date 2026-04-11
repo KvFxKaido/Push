@@ -8,20 +8,20 @@ import type { Theme } from './tui-theme.js';
 // ── ANSI escape helpers ─────────────────────────────────────────────
 
 export const ESC = {
-  altScreenOn:    '\x1b[?1049h',
-  altScreenOff:   '\x1b[?1049l',
-  cursorHide:     '\x1b[?25l',
-  cursorShow:     '\x1b[?25h',
-  cursorTo:       (row: number, col: number): string => `\x1b[${row};${col}H`,
-  clearScreen:    '\x1b[2J',
-  clearLine:      '\x1b[2K',
-  clearToEnd:     '\x1b[0J',
-  reset:          '\x1b[0m',
+  altScreenOn: '\x1b[?1049h',
+  altScreenOff: '\x1b[?1049l',
+  cursorHide: '\x1b[?25l',
+  cursorShow: '\x1b[?25h',
+  cursorTo: (row: number, col: number): string => `\x1b[${row};${col}H`,
+  clearScreen: '\x1b[2J',
+  clearLine: '\x1b[2K',
+  clearToEnd: '\x1b[0J',
+  reset: '\x1b[0m',
   // Mouse tracking (not used in Phase 1 but reserved)
-  mouseOn:        '\x1b[?1000h',
-  mouseOff:       '\x1b[?1000l',
+  mouseOn: '\x1b[?1000h',
+  mouseOff: '\x1b[?1000l',
   // Bracketed paste mode
-  bracketedPasteOn:  '\x1b[?2004h',
+  bracketedPasteOn: '\x1b[?2004h',
   bracketedPasteOff: '\x1b[?2004l',
 };
 
@@ -52,29 +52,35 @@ export function stripAnsi(str: string): string {
  */
 export function charWidth(cp: number): number {
   // Combining marks (zero width)
-  if ((cp >= 0x0300 && cp <= 0x036F) ||   // Combining Diacritical Marks
-      (cp >= 0x1AB0 && cp <= 0x1AFF) ||   // Combining Diacritical Marks Extended
-      (cp >= 0x1DC0 && cp <= 0x1DFF) ||   // Combining Diacritical Marks Supplement
-      (cp >= 0x20D0 && cp <= 0x20FF) ||   // Combining Diacritical Marks for Symbols
-      (cp >= 0xFE00 && cp <= 0xFE0F) ||   // Variation Selectors
-      (cp >= 0xFE20 && cp <= 0xFE2F) ||   // Combining Half Marks
-      (cp >= 0xE0100 && cp <= 0xE01EF)) { // Variation Selectors Supplement
+  if (
+    (cp >= 0x0300 && cp <= 0x036f) || // Combining Diacritical Marks
+    (cp >= 0x1ab0 && cp <= 0x1aff) || // Combining Diacritical Marks Extended
+    (cp >= 0x1dc0 && cp <= 0x1dff) || // Combining Diacritical Marks Supplement
+    (cp >= 0x20d0 && cp <= 0x20ff) || // Combining Diacritical Marks for Symbols
+    (cp >= 0xfe00 && cp <= 0xfe0f) || // Variation Selectors
+    (cp >= 0xfe20 && cp <= 0xfe2f) || // Combining Half Marks
+    (cp >= 0xe0100 && cp <= 0xe01ef)
+  ) {
+    // Variation Selectors Supplement
     return 0;
   }
   // Fullwidth and wide characters (width 2)
-  if ((cp >= 0x1100 && cp <= 0x115F) ||   // Hangul Jamo
-      (cp >= 0x2E80 && cp <= 0x303E) ||   // CJK Radicals, Kangxi, CJK Symbols
-      (cp >= 0x3041 && cp <= 0x33BF) ||   // Hiragana, Katakana, Bopomofo, CJK Compat
-      (cp >= 0x3400 && cp <= 0x4DBF) ||   // CJK Unified Ext A
-      (cp >= 0x4E00 && cp <= 0xA4CF) ||   // CJK Unified, Yi Syllables/Radicals
-      (cp >= 0xA960 && cp <= 0xA97C) ||   // Hangul Jamo Extended-A
-      (cp >= 0xAC00 && cp <= 0xD7AF) ||   // Hangul Syllables
-      (cp >= 0xF900 && cp <= 0xFAFF) ||   // CJK Compatibility Ideographs
-      (cp >= 0xFE30 && cp <= 0xFE6F) ||   // CJK Compatibility Forms + Small Forms
-      (cp >= 0xFF01 && cp <= 0xFF60) ||   // Fullwidth ASCII variants
-      (cp >= 0xFFE0 && cp <= 0xFFE6) ||   // Fullwidth signs
-      (cp >= 0x1F300 && cp <= 0x1F9FF) || // Misc Symbols & Pictographs, Emoticons, etc.
-      (cp >= 0x20000 && cp <= 0x2FA1F)) { // CJK Ext B-F, CJK Compat Ideographs Supp
+  if (
+    (cp >= 0x1100 && cp <= 0x115f) || // Hangul Jamo
+    (cp >= 0x2e80 && cp <= 0x303e) || // CJK Radicals, Kangxi, CJK Symbols
+    (cp >= 0x3041 && cp <= 0x33bf) || // Hiragana, Katakana, Bopomofo, CJK Compat
+    (cp >= 0x3400 && cp <= 0x4dbf) || // CJK Unified Ext A
+    (cp >= 0x4e00 && cp <= 0xa4cf) || // CJK Unified, Yi Syllables/Radicals
+    (cp >= 0xa960 && cp <= 0xa97c) || // Hangul Jamo Extended-A
+    (cp >= 0xac00 && cp <= 0xd7af) || // Hangul Syllables
+    (cp >= 0xf900 && cp <= 0xfaff) || // CJK Compatibility Ideographs
+    (cp >= 0xfe30 && cp <= 0xfe6f) || // CJK Compatibility Forms + Small Forms
+    (cp >= 0xff01 && cp <= 0xff60) || // Fullwidth ASCII variants
+    (cp >= 0xffe0 && cp <= 0xffe6) || // Fullwidth signs
+    (cp >= 0x1f300 && cp <= 0x1f9ff) || // Misc Symbols & Pictographs, Emoticons, etc.
+    (cp >= 0x20000 && cp <= 0x2fa1f)
+  ) {
+    // CJK Ext B-F, CJK Compat Ideographs Supp
     return 2;
   }
   return 1;
@@ -209,7 +215,11 @@ export function wordWrap(text: string, maxWidth: number): string[] {
  * Pad or truncate a string to exactly `width` visible characters.
  * Useful for rendering fixed-width cells.
  */
-export function padTo(str: string, width: number, align: 'left' | 'right' | 'center' = 'left'): string {
+export function padTo(
+  str: string,
+  width: number,
+  align: 'left' | 'right' | 'center' = 'left',
+): string {
   const w = visibleWidth(str);
   if (w >= width) return truncate(str, width);
   const pad = ' '.repeat(width - w);
@@ -242,15 +252,20 @@ export type { Theme } from './tui-theme.js';
  * @param glyphs - Glyph set from theme
  * @param theme - Theme for coloring borders
  */
-export function drawBox(contentLines: string[], width: number, glyphs: BoxGlyphs, theme: Theme): string[] {
+export function drawBox(
+  contentLines: string[],
+  width: number,
+  glyphs: BoxGlyphs,
+  theme: Theme,
+): string[] {
   const innerWidth = width - 2; // subtract border chars
   const borderColor = (s: string): string => theme.style('border.default', s);
 
   const topBorder = borderColor(
-    glyphs.topLeft + glyphs.horizontal.repeat(innerWidth) + glyphs.topRight
+    glyphs.topLeft + glyphs.horizontal.repeat(innerWidth) + glyphs.topRight,
   );
   const bottomBorder = borderColor(
-    glyphs.bottomLeft + glyphs.horizontal.repeat(innerWidth) + glyphs.bottomRight
+    glyphs.bottomLeft + glyphs.horizontal.repeat(innerWidth) + glyphs.bottomRight,
   );
 
   const rows: string[] = [topBorder];
@@ -421,15 +436,19 @@ export interface Layout {
  * Returns { header, transcript, toolPane, composer, footer } with
  * { top, left, width, height } for each.
  */
-export function computeLayout(rows: number, cols: number, { toolPaneOpen = false, composerLines = 1 }: LayoutOptions = {}): Layout {
+export function computeLayout(
+  rows: number,
+  cols: number,
+  { toolPaneOpen = false, composerLines = 1 }: LayoutOptions = {},
+): Layout {
   const outerMarginRow = 1;
   const outerMarginCol = 2;
 
-  const innerWidth = cols - (outerMarginCol * 2);
+  const innerWidth = cols - outerMarginCol * 2;
   const innerLeft = outerMarginCol + 1; // 1-indexed for ANSI
 
-  const headerHeight = 4;   // product line, model, directory, hint
-  const footerHeight = 2;   // status bar + keybind hints
+  const headerHeight = 4; // product line, model, directory, hint
+  const footerHeight = 2; // status bar + keybind hints
   const composerHeight = Math.max(3, Math.min(7, composerLines + 2)); // +2 for border
 
   const headerTop = outerMarginRow + 1; // 1-indexed
@@ -467,12 +486,14 @@ export function computeLayout(rows: number, cols: number, { toolPaneOpen = false
       width: transcriptWidth,
       height: Math.max(1, transcriptHeight),
     },
-    toolPane: toolPaneOpen ? {
-      top: transcriptTop,
-      left: toolPaneLeft,
-      width: toolPaneWidth,
-      height: Math.max(1, transcriptHeight),
-    } : null,
+    toolPane: toolPaneOpen
+      ? {
+          top: transcriptTop,
+          left: toolPaneLeft,
+          width: toolPaneWidth,
+          height: Math.max(1, transcriptHeight),
+        }
+      : null,
     composer: {
       top: composerTop,
       left: innerLeft,

@@ -41,46 +41,23 @@
     },
     "sessionState": {
       "type": "string",
-      "enum": [
-        "idle",
-        "running",
-        "awaiting_approval",
-        "completed",
-        "failed",
-        "cancelled"
-      ]
+      "enum": ["idle", "running", "awaiting_approval", "completed", "failed", "cancelled"]
     },
     "runOutcome": {
       "type": "string",
-      "enum": [
-        "success",
-        "failed",
-        "cancelled",
-        "denied"
-      ]
+      "enum": ["success", "failed", "cancelled", "denied"]
     },
     "approvalDecision": {
       "type": "string",
-      "enum": [
-        "approve",
-        "deny"
-      ]
+      "enum": ["approve", "deny"]
     },
     "provider": {
       "type": "string",
-      "enum": [
-        "ollama",
-        "mistral",
-        "openrouter",
-        "demo"
-      ]
+      "enum": ["ollama", "mistral", "openrouter", "demo"]
     },
     "sandboxProvider": {
       "type": "string",
-      "enum": [
-        "local",
-        "modal"
-      ]
+      "enum": ["local", "modal"]
     },
     "requestId": {
       "type": "string",
@@ -108,11 +85,7 @@
     },
     "protocolError": {
       "type": "object",
-      "required": [
-        "code",
-        "message",
-        "retryable"
-      ],
+      "required": ["code", "message", "retryable"],
       "properties": {
         "code": {
           "type": "string",
@@ -133,10 +106,7 @@
     },
     "acceptanceCriterion": {
       "type": "object",
-      "required": [
-        "id",
-        "check"
-      ],
+      "required": ["id", "check"],
       "properties": {
         "id": {
           "type": "string",
@@ -157,12 +127,7 @@
     },
     "criterionResult": {
       "type": "object",
-      "required": [
-        "id",
-        "passed",
-        "exitCode",
-        "output"
-      ],
+      "required": ["id", "passed", "exitCode", "output"],
       "properties": {
         "id": {
           "type": "string",
@@ -182,11 +147,7 @@
     },
     "repoContext": {
       "type": "object",
-      "required": [
-        "rootPath",
-        "currentBranch",
-        "defaultBranch"
-      ],
+      "required": ["rootPath", "currentBranch", "defaultBranch"],
       "properties": {
         "rootPath": {
           "type": "string",
@@ -209,12 +170,7 @@
     },
     "replayInfo": {
       "type": "object",
-      "required": [
-        "fromSeq",
-        "toSeq",
-        "completed",
-        "gap"
-      ],
+      "required": ["fromSeq", "toSeq", "completed", "gap"],
       "properties": {
         "fromSeq": {
           "type": "integer",
@@ -235,12 +191,7 @@
     },
     "sessionSummary": {
       "type": "object",
-      "required": [
-        "sessionId",
-        "state",
-        "updatedAt",
-        "repo"
-      ],
+      "required": ["sessionId", "state", "updatedAt", "repo"],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
@@ -254,10 +205,7 @@
         },
         "repo": {
           "type": "object",
-          "required": [
-            "rootPath",
-            "currentBranch"
-          ],
+          "required": ["rootPath", "currentBranch"],
           "properties": {
             "rootPath": {
               "type": "string"
@@ -273,11 +221,7 @@
     },
     "structuredToolError": {
       "type": "object",
-      "required": [
-        "type",
-        "retryable",
-        "message"
-      ],
+      "required": ["type", "retryable", "message"],
       "properties": {
         "type": {
           "type": "string",
@@ -310,23 +254,12 @@
     },
     "toolCallSource": {
       "type": "string",
-      "enum": [
-        "github",
-        "sandbox",
-        "delegate",
-        "scratchpad",
-        "web-search",
-        "unknown"
-      ]
+      "enum": ["github", "sandbox", "delegate", "scratchpad", "web-search", "unknown"]
     },
 
     "helloRequestPayload": {
       "type": "object",
-      "required": [
-        "clientName",
-        "clientVersion",
-        "capabilities"
-      ],
+      "required": ["clientName", "clientVersion", "capabilities"],
       "properties": {
         "clientName": {
           "type": "string",
@@ -349,19 +282,11 @@
     },
     "startSessionRequestPayload": {
       "type": "object",
-      "required": [
-        "mode",
-        "provider",
-        "sandboxProvider",
-        "repo"
-      ],
+      "required": ["mode", "provider", "sandboxProvider", "repo"],
       "properties": {
         "mode": {
           "type": "string",
-          "enum": [
-            "interactive",
-            "headless"
-          ]
+          "enum": ["interactive", "headless"]
         },
         "provider": {
           "$ref": "#/$defs/provider"
@@ -391,10 +316,7 @@
     },
     "attachSessionRequestPayload": {
       "type": "object",
-      "required": [
-        "sessionId",
-        "lastSeenSeq"
-      ],
+      "required": ["sessionId", "lastSeenSeq"],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
@@ -411,10 +333,7 @@
     },
     "resumeSessionRequestPayload": {
       "type": "object",
-      "required": [
-        "sessionId",
-        "lastSeenSeq"
-      ],
+      "required": ["sessionId", "lastSeenSeq"],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
@@ -428,11 +347,7 @@
     },
     "sendUserMessageRequestPayload": {
       "type": "object",
-      "required": [
-        "sessionId",
-        "clientMessageId",
-        "text"
-      ],
+      "required": ["sessionId", "clientMessageId", "text"],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
@@ -455,12 +370,7 @@
     },
     "submitApprovalRequestPayload": {
       "type": "object",
-      "required": [
-        "sessionId",
-        "runId",
-        "approvalId",
-        "decision"
-      ],
+      "required": ["sessionId", "runId", "approvalId", "decision"],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
@@ -482,10 +392,7 @@
     },
     "cancelRunRequestPayload": {
       "type": "object",
-      "required": [
-        "sessionId",
-        "runId"
-      ],
+      "required": ["sessionId", "runId"],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
@@ -506,12 +413,7 @@
 
     "helloResponsePayload": {
       "type": "object",
-      "required": [
-        "runtimeName",
-        "runtimeVersion",
-        "protocolVersion",
-        "capabilities"
-      ],
+      "required": ["runtimeName", "runtimeVersion", "protocolVersion", "capabilities"],
       "properties": {
         "runtimeName": {
           "type": "string",
@@ -536,11 +438,7 @@
     },
     "startSessionResponsePayload": {
       "type": "object",
-      "required": [
-        "sessionId",
-        "state",
-        "attachToken"
-      ],
+      "required": ["sessionId", "state", "attachToken"],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
@@ -556,9 +454,7 @@
     },
     "listSessionsResponsePayload": {
       "type": "object",
-      "required": [
-        "sessions"
-      ],
+      "required": ["sessions"],
       "properties": {
         "sessions": {
           "type": "array",
@@ -571,11 +467,7 @@
     },
     "attachSessionResponsePayload": {
       "type": "object",
-      "required": [
-        "sessionId",
-        "state",
-        "replay"
-      ],
+      "required": ["sessionId", "state", "replay"],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
@@ -591,10 +483,7 @@
     },
     "sendUserMessageResponsePayload": {
       "type": "object",
-      "required": [
-        "runId",
-        "accepted"
-      ],
+      "required": ["runId", "accepted"],
       "properties": {
         "runId": {
           "$ref": "#/$defs/runId"
@@ -607,9 +496,7 @@
     },
     "submitApprovalResponsePayload": {
       "type": "object",
-      "required": [
-        "accepted"
-      ],
+      "required": ["accepted"],
       "properties": {
         "accepted": {
           "type": "boolean"
@@ -619,9 +506,7 @@
     },
     "cancelRunResponsePayload": {
       "type": "object",
-      "required": [
-        "accepted"
-      ],
+      "required": ["accepted"],
       "properties": {
         "accepted": {
           "type": "boolean"
@@ -631,10 +516,7 @@
     },
     "pingResponsePayload": {
       "type": "object",
-      "required": [
-        "pong",
-        "ts"
-      ],
+      "required": ["pong", "ts"],
       "properties": {
         "pong": {
           "type": "boolean"
@@ -649,13 +531,7 @@
 
     "sessionStartedEventPayload": {
       "type": "object",
-      "required": [
-        "sessionId",
-        "state",
-        "mode",
-        "provider",
-        "sandboxProvider"
-      ],
+      "required": ["sessionId", "state", "mode", "provider", "sandboxProvider"],
       "properties": {
         "sessionId": {
           "$ref": "#/$defs/sessionId"
@@ -665,10 +541,7 @@
         },
         "mode": {
           "type": "string",
-          "enum": [
-            "interactive",
-            "headless"
-          ]
+          "enum": ["interactive", "headless"]
         },
         "provider": {
           "$ref": "#/$defs/provider"
@@ -681,11 +554,7 @@
     },
     "sessionSnapshotEventPayload": {
       "type": "object",
-      "required": [
-        "state",
-        "pendingApproval",
-        "meta"
-      ],
+      "required": ["state", "pendingApproval", "meta"],
       "properties": {
         "state": {
           "$ref": "#/$defs/sessionState"
@@ -715,10 +584,7 @@
         },
         "meta": {
           "type": "object",
-          "required": [
-            "provider",
-            "sandboxProvider"
-          ],
+          "required": ["provider", "sandboxProvider"],
           "properties": {
             "provider": {
               "$ref": "#/$defs/provider"
@@ -734,10 +600,7 @@
     },
     "statusEventPayload": {
       "type": "object",
-      "required": [
-        "source",
-        "phase"
-      ],
+      "required": ["source", "phase"],
       "properties": {
         "source": {
           "type": "string",
@@ -755,9 +618,7 @@
     },
     "thinkingTokenEventPayload": {
       "type": "object",
-      "required": [
-        "text"
-      ],
+      "required": ["text"],
       "properties": {
         "text": {
           "type": "string"
@@ -767,9 +628,7 @@
     },
     "assistantTokenEventPayload": {
       "type": "object",
-      "required": [
-        "text"
-      ],
+      "required": ["text"],
       "properties": {
         "text": {
           "type": "string"
@@ -779,9 +638,7 @@
     },
     "assistantDoneEventPayload": {
       "type": "object",
-      "required": [
-        "messageId"
-      ],
+      "required": ["messageId"],
       "properties": {
         "messageId": {
           "type": "string",
@@ -792,11 +649,7 @@
     },
     "toolCallEventPayload": {
       "type": "object",
-      "required": [
-        "source",
-        "toolName",
-        "args"
-      ],
+      "required": ["source", "toolName", "args"],
       "properties": {
         "source": {
           "$ref": "#/$defs/toolCallSource"
@@ -813,14 +666,7 @@
     },
     "toolResultEventPayload": {
       "type": "object",
-      "required": [
-        "source",
-        "toolName",
-        "durationMs",
-        "isError",
-        "text",
-        "structuredError"
-      ],
+      "required": ["source", "toolName", "durationMs", "isError", "text", "structuredError"],
       "properties": {
         "source": {
           "$ref": "#/$defs/toolCallSource"
@@ -854,15 +700,7 @@
     },
     "approvalRequiredEventPayload": {
       "type": "object",
-      "required": [
-        "approvalId",
-        "kind",
-        "title",
-        "summary",
-        "details",
-        "options",
-        "expiresAt"
-      ],
+      "required": ["approvalId", "kind", "title", "summary", "details", "options", "expiresAt"],
       "properties": {
         "approvalId": {
           "$ref": "#/$defs/approvalId"
@@ -899,11 +737,7 @@
     },
     "approvalReceivedEventPayload": {
       "type": "object",
-      "required": [
-        "approvalId",
-        "decision",
-        "by"
-      ],
+      "required": ["approvalId", "decision", "by"],
       "properties": {
         "approvalId": {
           "$ref": "#/$defs/approvalId"
@@ -920,10 +754,7 @@
     },
     "warningEventPayload": {
       "type": "object",
-      "required": [
-        "code",
-        "message"
-      ],
+      "required": ["code", "message"],
       "properties": {
         "code": {
           "type": "string",
@@ -941,11 +772,7 @@
     },
     "errorEventPayload": {
       "type": "object",
-      "required": [
-        "code",
-        "message",
-        "retryable"
-      ],
+      "required": ["code", "message", "retryable"],
       "properties": {
         "code": {
           "type": "string",
@@ -966,11 +793,7 @@
     },
     "runCompleteEventPayload": {
       "type": "object",
-      "required": [
-        "runId",
-        "outcome",
-        "summary"
-      ],
+      "required": ["runId", "outcome", "summary"],
       "properties": {
         "runId": {
           "$ref": "#/$defs/runId"
@@ -983,11 +806,7 @@
         },
         "acceptance": {
           "type": "object",
-          "required": [
-            "total",
-            "passed",
-            "results"
-          ],
+          "required": ["total", "passed", "results"],
           "properties": {
             "total": {
               "type": "integer",
@@ -1008,9 +827,7 @@
         },
         "headless": {
           "type": "object",
-          "required": [
-            "exitCodeHint"
-          ],
+          "required": ["exitCodeHint"],
           "properties": {
             "exitCodeHint": {
               "type": "integer",

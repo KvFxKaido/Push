@@ -87,7 +87,13 @@ export interface TaskGraphMemoryEntry {
 }
 
 /** Runtime status for a task-graph node. */
-export type TaskGraphNodeStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type TaskGraphNodeStatus =
+  | 'pending'
+  | 'ready'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 /** Runtime state for a task-graph node during execution. */
 export interface TaskGraphNodeState {
@@ -107,7 +113,13 @@ export interface TaskGraphArgs {
 
 /** Progress event emitted during task-graph execution. */
 export interface TaskGraphProgressEvent {
-  type: 'task_ready' | 'task_started' | 'task_completed' | 'task_failed' | 'task_cancelled' | 'graph_complete';
+  type:
+    | 'task_ready'
+    | 'task_started'
+    | 'task_completed'
+    | 'task_failed'
+    | 'task_cancelled'
+    | 'graph_complete';
   taskId?: string;
   detail?: string;
   elapsedMs?: number;

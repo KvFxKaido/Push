@@ -21,7 +21,14 @@ export interface PRCardData {
 export interface PRListCardData {
   repo: string;
   state: string;
-  prs: { number: number; title: string; author: string; additions?: number; deletions?: number; createdAt: string }[];
+  prs: {
+    number: number;
+    title: string;
+    author: string;
+    additions?: number;
+    deletions?: number;
+    createdAt: string;
+  }[];
 }
 
 export interface CommitListCardData {
@@ -44,7 +51,15 @@ export interface FileListCardData {
 export interface CICheck {
   name: string;
   status: 'queued' | 'in_progress' | 'completed';
-  conclusion: 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | null;
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'neutral'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | null;
   detailsUrl?: string;
 }
 
@@ -89,7 +104,15 @@ export interface WorkflowRunItem {
   id: number;
   name: string;
   status: 'queued' | 'in_progress' | 'completed' | 'waiting' | 'requested' | 'pending';
-  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | 'neutral'
+    | null;
   branch: string;
   event: string;
   createdAt: string;
@@ -109,11 +132,27 @@ export interface WorkflowRunsCardData {
 export interface WorkflowJob {
   name: string;
   status: 'queued' | 'in_progress' | 'completed' | 'waiting';
-  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+  conclusion:
+    | 'success'
+    | 'failure'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required'
+    | 'neutral'
+    | null;
   steps: {
     name: string;
     status: 'queued' | 'in_progress' | 'completed';
-    conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | 'neutral' | null;
+    conclusion:
+      | 'success'
+      | 'failure'
+      | 'cancelled'
+      | 'skipped'
+      | 'timed_out'
+      | 'action_required'
+      | 'neutral'
+      | null;
     number: number;
   }[];
   htmlUrl: string;

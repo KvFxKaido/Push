@@ -37,10 +37,12 @@ export function buildDelegationBrief(input: DelegationBriefInput): string {
   }
   if (input.knownContext && input.knownContext.length > 0) {
     lines.push('', 'Known context:');
-    lines.push(...input.knownContext.map((item) => {
-      if (item.includes('\n')) return item;
-      return `- ${item}`;
-    }));
+    lines.push(
+      ...input.knownContext.map((item) => {
+        if (item.includes('\n')) return item;
+        return `- ${item}`;
+      }),
+    );
   }
   if (input.constraints && input.constraints.length > 0) {
     lines.push('', 'Constraints:');

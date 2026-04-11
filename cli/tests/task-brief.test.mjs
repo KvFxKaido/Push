@@ -4,7 +4,10 @@ import { buildHeadlessTaskBrief } from '../task-brief.ts';
 
 describe('buildHeadlessTaskBrief', () => {
   it('uses the shared delegation brief shape for headless tasks', () => {
-    const brief = buildHeadlessTaskBrief('Fix the auth retry bug', ['npm test -- auth', 'npm run lint']);
+    const brief = buildHeadlessTaskBrief('Fix the auth retry bug', [
+      'npm test -- auth',
+      'npm run lint',
+    ]);
 
     assert.ok(brief.includes('Task: Fix the auth retry bug'));
     assert.ok(brief.includes('Acceptance checks:'));

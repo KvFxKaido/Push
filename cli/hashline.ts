@@ -21,7 +21,10 @@ export type { HashlineOp };
 // ---------------------------------------------------------------------------
 
 export function calculateLineHash(line: unknown, length: number = 7): string {
-  return createHash('sha256').update(String(line).trim()).digest('hex').slice(0, Math.min(Math.max(length, 7), 12));
+  return createHash('sha256')
+    .update(String(line).trim())
+    .digest('hex')
+    .slice(0, Math.min(Math.max(length, 7), 12));
 }
 
 export function calculateContentVersion(content: unknown): string {
@@ -107,7 +110,11 @@ export function applyHashlineEdits(content: unknown, edits: unknown): CliHashlin
       if (typeof (edit as Record<string, unknown>).content !== 'string') {
         throw new Error(`${op} requires string content`);
       }
-      return { op, ref, content: (edit as Record<string, unknown>).content as string } as HashlineOp;
+      return {
+        op,
+        ref,
+        content: (edit as Record<string, unknown>).content as string,
+      } as HashlineOp;
     }
     if (op === 'delete_line') {
       return { op, ref } as HashlineOp;
@@ -117,7 +124,9 @@ export function applyHashlineEdits(content: unknown, edits: unknown): CliHashlin
 
   // Sync crypto, shared resolution + application engine
   const resultLines = String(content).split('\n');
-  const hashCache = resultLines.map((l) => createHash('sha256').update(l.trim()).digest('hex').slice(0, 12));
+  const hashCache = resultLines.map((l) =>
+    createHash('sha256').update(l.trim()).digest('hex').slice(0, 12),
+  );
 
   const resolved = resolveHashlineRefs(hashCache, resultLines, validated);
 

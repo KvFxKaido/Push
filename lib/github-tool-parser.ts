@@ -102,7 +102,10 @@ export function parseGitHubCoreToolCall(
     };
   }
   if (name === 'list_branches') {
-    return { tool: 'list_branches', args: { repo, maxBranches: asPositiveNumber(args.maxBranches) } };
+    return {
+      tool: 'list_branches',
+      args: { repo, maxBranches: asPositiveNumber(args.maxBranches) },
+    };
   }
   if (name === 'fetch_checks') {
     return { tool: 'fetch_checks', args: { repo, ref: asString(args.ref) } };
@@ -156,7 +159,10 @@ export function parseGitHubCoreToolCall(
   if (name === 'merge_pr') {
     const prNumber = asPositiveNumber(args.pr_number);
     return prNumber
-      ? { tool: 'merge_pr', args: { repo, pr_number: prNumber, merge_method: asString(args.merge_method) } }
+      ? {
+          tool: 'merge_pr',
+          args: { repo, pr_number: prNumber, merge_method: asString(args.merge_method) },
+        }
       : null;
   }
   if (name === 'delete_branch') {

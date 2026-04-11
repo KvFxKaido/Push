@@ -22,9 +22,7 @@ export interface TurnContext {
   phase?: string;
 }
 
-export type BeforeToolResult =
-  | { action: 'deny'; reason: string }
-  | null;
+export type BeforeToolResult = { action: 'deny'; reason: string } | null;
 
 export type AfterModelResult =
   | { action: 'inject'; message: string }
@@ -37,10 +35,7 @@ type BeforeToolHook = (
   ctx: TurnContext,
 ) => BeforeToolResult;
 
-type AfterModelHook = (
-  response: string,
-  ctx: TurnContext,
-) => AfterModelResult;
+type AfterModelHook = (response: string, ctx: TurnContext) => AfterModelResult;
 
 export interface TurnPolicy {
   name: string;
@@ -61,20 +56,16 @@ export function isVerificationPhase(phase: string | undefined): boolean {
 // Mutation tools — file-mutating tools that should be blocked during verification
 // ---------------------------------------------------------------------------
 
-const MUTATION_TOOLS = new Set([
-  'write_file',
-  'edit_file',
-  'undo_edit',
-]);
+const MUTATION_TOOLS = new Set(['write_file', 'edit_file', 'undo_edit']);
 
 // ---------------------------------------------------------------------------
 // Drift detection (mirrors app/src/lib/turn-policies/coder-policy.ts)
 // ---------------------------------------------------------------------------
 
 function hasCodeSignals(text: string): boolean {
-  return /\{\s*"tool"\s*:/.test(text)
-    || /```/.test(text)
-    || /\.[tj]sx?\b|\.py\b|\.json\b/.test(text);
+  return (
+    /\{\s*"tool"\s*:/.test(text) || /```/.test(text) || /\.[tj]sx?\b|\.py\b|\.json\b/.test(text)
+  );
 }
 
 function detectCognitiveDrift(text: string): string | null {
@@ -135,10 +126,7 @@ export class TurnPolicyRegistry {
     return null;
   }
 
-  evaluateAfterModel(
-    response: string,
-    ctx: TurnContext,
-  ): AfterModelResult {
+  evaluateAfterModel(response: string, ctx: TurnContext): AfterModelResult {
     for (const policy of this.policies) {
       if (!policy.afterModelCall) continue;
       for (const hook of policy.afterModelCall) {

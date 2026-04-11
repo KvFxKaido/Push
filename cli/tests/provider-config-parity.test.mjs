@@ -3,8 +3,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const cliProviderSource = readFileSync(new URL('../provider.ts', import.meta.url), 'utf8');
-const webProviderSource = readFileSync(new URL('../../app/src/lib/providers.ts', import.meta.url), 'utf8');
-const sharedProviderModelSource = readFileSync(new URL('../../lib/provider-models.ts', import.meta.url), 'utf8');
+const webProviderSource = readFileSync(
+  new URL('../../app/src/lib/providers.ts', import.meta.url),
+  'utf8',
+);
+const sharedProviderModelSource = readFileSync(
+  new URL('../../lib/provider-models.ts', import.meta.url),
+  'utf8',
+);
 
 function extractExportedStringConstant(source, exportName) {
   const match = source.match(new RegExp(`export const ${exportName}\\s*=\\s*'([^']+)';`));
@@ -32,7 +38,9 @@ function extractCliProviderIds(source) {
 function extractCliProviderEntry(source, providerId) {
   const block = extractProviderConfigsBlock(source);
   const escapedId = providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = block.match(new RegExp(`^\\s{2}${escapedId}:\\s*\\{([\\s\\S]*?)^\\s{2}\\},?$`, 'm'));
+  const match = block.match(
+    new RegExp(`^\\s{2}${escapedId}:\\s*\\{([\\s\\S]*?)^\\s{2}\\},?$`, 'm'),
+  );
   assert.ok(match, `Expected to find CLI provider entry ${providerId}`);
 
   const entry = match[1];
@@ -61,7 +69,7 @@ describe('provider config parity', () => {
   // CLI only implements the four built-in providers; azure/bedrock/vertex are
   // advanced connectors deferred per the Web-CLI Parity Plan.
   const CLI_DEFERRED_PROVIDERS = new Set(['azure', 'bedrock', 'vertex']);
-  const providerIds = allWebProviderIds.filter(id => !CLI_DEFERRED_PROVIDERS.has(id));
+  const providerIds = allWebProviderIds.filter((id) => !CLI_DEFERRED_PROVIDERS.has(id));
   const defaultConstByProvider = {
     ollama: 'OLLAMA_DEFAULT_MODEL',
     openrouter: 'OPENROUTER_DEFAULT_MODEL',
@@ -82,11 +90,14 @@ describe('provider config parity', () => {
       assert.equal(entry.id, providerId);
       assert.match(
         entry.entry,
-        new RegExp(`defaultModel:\\s*process\\.env\\.[A-Z0-9_]+\\s*\\|\\|\\s*${defaultConstByProvider[providerId]}`),
+        new RegExp(
+          `defaultModel:\\s*process\\.env\\.[A-Z0-9_]+\\s*\\|\\|\\s*${defaultConstByProvider[providerId]}`,
+        ),
         `Expected ${providerId} default model to reference ${defaultConstByProvider[providerId]}`,
       );
       assert.ok(
-        extractExportedStringConstant(sharedProviderModelSource, defaultConstByProvider[providerId]).length > 0,
+        extractExportedStringConstant(sharedProviderModelSource, defaultConstByProvider[providerId])
+          .length > 0,
         `Expected shared model constant ${defaultConstByProvider[providerId]} to resolve to a non-empty value`,
       );
     }

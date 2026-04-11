@@ -6,20 +6,25 @@ const OLLAMA_MODELS = ['gemini-3-flash-preview'];
 const PROVIDERS = [{ id: 'ollama' }, { id: 'openrouter' }, { id: 'zen' }, { id: 'nvidia' }];
 
 function makeCompleter(overrides = {}) {
-  const skills = overrides.skills ?? new Map([
-    ['commit', { name: 'commit', description: 'Commit changes' }],
-    ['review', { name: 'review', description: 'Review code' }],
-  ]);
+  const skills =
+    overrides.skills ??
+    new Map([
+      ['commit', { name: 'commit', description: 'Commit changes' }],
+      ['review', { name: 'review', description: 'Review code' }],
+    ]);
   return createCompleter({
     ctx: overrides.ctx ?? { providerConfig: { id: 'ollama' } },
     skills,
-    getCuratedModels: overrides.getCuratedModels ?? ((id) => id === 'ollama' ? OLLAMA_MODELS : []),
+    getCuratedModels:
+      overrides.getCuratedModels ?? ((id) => (id === 'ollama' ? OLLAMA_MODELS : [])),
     getProviderList: overrides.getProviderList ?? (() => PROVIDERS),
     workspaceRoot: overrides.workspaceRoot ?? '/tmp/workspace',
-    getPathCompletions: overrides.getPathCompletions ?? ((_root, fragment) => {
-      const all = ['src/', 'src/app.ts', 'src/api/', 'README.md'];
-      return all.filter((p) => p.startsWith(fragment));
-    }),
+    getPathCompletions:
+      overrides.getPathCompletions ??
+      ((_root, fragment) => {
+        const all = ['src/', 'src/app.ts', 'src/api/', 'README.md'];
+        return all.filter((p) => p.startsWith(fragment));
+      }),
   });
 }
 
@@ -173,7 +178,8 @@ describe('createCompleter', () => {
   it('uses active provider for model completions', () => {
     const c = makeCompleter({
       ctx: { providerConfig: { id: 'openrouter' } },
-      getCuratedModels: (id) => id === 'openrouter' ? ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.4'] : [],
+      getCuratedModels: (id) =>
+        id === 'openrouter' ? ['anthropic/claude-sonnet-4.6', 'openai/gpt-5.4'] : [],
     });
     const [hits] = c('/model anth');
     assert.deepEqual(hits, ['anthropic/claude-sonnet-4.6']);

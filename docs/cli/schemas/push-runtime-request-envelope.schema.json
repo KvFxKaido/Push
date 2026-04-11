@@ -3,13 +3,7 @@
   "$id": "https://push.sh/schemas/push-runtime-request-envelope.schema.json",
   "title": "Push Runtime Request Envelope",
   "type": "object",
-  "required": [
-    "v",
-    "kind",
-    "requestId",
-    "type",
-    "payload"
-  ],
+  "required": ["v", "kind", "requestId", "type", "payload"],
   "properties": {
     "v": {
       "$ref": "./push-runtime-defs.schema.json#/$defs/protocolVersion"
@@ -89,9 +83,7 @@
         }
       },
       "then": {
-        "required": [
-          "sessionId"
-        ],
+        "required": ["sessionId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/attachSessionRequestPayload"
@@ -108,9 +100,7 @@
         }
       },
       "then": {
-        "required": [
-          "sessionId"
-        ],
+        "required": ["sessionId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/resumeSessionRequestPayload"
@@ -127,9 +117,7 @@
         }
       },
       "then": {
-        "required": [
-          "sessionId"
-        ],
+        "required": ["sessionId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/sendUserMessageRequestPayload"
@@ -146,9 +134,7 @@
         }
       },
       "then": {
-        "required": [
-          "sessionId"
-        ],
+        "required": ["sessionId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/submitApprovalRequestPayload"
@@ -165,9 +151,7 @@
         }
       },
       "then": {
-        "required": [
-          "sessionId"
-        ],
+        "required": ["sessionId"],
         "properties": {
           "payload": {
             "$ref": "./push-runtime-defs.schema.json#/$defs/cancelRunRequestPayload"

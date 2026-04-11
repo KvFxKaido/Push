@@ -18,7 +18,10 @@ function makeDeps(providerId = 'ollama') {
   };
 
   const getProviderList = () => [
-    { id: 'ollama' }, { id: 'openrouter' }, { id: 'zen' }, { id: 'nvidia' },
+    { id: 'ollama' },
+    { id: 'openrouter' },
+    { id: 'zen' },
+    { id: 'nvidia' },
   ];
 
   const getPathCompletions = (_root, fragment) => {
@@ -26,7 +29,14 @@ function makeDeps(providerId = 'ollama') {
     return all.filter((p) => p.startsWith(fragment));
   };
 
-  return { ctx, skills, getCuratedModels, getProviderList, workspaceRoot: '/tmp/workspace', getPathCompletions };
+  return {
+    ctx,
+    skills,
+    getCuratedModels,
+    getProviderList,
+    workspaceRoot: '/tmp/workspace',
+    getPathCompletions,
+  };
 }
 
 // ── Tab (cycling) ─────────────────────────────────────────────────
@@ -249,9 +259,9 @@ describe('suggest (live preview)', () => {
 
   it('does not override cycling state', () => {
     tc.tab('/provider ', false); // enter cycling, index=0
-    tc.suggest('/provider ol');   // should be ignored (cycling)
+    tc.suggest('/provider ol'); // should be ignored (cycling)
     const s = tc.getState();
-    assert.equal(s.index, 0);    // still at cycling index 0
+    assert.equal(s.index, 0); // still at cycling index 0
     assert.equal(s.items.length, 4); // original 4 candidates, not narrowed
   });
 

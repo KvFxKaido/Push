@@ -27,13 +27,17 @@ function makeAssistantMsg(text = 'Sure, let me help.') {
 }
 
 function makeToolResult(toolName, chars = 200) {
-  const payload = JSON.stringify({
-    tool: toolName,
-    ok: true,
-    output: 'X'.repeat(Math.max(0, chars - 80)),
-    meta: null,
-    structuredError: null,
-  }, null, 2);
+  const payload = JSON.stringify(
+    {
+      tool: toolName,
+      ok: true,
+      output: 'X'.repeat(Math.max(0, chars - 80)),
+      meta: null,
+      structuredError: null,
+    },
+    null,
+    2,
+  );
   return { role: 'user', content: `[TOOL_RESULT]\n${payload}\n[/TOOL_RESULT]` };
 }
 
@@ -41,10 +45,7 @@ function makeToolResult(toolName, chars = 200) {
  * Assistant message followed by a tool-result — simulates one tool-loop round.
  */
 function makeToolPair(toolName, chars = 200) {
-  return [
-    makeAssistantMsg(`Let me use ${toolName}.`),
-    makeToolResult(toolName, chars),
-  ];
+  return [makeAssistantMsg(`Let me use ${toolName}.`), makeToolResult(toolName, chars)];
 }
 
 /**
@@ -172,7 +173,10 @@ describe('message detection', () => {
   });
 
   it('detects parse error messages', () => {
-    const parseErr = { role: 'user', content: '[TOOL_CALL_PARSE_ERROR]\n{"reason":"bad"}\n[/TOOL_CALL_PARSE_ERROR]' };
+    const parseErr = {
+      role: 'user',
+      content: '[TOOL_CALL_PARSE_ERROR]\n{"reason":"bad"}\n[/TOOL_CALL_PARSE_ERROR]',
+    };
     assert.equal(isParseErrorMessage(parseErr), true);
     assert.equal(isParseErrorMessage(makeUserMsg('Hello')), false);
   });
@@ -226,11 +230,17 @@ describe('trimContext — Phase 1 (summarize)', () => {
 
     // Older messages (before the last-14 tail) should be summarized
     const oldToolResult = result.messages[3]; // index 3 = first tool result
-    assert.ok(oldToolResult.content.includes('[...summarized]'), 'old tool result should be summarized');
+    assert.ok(
+      oldToolResult.content.includes('[...summarized]'),
+      'old tool result should be summarized',
+    );
 
     // Recent tail should be untouched
     const lastMsg = result.messages[result.messages.length - 1];
-    assert.ok(!lastMsg.content.includes('[...summarized]'), 'recent messages should not be summarized');
+    assert.ok(
+      !lastMsg.content.includes('[...summarized]'),
+      'recent messages should not be summarized',
+    );
   });
 
   it('does not summarize the system prompt', () => {
@@ -274,7 +284,7 @@ describe('trimContext — Phase 2 (remove pairs + digest)', () => {
     assert.ok(result.afterTokens < result.beforeTokens, 'token count should decrease');
 
     // Should contain a CONTEXT DIGEST
-    const digestMsg = result.messages.find(m => m.content.includes('[CONTEXT DIGEST]'));
+    const digestMsg = result.messages.find((m) => m.content.includes('[CONTEXT DIGEST]'));
     assert.ok(digestMsg, 'should contain a context digest message');
     assert.ok(digestMsg.content.includes('[/CONTEXT DIGEST]'));
   });
@@ -290,7 +300,9 @@ describe('trimContext — Phase 2 (remove pairs + digest)', () => {
     const firstUserContent = msgs[1].content; // 'Please fix the bug.'
     const result = trimContext(msgs, 'ollama', 'test');
 
-    const firstUser = result.messages.find(m => m.role === 'user' && m.content === firstUserContent);
+    const firstUser = result.messages.find(
+      (m) => m.role === 'user' && m.content === firstUserContent,
+    );
     assert.ok(firstUser, 'first user message should be preserved');
   });
 
@@ -301,7 +313,7 @@ describe('trimContext — Phase 2 (remove pairs + digest)', () => {
 
     // The last original message should exist somewhere in the trimmed output
     // (hard fallback may splice from position 1, but tail messages are kept)
-    const found = result.messages.some(m => m.content === lastMsg.content);
+    const found = result.messages.some((m) => m.content === lastMsg.content);
     assert.ok(found, 'last original message should be preserved in trimmed output');
   });
 });
@@ -321,8 +333,14 @@ describe('trimContext — Phase 3 (hard fallback)', () => {
 
     const result = trimContext(msgs, 'ollama', 'test');
     assert.equal(result.trimmed, true);
-    assert.ok(result.afterTokens <= 100_000, `should be <= max token budget, got ${result.afterTokens}`);
-    assert.ok(result.messages.length >= 2, `should keep at least 2 messages, got ${result.messages.length}`);
+    assert.ok(
+      result.afterTokens <= 100_000,
+      `should be <= max token budget, got ${result.afterTokens}`,
+    );
+    assert.ok(
+      result.messages.length >= 2,
+      `should keep at least 2 messages, got ${result.messages.length}`,
+    );
     assert.equal(result.messages[0].role, 'system');
   });
 });
@@ -343,7 +361,7 @@ describe('trimContext — immutability', () => {
 
   it('does not mutate individual message objects', () => {
     const msgs = buildOverBudgetMessages(88_000, 20, 15000);
-    const origContents = msgs.map(m => m.content);
+    const origContents = msgs.map((m) => m.content);
 
     trimContext(msgs, 'ollama', 'test');
 
@@ -378,7 +396,10 @@ describe('trimContext — edge cases', () => {
 
     const result = trimContext(msgs, 'ollama', 'test');
     assert.equal(result.trimmed, true);
-    assert.ok(result.afterTokens <= 100_000, `should be <= max token budget, got ${result.afterTokens}`);
+    assert.ok(
+      result.afterTokens <= 100_000,
+      `should be <= max token budget, got ${result.afterTokens}`,
+    );
     assert.ok(result.removedCount > 0, 'should remove messages via hard fallback');
   });
 
@@ -428,10 +449,23 @@ describe('compactContext', () => {
     const digestIdx = result.messages.findIndex((m) => m.content.includes('[CONTEXT DIGEST]'));
     assert.ok(digestIdx >= 0, 'should include a context digest message');
     assert.equal(result.messages[0].role, 'system');
-    assert.equal(result.messages[1].content, 'Turn 1 user', 'first user message should be preserved');
-    assert.ok(result.messages.some((m) => m.content === 'Turn 3 user'), 'latest user turn should be preserved');
-    assert.ok(result.messages.some((m) => m.content === 'Turn 3 assistant'), 'latest assistant reply should be preserved');
-    assert.ok(!result.messages.some((m) => m.content === 'Turn 2 user'), 'older middle turn should be compacted');
+    assert.equal(
+      result.messages[1].content,
+      'Turn 1 user',
+      'first user message should be preserved',
+    );
+    assert.ok(
+      result.messages.some((m) => m.content === 'Turn 3 user'),
+      'latest user turn should be preserved',
+    );
+    assert.ok(
+      result.messages.some((m) => m.content === 'Turn 3 assistant'),
+      'latest assistant reply should be preserved',
+    );
+    assert.ok(
+      !result.messages.some((m) => m.content === 'Turn 2 user'),
+      'older middle turn should be compacted',
+    );
   });
 
   it('returns a no-op copy when there are not enough turns to compact', () => {
@@ -462,7 +496,6 @@ describe('compactContext', () => {
   });
 });
 
-
 // ─── distillContext ──────────────────────────────────────────────
 
 describe('distillContext', () => {
@@ -472,11 +505,7 @@ describe('distillContext', () => {
   });
 
   it('preserves system prompt at index 0', () => {
-    const msgs = [
-      makeSystemMsg(100),
-      makeUserMsg('Hello'),
-      makeAssistantMsg('Hi!'),
-    ];
+    const msgs = [makeSystemMsg(100), makeUserMsg('Hello'), makeAssistantMsg('Hi!')];
     const result = distillContext(msgs);
     assert.equal(result[0]?.role, 'system');
     assert.equal(result[0]?.content, msgs[0].content);
@@ -497,7 +526,8 @@ describe('distillContext', () => {
   it('preserves latest working memory update (coder_update_state tool call)', () => {
     const workingMemoryMsg = {
       role: 'user',
-      content: '[TOOL_RESULT]\n{"tool": "coder_update_state", "ok": true, "output": "Memory updated", "meta": {"workingMemory": {"plan": "Test plan"}}, "structuredError": null}\n[/TOOL_RESULT]',
+      content:
+        '[TOOL_RESULT]\n{"tool": "coder_update_state", "ok": true, "output": "Memory updated", "meta": {"workingMemory": {"plan": "Test plan"}}, "structuredError": null}\n[/TOOL_RESULT]',
     };
     const msgs = [
       makeSystemMsg(100),
@@ -553,7 +583,10 @@ describe('distillContext', () => {
     const resultSmallTail = distillContext(msgs, { tailSize: 2 });
     const resultLargeTail = distillContext(msgs, { tailSize: 15 });
     // Larger tail should preserve more messages
-    assert.ok(resultLargeTail.length >= resultSmallTail.length, 'larger tailSize should preserve at least as many messages');
+    assert.ok(
+      resultLargeTail.length >= resultSmallTail.length,
+      'larger tailSize should preserve at least as many messages',
+    );
   });
 
   it('handles messages without working memory updates', () => {

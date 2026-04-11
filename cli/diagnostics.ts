@@ -74,7 +74,10 @@ export async function detectProjectType(workspaceRoot: string): Promise<ProjectD
 /**
  * Run TypeScript diagnostics via tsc --noEmit
  */
-async function runTypeScriptDiagnostics(workspaceRoot: string, specificPath: string | null): Promise<DiagnosticResult> {
+async function runTypeScriptDiagnostics(
+  workspaceRoot: string,
+  specificPath: string | null,
+): Promise<DiagnosticResult> {
   try {
     const args: string[] = ['--noEmit', '--pretty', 'false'];
     if (specificPath) {
@@ -161,7 +164,10 @@ function parseTscOutput(output: string, workspaceRoot: string): Diagnostic[] {
 /**
  * Run Python diagnostics via pyright or ruff
  */
-async function runPythonDiagnostics(workspaceRoot: string, specificPath: string | null): Promise<DiagnosticResult> {
+async function runPythonDiagnostics(
+  workspaceRoot: string,
+  specificPath: string | null,
+): Promise<DiagnosticResult> {
   // Try pyright first, then fall back to ruff
   const pyrightResult: DiagnosticResult | null = await tryPyright(workspaceRoot, specificPath);
   if (pyrightResult) return pyrightResult;
@@ -173,13 +179,17 @@ async function runPythonDiagnostics(workspaceRoot: string, specificPath: string 
     diagnostics: [],
     error: {
       code: 'DIAGNOSTIC_TOOL_NOT_FOUND',
-      message: 'No Python type checker found. Install pyright (npm install -g pyright) or ruff (pip install ruff)',
+      message:
+        'No Python type checker found. Install pyright (npm install -g pyright) or ruff (pip install ruff)',
       retryable: false,
     },
   };
 }
 
-async function tryPyright(workspaceRoot: string, specificPath: string | null): Promise<DiagnosticResult | null> {
+async function tryPyright(
+  workspaceRoot: string,
+  specificPath: string | null,
+): Promise<DiagnosticResult | null> {
   try {
     const args: string[] = ['--outputjson'];
     if (specificPath) {
@@ -231,7 +241,9 @@ function parsePyrightOutput(jsonOutput: string, workspaceRoot: string): Diagnost
 
     for (const diag of data.generalDiagnostics || []) {
       diagnostics.push({
-        file: diag.file ? path.relative(workspaceRoot, path.resolve(workspaceRoot, diag.file)) : '<unknown>',
+        file: diag.file
+          ? path.relative(workspaceRoot, path.resolve(workspaceRoot, diag.file))
+          : '<unknown>',
         line: diag.range?.start?.line ?? 0,
         col: diag.range?.start?.character ?? 0,
         severity: diag.severity === 'error' ? 'error' : 'warning',
@@ -253,7 +265,10 @@ interface RuffViolation {
   code: string;
 }
 
-async function tryRuff(workspaceRoot: string, specificPath: string | null): Promise<DiagnosticResult | null> {
+async function tryRuff(
+  workspaceRoot: string,
+  specificPath: string | null,
+): Promise<DiagnosticResult | null> {
   try {
     const args: string[] = ['check', '--output-format', 'json'];
     if (specificPath) {
@@ -313,7 +328,10 @@ function parseRuffOutput(jsonOutput: string, workspaceRoot: string): Diagnostic[
 /**
  * Run Rust diagnostics via cargo check
  */
-async function runRustDiagnostics(workspaceRoot: string, specificPath: string | null): Promise<DiagnosticResult> {
+async function runRustDiagnostics(
+  workspaceRoot: string,
+  specificPath: string | null,
+): Promise<DiagnosticResult> {
   try {
     // cargo check doesn't support single-file checks well
     // so we run workspace-level check but filter results
@@ -408,7 +426,10 @@ function parseCargoOutput(output: string, workspaceRoot: string): Diagnostic[] {
 /**
  * Run Go diagnostics via go vet
  */
-async function runGoDiagnostics(workspaceRoot: string, specificPath: string | null): Promise<DiagnosticResult> {
+async function runGoDiagnostics(
+  workspaceRoot: string,
+  specificPath: string | null,
+): Promise<DiagnosticResult> {
   try {
     const args: string[] = ['vet'];
     if (specificPath) {
@@ -483,7 +504,10 @@ function parseGoVetOutput(output: string, workspaceRoot: string): Diagnostic[] {
 /**
  * Run diagnostics for the workspace or a specific file
  */
-export async function runDiagnostics(workspaceRoot: string, specificPath: string | null = null): Promise<FullDiagnosticResult> {
+export async function runDiagnostics(
+  workspaceRoot: string,
+  specificPath: string | null = null,
+): Promise<FullDiagnosticResult> {
   const { type: projectType } = await detectProjectType(workspaceRoot);
 
   if (!projectType) {
@@ -492,7 +516,8 @@ export async function runDiagnostics(workspaceRoot: string, specificPath: string
       projectType: null,
       error: {
         code: 'UNSUPPORTED_PROJECT_TYPE',
-        message: 'No supported project type detected (tsconfig.json, pyproject.toml, Cargo.toml, go.mod)',
+        message:
+          'No supported project type detected (tsconfig.json, pyproject.toml, Cargo.toml, go.mod)',
         retryable: false,
       },
     };

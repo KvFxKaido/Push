@@ -9,7 +9,13 @@ describe('buildToolResultMessage', () => {
   const result = { ok: true, text: 'file contents here', meta: null, structuredError: null };
 
   it('includes workingMemory when present in meta envelope', () => {
-    const wm = { plan: 'do stuff', openTasks: [], filesTouched: [], assumptions: [], errorsEncountered: [] };
+    const wm = {
+      plan: 'do stuff',
+      openTasks: [],
+      filesTouched: [],
+      assumptions: [],
+      errorsEncountered: [],
+    };
     const meta = { runId: 'r1', round: 1, contextChars: 100, ledger: {}, workingMemory: wm };
     const msg = buildToolResultMessage(call, result, meta);
 
@@ -82,9 +88,9 @@ describe('buildSystemPrompt', () => {
 describe('contextChars calculation', () => {
   it('sums character lengths of string message content', () => {
     const messages = [
-      { role: 'system', content: 'You are a helper.' },   // 17
-      { role: 'user', content: 'Hello' },                  // 5
-      { role: 'assistant', content: 'Hi there!' },         // 9
+      { role: 'system', content: 'You are a helper.' }, // 17
+      { role: 'user', content: 'Hello' }, // 5
+      { role: 'assistant', content: 'Hi there!' }, // 9
     ];
 
     const contextChars = messages.reduce(
