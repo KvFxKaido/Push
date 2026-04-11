@@ -1,9 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  __getDispatchModeForTesting,
+  __getPendingCountForTesting,
+  __resetErrorReportingForTesting,
+  ERROR_BUFFER_CAP,
   type CapturedError,
   extractRejection,
   extractWindowError,
   installGlobalErrorHandlers,
+  primeErrorReporting,
+  reportError,
   shouldSkipReport,
 } from './error-reporting';
 
@@ -234,3 +240,209 @@ describe('installGlobalErrorHandlers', () => {
     expect(reporter).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A tiny deferred helper — creates a Promise alongside its resolve/reject
+ * functions so tests can drive settlement explicitly.
+ */
+function createDeferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/** Flush the microtask queue so then-callbacks attached to resolved promises run. */
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe('reportError dispatch modes', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    __resetErrorReportingForTesting();
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    __resetErrorReportingForTesting();
+  });
+
+  it('starts in disabled mode and falls back to console.warn', () => {
+    expect(__getDispatchModeForTesting()).toBe('disabled');
+
+    reportError({ source: 'react-render', error: new Error('boom') });
+
+    expect(warnSpy).toHaveBeenCalled();
+    expect(__getPendingCountForTesting()).toBe(0);
+  });
+
+  it('never throws when dispatching in disabled mode', () => {
+    expect(() => reportError({ source: 'react-render', error: new Error('boom') })).not.toThrow();
+  });
+
+  it('skips filtered errors in disabled mode without warning', () => {
+    reportError({
+      source: 'window-error',
+      error: new Error('Script error.'),
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('buffers errors after priming until ready resolves', async () => {
+    const ready = createDeferred<void>();
+    primeErrorReporting(ready.promise);
+
+    expect(__getDispatchModeForTesting()).toBe('buffering');
+
+    reportError({ source: 'react-render', error: new Error('first') });
+    reportError({ source: 'window-error', error: new Error('second') });
+
+    expect(__getPendingCountForTesting()).toBe(2);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('flushes the buffer in FIFO order when ready resolves', async () => {
+    const ready = createDeferred<void>();
+    primeErrorReporting(ready.promise);
+
+    reportError({ source: 'react-render', error: new Error('first') });
+    reportError({ source: 'react-render', error: new Error('second') });
+
+    ready.resolve();
+    await flushMicrotasks();
+
+    expect(__getDispatchModeForTesting()).toBe('live');
+    expect(__getPendingCountForTesting()).toBe(0);
+  });
+
+  it('dispatches new errors straight through after ready resolves', async () => {
+    const ready = createDeferred<void>();
+    primeErrorReporting(ready.promise);
+    ready.resolve();
+    await flushMicrotasks();
+
+    // In live mode, reportError should not buffer and should not console.warn.
+    reportError({ source: 'react-render', error: new Error('post-ready') });
+
+    expect(__getPendingCountForTesting()).toBe(0);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('drains the buffer to console.warn when ready rejects', async () => {
+    const ready = createDeferred<void>();
+    primeErrorReporting(ready.promise);
+
+    reportError({ source: 'react-render', error: new Error('buffered-1') });
+    reportError({ source: 'window-error', error: new Error('buffered-2') });
+
+    ready.reject('bootstrap-failed');
+    await flushMicrotasks();
+
+    expect(__getDispatchModeForTesting()).toBe('givenup');
+    expect(__getPendingCountForTesting()).toBe(0);
+    // One header line plus one per buffered error.
+    expect(warnSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(warnSpy.mock.calls[0][0]).toContain('bootstrap-failed');
+  });
+
+  it('warns on subsequent errors after givenup', async () => {
+    const ready = createDeferred<void>();
+    primeErrorReporting(ready.promise);
+    ready.reject('disabled');
+    await flushMicrotasks();
+
+    warnSpy.mockClear();
+
+    reportError({ source: 'react-render', error: new Error('after-givenup') });
+
+    expect(warnSpy).toHaveBeenCalled();
+    expect(__getDispatchModeForTesting()).toBe('givenup');
+  });
+
+  it('primeErrorReporting is idempotent', async () => {
+    const first = createDeferred<void>();
+    const second = createDeferred<void>();
+
+    primeErrorReporting(first.promise);
+    primeErrorReporting(second.promise); // ignored
+
+    reportError({ source: 'react-render', error: new Error('buffered') });
+    expect(__getPendingCountForTesting()).toBe(1);
+
+    // Resolving the *second* promise should be a no-op — only the first one
+    // is wired up — so the buffer should not flush.
+    second.resolve();
+    await flushMicrotasks();
+    expect(__getDispatchModeForTesting()).toBe('buffering');
+    expect(__getPendingCountForTesting()).toBe(1);
+
+    // Resolving the first promise completes the transition.
+    first.resolve();
+    await flushMicrotasks();
+    expect(__getDispatchModeForTesting()).toBe('live');
+    expect(__getPendingCountForTesting()).toBe(0);
+  });
+
+  it('caps the buffer at ERROR_BUFFER_CAP and drops the oldest on overflow', () => {
+    const ready = createDeferred<void>();
+    primeErrorReporting(ready.promise);
+
+    for (let i = 0; i < ERROR_BUFFER_CAP + 5; i++) {
+      reportError({ source: 'react-render', error: new Error(`err-${i}`) });
+    }
+
+    expect(__getPendingCountForTesting()).toBe(ERROR_BUFFER_CAP);
+  });
+
+  it('reportError never throws regardless of dispatch mode', () => {
+    const cases: DispatchCase[] = [
+      { mode: 'disabled', setup: () => {} },
+      {
+        mode: 'buffering',
+        setup: () => primeErrorReporting(createDeferred<void>().promise),
+      },
+      {
+        mode: 'live',
+        setup: async () => {
+          const ready = createDeferred<void>();
+          primeErrorReporting(ready.promise);
+          ready.resolve();
+          await flushMicrotasks();
+        },
+      },
+      {
+        mode: 'givenup',
+        setup: async () => {
+          const ready = createDeferred<void>();
+          primeErrorReporting(ready.promise);
+          ready.reject('disabled');
+          await flushMicrotasks();
+        },
+      },
+    ];
+
+    for (const { setup } of cases) {
+      __resetErrorReportingForTesting();
+      warnSpy.mockClear();
+      void setup();
+      expect(() => reportError({ source: 'react-render', error: new Error('test') })).not.toThrow();
+    }
+  });
+});
+
+interface DispatchCase {
+  mode: 'disabled' | 'buffering' | 'live' | 'givenup';
+  setup: () => void | Promise<void>;
+}

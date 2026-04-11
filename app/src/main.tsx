@@ -4,7 +4,7 @@ import './index.css';
 import App from './App.tsx';
 import { RootErrorBoundary } from './components/RootErrorBoundary.tsx';
 import { initPushTracing } from './lib/tracing.ts';
-import { installGlobalErrorHandlers } from './lib/error-reporting.ts';
+import { installGlobalErrorHandlers, primeErrorReporting } from './lib/error-reporting.ts';
 import { perfMark } from './lib/perf-marks.ts';
 
 perfMark('app:boot');
@@ -23,6 +23,11 @@ const tracingConfig = initPushTracing();
 // bootstrap guard here so handlers are only installed when crash events can
 // actually be exported.
 if (tracingConfig.enabled && (tracingConfig.endpoint || tracingConfig.consoleExporter)) {
+  // Prime the reporter to buffer crashes during the pre-bootstrap window —
+  // `initPushTracing` defers SDK setup to `requestIdleCallback` for first
+  // paint, and we don't want to drop early-startup errors on the floor while
+  // we wait for the tracer to come up.
+  primeErrorReporting();
   installGlobalErrorHandlers();
 }
 

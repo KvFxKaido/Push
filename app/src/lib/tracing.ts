@@ -49,6 +49,56 @@ type TracingEnvInput = {
 let initialized = false;
 let cachedConfig: PushTracingConfig | null = null;
 
+/**
+ * Settled states for tracing bootstrap. `whenTracingReady()` resolves on
+ * `'ready'` and rejects with any other string so callers can branch on the
+ * failure reason.
+ */
+export type TracingReadyRejection = 'disabled' | 'no-exporters' | 'bootstrap-failed';
+
+let tracingReadyResolve: (() => void) | null = null;
+let tracingReadyReject: ((reason: TracingReadyRejection) => void) | null = null;
+let tracingReadyPromise: Promise<void> | null = null;
+let tracingReadySettled = false;
+
+function ensureTracingReadyDeferred(): Promise<void> {
+  if (!tracingReadyPromise) {
+    tracingReadyPromise = new Promise<void>((resolve, reject) => {
+      tracingReadyResolve = resolve;
+      tracingReadyReject = reject;
+    });
+    // Swallow unhandled rejection warnings — callers that don't opt in to
+    // the ready signal shouldn't trigger `unhandledrejection` spam.
+    tracingReadyPromise.catch(() => {});
+  }
+  return tracingReadyPromise;
+}
+
+function settleTracingReady(outcome: 'ready' | TracingReadyRejection): void {
+  if (tracingReadySettled) return;
+  tracingReadySettled = true;
+  ensureTracingReadyDeferred();
+  if (outcome === 'ready') {
+    tracingReadyResolve?.();
+  } else {
+    tracingReadyReject?.(outcome);
+  }
+}
+
+/**
+ * Returns a promise that resolves when the OpenTelemetry SDK has been
+ * successfully bootstrapped, or rejects with a `TracingReadyRejection` reason
+ * when tracing is disabled, has no exporters configured, or SDK bootstrap
+ * fails. Callers that need to defer exporter-dependent work (e.g. a buffered
+ * error reporter) until the SDK is live should await this.
+ *
+ * Safe to call before `initPushTracing()` — the promise is created lazily and
+ * settles once `initPushTracing()` runs.
+ */
+export function whenTracingReady(): Promise<void> {
+  return ensureTracingReadyDeferred();
+}
+
 function normalizeString(value: string | null | undefined): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -109,19 +159,33 @@ export function initPushTracing(): PushTracingConfig {
   const config = resolveTracingConfigFromInputs();
   cachedConfig = config;
 
+  // Ensure the ready deferred exists before we try to settle it below.
+  ensureTracingReadyDeferred();
+
   // Skip SDK load entirely when tracing is disabled or no exporters are configured.
   const hasExporters = Boolean(config.endpoint || config.consoleExporter);
-  if (!config.enabled || !hasExporters) return config;
+  if (!config.enabled) {
+    settleTracingReady('disabled');
+    return config;
+  }
+  if (!hasExporters) {
+    settleTracingReady('no-exporters');
+    return config;
+  }
 
   // Defer the heavy SDK bootstrap so it never blocks first paint.
   const bootstrap = () => {
     loadTracingSdk()
       .then((sdk) => sdk.bootstrapTracing(config))
+      .then(() => {
+        settleTracingReady('ready');
+      })
       .catch((error) => {
         console.warn(
           '[tracing] Failed to initialize OpenTelemetry tracing:',
           error instanceof Error ? error.message : String(error),
         );
+        settleTracingReady('bootstrap-failed');
       });
   };
 
