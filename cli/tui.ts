@@ -13,6 +13,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
 import { createTheme } from './tui-theme.js';
+import { delegationEventToTranscript, isDelegationEvent } from './tui-delegation-events.js';
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
 import { filterSessions } from './tui-fuzzy.js';
@@ -2227,6 +2228,23 @@ export async function runTUI(options = {}) {
         tuiState.dirty.add('all');
         process.stdout.write('\x07'); // bell
         scheduler.schedule();
+        break;
+
+      default:
+        // Delegation lifecycle events (`subagent.*`, `task_graph.*`) are
+        // routed through a single helper so the list of handled types lives
+        // in one place (cli/tui-delegation-events.ts). Adding a new event
+        // type to the shared runtime vocabulary only requires updating the
+        // helper's `DELEGATION_EVENT_TYPES` set and its transform switch —
+        // no changes here. Unknown non-delegation events fall through
+        // silently, same as before.
+        if (isDelegationEvent(event)) {
+          const entry = delegationEventToTranscript(event);
+          if (entry) {
+            addTranscriptEntry(tuiState, entry.role, entry.text);
+            scheduler.schedule();
+          }
+        }
         break;
     }
   }
