@@ -1,0 +1,6 @@
+// Header
+import { a } from "a";
+
+export function main() {
+  console.log("moved fix");
+}

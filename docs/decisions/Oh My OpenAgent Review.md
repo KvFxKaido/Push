@@ -136,4 +136,4 @@ are the three Tier-1 items above. They are being tackled on branch
       `results.json`, no runtime flag.
 
 Tier 2 items are not committed work — promote to a runbook or ROADMAP entry
-first if we decide to pursue them.
+- [x] Hashline metric runbook — executed. Initial results (100% vs 66.7%) recorded in `docs/decisions/Hashline System Review.md`. Fixtures and harness live in `tests/hashline-effectiveness/`.

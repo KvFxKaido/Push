@@ -1,0 +1,8 @@
+[
+  {
+    "op": "replace_line",
+    "ref": "3781f94",
+    "content": "  console.log(\"moved fix\");",
+    "originalLine": "  console.log(\"hello\");"
+  }
+]

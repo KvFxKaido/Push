@@ -1,0 +1,52 @@
+{
+  "date": "2026-04-12",
+  "fixtures": 3,
+  "hashline": {
+    "applied": 3,
+    "exactMatch": 3,
+    "errors": 0
+  },
+  "control": {
+    "applied": 3,
+    "exactMatch": 2,
+    "errors": 0
+  },
+  "byBucket": {
+    "clean": {
+      "hashline": {
+        "applied": 1,
+        "exactMatch": 1,
+        "errors": 0
+      },
+      "control": {
+        "applied": 1,
+        "exactMatch": 1,
+        "errors": 0
+      }
+    },
+    "stale": {
+      "hashline": {
+        "applied": 1,
+        "exactMatch": 1,
+        "errors": 0
+      },
+      "control": {
+        "applied": 1,
+        "exactMatch": 0,
+        "errors": 0
+      }
+    },
+    "moved": {
+      "hashline": {
+        "applied": 1,
+        "exactMatch": 1,
+        "errors": 0
+      },
+      "control": {
+        "applied": 1,
+        "exactMatch": 1,
+        "errors": 0
+      }
+    }
+  }
+}
