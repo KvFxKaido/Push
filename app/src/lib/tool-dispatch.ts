@@ -695,7 +695,11 @@ export function diagnoseToolCallFailure(text: string): ToolCallDiagnosis | null 
  * without emitting the explorer tool. Bias toward investigation intent.
  */
 function diagnoseMissingExplorerCall(text: string): ToolCallDiagnosis | null {
-  if (extractBareToolJsonObjects(text).some((parsed) => isReadOnlyToolName(asRecord(parsed)?.tool as string))) {
+  if (
+    extractBareToolJsonObjects(text).some((parsed) =>
+      isReadOnlyToolName(asRecord(parsed)?.tool as string),
+    )
+  ) {
     return null;
   }
   const classification = classifyIntent(text);
