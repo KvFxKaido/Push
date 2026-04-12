@@ -104,4 +104,20 @@ describe('runInitDeep', () => {
     assert.notEqual(after, '# Existing root doc\n');
     assert.match(after, /# Repository Context/);
   });
+
+  it('throws a clear error when --cwd does not exist', async () => {
+    const bogus = path.join(os.tmpdir(), 'push-init-deep-does-not-exist-xyz');
+    await assert.rejects(
+      () => runInitDeep({ cwd: bogus, dryRun: true, force: false }),
+      /directory does not exist/,
+    );
+  });
+
+  it('throws when --cwd points at a file instead of a directory', async () => {
+    const filePath = path.join(repo, 'README.md');
+    await assert.rejects(
+      () => runInitDeep({ cwd: filePath, dryRun: true, force: false }),
+      /is not a directory/,
+    );
+  });
 });

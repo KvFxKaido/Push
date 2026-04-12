@@ -66,15 +66,18 @@ Ranked by effort vs payoff.
 ### Tier 1 — small, self-contained, ship this session
 
 1. **Comment Checker in the Auditor.** A content-policy pass over the pending
-   diff flags obvious AI-comment patterns (`// added X`, `// NEW:`,
-   restating-the-next-line comments, comments that narrate an operation
-   already obvious from code). Slots into the existing SAFE/UNSAFE gate — no
+   diff flags high-confidence AI-comment artifacts (operation narration like
+   `// added X`, meta markers like `// NEW:`, and trivial docblocks). It
+   deliberately skips the ambiguous "comment restates the next line" class
+   to keep precision high. Slots into the existing SAFE/UNSAFE gate — no
    new role, no new provider plumbing.
 
-2. **`init-deep` bootstrap command.** Walk the current repo, ask Explorer for
-   a one-paragraph summary per top-level (and significant sub-) directory,
-   write an `AGENTS.md` file at each level. Reuses Explorer + existing file
-   tools. Largest UX win for mobile users dropped into a fresh repo.
+2. **`init-deep` bootstrap command.** Walk the current repo, derive a short
+   summary for each top-level (and significant sub-) directory from
+   deterministic hints (`README.md`, `package.json` name/description, child
+   listings), and write an `AGENTS.md` file at each level. Uses existing
+   file tools only — no Explorer delegation, no model calls, no provider
+   dependency. Largest UX win for mobile users dropped into a fresh repo.
 
 3. **Published hashline metric.** Pick a fixture set, run edits with hashline
    on/off, record the success-rate delta. Validates (or disproves) a claim we

@@ -102,6 +102,23 @@ function truncateText(text, maxLength = 100) {
   return text.slice(0, maxLength) + '...';
 }
 
+// Strict boolean flag parser — parseArgs runs with strict: false so a scripted
+// caller can pass `--force=false` or `--dry-run=false`, and the raw value
+// arrives as the STRING "false". Plain Boolean(...) would then coerce it to
+// true and do the opposite of what the caller asked for. Accept the common
+// string forms explicitly and reject anything else rather than guessing.
+function parseBoolFlag(raw, flagName) {
+  if (raw === undefined || raw === false) return false;
+  if (raw === true) return true;
+  if (typeof raw === 'string') {
+    const normalized = raw.toLowerCase();
+    if (normalized === '' || normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0') return false;
+    throw new Error(`Invalid value for --${flagName}: ${JSON.stringify(raw)}`);
+  }
+  return Boolean(raw);
+}
+
 function printHelp() {
   process.stdout.write(
     `Push CLI (bootstrap)
@@ -1694,8 +1711,8 @@ export async function main() {
   if (subcommand === 'init-deep') {
     const { runInitDeep } = await import('./init-deep.ts');
     const cwd = path.resolve(values.cwd || process.cwd());
-    const dryRun = Boolean(values['dry-run'] || values.dryRun);
-    const force = Boolean(values.force);
+    const dryRun = parseBoolFlag(values['dry-run'] ?? values.dryRun, 'dry-run');
+    const force = parseBoolFlag(values.force, 'force');
     const result = await runInitDeep({ cwd, dryRun, force });
 
     if (values.json) {

@@ -19,7 +19,11 @@ import {
   type InitDeepProposal,
 } from '../lib/init-deep.ts';
 
-/** Max depth we traverse below the repo root. Two is enough for MVP: top-level and one layer beneath for src/lib groups. */
+/**
+ * Max depth we traverse below the repo root. Four levels reaches
+ * `app/src/lib`-style nested source groups (root -> app -> src -> lib)
+ * while keeping init-deep fast and the generated output scoped.
+ */
 const MAX_DEPTH = 4;
 
 const README_MAX_CHARS = 400;
@@ -113,10 +117,12 @@ async function buildSnapshot(
 
 async function collectSnapshots(repoRoot: string): Promise<InitDeepDirSnapshot[]> {
   const snapshots: InitDeepDirSnapshot[] = [];
+  // BFS queue walked via an index so the traversal stays O(n) — `Array#shift`
+  // would be O(queue.length) per pop and noticeable on larger repos.
   const queue: { relative: string; depth: number }[] = [{ relative: '', depth: 0 }];
 
-  while (queue.length > 0) {
-    const { relative, depth } = queue.shift()!;
+  for (let cursor = 0; cursor < queue.length; cursor++) {
+    const { relative, depth } = queue[cursor];
     const snapshot = await buildSnapshot(repoRoot, relative);
     if (!snapshot) continue;
     snapshots.push(snapshot);
@@ -159,9 +165,30 @@ async function collectExistingAgentsMd(
  * Run the init-deep flow against a real filesystem. Callers are responsible
  * for printing results; this function returns the structured outcome and
  * does not write to stdout.
+ *
+ * Throws when the root directory is missing, unreadable, or not a directory
+ * — otherwise a typo like `--cwd /bad/path` would silently succeed with an
+ * empty plan and mislead users into thinking init-deep had nothing to do.
  */
 export async function runInitDeep(options: InitDeepRunOptions): Promise<InitDeepRunResult> {
   const repoRoot = path.resolve(options.cwd);
+
+  try {
+    const rootStat = await fs.stat(repoRoot);
+    if (!rootStat.isDirectory()) {
+      throw new Error(`init-deep: ${repoRoot} is not a directory`);
+    }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === 'ENOENT') {
+      throw new Error(`init-deep: directory does not exist: ${repoRoot}`);
+    }
+    if (code === 'EACCES' || code === 'EPERM') {
+      throw new Error(`init-deep: cannot read directory: ${repoRoot}`);
+    }
+    throw err;
+  }
+
   const snapshots = await collectSnapshots(repoRoot);
 
   // First pass: plan without "existing" knowledge to get the full list of
