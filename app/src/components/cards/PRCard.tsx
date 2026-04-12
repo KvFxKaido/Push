@@ -1,3 +1,4 @@
+import { formatDistanceToNow } from 'date-fns';
 import { MergeShieldIcon, PRThreadIcon } from '@/components/icons/push-custom-icons';
 import type { PRCardData } from '@/types';
 import { useExpandable } from '@/hooks/useExpandable';
@@ -17,6 +18,8 @@ const statusConfig = {
 
 export function PRCard({ data }: { data: PRCardData }) {
   const { expanded: filesExpanded, toggleExpanded: toggleFilesExpanded } = useExpandable(false);
+  const { expanded: reviewExpanded, toggleExpanded: toggleReviewExpanded } = useExpandable(false);
+  const { expanded: convoExpanded, toggleExpanded: toggleConvoExpanded } = useExpandable(false);
   const { label, color, Icon } = statusConfig[data.state];
 
   return (
@@ -88,6 +91,83 @@ export function PRCard({ data }: { data: PRCardData }) {
                   <span className="text-push-status-error">-{f.deletions}</span>
                 </span>
                 <span className="text-push-fg-secondary font-mono truncate">{f.filename}</span>
+              </div>
+            ))}
+          </ExpandableCardPanel>
+        </div>
+      )}
+
+      {/* Inline review comments */}
+      {data.reviewComments && data.reviewComments.length > 0 && (
+        <div className="border-t border-push-edge">
+          <button
+            onClick={toggleReviewExpanded}
+            aria-expanded={reviewExpanded}
+            className="w-full px-3 py-1.5 flex items-center gap-1 text-push-sm text-push-fg-dim hover:text-push-fg-secondary transition-colors"
+          >
+            <ExpandChevron expanded={reviewExpanded} />
+            <span>
+              {data.reviewComments.length} review comment
+              {data.reviewComments.length !== 1 ? 's' : ''}
+            </span>
+          </button>
+          <ExpandableCardPanel
+            expanded={reviewExpanded}
+            bordered={false}
+            className="px-3 pb-2 space-y-2"
+          >
+            {data.reviewComments.map((c, i) => (
+              <div key={i} className="text-push-sm">
+                <div className="flex items-baseline gap-1.5 min-w-0 text-push-fg-dim">
+                  <span className="font-medium text-push-fg-secondary shrink-0">@{c.author}</span>
+                  {c.path && (
+                    <span className="font-mono text-push-xs min-w-0 truncate">
+                      {c.path}
+                      {c.line ? `:${c.line}` : ''}
+                    </span>
+                  )}
+                </div>
+                <p className="text-push-fg-secondary mt-0.5 line-clamp-3 whitespace-pre-wrap">
+                  {c.body}
+                </p>
+              </div>
+            ))}
+          </ExpandableCardPanel>
+        </div>
+      )}
+
+      {/* Conversation comments */}
+      {data.issueComments && data.issueComments.length > 0 && (
+        <div className="border-t border-push-edge">
+          <button
+            onClick={toggleConvoExpanded}
+            aria-expanded={convoExpanded}
+            className="w-full px-3 py-1.5 flex items-center gap-1 text-push-sm text-push-fg-dim hover:text-push-fg-secondary transition-colors"
+          >
+            <ExpandChevron expanded={convoExpanded} />
+            <span>
+              {data.issueComments.length} conversation comment
+              {data.issueComments.length !== 1 ? 's' : ''}
+            </span>
+          </button>
+          <ExpandableCardPanel
+            expanded={convoExpanded}
+            bordered={false}
+            className="px-3 pb-2 space-y-2"
+          >
+            {data.issueComments.map((c, i) => (
+              <div key={i} className="text-push-sm">
+                <div className="flex items-baseline gap-1.5 text-push-fg-dim">
+                  <span className="font-medium text-push-fg-secondary">@{c.author}</span>
+                  {c.createdAt && (
+                    <span className="text-push-xs">
+                      {formatDistanceToNow(new Date(c.createdAt), { addSuffix: true })}
+                    </span>
+                  )}
+                </div>
+                <p className="text-push-fg-secondary mt-0.5 line-clamp-3 whitespace-pre-wrap">
+                  {c.body}
+                </p>
               </div>
             ))}
           </ExpandableCardPanel>

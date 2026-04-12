@@ -465,6 +465,19 @@ export interface ToolExecutionResult {
   postHookHalt?: string;
 }
 
+export interface PRReviewComment {
+  author: string;
+  path?: string;
+  line?: number;
+  body: string;
+}
+
+export interface PRIssueComment {
+  author: string;
+  body: string;
+  createdAt: string;
+}
+
 export interface PRCardData {
   number: number;
   title: string;
@@ -478,6 +491,8 @@ export interface PRCardData {
   createdAt: string;
   description?: string;
   files?: { filename: string; status: string; additions: number; deletions: number }[];
+  reviewComments?: PRReviewComment[];
+  issueComments?: PRIssueComment[];
 }
 
 export interface PRListCardData {
