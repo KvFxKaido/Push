@@ -13,6 +13,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
 import { createTheme } from './tui-theme.js';
+import { delegationEventToTranscript } from './tui-delegation-events.js';
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
 import { filterSessions } from './tui-fuzzy.js';
@@ -2214,6 +2215,28 @@ export async function runTUI(options = {}) {
           scheduler.schedule();
         }
         break;
+
+      // ── Delegation lifecycle events ──────────────────────────────
+      // The CLI engine does not currently produce subagent.* or
+      // task_graph.* events, but when they arrive from other sources
+      // (daemon stream, future CLI delegation runtime) we render them
+      // as normal transcript entries. See cli/tui-delegation-events.ts
+      // for the event → transcript mapping.
+      case 'subagent.started':
+      case 'subagent.completed':
+      case 'subagent.failed':
+      case 'task_graph.task_ready':
+      case 'task_graph.task_started':
+      case 'task_graph.task_completed':
+      case 'task_graph.task_failed':
+      case 'task_graph.task_cancelled': {
+        const entry = delegationEventToTranscript(event);
+        if (entry) {
+          addTranscriptEntry(tuiState, entry.role, entry.text);
+          scheduler.schedule();
+        }
+        break;
+      }
 
       case 'run_complete':
         tuiState.runState = 'idle';
