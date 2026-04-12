@@ -325,6 +325,22 @@ function isAbortError(err: unknown): boolean {
   );
 }
 
+function withCumulativeRounds(
+  outcome: DelegationOutcome | undefined,
+  rounds: number,
+): DelegationOutcome | undefined {
+  return outcome ? { ...outcome, rounds } : undefined;
+}
+
+function formatCompletionRetriesExhaustedError(
+  maxRetries: number,
+  outcome: DelegationOutcome | undefined,
+): string {
+  const gaps = outcome?.missingRequirements ?? [];
+  const missingRequirements = gaps.length > 0 ? ` Missing requirements: ${gaps.join('; ')}` : '';
+  return `Maximum completion retries (${maxRetries}) exhausted. Task remains incomplete.${missingRequirements}`;
+}
+
 /**
  * Execute a validated task graph.
  */
@@ -359,6 +375,7 @@ export async function executeTaskGraph(
       try {
         let attempts = 0;
         let currentEnrichedContext = enrichedContext;
+        let nodeRounds = 0;
 
         while (attempts <= MAX_COMPLETION_RETRIES) {
           const result = await executor(state.node, currentEnrichedContext, signal);
@@ -368,16 +385,21 @@ export async function executeTaskGraph(
             return id;
           }
 
+          nodeRounds += result.rounds;
           totalRounds += result.rounds;
+          const cumulativeDelegationOutcome = withCumulativeRounds(
+            result.delegationOutcome,
+            nodeRounds,
+          );
 
           // Todo Enforcer: if a Coder task is incomplete, retry up to MAX_COMPLETION_RETRIES times.
           if (
             state.node.agent === 'coder' &&
-            result.delegationOutcome?.status === 'incomplete' &&
+            cumulativeDelegationOutcome?.status === 'incomplete' &&
             attempts < MAX_COMPLETION_RETRIES
           ) {
             attempts++;
-            const gaps = result.delegationOutcome.missingRequirements ?? [];
+            const gaps = cumulativeDelegationOutcome.missingRequirements ?? [];
             const gapList =
               gaps.length > 0
                 ? gaps.map((g) => `- ${g}`).join('\n')
@@ -397,15 +419,23 @@ export async function executeTaskGraph(
           }
 
           // Check for retry exhaustion
-          if (state.node.agent === 'coder' && result.delegationOutcome?.status === 'incomplete') {
+          if (
+            state.node.agent === 'coder' &&
+            cumulativeDelegationOutcome?.status === 'incomplete'
+          ) {
+            state.result = result.summary;
+            state.delegationOutcome = cumulativeDelegationOutcome;
             throw new Error(
-              `Maximum completion retries (${MAX_COMPLETION_RETRIES}) exhausted. Task remains incomplete.`,
+              formatCompletionRetriesExhaustedError(
+                MAX_COMPLETION_RETRIES,
+                cumulativeDelegationOutcome,
+              ),
             );
           }
 
           state.status = 'completed';
           state.result = result.summary;
-          state.delegationOutcome = result.delegationOutcome;
+          state.delegationOutcome = cumulativeDelegationOutcome;
           state.memoryEntry = buildTaskGraphMemoryEntry(state) ?? undefined;
           state.elapsedMs = Date.now() - taskStartMs;
           onProgress?.({

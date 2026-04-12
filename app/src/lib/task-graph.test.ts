@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { DelegationOutcome, TaskGraphNode } from '@/types';
 import { executeTaskGraph, formatTaskGraphResult } from './task-graph';
 
-function makeDelegationOutcome(agent: 'coder' | 'explorer', summary: string): DelegationOutcome {
+function makeDelegationOutcome(
+  agent: 'coder' | 'explorer',
+  summary: string,
+  overrides: Partial<DelegationOutcome> = {},
+): DelegationOutcome {
   return {
     agent,
     status: 'complete',
@@ -15,6 +19,7 @@ function makeDelegationOutcome(agent: 'coder' | 'explorer', summary: string): De
     rounds: 1,
     checkpoints: 0,
     elapsedMs: 10,
+    ...overrides,
   };
 }
 
@@ -122,6 +127,96 @@ describe('task-graph', () => {
     expect(result.nodeStates.get('root')?.status).toBe('failed');
     expect(result.nodeStates.get('dependent')?.status).toBe('cancelled');
     expect(result.nodeStates.get('independent')?.status).toBe('completed');
+  });
+
+  it('retries incomplete coder tasks and stores cumulative rounds on success', async () => {
+    const contexts: string[][] = [];
+    const nodes: TaskGraphNode[] = [{ id: 'fix-auth', agent: 'coder', task: 'Fix auth flow' }];
+
+    const result = await executeTaskGraph(nodes, async (node, enrichedContext) => {
+      contexts.push(enrichedContext);
+      if (contexts.length === 1) {
+        return {
+          summary: 'Auth fix still misses regression coverage.',
+          rounds: 2,
+          delegationOutcome: makeDelegationOutcome(
+            node.agent,
+            'Auth fix still misses regression coverage.',
+            {
+              status: 'incomplete',
+              checks: [{ id: 'auth-regression', passed: false, output: 'missing test' }],
+              missingRequirements: ['Add regression coverage for expired tokens'],
+              nextRequiredAction: 'Add the missing test',
+              rounds: 2,
+            },
+          ),
+        };
+      }
+
+      return {
+        summary: 'Auth fix and regression coverage complete.',
+        rounds: 3,
+        delegationOutcome: makeDelegationOutcome(
+          node.agent,
+          'Auth fix and regression coverage complete.',
+          {
+            checks: [{ id: 'auth-regression', passed: true, output: 'passed' }],
+            rounds: 3,
+          },
+        ),
+      };
+    });
+
+    const state = result.nodeStates.get('fix-auth');
+
+    expect(result.success).toBe(true);
+    expect(result.totalRounds).toBe(5);
+    expect(contexts).toHaveLength(2);
+    expect(contexts[1]?.join('\n')).toContain('[TODO_ENFORCER]');
+    expect(contexts[1]?.join('\n')).toContain('- Add regression coverage for expired tokens');
+    expect(state?.status).toBe('completed');
+    expect(state?.result).toBe('Auth fix and regression coverage complete.');
+    expect(state?.delegationOutcome?.rounds).toBe(5);
+    expect(state?.delegationOutcome?.checks).toEqual([
+      { id: 'auth-regression', passed: true, output: 'passed' },
+    ]);
+  });
+
+  it('preserves final incomplete outcome when coder retries are exhausted', async () => {
+    let attempts = 0;
+    const nodes: TaskGraphNode[] = [{ id: 'fix-auth', agent: 'coder', task: 'Fix auth flow' }];
+
+    const result = await executeTaskGraph(nodes, async (node) => {
+      attempts++;
+      const summary = `Attempt ${attempts} still incomplete.`;
+      return {
+        summary,
+        rounds: attempts,
+        delegationOutcome: makeDelegationOutcome(node.agent, summary, {
+          status: 'incomplete',
+          checks: [{ id: `check-${attempts}`, passed: false, output: `failure ${attempts}` }],
+          missingRequirements: [`gap ${attempts}`],
+          nextRequiredAction: `Address gap ${attempts}`,
+          rounds: attempts,
+        }),
+      };
+    });
+
+    const state = result.nodeStates.get('fix-auth');
+
+    expect(result.success).toBe(false);
+    expect(result.totalRounds).toBe(6);
+    expect(attempts).toBe(3);
+    expect(state?.status).toBe('failed');
+    expect(state?.result).toBe('Attempt 3 still incomplete.');
+    expect(state?.error).toContain('Maximum completion retries (2) exhausted');
+    expect(state?.error).toContain('gap 3');
+    expect(state?.delegationOutcome?.summary).toBe('Attempt 3 still incomplete.');
+    expect(state?.delegationOutcome?.rounds).toBe(6);
+    expect(state?.delegationOutcome?.missingRequirements).toEqual(['gap 3']);
+    expect(state?.delegationOutcome?.checks).toEqual([
+      { id: 'check-3', passed: false, output: 'failure 3' },
+    ]);
   });
 
   it('marks aborted work as cancelled instead of failed', async () => {
