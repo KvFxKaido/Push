@@ -1035,15 +1035,20 @@ const DEPRECATED_PROVIDERS = {
   minimax: 'openrouter',
 };
 
-function parseProvider(raw) {
-  const provider = (raw || process.env.PUSH_PROVIDER || 'ollama').toLowerCase();
-  if (
-    provider === 'ollama' ||
-    provider === 'openrouter' ||
-    provider === 'zen' ||
-    provider === 'nvidia'
-  )
-    return provider;
+function normalizeProviderInput(value) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === 'undefined' || normalized === 'null') return '';
+  return normalized;
+}
+
+function parseProvider(raw, fallback) {
+  const provider =
+    normalizeProviderInput(raw) ||
+    normalizeProviderInput(process.env.PUSH_PROVIDER) ||
+    normalizeProviderInput(fallback) ||
+    'ollama';
+  if (PROVIDER_CONFIGS[provider]) return provider;
   if (DEPRECATED_PROVIDERS[provider]) {
     const replacement = DEPRECATED_PROVIDERS[provider];
     process.stderr.write(
@@ -1051,7 +1056,7 @@ function parseProvider(raw) {
     );
     return replacement;
   }
-  throw new Error(`Unsupported provider: ${raw}`);
+  throw new Error(`Unsupported provider: ${provider}`);
 }
 
 function parseSearchBackend(raw, fallback = 'auto') {
@@ -1794,7 +1799,7 @@ export async function main() {
     );
   }
 
-  const provider = parseProvider(values.provider);
+  const provider = parseProvider(values.provider, persistedConfig.provider);
   const providerConfig = PROVIDER_CONFIGS[provider];
   const cwd = path.resolve(values.cwd || process.cwd());
   if (values.cwd) {

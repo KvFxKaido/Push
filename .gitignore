@@ -19,6 +19,7 @@ build-out*.txt
 
 # claude code
 .claude/
+.codex
 
 # editor
 .vscode/

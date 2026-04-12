@@ -93,6 +93,13 @@ function isPathWithin(root, candidate) {
   );
 }
 
+function normalizeProviderInput(value) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === 'undefined' || normalized === 'null') return '';
+  return normalized;
+}
+
 function findContainingPushRepoRoot(startDir) {
   let dir = safeRealpath(startDir);
 
@@ -1562,8 +1569,8 @@ export async function runTUI(options = {}) {
     // Optional resume overrides
     let stateChanged = false;
 
-    if (options.provider) {
-      const overrideProvider = options.provider.toLowerCase();
+    const overrideProvider = normalizeProviderInput(options.provider);
+    if (overrideProvider) {
       const overrideConfig = PROVIDER_CONFIGS[overrideProvider];
       if (!overrideConfig) throw new Error(`Unknown provider: ${overrideProvider}`);
       if (overrideProvider !== state.provider) {
@@ -1590,12 +1597,11 @@ export async function runTUI(options = {}) {
       await saveSessionState(state);
     }
   } else {
-    const providerName = (
-      options.provider ||
-      process.env.PUSH_PROVIDER ||
-      config.provider ||
-      'ollama'
-    ).toLowerCase();
+    const providerName =
+      normalizeProviderInput(options.provider) ||
+      normalizeProviderInput(process.env.PUSH_PROVIDER) ||
+      normalizeProviderInput(config.provider) ||
+      'ollama';
     const cwd = path.resolve(options.cwd || process.cwd());
     const providerConfig = PROVIDER_CONFIGS[providerName];
     if (!providerConfig) throw new Error(`Unknown provider: ${providerName}`);

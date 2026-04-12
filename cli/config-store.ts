@@ -58,13 +58,21 @@ export async function saveConfig(config: PushConfig): Promise<string> {
   return configPath;
 }
 
+function normalizeConfigEnvValue(value: unknown): string {
+  if (typeof value !== 'string') return value ? String(value) : '';
+  const normalized = value.trim();
+  if (!normalized || normalized === 'undefined' || normalized === 'null') return '';
+  return normalized;
+}
+
 function setEnvIfMissing(key: string, value: unknown): void {
-  if (!value || process.env[key]) return;
-  process.env[key] = String(value);
+  const normalized = normalizeConfigEnvValue(value);
+  if (!normalized || process.env[key]) return;
+  process.env[key] = normalized;
 }
 
 export function applyConfigToEnv(config: PushConfig): void {
-  const provider = typeof config.provider === 'string' ? config.provider : '';
+  const provider = normalizeConfigEnvValue(config.provider);
   setEnvIfMissing('PUSH_PROVIDER', provider);
   if (config.localSandbox !== undefined) {
     process.env.PUSH_LOCAL_SANDBOX = String(config.localSandbox);

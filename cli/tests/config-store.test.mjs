@@ -42,6 +42,19 @@ describe('applyConfigToEnv', () => {
     assert.equal(process.env.PUSH_TAVILY_API_KEY, 'existing-env-key');
   });
 
+  it('does not export sentinel string values from config', () => {
+    delete process.env.PUSH_PROVIDER;
+    delete process.env.PUSH_TAVILY_API_KEY;
+
+    applyConfigToEnv({
+      provider: 'undefined',
+      tavilyApiKey: 'null',
+    });
+
+    assert.equal(process.env.PUSH_PROVIDER, undefined);
+    assert.equal(process.env.PUSH_TAVILY_API_KEY, undefined);
+  });
+
   it('applies webSearchBackend to PUSH_WEB_SEARCH_BACKEND when missing', () => {
     delete process.env.PUSH_WEB_SEARCH_BACKEND;
 

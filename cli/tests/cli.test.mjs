@@ -245,6 +245,16 @@ describe('non-TTY stdin guard', () => {
     assert.equal(code, 1);
     assert.ok(stderr.includes('Interactive mode requires a TTY'));
   });
+
+  it('treats sentinel PUSH_PROVIDER values as unset', async () => {
+    const { code, stderr } = await runCli([], {
+      input: '',
+      env: { PUSH_PROVIDER: 'undefined', PUSH_TUI_ENABLED: '0' },
+    });
+    assert.equal(code, 1);
+    assert.ok(stderr.includes('Interactive mode requires a TTY'));
+    assert.ok(!stderr.includes('Unsupported provider'));
+  });
 });
 
 // ─── --cwd validation ────────────────────────────────────────────
