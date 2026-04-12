@@ -5,16 +5,22 @@ on:
     branches: [main]
     paths:
       - 'app/**'
+      - 'cli/**'
+      - 'lib/**'
       - 'mcp/**'
       - 'sandbox/**'
+      - 'biome.json'
       - 'package.json'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
     paths:
       - 'app/**'
+      - 'cli/**'
+      - 'lib/**'
       - 'mcp/**'
       - 'sandbox/**'
+      - 'biome.json'
       - 'package.json'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
@@ -78,6 +84,40 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  cli:
+    name: Format, Typecheck, Test (cli)
+    runs-on: ubuntu-latest
+    # Runs from the repo root. Biome, tsx, TypeScript, and @types/node all
+    # live in the root devDependencies; the CLI itself has no external npm
+    # imports (verified by grep: only node built-ins and relative paths to
+    # cli/ and lib/), so `npm ci` at the root is the complete install.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Biome's format check covers the entire monorepo (app/, cli/, lib/,
+      # mcp/, scripts/, docs/cli/schemas/) because biome.json is at the repo
+      # root. Running it here makes the CLI job the one place CI enforces
+      # formatter rules for the whole repo.
+      - name: Format check
+        run: npm run format:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test:cli
 
   modal:
     name: Deploy Modal Sandbox
