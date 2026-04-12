@@ -742,7 +742,9 @@ export function HubReviewTab({
         abortControllerRef.current = abortController;
         const { streamFn: deepStreamFn } = getProviderStreamFn(selectedProvider);
         const deepModelId =
-          selectedReviewModel?.trim() || getModelForRole(selectedProvider, 'reviewer')?.id || '';
+          selectedReviewModel?.trim() ||
+          getModelForRole(selectedProvider, 'reviewer')?.id ||
+          selectedProvider;
         reviewResult = await runDeepReviewer(
           diff,
           {
@@ -778,7 +780,9 @@ export function HubReviewTab({
       } else {
         const { streamFn } = getProviderStreamFn(selectedProvider);
         const resolvedModelId =
-          selectedReviewModel?.trim() || getModelForRole(selectedProvider, 'reviewer')?.id || '';
+          selectedReviewModel?.trim() ||
+          getModelForRole(selectedProvider, 'reviewer')?.id ||
+          selectedProvider;
         reviewResult = await runReviewer(
           diff,
           {

@@ -224,7 +224,7 @@ function parseReviewResult(
     totalFiles: coverage.totalFiles,
     truncated: coverage.truncated,
     provider,
-    model: modelId ?? provider,
+    model: modelId || provider,
     reviewedAt: Date.now(),
   };
 }
@@ -242,7 +242,7 @@ function buildFallbackResult(
     totalFiles: coverage.totalFiles,
     truncated: coverage.truncated,
     provider,
-    model: modelId ?? provider,
+    model: modelId || provider,
     reviewedAt: Date.now(),
   };
 }
