@@ -135,6 +135,47 @@ describe('runReviewer', () => {
     expect(statuses2.length).toBeGreaterThan(0);
   });
 
+  it('does not coalesce concurrent reviews with different streamFn instances', async () => {
+    // Regression for PR #273 review feedback: when callers inject distinct
+    // streamFn implementations (e.g., different session auth wrappers), the
+    // coalescing key must treat them as distinct so the second caller does
+    // not silently receive a result produced by the first caller's backend.
+    const streamFnA = vi.fn(
+      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        await new Promise((r) => setTimeout(r, 10));
+        onToken('{"summary":"Looks good A","comments":[]}');
+        onDone();
+      },
+    );
+    const streamFnB = vi.fn(
+      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        await new Promise((r) => setTimeout(r, 10));
+        onToken('{"summary":"Looks good B","comments":[]}');
+        onDone();
+      },
+    );
+
+    const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
+    const optionsA = {
+      ...baseReviewerOptions,
+      streamFn: streamFnA as unknown as import('./orchestrator-provider-routing').StreamChatFn,
+    };
+    const optionsB = {
+      ...baseReviewerOptions,
+      streamFn: streamFnB as unknown as import('./orchestrator-provider-routing').StreamChatFn,
+    };
+
+    const [r1, r2] = await Promise.all([
+      runReviewer(diff, optionsA, () => {}),
+      runReviewer(diff, optionsB, () => {}),
+    ]);
+
+    expect(streamFnA).toHaveBeenCalledTimes(1);
+    expect(streamFnB).toHaveBeenCalledTimes(1);
+    expect(r1.summary).toBe('Looks good A');
+    expect(r2.summary).toBe('Looks good B');
+  });
+
   it('does not coalesce concurrent reviews with different runtime context', async () => {
     mockBuildReviewerRuntimeContext.mockImplementation(
       async (_diff: string, context?: { sourceLabel?: string }) => context?.sourceLabel ?? '',

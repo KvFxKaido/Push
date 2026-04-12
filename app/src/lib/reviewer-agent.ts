@@ -97,7 +97,28 @@ const pendingReviews = new Map<string, Promise<ReviewResult>>();
 const reviewListeners = new Map<string, Set<(phase: string) => void>>();
 const reviewLatestPhase = new Map<string, string>();
 
+/**
+ * Stable identity for an injected streamFn. Two concurrent reviews that share
+ * every input EXCEPT the stream implementation must not coalesce — otherwise
+ * the second caller silently picks up a result from the first caller's
+ * backend/auth/session wrapper. We mint a per-reference integer id via WeakMap
+ * so distinct functions produce distinct coalesce keys without forcing callers
+ * to name their stream implementations.
+ */
+const streamFnIds = new WeakMap<StreamChatFn, number>();
+let nextStreamFnId = 0;
+
+function getStreamFnId(streamFn: StreamChatFn): number {
+  let id = streamFnIds.get(streamFn);
+  if (id === undefined) {
+    id = nextStreamFnId++;
+    streamFnIds.set(streamFn, id);
+  }
+  return id;
+}
+
 function reviewCoalesceKey(
+  streamFn: StreamChatFn,
   diff: string,
   provider: string,
   modelId: string | undefined,
@@ -105,6 +126,7 @@ function reviewCoalesceKey(
   sandboxId?: string,
 ): string {
   return JSON.stringify({
+    streamFnId: getStreamFnId(streamFn),
     provider,
     modelId: modelId ?? '',
     runtimeContext,
@@ -239,6 +261,7 @@ export async function runReviewer(
   onStatus: (phase: string) => void,
 ): Promise<ReviewResult> {
   const key = reviewCoalesceKey(
+    options.streamFn,
     diff,
     options.provider,
     options.modelId,
