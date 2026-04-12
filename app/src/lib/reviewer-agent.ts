@@ -9,8 +9,7 @@
 
 import type { ChatMessage, ReviewComment, ReviewResult } from '@/types';
 import type { AIProviderType } from '@/types';
-import { getProviderStreamFn } from './orchestrator';
-import { getModelForRole } from './providers';
+import type { StreamChatFn } from './orchestrator-provider-routing';
 import type { ReviewerPromptContext } from './role-context';
 import { buildReviewerRuntimeContext } from './role-memory-context';
 import { readSymbolsFromSandbox, type SandboxSymbol } from './sandbox-client';
@@ -226,7 +225,10 @@ async function fetchFileStructure(diff: string, sandboxId: string): Promise<stri
 
 export interface ReviewerOptions {
   provider: AIProviderType;
-  model?: string; // explicit override; falls back to role default
+  /** Injected provider stream function. Caller resolves it (e.g. via getProviderStreamFn). */
+  streamFn: StreamChatFn;
+  /** Resolved model id the caller wants the reviewer to use. */
+  modelId: string;
   context?: ReviewerPromptContext;
   sandboxId?: string;
 }
@@ -236,12 +238,10 @@ export async function runReviewer(
   options: ReviewerOptions,
   onStatus: (phase: string) => void,
 ): Promise<ReviewResult> {
-  const roleModel = getModelForRole(options.provider, 'reviewer');
-  const modelId = options.model?.trim() || roleModel?.id;
   const key = reviewCoalesceKey(
     diff,
     options.provider,
-    modelId,
+    options.modelId,
     JSON.stringify(options.context ?? null),
     options.sandboxId,
   );
@@ -257,17 +257,9 @@ export async function runReviewer(
 
   const run = (async () => {
     const runtimeContext = await buildReviewerRuntimeContext(diff, options.context);
-    return runReviewerCore(
-      diff,
-      {
-        ...options,
-        model: modelId,
-      },
-      runtimeContext,
-      (phase) => {
-        broadcastReviewStatus(key, phase);
-      },
-    );
+    return runReviewerCore(diff, options, runtimeContext, (phase) => {
+      broadcastReviewStatus(key, phase);
+    });
   })();
   pendingReviews.set(key, run);
   run.finally(() => {
@@ -290,10 +282,8 @@ async function runReviewerCore(
   const totalFiles = parseDiffStats(diff).filesChanged;
   const filesReviewed = parseDiffStats(chunkedDiff).filesChanged;
   const truncated = filesReviewed < totalFiles;
-  const { provider, model: modelOverride, sandboxId } = options;
+  const { provider, streamFn, modelId, sandboxId } = options;
 
-  const { streamFn } = getProviderStreamFn(provider);
-  const modelId = modelOverride?.trim() || getModelForRole(provider, 'reviewer')?.id;
   let fileStructureBlock: string | null = null;
   if (sandboxId) {
     onStatus('Preparing review...');
@@ -383,7 +373,7 @@ async function runReviewerCore(
     totalFiles,
     truncated,
     provider,
-    model: modelId ?? provider,
+    model: modelId || provider,
     reviewedAt: Date.now(),
   };
 }

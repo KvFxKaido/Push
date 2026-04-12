@@ -29,13 +29,7 @@ import {
   buildToolCallParseErrorBlock,
   buildUnimplementedToolErrorText,
 } from './tool-call-recovery';
-import {
-  buildUserIdentityBlock,
-  getActiveProvider,
-  getProviderStreamFn,
-  type ActiveProvider,
-} from './orchestrator';
-import { getModelForRole } from './providers';
+import { buildUserIdentityBlock, type ActiveProvider } from './orchestrator';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils';
 import { asRecord, streamWithTimeout } from './utils';
 import { getToolPublicName, getToolPublicNames } from './tool-registry';
@@ -280,7 +274,8 @@ export async function runDeepReviewer(
 ): Promise<ReviewResult> {
   const {
     provider,
-    model: modelOverride,
+    streamFn,
+    modelId,
     context,
     sandboxId,
     allowedRepo,
@@ -289,17 +284,13 @@ export async function runDeepReviewer(
     instructionFilename,
   } = options;
 
-  // Resolve provider
-  const activeProvider: ActiveProvider =
-    provider === 'demo' ? getActiveProvider() : (provider as ActiveProvider);
-
-  if (activeProvider === 'demo') {
+  if (provider === 'demo') {
     throw new Error('No AI provider configured. Add an API key in Settings.');
   }
 
-  const { streamFn } = getProviderStreamFn(activeProvider);
-  const roleModel = getModelForRole(activeProvider, 'reviewer');
-  const modelId = modelOverride || roleModel?.id || provider;
+  // Cast once for the downstream helpers that take ActiveProvider specifically.
+  // Caller is responsible for resolving 'demo' before invoking runDeepReviewer.
+  const activeProvider = provider as Exclude<ActiveProvider, 'demo'>;
 
   // Build system prompt
   let systemPrompt = buildDeepReviewerSystemPrompt();
