@@ -31,7 +31,7 @@ const results = {
   fixtures: 0,
   hashline: { applied: 0, exactMatch: 0, errors: 0 },
   control: { applied: 0, exactMatch: 0, errors: 0 },
-  byBucket: {}
+  byBucket: {},
 };
 
 async function runBenchmark() {
@@ -44,7 +44,7 @@ async function runBenchmark() {
     results.fixtures++;
     results.byBucket[bucket] = {
       hashline: { applied: 0, exactMatch: 0, errors: 0 },
-      control: { applied: 0, exactMatch: 0, errors: 0 }
+      control: { applied: 0, exactMatch: 0, errors: 0 },
     };
 
     const hashlineResult = await applyHashlineEdits(original, ops);
@@ -56,7 +56,7 @@ async function runBenchmark() {
       results.hashline.exactMatch++;
       results.byBucket[bucket].hashline.exactMatch = 1;
     } else {
-       results.byBucket[bucket].hashline.exactMatch = 0;
+      results.byBucket[bucket].hashline.exactMatch = 0;
     }
 
     const controlResult = await runControl(original, ops);
@@ -76,7 +76,7 @@ async function runBenchmark() {
   console.log('Benchmark finished. Results written to results.json');
 }
 
-runBenchmark().catch(err => {
+runBenchmark().catch((err) => {
   console.error(err);
   process.exit(1);
 });

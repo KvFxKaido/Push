@@ -175,10 +175,11 @@ function buildContextDigest(removed: Message[]): string {
   // Build points: normalize whitespace and extract first semantic line only
   const points: string[] = recent.map((msg) => {
     // Get full content and normalize: replace newlines with spaces
-    const fullContent = toContentString(msg.content).replace(/[\r\n]+/g, ' ').trim();
+    const fullContent = toContentString(msg.content)
+      .replace(/[\r\n]+/g, ' ')
+      .trim();
     // Extract first ~200 chars as snippet
-    const snippet =
-      fullContent.length > 200 ? fullContent.slice(0, 200) + '...' : fullContent;
+    const snippet = fullContent.length > 200 ? fullContent.slice(0, 200) + '...' : fullContent;
     return `- ${msg.role === 'user' ? 'User' : 'Assistant'}: ${snippet}`;
   });
 
