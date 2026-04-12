@@ -107,51 +107,51 @@ describe('estimateMessageTokens', () => {
 describe('getContextBudget', () => {
   it('returns default budget for non-Gemini provider', () => {
     const budget = getContextBudget('nvidia', 'nvidia/llama-3.1-nemotron-70b-instruct');
-    assert.equal(budget.targetTokens, 88_000);
+    assert.equal(budget.targetTokens, 60_000);
     assert.equal(budget.maxTokens, 100_000);
   });
 
   it('returns Gemini budget for exact model name on Ollama', () => {
     const budget = getContextBudget('ollama', 'gemini-3-flash-preview');
-    assert.equal(budget.targetTokens, 900_000);
+    assert.equal(budget.targetTokens, 600_000);
     assert.equal(budget.maxTokens, 950_000);
   });
 
   it('matches gemini variants case-insensitively on Ollama', () => {
     const budget = getContextBudget('ollama', 'Gemini-3-Flash-Preview');
-    assert.equal(budget.targetTokens, 900_000);
+    assert.equal(budget.targetTokens, 600_000);
   });
 
   it('matches model names containing gemini on Ollama', () => {
     const budget = getContextBudget('ollama', 'my-gemini-3-flash-custom');
-    assert.equal(budget.targetTokens, 900_000);
+    assert.equal(budget.targetTokens, 600_000);
   });
 
   it('returns Gemini budget for OpenRouter with Gemini model', () => {
     const budget = getContextBudget('openrouter', 'google/gemini-3.1-pro-preview');
-    assert.equal(budget.targetTokens, 900_000);
+    assert.equal(budget.targetTokens, 600_000);
     assert.equal(budget.maxTokens, 950_000);
   });
 
   it('returns Gemini budget for Zen with Gemini model', () => {
     const budget = getContextBudget('zen', 'gemini-3-flash');
-    assert.equal(budget.targetTokens, 900_000);
+    assert.equal(budget.targetTokens, 600_000);
     assert.equal(budget.maxTokens, 950_000);
   });
 
   it('returns default budget for non-Gemini Zen model', () => {
     const budget = getContextBudget('zen', 'big-pickle');
-    assert.equal(budget.targetTokens, 88_000);
+    assert.equal(budget.targetTokens, 60_000);
   });
 
   it('returns default budget for Gemini model on unsupported providers', () => {
     const budget = getContextBudget('nvidia', 'gemini-3-flash-preview');
-    assert.equal(budget.targetTokens, 88_000);
+    assert.equal(budget.targetTokens, 60_000);
   });
 
   it('returns default budget when model is undefined', () => {
     const budget = getContextBudget('ollama', undefined);
-    assert.equal(budget.targetTokens, 88_000);
+    assert.equal(budget.targetTokens, 60_000);
   });
 
   it('returns a new object each call (no shared mutation)', () => {
@@ -159,7 +159,7 @@ describe('getContextBudget', () => {
     const b = getContextBudget('ollama', 'test');
     assert.notEqual(a, b);
     a.targetTokens = 0;
-    assert.equal(b.targetTokens, 88_000);
+    assert.equal(b.targetTokens, 60_000);
   });
 });
 
