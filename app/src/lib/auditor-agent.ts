@@ -28,6 +28,7 @@ import { formatCoderState } from './coder-agent';
 
 import { asRecord, streamWithTimeout } from './utils';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils';
+import { detectAiCommentPatterns, formatCommentCheckBlock } from './comment-check';
 import type { AuditorFileContext } from './auditor-file-context';
 import { SystemPromptBuilder } from './system-prompt-builder';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
@@ -113,6 +114,7 @@ Review criteria:
 - Overly broad file permissions → UNSAFE (medium)
 - Missing input validation on user-facing code → UNSAFE (medium)
 - Dead code or debug artifacts (console.log) → SAFE but note as low risk
+- AI-generated comment noise (operation narration like "// added validation", meta markers, trivial docblocks) → SAFE but note each as low risk. See [COMMENT CHECK].
 - Normal code changes with no security implications → SAFE
 
 Context: You see the diff, and when available, the full contents of changed files in [FILE CONTEXT] blocks. Use file context to:
@@ -124,6 +126,8 @@ Context: You see the diff, and when available, the full contents of changed file
 When file context is not provided, or for files without context blocks, note the uncertainty explicitly in the risk description rather than defaulting to UNSAFE.
 
 Use [FILE HINTS] to calibrate risk — hardcoded values in test/fixture files are lower risk than in production files. Use [FILE CONTEXT] blocks (when present) for deeper analysis — trace data flows, check surrounding security controls, and validate that changes are consistent with the file's existing patterns.
+
+[COMMENT CHECK] is a deterministic pre-pass that flags AI-generated comment noise (operation narration, meta markers, trivial docblocks). Mirror each flagged comment as a LOW-risk item in the risks array so the user sees it, but DO NOT flip the verdict to UNSAFE based on comment noise alone. Security findings still drive the verdict.
 
 Be strict. When in doubt, lean toward UNSAFE. False positives are acceptable; false negatives are not.`;
 
@@ -245,11 +249,18 @@ async function runAuditorCore(
 
   const fileContextBlock = formatFileContextBlock(fileContexts ?? []);
 
+  // Deterministic pre-pass — flags AI comment noise on added lines. Findings
+  // are rendered as a [COMMENT CHECK] block the Auditor mirrors as low-risk
+  // items without flipping the verdict.
+  const commentFindings = detectAiCommentPatterns(chunkedDiff);
+  const commentCheckBlock = formatCommentCheckBlock(commentFindings);
+  const commentCheckSection = commentCheckBlock ? `${commentCheckBlock}\n\n` : '';
+
   const messages: ChatMessage[] = [
     {
       id: 'audit-request',
       role: 'user',
-      content: `Review this diff for security issues:\n\n${fileHintsBlock}${fileContextBlock}\`\`\`diff\n${chunkedDiff.replace(/`/g, '\\`')}\n\`\`\`${hookResult ? `\n\n[PRE-COMMIT HOOK RESULT]\nExit Code: ${hookResult.exitCode}\nOutput:\n${hookResult.output}\n\nIf non-zero, you MUST return UNSAFE...\n[/PRE-COMMIT HOOK RESULT]` : ''}`,
+      content: `Review this diff for security issues:\n\n${fileHintsBlock}${commentCheckSection}${fileContextBlock}\`\`\`diff\n${chunkedDiff.replace(/`/g, '\\`')}\n\`\`\`${hookResult ? `\n\n[PRE-COMMIT HOOK RESULT]\nExit Code: ${hookResult.exitCode}\nOutput:\n${hookResult.output}\n\nIf non-zero, you MUST return UNSAFE...\n[/PRE-COMMIT HOOK RESULT]` : ''}`,
       timestamp: Date.now(),
     },
   ];

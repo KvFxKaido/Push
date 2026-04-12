@@ -71,6 +71,9 @@ const KNOWN_OPTIONS = new Set([
   'no-sandbox',
   'version',
   'exec-mode',
+  'dry-run',
+  'dryRun',
+  'force',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -84,6 +87,7 @@ const KNOWN_SUBCOMMANDS = new Set([
   'daemon',
   'attach',
   'tui',
+  'init-deep',
 ]);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 const DEFAULT_COMPACT_TURNS = 6;
@@ -116,6 +120,9 @@ Usage:
   push tui                       Start full-screen TUI
   push tui --session <id>        Resume session in TUI
   push attach <session-id>      Attach to a running daemon session
+  push init-deep                Generate AGENTS.md skeletons for significant directories
+  push init-deep --dry-run      Preview the init-deep plan without writing files
+  push init-deep --force        Overwrite existing AGENTS.md files
   push config show              Show saved CLI config
   push config init              Interactive setup wizard
   push config set ...           Save provider config defaults
@@ -1682,6 +1689,66 @@ export async function main() {
     const sessionId = positionals[1];
     if (!sessionId) throw new Error('Usage: push attach <session-id>');
     return runAttach(sessionId);
+  }
+
+  if (subcommand === 'init-deep') {
+    const { runInitDeep } = await import('./init-deep.ts');
+    const cwd = path.resolve(values.cwd || process.cwd());
+    const dryRun = Boolean(values['dry-run'] || values.dryRun);
+    const force = Boolean(values.force);
+    const result = await runInitDeep({ cwd, dryRun, force });
+
+    if (values.json) {
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            dryRun,
+            force,
+            significantDirs: result.significantDirs,
+            written: result.written.map((p) => ({
+              path: p.path,
+              dir: p.dir,
+              significance: p.significance,
+            })),
+            skipped: result.skipped.map((p) => ({
+              path: p.path,
+              dir: p.dir,
+              significance: p.significance,
+            })),
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      return 0;
+    }
+
+    process.stdout.write(
+      `${fmt.dim('[init-deep]')} scanned ${result.significantDirs} significant director${
+        result.significantDirs === 1 ? 'y' : 'ies'
+      }\n`,
+    );
+
+    const writeLabel = dryRun ? '[plan]' : '[write]';
+    for (const proposal of result.written) {
+      process.stdout.write(`${fmt.green(writeLabel)} ${proposal.path}\n`);
+    }
+    for (const proposal of result.skipped) {
+      process.stdout.write(
+        `${fmt.dim('[skip]')} ${proposal.path} (already exists — use --force to overwrite)\n`,
+      );
+    }
+
+    if (dryRun) {
+      process.stdout.write(
+        `${fmt.dim('[init-deep]')} dry-run — ${result.written.length} file(s) would be written, ${result.skipped.length} skipped. Re-run without --dry-run to apply.\n`,
+      );
+    } else {
+      process.stdout.write(
+        `${fmt.dim('[init-deep]')} wrote ${result.written.length} file(s), skipped ${result.skipped.length}\n`,
+      );
+    }
+    return 0;
   }
 
   if (subcommand === 'tui') {
