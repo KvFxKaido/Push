@@ -1802,7 +1802,9 @@ export async function runTUI(options = {}) {
 
   // ── Enter alternate screen ───────────────────────────────────────
 
-  process.stdout.write(ESC.altScreenOn + ESC.cursorHide + ESC.clearScreen + ESC.bracketedPasteOn);
+  process.stdout.write(
+    ESC.altScreenOn + ESC.cursorHide + ESC.clearScreen + ESC.bracketedPasteOn + ESC.mouseOn,
+  );
 
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true);
@@ -4679,7 +4681,9 @@ export async function runTUI(options = {}) {
       /* best-effort */
     }
     try {
-      process.stdout.write(ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset);
+      process.stdout.write(
+        ESC.mouseOff + ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset,
+      );
       if (process.stdin.isTTY) process.stdin.setRawMode(false);
     } catch {
       /* best-effort */
@@ -4749,7 +4753,9 @@ export async function runTUI(options = {}) {
       daemonClient = null;
     }
 
-    process.stdout.write(ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset);
+    process.stdout.write(
+      ESC.mouseOff + ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset,
+    );
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }

@@ -14,6 +14,16 @@ function readEscapeSequence(str: string, start: number): string | null {
   if (str[start] !== '\x1b') return null;
   const rest = str.slice(start);
 
+  // SGR mouse reporting: ESC [ < button ; x ; y M/m
+  const sgrMouseMatch = rest.match(/^\x1b\[<\d+;\d+;\d+[mM]/);
+  if (sgrMouseMatch) return sgrMouseMatch[0];
+
+  // Legacy xterm mouse reporting: ESC [ M Cb Cx Cy
+  if (rest.startsWith('\x1b[M')) {
+    if (rest.length >= 6) return rest.slice(0, 6);
+    return null;
+  }
+
   // CSI sequence: ESC [ ... final-byte
   // We split on any complete CSI final byte, even if parseKey() later classifies
   // it as unknown. This keeps concatenated sequences tokenized correctly.
@@ -166,6 +176,44 @@ export function parseKey(buf: Buffer): ParsedKey {
   // CSI sequences: ESC [ ...
   if (seq.startsWith('\x1b[')) {
     const body = seq.slice(2);
+
+    // SGR mouse wheel: button bit 64 marks wheel, low bits encode direction.
+    const sgrMouse = body.match(/^<(\d+);\d+;\d+([mM])$/);
+    if (sgrMouse) {
+      const button = Number(sgrMouse[1]);
+      const action = sgrMouse[2];
+      if (action === 'M' && (button & 64) === 64) {
+        const direction = button & 3;
+        if (direction === 0) {
+          key.name = 'wheelup';
+          return key;
+        }
+        if (direction === 1) {
+          key.name = 'wheeldown';
+          return key;
+        }
+      }
+      key.name = 'mouse';
+      return key;
+    }
+
+    // Legacy xterm mouse reporting: ESC [ M Cb Cx Cy
+    if (seq.startsWith('\x1b[M') && buf.length >= 6) {
+      const button = seq.charCodeAt(3) - 32;
+      if ((button & 64) === 64) {
+        const direction = button & 3;
+        if (direction === 0) {
+          key.name = 'wheelup';
+          return key;
+        }
+        if (direction === 1) {
+          key.name = 'wheeldown';
+          return key;
+        }
+      }
+      key.name = 'mouse';
+      return key;
+    }
 
     // Arrow keys
     if (body === 'A') {
@@ -389,6 +437,8 @@ export function createKeybindMap(): KeybindMap {
   // Scrollback
   bind('pageup', 'scroll_up');
   bind('pagedown', 'scroll_down');
+  bind('wheelup', 'scroll_up');
+  bind('wheeldown', 'scroll_down');
 
   return { bind, lookup, serializeKey };
 }

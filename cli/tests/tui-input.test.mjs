@@ -34,6 +34,19 @@ describe('splitRawInputChunk', () => {
     assert.deepEqual(splitRawInputChunk('ab\x1b[Acd'), ['a', 'b', '\x1b[A', 'c', 'd']);
   });
 
+  it('keeps SGR mouse wheel sequences grouped', () => {
+    assert.deepEqual(splitRawInputChunk('\x1b[<64;12;8M'), ['\x1b[<64;12;8M']);
+    assert.deepEqual(splitRawInputChunk('\x1b[<64;12;8M\x1b[<65;12;9M'), [
+      '\x1b[<64;12;8M',
+      '\x1b[<65;12;9M',
+    ]);
+  });
+
+  it('keeps legacy mouse wheel sequences grouped', () => {
+    assert.deepEqual(splitRawInputChunk('\x1b[M`!!'), ['\x1b[M`!!']);
+    assert.deepEqual(splitRawInputChunk('\x1b[M`!!\x1b[Ma!!'), ['\x1b[M`!!', '\x1b[Ma!!']);
+  });
+
   it('preserves incomplete escape sequences at end of chunk', () => {
     assert.deepEqual(splitRawInputChunk('\x1b['), ['\x1b[']);
     assert.deepEqual(splitRawInputChunk('ab\x1b['), ['a', 'b', '\x1b[']);
@@ -174,6 +187,21 @@ describe('parseKey', () => {
     assert.equal(key.name, 'pagedown');
   });
 
+  it('parses SGR mouse wheel up/down', () => {
+    assert.equal(parseKey(Buffer.from('\x1b[<64;12;8M')).name, 'wheelup');
+    assert.equal(parseKey(Buffer.from('\x1b[<65;12;8M')).name, 'wheeldown');
+  });
+
+  it('parses modifier-bearing SGR mouse wheel as scroll direction', () => {
+    assert.equal(parseKey(Buffer.from('\x1b[<80;12;8M')).name, 'wheelup');
+    assert.equal(parseKey(Buffer.from('\x1b[<81;12;8M')).name, 'wheeldown');
+  });
+
+  it('parses legacy mouse wheel up/down', () => {
+    assert.equal(parseKey(Buffer.from('\x1b[M`!!')).name, 'wheelup');
+    assert.equal(parseKey(Buffer.from('\x1b[Ma!!')).name, 'wheeldown');
+  });
+
   it('parses Shift+Arrow', () => {
     const key = parseKey(Buffer.from('\x1b[1;2A'));
     assert.equal(key.name, 'up');
@@ -266,6 +294,12 @@ describe('createKeybindMap', () => {
     const map = createKeybindMap();
     const key = parseKey(Buffer.from([0x0c]));
     assert.equal(map.lookup(key), 'clear_viewport');
+  });
+
+  it('maps mouse wheel to scrollback', () => {
+    const map = createKeybindMap();
+    assert.equal(map.lookup(parseKey(Buffer.from('\x1b[<64;12;8M'))), 'scroll_up');
+    assert.equal(map.lookup(parseKey(Buffer.from('\x1b[<65;12;8M'))), 'scroll_down');
   });
 
   it('maps Escape to close_modal', () => {

@@ -17,9 +17,9 @@ export const ESC = {
   clearLine: '\x1b[2K',
   clearToEnd: '\x1b[0J',
   reset: '\x1b[0m',
-  // Mouse tracking (not used in Phase 1 but reserved)
-  mouseOn: '\x1b[?1000h',
-  mouseOff: '\x1b[?1000l',
+  // Mouse tracking + SGR coordinates for wheel scroll in alternate screen.
+  mouseOn: '\x1b[?1000h\x1b[?1006h',
+  mouseOff: '\x1b[?1006l\x1b[?1000l',
   // Bracketed paste mode
   bracketedPasteOn: '\x1b[?2004h',
   bracketedPasteOff: '\x1b[?2004l',
