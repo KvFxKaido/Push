@@ -345,6 +345,8 @@ export async function executeTaskGraph(
 
   const inFlight = new Map<string, Promise<string>>();
 
+  const MAX_COMPLETION_RETRIES = 2;
+
   function dispatchTask(id: string): void {
     const state = states.get(id)!;
     state.status = 'running';
@@ -355,23 +357,65 @@ export async function executeTaskGraph(
 
     const promise = (async () => {
       try {
-        const result = await executor(state.node, enrichedContext, signal);
-        if (state.status === 'cancelled' || signal?.aborted) {
-          state.elapsedMs ??= Date.now() - taskStartMs;
-          return id;
+        let attempts = 0;
+        let currentEnrichedContext = enrichedContext;
+
+        while (attempts <= MAX_COMPLETION_RETRIES) {
+          const result = await executor(state.node, currentEnrichedContext, signal);
+
+          if (state.status === 'cancelled' || signal?.aborted) {
+            state.elapsedMs ??= Date.now() - taskStartMs;
+            return id;
+          }
+
+          totalRounds += result.rounds;
+
+          // Todo Enforcer: if a Coder task is incomplete, retry up to MAX_COMPLETION_RETRIES times.
+          if (
+            state.node.agent === 'coder' &&
+            result.delegationOutcome?.status === 'incomplete' &&
+            attempts < MAX_COMPLETION_RETRIES
+          ) {
+            attempts++;
+            const gaps = result.delegationOutcome.missingRequirements ?? [];
+            const gapList =
+              gaps.length > 0
+                ? gaps.map((g) => `- ${g}`).join('\n')
+                : '- (No specific gaps reported)';
+
+            currentEnrichedContext = [
+              ...currentEnrichedContext,
+              `[TODO_ENFORCER] The previous attempt was incomplete. Please address these missing requirements:\n${gapList}`,
+            ];
+
+            onProgress?.({
+              type: 'task_started',
+              taskId: id,
+              detail: `[Retry ${attempts}/${MAX_COMPLETION_RETRIES}] ${state.node.task}`,
+            });
+            continue;
+          }
+
+          // Check for retry exhaustion
+          if (state.node.agent === 'coder' && result.delegationOutcome?.status === 'incomplete') {
+            throw new Error(
+              `Maximum completion retries (${MAX_COMPLETION_RETRIES}) exhausted. Task remains incomplete.`,
+            );
+          }
+
+          state.status = 'completed';
+          state.result = result.summary;
+          state.delegationOutcome = result.delegationOutcome;
+          state.memoryEntry = buildTaskGraphMemoryEntry(state) ?? undefined;
+          state.elapsedMs = Date.now() - taskStartMs;
+          onProgress?.({
+            type: 'task_completed',
+            taskId: id,
+            detail: result.summary,
+            elapsedMs: state.elapsedMs,
+          });
+          break;
         }
-        state.status = 'completed';
-        state.result = result.summary;
-        state.delegationOutcome = result.delegationOutcome;
-        state.memoryEntry = buildTaskGraphMemoryEntry(state) ?? undefined;
-        state.elapsedMs = Date.now() - taskStartMs;
-        totalRounds += result.rounds;
-        onProgress?.({
-          type: 'task_completed',
-          taskId: id,
-          detail: result.summary,
-          elapsedMs: state.elapsedMs,
-        });
       } catch (err) {
         if (state.status === 'cancelled') {
           state.elapsedMs ??= Date.now() - taskStartMs;
