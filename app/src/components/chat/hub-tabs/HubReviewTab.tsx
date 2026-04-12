@@ -20,7 +20,7 @@ import {
   fetchLatestCommitDiff,
 } from '@/lib/github-tools';
 import { parseDiffStats } from '@/lib/diff-utils';
-import type { ActiveProvider } from '@/lib/orchestrator';
+import { getProviderStreamFn, type ActiveProvider } from '@/lib/orchestrator';
 import {
   OLLAMA_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
@@ -32,6 +32,7 @@ import {
   VERTEX_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
   OPENADAPTER_DEFAULT_MODEL,
+  getModelForRole,
   type PreferredProvider,
   formatModelDisplayName,
 } from '@/lib/providers';
@@ -739,11 +740,17 @@ export function HubReviewTab({
       if (requestedReviewDepth === 'deep') {
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
+        const { streamFn: deepStreamFn } = getProviderStreamFn(selectedProvider);
+        const deepModelId =
+          selectedReviewModel?.trim() ||
+          getModelForRole(selectedProvider, 'reviewer')?.id ||
+          selectedProvider;
         reviewResult = await runDeepReviewer(
           diff,
           {
             provider: selectedProvider,
-            model: selectedReviewModel || undefined,
+            streamFn: deepStreamFn,
+            modelId: deepModelId,
             sandboxId: reviewerSandboxId,
             context: {
               repoFullName,
@@ -771,11 +778,17 @@ export function HubReviewTab({
         );
         abortControllerRef.current = null;
       } else {
+        const { streamFn } = getProviderStreamFn(selectedProvider);
+        const resolvedModelId =
+          selectedReviewModel?.trim() ||
+          getModelForRole(selectedProvider, 'reviewer')?.id ||
+          selectedProvider;
         reviewResult = await runReviewer(
           diff,
           {
             provider: selectedProvider,
-            model: selectedReviewModel || undefined,
+            streamFn,
+            modelId: resolvedModelId,
             sandboxId: reviewerSandboxId,
             context: {
               repoFullName,

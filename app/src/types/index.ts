@@ -2,6 +2,7 @@ import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { VerificationPolicy } from '@/lib/verification-policy';
 import type {
   AcceptanceCriterion,
+  AgentRole,
   DelegationGateVerdict,
   DelegationOutcome,
   DelegationStatus,
@@ -10,6 +11,7 @@ import type {
 } from '@push/lib/runtime-contract';
 export type {
   AcceptanceCriterion,
+  AgentRole,
   DelegationCheck,
   DelegationEvidence,
   DelegationGateVerdict,
@@ -106,8 +108,6 @@ export const USER_PROFILE_DEFAULTS: UserProfile = {
   githubLogin: undefined,
   bio: '',
 };
-
-export type AgentRole = 'orchestrator' | 'coder' | 'explorer' | 'auditor' | 'reviewer';
 
 // ---------------------------------------------------------------------------
 // Reviewer agent types

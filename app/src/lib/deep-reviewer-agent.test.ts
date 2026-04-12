@@ -2,16 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   mockStreamFn,
-  mockGetProviderStreamFn,
-  mockGetModelForRole,
   mockBuildReviewerRuntimeContext,
   mockGetUserProfile,
   mockExecuteAnyToolCall,
   mockCreateExplorerToolHooks,
 } = vi.hoisted(() => ({
   mockStreamFn: vi.fn(),
-  mockGetProviderStreamFn: vi.fn(),
-  mockGetModelForRole: vi.fn(),
   mockBuildReviewerRuntimeContext: vi.fn(),
   mockGetUserProfile: vi.fn(),
   mockExecuteAnyToolCall: vi.fn(),
@@ -24,17 +20,17 @@ vi.mock('@/hooks/useUserProfile', () => ({
 
 vi.mock('./orchestrator', () => ({
   buildUserIdentityBlock: vi.fn(() => ''),
-  getActiveProvider: vi.fn(() => 'openrouter'),
-  getProviderStreamFn: (...args: unknown[]) => mockGetProviderStreamFn(...args),
 }));
 
-vi.mock('./providers', async () => {
-  const actual = await vi.importActual<typeof import('./providers')>('./providers');
-  return {
-    ...actual,
-    getModelForRole: (...args: unknown[]) => mockGetModelForRole(...args),
-  };
-});
+/**
+ * Shared deep-reviewer options used across tests. Providers now inject streamFn
+ * and modelId, so tests pass them explicitly.
+ */
+const baseDeepOptions = {
+  provider: 'openrouter' as const,
+  streamFn: mockStreamFn as unknown as import('./orchestrator-provider-routing').StreamChatFn,
+  modelId: 'default-reviewer-model',
+};
 
 vi.mock('./role-memory-context', () => ({
   buildReviewerRuntimeContext: (...args: unknown[]) => mockBuildReviewerRuntimeContext(...args),
@@ -76,18 +72,11 @@ function makeAddedFileDiff(path: string, addedContent: string): string {
 describe('runDeepReviewer', () => {
   beforeEach(() => {
     mockStreamFn.mockReset();
-    mockGetProviderStreamFn.mockReset();
-    mockGetModelForRole.mockReset();
     mockBuildReviewerRuntimeContext.mockReset();
     mockGetUserProfile.mockReset();
     mockExecuteAnyToolCall.mockReset();
     mockCreateExplorerToolHooks.mockReset();
 
-    mockGetProviderStreamFn.mockImplementation((provider: string) => ({
-      providerType: provider,
-      streamFn: mockStreamFn,
-    }));
-    mockGetModelForRole.mockReturnValue({ id: 'default-reviewer-model' });
     mockBuildReviewerRuntimeContext.mockResolvedValue('');
     mockGetUserProfile.mockReturnValue({ displayName: '', bio: '', githubLogin: undefined });
     mockCreateExplorerToolHooks.mockReturnValue({});
@@ -116,7 +105,7 @@ describe('runDeepReviewer', () => {
 
     const result = await runDeepReviewer(
       diff,
-      { provider: 'openrouter', allowedRepo: 'KvFxKaido/Push', sandboxId: 'sb-123' },
+      { ...baseDeepOptions, allowedRepo: 'KvFxKaido/Push', sandboxId: 'sb-123' },
       { onStatus: () => {} },
     );
 
@@ -143,7 +132,7 @@ describe('runDeepReviewer', () => {
     await expect(
       runDeepReviewer(
         makeAddedFileDiff('src/example.ts', 'const value = 1;'),
-        { provider: 'openrouter', allowedRepo: 'KvFxKaido/Push' },
+        { ...baseDeepOptions, allowedRepo: 'KvFxKaido/Push' },
         { onStatus: () => {}, signal: abortController.signal },
       ),
     ).rejects.toMatchObject({ name: 'AbortError' });

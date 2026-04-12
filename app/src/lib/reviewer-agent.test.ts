@@ -1,26 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const {
-  mockStreamFn,
-  mockGetProviderStreamFn,
-  mockGetModelForRole,
-  mockBuildReviewerRuntimeContext,
-  mockReadSymbolsFromSandbox,
-} = vi.hoisted(() => ({
-  mockStreamFn: vi.fn(),
-  mockGetProviderStreamFn: vi.fn(),
-  mockGetModelForRole: vi.fn(),
-  mockBuildReviewerRuntimeContext: vi.fn(),
-  mockReadSymbolsFromSandbox: vi.fn(),
-}));
-
-vi.mock('./orchestrator', () => ({
-  getProviderStreamFn: (...args: unknown[]) => mockGetProviderStreamFn(...args),
-}));
-
-vi.mock('./providers', () => ({
-  getModelForRole: (...args: unknown[]) => mockGetModelForRole(...args),
-}));
+const { mockStreamFn, mockBuildReviewerRuntimeContext, mockReadSymbolsFromSandbox } = vi.hoisted(
+  () => ({
+    mockStreamFn: vi.fn(),
+    mockBuildReviewerRuntimeContext: vi.fn(),
+    mockReadSymbolsFromSandbox: vi.fn(),
+  }),
+);
 
 vi.mock('./role-memory-context', () => ({
   buildReviewerRuntimeContext: (...args: unknown[]) => mockBuildReviewerRuntimeContext(...args),
@@ -31,6 +17,17 @@ vi.mock('./sandbox-client', () => ({
 }));
 
 import { runReviewer } from './reviewer-agent';
+
+/**
+ * Shared reviewer options used across tests. Providers now inject streamFn and
+ * modelId, so tests pass them explicitly rather than letting reviewer-agent
+ * look them up via getProviderStreamFn / getModelForRole.
+ */
+const baseReviewerOptions = {
+  provider: 'openrouter' as const,
+  streamFn: mockStreamFn as unknown as import('./orchestrator-provider-routing').StreamChatFn,
+  modelId: 'default-reviewer-model',
+};
 
 function makeAddedFileDiff(path: string, addedContent: string): string {
   return [
@@ -46,16 +43,9 @@ function makeAddedFileDiff(path: string, addedContent: string): string {
 describe('runReviewer', () => {
   beforeEach(() => {
     mockStreamFn.mockReset();
-    mockGetProviderStreamFn.mockReset();
-    mockGetModelForRole.mockReset();
     mockBuildReviewerRuntimeContext.mockReset();
     mockReadSymbolsFromSandbox.mockReset();
 
-    mockGetProviderStreamFn.mockImplementation((provider: string) => ({
-      providerType: provider,
-      streamFn: mockStreamFn,
-    }));
-    mockGetModelForRole.mockReturnValue({ id: 'default-reviewer-model' });
     mockBuildReviewerRuntimeContext.mockResolvedValue('');
     mockStreamFn.mockImplementation(
       (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
@@ -88,7 +78,7 @@ describe('runReviewer', () => {
       makeAddedFileDiff('src/auth.test.ts', 'it("works", () => {})'),
     ].join('');
 
-    await runReviewer(diff, { provider: 'openrouter', sandboxId: 'sb-123' }, (phase) => {
+    await runReviewer(diff, { ...baseReviewerOptions, sandboxId: 'sb-123' }, (phase) => {
       statuses.push(phase);
     });
 
@@ -128,10 +118,10 @@ describe('runReviewer', () => {
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
 
     const [r1, r2] = await Promise.all([
-      runReviewer(diff, { provider: 'openrouter' }, (phase) => {
+      runReviewer(diff, baseReviewerOptions, (phase) => {
         statuses1.push(phase);
       }),
-      runReviewer(diff, { provider: 'openrouter' }, (phase) => {
+      runReviewer(diff, baseReviewerOptions, (phase) => {
         statuses2.push(phase);
       }),
     ]);
@@ -143,6 +133,47 @@ describe('runReviewer', () => {
     // Both callers received status updates
     expect(statuses1.length).toBeGreaterThan(0);
     expect(statuses2.length).toBeGreaterThan(0);
+  });
+
+  it('does not coalesce concurrent reviews with different streamFn instances', async () => {
+    // Regression for PR #273 review feedback: when callers inject distinct
+    // streamFn implementations (e.g., different session auth wrappers), the
+    // coalescing key must treat them as distinct so the second caller does
+    // not silently receive a result produced by the first caller's backend.
+    const streamFnA = vi.fn(
+      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        await new Promise((r) => setTimeout(r, 10));
+        onToken('{"summary":"Looks good A","comments":[]}');
+        onDone();
+      },
+    );
+    const streamFnB = vi.fn(
+      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        await new Promise((r) => setTimeout(r, 10));
+        onToken('{"summary":"Looks good B","comments":[]}');
+        onDone();
+      },
+    );
+
+    const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
+    const optionsA = {
+      ...baseReviewerOptions,
+      streamFn: streamFnA as unknown as import('./orchestrator-provider-routing').StreamChatFn,
+    };
+    const optionsB = {
+      ...baseReviewerOptions,
+      streamFn: streamFnB as unknown as import('./orchestrator-provider-routing').StreamChatFn,
+    };
+
+    const [r1, r2] = await Promise.all([
+      runReviewer(diff, optionsA, () => {}),
+      runReviewer(diff, optionsB, () => {}),
+    ]);
+
+    expect(streamFnA).toHaveBeenCalledTimes(1);
+    expect(streamFnB).toHaveBeenCalledTimes(1);
+    expect(r1.summary).toBe('Looks good A');
+    expect(r2.summary).toBe('Looks good B');
   });
 
   it('does not coalesce concurrent reviews with different runtime context', async () => {
@@ -160,8 +191,8 @@ describe('runReviewer', () => {
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
 
     await Promise.all([
-      runReviewer(diff, { provider: 'openrouter', context: { sourceLabel: 'Repo A' } }, () => {}),
-      runReviewer(diff, { provider: 'openrouter', context: { sourceLabel: 'Repo B' } }, () => {}),
+      runReviewer(diff, { ...baseReviewerOptions, context: { sourceLabel: 'Repo A' } }, () => {}),
+      runReviewer(diff, { ...baseReviewerOptions, context: { sourceLabel: 'Repo B' } }, () => {}),
     ]);
 
     expect(mockStreamFn).toHaveBeenCalledTimes(2);
@@ -180,13 +211,13 @@ describe('runReviewer', () => {
     const statuses1: string[] = [];
     const statuses2: string[] = [];
 
-    const first = runReviewer(diff, { provider: 'openrouter', sandboxId: 'sb-123' }, (phase) => {
+    const first = runReviewer(diff, { ...baseReviewerOptions, sandboxId: 'sb-123' }, (phase) => {
       statuses1.push(phase);
     });
 
     await Promise.resolve();
 
-    const second = runReviewer(diff, { provider: 'openrouter', sandboxId: 'sb-123' }, (phase) => {
+    const second = runReviewer(diff, { ...baseReviewerOptions, sandboxId: 'sb-123' }, (phase) => {
       statuses2.push(phase);
     });
 
@@ -203,7 +234,7 @@ describe('runReviewer', () => {
     const statuses: string[] = [];
     const diff = makeAddedFileDiff('src/auth.ts', 'const auth = true;');
 
-    await runReviewer(diff, { provider: 'openrouter' }, (phase) => {
+    await runReviewer(diff, baseReviewerOptions, (phase) => {
       statuses.push(phase);
     });
 
@@ -225,7 +256,7 @@ describe('runReviewer', () => {
 
     await runReviewer(
       makeAddedFileDiff('src/auth.ts', 'const auth = true;'),
-      { provider: 'openrouter' },
+      baseReviewerOptions,
       () => {},
     );
 

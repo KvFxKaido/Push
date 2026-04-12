@@ -22,10 +22,13 @@ import type { ChatMessage, ToolExecutionResult, PostToolUseResult } from '@/type
 import type { ToolHookRegistry } from './tool-hooks';
 
 // ---------------------------------------------------------------------------
-// Agent role type — the five locked roles
+// Agent role type — re-exported from the shared runtime contract to prevent
+// role-list drift between Web and CLI. Canonical definition lives in
+// lib/runtime-contract.ts.
 // ---------------------------------------------------------------------------
 
-export type AgentRole = 'orchestrator' | 'explorer' | 'coder' | 'reviewer' | 'auditor';
+import type { AgentRole } from '@/types';
+export type { AgentRole };
 
 // ---------------------------------------------------------------------------
 // Agent phase — well-known phases for phase-aware policy gating

@@ -9,8 +9,7 @@
 
 import type { ChatMessage, ReviewComment, ReviewResult } from '@/types';
 import type { AIProviderType } from '@/types';
-import { getProviderStreamFn } from './orchestrator';
-import { getModelForRole } from './providers';
+import type { StreamChatFn } from './orchestrator-provider-routing';
 import type { ReviewerPromptContext } from './role-context';
 import { buildReviewerRuntimeContext } from './role-memory-context';
 import { readSymbolsFromSandbox, type SandboxSymbol } from './sandbox-client';
@@ -98,7 +97,28 @@ const pendingReviews = new Map<string, Promise<ReviewResult>>();
 const reviewListeners = new Map<string, Set<(phase: string) => void>>();
 const reviewLatestPhase = new Map<string, string>();
 
+/**
+ * Stable identity for an injected streamFn. Two concurrent reviews that share
+ * every input EXCEPT the stream implementation must not coalesce — otherwise
+ * the second caller silently picks up a result from the first caller's
+ * backend/auth/session wrapper. We mint a per-reference integer id via WeakMap
+ * so distinct functions produce distinct coalesce keys without forcing callers
+ * to name their stream implementations.
+ */
+const streamFnIds = new WeakMap<StreamChatFn, number>();
+let nextStreamFnId = 0;
+
+function getStreamFnId(streamFn: StreamChatFn): number {
+  let id = streamFnIds.get(streamFn);
+  if (id === undefined) {
+    id = nextStreamFnId++;
+    streamFnIds.set(streamFn, id);
+  }
+  return id;
+}
+
 function reviewCoalesceKey(
+  streamFn: StreamChatFn,
   diff: string,
   provider: string,
   modelId: string | undefined,
@@ -106,6 +126,7 @@ function reviewCoalesceKey(
   sandboxId?: string,
 ): string {
   return JSON.stringify({
+    streamFnId: getStreamFnId(streamFn),
     provider,
     modelId: modelId ?? '',
     runtimeContext,
@@ -226,7 +247,10 @@ async function fetchFileStructure(diff: string, sandboxId: string): Promise<stri
 
 export interface ReviewerOptions {
   provider: AIProviderType;
-  model?: string; // explicit override; falls back to role default
+  /** Injected provider stream function. Caller resolves it (e.g. via getProviderStreamFn). */
+  streamFn: StreamChatFn;
+  /** Resolved model id the caller wants the reviewer to use. */
+  modelId: string;
   context?: ReviewerPromptContext;
   sandboxId?: string;
 }
@@ -236,12 +260,11 @@ export async function runReviewer(
   options: ReviewerOptions,
   onStatus: (phase: string) => void,
 ): Promise<ReviewResult> {
-  const roleModel = getModelForRole(options.provider, 'reviewer');
-  const modelId = options.model?.trim() || roleModel?.id;
   const key = reviewCoalesceKey(
+    options.streamFn,
     diff,
     options.provider,
-    modelId,
+    options.modelId,
     JSON.stringify(options.context ?? null),
     options.sandboxId,
   );
@@ -257,17 +280,9 @@ export async function runReviewer(
 
   const run = (async () => {
     const runtimeContext = await buildReviewerRuntimeContext(diff, options.context);
-    return runReviewerCore(
-      diff,
-      {
-        ...options,
-        model: modelId,
-      },
-      runtimeContext,
-      (phase) => {
-        broadcastReviewStatus(key, phase);
-      },
-    );
+    return runReviewerCore(diff, options, runtimeContext, (phase) => {
+      broadcastReviewStatus(key, phase);
+    });
   })();
   pendingReviews.set(key, run);
   run.finally(() => {
@@ -290,10 +305,8 @@ async function runReviewerCore(
   const totalFiles = parseDiffStats(diff).filesChanged;
   const filesReviewed = parseDiffStats(chunkedDiff).filesChanged;
   const truncated = filesReviewed < totalFiles;
-  const { provider, model: modelOverride, sandboxId } = options;
+  const { provider, streamFn, modelId, sandboxId } = options;
 
-  const { streamFn } = getProviderStreamFn(provider);
-  const modelId = modelOverride?.trim() || getModelForRole(provider, 'reviewer')?.id;
   let fileStructureBlock: string | null = null;
   if (sandboxId) {
     onStatus('Preparing review...');
@@ -383,7 +396,7 @@ async function runReviewerCore(
     totalFiles,
     truncated,
     provider,
-    model: modelId ?? provider,
+    model: modelId || provider,
     reviewedAt: Date.now(),
   };
 }
