@@ -42,6 +42,8 @@ Use this file to navigate active design/planning docs versus historical referenc
   - Status: Architecture quality ratings and improvement tracking.
 - `decisions/External Resource Review — Harness Engineering and Ralph Loop.md`
   - Status: External resource review reference.
+- `decisions/Oh My OpenAgent Review.md`
+  - Status: Comparative review of the oh-my-openagent harness with Tier-1/2/3 quick-win list for Push.
 - `decisions/Resumable Sessions Design.md`
   - Status: Shipped resumable sessions design and review log.
 - `decisions/Sectioned System Prompts.md`
@@ -57,6 +59,8 @@ Use this file to navigate active design/planning docs versus historical referenc
   - Status: Partially shipped; context trimming and the prompt-engineered tool path are in code, follow-up optimization remains open.
 - `runbooks/Harness Reliability Plan.md`
   - Status: Mostly shipped; Tracks A/B/C/E are in code, while Track D remains deferred.
+- `runbooks/Hashline Effectiveness Metric.md`
+  - Status: Draft plan — fixture-based measurement of hashline edit-success delta, not yet executed.
 - `runbooks/UX Nice-to-Haves Plan.md`
   - Status: Wishlist parking lot; treat as mostly not in code unless separately promoted.
 - `runbooks/Web-CLI Parity Plan.md`

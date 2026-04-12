@@ -71,6 +71,9 @@ const KNOWN_OPTIONS = new Set([
   'no-sandbox',
   'version',
   'exec-mode',
+  'dry-run',
+  'dryRun',
+  'force',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -84,6 +87,7 @@ const KNOWN_SUBCOMMANDS = new Set([
   'daemon',
   'attach',
   'tui',
+  'init-deep',
 ]);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 const DEFAULT_COMPACT_TURNS = 6;
@@ -96,6 +100,23 @@ function truncateText(text, maxLength = 100) {
   if (!text) return '';
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength) + '...';
+}
+
+// Strict boolean flag parser — parseArgs runs with strict: false so a scripted
+// caller can pass `--force=false` or `--dry-run=false`, and the raw value
+// arrives as the STRING "false". Plain Boolean(...) would then coerce it to
+// true and do the opposite of what the caller asked for. Accept the common
+// string forms explicitly and reject anything else rather than guessing.
+function parseBoolFlag(raw, flagName) {
+  if (raw === undefined || raw === false) return false;
+  if (raw === true) return true;
+  if (typeof raw === 'string') {
+    const normalized = raw.toLowerCase();
+    if (normalized === '' || normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0') return false;
+    throw new Error(`Invalid value for --${flagName}: ${JSON.stringify(raw)}`);
+  }
+  return Boolean(raw);
 }
 
 function printHelp() {
@@ -116,6 +137,9 @@ Usage:
   push tui                       Start full-screen TUI
   push tui --session <id>        Resume session in TUI
   push attach <session-id>      Attach to a running daemon session
+  push init-deep                Generate AGENTS.md skeletons for significant directories
+  push init-deep --dry-run      Preview the init-deep plan without writing files
+  push init-deep --force        Overwrite existing AGENTS.md files
   push config show              Show saved CLI config
   push config init              Interactive setup wizard
   push config set ...           Save provider config defaults
@@ -1684,6 +1708,66 @@ export async function main() {
     return runAttach(sessionId);
   }
 
+  if (subcommand === 'init-deep') {
+    const { runInitDeep } = await import('./init-deep.ts');
+    const cwd = path.resolve(values.cwd || process.cwd());
+    const dryRun = parseBoolFlag(values['dry-run'] ?? values.dryRun, 'dry-run');
+    const force = parseBoolFlag(values.force, 'force');
+    const result = await runInitDeep({ cwd, dryRun, force });
+
+    if (values.json) {
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            dryRun,
+            force,
+            significantDirs: result.significantDirs,
+            written: result.written.map((p) => ({
+              path: p.path,
+              dir: p.dir,
+              significance: p.significance,
+            })),
+            skipped: result.skipped.map((p) => ({
+              path: p.path,
+              dir: p.dir,
+              significance: p.significance,
+            })),
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      return 0;
+    }
+
+    process.stdout.write(
+      `${fmt.dim('[init-deep]')} scanned ${result.significantDirs} significant director${
+        result.significantDirs === 1 ? 'y' : 'ies'
+      }\n`,
+    );
+
+    const writeLabel = dryRun ? '[plan]' : '[write]';
+    for (const proposal of result.written) {
+      process.stdout.write(`${fmt.green(writeLabel)} ${proposal.path}\n`);
+    }
+    for (const proposal of result.skipped) {
+      process.stdout.write(
+        `${fmt.dim('[skip]')} ${proposal.path} (already exists — use --force to overwrite)\n`,
+      );
+    }
+
+    if (dryRun) {
+      process.stdout.write(
+        `${fmt.dim('[init-deep]')} dry-run — ${result.written.length} file(s) would be written, ${result.skipped.length} skipped. Re-run without --dry-run to apply.\n`,
+      );
+    } else {
+      process.stdout.write(
+        `${fmt.dim('[init-deep]')} wrote ${result.written.length} file(s), skipped ${result.skipped.length}\n`,
+      );
+    }
+    return 0;
+  }
+
   if (subcommand === 'tui') {
     if (!tuiEnabled) {
       throw new Error('TUI is behind a feature flag. Set PUSH_TUI_ENABLED=1 to enable it.');
@@ -1706,7 +1790,7 @@ export async function main() {
 
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
     throw new Error(
-      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui. See: push --help`,
+      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, init-deep. See: push --help`,
     );
   }
 
