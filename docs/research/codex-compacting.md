@@ -82,7 +82,7 @@ The model's summary is then wrapped with a prefix (`templates/compact/summary_pr
 
 | Item | Details |
 |------|---------|
-| **System/developer instructions** | Rebuilt fresh from current session state (not carried over) |
+| **System/developer instructions** | Old messages are dropped, but equivalent instructions are rebuilt fresh from current session state — so nothing structural is lost |
 | **Recent user messages** | Up to 20,000 tokens, most-recent-first; oversized messages truncated |
 | **Model-generated summary** | Injected as a user message with the handoff prefix |
 | **Ghost snapshots** | Lightweight state receipts for `/undo` functionality |
@@ -94,7 +94,7 @@ The model's summary is then wrapped with a prefix (`templates/compact/summary_pr
 | **All assistant messages** | Completely removed |
 | **All tool calls and outputs** | Shell commands, file reads, their results — all gone |
 | **All reasoning items** | Internal chain-of-thought stripped |
-| **Developer/system messages** | Dropped (rebuilt fresh instead) |
+| **Developer/system messages** | Original messages discarded (reconstructed from current session state in the Preserved section above) |
 | **Previous compaction summaries** | Filtered out to prevent nested summary accumulation |
 | **Images** | InputImage items are ignored |
 
@@ -182,7 +182,7 @@ Key design principles worth considering:
 
 5. **Server-side compaction is the speed secret** — Codex's "fast" feeling comes from offloading to a dedicated endpoint, not from a better algorithm. For non-OpenAI providers, it's a normal (slower) LLM call.
 
-6. **Tool output loss is the Achilles' heel** — the biggest unsolved problem. Any compaction strategy should consider how to preserve critical tool results (file contents, error messages, test output) rather than structurally filtering them out.
+6. **Tool output loss is the Achilles' heel** — the biggest unsolved problem. Any compaction strategy should consider how to preserve critical tool results (file contents, error messages, test output) rather than structurally filtering them out. A lightweight mitigation: preserve a **tool call log** (tool names and arguments without full output) so the model retains a map of explored paths and avoids re-reading files it already visited.
 
 7. **Cumulative summaries** can mitigate progressive degradation across multiple compaction cycles at minimal token cost.
 
