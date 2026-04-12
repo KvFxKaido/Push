@@ -324,6 +324,21 @@ function buildParseErrorMessage(malformed: { reason: string; sample: string }[])
   )}\n[/TOOL_CALL_PARSE_ERROR]`;
 }
 
+export function buildMaxRoundsFinalizationMessage(
+  maxRounds: number,
+  toolsUsed: Iterable<string>,
+): string {
+  const tools = [...toolsUsed].join(', ') || 'none';
+  return `[MAX_ROUNDS_REACHED]
+Reached the tool-loop round cap (${maxRounds}). Tools used: ${tools}.
+
+Do not call any more tools. Return a concise plain-text answer using only the information already in this conversation:
+- Summarize what you found or changed.
+- Be explicit about what may be incomplete.
+- Give the next best command or request if more work is needed.
+[/MAX_ROUNDS_REACHED]`;
+}
+
 // ─── Main Loop ───────────────────────────────────────────────────
 
 /**
@@ -1081,17 +1096,111 @@ export async function runAssistantLoop(
     await saveSessionState(state);
   }
 
-  const warning: string = `Reached max rounds (${maxRounds}). Tools used: ${[...toolsUsed].join(', ') || 'none'}. Increase --max-rounds or break the task into smaller steps.`;
+  const warning: string = `Reached max rounds (${maxRounds}). Tools used: ${[...toolsUsed].join(', ') || 'none'}.`;
+  const finalizationPrompt = buildMaxRoundsFinalizationMessage(maxRounds, toolsUsed);
+  (state.messages as Message[]).push({ role: 'user', content: finalizationPrompt });
+  await appendSessionEvent(
+    state,
+    'warning',
+    {
+      code: 'MAX_ROUNDS_REACHED',
+      message: `${warning} Asking the assistant for a final no-tool summary.`,
+    },
+    runId,
+  );
+  dispatchEvent('warning', {
+    code: 'MAX_ROUNDS_REACHED',
+    message: `${warning} Asking for a final summary.`,
+  });
+
+  let finalSummaryText = warning;
+  try {
+    const finalTrimResult = trimContext(
+      state.messages as Message[],
+      providerConfig.id,
+      state.model,
+    );
+    if (finalTrimResult.trimmed) {
+      dispatchEvent('status', {
+        source: 'orchestrator',
+        phase: 'context_trimming',
+        detail: `${finalTrimResult.beforeTokens} → ${finalTrimResult.afterTokens} tokens (${finalTrimResult.removedCount} msgs removed)`,
+      });
+    }
+    const finalStreamOptions: {
+      onThinkingToken?: (token: string | null) => void;
+      sessionId?: string;
+    } = {
+      onThinkingToken: emit
+        ? (token: string | null): void => {
+            if (token === null) {
+              dispatchEvent('assistant_thinking_done', {});
+              return;
+            }
+            dispatchEvent('assistant_thinking_token', { text: token });
+          }
+        : undefined,
+      sessionId: state.sessionId,
+    };
+    const assistantText = await streamCompletion(
+      providerConfig,
+      apiKey,
+      state.model,
+      finalTrimResult.messages,
+      (token: string): void => {
+        dispatchEvent('assistant_token', { text: token });
+      },
+      undefined,
+      signal,
+      finalStreamOptions,
+    );
+    finalSummaryText = assistantText.trim() || warning;
+    (state.messages as Message[]).push({ role: 'assistant', content: assistantText });
+    const messageId: string = `asst_${Date.now().toString(36)}`;
+    await appendSessionEvent(state, 'assistant_done', { messageId }, runId);
+    dispatchEvent('assistant_done', { messageId });
+  } catch (err: unknown) {
+    const isAbort: boolean =
+      (err instanceof Error && err.name === 'AbortError') || (signal?.aborted ?? false);
+    if (isAbort) {
+      await saveSessionState(state);
+      await appendSessionEvent(
+        state,
+        'run_complete',
+        { runId, outcome: 'aborted', summary: 'Aborted by user.' },
+        runId,
+      );
+      dispatchEvent('run_complete', { outcome: 'aborted', summary: 'Aborted by user.' });
+      return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: maxRounds, runId };
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    await appendSessionEvent(
+      state,
+      'error',
+      {
+        code: 'MAX_ROUNDS_FINALIZATION_FAILED',
+        message,
+        retryable: true,
+      },
+      runId,
+    );
+    dispatchEvent('warning', {
+      code: 'MAX_ROUNDS_FINALIZATION_FAILED',
+      message: `Could not get final summary after round cap: ${message}`,
+    });
+  }
+
+  await saveSessionState(state);
   await appendSessionEvent(
     state,
     'run_complete',
     {
       runId,
-      outcome: 'failed',
-      summary: warning,
+      outcome: 'max_rounds',
+      summary: finalSummaryText.slice(0, 500),
     },
     runId,
   );
-  dispatchEvent('run_complete', { outcome: 'failed', summary: warning });
-  return { outcome: 'max_rounds', finalAssistantText: warning, rounds: maxRounds, runId };
+  dispatchEvent('run_complete', { outcome: 'max_rounds', summary: finalSummaryText });
+  return { outcome: 'max_rounds', finalAssistantText: finalSummaryText, rounds: maxRounds, runId };
 }

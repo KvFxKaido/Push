@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSystemPrompt, buildSystemPromptBase, buildToolResultMessage } from '../engine.ts';
+import {
+  buildMaxRoundsFinalizationMessage,
+  buildSystemPrompt,
+  buildSystemPromptBase,
+  buildToolResultMessage,
+} from '../engine.ts';
 
 // ─── buildToolResultMessage: working memory deduplication ────────
 
@@ -52,6 +57,17 @@ describe('buildToolResultMessage', () => {
     assert.ok(metaMatch, 'should have a [meta] line');
     const parsed = JSON.parse(metaMatch[1]);
     assert.equal(parsed.contextChars, 42000);
+  });
+});
+
+describe('buildMaxRoundsFinalizationMessage', () => {
+  it('asks for a final no-tool summary instead of another tool round', () => {
+    const message = buildMaxRoundsFinalizationMessage(8, ['web_search', 'exec']);
+
+    assert.ok(message.includes('[MAX_ROUNDS_REACHED]'));
+    assert.ok(message.includes('Do not call any more tools'));
+    assert.ok(message.includes('web_search, exec'));
+    assert.ok(message.includes('what may be incomplete'));
   });
 });
 
