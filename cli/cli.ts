@@ -1773,7 +1773,7 @@ export async function main() {
 
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
     throw new Error(
-      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui. See: push --help`,
+      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, init-deep. See: push --help`,
     );
   }
 
