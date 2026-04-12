@@ -107,7 +107,8 @@ export const USER_PROFILE_DEFAULTS: UserProfile = {
   bio: '',
 };
 
-export type AgentRole = 'orchestrator' | 'coder' | 'explorer' | 'auditor' | 'reviewer';
+import type { AgentRole } from '@push/lib/runtime-contract';
+export type { AgentRole };
 
 // ---------------------------------------------------------------------------
 // Reviewer agent types

@@ -7,6 +7,12 @@
  */
 
 // ---------------------------------------------------------------------------
+// Agent roles
+// ---------------------------------------------------------------------------
+
+export type AgentRole = 'orchestrator' | 'explorer' | 'coder' | 'reviewer' | 'auditor';
+
+// ---------------------------------------------------------------------------
 // Acceptance criteria and delegated-run outcomes
 // ---------------------------------------------------------------------------
 
@@ -188,7 +194,7 @@ export interface MemoryQuery {
   repoFullName: string;
   branch?: string;
   chatId?: string;
-  role: 'orchestrator' | 'explorer' | 'coder' | 'reviewer' | 'auditor';
+  role: AgentRole;
   taskText: string;
   fileHints?: string[];
   symbolHints?: string[];
