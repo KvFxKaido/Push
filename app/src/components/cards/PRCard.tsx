@@ -1,3 +1,4 @@
+import { formatDistanceToNow } from 'date-fns';
 import { MergeShieldIcon, PRThreadIcon } from '@/components/icons/push-custom-icons';
 import type { PRCardData } from '@/types';
 import { useExpandable } from '@/hooks/useExpandable';
@@ -101,6 +102,7 @@ export function PRCard({ data }: { data: PRCardData }) {
         <div className="border-t border-push-edge">
           <button
             onClick={toggleReviewExpanded}
+            aria-expanded={reviewExpanded}
             className="w-full px-3 py-1.5 flex items-center gap-1 text-push-sm text-push-fg-dim hover:text-push-fg-secondary transition-colors"
           >
             <ExpandChevron expanded={reviewExpanded} />
@@ -116,10 +118,10 @@ export function PRCard({ data }: { data: PRCardData }) {
           >
             {data.reviewComments.map((c, i) => (
               <div key={i} className="text-push-sm">
-                <div className="flex items-baseline gap-1.5 text-push-fg-dim">
-                  <span className="font-medium text-push-fg-secondary">@{c.author}</span>
-                  {(c.path || c.line) && (
-                    <span className="font-mono text-push-xs truncate">
+                <div className="flex items-baseline gap-1.5 min-w-0 text-push-fg-dim">
+                  <span className="font-medium text-push-fg-secondary shrink-0">@{c.author}</span>
+                  {c.path && (
+                    <span className="font-mono text-push-xs min-w-0 truncate">
                       {c.path}
                       {c.line ? `:${c.line}` : ''}
                     </span>
@@ -139,6 +141,7 @@ export function PRCard({ data }: { data: PRCardData }) {
         <div className="border-t border-push-edge">
           <button
             onClick={toggleConvoExpanded}
+            aria-expanded={convoExpanded}
             className="w-full px-3 py-1.5 flex items-center gap-1 text-push-sm text-push-fg-dim hover:text-push-fg-secondary transition-colors"
           >
             <ExpandChevron expanded={convoExpanded} />
@@ -158,7 +161,7 @@ export function PRCard({ data }: { data: PRCardData }) {
                   <span className="font-medium text-push-fg-secondary">@{c.author}</span>
                   {c.createdAt && (
                     <span className="text-push-xs">
-                      {new Date(c.createdAt).toLocaleDateString()}
+                      {formatDistanceToNow(new Date(c.createdAt), { addSuffix: true })}
                     </span>
                   )}
                 </div>
