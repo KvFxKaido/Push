@@ -3,9 +3,44 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const readmeSource = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-const providerSource = readFileSync(new URL('../provider.ts', import.meta.url), 'utf8');
+const rawProviderSource = readFileSync(new URL('../provider.ts', import.meta.url), 'utf8');
+const providerModelsSource = readFileSync(
+  new URL('../../lib/provider-models.ts', import.meta.url),
+  'utf8',
+);
 const cliSource = readFileSync(new URL('../cli.ts', import.meta.url), 'utf8');
 const toolsSource = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
+
+// Some provider defaults were refactored from inline string literals to
+// named constants exported from `lib/provider-models.ts` (e.g.
+// `OLLAMA_DEFAULT_MODEL`). The regex extractor below looks for quoted
+// string literals inside each provider's config block, so it can't follow
+// that indirection. Pre-process `provider.ts` by inlining every known
+// `export const NAME = 'value'` from `provider-models.ts` into the
+// `PROVIDER_CONFIGS` block so the regex sees string literals where it
+// expects them.
+//
+// NOTE: this is a pragmatic band-aid. The correct long-term fix is to
+// dynamically `import()` `provider.ts` in a test harness with env vars
+// cleared and read `PROVIDER_CONFIGS` values directly. That's a bigger
+// refactor and out of scope for the CI-wiring PR that unblocked this.
+const stringConstPattern = /^export const ([A-Z_][A-Z0-9_]*) = '([^']+)'/gm;
+const inlinedConstants = new Map();
+for (const match of providerModelsSource.matchAll(stringConstPattern)) {
+  const [, name, value] = match;
+  inlinedConstants.set(name, value);
+}
+
+const providerSource = rawProviderSource.replace(
+  /(export const PROVIDER_CONFIGS[^=]*= \{[\s\S]*?\n\};)/,
+  (block) => {
+    let patched = block;
+    for (const [name, value] of inlinedConstants) {
+      patched = patched.replace(new RegExp(`\\b${name}\\b`, 'g'), `'${value}'`);
+    }
+    return patched;
+  },
+);
 
 function extractProviderConfigsBlock(source) {
   const match = source.match(/export const PROVIDER_CONFIGS[^=]*= \{([\s\S]*?)\n\};/);
@@ -20,8 +55,14 @@ function extractCliProviderEntries(source) {
 
   for (const match of block.matchAll(entryRegex)) {
     const [, providerId, entryBody] = match;
-    const urlLine = entryBody.match(/url:\s*(.+),/);
-    const defaultModelLine = entryBody.match(/defaultModel:\s*(.+),/);
+    // `url:` and `defaultModel:` may span multiple lines when the value is a
+    // long `process.env.X || process.env.Y || 'fallback'` chain (see the
+    // `ollama` entry in cli/provider.ts). `[\s\S]+?` matches across newlines
+    // non-greedily, and the `,\s*\n` terminator anchors on a comma at the
+    // end of the line so we don't accidentally stop at a comma inside an
+    // array or function argument list.
+    const urlLine = entryBody.match(/url:\s*([\s\S]+?),\s*\n/);
+    const defaultModelLine = entryBody.match(/defaultModel:\s*([\s\S]+?),\s*\n/);
     const requiresKeyLine = entryBody.match(/requiresKey:\s*(true|false)/);
 
     assert.ok(urlLine, `Expected ${providerId} to define url`);
