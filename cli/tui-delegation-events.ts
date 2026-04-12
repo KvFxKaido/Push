@@ -30,14 +30,25 @@ export interface DelegationEventEnvelope {
     detail?: string;
     summary?: string;
     error?: string;
+    reason?: string;
     taskId?: string;
     elapsedMs?: number;
+    // task_graph.graph_completed fields
+    success?: boolean;
+    aborted?: boolean;
+    nodeCount?: number;
+    totalRounds?: number;
+    wallTimeMs?: number;
   };
 }
 
 /**
  * The set of event types this module handles. Callers can use this to route
  * events to `delegationEventToTranscript` or fall through to other handlers.
+ *
+ * Adding a new delegation event type to `lib/runtime-contract.ts` means
+ * updating this set AND the switch in `delegationEventToTranscript` — the
+ * test suite pins the count so drift between the two is caught at test time.
  */
 export const DELEGATION_EVENT_TYPES = new Set<string>([
   'subagent.started',
@@ -48,6 +59,7 @@ export const DELEGATION_EVENT_TYPES = new Set<string>([
   'task_graph.task_completed',
   'task_graph.task_failed',
   'task_graph.task_cancelled',
+  'task_graph.graph_completed',
 ]);
 
 export function isDelegationEvent(event: { type: string }): boolean {
@@ -136,7 +148,29 @@ export function delegationEventToTranscript(
     case 'task_graph.task_cancelled': {
       const taskId = p.taskId ?? '?';
       const agent = String(p.agent ?? 'agent');
-      return { role: 'warning', text: `task cancelled: ${taskId} (${agent})` };
+      const elapsed = typeof p.elapsedMs === 'number' ? `, ${p.elapsedMs}ms` : '';
+      const reason = p.reason ? ` — ${p.reason}` : '';
+      return {
+        role: 'warning',
+        text: `task cancelled: ${taskId} (${agent}${elapsed})${reason}`,
+      };
+    }
+
+    case 'task_graph.graph_completed': {
+      const nodeCount = p.nodeCount ?? 0;
+      const totalRounds = p.totalRounds ?? 0;
+      const wallTimeMs = p.wallTimeMs ?? 0;
+      const summary = p.summary ?? '(no summary)';
+      const stats = `${nodeCount} nodes / ${totalRounds} rounds / ${wallTimeMs}ms`;
+      // Severity branches on success/aborted: aborted → warn, failed → error,
+      // success → info. Keeps the rendering honest about what happened.
+      if (p.aborted) {
+        return { role: 'warning', text: `task graph aborted: ${stats} — ${summary}` };
+      }
+      if (p.success === false) {
+        return { role: 'error', text: `task graph failed: ${stats} — ${summary}` };
+      }
+      return { role: 'status', text: `task graph completed: ${stats} — ${summary}` };
     }
 
     default:

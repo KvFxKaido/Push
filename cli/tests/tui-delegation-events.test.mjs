@@ -9,7 +9,7 @@ import {
 // ─── isDelegationEvent ───────────────────────────────────────────
 
 describe('isDelegationEvent', () => {
-  it('recognizes all eight delegation event types', () => {
+  it('recognizes all nine delegation event types', () => {
     const expected = [
       'subagent.started',
       'subagent.completed',
@@ -19,6 +19,7 @@ describe('isDelegationEvent', () => {
       'task_graph.task_completed',
       'task_graph.task_failed',
       'task_graph.task_cancelled',
+      'task_graph.graph_completed',
     ];
     for (const type of expected) {
       assert.equal(isDelegationEvent({ type }), true, `missing: ${type}`);
@@ -33,10 +34,10 @@ describe('isDelegationEvent', () => {
     assert.equal(isDelegationEvent({ type: 'status' }), false);
   });
 
-  it('has exactly eight entries so every handled case is enumerated', () => {
+  it('has exactly nine entries so every handled case is enumerated', () => {
     // Sanity check: if someone adds a case to the switch without updating the
     // set (or vice versa), this test catches the drift.
-    assert.equal(DELEGATION_EVENT_TYPES.size, 8);
+    assert.equal(DELEGATION_EVENT_TYPES.size, 9);
   });
 });
 
@@ -193,15 +194,133 @@ describe('delegationEventToTranscript — task_graph events', () => {
     });
   });
 
-  it('maps task_graph.task_cancelled to a warning entry', () => {
+  it('maps task_graph.task_cancelled with reason and elapsedMs', () => {
+    const entry = delegationEventToTranscript({
+      type: 'task_graph.task_cancelled',
+      payload: {
+        executionId: 'ex-1',
+        taskId: 't-1',
+        agent: 'explorer',
+        reason: 'budget exceeded',
+        elapsedMs: 1200,
+      },
+    });
+    assert.deepEqual(entry, {
+      role: 'warning',
+      text: 'task cancelled: t-1 (explorer, 1200ms) — budget exceeded',
+    });
+  });
+
+  it('maps task_graph.task_cancelled without elapsedMs', () => {
+    const entry = delegationEventToTranscript({
+      type: 'task_graph.task_cancelled',
+      payload: {
+        executionId: 'ex-1',
+        taskId: 't-1',
+        agent: 'coder',
+        reason: 'user aborted',
+      },
+    });
+    assert.equal(entry?.text, 'task cancelled: t-1 (coder) — user aborted');
+  });
+
+  it('maps task_graph.task_cancelled without reason (fallback to bare label)', () => {
+    // `reason` is required in the shared contract, but the observer should
+    // still render a sensible line if a producer omits it during a protocol
+    // hiccup rather than crashing or printing "undefined".
     const entry = delegationEventToTranscript({
       type: 'task_graph.task_cancelled',
       payload: { executionId: 'ex-1', taskId: 't-1', agent: 'explorer' },
     });
+    assert.equal(entry?.text, 'task cancelled: t-1 (explorer)');
+  });
+});
+
+// ─── delegationEventToTranscript: task_graph.graph_completed ─────
+
+describe('delegationEventToTranscript — task_graph.graph_completed', () => {
+  it('maps a successful graph completion to a status entry', () => {
+    const entry = delegationEventToTranscript({
+      type: 'task_graph.graph_completed',
+      payload: {
+        executionId: 'ex-1',
+        summary: 'all tasks succeeded',
+        success: true,
+        aborted: false,
+        nodeCount: 5,
+        totalRounds: 3,
+        wallTimeMs: 4200,
+      },
+    });
+    assert.deepEqual(entry, {
+      role: 'status',
+      text: 'task graph completed: 5 nodes / 3 rounds / 4200ms — all tasks succeeded',
+    });
+  });
+
+  it('maps an aborted graph completion to a warning entry', () => {
+    const entry = delegationEventToTranscript({
+      type: 'task_graph.graph_completed',
+      payload: {
+        executionId: 'ex-1',
+        summary: 'run aborted by user',
+        success: false,
+        aborted: true,
+        nodeCount: 2,
+        totalRounds: 1,
+        wallTimeMs: 800,
+      },
+    });
     assert.deepEqual(entry, {
       role: 'warning',
-      text: 'task cancelled: t-1 (explorer)',
+      text: 'task graph aborted: 2 nodes / 1 rounds / 800ms — run aborted by user',
     });
+  });
+
+  it('maps a failed (non-aborted) graph completion to an error entry', () => {
+    const entry = delegationEventToTranscript({
+      type: 'task_graph.graph_completed',
+      payload: {
+        executionId: 'ex-1',
+        summary: 'coder task failed',
+        success: false,
+        aborted: false,
+        nodeCount: 3,
+        totalRounds: 2,
+        wallTimeMs: 1500,
+      },
+    });
+    assert.deepEqual(entry, {
+      role: 'error',
+      text: 'task graph failed: 3 nodes / 2 rounds / 1500ms — coder task failed',
+    });
+  });
+
+  it('falls back to zeros and "(no summary)" on missing fields', () => {
+    const entry = delegationEventToTranscript({
+      type: 'task_graph.graph_completed',
+      payload: { executionId: 'ex-1', success: true, aborted: false },
+    });
+    assert.equal(entry?.text, 'task graph completed: 0 nodes / 0 rounds / 0ms — (no summary)');
+  });
+
+  it('prioritizes aborted over failed when both flags are set', () => {
+    // aborted is a more specific signal than "not successful" — a user
+    // cancellation shouldn't get rendered as a failure even if the run also
+    // reports success: false.
+    const entry = delegationEventToTranscript({
+      type: 'task_graph.graph_completed',
+      payload: {
+        executionId: 'ex-1',
+        summary: 'stopped mid-run',
+        success: false,
+        aborted: true,
+        nodeCount: 1,
+        totalRounds: 0,
+        wallTimeMs: 100,
+      },
+    });
+    assert.equal(entry?.role, 'warning');
   });
 });
 

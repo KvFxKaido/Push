@@ -13,7 +13,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
 import { createTheme } from './tui-theme.js';
-import { delegationEventToTranscript } from './tui-delegation-events.js';
+import { delegationEventToTranscript, isDelegationEvent } from './tui-delegation-events.js';
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
 import { filterSessions } from './tui-fuzzy.js';
@@ -2216,28 +2216,6 @@ export async function runTUI(options = {}) {
         }
         break;
 
-      // ── Delegation lifecycle events ──────────────────────────────
-      // The CLI engine does not currently produce subagent.* or
-      // task_graph.* events, but when they arrive from other sources
-      // (daemon stream, future CLI delegation runtime) we render them
-      // as normal transcript entries. See cli/tui-delegation-events.ts
-      // for the event → transcript mapping.
-      case 'subagent.started':
-      case 'subagent.completed':
-      case 'subagent.failed':
-      case 'task_graph.task_ready':
-      case 'task_graph.task_started':
-      case 'task_graph.task_completed':
-      case 'task_graph.task_failed':
-      case 'task_graph.task_cancelled': {
-        const entry = delegationEventToTranscript(event);
-        if (entry) {
-          addTranscriptEntry(tuiState, entry.role, entry.text);
-          scheduler.schedule();
-        }
-        break;
-      }
-
       case 'run_complete':
         tuiState.runState = 'idle';
         // assistant_done normally flushes the stream; this is a fallback for
@@ -2250,6 +2228,23 @@ export async function runTUI(options = {}) {
         tuiState.dirty.add('all');
         process.stdout.write('\x07'); // bell
         scheduler.schedule();
+        break;
+
+      default:
+        // Delegation lifecycle events (`subagent.*`, `task_graph.*`) are
+        // routed through a single helper so the list of handled types lives
+        // in one place (cli/tui-delegation-events.ts). Adding a new event
+        // type to the shared runtime vocabulary only requires updating the
+        // helper's `DELEGATION_EVENT_TYPES` set and its transform switch —
+        // no changes here. Unknown non-delegation events fall through
+        // silently, same as before.
+        if (isDelegationEvent(event)) {
+          const entry = delegationEventToTranscript(event);
+          if (entry) {
+            addTranscriptEntry(tuiState, entry.role, entry.text);
+            scheduler.schedule();
+          }
+        }
         break;
     }
   }
