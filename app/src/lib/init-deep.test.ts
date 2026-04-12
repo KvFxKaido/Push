@@ -43,7 +43,9 @@ describe('isSignificantDir', () => {
     expect(
       isSignificantDir(snapshot('node_modules', [{ name: 'foo', isDirectory: true }])),
     ).toBeNull();
-    expect(isSignificantDir(snapshot('dist', [{ name: 'bundle.js', isDirectory: false }]))).toBeNull();
+    expect(
+      isSignificantDir(snapshot('dist', [{ name: 'bundle.js', isDirectory: false }])),
+    ).toBeNull();
   });
 
   it('skips top-level dirs with no children and no hints', () => {
@@ -117,10 +119,7 @@ describe('renderAgentsMd', () => {
   });
 
   it('labels root as Repository Context', () => {
-    const content = renderAgentsMd(
-      snapshot('.', [{ name: 'app', isDirectory: true }]),
-      'root',
-    );
+    const content = renderAgentsMd(snapshot('.', [{ name: 'app', isDirectory: true }]), 'root');
 
     expect(content).toContain('# Repository Context');
     expect(content).not.toContain('Parent context');
