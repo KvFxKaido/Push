@@ -9,8 +9,11 @@ on:
       - 'lib/**'
       - 'mcp/**'
       - 'sandbox/**'
+      - 'scripts/**'
+      - 'docs/cli/schemas/**'
       - 'biome.json'
       - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
@@ -20,8 +23,11 @@ on:
       - 'lib/**'
       - 'mcp/**'
       - 'sandbox/**'
+      - 'scripts/**'
+      - 'docs/cli/schemas/**'
       - 'biome.json'
       - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
 
@@ -107,9 +113,12 @@ jobs:
         run: npm ci
 
       # Biome's format check covers the entire monorepo (app/, cli/, lib/,
-      # mcp/, scripts/, docs/cli/schemas/) because biome.json is at the repo
-      # root. Running it here makes the CLI job the one place CI enforces
-      # formatter rules for the whole repo.
+      # mcp/, scripts/, docs/cli/schemas/) because biome.json is at the
+      # repo root. The workflow's `paths` filter above explicitly includes
+      # every directory Biome formats, so whenever this job runs it's
+      # enforcing formatter rules against every file that Biome cares
+      # about — no format-relevant change slips past by only touching a
+      # path the filter ignores.
       - name: Format check
         run: npm run format:check
 
