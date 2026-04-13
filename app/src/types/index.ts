@@ -46,14 +46,10 @@ export type {
   ReviewResult,
 } from '@push/lib/provider-contract';
 
-// User profile — persisted in localStorage, injected into system prompt
-export interface UserProfile {
-  displayName: string;
-  githubLogin?: string;
-  bio: string;
-  /** Longer-form instructions for plain chat mode (not the short bio). */
-  chatInstructions?: string;
-}
+// User profile — canonical shape lives in lib/user-identity.ts; re-exported
+// here so existing Web call sites using `@/types` don't have to churn.
+import type { UserProfile } from '@push/lib/user-identity';
+export type { UserProfile } from '@push/lib/user-identity';
 
 export type WorkspaceMode = 'repo' | 'scratch' | 'chat';
 

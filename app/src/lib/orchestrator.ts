@@ -566,29 +566,8 @@ export function buildChatInstructionsBlock(profile?: UserProfile): string {
  * Build a compact identity block for the system prompt.
  * Returns empty string when no identity fields are set.
  */
-export function buildUserIdentityBlock(profile?: UserProfile): string {
-  const hasName = Boolean(profile?.displayName?.trim());
-  const hasGitHub = Boolean(profile?.githubLogin?.trim());
-  const hasBio = Boolean(profile?.bio?.trim());
-  if (!profile || (!hasName && !hasGitHub && !hasBio)) return '';
-
-  const lines = ['## User Identity'];
-  if (hasName) {
-    lines.push(`Name: ${profile.displayName.trim()}`);
-  }
-  if (hasGitHub) {
-    lines.push(`GitHub: @${profile.githubLogin}`);
-  }
-  if (hasBio) {
-    // Escape delimiter-breaking attempts (same pattern as scratchpad)
-    const escaped = profile.bio
-      .trim()
-      .replace(/\[USER IDENTITY\]/gi, '[USER IDENTITY\u200B]')
-      .replace(/\[\/USER IDENTITY\]/gi, '[/USER IDENTITY\u200B]');
-    lines.push(`Context: ${escaped}`);
-  }
-  return lines.join('\n');
-}
+import { buildUserIdentityBlock } from '@push/lib/user-identity';
+export { buildUserIdentityBlock };
 
 function toLLMMessages(
   messages: ChatMessage[],
