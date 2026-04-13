@@ -690,10 +690,19 @@ describe('exec session tools', () => {
       const sessionId = start.meta?.session_id;
       assert.ok(sessionId, 'exec_start should return a session_id');
 
+      // Poll on a wall-clock budget rather than a fixed iteration count.
+      // `startExecSession` uses `/bin/bash -lc`, which sources login profiles
+      // (`.bashrc`, `nvm.sh`, etc.) before running the inlined command —
+      // measured at ~1200ms on Node 20 CI runners, which blows past any
+      // short iteration×sleep window. The command itself only runs ~200ms
+      // once bash is up, so a 15s budget is overkill for the happy path
+      // and still bounds the test on genuinely stuck children.
+      const DEADLINE_MS = 15_000;
+      const deadline = Date.now() + DEADLINE_MS;
       let fromSeq = 0;
       let combinedOutput = '';
       let running = true;
-      for (let i = 0; i < 30 && running; i++) {
+      while (Date.now() < deadline && running) {
         const poll = await executeToolCall(
           {
             tool: 'exec_poll',
@@ -706,13 +715,32 @@ describe('exec session tools', () => {
         running = Boolean(poll.meta.running);
         combinedOutput += poll.text;
         if (running) {
-          await new Promise((resolve) => setTimeout(resolve, 30));
+          await new Promise((resolve) => setTimeout(resolve, 20));
         }
       }
 
-      assert.ok(combinedOutput.includes('tick-1'));
-      assert.ok(combinedOutput.includes('tick-2'));
-      assert.ok(combinedOutput.includes('tick-3'));
+      // Drain any output that landed after the child closed but before we
+      // observed `running: false` — the exec_poll that first sees the
+      // closed state and the poll that reads the final chunks are not
+      // guaranteed to be the same poll.
+      const finalPoll = await executeToolCall(
+        {
+          tool: 'exec_poll',
+          args: { session_id: sessionId, from_seq: fromSeq, max_chars: 4096 },
+        },
+        root,
+      );
+      assert.equal(finalPoll.ok, true);
+      combinedOutput += finalPoll.text;
+
+      assert.equal(
+        running,
+        false,
+        `session should have exited within ${DEADLINE_MS}ms; combined output:\n${combinedOutput}`,
+      );
+      assert.ok(combinedOutput.includes('tick-1'), `expected tick-1 in output:\n${combinedOutput}`);
+      assert.ok(combinedOutput.includes('tick-2'), `expected tick-2 in output:\n${combinedOutput}`);
+      assert.ok(combinedOutput.includes('tick-3'), `expected tick-3 in output:\n${combinedOutput}`);
 
       const stop = await executeToolCall(
         { tool: 'exec_stop', args: { session_id: sessionId } },

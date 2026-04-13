@@ -31,6 +31,17 @@ export interface SessionState {
   workingMemory: unknown;
   roleRouting?: Record<string, RoleRoutingEntry>;
   delegationOutcomes?: DelegationOutcomeRecord[];
+  /**
+   * Per-session attach token, persisted so that clients survive daemon
+   * restarts. Minted at `start_session` time; disk-loaded sessions restore
+   * this value into the in-memory entry instead of generating a fresh
+   * token (which would invalidate the caller's stored token).
+   *
+   * Optional for migration: sessions created before this field existed
+   * will load without it, and `validateAttachToken`'s legacy bypass accepts
+   * any provided token for entries whose `attachToken` is falsy.
+   */
+  attachToken?: string;
   [key: string]: unknown;
 }
 

@@ -19,6 +19,7 @@ import {
   collectOrphanedDelegations,
   formatDelegationInterruptedNote,
   __getActiveSessionForTesting,
+  __evictActiveSessionForTesting,
   __setDelegateExplorerHooksForTesting,
 } from '../pushd.ts';
 import {
@@ -29,6 +30,7 @@ import {
   scanInterruptedSessions,
   makeSessionId,
   loadSessionState,
+  saveSessionState,
   appendSessionEvent,
   loadSessionEvents,
 } from '../session-store.ts';
@@ -901,8 +903,7 @@ async function waitForTaskGraphComplete(entry, executionId, sessionId, timeoutMs
     if (!stillActive) {
       const events = await loadSessionEvents(sessionId);
       const terminal = events.find(
-        (e) =>
-          e.type === 'task_graph.graph_completed' && e.payload?.executionId === executionId,
+        (e) => e.type === 'task_graph.graph_completed' && e.payload?.executionId === executionId,
       );
       if (terminal) return;
     }
@@ -1152,16 +1153,13 @@ describe('submit_task_graph', () => {
 
       const events = await loadSessionEvents(sessionId);
       const started = events.find(
-        (e) =>
-          e.type === 'task_graph.task_started' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.task_started' && e.payload.executionId === executionId,
       );
       const completedTask = events.find(
-        (e) =>
-          e.type === 'task_graph.task_completed' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.task_completed' && e.payload.executionId === executionId,
       );
       const completedGraph = events.find(
-        (e) =>
-          e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
       );
       assert.ok(started, 'expected task_graph.task_started event');
       assert.ok(completedTask, 'expected task_graph.task_completed event');
@@ -1174,8 +1172,7 @@ describe('submit_task_graph', () => {
       assert.equal(completedGraph.payload.aborted, false);
 
       const broadcastGraphCompleted = broadcasted.find(
-        (e) =>
-          e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
       );
       assert.ok(broadcastGraphCompleted, 'expected task_graph.graph_completed broadcast');
     } finally {
@@ -1254,7 +1251,10 @@ describe('submit_task_graph', () => {
       const graphEvents = events.filter(
         (e) => e.type.startsWith('task_graph.') && e.payload?.executionId === executionId,
       );
-      assert.ok(graphEvents.length >= 7, 'expected at least 3 started + 3 completed + 1 graph_completed events');
+      assert.ok(
+        graphEvents.length >= 7,
+        'expected at least 3 started + 3 completed + 1 graph_completed events',
+      );
 
       // Disk order = emission order; seq must be strictly increasing.
       let prevSeq = -Infinity;
@@ -1379,7 +1379,10 @@ describe('submit_task_graph', () => {
           !('runId' in e) || e.runId !== null,
           `broadcast envelope must omit runId (or make it non-null) when parentRunId is null, got: ${JSON.stringify(e)}`,
         );
-        assert.ok(!('runId' in e), `broadcast envelope should omit runId entirely: ${JSON.stringify(e)}`);
+        assert.ok(
+          !('runId' in e),
+          `broadcast envelope should omit runId entirely: ${JSON.stringify(e)}`,
+        );
       }
     } finally {
       restoreConfig();
@@ -1431,12 +1434,10 @@ describe('submit_task_graph', () => {
 
       const events = await loadSessionEvents(sessionId);
       const failed = events.find(
-        (e) =>
-          e.type === 'task_graph.task_failed' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.task_failed' && e.payload.executionId === executionId,
       );
       const completedGraph = events.find(
-        (e) =>
-          e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
       );
       assert.ok(failed, 'expected task_graph.task_failed event for coder node');
       assert.ok(failed.payload.error.includes('Coder delegation is not yet wired'));
@@ -2785,5 +2786,200 @@ describe('start_session defaults', () => {
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── attachToken persistence across daemon-restart / disk-load ────
+
+// Before this fix, every handler that lazy-loaded a session from disk
+// minted a fresh in-memory attachToken and then immediately validated
+// the caller's ORIGINAL token against it — so any client that had
+// successfully called start_session lost the ability to use that session
+// as soon as it was evicted from `activeSessions` (including after a
+// daemon crash + restart). The fix persists `attachToken` on the session
+// state and restores it on disk-load; legacy sessions without a
+// persisted token fall through `validateAttachToken`'s bypass.
+describe('attach token persistence', () => {
+  it('start_session persists attachToken to the session state file', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-attach-persist-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      assert.equal(start.ok, true);
+      const { sessionId, attachToken } = start.payload;
+      assert.ok(typeof attachToken === 'string' && attachToken.length > 0);
+
+      const persisted = await loadSessionState(sessionId);
+      assert.equal(persisted.attachToken, attachToken);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('lazy disk-load restores the original attachToken (daemon-restart path)', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-attach-reload-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      // Simulate daemon restart: evict the in-memory entry so the next
+      // handler call has to lazy-load session state from disk.
+      const evicted = __evictActiveSessionForTesting(sessionId);
+      assert.equal(evicted, true);
+      assert.equal(__getActiveSessionForTesting(sessionId), null);
+
+      // configure_role_routing is a cheap handler that exercises the
+      // disk-load + validateAttachToken path without needing a mock
+      // provider. The client presents its ORIGINAL attachToken, which
+      // must still be accepted after the reload.
+      const response = await handleRequest(
+        makeRequest(
+          'configure_role_routing',
+          {
+            sessionId,
+            attachToken,
+            routing: { explorer: { provider: 'ollama' } },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, true, `expected success, got ${JSON.stringify(response.error)}`);
+
+      const reloaded = __getActiveSessionForTesting(sessionId);
+      assert.ok(reloaded, 'handler should have lazy-loaded the session');
+      assert.equal(
+        reloaded.attachToken,
+        attachToken,
+        'restored in-memory attachToken must equal the original',
+      );
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a wrong attachToken after disk-load', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-attach-wrong-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId } = start.payload;
+      __evictActiveSessionForTesting(sessionId);
+
+      const response = await handleRequest(
+        makeRequest(
+          'configure_role_routing',
+          {
+            sessionId,
+            attachToken: 'att_wrong',
+            routing: { explorer: { provider: 'ollama' } },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_TOKEN');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('legacy session without persisted attachToken falls through the bypass', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-attach-legacy-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      // Create a session the normal way, then manually strip the
+      // attachToken field from its persisted state to simulate a session
+      // created before this field existed.
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId } = start.payload;
+      __evictActiveSessionForTesting(sessionId);
+
+      const raw = await loadSessionState(sessionId);
+      delete raw.attachToken;
+      await saveSessionState(raw);
+
+      // With no persisted token, the disk-load path leaves
+      // entry.attachToken undefined, and validateAttachToken's bypass
+      // accepts any caller-provided token (including empty/missing).
+      const response = await handleRequest(
+        makeRequest(
+          'configure_role_routing',
+          {
+            sessionId,
+            routing: { explorer: { provider: 'ollama' } },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(
+        response.ok,
+        true,
+        `expected legacy bypass success, got ${JSON.stringify(response.error)}`,
+      );
+
+      const reloaded = __getActiveSessionForTesting(sessionId);
+      assert.ok(reloaded);
+      assert.equal(reloaded.attachToken, undefined);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('applies the same persistence across every disk-load handler', async () => {
+    // Guard that future handlers added to the family stay consistent.
+    // This test loads the source of pushd.ts and asserts that nobody
+    // reintroduces the old `attachToken: makeAttachToken()` pattern on a
+    // disk-load path — anyone tempted to copy it will fail this test.
+    const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
+    const offenders = content
+      .split('\n')
+      .map((line, idx) => ({ line, n: idx + 1 }))
+      .filter(({ line }) => /attachToken:\s*makeAttachToken\(\)/.test(line));
+    assert.equal(
+      offenders.length,
+      0,
+      `Found ${offenders.length} disk-load site(s) still minting fresh attach tokens: ` +
+        offenders.map((o) => `L${o.n}: ${o.line.trim()}`).join(' | '),
+    );
   });
 });

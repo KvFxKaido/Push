@@ -49,11 +49,7 @@ import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
-import {
-  validateTaskGraph,
-  executeTaskGraph,
-  formatTaskGraphResult,
-} from '../lib/task-graph.ts';
+import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
 
 const VERSION = '0.3.0';
 const CAPABILITIES = [
@@ -215,6 +211,15 @@ export function ensureRuntimeState(entry) {
 
 export function __getActiveSessionForTesting(sessionId) {
   return activeSessions.get(sessionId) || null;
+}
+
+/**
+ * Test-only: evict a session from the in-memory registry so the next
+ * handler call has to lazy-load it from disk. Used to simulate the
+ * daemon-restart path without actually restarting the daemon.
+ */
+export function __evictActiveSessionForTesting(sessionId) {
+  return activeSessions.delete(sessionId);
 }
 
 // Test-only seam for deterministic delegate_explorer race coverage.
@@ -381,6 +386,11 @@ async function handleStartSession(req) {
     rounds: 0,
     eventSeq: 0,
     messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
+    // Persist the attach token so that disk-reload paths (daemon restart,
+    // session eviction, cross-handler lazy load) can restore the SAME token
+    // the client received at start_session time instead of minting a fresh
+    // one and immediately rejecting the client's original token as invalid.
+    attachToken,
   };
 
   await appendSessionEvent(state, 'session_started', {
@@ -419,7 +429,14 @@ async function handleSendUserMessage(req, emitEvent) {
   if (!entry) {
     try {
       const state = await loadSessionState(sessionId);
-      entry = { state, attachToken: makeAttachToken() };
+      // Restore the persisted attach token from session state instead of
+      // minting a fresh one. Without this, clients lose their token on any
+      // handler that lazy-loads a session from disk (including after a
+      // daemon crash + restart), because `validateAttachToken` would
+      // compare the caller's original token against a freshly minted one.
+      // Legacy sessions without a persisted token fall through the bypass
+      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
       return makeErrorResponse(
@@ -606,7 +623,14 @@ async function handleAttachSession(req, emitEvent) {
   if (!entry) {
     try {
       const state = await loadSessionState(sessionId);
-      entry = { state, attachToken: makeAttachToken() };
+      // Restore the persisted attach token from session state instead of
+      // minting a fresh one. Without this, clients lose their token on any
+      // handler that lazy-loads a session from disk (including after a
+      // daemon crash + restart), because `validateAttachToken` would
+      // compare the caller's original token against a freshly minted one.
+      // Legacy sessions without a persisted token fall through the bypass
+      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
       return makeErrorResponse(
@@ -798,7 +822,14 @@ async function handleConfigureRoleRouting(req) {
   if (!entry) {
     try {
       const state = await loadSessionState(sessionId);
-      entry = { state, attachToken: makeAttachToken() };
+      // Restore the persisted attach token from session state instead of
+      // minting a fresh one. Without this, clients lose their token on any
+      // handler that lazy-loads a session from disk (including after a
+      // daemon crash + restart), because `validateAttachToken` would
+      // compare the caller's original token against a freshly minted one.
+      // Legacy sessions without a persisted token fall through the bypass
+      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
       return makeErrorResponse(
@@ -918,8 +949,7 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
   const stubDetectAllToolCalls = () => emptyDetection;
   const stubDetectAnyToolCall = () => null;
   const stubToolExec = async () => ({
-    resultText:
-      '[pushd scaffold] daemon-side Explorer tool execution is not yet wired',
+    resultText: '[pushd scaffold] daemon-side Explorer tool execution is not yet wired',
   });
   const stubEvaluateAfterModel = async () => null;
   const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
@@ -956,8 +986,7 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
     missingRequirements: [
       'Daemon-side Explorer tool executor (stubbed in runScaffoldExplorerForTaskGraph)',
     ],
-    nextRequiredAction:
-      'Wire a real daemon Explorer tool executor before advertising multi_agent',
+    nextRequiredAction: 'Wire a real daemon Explorer tool executor before advertising multi_agent',
     rounds: result.rounds,
     checkpoints: 0,
     elapsedMs: 0,
@@ -999,7 +1028,14 @@ async function handleSubmitTaskGraph(req) {
   if (!entry) {
     try {
       const state = await loadSessionState(sessionId);
-      entry = { state, attachToken: makeAttachToken() };
+      // Restore the persisted attach token from session state instead of
+      // minting a fresh one. Without this, clients lose their token on any
+      // handler that lazy-loads a session from disk (including after a
+      // daemon crash + restart), because `validateAttachToken` would
+      // compare the caller's original token against a freshly minted one.
+      // Legacy sessions without a persisted token fall through the bypass
+      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
       return makeErrorResponse(
@@ -1232,7 +1268,14 @@ async function handleCancelDelegation(req) {
   if (!entry) {
     try {
       const state = await loadSessionState(sessionId);
-      entry = { state, attachToken: makeAttachToken() };
+      // Restore the persisted attach token from session state instead of
+      // minting a fresh one. Without this, clients lose their token on any
+      // handler that lazy-loads a session from disk (including after a
+      // daemon crash + restart), because `validateAttachToken` would
+      // compare the caller's original token against a freshly minted one.
+      // Legacy sessions without a persisted token fall through the bypass
+      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
       return makeErrorResponse(
@@ -1351,7 +1394,14 @@ async function handleFetchDelegationEvents(req) {
   if (!entry) {
     try {
       const state = await loadSessionState(sessionId);
-      entry = { state, attachToken: makeAttachToken() };
+      // Restore the persisted attach token from session state instead of
+      // minting a fresh one. Without this, clients lose their token on any
+      // handler that lazy-loads a session from disk (including after a
+      // daemon crash + restart), because `validateAttachToken` would
+      // compare the caller's original token against a freshly minted one.
+      // Legacy sessions without a persisted token fall through the bypass
+      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
       return makeErrorResponse(
@@ -1456,7 +1506,14 @@ async function handleDelegateExplorer(req) {
   if (!entry) {
     try {
       const state = await loadSessionState(sessionId);
-      entry = { state, attachToken: makeAttachToken() };
+      // Restore the persisted attach token from session state instead of
+      // minting a fresh one. Without this, clients lose their token on any
+      // handler that lazy-loads a session from disk (including after a
+      // daemon crash + restart), because `validateAttachToken` would
+      // compare the caller's original token against a freshly minted one.
+      // Legacy sessions without a persisted token fall through the bypass
+      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
       return makeErrorResponse(
@@ -1792,7 +1849,14 @@ async function handleDelegateReviewer(req) {
   if (!entry) {
     try {
       const state = await loadSessionState(sessionId);
-      entry = { state, attachToken: makeAttachToken() };
+      // Restore the persisted attach token from session state instead of
+      // minting a fresh one. Without this, clients lose their token on any
+      // handler that lazy-loads a session from disk (including after a
+      // daemon crash + restart), because `validateAttachToken` would
+      // compare the caller's original token against a freshly minted one.
+      // Legacy sessions without a persisted token fall through the bypass
+      // in `validateAttachToken` (`!entry.attachToken → return true`).
+      entry = { state, attachToken: state.attachToken };
       activeSessions.set(sessionId, entry);
     } catch {
       return makeErrorResponse(
@@ -2179,7 +2243,7 @@ export function collectOrphanedDelegations(events, parentRunId) {
 
   for (const event of events) {
     if (!event || typeof event.type !== 'string') continue;
-    const payload = (event.payload || {});
+    const payload = event.payload || {};
 
     if (event.type === 'subagent.started') {
       if (payload.parentRunId !== parentRunId) continue;
@@ -2315,7 +2379,11 @@ async function recoverInterruptedRuns() {
 
     const recoveryRunId = makeRunId();
     const abortController = new AbortController();
-    const attachToken = makeAttachToken();
+    // Restore the persisted attach token so a client that had the session
+    // open before the crash can successfully re-attach with the SAME token
+    // they originally received from `start_session`. Legacy sessions that
+    // have no persisted token fall through `validateAttachToken`'s bypass.
+    const attachToken = state.attachToken;
 
     // Register in-memory
     const entry = { state, attachToken, activeRunId: recoveryRunId, abortController };
