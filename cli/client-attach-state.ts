@@ -76,12 +76,24 @@ export async function writeClientAttachState(
     updatedAt: Date.now(),
   };
   const dir = getSessionDir(sessionId);
+  const filePath = getClientAttachPath(sessionId);
   try {
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    await fs.writeFile(getClientAttachPath(sessionId), JSON.stringify(state, null, 2), {
+    // `mkdir`'s `mode` option is only honored when the directory is
+    // actually created — it's silently ignored if `dir` already exists
+    // with looser permissions. Apply `chmod` explicitly so a pre-existing
+    // session directory gets tightened to 0o700. Matches the pattern in
+    // `session-store.ts:ensureSessionDir`.
+    await fs.chmod(dir, 0o700);
+    await fs.writeFile(filePath, JSON.stringify(state, null, 2), {
       encoding: 'utf8',
       mode: 0o600,
     });
+    // Same caveat as above: `writeFile`'s `mode` option only applies on
+    // file creation. If a previous run left `client-attach.json` at
+    // 0o644, we need an explicit `chmod` to restore the restrictive
+    // permissions we advertise in the module doc.
+    await fs.chmod(filePath, 0o600);
   } catch {
     // Best effort — see function doc.
   }

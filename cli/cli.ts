@@ -1646,9 +1646,25 @@ async function runAttach(sessionId, options = {}) {
       attemptIdx = 0;
 
       await new Promise((resolve) => {
-        client._socket.on('close', () => resolve());
-        client._socket.on('error', () => resolve());
+        // `.once` (not `.on`) so an `error` followed by the inevitable
+        // `close` doesn't double-resolve, and so neither listener lingers
+        // on the socket after we move on to the next reconnect iteration.
+        const done = () => resolve();
+        client._socket.once('close', done);
+        client._socket.once('error', done);
       });
+
+      // Belt-and-suspenders: `daemon-client.connect`'s `error` handler
+      // tears down pending requests but does NOT call `socket.end()`, so
+      // an error-path exit can leave the underlying fd half-alive. Call
+      // `client.close()` (which ends the socket) unconditionally before
+      // looping. It's idempotent — on an already-closed socket `end()`
+      // is a no-op — so calling it in the normal close path is safe too.
+      try {
+        client.close();
+      } catch {
+        // Swallow: we're past this client's lifecycle anyway.
+      }
 
       currentClient = null;
       if (userRequestedExit) break;

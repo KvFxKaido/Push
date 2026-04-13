@@ -134,6 +134,41 @@ describe('writeClientAttachState', () => {
       assert.equal(mode, 0o600);
     });
   });
+
+  it('tightens permissions on a pre-existing loosely-permissioned file', async () => {
+    // `fs.writeFile`'s `mode` option is only applied on file creation.
+    // If a previous run left `client-attach.json` at 0o644 (or a user
+    // manually relaxed it), re-writing via writeClientAttachState must
+    // still restore 0o600. This regression guard pre-creates both the
+    // session dir and the attach file with loose permissions and then
+    // asserts they're tightened after the next write.
+    await withTmpSessionRoot('write-mode-tighten', async () => {
+      const sessionId = makeSessionId();
+      const dir = path.join(process.env.PUSH_SESSION_DIR, sessionId);
+      const filePath = path.join(dir, 'client-attach.json');
+      await fs.mkdir(dir, { recursive: true });
+      await fs.chmod(dir, 0o755);
+      await fs.writeFile(filePath, JSON.stringify({ lastSeenSeq: 1, updatedAt: 0 }));
+      await fs.chmod(filePath, 0o644);
+
+      // Sanity-check that our setup actually loosened the permissions.
+      const dirBefore = (await fs.stat(dir)).mode & 0o777;
+      const fileBefore = (await fs.stat(filePath)).mode & 0o777;
+      assert.equal(dirBefore, 0o755);
+      assert.equal(fileBefore, 0o644);
+
+      await writeClientAttachState(sessionId, 42);
+
+      const dirAfter = (await fs.stat(dir)).mode & 0o777;
+      const fileAfter = (await fs.stat(filePath)).mode & 0o777;
+      assert.equal(dirAfter, 0o700);
+      assert.equal(fileAfter, 0o600);
+
+      // And the content we just wrote is readable.
+      const persisted = await readClientAttachState(sessionId);
+      assert.equal(persisted.lastSeenSeq, 42);
+    });
+  });
 });
 
 describe('makeDebouncedClientAttachWriter', () => {
