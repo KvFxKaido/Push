@@ -38,6 +38,13 @@ export type {
   TaskGraphProgressEvent,
   TaskGraphResult,
 } from '@push/lib/runtime-contract';
+import type { AIProviderType } from '@push/lib/provider-contract';
+export type {
+  AIProviderType,
+  PreCompactEvent,
+  ReviewComment,
+  ReviewResult,
+} from '@push/lib/provider-contract';
 
 // User profile — persisted in localStorage, injected into system prompt
 export interface UserProfile {
@@ -110,30 +117,9 @@ export const USER_PROFILE_DEFAULTS: UserProfile = {
 };
 
 // ---------------------------------------------------------------------------
-// Reviewer agent types
+// Reviewer agent types (ReviewComment / ReviewResult are re-exported from
+// @push/lib/provider-contract above)
 // ---------------------------------------------------------------------------
-
-export interface ReviewComment {
-  file: string;
-  severity: 'critical' | 'warning' | 'suggestion' | 'note';
-  comment: string;
-  /** Line number in the new file (RIGHT side) — present when the model targeted a specific added line */
-  line?: number;
-}
-
-export interface ReviewResult {
-  summary: string;
-  comments: ReviewComment[];
-  /** Files included in the diff that was actually sent to the model */
-  filesReviewed: number;
-  /** Total files in the full diff (may exceed filesReviewed when truncated) */
-  totalFiles: number;
-  /** True when the diff was sliced before review — coverage is partial */
-  truncated: boolean;
-  provider: string;
-  model: string;
-  reviewedAt: number;
-}
 
 export type ReviewDepth = 'quick' | 'deep';
 
@@ -142,19 +128,6 @@ export interface DeepReviewCallbacks {
   onStatus: (phase: string, detail?: string) => void;
   signal?: AbortSignal;
 }
-
-export type AIProviderType =
-  | 'ollama'
-  | 'openrouter'
-  | 'zen'
-  | 'nvidia'
-  | 'blackbox'
-  | 'azure'
-  | 'kilocode'
-  | 'openadapter'
-  | 'bedrock'
-  | 'vertex'
-  | 'demo';
 
 export type ModelCapabilitySupport = 'supported' | 'unsupported' | 'unknown';
 
@@ -1067,15 +1040,7 @@ export interface ApprovalGateBlockedResult {
 // PreCompact event — fired before context window compaction
 // ---------------------------------------------------------------------------
 
-/** Emitted before the orchestrator summarizes or drops old messages. */
-export interface PreCompactEvent {
-  /** Estimated total tokens before compaction. */
-  totalTokens: number;
-  /** Token threshold that triggered compaction. */
-  budgetThreshold: number;
-  /** Number of messages in the window before compaction. */
-  messageCount: number;
-}
+// PreCompactEvent is re-exported from @push/lib/provider-contract above.
 
 // ---------------------------------------------------------------------------
 // Delegation envelope — structured contract between Orchestrator and Coder

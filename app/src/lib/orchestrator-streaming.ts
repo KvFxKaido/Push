@@ -1,19 +1,10 @@
 import { extractProviderErrorDetail } from './provider-error-utils';
 import { asRecord } from './utils';
+export type { ChunkMetadata, StreamUsage } from '@push/lib/provider-contract';
 
 // ---------------------------------------------------------------------------
 // Types shared across orchestrator modules
 // ---------------------------------------------------------------------------
-
-export interface StreamUsage {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-}
-
-export interface ChunkMetadata {
-  chunkIndex: number;
-}
 
 export interface StreamProviderConfig {
   name: string;

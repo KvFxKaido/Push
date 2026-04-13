@@ -1,5 +1,5 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
-import type { PreCompactEvent } from '@/types';
+import type { PreCompactEvent, ProviderStreamFn } from '@push/lib/provider-contract';
 import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
 import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-session';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
@@ -391,20 +391,7 @@ async function streamProviderChat(
 // Thin wrappers preserving existing exports
 // ---------------------------------------------------------------------------
 
-export type StreamChatFn = (
-  messages: ChatMessage[],
-  onToken: (token: string, meta?: ChunkMetadata) => void,
-  onDone: (usage?: StreamUsage) => void,
-  onError: (error: Error) => void,
-  onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: WorkspaceContext,
-  hasSandbox?: boolean,
-  modelOverride?: string,
-  systemPromptOverride?: string,
-  scratchpadContent?: string,
-  signal?: AbortSignal,
-  onPreCompact?: (event: PreCompactEvent) => void,
-) => Promise<void>;
+export type StreamChatFn = ProviderStreamFn<ChatMessage, WorkspaceContext>;
 
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
 export const streamOpenRouterChat: StreamChatFn = (...args) =>

@@ -1,18 +1,13 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { asRecord, streamWithTimeout } from '@push/lib/stream-utils';
+import type { JsonRecord } from '@push/lib/stream-utils';
+
+export { asRecord, streamWithTimeout };
+export type { JsonRecord };
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
-}
-
-// ---------------------------------------------------------------------------
-// JSON helpers (previously duplicated across 6 lib files)
-// ---------------------------------------------------------------------------
-
-export type JsonRecord = Record<string, unknown>;
-
-export function asRecord(value: unknown): JsonRecord | null {
-  return typeof value === 'object' && value !== null ? (value as JsonRecord) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -706,50 +701,5 @@ export function formatElapsedTime(ms: number): string {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-// ---------------------------------------------------------------------------
-
-/**
- * Wraps a streaming call with a timeout. Returns an Error if timed out or
- * the stream errored, otherwise null.
- */
-export function streamWithTimeout(
-  timeoutMs: number,
-  timeoutMessage: string,
-  run: (
-    onToken: (token: string) => void,
-    onDone: () => void,
-    onError: (err: Error) => void,
-  ) => void | Promise<void>,
-): { promise: Promise<Error | null>; getAccumulated: () => string } {
-  let accumulated = '';
-  const promise = new Promise<Error | null>((resolve) => {
-    let settled = false;
-    const settle = (v: Error | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(v);
-    };
-    // Activity-based timeout: resets on every token so actively-streaming
-    // responses aren't killed. Only fires after `timeoutMs` of silence.
-    let timer = setTimeout(() => settle(new Error(timeoutMessage)), timeoutMs);
-    // Catch unhandled rejections from async run callbacks (e.g. if streamFn
-    // rejects its promise without calling onDone/onError). Without this,
-    // the promise would only settle after the timeout fires — up to 60s delay.
-    const maybePromise = run(
-      (token) => {
-        accumulated += token;
-        clearTimeout(timer);
-        timer = setTimeout(() => settle(new Error(timeoutMessage)), timeoutMs);
-      },
-      () => settle(null),
-      (error) => settle(error),
-    );
-    if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
-      (maybePromise as Promise<void>).catch((err) => {
-        settle(err instanceof Error ? err : new Error(String(err)));
-      });
-    }
-  });
-  return { promise, getAccumulated: () => accumulated };
-}
+// streamWithTimeout is re-exported at the top of this file from
+// @push/lib/stream-utils.
