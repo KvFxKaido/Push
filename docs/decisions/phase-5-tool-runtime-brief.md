@@ -123,20 +123,23 @@ interface ToolEventEmitter {
 ## Minimal method set — final
 
 ```ts
-interface ToolExecutionRuntime {
-  execute(toolCall: AnyToolCall, context: ToolExecutionContext): Promise<ToolExecutionResult>;
+interface ToolExecutionRuntime<TCall, TResult, THooks = unknown, TGates = unknown> {
+  execute(
+    toolCall: TCall,
+    context: ToolExecutionContext<THooks, TGates>,
+  ): Promise<TResult>;
   getSandboxBranch(sandboxId: string): Promise<string | null>;
 }
 
-interface ToolExecutionContext {
+interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
   allowedRepo: string;
   sandboxId: string | null;
   isMainProtected: boolean;
   defaultBranch?: string;
-  activeProvider: ActiveProvider;
+  activeProvider?: string;
   activeModel?: string;
-  hooks: ToolHookRegistry;
-  approvalGates: ApprovalGateRegistry;
+  hooks?: THooks;
+  approvalGates?: TGates;
   capabilityLedger?: CapabilityLedger;
   approvalCallback?: ApprovalCallback;
   emit?: ToolEventEmitter;
@@ -155,7 +158,9 @@ type ApprovalCallback = (
 ) => Promise<boolean>;
 ```
 
-Two interfaces, one type alias, three event payloads. Anything bigger and we are probably solving the wrong problem.
+Two generic interfaces, one type alias, three event payloads. Anything bigger and we are probably solving the wrong problem.
+
+**Why the generic parameters.** An earlier draft of this brief showed concrete types (`AnyToolCall`, `ToolExecutionResult`, `ToolHookRegistry`, `ApprovalGateRegistry`) as the context fields. That's aspirationally correct but operationally painful: every one of those Web types transitively references `ChatMessage`, `ChatCard`, `DelegationOutcome`, and other Web-entangled shapes. Lifting all of them to `lib/` would be a cascading type-lift pass larger than the rest of Phase 5B combined. Using generics instead lets Web bind `ToolExecutionRuntime<AnyToolCall, ToolExecutionResult, ToolHookRegistry, ApprovalGateRegistry>` with its rich real types, while `lib/`-side consumers can either bind to their own stripped-down shapes or leave the defaults as `unknown`. `TCall` and `TResult` are required generics (no default) so consumers must commit to a shape; `THooks` and `TGates` default to `unknown` because not every consumer uses hooks or gates. `activeProvider` is `string` rather than the full provider union — the runtime just forwards it to the sandbox executor and does not need exhaustive provider knowledge. Event payloads use an inline structural subset for error shapes (`{ type: string; message: string; retryable?: boolean }`) that Web's real `StructuredToolError` is assignable to without casts. `ToolCallDiagnosis` is imported from `lib/tool-call-diagnosis.ts` (already shared in Phase 5A) so the malformed event carries a real type.
 
 ## Web adapter responsibilities
 

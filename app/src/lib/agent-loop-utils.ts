@@ -5,14 +5,22 @@
  * read-only investigation agents.
  */
 
-import type { ChatCard } from '@/types';
-import { createDefaultApprovalGates } from './approval-gates';
+import type { ChatCard, ToolExecutionResult } from '@/types';
+import { createDefaultApprovalGates, type ApprovalGateRegistry } from './approval-gates';
 import type { ToolExecutionRuntime } from '@push/lib/tool-execution-runtime';
 import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
+import { type AnyToolCall } from './tool-dispatch';
 import type { ToolHookRegistry } from './tool-hooks';
 import type { ActiveProvider } from './orchestrator';
 import { formatToolResultEnvelope } from './tool-call-recovery';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
+
+type WebRuntime = ToolExecutionRuntime<
+  AnyToolCall,
+  ToolExecutionResult,
+  ToolHookRegistry,
+  ApprovalGateRegistry
+>;
 
 const MAX_TOOL_RESULT_SIZE = 8_000;
 const DEFAULT_APPROVAL_GATES = createDefaultApprovalGates();
@@ -47,7 +55,7 @@ export async function executeReadOnlyTool(
   activeModel: string | undefined,
   hooks: ToolHookRegistry,
   capabilityLedger?: import('./capabilities').CapabilityLedger,
-  runtime?: ToolExecutionRuntime,
+  runtime?: WebRuntime,
 ): Promise<{ resultText: string; card?: ChatCard }> {
   return withActiveSpan(
     'tool.execute',
@@ -78,17 +86,17 @@ export async function executeReadOnlyTool(
         return { resultText, card };
       }
 
-      const executor = runtime ?? new WebToolExecutionRuntime();
-      const result = (await executor.execute(toolCall, {
+      const executor: WebRuntime = runtime ?? new WebToolExecutionRuntime();
+      const result = await executor.execute(toolCall, {
         allowedRepo,
         sandboxId,
         isMainProtected: false,
-        activeProvider: activeProvider,
+        activeProvider,
         activeModel,
-        hooks: hooks,
+        hooks,
         approvalGates: DEFAULT_APPROVAL_GATES,
-        capabilityLedger: capabilityLedger,
-      })) as import('@/types').ToolExecutionResult;
+        capabilityLedger,
+      });
       resultText = result.text;
       const resultCard = result.card;
 

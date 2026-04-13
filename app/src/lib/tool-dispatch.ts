@@ -305,8 +305,6 @@ export function detectAnyToolCall(text: string): AnyToolCall | null {
  * @param isMainProtected — when true, commit/push tools on the default branch are blocked.
  * @param defaultBranch — the repo's default branch name (e.g. 'main', 'master').
  */
-import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
-
 export async function executeAnyToolCall(
   toolCall: AnyToolCall,
   allowedRepo: string,

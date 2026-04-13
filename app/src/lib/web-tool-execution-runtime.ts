@@ -1,9 +1,17 @@
-import type {
-  ToolExecutionRuntime,
-  ToolExecutionContext,
-  AnyToolCall as RuntimeAnyToolCall,
-  ToolExecutionResult as RuntimeToolExecutionResult,
-} from '@push/lib/tool-execution-runtime';
+/**
+ * Web-side implementation of `ToolExecutionRuntime`.
+ *
+ * Wraps the existing per-source executors (`executeToolCall`,
+ * `executeSandboxToolCall`, `executeWebSearch`) and preserves the full
+ * pre/post-hook + approval-gate + Protect Main pipeline that
+ * `executeAnyToolCall` used to run inline.
+ *
+ * This module is the Phase 5B Web binding. `app/src/lib/tool-dispatch.ts`
+ * keeps a thin `executeAnyToolCall` shim for existing callers that is
+ * implemented in terms of this class.
+ */
+
+import type { ToolExecutionRuntime, ToolExecutionContext } from '@push/lib/tool-execution-runtime';
 
 import type { StructuredToolError, ToolHookContext, ToolExecutionResult } from '@/types';
 import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './tool-hooks';
@@ -14,6 +22,12 @@ import { executeWebSearch } from './web-search-tools';
 import { getActiveProvider, type ActiveProvider } from './orchestrator';
 import { type AnyToolCall } from './tool-dispatch';
 import { execInSandbox } from './sandbox-client';
+
+// ---------------------------------------------------------------------------
+// Pure helpers — private to the Web adapter.
+// These formerly lived in tool-dispatch.ts. `AnyToolCall` is still a
+// Web-side discriminated union, so the helpers stay in Web too.
+// ---------------------------------------------------------------------------
 
 export function getHookToolName(toolCall: AnyToolCall): string {
   return toolCall.call.tool;
@@ -56,89 +70,79 @@ export function applyHookToolArgs(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Protect Main
+// ---------------------------------------------------------------------------
+
 const PROTECTED_MAIN_TOOLS = new Set(['sandbox_prepare_commit', 'sandbox_push']);
 
-export async function getSandboxBranch(sandboxId: string): Promise<string | null> {
+async function readSandboxBranch(sandboxId: string): Promise<string | null> {
   try {
     const result = await execInSandbox(sandboxId, 'cd /workspace && git branch --show-current');
     if (result.exitCode === 0 && result.stdout?.trim()) {
       return result.stdout.trim();
     }
   } catch {
-    // Best-effort — fail-safe (return null → will block)
+    // Best-effort — fail-safe (return null → will block).
   }
   return null;
 }
-import type { CapabilityLedger } from './capabilities';
 
-/**
- * Web-specific implementation of the ToolExecutionRuntime interface.
- * Wraps the existing per-source executors (github, sandbox, web-search)
- * and evaluates pre/post hooks, approval gates, and protect-main rules.
- */
-export class WebToolExecutionRuntime implements ToolExecutionRuntime {
+// ---------------------------------------------------------------------------
+// Web-bound context alias — keeps call sites readable without changing
+// the generic interface shape in lib.
+// ---------------------------------------------------------------------------
+
+type WebToolExecutionContext = ToolExecutionContext<ToolHookRegistry, ApprovalGateRegistry>;
+
+// ---------------------------------------------------------------------------
+// The runtime
+// ---------------------------------------------------------------------------
+
+export class WebToolExecutionRuntime
+  implements
+    ToolExecutionRuntime<AnyToolCall, ToolExecutionResult, ToolHookRegistry, ApprovalGateRegistry>
+{
   async execute(
-    toolCall: RuntimeAnyToolCall,
-    context: ToolExecutionContext,
-  ): Promise<RuntimeToolExecutionResult> {
-    const typedToolCall = toolCall as AnyToolCall;
-    const typedContext = context as ToolExecutionContext & {
-      hooks?: ToolHookRegistry;
-      approvalGates?: ApprovalGateRegistry;
-      capabilityLedger?: CapabilityLedger;
-      activeProvider?: ActiveProvider;
-    };
-
-    const toolName = getHookToolName(typedToolCall);
-    const toolArgs = getHookToolArgs(typedToolCall);
+    toolCall: AnyToolCall,
+    context: WebToolExecutionContext,
+  ): Promise<ToolExecutionResult> {
+    const toolName = getHookToolName(toolCall);
+    const toolArgs = getHookToolArgs(toolCall);
+    const activeProvider = context.activeProvider as ActiveProvider | undefined;
     const hookContext: ToolHookContext = {
       sandboxId: context.sandboxId,
       allowedRepo: context.allowedRepo,
-      activeProvider: typedContext.activeProvider,
+      activeProvider,
       activeModel: context.activeModel,
-      capabilityLedger: typedContext.capabilityLedger,
+      capabilityLedger: context.capabilityLedger,
     };
 
-    // Emit start event
-    if (context.emit) {
-      context.emit.toolExecutionStart({
-        toolName,
-        source: typedToolCall.source,
-        toolCallId: (typedToolCall.call as { id?: string }).id ?? '',
-      });
-    }
+    context.emit?.toolExecutionStart({
+      toolName,
+      source: toolCall.source,
+      toolCallId: (toolCall.call as { id?: string }).id ?? '',
+    });
     const startTime = Date.now();
 
     try {
-      // --- Pre-hooks evaluation ---
-      if (typedContext.hooks && typedContext.hooks.pre.length > 0) {
-        const preResult = await evaluatePreHooks(
-          typedContext.hooks,
-          toolName,
-          toolArgs,
-          hookContext,
-        );
-
+      // --- Pre-hooks ---
+      if (context.hooks && context.hooks.pre.length > 0) {
+        const preResult = await evaluatePreHooks(context.hooks, toolName, toolArgs, hookContext);
         if (preResult?.decision === 'deny') {
           return {
             text: `[Tool Blocked] ${preResult.reason || 'Blocked by pre-execution hook.'}`,
-          } as RuntimeToolExecutionResult;
+          };
         }
-
-        // Apply modified args if a hook rewrote them
         if (preResult?.modifiedArgs) {
           Object.assign(toolArgs, preResult.modifiedArgs);
-          applyHookToolArgs(typedToolCall, preResult.modifiedArgs);
+          applyHookToolArgs(toolCall, preResult.modifiedArgs);
         }
       }
 
-      // --- Approval gate evaluation ---
-      if (typedContext.approvalGates) {
-        const gateResult = await typedContext.approvalGates.evaluate(
-          toolName,
-          toolArgs,
-          hookContext,
-        );
+      // --- Approval gates ---
+      if (context.approvalGates) {
+        const gateResult = await context.approvalGates.evaluate(toolName, toolArgs, hookContext);
         if (gateResult) {
           if (gateResult.decision === 'blocked') {
             const err: StructuredToolError = {
@@ -150,7 +154,7 @@ export class WebToolExecutionRuntime implements ToolExecutionRuntime {
             return {
               text: `[Tool Blocked — ${toolName}] ${gateResult.reason}\n\nRecovery: ${gateResult.recoveryPath}`,
               structuredError: err,
-            } as RuntimeToolExecutionResult;
+            };
           }
           if (gateResult.decision === 'ask_user') {
             if (context.approvalCallback) {
@@ -162,9 +166,9 @@ export class WebToolExecutionRuntime implements ToolExecutionRuntime {
               if (!approved) {
                 return {
                   text: `[Approval Denied — ${toolName}] User denied approval.\n\nReason: ${gateResult.reason}`,
-                } as RuntimeToolExecutionResult;
+                };
               }
-              // Approved — fall through to normal tool execution below.
+              // Approved — fall through to normal tool execution.
             } else {
               return {
                 text: `[Approval Required — ${toolName}] This action requires explicit user approval.\n\nReason: ${gateResult.reason}\n\nUse ask_user to request permission before proceeding. Explain what you want to do and why.\n\nRecovery: ${gateResult.recoveryPath}`,
@@ -174,48 +178,44 @@ export class WebToolExecutionRuntime implements ToolExecutionRuntime {
                   message: gateResult.reason,
                   detail: `Use ask_user to get approval. ${gateResult.recoveryPath}`,
                 },
-              } as RuntimeToolExecutionResult;
+              };
             }
           }
         }
       }
 
-      // Enforce Protect Main: block commit/push tools when on the default branch
+      // --- Protect Main: block commit/push tools when on the default branch ---
       if (
         context.isMainProtected &&
-        typedToolCall.source === 'sandbox' &&
-        PROTECTED_MAIN_TOOLS.has(typedToolCall.call.tool) &&
+        toolCall.source === 'sandbox' &&
+        PROTECTED_MAIN_TOOLS.has(toolCall.call.tool) &&
         context.sandboxId
       ) {
         const currentBranch = await this.getSandboxBranch(context.sandboxId);
         const mainBranches = new Set(['main', 'master']);
         if (context.defaultBranch) mainBranches.add(context.defaultBranch);
-        // Block if we can't determine the branch (fail-safe) or if we're on the default branch
         if (!currentBranch || mainBranches.has(currentBranch)) {
           return {
             text: `[Tool Error] Protect Main is enabled. Commits and pushes to the main/default branch are blocked. Create a new branch first (e.g. sandbox_exec with "git checkout -b feature/my-change"), then retry.`,
-          } as RuntimeToolExecutionResult;
+          };
         }
       }
 
-      // Execute through the appropriate handler
+      // --- Execute through the appropriate handler ---
       let result: ToolExecutionResult;
 
-      switch (typedToolCall.source) {
+      switch (toolCall.source) {
         case 'github':
-          result = await executeToolCall(
-            typedToolCall.call as import('./github-tools').ToolCall,
-            context.allowedRepo,
-          );
+          result = await executeToolCall(toolCall.call, context.allowedRepo);
           break;
 
-        case 'sandbox':
+        case 'sandbox': {
           if (!context.sandboxId) {
             const err: StructuredToolError = {
               type: 'SANDBOX_UNREACHABLE',
               retryable: true,
               message: 'No active sandbox session',
-              detail: `Attempted tool: ${typedToolCall.call.tool}`,
+              detail: `Attempted tool: ${toolCall.call.tool}`,
             };
             result = {
               text: `[Tool Error] No active sandbox. The sandbox may still be starting — wait a moment and retry. If this persists, the user needs to start a sandbox from the UI.\nerror_type: ${err.type}\nretryable: ${err.retryable}`,
@@ -223,15 +223,12 @@ export class WebToolExecutionRuntime implements ToolExecutionRuntime {
             };
             break;
           }
-          result = await executeSandboxToolCall(
-            typedToolCall.call as import('./sandbox-tools').SandboxToolCall,
-            context.sandboxId,
-            {
-              auditorProviderOverride: typedContext.activeProvider,
-              auditorModelOverride: context.activeModel,
-            },
-          );
+          result = await executeSandboxToolCall(toolCall.call, context.sandboxId, {
+            auditorProviderOverride: activeProvider,
+            auditorModelOverride: context.activeModel,
+          });
           break;
+        }
 
         case 'delegate':
           result = { text: '[Tool Error] Delegation must be handled by the chat hook.' };
@@ -242,21 +239,15 @@ export class WebToolExecutionRuntime implements ToolExecutionRuntime {
           break;
 
         case 'web-search': {
-          const provider = typedContext.activeProvider || getActiveProvider();
-          result = await executeWebSearch(
-            (typedToolCall.call as import('./web-search-tools').WebSearchToolCall).args.query,
-            provider,
-          );
+          const provider = activeProvider || getActiveProvider();
+          result = await executeWebSearch(toolCall.call.args.query, provider);
           break;
         }
 
         case 'ask-user':
           result = {
             text: '[Tool Result] Question sent to user. The system will wait for their response.',
-            card: {
-              type: 'ask-user',
-              data: (typedToolCall.call as import('./ask-user-tools').AskUserToolCall).args,
-            },
+            card: { type: 'ask-user', data: toolCall.call.args },
           };
           break;
 
@@ -264,29 +255,26 @@ export class WebToolExecutionRuntime implements ToolExecutionRuntime {
           result = { text: '[Tool Error] Unknown tool source.' };
       }
 
-      // --- Record capability usage ---
-      if (typedContext.capabilityLedger) {
-        typedContext.capabilityLedger.recordToolUse(toolName);
+      // --- Capability ledger ---
+      if (context.capabilityLedger) {
+        context.capabilityLedger.recordToolUse(toolName);
       }
 
-      // --- Post-hooks evaluation ---
-      if (typedContext.hooks && typedContext.hooks.post.length > 0) {
+      // --- Post-hooks ---
+      if (context.hooks && context.hooks.post.length > 0) {
         const postResult = await evaluatePostHooks(
-          typedContext.hooks,
+          context.hooks,
           toolName,
           toolArgs,
           result,
           hookContext,
         );
-
         if (postResult?.resultOverride) {
           result = { ...result, text: postResult.resultOverride };
         }
-        // systemMessage is returned to the caller for injection into the conversation
         if (postResult?.systemMessage) {
           result = { ...result, text: `${result.text}\n\n[Hook] ${postResult.systemMessage}` };
         }
-        // Policy actions: inject/halt flow through ToolExecutionResult to the caller
         if (postResult?.action === 'inject' && postResult.injectMessage) {
           result = { ...result, postHookInject: postResult.injectMessage };
         }
@@ -295,14 +283,12 @@ export class WebToolExecutionRuntime implements ToolExecutionRuntime {
         }
       }
 
-      if (context.emit) {
-        context.emit.toolExecutionComplete({
-          toolName,
-          durationMs: Date.now() - startTime,
-        });
-      }
+      context.emit?.toolExecutionComplete({
+        toolName,
+        durationMs: Date.now() - startTime,
+      });
 
-      return result as RuntimeToolExecutionResult;
+      return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const structuredError: StructuredToolError = {
@@ -310,21 +296,19 @@ export class WebToolExecutionRuntime implements ToolExecutionRuntime {
         retryable: true,
         message: `Unexpected error executing ${toolName}: ${message}`,
       };
-      if (context.emit) {
-        context.emit.toolExecutionComplete({
-          toolName,
-          durationMs: Date.now() - startTime,
-          error: structuredError,
-        });
-      }
+      context.emit?.toolExecutionComplete({
+        toolName,
+        durationMs: Date.now() - startTime,
+        error: structuredError,
+      });
       return {
         text: `[Tool Error] ${structuredError.message}`,
         structuredError,
-      } as RuntimeToolExecutionResult;
+      };
     }
   }
 
   async getSandboxBranch(sandboxId: string): Promise<string | null> {
-    return getSandboxBranch(sandboxId);
+    return readSandboxBranch(sandboxId);
   }
 }
