@@ -39,6 +39,12 @@ import { fmt, Spinner } from './format.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { compactContext } from './context-manager.js';
 import { buildHeadlessTaskBrief } from './task-brief.js';
+import { delegationEventToTranscript, isDelegationEvent } from './tui-delegation-events.js';
+import {
+  readClientAttachState,
+  writeClientAttachState,
+  makeDebouncedClientAttachWriter,
+} from './client-attach-state.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -74,6 +80,8 @@ const KNOWN_OPTIONS = new Set([
   'dry-run',
   'dryRun',
   'force',
+  'no-resume',
+  'noResume',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -203,20 +211,45 @@ async function runAcceptanceChecks(cwd, checks) {
   };
 }
 
-function makeCLIEventHandler() {
+export function makeCLIEventHandler() {
   let isAssistantStreaming = false;
   let isReasoningStreaming = false;
   const spinner = new Spinner();
 
+  function flushInlineStreams() {
+    if (isReasoningStreaming || isAssistantStreaming) {
+      process.stdout.write('\n');
+      isReasoningStreaming = false;
+      isAssistantStreaming = false;
+    }
+  }
+
   return (event) => {
+    // Route `subagent.*` and `task_graph.*` events through the shared
+    // transcript mapper so a `push attach` client sees the same transcript
+    // semantics the interactive TUI already exposes. The mapper is pure and
+    // returns `null` for non-delegation events, so falling through on null
+    // keeps the rest of the switch-based routing below untouched.
+    if (isDelegationEvent(event)) {
+      const entry = delegationEventToTranscript(event);
+      if (entry) {
+        flushInlineStreams();
+        spinner.stop();
+        const badge =
+          entry.role === 'error'
+            ? fmt.error('[error]')
+            : entry.role === 'warning'
+              ? fmt.warn('[warn]')
+              : fmt.dim('[info]');
+        process.stdout.write(`${badge} ${entry.text}\n`);
+        return;
+      }
+    }
+
     switch (event.type) {
       case 'tool_call':
       case 'tool.execution_start':
-        if (isReasoningStreaming || isAssistantStreaming) {
-          process.stdout.write('\n');
-          isReasoningStreaming = false;
-          isAssistantStreaming = false;
-        }
+        flushInlineStreams();
         spinner.stop();
         process.stdout.write(`${fmt.dim('[tool]')} ${event.payload.toolName}\n`);
         spinner.start(event.payload.toolName);
@@ -1461,7 +1494,43 @@ async function runDaemonSubcommand(positionals) {
   throw new Error(`Unknown daemon action: ${action}. Use: push daemon start|stop|status`);
 }
 
-async function runAttach(sessionId) {
+/**
+ * Sleep for `ms` milliseconds but check `shouldCancel()` every ~100ms so
+ * Ctrl+C during an attach-reconnect backoff aborts within one poll tick
+ * instead of blocking for the full delay. Returns `true` if the sleep
+ * completed, `false` if cancelled early.
+ */
+async function sleepInterruptible(ms, shouldCancel) {
+  const CHECK_INTERVAL = 100;
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (shouldCancel()) return false;
+    const chunk = Math.min(CHECK_INTERVAL, end - Date.now());
+    if (chunk <= 0) break;
+    await new Promise((r) => setTimeout(r, chunk));
+  }
+  return !shouldCancel();
+}
+
+/**
+ * `push attach <session-id>` — stream live events from a pushd session.
+ *
+ * Behavior contract (see ROADMAP.md "`pushd` Attach + Event Stream UX"):
+ *   1. Attach to a live session.
+ *   2. Watch events in a readable transcript — delegation events route
+ *      through `delegationEventToTranscript` via `makeCLIEventHandler`.
+ *   3. Recover after disconnect without manual state inspection — we
+ *      persist `lastSeenSeq` to the session's `client-attach.json` and
+ *      auto-reconnect with exponential backoff (0s, 1s, 2s, 4s, 8s, 16s,
+ *      30s, capped). On each reattach we pass the persisted seq to
+ *      `attach_session`, so the daemon replays exactly the events we
+ *      missed — never the whole log from zero.
+ *
+ * Options:
+ *   --no-resume — start fresh from seq 0 (useful if the stored state is
+ *     corrupt or you explicitly want to replay the full history).
+ */
+async function runAttach(sessionId, options = {}) {
   const pid = await readPidFile();
   if (!pid || !isProcessRunning(pid)) {
     throw new Error('pushd is not running. Start it with: push daemon start');
@@ -1470,43 +1539,133 @@ async function runAttach(sessionId) {
   const socketPath = getSocketPath();
   const { connect } = await import('./daemon-client.js');
 
-  let client;
-  try {
-    client = await connect(socketPath);
-  } catch (err) {
-    process.stderr.write(`${fmt.error('Connection error:')} ${err.message}\n`);
-    return 1;
-  }
+  // Resume from the last seq we successfully processed. `--no-resume`
+  // is the escape hatch: replay the whole event log from the beginning.
+  const persisted = options.noResume
+    ? { lastSeenSeq: 0, updatedAt: 0 }
+    : await readClientAttachState(sessionId);
+  let lastSeenSeq = persisted.lastSeenSeq;
+  const seqWriter = makeDebouncedClientAttachWriter(sessionId);
 
   const onEvent = makeCLIEventHandler();
-  client.onEvent(onEvent);
+  // Wrap the renderer so we track the highest seq we've observed BEFORE
+  // delegating to the renderer. A render-time exception is swallowed by
+  // daemon-client's try/catch around listeners, but we still want the
+  // resume point to advance so a later reconnect doesn't replay the
+  // event that tripped the renderer.
+  const observingHandler = (event) => {
+    if (typeof event.seq === 'number' && event.seq > lastSeenSeq) {
+      lastSeenSeq = event.seq;
+      seqWriter.schedule(lastSeenSeq);
+    }
+    onEvent(event);
+  };
+
+  let userRequestedExit = false;
+  let currentClient = null;
+  const onSigint = () => {
+    userRequestedExit = true;
+    process.stdout.write('\n[detached]\n');
+    if (currentClient) {
+      currentClient.close();
+    }
+  };
+  process.on('SIGINT', onSigint);
+
+  // Reconnect backoff. Index 0 is the initial connect attempt (no wait);
+  // subsequent entries apply after each unexpected disconnect. We cap at
+  // 30s to keep the worst-case resume latency bounded on a daemon that's
+  // slow to restart.
+  const BACKOFF_MS = [0, 1000, 2000, 4000, 8000, 16000, 30000];
+  let attemptIdx = 0;
+  let firstConnection = true;
+  let exitCode = 0;
 
   try {
-    const res = await client.request('attach_session', { sessionId, lastSeenSeq: 0 });
-    process.stdout.write(
-      `Attached to ${sessionId}\n` +
-        `State: ${res.payload.state}${res.payload.activeRunId ? ` (run: ${res.payload.activeRunId})` : ''}\n` +
-        `Replay: seq ${res.payload.replay.fromSeq}–${res.payload.replay.toSeq}\n`,
-    );
-  } catch (err) {
-    process.stderr.write(`${fmt.error('Attach failed:')} ${err.message}\n`);
-    client.close();
-    return 1;
+    while (!userRequestedExit) {
+      const delay = BACKOFF_MS[Math.min(attemptIdx, BACKOFF_MS.length - 1)];
+      if (delay > 0) {
+        process.stdout.write(
+          `${fmt.dim(`[reconnecting in ${Math.round(delay / 1000)}s — Ctrl+C to give up]`)}\n`,
+        );
+        const completed = await sleepInterruptible(delay, () => userRequestedExit);
+        if (!completed) break;
+      }
+      attemptIdx += 1;
+
+      let client;
+      try {
+        client = await connect(socketPath);
+      } catch (err) {
+        if (firstConnection) {
+          process.stderr.write(`${fmt.error('Connection error:')} ${err.message}\n`);
+          exitCode = 1;
+          break;
+        }
+        // Transient failure during reconnect — back off and retry.
+        continue;
+      }
+      currentClient = client;
+      client.onEvent(observingHandler);
+
+      let res;
+      try {
+        res = await client.request('attach_session', { sessionId, lastSeenSeq });
+      } catch (err) {
+        if (firstConnection) {
+          process.stderr.write(`${fmt.error('Attach failed:')} ${err.message}\n`);
+          client.close();
+          currentClient = null;
+          exitCode = 1;
+          break;
+        }
+        // Attach failed on a reconnect — likely SESSION_NOT_FOUND or
+        // INVALID_TOKEN. These are not transient, so surface and exit.
+        process.stderr.write(`${fmt.error('Attach failed on reconnect:')} ${err.message}\n`);
+        client.close();
+        currentClient = null;
+        exitCode = 1;
+        break;
+      }
+
+      if (firstConnection) {
+        process.stdout.write(
+          `Attached to ${sessionId}\n` +
+            `State: ${res.payload.state}${res.payload.activeRunId ? ` (run: ${res.payload.activeRunId})` : ''}\n` +
+            `Replay: seq ${res.payload.replay.fromSeq}–${res.payload.replay.toSeq}\n`,
+        );
+        firstConnection = false;
+      } else {
+        process.stdout.write(
+          `${fmt.dim(`[reattached — replayed seq ${res.payload.replay.fromSeq}–${res.payload.replay.toSeq}]`)}\n`,
+        );
+      }
+
+      // A successful attach resets the backoff ladder so the next drop
+      // retries quickly rather than inheriting this cycle's delay.
+      attemptIdx = 0;
+
+      await new Promise((resolve) => {
+        client._socket.on('close', () => resolve());
+        client._socket.on('error', () => resolve());
+      });
+
+      currentClient = null;
+      if (userRequestedExit) break;
+      process.stdout.write(`${fmt.dim('[disconnected]')}\n`);
+      // Next attempt waits BACKOFF_MS[1] (1s) rather than the 0s initial.
+      attemptIdx = 1;
+    }
+  } finally {
+    process.removeListener('SIGINT', onSigint);
+    // Final flush so the debounced writer doesn't leave data in memory.
+    await seqWriter.flush();
+    // Belt-and-suspenders: write the current lastSeenSeq one more time in
+    // case the debounced writer had nothing pending.
+    await writeClientAttachState(sessionId, lastSeenSeq);
   }
 
-  // Stay attached until Ctrl+C or disconnect
-  return new Promise((resolve) => {
-    client._socket.on('close', () => {
-      process.stdout.write('\n[disconnected]\n');
-      resolve(0);
-    });
-
-    process.on('SIGINT', () => {
-      process.stdout.write('\n[detached]\n');
-      client.close();
-      resolve(0);
-    });
-  });
+  return exitCode;
 }
 
 export async function main() {
@@ -1540,6 +1699,7 @@ export async function main() {
       sandbox: { type: 'boolean' },
       'exec-mode': { type: 'string' },
       'no-sandbox': { type: 'boolean' },
+      'no-resume': { type: 'boolean' },
       version: { type: 'boolean', short: 'v' },
     },
   });
@@ -1709,8 +1869,9 @@ export async function main() {
 
   if (subcommand === 'attach') {
     const sessionId = positionals[1];
-    if (!sessionId) throw new Error('Usage: push attach <session-id>');
-    return runAttach(sessionId);
+    if (!sessionId) throw new Error('Usage: push attach <session-id> [--no-resume]');
+    const noResume = parseBoolFlag(values['no-resume'] ?? values.noResume, 'no-resume');
+    return runAttach(sessionId, { noResume });
   }
 
   if (subcommand === 'init-deep') {
@@ -1916,12 +2077,21 @@ export async function main() {
   });
 }
 
-main()
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`${fmt.error('Error:')} ${message}\n`);
-    process.exitCode = 1;
-  });
+// Only run main() when this module is executed directly (not when it's
+// imported by a test file or another module). Without this guard, any
+// `import { ... } from '../cli.ts'` triggers interactive-mode startup
+// and errors out in headless test environments.
+const isDirectRun =
+  process.argv[1] && (process.argv[1].endsWith('/cli.ts') || process.argv[1].endsWith('\\cli.ts'));
+
+if (isDirectRun) {
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`${fmt.error('Error:')} ${message}\n`);
+      process.exitCode = 1;
+    });
+}
