@@ -181,6 +181,13 @@ export function validateAttachToken(entry, providedToken) {
   return entry.attachToken === providedToken;
 }
 
+function normalizeProviderInput(value) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === 'undefined' || normalized === 'null') return '';
+  return normalized;
+}
+
 // ─── Session registry (in-memory) ────────────────────────────────
 
 // sessionId → { state, attachToken, abortController?, activeRunId?, pendingApproval?, activeDelegations?, activeGraphs? }
@@ -1125,6 +1132,34 @@ async function handleDelegateExplorer(req) {
     );
   }
 
+  // Resolve provider/model with role-routing precedence. configure_role_routing
+  // stores `state.roleRouting[role] = { provider, model }`; when present for
+  // 'explorer' it overrides the session-level defaults for this delegation.
+  const explorerRoute = entry.state.roleRouting?.explorer;
+  const routedProvider = normalizeProviderInput(explorerRoute?.provider);
+  if (routedProvider && !PROVIDER_CONFIGS[routedProvider]) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_explorer',
+      'PROVIDER_NOT_CONFIGURED',
+      `Unknown provider "${routedProvider}" for explorer role routing`,
+    );
+  }
+  const sessionProvider = normalizeProviderInput(entry.state.provider);
+  if (!routedProvider && (!sessionProvider || !PROVIDER_CONFIGS[sessionProvider])) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_explorer',
+      'PROVIDER_NOT_CONFIGURED',
+      `Unknown provider "${sessionProvider || '(missing)'}" in session state`,
+    );
+  }
+  const resolvedProvider = routedProvider || sessionProvider;
+  const resolvedModel =
+    (typeof explorerRoute?.model === 'string' && explorerRoute.model.trim()) ||
+    (typeof entry.state.model === 'string' && entry.state.model.trim()) ||
+    PROVIDER_CONFIGS[resolvedProvider].defaultModel;
+
   ensureRuntimeState(entry);
 
   const subagentId = `sub_explorer_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
@@ -1172,17 +1207,6 @@ async function handleDelegateExplorer(req) {
     accepted: true,
   });
 
-  // Resolve provider/model with role-routing precedence. configure_role_routing
-  // stores `state.roleRouting[role] = { provider, model }`; when present for
-  // 'explorer' it overrides the session-level defaults for this delegation.
-  const explorerRoute = entry.state.roleRouting?.explorer;
-  const resolvedProvider =
-    (explorerRoute && typeof explorerRoute.provider === 'string' && explorerRoute.provider) ||
-    entry.state.provider;
-  const resolvedModel =
-    (explorerRoute && typeof explorerRoute.model === 'string' && explorerRoute.model) ||
-    entry.state.model;
-
   // Background run. The RPC has already acked. Events are broadcast as the
   // lib kernel progresses. Terminal ownership is claimed synchronously by
   // deleting the delegation entry before any awaited terminal-event work so
@@ -1196,11 +1220,10 @@ async function handleDelegateExplorer(req) {
     });
     const stubEvaluateAfterModel = async () => null;
 
-    const daemonStreamFn = createDaemonProviderStream(resolvedProvider, sessionId);
-
     let outcome;
     let runError = null;
     try {
+      const daemonStreamFn = createDaemonProviderStream(resolvedProvider, sessionId);
       const result = await runExplorerAgent(
         {
           provider: resolvedProvider,

@@ -1003,6 +1003,54 @@ describe('delegate_explorer', () => {
     assert.equal(response.error.code, 'SESSION_NOT_FOUND');
   });
 
+  it('rejects stale explorer role routing with an unknown provider before acking', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-explorer-stale-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      assert.equal(start.ok, true);
+      const { sessionId, attachToken } = start.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+      entry.state.roleRouting = {
+        explorer: {
+          provider: 'google',
+          model: 'stale-model',
+        },
+      };
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_explorer',
+          { sessionId, attachToken, task: 'scaffold exploration' },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'PROVIDER_NOT_CONFIGURED');
+      assert.ok(response.error.message.includes('google'));
+      assert.equal(entry.activeDelegations?.size ?? 0, 0);
+
+      const events = await loadSessionEvents(sessionId);
+      const subagentEvents = events.filter((event) => event.type.startsWith('subagent.'));
+      assert.equal(subagentEvents.length, 0);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
   it('runs the lib kernel end-to-end with a real streamFn adapter and persists an inconclusive outcome', async () => {
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-explorer-happy-'));
