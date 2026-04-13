@@ -888,10 +888,12 @@ describe('configure_role_routing behavior', () => {
 // ─── submit_task_graph ──────────────────────────────────────────
 
 // Wait for a task-graph background run to emit its terminal
-// task_graph.graph_completed event — the executor claims terminal
-// ownership by deleting from activeGraphs BEFORE emitting, but the
-// append + broadcast happen after, so polling activeGraphs alone
-// races the write to the events log.
+// task_graph.graph_completed event — handleSubmitTaskGraph appends and
+// broadcasts that terminal event BEFORE deleting the execution from
+// activeGraphs, so polling activeGraphs alone can still race with the
+// terminal event being written to the events log (and a caller that
+// only checks activeGraphs.has() can observe "gone" before the events
+// log has caught up). Poll both to be safe.
 async function waitForTaskGraphComplete(entry, executionId, sessionId, timeoutMs = 5000) {
   const startWait = Date.now();
   while (Date.now() - startWait < timeoutMs) {
@@ -1176,6 +1178,209 @@ describe('submit_task_graph', () => {
           e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
       );
       assert.ok(broadcastGraphCompleted, 'expected task_graph.graph_completed broadcast');
+    } finally {
+      restoreConfig();
+      await mock.stop();
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('serializes events from parallel explorer nodes into monotonic seq order', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-submit-graph-parallel-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    // executeTaskGraph runs explorer nodes in parallel (up to 3). If
+    // emitTaskGraphEvent isn't serialized, overlapping appendSessionEvent
+    // calls can interleave: state.eventSeq is bumped synchronously before
+    // the filesystem append resolves, so the on-disk order (and the
+    // broadcast envelope seq) can drift. This test submits three
+    // independent explorer nodes and asserts that all task_graph.* events
+    // for the graph land in strictly increasing seq both on disk and on
+    // the broadcast stream.
+    const mock = await startMockProviderServer({
+      tokens: ['MOCK_PARALLEL_ALPHA ', 'MOCK_PARALLEL_OMEGA'],
+    });
+    const restoreConfig = patchProviderConfig('ollama', {
+      url: mock.url,
+      apiKey: 'test-mock-key',
+    });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const broadcasted = [];
+      const attached = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        (event) => broadcasted.push(event),
+      );
+      assert.equal(attached.ok, true);
+      broadcasted.length = 0;
+
+      const response = await handleRequest(
+        makeRequest(
+          'submit_task_graph',
+          {
+            sessionId,
+            attachToken,
+            graph: {
+              tasks: [
+                { id: 'explore-a', agent: 'explorer', task: 'a' },
+                { id: 'explore-b', agent: 'explorer', task: 'b' },
+                { id: 'explore-c', agent: 'explorer', task: 'c' },
+              ],
+            },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, true);
+      const { executionId } = response.payload;
+
+      const entry = __getActiveSessionForTesting(sessionId);
+      await waitForTaskGraphComplete(entry, executionId, sessionId);
+
+      const events = await loadSessionEvents(sessionId);
+      const graphEvents = events.filter(
+        (e) => e.type.startsWith('task_graph.') && e.payload?.executionId === executionId,
+      );
+      assert.ok(graphEvents.length >= 7, 'expected at least 3 started + 3 completed + 1 graph_completed events');
+
+      // Disk order = emission order; seq must be strictly increasing.
+      let prevSeq = -Infinity;
+      for (const e of graphEvents) {
+        assert.ok(
+          typeof e.seq === 'number' && e.seq > prevSeq,
+          `events.jsonl task_graph.* seq regressed: ${e.seq} <= ${prevSeq}`,
+        );
+        prevSeq = e.seq;
+      }
+
+      // The broadcast stream must also be monotonic and free of seq collisions.
+      const broadcastGraphEvents = broadcasted.filter(
+        (e) => e.type.startsWith('task_graph.') && e.payload?.executionId === executionId,
+      );
+      const broadcastSeqs = broadcastGraphEvents.map((e) => e.seq);
+      const uniqueBroadcastSeqs = new Set(broadcastSeqs);
+      assert.equal(
+        uniqueBroadcastSeqs.size,
+        broadcastSeqs.length,
+        'broadcast envelopes reused seq values',
+      );
+      let prevBroadcastSeq = -Infinity;
+      for (const seq of broadcastSeqs) {
+        assert.ok(
+          seq > prevBroadcastSeq,
+          `broadcast task_graph.* seq regressed: ${seq} <= ${prevBroadcastSeq}`,
+        );
+        prevBroadcastSeq = seq;
+      }
+
+      // graph_completed must be the last task_graph.* event on both streams.
+      assert.equal(
+        graphEvents[graphEvents.length - 1].type,
+        'task_graph.graph_completed',
+        'graph_completed must be the final task_graph.* event in events.jsonl',
+      );
+      assert.equal(
+        broadcastGraphEvents[broadcastGraphEvents.length - 1].type,
+        'task_graph.graph_completed',
+        'graph_completed must be the final task_graph.* event on the broadcast',
+      );
+    } finally {
+      restoreConfig();
+      await mock.stop();
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('omits runId from task_graph event envelopes when parentRunId is null', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-submit-graph-nullrun-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    const mock = await startMockProviderServer({
+      tokens: ['MOCK_NULLRUN_ALPHA'],
+    });
+    const restoreConfig = patchProviderConfig('ollama', {
+      url: mock.url,
+      apiKey: 'test-mock-key',
+    });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+      const broadcasted = [];
+      await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        (event) => broadcasted.push(event),
+      );
+      broadcasted.length = 0;
+
+      // No parentRunId in payload and no active run — parentRunId resolves
+      // to null inside the handler. Wire envelopes must omit the field
+      // rather than serializing `"runId":null`, matching how the session
+      // store persists events via appendSessionEvent.
+      const response = await handleRequest(
+        makeRequest(
+          'submit_task_graph',
+          {
+            sessionId,
+            attachToken,
+            graph: {
+              tasks: [{ id: 'explore-1', agent: 'explorer', task: 'nullrun' }],
+            },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, true);
+      const { executionId } = response.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      await waitForTaskGraphComplete(entry, executionId, sessionId);
+
+      const events = await loadSessionEvents(sessionId);
+      const graphEvents = events.filter(
+        (e) => e.type.startsWith('task_graph.') && e.payload?.executionId === executionId,
+      );
+      assert.ok(graphEvents.length > 0);
+      for (const e of graphEvents) {
+        assert.ok(
+          !('runId' in e),
+          `persisted event should omit runId when parentRunId is null, got: ${JSON.stringify(e)}`,
+        );
+      }
+
+      const broadcastGraphEvents = broadcasted.filter(
+        (e) => e.type.startsWith('task_graph.') && e.payload?.executionId === executionId,
+      );
+      assert.ok(broadcastGraphEvents.length > 0);
+      for (const e of broadcastGraphEvents) {
+        assert.ok(
+          !('runId' in e) || e.runId !== null,
+          `broadcast envelope must omit runId (or make it non-null) when parentRunId is null, got: ${JSON.stringify(e)}`,
+        );
+        assert.ok(!('runId' in e), `broadcast envelope should omit runId entirely: ${JSON.stringify(e)}`);
+      }
     } finally {
       restoreConfig();
       await mock.stop();

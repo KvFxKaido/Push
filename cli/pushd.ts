@@ -1059,18 +1059,38 @@ async function handleSubmitTaskGraph(req) {
     const nodesById = new Map();
     for (const node of graph.tasks) nodesById.set(node.id, node);
 
-    const emitTaskGraphEvent = async (type, payload) => {
-      await appendSessionEvent(entry.state, type, payload, parentRunId).catch(() => {});
-      broadcastEvent(sessionId, {
-        v: PROTOCOL_VERSION,
-        kind: 'event',
-        sessionId,
-        runId: parentRunId,
-        seq: entry.state.eventSeq,
-        ts: Date.now(),
-        type,
-        payload,
+    // Serialize task-graph progress writes through a per-session promise
+    // chain. `executeTaskGraph` calls `onProgress` synchronously, and with
+    // parallel explorer nodes (max 3) multiple progress callbacks can fire
+    // in quick succession. Without serialization, concurrent
+    // `appendSessionEvent` calls race on `state.eventSeq` — the field is
+    // mutated *before* the filesystem append resolves, so overlapping calls
+    // can (a) write events to `events.jsonl` out of seq order and
+    // (b) read a seq value for the broadcast envelope that has already been
+    // bumped by a later write. `attach_session` replays from disk in file
+    // order, so misordering would surface on any reconnect.
+    let emitChain = Promise.resolve();
+    const emitTaskGraphEvent = (type, payload) => {
+      const runIdField = parentRunId ? { runId: parentRunId } : {};
+      const chained = emitChain.then(async () => {
+        // Pass `parentRunId` (possibly null) through to appendSessionEvent;
+        // session-store already omits `runId` from the persisted envelope
+        // when the argument is falsy, so the on-disk record stays consistent
+        // with the wire envelope built below.
+        await appendSessionEvent(entry.state, type, payload, parentRunId).catch(() => {});
+        broadcastEvent(sessionId, {
+          v: PROTOCOL_VERSION,
+          kind: 'event',
+          sessionId,
+          ...runIdField,
+          seq: entry.state.eventSeq,
+          ts: Date.now(),
+          type,
+          payload,
+        });
       });
+      emitChain = chained.catch(() => {});
+      return chained;
     };
 
     const onProgress = (evt) => {
@@ -1088,7 +1108,7 @@ async function handleSubmitTaskGraph(req) {
             taskId: evt.taskId,
             agent,
             detail: evt.detail,
-          }).catch(() => {});
+          });
           return;
         case 'task_started':
           emitTaskGraphEvent('task_graph.task_started', {
@@ -1096,7 +1116,7 @@ async function handleSubmitTaskGraph(req) {
             taskId: evt.taskId,
             agent,
             detail: evt.detail,
-          }).catch(() => {});
+          });
           return;
         case 'task_completed':
           emitTaskGraphEvent('task_graph.task_completed', {
@@ -1105,7 +1125,7 @@ async function handleSubmitTaskGraph(req) {
             agent,
             summary: evt.detail || '',
             elapsedMs: evt.elapsedMs,
-          }).catch(() => {});
+          });
           return;
         case 'task_failed':
           emitTaskGraphEvent('task_graph.task_failed', {
@@ -1114,7 +1134,7 @@ async function handleSubmitTaskGraph(req) {
             agent,
             error: evt.detail || 'Task failed',
             elapsedMs: evt.elapsedMs,
-          }).catch(() => {});
+          });
           return;
         case 'task_cancelled':
           emitTaskGraphEvent('task_graph.task_cancelled', {
@@ -1123,7 +1143,7 @@ async function handleSubmitTaskGraph(req) {
             agent,
             reason: evt.detail || 'Task cancelled',
             elapsedMs: evt.elapsedMs,
-          }).catch(() => {});
+          });
           return;
         default:
           return;
