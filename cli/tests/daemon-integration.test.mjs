@@ -902,13 +902,34 @@ describe('submit_task_graph scaffold', () => {
 
 // ─── delegate_explorer ──────────────────────────────────────────
 
-async function waitForDelegationComplete(entry, subagentId, timeoutMs = 5000) {
+// Wait for a delegation background task to finish.
+//
+// Ownership is claimed by deleting the entry from `activeDelegations` BEFORE
+// the terminal event is persisted (see handleDelegateExplorer / handleDelegateReviewer)
+// — polling `activeDelegations.has()` alone races the `await appendSessionEvent`
+// that lands `subagent.completed`/`subagent.failed` on disk. When a `sessionId`
+// is provided, also poll the events log until the terminal event appears so
+// callers can immediately `loadSessionEvents` without hitting the write race.
+async function waitForDelegationComplete(entry, subagentId, sessionId = null, timeoutMs = 5000) {
   const startWait = Date.now();
   while (Date.now() - startWait < timeoutMs) {
-    if (!entry.activeDelegations || !entry.activeDelegations.has(subagentId)) return;
+    const stillActive = entry.activeDelegations && entry.activeDelegations.has(subagentId);
+    if (!stillActive) {
+      if (!sessionId) return;
+      const events = await loadSessionEvents(sessionId);
+      const terminal = events.find(
+        (e) =>
+          (e.type === 'subagent.completed' || e.type === 'subagent.failed') &&
+          e.payload?.subagentId === subagentId,
+      );
+      if (terminal) return;
+    }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  throw new Error(`delegate_explorer background run did not complete within ${timeoutMs}ms`);
+  const details = sessionId
+    ? `subagentId=${subagentId}, sessionId=${sessionId}`
+    : `subagentId=${subagentId}`;
+  throw new Error(`delegation background run did not complete within ${timeoutMs}ms (${details})`);
 }
 
 describe('delegate_explorer', () => {
@@ -1111,7 +1132,7 @@ describe('delegate_explorer', () => {
       assert.ok(entry.activeDelegations);
       assert.equal(entry.activeDelegations.has(subagentId), true);
 
-      await waitForDelegationComplete(entry, subagentId);
+      await waitForDelegationComplete(entry, subagentId, sessionId);
 
       assert.equal(entry.activeDelegations.has(subagentId), false);
 
@@ -1528,7 +1549,7 @@ describe('delegate_reviewer', () => {
       assert.ok(entry);
       assert.ok(entry.activeDelegations);
 
-      await waitForDelegationComplete(entry, subagentId);
+      await waitForDelegationComplete(entry, subagentId, sessionId);
       assert.equal(entry.activeDelegations.has(subagentId), false);
 
       const events = await loadSessionEvents(sessionId);
