@@ -16,13 +16,15 @@
  */
 
 import type {
+  DelegationCheck,
+  DelegationEvidence,
   DelegationOutcome,
   TaskGraphMemoryEntry,
   TaskGraphNode,
   TaskGraphNodeState,
   TaskGraphProgressEvent,
   TaskGraphResult,
-} from './runtime-contract';
+} from './runtime-contract.js';
 
 const MAX_MEMORY_SUMMARY_CHARS = 220;
 const MAX_MEMORY_CHECKS = 5;
@@ -148,7 +150,7 @@ export function getReadyTasks(states: Map<string, TaskGraphNodeState>): string[]
   for (const [id, state] of states) {
     if (state.status !== 'pending') continue;
     const deps = state.node.dependsOn ?? [];
-    const allDepsComplete = deps.every((dep) => states.get(dep)?.status === 'completed');
+    const allDepsComplete = deps.every((dep: string) => states.get(dep)?.status === 'completed');
     if (allDepsComplete) {
       state.status = 'ready';
       ready.push(id);
@@ -234,13 +236,15 @@ export function buildTaskGraphMemoryEntry(state: TaskGraphNodeState): TaskGraphM
     agent: state.node.agent,
     status: state.delegationOutcome?.status ?? 'complete',
     summary: truncateMemoryText(summary),
-    checks: state.delegationOutcome?.checks?.slice(0, MAX_MEMORY_CHECKS).map((check) => ({
-      id: check.id,
-      passed: check.passed,
-    })),
+    checks: state.delegationOutcome?.checks
+      ?.slice(0, MAX_MEMORY_CHECKS)
+      .map((check: DelegationCheck) => ({
+        id: check.id,
+        passed: check.passed,
+      })),
     evidenceLabels: state.delegationOutcome?.evidence
       ?.slice(0, MAX_MEMORY_EVIDENCE_LABELS)
-      .map((evidence) => evidence.label),
+      .map((evidence: DelegationEvidence) => evidence.label),
     nextRequiredAction: state.delegationOutcome?.nextRequiredAction ?? null,
   };
 }
@@ -249,7 +253,7 @@ function formatMemoryEntry(entry: TaskGraphMemoryEntry): string {
   const lines = [`- [${entry.namespace} | ${entry.agent} | ${entry.status}] ${entry.summary}`];
   if (entry.checks && entry.checks.length > 0) {
     lines.push(
-      `  Checks: ${entry.checks.map((check) => `${check.passed ? 'PASS' : 'FAIL'} ${check.id}`).join(', ')}`,
+      `  Checks: ${entry.checks.map((check: { id: string; passed: boolean }) => `${check.passed ? 'PASS' : 'FAIL'} ${check.id}`).join(', ')}`,
     );
   }
   if (entry.evidenceLabels && entry.evidenceLabels.length > 0) {
@@ -402,7 +406,7 @@ export async function executeTaskGraph(
             const gaps = cumulativeDelegationOutcome.missingRequirements ?? [];
             const gapList =
               gaps.length > 0
-                ? gaps.map((g) => `- ${g}`).join('\n')
+                ? gaps.map((g: string) => `- ${g}`).join('\n')
                 : '- (No specific gaps reported)';
 
             currentEnrichedContext = [
