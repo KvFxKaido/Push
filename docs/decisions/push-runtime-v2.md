@@ -1,7 +1,7 @@
 # Push Runtime v2 — Multi-Agent Daemon Protocol
 
 Date: 2026-04-12
-Status: **In progress** — Phases 1-3 shipped for the durable scope. Phase 4 approval seam and Phase 5 headless tool-loop runtime are next.
+Status: **In progress** — Phases 1-5 are shipped/closed for the durable scope. Phase 6 daemon wiring is next. Phase 5E decided Orchestrator stays Web-side; prompt-builder and context-manager extraction are optional pushd reuse follow-ups, not blockers.
 Owner: ishaw
 Related: [Web and CLI Runtime Contract](Web%20and%20CLI%20Runtime%20Contract.md), [Resumable Sessions Design](Resumable%20Sessions%20Design.md), [Multi-Agent Orchestration Research — open-multi-agent](Multi-Agent%20Orchestration%20Research%20%E2%80%94%20open-multi-agent.md)
 
@@ -36,6 +36,7 @@ A surprising amount of the machinery is already in place. The audit that motivat
 - `lib/task-graph.ts` already implements dependency-ordered execution with an `onProgress` event callback that emits `task_ready` / `task_started` / `task_completed` / `task_failed` / `task_cancelled` / `graph_complete` events. Primary caller bridges these into `RunEvent`s at `app/src/hooks/useAgentDelegation.ts:1442-1517`. (Fact)
 - `lib/role-context.ts`, `lib/system-prompt-builder.ts`, `lib/hashline.ts`, `lib/context-memory.ts` are all already shared. (Fact)
 - `DelegationOutcome`, `TaskGraphNode`, `AcceptanceCriterion`, `DelegationEvidence`, `DelegationCheck`, `DelegationGateVerdict`, `AgentRole` (added in Phase 1) are canonical types in `lib/runtime-contract.ts`. (Fact)
+- `lib/provider-contract.ts`, `lib/tool-execution-runtime.ts`, and the moved role kernels (`reviewer-agent`, `auditor-agent`, `deep-reviewer-agent`, `explorer-agent`, `coder-agent`) now carry the shared Phase 2-5 semantics. Web keeps compatibility shims under `app/src/lib/`. (Fact — updated 2026-04-13)
 
 **Daemon scaffold (`cli/pushd.ts`, `cli/daemon-client.ts`):**
 - Unix socket server with NDJSON envelope protocol `push.runtime.v1`. (Fact)
@@ -51,13 +52,13 @@ A surprising amount of the machinery is already in place. The audit that motivat
 - Capability ledger at `app/src/lib/capabilities.ts` (now extracted to `lib/capabilities.ts` in Phase 1). (Fact)
 - Approval gates at `app/src/lib/approval-gates.ts` with exactly one call site — `app/src/lib/tool-dispatch.ts:413`. (Fact)
 
-## What's Missing
+## What Still Remains
 
-1. **No provider-streaming abstraction in `lib/`.** Every role agent in Web imports `getProviderStreamFn` from `./orchestrator` and `getModelForRole` from `./providers`. Both are Web-coupled. Until this is extracted, no role agent is movable to `lib/`. (Fact — discovered in Phase 1 extraction attempt)
-2. **Web's approval flow is incompatible with the daemon's RPC approval.** When an approval gate returns `'ask_user'` at `app/src/lib/tool-dispatch.ts:413`, the dispatcher returns a structured error telling the *model* to emit an `ask_user` tool call. The user's response comes back as a chat message that re-enters the loop. No callback seam exists; no Promise blocks. Exactly one call site, but the refactor is semantic, not mechanical. (Fact)
-3. **Orchestrator is a 16K-line monolith.** `app/src/lib/orchestrator.ts` is where provider streaming, context budgeting, delegation dispatch, and system prompt building all live together. Extracting any single piece requires threading through tangled state.
-4. **No per-role provider routing on the wire.** The daemon today runs a single provider per session. v2 needs to let a session set `{orchestrator: Claude, explorer: local-8B, coder: Sonnet}` and have each role launch pick its own.
-5. **No delegation events in the daemon event log.** `recoverInterruptedRuns()` would need to understand delegation lifecycle if it's going to recover multi-agent sessions correctly.
+1. **Daemon wiring for multi-agent delegation.** `pushd` still needs to host Orchestrator + sub-agent delegation, emit the v2 `RunEvent` stream, and persist delegation outcomes. This is Phase 6.
+2. **Per-role provider routing on the wire.** The daemon today runs a single provider per session. v2 needs to let a session set `{orchestrator: Claude, explorer: local-8B, coder: Sonnet}` and have each role launch pick its own.
+3. **Delegation events in the daemon event log.** `recoverInterruptedRuns()` still needs to understand delegation lifecycle so parent runs can recover with a `[DELEGATION_INTERRUPTED]` reconciliation note.
+4. **Approval callback wiring into the daemon.** The Web seam exists (`approvalCallback?` in `executeAnyToolCall()` / `WebToolExecutionRuntime`), but Phase 6 still has to bind it to pushd's RPC approval flow.
+5. **Optional pushd reuse helpers.** Orchestrator stays Web-side by design. If Phase 6 wants reuse instead of duplication, extract the pure prompt-builder helpers and generic context-manager helpers called out in Phase 5E; neither blocks daemon wiring.
 
 ## Wire Format
 
@@ -330,19 +331,19 @@ Auditor moved as the second durable role kernel. The extraction deliberately sto
 
 **Verification for Step 2:** direct NodeNext compile for the moved lib files; `tsc -b` in the Web app; focused suites for `auditor-agent`, `verification-policy`, `role-memory-context`, `capabilities`, and `approval-gates-capabilities`.
 
-### Phase 4 — Approval callback seam
+### Phase 4 — Approval callback seam SHIPPED 2026-04-12 (commit `bbd282e6`)
 
-Add the `approvalCallback?` parameter to `executeAnyToolCall()` in `app/src/lib/tool-dispatch.ts`. Thread it through the 3-4 call sites. Write tests for both the old chat-loop path and the new callback path. Don't remove the old path yet — the daemon isn't wiring into it until Phase 6.
+The Web tool-dispatch path now has the daemon-compatible callback seam. `executeAnyToolCall()` accepts `approvalCallback?: (toolName, reason, recoveryPath) => Promise<boolean>` and passes it into `WebToolExecutionRuntime`; when present, approval gates can block on a Promise instead of telling the model to emit an `ask_user` tool call. When absent, the old chat-loop approval path is preserved for Web-standalone.
 
-**Estimated scope:** 200-300 lines + tests. Can run in parallel with Phase 3 since it's a different file.
+**What remains:** Phase 6 must bind this callback to pushd's existing RPC approval flow. The seam is present; daemon wiring is not.
 
-### Phase 5 — Headless tool-loop runtime extraction
+### Phase 5 — Headless tool-loop runtime extraction CLOSED 2026-04-13
 
-The biggest and scariest refactor is not "make `orchestrator.ts` pretty." The blocker is narrower and more valuable: Explorer, Coder, and deep-reviewer need a headless tool loop that can detect, validate, approve, and execute tools without importing the Web shell.
+The biggest and scariest refactor was not "make `orchestrator.ts` pretty." The blocker was narrower and more valuable: Explorer, Coder, and deep-reviewer needed headless role kernels that can run their conversation loops without importing the Web shell.
 
-This phase should deliberately avoid a broad orchestrator cleanup. Keep `app/src/lib/orchestrator.ts` as Web's transport wrapper until the new runtime seam proves itself.
+This phase deliberately avoided a broad orchestrator cleanup. `app/src/lib/orchestrator.ts` stays Web-side by design after the Phase 5E decision below.
 
-Recommended PR sequence:
+Delivered sequence:
 
 1. **Phase 5A — Pure tool protocol + detectors.**
    Move protocol text, parsing, diagnostics, and detector helpers that do not execute tools into `lib/`. Keep Web shims. Do not move tool execution yet.
@@ -355,7 +356,7 @@ Recommended PR sequence:
 
 The goal is **not** one file for both shells — it's "the *semantics* are in `lib/`, the *transport* is per-shell." The headless loop can live in `lib/`; Web and CLI provide their own runtime adapters.
 
-**Estimated scope:** 1-2 weeks, split across 4 PRs. This is the best place to use agents, but only with disjoint ownership: one agent can audit detector boundaries, one can implement the Phase 4 seam or Phase 5A tests, and one can attempt the deep-reviewer move after the runtime interface lands. Keep the `ToolRuntime` interface design in the main thread because a wrong abstraction here will multiply pain across Phase 6.
+**Actual closure:** Phases 5A-5D moved the protocol/detector/runtime seam and the deep-reviewer, Explorer, and Coder role kernels. Phase 5E closed the orchestrator question: no move sprint, because Orchestrator has no `run{Role}Agent()` loop boundary to wrap. The remaining prompt-builder/context-manager helper extractions are optional Phase 6 reuse work.
 
 #### Phase 5C — deep-reviewer move SHIPPED 2026-04-13 (commit `6009156`)
 
@@ -516,11 +517,9 @@ Captured here so future-self doesn't re-litigate them. All were decided in the 2
 
 ## Risks & Unknowns
 
-**Fact:** the biggest single refactor is Phase 5, but its useful target is now narrower than "orchestrator extraction." The blocker is the Web-coupled tool loop, not the existence of a 16K-line orchestrator file. 1-2 weeks is still a guess, but the risk is now concentrated around the `ToolRuntime` interface and detector/execution split.
+**Fact:** Phase 5 is closed. The useful target was the Web-coupled tool-loop runtime, not the existence of a large `orchestrator.ts` file. The remaining risk is now concentrated in Phase 6 daemon wiring: request handlers, event fan-out, role routing, approval callback binding, and recovery behavior.
 
-**Inference:** Phase 2 (provider-streaming abstraction) is probably simpler than it looks because the interface surface is small (a streamFn type and a model-id string). The risk is that Web's non-role code paths — especially `orchestrator.ts`'s own internal calls — also use `getProviderStreamFn` and need to be refactored to use the new interface, not just the role agents.
-
-**Inference:** the approval callback seam (Phase 4) is the one most likely to surface unexpected coupling. "Exactly one call site" is true of `approvalGates.evaluate()`, but the downstream behavior — `ask_user` tool, CardAction, `sendMessageRef.current()` — is distributed across multiple files. The refactor might touch more files than the estimate suggests.
+**Fact:** Phase 2's provider-streaming abstraction and Phase 4's approval callback seam are shipped. The remaining approval risk is not the Web seam itself; it is whether pushd's RPC approval flow maps cleanly onto sub-agent approvals once role attribution and v1 synthetic downgrade are active.
 
 **Guess:** v1 client handling via synthetic downgrade is clever but untested. Once Phase 6 ships, running a v1 CLI client against a v2 daemon with active delegation is the first real test of whether the `[Role]` prefix synthesis actually reads well. If it doesn't, we may need to introduce a minimal `v1_delegation_summary` pseudo-event type as a compromise.
 
@@ -540,9 +539,9 @@ Phase 1 (shipped) ──┐
                                                                    └──> Phase 7 (optional: Web-as-client)
 ```
 
-Phase 4 (approval seam) can run before or alongside Phase 5A because it is the callback hook the later `ToolRuntime` adapter will need. Phase 5 should not start by editing the whole orchestrator; start with the pure tool protocol/detector extraction and runtime interface.
+Phases 1-5 are now done or explicitly closed. Phase 6 can start from the shared role kernels in `lib/`, the existing approval callback seam, and the Phase 5E decision that Orchestrator remains Web-side.
 
-**Calendar estimate (Inference):** Phase 4 = 1-2 days, Phase 5A-D = 1-2 weeks, Phase 6A-D = ~1 week. Since Phases 1-3 are now shipped, the remaining v2.0 tranche is plausibly **2-3 weeks of focused work** if Phase 5 stays scoped to the headless tool-loop runtime.
+**Calendar estimate (Inference):** Phase 6A-D remains roughly ~1 week if it stays focused on pushd wiring. The two optional Phase 5E helper extractions can run before or during Phase 6 if reuse is worth the extra PRs, but they should not be treated as prerequisites.
 
 ## Acceptance Criteria
 
