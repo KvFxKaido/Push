@@ -2582,10 +2582,14 @@ export async function main() {
   });
 }
 
-// Only run main() when executed directly (not when imported)
+// Only run main() when executed directly (not when imported).
+// Matches the entry basename `pushd` with any of the extensions we ship
+// under (`.ts` via tsx for dev/tests, `.js`/`.mjs`/`.cjs` for compiled
+// output produced by `npm run build:cli`). Handles POSIX (`/`) and
+// Windows (`\\`) path separators so a packaged daemon binary on either
+// platform still boots.
 const isDirectRun =
-  process.argv[1] &&
-  (process.argv[1].endsWith('/pushd.ts') || process.argv[1].endsWith('\\pushd.ts'));
+  typeof process.argv[1] === 'string' && /[/\\]pushd\.(ts|mjs|cjs|js)$/.test(process.argv[1]);
 
 if (isDirectRun) {
   main().catch((err) => {

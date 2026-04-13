@@ -2983,3 +2983,165 @@ describe('attach token persistence', () => {
     );
   });
 });
+
+// ─── attach_session resume from lastSeenSeq ──────────────────────
+
+// Exercises the daemon-side replay semantics that `push attach` relies on
+// to recover after a disconnect: when the client re-sends `attach_session`
+// with the highest `seq` it has already processed, the handler must replay
+// ONLY the events it missed — never the full log from seq 0, and never the
+// empty set when events have landed since the drop.
+describe('attach_session resume from lastSeenSeq', () => {
+  // Append `count` synthetic events while a session is live in
+  // `activeSessions`. Mutates the SAME state object the handler sees so
+  // `entry.state.eventSeq` advances in lockstep with the on-disk event
+  // log — without that, `handleAttachSession` caps replay at the stale
+  // in-memory tip and misses everything we just seeded.
+  async function seedSessionWithEvents(sessionId, count) {
+    const entry = __getActiveSessionForTesting(sessionId);
+    assert.ok(entry, `seedSessionWithEvents: session ${sessionId} not active`);
+    for (let i = 0; i < count; i += 1) {
+      await appendSessionEvent(entry.state, 'status', { phase: 'test', n: i + 1 }, 'run_seed');
+    }
+    await saveSessionState(entry.state);
+  }
+
+  it('replays exactly the missed events when lastSeenSeq is set (live session)', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-attach-resume-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      assert.equal(start.ok, true);
+      const { sessionId, attachToken } = start.payload;
+
+      // Seed the event log with 5 status events (seqs 2–6 after the
+      // session_started event at seq 1).
+      await seedSessionWithEvents(sessionId, 5);
+
+      // First attach from seq 0 — should replay every event including the
+      // session_started one.
+      const firstEvents = [];
+      const firstAttach = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken, lastSeenSeq: 0 }, sessionId),
+        (event) => firstEvents.push(event),
+      );
+      assert.equal(firstAttach.ok, true);
+      assert.equal(firstAttach.payload.replay.fromSeq, 1);
+      assert.equal(firstEvents.length, 6);
+      const highestSeq = firstEvents[firstEvents.length - 1].seq;
+      assert.equal(highestSeq, 6);
+
+      // Simulate a flaky client: the session is still live (daemon never
+      // restarted), but the client is recovering from a socket drop. Seed
+      // 3 more events on the same active session, then re-attach with the
+      // highest seq we observed earlier. The handler must replay ONLY the
+      // three new events, not the six we already saw.
+      await seedSessionWithEvents(sessionId, 3);
+
+      const resumeEvents = [];
+      const resume = await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, lastSeenSeq: highestSeq },
+          sessionId,
+        ),
+        (event) => resumeEvents.push(event),
+      );
+      assert.equal(resume.ok, true, `resume attach failed: ${JSON.stringify(resume.error)}`);
+      assert.equal(resume.payload.replay.fromSeq, highestSeq + 1);
+      assert.equal(resume.payload.replay.toSeq, 9);
+      assert.equal(resumeEvents.length, 3);
+      assert.deepEqual(
+        resumeEvents.map((e) => e.seq),
+        [7, 8, 9],
+      );
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns an empty replay when lastSeenSeq is already at the tip', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-attach-caught-up-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const state = await loadSessionState(sessionId);
+      const tip = state.eventSeq;
+
+      const events = [];
+      const response = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken, lastSeenSeq: tip }, sessionId),
+        (event) => events.push(event),
+      );
+      assert.equal(response.ok, true);
+      assert.equal(events.length, 0);
+      assert.equal(response.payload.replay.fromSeq, tip + 1);
+      assert.equal(response.payload.replay.toSeq, tip);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('handles a disk-reload resume after daemon-restart eviction', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-attach-restart-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      // Seed events while the session is live (session_started at seq 1
+      // plus four status events at seqs 2–5), THEN evict the in-memory
+      // entry. This is the full "daemon restart" path: events are durable
+      // on disk, clients still hold their original token, and the next
+      // attach_session has to re-load state and replay the tail of the
+      // log from whatever seq the client last observed.
+      await seedSessionWithEvents(sessionId, 4);
+      __evictActiveSessionForTesting(sessionId);
+      assert.equal(__getActiveSessionForTesting(sessionId), null);
+
+      const resumeEvents = [];
+      const resume = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken, lastSeenSeq: 2 }, sessionId),
+        (event) => resumeEvents.push(event),
+      );
+      assert.equal(resume.ok, true, `resume failed: ${JSON.stringify(resume.error)}`);
+      // session_started at seq 1, 4 seeded events at seqs 2–5. Starting
+      // from lastSeenSeq=2 means we expect seqs 3, 4, 5 replayed.
+      assert.deepEqual(
+        resumeEvents.map((e) => e.seq),
+        [3, 4, 5],
+      );
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
