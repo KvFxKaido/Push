@@ -2081,8 +2081,14 @@ export async function main() {
 // imported by a test file or another module). Without this guard, any
 // `import { ... } from '../cli.ts'` triggers interactive-mode startup
 // and errors out in headless test environments.
+//
+// Matches the entry basename `cli` with any of the extensions we ship
+// under (`.ts` via tsx for dev/tests, `.js`/`.mjs`/`.cjs` for compiled
+// output produced by `npm run build:cli`). Handles both POSIX (`/`)
+// and Windows (`\\`) path separators so a packaged `push` binary on
+// either platform still boots into interactive mode.
 const isDirectRun =
-  process.argv[1] && (process.argv[1].endsWith('/cli.ts') || process.argv[1].endsWith('\\cli.ts'));
+  typeof process.argv[1] === 'string' && /[/\\]cli\.(ts|mjs|cjs|js)$/.test(process.argv[1]);
 
 if (isDirectRun) {
   main()
