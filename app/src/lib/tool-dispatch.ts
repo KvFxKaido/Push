@@ -378,6 +378,8 @@ export async function executeAnyToolCall(
   hooks?: ToolHookRegistry,
   approvalGates?: ApprovalGateRegistry,
   capabilityLedger?: import('./capabilities').CapabilityLedger,
+  // Phase 4 seam — set by daemon adapter in Phase 6; unset in Web chat-loop.
+  approvalCallback?: (toolName: string, reason: string, recoveryPath: string) => Promise<boolean>,
 ): Promise<ToolExecutionResult> {
   const toolName = getHookToolName(toolCall);
   const toolArgs = getHookToolArgs(toolCall);
@@ -425,15 +427,29 @@ export async function executeAnyToolCall(
           };
         }
         if (gateResult.decision === 'ask_user') {
-          return {
-            text: `[Approval Required — ${toolName}] This action requires explicit user approval.\n\nReason: ${gateResult.reason}\n\nUse ask_user to request permission before proceeding. Explain what you want to do and why.\n\nRecovery: ${gateResult.recoveryPath}`,
-            structuredError: {
-              type: 'APPROVAL_GATE_BLOCKED',
-              retryable: true,
-              message: gateResult.reason,
-              detail: `Use ask_user to get approval. ${gateResult.recoveryPath}`,
-            },
-          };
+          if (approvalCallback) {
+            const approved = await approvalCallback(
+              toolName,
+              gateResult.reason,
+              gateResult.recoveryPath,
+            );
+            if (!approved) {
+              return {
+                text: `[Approval Denied — ${toolName}] User denied approval.\n\nReason: ${gateResult.reason}`,
+              };
+            }
+            // Approved — fall through to normal tool execution below.
+          } else {
+            return {
+              text: `[Approval Required — ${toolName}] This action requires explicit user approval.\n\nReason: ${gateResult.reason}\n\nUse ask_user to request permission before proceeding. Explain what you want to do and why.\n\nRecovery: ${gateResult.recoveryPath}`,
+              structuredError: {
+                type: 'APPROVAL_GATE_BLOCKED',
+                retryable: true,
+                message: gateResult.reason,
+                detail: `Use ask_user to get approval. ${gateResult.recoveryPath}`,
+              },
+            };
+          }
         }
       }
     }

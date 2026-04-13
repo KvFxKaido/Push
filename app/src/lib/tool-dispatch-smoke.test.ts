@@ -21,11 +21,24 @@ vi.mock('./edit-metrics', () => ({
   recordReadFileMetric: vi.fn(),
 }));
 
+// Partially mock sandbox-tools so we can intercept executeSandboxToolCall
+// in the Phase 4 approval-callback tests while leaving detection/other
+// exports intact for the rest of the suite.
+vi.mock('./sandbox-tools', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./sandbox-tools')>();
+  return {
+    ...actual,
+    executeSandboxToolCall: vi.fn(actual.executeSandboxToolCall),
+  };
+});
+
 import { detectAnyToolCall, executeAnyToolCall } from './tool-dispatch';
 import * as sandboxClient from './sandbox-client';
+import * as sandboxTools from './sandbox-tools';
 import { runAuditor } from './auditor-agent';
 import { fileLedger } from './file-awareness-ledger';
 import { createToolHookRegistry } from './tool-hooks';
+import { createDefaultApprovalGates } from './approval-gates';
 
 describe('tool-dispatch smoke -- sandbox_search_replace', () => {
   beforeEach(() => {
@@ -259,5 +272,98 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
 
     expect(result.text).toBe('[Tool Result] Hook override applied.');
     expect(result.card?.type).toBe('ask-user');
+  });
+});
+
+describe('tool-dispatch -- approval callback seam (Phase 4)', () => {
+  const destructiveCall = {
+    source: 'sandbox' as const,
+    call: {
+      tool: 'sandbox_exec' as const,
+      args: { command: 'rm -rf /tmp/foo' },
+    },
+  };
+
+  beforeEach(() => {
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('fallback behavior preserved when no approvalCallback is provided', async () => {
+    const gates = createDefaultApprovalGates();
+
+    const result = await executeAnyToolCall(
+      destructiveCall,
+      'KvFxKaido/Push',
+      'sb-123',
+      false,
+      'main',
+      undefined,
+      undefined,
+      undefined,
+      gates,
+    );
+
+    expect(result.text).toContain('[Approval Required');
+    expect(result.text).toContain('sandbox_exec');
+    expect(result.structuredError?.type).toBe('APPROVAL_GATE_BLOCKED');
+    expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
+  });
+
+  it('callback approve path executes the tool and records no structured error', async () => {
+    const gates = createDefaultApprovalGates();
+    const approvalCallback = vi.fn().mockResolvedValue(true);
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockResolvedValue({
+      text: '[Tool Result] executed',
+    });
+
+    const result = await executeAnyToolCall(
+      destructiveCall,
+      'KvFxKaido/Push',
+      'sb-123',
+      false,
+      'main',
+      undefined,
+      undefined,
+      undefined,
+      gates,
+      undefined,
+      approvalCallback,
+    );
+
+    expect(approvalCallback).toHaveBeenCalledTimes(1);
+    expect(approvalCallback).toHaveBeenCalledWith(
+      'sandbox_exec',
+      expect.any(String),
+      expect.any(String),
+    );
+    expect(vi.mocked(sandboxTools.executeSandboxToolCall)).toHaveBeenCalledTimes(1);
+    expect(result.text).toContain('[Tool Result] executed');
+    expect(result.structuredError).toBeUndefined();
+  });
+
+  it('callback deny path blocks execution and returns a denial result', async () => {
+    const gates = createDefaultApprovalGates();
+    const approvalCallback = vi.fn().mockResolvedValue(false);
+
+    const result = await executeAnyToolCall(
+      destructiveCall,
+      'KvFxKaido/Push',
+      'sb-123',
+      false,
+      'main',
+      undefined,
+      undefined,
+      undefined,
+      gates,
+      undefined,
+      approvalCallback,
+    );
+
+    expect(approvalCallback).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
+    expect(result.text).toContain('[Approval Denied');
+    expect(result.text).toContain('sandbox_exec');
+    expect(result.structuredError).toBeUndefined();
   });
 });
