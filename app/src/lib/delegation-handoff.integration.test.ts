@@ -7,6 +7,7 @@ const {
   mockGetUserProfile,
   mockGetSandboxDiff,
   mockIsProviderAvailable,
+  mockExecuteSandboxToolCall,
 } = vi.hoisted(() => ({
   mockStreamFn: vi.fn(),
   mockGetProviderStreamFn: vi.fn(),
@@ -14,6 +15,7 @@ const {
   mockGetUserProfile: vi.fn(),
   mockGetSandboxDiff: vi.fn(),
   mockIsProviderAvailable: vi.fn(),
+  mockExecuteSandboxToolCall: vi.fn(),
 }));
 
 vi.mock('@/hooks/useUserProfile', () => ({
@@ -43,6 +45,14 @@ vi.mock('./sandbox-client', async () => {
   };
 });
 
+vi.mock('./sandbox-tools', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./sandbox-tools')>();
+  return {
+    ...actual,
+    executeSandboxToolCall: mockExecuteSandboxToolCall,
+  };
+});
+
 import { detectToolCall } from './github-tools';
 import { runCoderAgent } from './coder-agent';
 import { runExplorerAgent } from './explorer-agent';
@@ -56,6 +66,7 @@ describe('delegation handoff integration', () => {
     mockGetUserProfile.mockReset();
     mockGetSandboxDiff.mockReset();
     mockIsProviderAvailable.mockReset();
+    mockExecuteSandboxToolCall.mockReset();
 
     symbolLedger.reset();
     symbolLedger.setRepo('KvFxKaido/Push:feature/auth-flow');
@@ -82,6 +93,9 @@ describe('delegation handoff integration', () => {
     }));
     mockGetUserProfile.mockReturnValue({ displayName: '', bio: '', githubLogin: undefined });
     mockGetSandboxDiff.mockResolvedValue({ diff: '', truncated: false });
+    mockExecuteSandboxToolCall.mockResolvedValue({
+      text: 'sandbox result',
+    });
   });
 
   it('carries parsed explorer handoff fields and symbol cache into the delegated Explorer run', async () => {
@@ -227,6 +241,48 @@ describe('delegation handoff integration', () => {
     expect(taskBrief).toContain('auth-tests: Auth tests pass');
     expect(systemPrompt).toContain('[SYMBOL_CACHE]');
     expect(systemPrompt).toContain('src/auth.ts: 1 symbols (120 lines)');
+  });
+
+  it('keeps Coder tool detection scoped to sandbox and web-search calls', async () => {
+    let streamRound = 0;
+    mockStreamFn.mockImplementation(
+      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        streamRound++;
+        if (streamRound === 1) {
+          onToken(
+            [
+              '{"tool":"ask_user","args":{"question":"Which option?","options":[{"id":"a","label":"A"}]}}',
+              '{"tool":"sandbox_read_file","args":{"path":"/workspace/src/auth.ts"}}',
+            ].join('\n'),
+          );
+        } else {
+          onToken(
+            '**Done:** Read src/auth.ts through sandbox_read_file.\n**Changed:** No file changes; read src/auth.ts only.\n**Verified:** sandbox_read_file completed for /workspace/src/auth.ts.\n**Open:** nothing',
+          );
+        }
+        onDone();
+        return Promise.resolve();
+      },
+    );
+
+    const result = await runCoderAgent(
+      {
+        task: 'Read auth.ts',
+        files: ['src/auth.ts'],
+        declaredCapabilities: ['repo:read'],
+        provider: 'openrouter',
+        model: 'coder-test-model',
+      },
+      'sb-123',
+      { onStatus: () => {} },
+    );
+
+    expect(mockExecuteSandboxToolCall).toHaveBeenCalledTimes(1);
+    expect(mockExecuteSandboxToolCall.mock.calls[0]?.[0]).toEqual({
+      tool: 'sandbox_read_file',
+      args: { path: '/workspace/src/auth.ts' },
+    });
+    expect(result.summary).toContain('**Done:** Read src/auth.ts through sandbox_read_file.');
   });
 
   it('falls back to the active provider model when the delegated explorer provider is unavailable', async () => {

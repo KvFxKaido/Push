@@ -19,7 +19,7 @@
  *                                 /`executeWebSearch` → `policyRegistry.evaluateAfterTool`, plus a
  *                                 sandbox health-check probe on `SANDBOX_UNREACHABLE`
  *  5. `detectAllToolCalls`      — wrapped to filter sandbox-source parallel reads
- *  6. `detectAnyToolCall`       — real function from `./tool-dispatch`
+ *  6. `detectAnyToolCall`       — wrapped to keep Coder on sandbox/web-search tools
  *  7. `webSearchToolProtocol`   — `WEB_SEARCH_TOOL_PROTOCOL`
  *  8. `evaluateAfterModel`      — flattened adapter around `policyRegistry.evaluateAfterModel`
  *  9. `verificationPolicyBlock` — `formatVerificationPolicyBlock(verificationPolicy)`
@@ -57,8 +57,16 @@ import {
 import { getActiveProvider, getProviderStreamFn, type ActiveProvider } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
-import { executeSandboxToolCall, getSandboxToolProtocol } from './sandbox-tools';
-import { executeWebSearch, WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import {
+  detectSandboxToolCall,
+  executeSandboxToolCall,
+  getSandboxToolProtocol,
+} from './sandbox-tools';
+import {
+  detectWebSearchToolCall,
+  executeWebSearch,
+  WEB_SEARCH_TOOL_PROTOCOL,
+} from './web-search-tools';
 import { CapabilityLedger, ROLE_CAPABILITIES } from './capabilities';
 import { detectAllToolCalls, detectAnyToolCall, type AnyToolCall } from './tool-dispatch';
 import { fileLedger } from './file-awareness-ledger';
@@ -297,6 +305,20 @@ export async function runCoderAgent(
     };
   };
 
+  const detectCoderToolCall = (text: string): AnyToolCall | null => {
+    const sandboxCall = detectSandboxToolCall(text);
+    if (sandboxCall) return { source: 'sandbox', call: sandboxCall };
+
+    const webSearchCall = detectWebSearchToolCall(text);
+    if (webSearchCall) return { source: 'web-search', call: webSearchCall };
+
+    const recoveredCall = detectAnyToolCall(text);
+    if (recoveredCall?.source === 'sandbox' || recoveredCall?.source === 'web-search') {
+      return recoveredCall;
+    }
+    return null;
+  };
+
   // --- toolExec closure: evaluateBeforeTool + withActiveSpan + execute + evaluateAfterTool ---
   const toolExec = async (
     call: AnyToolCall,
@@ -312,6 +334,13 @@ export async function runCoderAgent(
     const callStructural = call as unknown as {
       call: { tool: string; args?: Record<string, unknown> };
     };
+
+    if (call.source !== 'sandbox' && call.source !== 'web-search') {
+      return {
+        kind: 'denied',
+        reason: `Coder can only execute sandbox and web_search tools. "${callStructural.call.tool}" is not available to Coder.`,
+      };
+    }
 
     // Phase-aware tool gating
     const beforeResult = await policyRegistry.evaluateBeforeTool(
@@ -531,7 +560,7 @@ export async function runCoderAgent(
     symbolSummary: symbolLedger.getSummary(),
     toolExec,
     detectAllToolCalls: detectAllToolCallsFiltered,
-    detectAnyToolCall,
+    detectAnyToolCall: detectCoderToolCall,
     webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
     sandboxToolProtocol: getSandboxToolProtocol(),
     verificationPolicyBlock,
