@@ -903,8 +903,7 @@ async function waitForTaskGraphComplete(entry, executionId, sessionId, timeoutMs
     if (!stillActive) {
       const events = await loadSessionEvents(sessionId);
       const terminal = events.find(
-        (e) =>
-          e.type === 'task_graph.graph_completed' && e.payload?.executionId === executionId,
+        (e) => e.type === 'task_graph.graph_completed' && e.payload?.executionId === executionId,
       );
       if (terminal) return;
     }
@@ -1154,16 +1153,13 @@ describe('submit_task_graph', () => {
 
       const events = await loadSessionEvents(sessionId);
       const started = events.find(
-        (e) =>
-          e.type === 'task_graph.task_started' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.task_started' && e.payload.executionId === executionId,
       );
       const completedTask = events.find(
-        (e) =>
-          e.type === 'task_graph.task_completed' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.task_completed' && e.payload.executionId === executionId,
       );
       const completedGraph = events.find(
-        (e) =>
-          e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
       );
       assert.ok(started, 'expected task_graph.task_started event');
       assert.ok(completedTask, 'expected task_graph.task_completed event');
@@ -1176,8 +1172,7 @@ describe('submit_task_graph', () => {
       assert.equal(completedGraph.payload.aborted, false);
 
       const broadcastGraphCompleted = broadcasted.find(
-        (e) =>
-          e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
       );
       assert.ok(broadcastGraphCompleted, 'expected task_graph.graph_completed broadcast');
     } finally {
@@ -1256,7 +1251,10 @@ describe('submit_task_graph', () => {
       const graphEvents = events.filter(
         (e) => e.type.startsWith('task_graph.') && e.payload?.executionId === executionId,
       );
-      assert.ok(graphEvents.length >= 7, 'expected at least 3 started + 3 completed + 1 graph_completed events');
+      assert.ok(
+        graphEvents.length >= 7,
+        'expected at least 3 started + 3 completed + 1 graph_completed events',
+      );
 
       // Disk order = emission order; seq must be strictly increasing.
       let prevSeq = -Infinity;
@@ -1381,7 +1379,10 @@ describe('submit_task_graph', () => {
           !('runId' in e) || e.runId !== null,
           `broadcast envelope must omit runId (or make it non-null) when parentRunId is null, got: ${JSON.stringify(e)}`,
         );
-        assert.ok(!('runId' in e), `broadcast envelope should omit runId entirely: ${JSON.stringify(e)}`);
+        assert.ok(
+          !('runId' in e),
+          `broadcast envelope should omit runId entirely: ${JSON.stringify(e)}`,
+        );
       }
     } finally {
       restoreConfig();
@@ -1433,12 +1434,10 @@ describe('submit_task_graph', () => {
 
       const events = await loadSessionEvents(sessionId);
       const failed = events.find(
-        (e) =>
-          e.type === 'task_graph.task_failed' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.task_failed' && e.payload.executionId === executionId,
       );
       const completedGraph = events.find(
-        (e) =>
-          e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
+        (e) => e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
       );
       assert.ok(failed, 'expected task_graph.task_failed event for coder node');
       assert.ok(failed.payload.error.includes('Coder delegation is not yet wired'));
@@ -2950,7 +2949,11 @@ describe('attach token persistence', () => {
         ),
         () => {},
       );
-      assert.equal(response.ok, true, `expected legacy bypass success, got ${JSON.stringify(response.error)}`);
+      assert.equal(
+        response.ok,
+        true,
+        `expected legacy bypass success, got ${JSON.stringify(response.error)}`,
+      );
 
       const reloaded = __getActiveSessionForTesting(sessionId);
       assert.ok(reloaded);
@@ -2967,10 +2970,7 @@ describe('attach token persistence', () => {
     // This test loads the source of pushd.ts and asserts that nobody
     // reintroduces the old `attachToken: makeAttachToken()` pattern on a
     // disk-load path — anyone tempted to copy it will fail this test.
-    const content = await fs.readFile(
-      path.join(import.meta.dirname, '..', 'pushd.ts'),
-      'utf8',
-    );
+    const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
     const offenders = content
       .split('\n')
       .map((line, idx) => ({ line, n: idx + 1 }))

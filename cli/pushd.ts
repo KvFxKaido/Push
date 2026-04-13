@@ -49,11 +49,7 @@ import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
-import {
-  validateTaskGraph,
-  executeTaskGraph,
-  formatTaskGraphResult,
-} from '../lib/task-graph.ts';
+import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
 
 const VERSION = '0.3.0';
 const CAPABILITIES = [
@@ -953,8 +949,7 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
   const stubDetectAllToolCalls = () => emptyDetection;
   const stubDetectAnyToolCall = () => null;
   const stubToolExec = async () => ({
-    resultText:
-      '[pushd scaffold] daemon-side Explorer tool execution is not yet wired',
+    resultText: '[pushd scaffold] daemon-side Explorer tool execution is not yet wired',
   });
   const stubEvaluateAfterModel = async () => null;
   const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
@@ -991,8 +986,7 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
     missingRequirements: [
       'Daemon-side Explorer tool executor (stubbed in runScaffoldExplorerForTaskGraph)',
     ],
-    nextRequiredAction:
-      'Wire a real daemon Explorer tool executor before advertising multi_agent',
+    nextRequiredAction: 'Wire a real daemon Explorer tool executor before advertising multi_agent',
     rounds: result.rounds,
     checkpoints: 0,
     elapsedMs: 0,
@@ -2249,7 +2243,7 @@ export function collectOrphanedDelegations(events, parentRunId) {
 
   for (const event of events) {
     if (!event || typeof event.type !== 'string') continue;
-    const payload = (event.payload || {});
+    const payload = event.payload || {};
 
     if (event.type === 'subagent.started') {
       if (payload.parentRunId !== parentRunId) continue;
