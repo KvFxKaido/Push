@@ -6,6 +6,11 @@ import process from 'node:process';
 
 // ─── Interfaces ──────────────────────────────────────────────────
 
+export interface RoleRoutingEntry {
+  provider: string;
+  model: string;
+}
+
 export interface SessionState {
   sessionId: string;
   messages: unknown[];
@@ -17,6 +22,7 @@ export interface SessionState {
   rounds: number;
   sessionName: string;
   workingMemory: unknown;
+  roleRouting?: Record<string, RoleRoutingEntry>;
   [key: string]: unknown;
 }
 

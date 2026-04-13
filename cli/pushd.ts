@@ -15,6 +15,9 @@
  *   attach_session   — attach to existing session + event replay
  *   submit_approval  — respond to an approval_required pause
  *   cancel_run       — abort active run
+ *   configure_role_routing — set per-role provider/model routing
+ *   submit_task_graph      — scaffold for future task graph execution
+ *   cancel_delegation      — scaffold for future sub-agent cancellation
  */
 import net from 'node:net';
 import { promises as fs } from 'node:fs';
@@ -47,7 +50,10 @@ const CAPABILITIES = [
   'replay_attach',
   'multi_client',
   'crash_recovery',
+  'role_routing',
 ];
+
+const VALID_AGENT_ROLES = new Set(['orchestrator', 'explorer', 'coder', 'reviewer', 'auditor']);
 
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -162,7 +168,7 @@ function shouldRecover(policy, marker) {
 
 // ─── Token validation ─────────────────────────────────────────────
 
-export { getRestartPolicy, shouldRecover, DEFAULT_RESTART_POLICY };
+export { getRestartPolicy, shouldRecover, DEFAULT_RESTART_POLICY, VALID_AGENT_ROLES };
 
 export function validateAttachToken(entry, providedToken) {
   if (!entry || !entry.attachToken) return true;
@@ -323,6 +329,7 @@ async function handleStartSession(req) {
     model,
     cwd,
     restartPolicy,
+    roleRouting: {},
     rounds: 0,
     eventSeq: 0,
     messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
@@ -343,6 +350,7 @@ async function handleStartSession(req) {
     sessionId,
     state: 'idle',
     attachToken,
+    roleRouting: state.roleRouting,
   });
 }
 
@@ -593,6 +601,7 @@ async function handleAttachSession(req, emitEvent) {
     sessionId,
     state: entry.activeRunId ? 'running' : 'idle',
     activeRunId: entry.activeRunId || null,
+    roleRouting: state.roleRouting || {},
     replay: {
       fromSeq,
       toSeq: currentSeq,
@@ -713,6 +722,136 @@ async function handleCancelRun(req) {
   });
 }
 
+// ─── Role routing ───────────────────────────────────────────────
+
+async function handleConfigureRoleRouting(req) {
+  const sessionId = req.sessionId || req.payload?.sessionId;
+  const routing = req.payload?.routing;
+
+  if (!sessionId) {
+    return makeErrorResponse(
+      req.requestId,
+      'configure_role_routing',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
+  }
+
+  if (!routing || typeof routing !== 'object' || Array.isArray(routing)) {
+    return makeErrorResponse(
+      req.requestId,
+      'configure_role_routing',
+      'INVALID_REQUEST',
+      'routing must be a non-null object mapping role → { provider, model? }',
+    );
+  }
+
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: makeAttachToken() };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return makeErrorResponse(
+        req.requestId,
+        'configure_role_routing',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
+    }
+  }
+
+  const providedToken = req.payload?.attachToken;
+  if (!validateAttachToken(entry, providedToken)) {
+    return makeErrorResponse(
+      req.requestId,
+      'configure_role_routing',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
+  const normalized = {};
+  for (const [role, spec] of Object.entries(routing)) {
+    if (!VALID_AGENT_ROLES.has(role)) {
+      return makeErrorResponse(
+        req.requestId,
+        'configure_role_routing',
+        'INVALID_ROLE',
+        `Unknown agent role: ${role}. Valid roles: ${[...VALID_AGENT_ROLES].join(', ')}`,
+      );
+    }
+
+    if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
+      return makeErrorResponse(
+        req.requestId,
+        'configure_role_routing',
+        'INVALID_REQUEST',
+        `Entry for role "${role}" must be an object with at least { provider }`,
+      );
+    }
+
+    const provider = typeof spec.provider === 'string' ? spec.provider.trim() : spec.provider;
+    if (!provider || typeof provider !== 'string') {
+      return makeErrorResponse(
+        req.requestId,
+        'configure_role_routing',
+        'INVALID_REQUEST',
+        `Entry for role "${role}" must specify a provider`,
+      );
+    }
+
+    const providerConfig = PROVIDER_CONFIGS[provider];
+    if (!providerConfig) {
+      return makeErrorResponse(
+        req.requestId,
+        'configure_role_routing',
+        'PROVIDER_NOT_CONFIGURED',
+        `Unknown provider "${provider}" for role "${role}"`,
+      );
+    }
+
+    normalized[role] = {
+      provider,
+      model:
+        typeof spec.model === 'string' && spec.model.trim()
+          ? spec.model.trim()
+          : providerConfig.defaultModel,
+    };
+  }
+
+  const { state } = entry;
+  state.roleRouting = { ...(state.roleRouting || {}), ...normalized };
+  await saveSessionState(state);
+
+  return makeResponse(req.requestId, 'configure_role_routing', sessionId, true, {
+    roleRouting: state.roleRouting,
+  });
+}
+
+// ─── Task graph / delegation scaffolds ──────────────────────────
+
+async function handleSubmitTaskGraph(req) {
+  return makeErrorResponse(
+    req.requestId,
+    'submit_task_graph',
+    'NOT_IMPLEMENTED',
+    'Task graph execution is not yet available (Phase 6B)',
+    false,
+  );
+}
+
+async function handleCancelDelegation(req) {
+  return makeErrorResponse(
+    req.requestId,
+    'cancel_delegation',
+    'NOT_IMPLEMENTED',
+    'Delegation cancellation is not yet available (Phase 6B)',
+    false,
+  );
+}
+
 // ─── Request dispatcher ──────────────────────────────────────────
 
 const HANDLERS = {
@@ -724,9 +863,12 @@ const HANDLERS = {
   attach_session: handleAttachSession,
   submit_approval: handleSubmitApproval,
   cancel_run: handleCancelRun,
+  configure_role_routing: handleConfigureRoleRouting,
+  submit_task_graph: handleSubmitTaskGraph,
+  cancel_delegation: handleCancelDelegation,
 };
 
-async function handleRequest(req, emitEvent) {
+export async function handleRequest(req, emitEvent) {
   if (!req || req.v !== PROTOCOL_VERSION) {
     return makeErrorResponse(
       req?.requestId || makeRequestId(),

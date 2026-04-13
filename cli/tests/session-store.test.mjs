@@ -266,6 +266,72 @@ describe('validateSessionId', () => {
   });
 });
 
+// ─── roleRouting persistence ────────────────────────────────────
+
+describe('roleRouting persistence', () => {
+  it('saves and loads roleRouting on session state', async () => {
+    const id = makeSessionId();
+    const state = {
+      sessionId: id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'test',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+      roleRouting: {
+        coder: { provider: 'openrouter', model: 'gpt-4' },
+        explorer: { provider: 'ollama', model: 'llama3' },
+      },
+    };
+    await saveSessionState(state);
+    const loaded = await loadSessionState(id);
+    assert.deepEqual(loaded.roleRouting, {
+      coder: { provider: 'openrouter', model: 'gpt-4' },
+      explorer: { provider: 'ollama', model: 'llama3' },
+    });
+  });
+
+  it('preserves empty roleRouting through save/load', async () => {
+    const id = makeSessionId();
+    const state = {
+      sessionId: id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'test',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+      roleRouting: {},
+    };
+    await saveSessionState(state);
+    const loaded = await loadSessionState(id);
+    assert.deepEqual(loaded.roleRouting, {});
+  });
+
+  it('loads sessions without roleRouting (backwards compat)', async () => {
+    const id = makeSessionId();
+    const state = {
+      sessionId: id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'test',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+    };
+    await saveSessionState(state);
+    const loaded = await loadSessionState(id);
+    assert.equal(loaded.roleRouting, undefined);
+  });
+});
+
 // ─── getSessionDir traversal guard ──────────────────────────────
 
 describe('getSessionDir security', () => {

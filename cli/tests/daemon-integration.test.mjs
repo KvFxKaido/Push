@@ -13,6 +13,8 @@ import {
   getRestartPolicy,
   shouldRecover,
   DEFAULT_RESTART_POLICY,
+  VALID_AGENT_ROLES,
+  handleRequest,
 } from '../pushd.ts';
 import {
   PROTOCOL_VERSION,
@@ -21,6 +23,7 @@ import {
   readRunMarker,
   scanInterruptedSessions,
   makeSessionId,
+  loadSessionState,
 } from '../session-store.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -525,14 +528,18 @@ describe('daemon version', () => {
     assert.ok(content.includes("const VERSION = '0.3.0'"));
   });
 
-  it('capabilities include multi_client, replay_attach, and crash_recovery', async () => {
-    const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
-    assert.ok(content.includes("'multi_client'"));
-    assert.ok(content.includes("'replay_attach'"));
-    assert.ok(content.includes("'crash_recovery'"));
+  it('hello capabilities include role_routing but do not advertise unimplemented graph work', async () => {
+    const response = await handleRequest(makeRequest('hello', { clientName: 'test' }), () => {});
+    assert.equal(response.ok, true);
+    assert.ok(response.payload.capabilities.includes('multi_client'));
+    assert.ok(response.payload.capabilities.includes('replay_attach'));
+    assert.ok(response.payload.capabilities.includes('crash_recovery'));
+    assert.ok(response.payload.capabilities.includes('role_routing'));
+    assert.ok(!response.payload.capabilities.includes('multi_agent'));
+    assert.ok(!response.payload.capabilities.includes('task_graph'));
   });
 
-  it('all 8 handler types are registered', async () => {
+  it('all 11 handler types are registered', async () => {
     const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
     const handlers = [
       'hello',
@@ -543,6 +550,9 @@ describe('daemon version', () => {
       'attach_session',
       'submit_approval',
       'cancel_run',
+      'configure_role_routing',
+      'submit_task_graph',
+      'cancel_delegation',
     ];
     for (const h of handlers) {
       assert.ok(content.includes(`${h}: handle`), `Missing handler: ${h}`);
@@ -693,5 +703,199 @@ describe('run markers', () => {
       if (!originalEnv) delete process.env.PUSH_SESSION_DIR;
       await fs.rm(emptyRoot, { recursive: true, force: true }).catch(() => {});
     }
+  });
+});
+
+// ─── VALID_AGENT_ROLES ─────────────────────────────────────────
+
+describe('VALID_AGENT_ROLES', () => {
+  it('contains all five runtime-contract roles', () => {
+    const expected = ['orchestrator', 'explorer', 'coder', 'reviewer', 'auditor'];
+    for (const role of expected) {
+      assert.ok(VALID_AGENT_ROLES.has(role), `Missing role: ${role}`);
+    }
+    assert.equal(VALID_AGENT_ROLES.size, 5);
+  });
+});
+
+// ─── configure_role_routing behavior ───────────────────────────
+
+describe('configure_role_routing behavior', () => {
+  it('normalizes, merges, and persists role routing', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-role-routing-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          model: 'session-model',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+
+      assert.equal(start.ok, true);
+      const { sessionId, attachToken } = start.payload;
+      assert.deepEqual(start.payload.roleRouting, {});
+
+      const configured = await handleRequest(
+        makeRequest(
+          'configure_role_routing',
+          {
+            sessionId,
+            attachToken,
+            routing: {
+              coder: { provider: 'openrouter', model: 'coder-model' },
+              explorer: { provider: ' ollama ' },
+            },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(configured.ok, true);
+      assert.equal(configured.payload.roleRouting.coder.provider, 'openrouter');
+      assert.equal(configured.payload.roleRouting.coder.model, 'coder-model');
+      assert.equal(configured.payload.roleRouting.explorer.provider, 'ollama');
+      assert.equal(typeof configured.payload.roleRouting.explorer.model, 'string');
+      assert.ok(configured.payload.roleRouting.explorer.model.length > 0);
+
+      const merged = await handleRequest(
+        makeRequest(
+          'configure_role_routing',
+          {
+            sessionId,
+            attachToken,
+            routing: {
+              reviewer: { provider: 'ollama', model: 'reviewer-model' },
+            },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(merged.ok, true);
+      assert.equal(merged.payload.roleRouting.coder.model, 'coder-model');
+      assert.equal(merged.payload.roleRouting.reviewer.model, 'reviewer-model');
+
+      const loaded = await loadSessionState(sessionId);
+      assert.deepEqual(loaded.roleRouting, merged.payload.roleRouting);
+
+      const attached = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        () => {},
+      );
+      assert.equal(attached.ok, true);
+      assert.deepEqual(attached.payload.roleRouting, merged.payload.roleRouting);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid roles, providers, and tokens', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-role-routing-invalid-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      assert.equal(start.ok, true);
+      const { sessionId, attachToken } = start.payload;
+
+      const wrongToken = await handleRequest(
+        makeRequest(
+          'configure_role_routing',
+          {
+            sessionId,
+            attachToken: 'att_wrong',
+            routing: { coder: { provider: 'ollama' } },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(wrongToken.ok, false);
+      assert.equal(wrongToken.error.code, 'INVALID_TOKEN');
+
+      const invalidRole = await handleRequest(
+        makeRequest(
+          'configure_role_routing',
+          {
+            sessionId,
+            attachToken,
+            routing: { planner: { provider: 'ollama' } },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(invalidRole.ok, false);
+      assert.equal(invalidRole.error.code, 'INVALID_ROLE');
+
+      const invalidProvider = await handleRequest(
+        makeRequest(
+          'configure_role_routing',
+          {
+            sessionId,
+            attachToken,
+            routing: { coder: { provider: 'missing-provider' } },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(invalidProvider.ok, false);
+      assert.equal(invalidProvider.error.code, 'PROVIDER_NOT_CONFIGURED');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── submit_task_graph scaffold ─────────────────────────────────
+
+describe('submit_task_graph scaffold', () => {
+  it('handler returns a non-retryable scaffold error', async () => {
+    const response = await handleRequest(
+      makeRequest('submit_task_graph', {
+        sessionId: 'sess_abc_def123',
+        graph: { tasks: [] },
+      }),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'NOT_IMPLEMENTED');
+    assert.equal(response.error.retryable, false);
+  });
+});
+
+// ─── cancel_delegation scaffold ─────────────────────────────────
+
+describe('cancel_delegation scaffold', () => {
+  it('handler returns a non-retryable scaffold error', async () => {
+    const response = await handleRequest(
+      makeRequest('cancel_delegation', {
+        sessionId: 'sess_abc_def123',
+        subagentId: 'sub_test_123',
+      }),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'NOT_IMPLEMENTED');
+    assert.equal(response.error.retryable, false);
   });
 });
