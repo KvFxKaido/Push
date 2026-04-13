@@ -35,8 +35,12 @@ import { detectUnimplementedToolCall, diagnoseToolCallFailure } from './tool-cal
 import {
   buildToolCallParseErrorBlock,
   buildUnimplementedToolErrorText,
-  formatToolResultEnvelope,
 } from './tool-call-recovery.js';
+import {
+  truncateAgentContent,
+  formatAgentToolResult,
+  formatAgentParseError,
+} from './agent-loop-utils.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -47,7 +51,6 @@ const DEEP_REVIEW_ROUND_TIMEOUT_MS = 60_000;
 const REVIEW_COMPLETE_MARKER = '[REVIEW_COMPLETE]';
 const MAX_PROJECT_INSTRUCTIONS_SIZE = 12_000;
 const DIFF_LIMIT = 40_000;
-const MAX_TOOL_RESULT_SIZE = 8_000;
 
 const REVIEWER_GITHUB_TOOL_NAMES = getToolPublicNames({
   source: 'github',
@@ -75,30 +78,6 @@ const REVIEWER_MUTATION_BLOCKLIST = [
   getToolPublicName('sandbox_apply_patchset'),
   getToolPublicName('ask_user'),
 ].join(', ');
-
-// ---------------------------------------------------------------------------
-// Pure helpers — inlined from `app/src/lib/agent-loop-utils.ts`. A shared
-// `lib/agent-loop-utils.ts` extraction is deferred to Phase 5D so this move
-// stays ≤3 files.
-// ---------------------------------------------------------------------------
-
-/** Truncate content with a descriptive tail marker. */
-function truncateAgentContent(content: string, maxLen: number, label = 'content'): string {
-  if (content.length <= maxLen) return content;
-  return `${content.slice(0, maxLen)}\n\n[${label} truncated at ${maxLen.toLocaleString()} chars]`;
-}
-
-/** Wrap a tool result in the `[TOOL_RESULT]` envelope agents expect. */
-function formatAgentToolResult(result: string): string {
-  return formatToolResultEnvelope(
-    truncateAgentContent(result, MAX_TOOL_RESULT_SIZE, 'tool result'),
-  );
-}
-
-/** Wrap a parse/dispatch error in the same envelope so it reaches the model cleanly. */
-function formatAgentParseError(message: string): string {
-  return formatToolResultEnvelope(message);
-}
 
 // ---------------------------------------------------------------------------
 // Options — generic over the shell's tool-call and card shapes so the lib

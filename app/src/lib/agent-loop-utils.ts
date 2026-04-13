@@ -12,8 +12,14 @@ import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
 import { type AnyToolCall } from './tool-dispatch';
 import type { ToolHookRegistry } from './tool-hooks';
 import type { ActiveProvider } from './orchestrator';
-import { formatToolResultEnvelope } from './tool-call-recovery';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
+
+export {
+  truncateAgentContent,
+  formatAgentToolResult,
+  formatAgentParseError,
+  MAX_TOOL_RESULT_SIZE,
+} from '@push/lib/agent-loop-utils';
 
 type WebRuntime = ToolExecutionRuntime<
   AnyToolCall,
@@ -22,26 +28,7 @@ type WebRuntime = ToolExecutionRuntime<
   ApprovalGateRegistry
 >;
 
-const MAX_TOOL_RESULT_SIZE = 8_000;
 const DEFAULT_APPROVAL_GATES = createDefaultApprovalGates();
-
-/** Truncate content with a descriptive tail marker. */
-export function truncateAgentContent(content: string, maxLen: number, label = 'content'): string {
-  if (content.length <= maxLen) return content;
-  return `${content.slice(0, maxLen)}\n\n[${label} truncated at ${maxLen.toLocaleString()} chars]`;
-}
-
-/** Wrap a tool result in the `[TOOL_RESULT]` envelope agents expect. */
-export function formatAgentToolResult(result: string): string {
-  return formatToolResultEnvelope(
-    truncateAgentContent(result, MAX_TOOL_RESULT_SIZE, 'tool result'),
-  );
-}
-
-/** Wrap a parse/dispatch error in the same envelope so it reaches the model cleanly. */
-export function formatAgentParseError(message: string): string {
-  return formatToolResultEnvelope(message);
-}
 
 /**
  * Execute a single read-only tool call with a no-repo guard.
