@@ -15,6 +15,7 @@
     "outDir": "./dist",
     "rootDir": "..",
     "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "allowUnreachableCode": true,

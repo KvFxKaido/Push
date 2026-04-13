@@ -195,6 +195,17 @@ export function __getActiveSessionForTesting(sessionId) {
   return activeSessions.get(sessionId) || null;
 }
 
+// Test-only seam for deterministic delegate_explorer race coverage.
+const delegateExplorerTestHooks = {
+  beforeTerminalClaim: null,
+  afterTerminalDecision: null,
+};
+
+export function __setDelegateExplorerHooksForTesting(hooks = null) {
+  delegateExplorerTestHooks.beforeTerminalClaim = hooks?.beforeTerminalClaim || null;
+  delegateExplorerTestHooks.afterTerminalDecision = hooks?.afterTerminalDecision || null;
+}
+
 // ─── Shared approval builder ─────────────────────────────────────
 
 /**
@@ -1161,9 +1172,9 @@ async function handleDelegateExplorer(req) {
   });
 
   // Background run. The RPC has already acked. Events are broadcast as the
-  // lib kernel progresses. Race with cancel_delegation is handled below by
-  // checking activeDelegations.has() before emitting subagent.completed /
-  // subagent.failed — cancel_delegation always wins when it fires first.
+  // lib kernel progresses. Terminal ownership is claimed synchronously by
+  // deleting the delegation entry before any awaited terminal-event work so
+  // cancel_delegation wins whenever it removes the entry first.
   (async () => {
     const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
     const stubDetectAllToolCalls = () => emptyDetection;
@@ -1276,13 +1287,33 @@ async function handleDelegateExplorer(req) {
     }
     entry.state.delegationOutcomes.push({ subagentId, outcome });
 
-    const stillActive = Boolean(entry.activeDelegations?.has(subagentId));
-    if (!stillActive) {
+    if (delegateExplorerTestHooks.beforeTerminalClaim) {
+      await delegateExplorerTestHooks.beforeTerminalClaim({
+        sessionId,
+        subagentId,
+        childRunId,
+        outcome,
+        runError,
+      });
+    }
+
+    const activeDelegation = entry.activeDelegations?.get(subagentId);
+    if (!activeDelegation) {
       // cancel_delegation already removed the entry and emitted subagent.failed.
       // Persist outcome only, no event emission to avoid duplicates.
       await saveSessionState(entry.state);
+      if (delegateExplorerTestHooks.afterTerminalDecision) {
+        await delegateExplorerTestHooks.afterTerminalDecision({
+          sessionId,
+          subagentId,
+          childRunId,
+          emittedTerminalEvent: false,
+          terminalEventType: null,
+        });
+      }
       return;
     }
+    entry.activeDelegations.delete(subagentId);
 
     if (runError) {
       const isAbort =
@@ -1339,9 +1370,14 @@ async function handleDelegateExplorer(req) {
         payload: completePayload,
       });
     }
-
-    if (entry.activeDelegations?.has(subagentId)) {
-      entry.activeDelegations.delete(subagentId);
+    if (delegateExplorerTestHooks.afterTerminalDecision) {
+      await delegateExplorerTestHooks.afterTerminalDecision({
+        sessionId,
+        subagentId,
+        childRunId,
+        emittedTerminalEvent: true,
+        terminalEventType: runError ? 'subagent.failed' : 'subagent.completed',
+      });
     }
   })();
 

@@ -17,6 +17,7 @@ import {
   handleRequest,
   ensureRuntimeState,
   __getActiveSessionForTesting,
+  __setDelegateExplorerHooksForTesting,
 } from '../pushd.ts';
 import {
   PROTOCOL_VERSION,
@@ -41,6 +42,14 @@ function makeRequest(type, payload = {}, sessionId = null) {
     sessionId,
     payload,
   };
+}
+
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 async function canListenOnUnixSocket(socketPath) {
@@ -1081,6 +1090,132 @@ describe('delegate_explorer', () => {
       assert.ok(broadcastStarted, 'expected subagent.started broadcast');
       assert.ok(broadcastCompleted, 'expected subagent.completed broadcast');
     } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not emit completion after cancellation wins before terminal claim', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-explorer-race-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    const terminalClaimReached = createDeferred();
+    const releaseTerminalClaim = createDeferred();
+    const terminalDecision = createDeferred();
+
+    __setDelegateExplorerHooksForTesting({
+      beforeTerminalClaim: async ({ subagentId }) => {
+        terminalClaimReached.resolve(subagentId);
+        await releaseTerminalClaim.promise;
+      },
+      afterTerminalDecision: (result) => {
+        terminalDecision.resolve(result);
+      },
+    });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const broadcasted = [];
+      const attached = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        (event) => broadcasted.push(event),
+      );
+      assert.equal(attached.ok, true);
+      broadcasted.length = 0;
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_explorer',
+          { sessionId, attachToken, task: 'scaffold exploration' },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(response.ok, true);
+      assert.equal(response.payload.accepted, true);
+
+      const { subagentId, childRunId } = response.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+      assert.equal(entry.activeDelegations.has(subagentId), true);
+
+      const hookSubagentId = await Promise.race([
+        terminalClaimReached.promise,
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error('delegate_explorer did not reach terminal claim hook')),
+            5000,
+          ),
+        ),
+      ]);
+      assert.equal(hookSubagentId, subagentId);
+
+      const cancel = await handleRequest(
+        makeRequest('cancel_delegation', { sessionId, attachToken, subagentId }, sessionId),
+        () => {},
+      );
+      assert.equal(cancel.ok, true);
+      assert.equal(cancel.payload.accepted, true);
+
+      releaseTerminalClaim.resolve();
+
+      const decision = await Promise.race([
+        terminalDecision.promise,
+        new Promise((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error('delegate_explorer did not finish terminal decision after cancellation'),
+              ),
+            5000,
+          ),
+        ),
+      ]);
+      assert.equal(decision.emittedTerminalEvent, false);
+      assert.equal(decision.terminalEventType, null);
+
+      const events = await loadSessionEvents(sessionId);
+      const terminalEvents = events.filter(
+        (event) =>
+          (event.type === 'subagent.completed' || event.type === 'subagent.failed') &&
+          event.payload.subagentId === subagentId,
+      );
+      assert.equal(terminalEvents.length, 1);
+      assert.equal(terminalEvents[0].type, 'subagent.failed');
+      assert.equal(terminalEvents[0].runId, childRunId);
+      assert.equal(terminalEvents[0].payload.errorDetails.code, 'CANCELLED');
+
+      const completed = events.find(
+        (event) => event.type === 'subagent.completed' && event.payload.subagentId === subagentId,
+      );
+      assert.equal(completed, undefined);
+
+      const terminalBroadcasts = broadcasted.filter(
+        (event) =>
+          (event.type === 'subagent.completed' || event.type === 'subagent.failed') &&
+          event.payload.subagentId === subagentId,
+      );
+      assert.equal(terminalBroadcasts.length, 1);
+      assert.equal(terminalBroadcasts[0].type, 'subagent.failed');
+
+      const loaded = await loadSessionState(sessionId);
+      const record = loaded.delegationOutcomes.find((r) => r.subagentId === subagentId);
+      assert.ok(record, 'expected delegationOutcome record in session state');
+      assert.equal(record.outcome.agent, 'explorer');
+    } finally {
+      __setDelegateExplorerHooksForTesting(null);
+      releaseTerminalClaim.resolve();
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });
