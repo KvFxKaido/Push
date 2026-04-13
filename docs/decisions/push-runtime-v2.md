@@ -378,6 +378,37 @@ Deep-reviewer landed as the first role kernel through the Phase 5B seam. `app/sr
 
 **What's still pending before Phase 5D can start:** the pure agent-loop helpers (`truncateAgentContent`, `formatAgentToolResult`, `formatAgentParseError`) were inlined into `lib/deep-reviewer-agent.ts` this sprint to keep the move to two files. Phase 5D (Explorer) will need the same helpers — the expected outcome is a small `lib/agent-loop-utils.ts` extraction as the first Phase 5D PR, collapsing the deep-reviewer inlines into it.
 
+#### Phase 5D step 1 — Explorer move SHIPPED 2026-04-13 (commit `a47393d`)
+
+Explorer landed as the second role kernel through the Phase 5B seam, mirroring the Phase 5C template. `app/src/lib/explorer-agent.ts` (525 LOC) moved to `lib/explorer-agent.ts` (563 LOC); the Web shim shrank to ~120 LOC. Exactly two files touched, zero test changes, 964/964 vitest passing, `tsc -b --noEmit` silent. The pure agent-loop helpers extracted in `93edeb6` (`lib/agent-loop-utils.ts`) are imported directly by the lib kernel instead of being re-inlined.
+
+**DI shape — 8 injection points on `ExplorerAgentOptions<TCall, TCard>`:**
+
+1. `userProfile: UserProfile | null` — Web shim reads `getUserProfile()` at the boundary.
+2. `taskPreamble: string` — pre-built by the Web shim via `buildExplorerDelegationBrief(envelope)`. Mirrors how deep-reviewer passes the diff as a pre-built string; keeps `ExplorerDelegationEnvelope` Web-side so lib never imports `@/types`.
+3. `symbolSummary: string | null` — Web shim calls `symbolLedger.getSummary()` at the boundary. Keeps IndexedDB coupling out of lib.
+4. `toolExec: (call: TCall) => Promise<{ resultText: string; card?: TCard }>` — inherited from Phase 5C. Web shim curries `executeReadOnlyTool` with `allowedRepo`/`sandboxId`/`provider`/`modelId`/`hooks`/`capabilityLedger` closed over; inside that closure the shim also calls `capabilityLedger.recordToolUse(call.call.tool)`, which lets the lib kernel remain completely ignorant of `CapabilityLedger`.
+5. `detectAllToolCalls: (text) => DetectedToolCalls<TCall>` — inherited from Phase 5C.
+6. `detectAnyToolCall: (text) => TCall | null` — inherited from Phase 5C.
+7. `webSearchToolProtocol: string` — inherited from Phase 5C.
+8. `evaluateAfterModel: (response: string, round: number) => Promise<{ action: 'inject'; content: string } | { action: 'halt'; summary: string } | null>` — new, Explorer-specific. Web shim curries `policyRegistry.evaluateAfterModel` with the mutable `turnCtx` bound and flattens the returned `AfterModelResult` to primitives (`content: string` instead of `message: ChatMessage`) so the lib kernel never imports `TurnContext`, `ToolHookRegistry`, or `ChatMessage`.
+
+**Why 8, not 9 (and not 6).** The audit estimated 9 slots including `resolveRuntimeContext` inherited from `ReviewerOptions`. Explorer genuinely does not use a runtime-context resolver — it builds its system prompt directly from envelope fields plus the pre-read symbol summary — so `ExplorerAgentOptions` is a standalone interface, not an extension of `ReviewerOptions`. The `taskPreamble` and `symbolSummary` string slots absorb what would otherwise have been lazy resolver callbacks. The delta vs deep-reviewer's six slots is +2 (taskPreamble, symbolSummary) +1 (evaluateAfterModel) -1 (no resolveRuntimeContext) = 8.
+
+**What stayed Web-side (on purpose).**
+- `TurnPolicyRegistry`, `createExplorerPolicy`, `app/src/lib/turn-policy.ts`, `app/src/lib/turn-policies/explorer-policy.ts` — all untouched. The entire policy machinery stays Web-side; the lib kernel sees only the flattened callback. This avoids moving turn-policy (which is shared with Coder) and explorer-policy (which depends on `EXPLORER_ALLOWED_TOOLS`) during a sprint that is scoped to Explorer alone.
+- `symbolLedger` / `symbol-persistence-ledger.ts` — untouched. The IndexedDB singleton stays Web-side; lib sees only `symbolSummary: string | null`.
+- `createExplorerToolHooks` — untouched, still exported from the Web shim. `runExplorerAgent` no longer uses it internally (the runtime path uses `policyRegistry.toToolHookRegistry(turnCtx)`), so the export exists purely to preserve two call sites: `app/src/lib/deep-reviewer-agent.ts:28` and `app/src/lib/explorer-agent.test.ts:4`. Keeping it where it is costs nothing.
+- Provider resolution (`getActiveProvider`, `isProviderAvailable`, `getProviderStreamFn`, `getModelForRole`, `resolveProviderSpecificModel`) and the `'demo'` guard — all stay in the Web shim, same pattern as deep-reviewer. The lib kernel receives `provider`/`streamFn`/`modelId` already resolved.
+
+**Messages-callback choice.** `policyRegistry.evaluateAfterModel(response, messages, ctx)` takes a `messages: ChatMessage[]` argument. The Web shim passes an empty array — Lane B verified that Explorer's only registered `afterModelCall` hook is `noEmptyReport` in `explorer-policy.ts`, and its signature is `(response: string)` with the messages argument unused. A comment in the Web shim flags the upgrade path: if a future Explorer policy adds a messages-dependent `afterModelCall` hook, the callback should switch to passing the real lib-side buffer through a structural cast (same cross-shape cast pattern `streamFn` already uses).
+
+**Test preservation was free.** `explorer-agent.test.ts` has zero `vi.mock()` calls — it's a pure behavioral test that exercises `buildExplorerSystemPrompt()` and `createExplorerToolHooks()` end-to-end. Both exports remain on the Web shim (the former as a zero-arg curried wrapper around the lib version that takes `webSearchToolProtocol: string`, the latter unchanged), so the test passes unmodified. All four callers (`useAgentDelegation`, `deep-reviewer-agent` shim, `explorer-agent.test`, `delegation-handoff.integration.test`) import from `./explorer-agent` or `@/lib/explorer-agent` and continue to resolve to the Web shim 1:1.
+
+**Known follow-up (not blocking).** `EXPLORER_ALLOWED_TOOLS` is still defined in two places — once in `explorer-agent.ts` (derived from `PARALLEL_READ_ONLY_GITHUB_TOOLS` + `PARALLEL_READ_ONLY_SANDBOX_TOOLS` + `'web_search'`) and once in `explorer-constants.ts` (derived directly from `getToolCanonicalNames`). Both resolve to the same set today. The duplication predates this sprint and was not reconciled here — touching `explorer-constants.ts` would have reached into `explorer-policy.ts` via its import, which is out of scope. Worth a one-line reconciliation PR at some point.
+
+**Phase 5D step 2 (Coder) remains unstarted.** Coder is a separate sprint. It will face strictly more surface area than Explorer (working memory, commit flow, sandbox mutation, approval gates) and should not be folded into this landing.
+
 ### Phase 6 — Daemon wiring
 
 Finally, wire everything into `cli/pushd.ts`:
