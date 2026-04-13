@@ -1,7 +1,7 @@
 # Push Runtime v2 — Multi-Agent Daemon Protocol
 
 Date: 2026-04-12
-Status: **Design** — Phase 1 partially shipped (capabilities + shared prompt sections). Protocol, approval seam, and agent extractions pending.
+Status: **In progress** — Phases 1-3 shipped for the durable scope. Phase 4 approval seam and Phase 5 headless tool-loop runtime are next.
 Owner: ishaw
 Related: [Web and CLI Runtime Contract](Web%20and%20CLI%20Runtime%20Contract.md), [Resumable Sessions Design](Resumable%20Sessions%20Design.md), [Multi-Agent Orchestration Research — open-multi-agent](Multi-Agent%20Orchestration%20Research%20%E2%80%94%20open-multi-agent.md)
 
@@ -336,18 +336,26 @@ Add the `approvalCallback?` parameter to `executeAnyToolCall()` in `app/src/lib/
 
 **Estimated scope:** 200-300 lines + tests. Can run in parallel with Phase 3 since it's a different file.
 
-### Phase 5 — Orchestrator dispatch extraction
+### Phase 5 — Headless tool-loop runtime extraction
 
-The biggest and scariest refactor. Break `app/src/lib/orchestrator.ts` (~16K lines) along its seams:
+The biggest and scariest refactor is not "make `orchestrator.ts` pretty." The blocker is narrower and more valuable: Explorer, Coder, and deep-reviewer need a headless tool loop that can detect, validate, approve, and execute tools without importing the Web shell.
 
-- **Context budgeting + compaction** → `lib/orchestrator-context.ts`
-- **Delegation dispatch** (`delegate_coder` / `delegate_explorer` / `plan_tasks` handling) → `lib/orchestrator-dispatch.ts`
-- **System prompt building** → mostly already in `lib/system-prompt-builder.ts`; finish the migration
-- **Streaming + event emission** → stays Web-side behind a `RunSession` interface; CLI implements its own
+This phase should deliberately avoid a broad orchestrator cleanup. Keep `app/src/lib/orchestrator.ts` as Web's transport wrapper until the new runtime seam proves itself.
 
-The goal is **not** one file for both shells — it's "the *semantics* are in `lib/`, the *transport* is per-shell." Keep `app/src/lib/orchestrator.ts` as Web's transport wrapper, shrink it to the parts that are genuinely Web-specific (React stream hookup, chat-send integration).
+Recommended PR sequence:
 
-**Estimated scope:** 1-2 weeks. The tangled state in `orchestrator.ts` means this can't be rushed.
+1. **Phase 5A — Pure tool protocol + detectors.**
+   Move protocol text, parsing, diagnostics, and detector helpers that do not execute tools into `lib/`. Keep Web shims. Do not move tool execution yet.
+2. **Phase 5B — Tool runtime interface.**
+   Define a shared `ToolRuntime` / `ToolExecutionRuntime` seam in `lib/` for execution, approval requests, event emission, sandbox reads, and source-specific adapters. Web implements it using existing GitHub / sandbox / scratchpad / web-search / ask-user code. CLI implements it later.
+3. **Phase 5C — Move deep-reviewer.**
+   Use deep-reviewer as the proof that the tool-loop seam is right. It should move only after 5A/5B reduce its DI surface from the current ~12 Web-coupled imports to a small runtime interface.
+4. **Phase 5D — Move Explorer and Coder kernels.**
+   Move Explorer first because it is read-mostly. Move Coder last because write tools, working memory, verification gates, and approval behavior make it the riskiest role kernel.
+
+The goal is **not** one file for both shells — it's "the *semantics* are in `lib/`, the *transport* is per-shell." The headless loop can live in `lib/`; Web and CLI provide their own runtime adapters.
+
+**Estimated scope:** 1-2 weeks, split across 4 PRs. This is the best place to use agents, but only with disjoint ownership: one agent can audit detector boundaries, one can implement the Phase 4 seam or Phase 5A tests, and one can attempt the deep-reviewer move after the runtime interface lands. Keep the `ToolRuntime` interface design in the main thread because a wrong abstraction here will multiply pain across Phase 6.
 
 ### Phase 6 — Daemon wiring
 
@@ -381,7 +389,7 @@ Captured here so future-self doesn't re-litigate them. All were decided in the 2
 
 ## Risks & Unknowns
 
-**Fact:** the biggest single refactor is Phase 5 (orchestrator extraction) and its scope is genuinely unknown until someone starts reading the file in depth. 1-2 weeks is a guess based on the 16K line count and the audit's description of tangled state.
+**Fact:** the biggest single refactor is Phase 5, but its useful target is now narrower than "orchestrator extraction." The blocker is the Web-coupled tool loop, not the existence of a 16K-line orchestrator file. 1-2 weeks is still a guess, but the risk is now concentrated around the `ToolRuntime` interface and detector/execution split.
 
 **Inference:** Phase 2 (provider-streaming abstraction) is probably simpler than it looks because the interface surface is small (a streamFn type and a model-id string). The risk is that Web's non-role code paths — especially `orchestrator.ts`'s own internal calls — also use `getProviderStreamFn` and need to be refactored to use the new interface, not just the role agents.
 
@@ -398,16 +406,16 @@ The dependency graph, visualized:
 ```
 Phase 1 (shipped) ──┐
                     ├──> Phase 2 (provider abstraction) ──> Phase 3 (role extraction)
-                    │                                    ├──> Phase 5 (orchestrator split)
+                    │                                    ├──> Phase 5 (headless tool-loop runtime)
                     │                                    │
                     └──> Phase 4 (approval seam) ────────┴──> Phase 6 (daemon wiring)
                                                                    │
                                                                    └──> Phase 7 (optional: Web-as-client)
 ```
 
-Phase 4 (approval seam) can run in parallel with Phases 2/3 since it's a different file. Everything else is serial.
+Phase 4 (approval seam) can run before or alongside Phase 5A because it is the callback hook the later `ToolRuntime` adapter will need. Phase 5 should not start by editing the whole orchestrator; start with the pure tool protocol/detector extraction and runtime interface.
 
-**Calendar estimate (Inference):** Phase 2 = 1-2 days, Phase 3 = 3-5 days, Phase 4 = 2-3 days, Phase 5 = 1-2 weeks, Phase 6 = 1 week. Total: **3-5 weeks of focused work** before v2.0 is shippable.
+**Calendar estimate (Inference):** Phase 4 = 1-2 days, Phase 5A-D = 1-2 weeks, Phase 6A-D = ~1 week. Since Phases 1-3 are now shipped, the remaining v2.0 tranche is plausibly **2-3 weeks of focused work** if Phase 5 stays scoped to the headless tool-loop runtime.
 
 ## Acceptance Criteria
 
