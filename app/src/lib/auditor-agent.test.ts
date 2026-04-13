@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   mockStreamFn,
+  mockStreamFnAlt,
   mockGetActiveProvider,
   mockGetProviderStreamFn,
   mockGetModelForRole,
@@ -9,6 +10,7 @@ const {
   mockBuildAuditorEvaluationMemoryBlock,
 } = vi.hoisted(() => ({
   mockStreamFn: vi.fn(),
+  mockStreamFnAlt: vi.fn(),
   mockGetActiveProvider: vi.fn(),
   mockGetProviderStreamFn: vi.fn(),
   mockGetModelForRole: vi.fn(),
@@ -51,6 +53,7 @@ function makeAddedFileDiff(path: string, addedContent: string): string {
 describe('runAuditor', () => {
   beforeEach(() => {
     mockStreamFn.mockReset();
+    mockStreamFnAlt.mockReset();
     mockGetActiveProvider.mockReset();
     mockGetProviderStreamFn.mockReset();
     mockGetModelForRole.mockReset();
@@ -66,6 +69,13 @@ describe('runAuditor', () => {
     mockBuildAuditorRuntimeContext.mockResolvedValue('');
     mockBuildAuditorEvaluationMemoryBlock.mockResolvedValue(null);
     mockStreamFn.mockImplementation(
+      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
+        onDone();
+        return Promise.resolve();
+      },
+    );
+    mockStreamFnAlt.mockImplementation(
       (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
         onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
         onDone();
@@ -123,6 +133,34 @@ describe('runAuditor', () => {
     // Both callers received status updates
     expect(statuses1.length).toBeGreaterThan(0);
     expect(statuses2.length).toBeGreaterThan(0);
+  });
+
+  it('does not coalesce concurrent audits with different stream functions', async () => {
+    const makeAsyncStream =
+      (summary: string) =>
+      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
+        await new Promise((r) => setTimeout(r, 10));
+        onToken(`{"verdict":"safe","summary":"${summary}","risks":[]}`);
+        onDone();
+      };
+
+    mockStreamFn.mockImplementation(makeAsyncStream('Primary'));
+    mockStreamFnAlt.mockImplementation(makeAsyncStream('Alternate'));
+    mockGetProviderStreamFn
+      .mockReturnValueOnce({ providerType: 'openrouter', streamFn: mockStreamFn })
+      .mockReturnValueOnce({ providerType: 'openrouter', streamFn: mockStreamFnAlt });
+
+    const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
+
+    const [primary, alternate] = await Promise.all([
+      runAuditor(diff, () => {}),
+      runAuditor(diff, () => {}),
+    ]);
+
+    expect(mockStreamFn).toHaveBeenCalledTimes(1);
+    expect(mockStreamFnAlt).toHaveBeenCalledTimes(1);
+    expect(primary.card.summary).toBe('Primary');
+    expect(alternate.card.summary).toBe('Alternate');
   });
 
   it('does not coalesce concurrent audits with different hook output', async () => {
