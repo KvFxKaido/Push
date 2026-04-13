@@ -18,16 +18,16 @@ import type {
   ProviderStreamFn,
   ReviewComment,
   ReviewResult,
-} from './provider-contract';
-import type { ReviewerPromptContext } from './role-context';
-import { SystemPromptBuilder } from './system-prompt-builder';
-import { asRecord, streamWithTimeout } from './stream-utils';
+} from './provider-contract.js';
+import type { ReviewerPromptContext } from './role-context.js';
+import { SystemPromptBuilder } from './system-prompt-builder.js';
+import { asRecord, streamWithTimeout } from './stream-utils.js';
 import {
   parseDiffStats,
   parseDiffIntoFiles,
   chunkDiffByFile,
   classifyFilePath,
-} from './diff-utils';
+} from './diff-utils.js';
 
 const REVIEWER_TIMEOUT_MS = 90_000; // 90s — reviews can be thorough
 const REVIEWER_FILE_STRUCTURE_LIMIT = 2_000;

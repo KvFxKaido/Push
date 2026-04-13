@@ -1,5 +1,5 @@
-import { classifyIntent } from './intent-classifier';
-import { sanitizeProjectInstructions } from './project-instructions';
+import { classifyIntent } from './intent-classifier.js';
+import { sanitizeProjectInstructions } from './project-instructions.js';
 
 // Keep role-level policy hints compact so Reviewer/Auditor get the essentials
 // without crowding out the diff itself.

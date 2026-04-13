@@ -9,7 +9,7 @@
  *   <domain>:<action>   e.g. "repo:read", "git:push"
  */
 
-import type { AgentRole } from './runtime-contract';
+import type { AgentRole } from './runtime-contract.js';
 
 // ---------------------------------------------------------------------------
 // Capability type

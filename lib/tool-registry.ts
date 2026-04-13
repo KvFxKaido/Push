@@ -596,4 +596,4 @@ export function escapeToolNameForRegex(name: string): string {
  * Bridge to capabilities.ts for convenience. Does NOT resolve aliases
  * or public names — callers must pass the canonical tool name.
  */
-export { getToolCapabilities as getToolRequiredCapabilities } from './capabilities';
+export { getToolCapabilities as getToolRequiredCapabilities } from './capabilities.js';

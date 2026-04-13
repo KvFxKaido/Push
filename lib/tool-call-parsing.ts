@@ -15,7 +15,7 @@
  * detectors that are Web-side today.
  */
 
-import { asRecord } from './stream-utils';
+import { asRecord } from './stream-utils.js';
 
 // ---------------------------------------------------------------------------
 // JSON syntax error diagnosis — pinpoints *what* is wrong with malformed JSON

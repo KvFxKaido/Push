@@ -10,6 +10,7 @@ import { recordContextMetric } from './context-metrics';
 import type { SummarizationCause } from './context-metrics';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
+import { buildUserIdentityBlock } from '@push/lib/user-identity';
 import { buildContextSummaryBlock, compactChatMessage } from './context-compaction';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { getToolPublicName, getToolPublicNames } from './tool-registry';
@@ -562,11 +563,6 @@ export function buildChatInstructionsBlock(profile?: UserProfile): string {
   return `## Chat Instructions\n${escaped}`;
 }
 
-/**
- * Build a compact identity block for the system prompt.
- * Returns empty string when no identity fields are set.
- */
-import { buildUserIdentityBlock } from '@push/lib/user-identity';
 export { buildUserIdentityBlock };
 
 function toLLMMessages(
