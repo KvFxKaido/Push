@@ -357,6 +357,27 @@ The goal is **not** one file for both shells — it's "the *semantics* are in `l
 
 **Estimated scope:** 1-2 weeks, split across 4 PRs. This is the best place to use agents, but only with disjoint ownership: one agent can audit detector boundaries, one can implement the Phase 4 seam or Phase 5A tests, and one can attempt the deep-reviewer move after the runtime interface lands. Keep the `ToolRuntime` interface design in the main thread because a wrong abstraction here will multiply pain across Phase 6.
 
+#### Phase 5C — deep-reviewer move SHIPPED 2026-04-13 (commit `6009156`)
+
+Deep-reviewer landed as the first role kernel through the Phase 5B seam. `app/src/lib/deep-reviewer-agent.ts` (624 LOC) moved to `lib/deep-reviewer-agent.ts` (683 LOC after inlining the three pure agent-loop helpers); the Web shim collapsed to ~100 LOC using the same re-export pattern as reviewer and auditor. Net: two files changed, zero test changes, 964/964 vitest passing, `tsc -b --noEmit` silent.
+
+**DI shape — six new injection points on `DeepReviewerOptions<TCall, TCard>`:**
+
+1. `userProfile: UserProfile | null` — replaces the `getUserProfile()` hook call.
+2. `resolveRuntimeContext` — inherited from lib `ReviewerOptions` (Phase 3 Step 1 pattern). Web shim binds to `buildReviewerRuntimeContext`.
+3. `toolExec: (call: TCall) => Promise<{ resultText: string; card?: TCard }>` — the runtime callback. Web shim curries `executeReadOnlyTool(call, allowedRepo, sandboxId, provider, model, hooks)` by closing over per-run bindings.
+4. `detectAllToolCalls: (text) => DetectedToolCalls<TCall>` — Web-side detector passed as callback (required because `detectAllToolCalls` and `detectAnyToolCall` transitively depend on per-source detectors that are module-load-coupled to `useOllamaConfig`/`useTavilyConfig` — see `push-runtime-v2.md:318`).
+5. `detectAnyToolCall: (text) => TCall | null` — same rationale as #4.
+6. `webSearchToolProtocol: string` — the protocol prompt block passed as a plain string so the lib kernel does not import `./web-search-tools`.
+
+**Why the lib kernel does NOT import `ToolExecutionRuntime` directly.** The audit found that deep-reviewer's tool loop needs two things the runtime interface alone cannot provide: (a) OpenTelemetry spans around each tool call (`executeReadOnlyTool` wraps `WebToolExecutionRuntime.execute()` in `withActiveSpan` with `push.tool.*` attributes), and (b) parsing Web's `AnyToolCall` discriminated union, which transitively drags `ChatMessage`/`ChatCard`/`DelegationArgs` into lib. Both concerns resolve cleanly by treating `executeReadOnlyTool` as the DI boundary instead of `ToolExecutionRuntime` itself — the kernel stays generic over `TCall`/`TCard`, tracing stays in Web, and the Phase 5B runtime is still exercised transitively through the Web shim's `executeReadOnlyTool → WebToolExecutionRuntime` chain. The existing `vi.mock('./web-tool-execution-runtime', …)` test mock intercepts that chain unchanged.
+
+**Why the brief said "five injection points" and the actual count is six.** The brief (at `phase-5-tool-runtime-brief.md:185`) predicted "roughly: `ToolExecutionRuntime`, `ToolHookRegistry`, `ApprovalGateRegistry`, `CapabilityLedger`, plus the existing provider/memory DI from Phase 3." That estimate folded hooks/gates/ledger into the runtime and missed that the tool-call detectors (`detectAllToolCalls`, `detectAnyToolCall`) are themselves Web-coupled and need to be DI-ed separately. The audit caught the bucket error by grep-verifying that both functions live only in `app/src/lib/tool-dispatch.ts` (not in `lib/tool-call-diagnosis.ts` as the Phase 5A notes had suggested). Six is the delivered count; any future role move will likely face the same detector-coupling question until Phase 5D extracts the per-source detectors or the `AnyToolCall` union moves to lib.
+
+**Test coverage preserved 1:1.** `deep-reviewer-agent.test.ts` already mocked `./web-tool-execution-runtime` at line 56 — a mock shape that was already aligned with Phase 5B. After the move, all five existing `vi.mock` intercepts (`./web-tool-execution-runtime`, `./tool-dispatch`, `./role-memory-context`, `./explorer-agent`, `./web-search-tools`, plus `@/hooks/useUserProfile` and `./orchestrator`) continue to intercept the Web shim's imports unchanged. Zero test surgery — better than the brief predicted.
+
+**What's still pending before Phase 5D can start:** the pure agent-loop helpers (`truncateAgentContent`, `formatAgentToolResult`, `formatAgentParseError`) were inlined into `lib/deep-reviewer-agent.ts` this sprint to keep the move to two files. Phase 5D (Explorer) will need the same helpers — the expected outcome is a small `lib/agent-loop-utils.ts` extraction as the first Phase 5D PR, collapsing the deep-reviewer inlines into it.
+
 ### Phase 6 — Daemon wiring
 
 Finally, wire everything into `cli/pushd.ts`:
