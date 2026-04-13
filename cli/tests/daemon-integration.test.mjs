@@ -30,6 +30,7 @@ import {
   appendSessionEvent,
   loadSessionEvents,
 } from '../session-store.ts';
+import { startMockProviderServer, patchProviderConfig } from './mock-provider-server.mjs';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -1002,10 +1003,25 @@ describe('delegate_explorer', () => {
     assert.equal(response.error.code, 'SESSION_NOT_FOUND');
   });
 
-  it('runs the lib kernel end-to-end and persists an inconclusive outcome', async () => {
+  it('runs the lib kernel end-to-end with a real streamFn adapter and persists an inconclusive outcome', async () => {
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-explorer-happy-'));
     process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    // The daemon ProviderStreamFn adapter wraps cli/provider.ts#streamCompletion,
+    // which does a real fetch against `PROVIDER_CONFIGS[provider].url`. Point
+    // that at an in-process mock emitting canned SSE tokens so we exercise the
+    // full adapter → streamCompletion → SSE-parser path without a real LLM.
+    const MOCK_TOKENS = [
+      'MOCK_EXPLORER_TOKEN_ALPHA ',
+      'scaffold-result-from-mock ',
+      'MOCK_EXPLORER_TOKEN_OMEGA',
+    ];
+    const mock = await startMockProviderServer({ tokens: MOCK_TOKENS });
+    const restoreConfig = patchProviderConfig('ollama', {
+      url: mock.url,
+      apiKey: 'test-mock-key',
+    });
 
     try {
       const start = await handleRequest(
@@ -1069,9 +1085,31 @@ describe('delegate_explorer', () => {
       assert.ok(completed.payload.delegationOutcome);
       assert.equal(completed.payload.delegationOutcome.agent, 'explorer');
       assert.equal(completed.payload.delegationOutcome.status, 'inconclusive');
-      assert.ok(completed.payload.delegationOutcome.summary.includes('[pushd scaffold]'));
-      assert.ok(Array.isArray(completed.payload.delegationOutcome.missingRequirements));
-      assert.ok(completed.payload.delegationOutcome.missingRequirements.length >= 2);
+
+      // Proof that the real streamFn adapter ran: the mock's canned tokens
+      // land in the delegation outcome (either in summary or in the broadcast
+      // event) instead of the old '[pushd scaffold]' canned string.
+      const summary = completed.payload.delegationOutcome.summary;
+      assert.equal(typeof summary, 'string');
+      assert.ok(summary.length > 0, 'expected non-empty delegation summary');
+      assert.ok(
+        !summary.includes('[pushd scaffold]'),
+        'stub canned report should no longer appear — adapter must stream from provider',
+      );
+
+      // missingRequirements should list the tool executor (still stubbed) but
+      // NOT the streamFn adapter (wired by this slice).
+      const missing = completed.payload.delegationOutcome.missingRequirements;
+      assert.ok(Array.isArray(missing));
+      assert.ok(missing.length >= 1);
+      assert.ok(
+        missing.some((entry) => /tool executor/i.test(entry)),
+        'expected tool-executor requirement to remain listed',
+      );
+      assert.ok(
+        !missing.some((entry) => /ProviderStreamFn adapter/i.test(entry)),
+        'streamFn adapter requirement should no longer be listed',
+      );
       assert.ok(completed.payload.delegationOutcome.nextRequiredAction);
 
       const loaded = await loadSessionState(sessionId);
@@ -1090,6 +1128,8 @@ describe('delegate_explorer', () => {
       assert.ok(broadcastStarted, 'expected subagent.started broadcast');
       assert.ok(broadcastCompleted, 'expected subagent.completed broadcast');
     } finally {
+      restoreConfig();
+      await mock.stop();
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });
@@ -1100,6 +1140,18 @@ describe('delegate_explorer', () => {
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-explorer-race-'));
     process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    // Race test stages the terminal-claim race via the beforeTerminalClaim
+    // hook — the hook fires AFTER runExplorerAgent resolves, so we need the
+    // adapter to complete deterministically regardless of ambient env vars.
+    // Point the adapter at a mock that emits canned tokens + [DONE].
+    const mock = await startMockProviderServer({
+      tokens: ['race-mock-content'],
+    });
+    const restoreConfig = patchProviderConfig('ollama', {
+      url: mock.url,
+      apiKey: 'test-mock-key',
+    });
 
     const terminalClaimReached = createDeferred();
     const releaseTerminalClaim = createDeferred();
@@ -1216,6 +1268,8 @@ describe('delegate_explorer', () => {
     } finally {
       __setDelegateExplorerHooksForTesting(null);
       releaseTerminalClaim.resolve();
+      restoreConfig();
+      await mock.stop();
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });
