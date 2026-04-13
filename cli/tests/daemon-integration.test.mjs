@@ -1325,6 +1325,263 @@ describe('delegate_explorer', () => {
   });
 });
 
+// ─── delegate_reviewer ──────────────────────────────────────────
+
+const MINIMAL_REVIEWER_DIFF = [
+  'diff --git a/src/a.ts b/src/a.ts',
+  'index 1111111..2222222 100644',
+  '--- a/src/a.ts',
+  '+++ b/src/a.ts',
+  '@@ -1,3 +1,4 @@',
+  ' line one',
+  ' line two',
+  '+added line',
+  ' line three',
+  '',
+].join('\n');
+
+describe('delegate_reviewer', () => {
+  it('rejects missing sessionId', async () => {
+    const response = await handleRequest(
+      makeRequest('delegate_reviewer', { diff: MINIMAL_REVIEWER_DIFF }),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'INVALID_REQUEST');
+    assert.ok(response.error.message.includes('sessionId'));
+  });
+
+  it('rejects missing diff', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-reviewer-nodiff-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest('delegate_reviewer', { sessionId, attachToken }, sessionId),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_REQUEST');
+      assert.ok(response.error.message.includes('diff'));
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid attach token', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-reviewer-badtok-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_reviewer',
+          { sessionId, attachToken: 'att_wrong', diff: MINIMAL_REVIEWER_DIFF },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_TOKEN');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns SESSION_NOT_FOUND for unknown session', async () => {
+    const response = await handleRequest(
+      makeRequest(
+        'delegate_reviewer',
+        { sessionId: 'sess_abc123_def456', diff: MINIMAL_REVIEWER_DIFF },
+        'sess_abc123_def456',
+      ),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'SESSION_NOT_FOUND');
+  });
+
+  it('rejects stale reviewer role routing with an unknown provider before acking', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-reviewer-stale-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+      entry.state.roleRouting = {
+        reviewer: {
+          provider: 'google',
+          model: 'stale-model',
+        },
+      };
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_reviewer',
+          { sessionId, attachToken, diff: MINIMAL_REVIEWER_DIFF },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'PROVIDER_NOT_CONFIGURED');
+      assert.ok(response.error.message.includes('google'));
+      assert.equal(entry.activeDelegations?.size ?? 0, 0);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('runs the lib kernel end-to-end and persists a ReviewResult with comments', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-reviewer-happy-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    // Reviewer parser requires valid JSON (optionally in a ```json fence).
+    // Concatenating these tokens yields a parseable ReviewResult with one
+    // comment targeting the single added line in MINIMAL_REVIEWER_DIFF.
+    const MOCK_REVIEWER_TOKENS = [
+      '{"summary": "MOCK_REVIEWER_SUMMARY: diff introduces a single added line.",',
+      ' "comments": [',
+      '{"file": "src/a.ts", "line": 3, "severity": "warning",',
+      ' "comment": "MOCK_REVIEWER_COMMENT: consider a null check here"}',
+      ']}',
+    ];
+    const mock = await startMockProviderServer({ tokens: MOCK_REVIEWER_TOKENS });
+    const restoreConfig = patchProviderConfig('ollama', {
+      url: mock.url,
+      apiKey: 'test-mock-key',
+    });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const broadcasted = [];
+      const attached = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        (event) => broadcasted.push(event),
+      );
+      assert.equal(attached.ok, true);
+      broadcasted.length = 0;
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_reviewer',
+          { sessionId, attachToken, diff: MINIMAL_REVIEWER_DIFF },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(response.ok, true);
+      assert.equal(response.payload.accepted, true);
+      assert.ok(response.payload.subagentId);
+      assert.ok(response.payload.subagentId.startsWith('sub_reviewer_'));
+      assert.ok(response.payload.childRunId);
+      assert.ok(response.payload.childRunId.startsWith('run_'));
+
+      const { subagentId, childRunId } = response.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+      assert.ok(entry.activeDelegations);
+
+      await waitForDelegationComplete(entry, subagentId);
+      assert.equal(entry.activeDelegations.has(subagentId), false);
+
+      const events = await loadSessionEvents(sessionId);
+      const started = events.find(
+        (e) => e.type === 'subagent.started' && e.payload.subagentId === subagentId,
+      );
+      const completed = events.find(
+        (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+      );
+      assert.ok(started, 'expected subagent.started event');
+      assert.ok(completed, 'expected subagent.completed event');
+      assert.equal(started.runId, childRunId);
+      assert.equal(started.payload.agent, 'reviewer');
+      assert.equal(started.payload.role, 'reviewer');
+      assert.equal(completed.runId, childRunId);
+      assert.equal(completed.payload.agent, 'reviewer');
+      assert.equal(completed.payload.role, 'reviewer');
+
+      const reviewResult = completed.payload.reviewResult;
+      assert.ok(reviewResult, 'expected reviewResult payload on subagent.completed');
+      assert.ok(reviewResult.summary.includes('MOCK_REVIEWER_SUMMARY'));
+      assert.ok(Array.isArray(reviewResult.comments));
+      assert.equal(reviewResult.comments.length, 1);
+      assert.equal(reviewResult.comments[0].file, 'src/a.ts');
+      assert.equal(reviewResult.comments[0].severity, 'warning');
+      assert.ok(reviewResult.comments[0].comment.includes('MOCK_REVIEWER_COMMENT'));
+      assert.equal(typeof reviewResult.filesReviewed, 'number');
+      assert.equal(typeof reviewResult.totalFiles, 'number');
+      assert.equal(typeof reviewResult.truncated, 'boolean');
+      assert.equal(reviewResult.provider, 'ollama');
+
+      const loaded = await loadSessionState(sessionId);
+      assert.ok(Array.isArray(loaded.reviewOutcomes));
+      const record = loaded.reviewOutcomes.find((r) => r.subagentId === subagentId);
+      assert.ok(record, 'expected reviewOutcome record in session state');
+      assert.ok(record.result.summary.includes('MOCK_REVIEWER_SUMMARY'));
+      assert.equal(record.result.comments.length, 1);
+
+      const broadcastCompleted = broadcasted.find(
+        (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+      );
+      assert.ok(broadcastCompleted, 'expected subagent.completed broadcast');
+      assert.ok(broadcastCompleted.payload.reviewResult);
+    } finally {
+      restoreConfig();
+      await mock.stop();
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─── cancel_delegation ──────────────────────────────────────────
 
 describe('cancel_delegation', () => {

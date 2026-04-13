@@ -6,6 +6,8 @@
  * runtime, independent of whether the caller is the web app or the CLI.
  */
 
+import type { ReviewResult } from './provider-contract.js';
+
 // ---------------------------------------------------------------------------
 // Agent roles
 // ---------------------------------------------------------------------------
@@ -242,7 +244,13 @@ export type LoopPhase =
   | 'executing_task_graph';
 
 /** Subagent labels used in run-event streams and delegation lifecycle updates. */
-export type RunEventSubagent = 'planner' | 'coder' | 'explorer' | 'auditor' | 'task_graph';
+export type RunEventSubagent =
+  | 'planner'
+  | 'coder'
+  | 'explorer'
+  | 'reviewer'
+  | 'auditor'
+  | 'task_graph';
 
 export type RunEventInput =
   | {
@@ -291,6 +299,8 @@ export type RunEventInput =
       summary: string;
       /** Structured delegation outcome — present for coder/explorer delegations. */
       delegationOutcome?: DelegationOutcome;
+      /** Advisory review payload — present for reviewer delegations. */
+      reviewResult?: ReviewResult;
     }
   | {
       type: 'subagent.failed';

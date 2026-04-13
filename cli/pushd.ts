@@ -18,6 +18,7 @@
  *   configure_role_routing — set per-role provider/model routing
  *   submit_task_graph      — scaffold for future task graph execution
  *   delegate_explorer      — launch read-only Explorer sub-agent (real streamFn via daemon-provider-stream; toolExec still stubbed)
+ *   delegate_reviewer      — launch advisory Reviewer sub-agent (real streamFn, single-turn JSON review; no tool loop)
  *   cancel_delegation      — cancel active sub-agent delegation
  *   fetch_delegation_events — replay delegation event stream
  */
@@ -46,6 +47,8 @@ import {
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
+import { runReviewer } from '../lib/reviewer-agent.ts';
+import { buildReviewerContextBlock } from '../lib/role-context.ts';
 
 const VERSION = '0.3.0';
 const CAPABILITIES = [
@@ -56,6 +59,7 @@ const CAPABILITIES = [
   'crash_recovery',
   'role_routing',
   'delegation_explorer_v1',
+  'delegation_reviewer_v1',
 ];
 
 const VALID_AGENT_ROLES = new Set(['orchestrator', 'explorer', 'coder', 'reviewer', 'auditor']);
@@ -1392,6 +1396,289 @@ async function handleDelegateExplorer(req) {
   return ack;
 }
 
+// ─── Delegate Reviewer (advisory diff review, single-turn) ──────
+
+/**
+ * `delegate_reviewer` — daemon-side Reviewer launch.
+ *
+ * Wires the full delegate_reviewer RPC path from handler → runReviewer
+ * (the Phase 5D reviewer lib kernel) → ReviewResult persistence. Unlike
+ * Explorer, the Reviewer is single-turn and read-only — it streams JSON
+ * once, parses it into a ReviewResult, and returns. No tool loop, no
+ * stub detectors, no DelegationOutcome envelope: the review payload has
+ * its own schema (`filesReviewed` / `totalFiles` / `truncated` / `comments`)
+ * that would be lossy in the gate-shaped DelegationOutcome contract.
+ *
+ * The streamFn adapter is wrapped in a signal-forwarding closure so the
+ * handler's AbortController still reaches the underlying fetch even though
+ * `runReviewer` itself doesn't accept an AbortSignal in its options.
+ *
+ * Provider / model resolution honors `roleRouting.reviewer`; otherwise
+ * it falls back to session-level defaults.
+ *
+ * Capability flag: `delegation_reviewer_v1`.
+ */
+async function handleDelegateReviewer(req) {
+  const sessionId = req.sessionId || req.payload?.sessionId;
+  const providedToken = req.payload?.attachToken;
+  const diff = typeof req.payload?.diff === 'string' ? req.payload.diff : '';
+  const parentRunIdPayload =
+    typeof req.payload?.parentRunId === 'string' ? req.payload.parentRunId : null;
+  const rawContext =
+    req.payload?.context && typeof req.payload.context === 'object'
+      ? req.payload.context
+      : undefined;
+
+  if (!sessionId) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_reviewer',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
+  }
+
+  if (!diff || typeof diff !== 'string' || !diff.trim()) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_reviewer',
+      'INVALID_REQUEST',
+      'diff is required and must be a non-empty string',
+    );
+  }
+
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: makeAttachToken() };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return makeErrorResponse(
+        req.requestId,
+        'delegate_reviewer',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
+    }
+  }
+
+  if (!validateAttachToken(entry, providedToken)) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_reviewer',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
+  const reviewerRoute = entry.state.roleRouting?.reviewer;
+  const routedProvider = normalizeProviderInput(reviewerRoute?.provider);
+  if (routedProvider && !PROVIDER_CONFIGS[routedProvider]) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_reviewer',
+      'PROVIDER_NOT_CONFIGURED',
+      `Unknown provider "${routedProvider}" for reviewer role routing`,
+    );
+  }
+  const sessionProvider = normalizeProviderInput(entry.state.provider);
+  if (!routedProvider && (!sessionProvider || !PROVIDER_CONFIGS[sessionProvider])) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_reviewer',
+      'PROVIDER_NOT_CONFIGURED',
+      `Unknown provider "${sessionProvider || '(missing)'}" in session state`,
+    );
+  }
+  const resolvedProvider = routedProvider || sessionProvider;
+  const resolvedModel =
+    (typeof reviewerRoute?.model === 'string' && reviewerRoute.model.trim()) ||
+    (typeof entry.state.model === 'string' && entry.state.model.trim()) ||
+    PROVIDER_CONFIGS[resolvedProvider].defaultModel;
+
+  ensureRuntimeState(entry);
+
+  const subagentId = `sub_reviewer_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
+  const childRunId = makeRunId();
+  const parentRunId = parentRunIdPayload || entry.activeRunId || null;
+  const abortController = new AbortController();
+  const startedAt = Date.now();
+
+  entry.activeDelegations.set(subagentId, {
+    role: 'reviewer',
+    agent: 'reviewer',
+    parentRunId,
+    childRunId,
+    abortController,
+    startedAt,
+    task: 'review-diff',
+  });
+
+  const detail = `review diff (${diff.length} chars)`;
+  const startEventPayload = {
+    executionId: subagentId,
+    subagentId,
+    ...(parentRunId ? { parentRunId } : {}),
+    childRunId,
+    agent: 'reviewer',
+    role: 'reviewer',
+    detail,
+  };
+  await appendSessionEvent(entry.state, 'subagent.started', startEventPayload, childRunId);
+  await saveSessionState(entry.state);
+  broadcastEvent(sessionId, {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId,
+    runId: childRunId,
+    seq: entry.state.eventSeq,
+    ts: Date.now(),
+    type: 'subagent.started',
+    payload: startEventPayload,
+  });
+
+  const ack = makeResponse(req.requestId, 'delegate_reviewer', sessionId, true, {
+    subagentId,
+    childRunId,
+    accepted: true,
+  });
+
+  (async () => {
+    let reviewResult = null;
+    let runError = null;
+    try {
+      const baseStreamFn = createDaemonProviderStream(resolvedProvider, sessionId);
+      // runReviewer doesn't forward a signal through the 12-arg envelope —
+      // it calls streamFn with 9 positional args. Wrap the adapter so that
+      // arg 11 (signal) is always the handler's abort signal, giving
+      // cancel_delegation a clean AbortError path through streamCompletion.
+      const signalAwareStreamFn = (
+        messages,
+        onToken,
+        onDone,
+        onError,
+        onThinkingToken,
+        workspaceContext,
+        hasSandbox,
+        modelOverride,
+        systemPromptOverride,
+        scratchpadContent,
+        _ignoredSignal,
+        onPreCompact,
+      ) =>
+        baseStreamFn(
+          messages,
+          onToken,
+          onDone,
+          onError,
+          onThinkingToken,
+          workspaceContext,
+          hasSandbox,
+          modelOverride,
+          systemPromptOverride,
+          scratchpadContent,
+          abortController.signal,
+          onPreCompact,
+        );
+
+      reviewResult = await runReviewer(
+        diff,
+        {
+          provider: resolvedProvider,
+          streamFn: signalAwareStreamFn,
+          modelId: resolvedModel,
+          context: rawContext,
+          resolveRuntimeContext: async (_diff, context) => buildReviewerContextBlock(context) || '',
+        },
+        () => {
+          // Quiet for now — later slices can emit agent_status events here.
+        },
+      );
+    } catch (err) {
+      runError = err;
+    }
+
+    // Persist review result even if cancel_delegation already claimed the entry.
+    if (reviewResult) {
+      if (!Array.isArray(entry.state.reviewOutcomes)) {
+        entry.state.reviewOutcomes = [];
+      }
+      entry.state.reviewOutcomes.push({ subagentId, result: reviewResult });
+    }
+
+    const activeDelegation = entry.activeDelegations?.get(subagentId);
+    if (!activeDelegation) {
+      // cancel_delegation already removed the entry and emitted subagent.failed.
+      // Persist outcome only, no event emission.
+      await saveSessionState(entry.state);
+      return;
+    }
+    entry.activeDelegations.delete(subagentId);
+
+    if (runError || !reviewResult) {
+      const err = runError;
+      const isAbort =
+        err &&
+        ((err instanceof Error && err.name === 'AbortError') ||
+          (typeof err?.message === 'string' && err.message.includes('cancelled')));
+      const message = err instanceof Error ? err.message : String(err ?? 'unknown reviewer error');
+      const failPayload = {
+        executionId: subagentId,
+        subagentId,
+        ...(parentRunId ? { parentRunId } : {}),
+        childRunId,
+        agent: 'reviewer',
+        role: 'reviewer',
+        error: message,
+        errorDetails: {
+          code: isAbort ? 'CANCELLED' : 'REVIEWER_FAILED',
+          message,
+          retryable: false,
+        },
+      };
+      await appendSessionEvent(entry.state, 'subagent.failed', failPayload, childRunId);
+      await saveSessionState(entry.state);
+      broadcastEvent(sessionId, {
+        v: PROTOCOL_VERSION,
+        kind: 'event',
+        sessionId,
+        runId: childRunId,
+        seq: entry.state.eventSeq,
+        ts: Date.now(),
+        type: 'subagent.failed',
+        payload: failPayload,
+      });
+    } else {
+      const summary = typeof reviewResult.summary === 'string' ? reviewResult.summary : '';
+      const completePayload = {
+        executionId: subagentId,
+        subagentId,
+        ...(parentRunId ? { parentRunId } : {}),
+        childRunId,
+        agent: 'reviewer',
+        role: 'reviewer',
+        summary: summary.slice(0, 280),
+        reviewResult,
+      };
+      await appendSessionEvent(entry.state, 'subagent.completed', completePayload, childRunId);
+      await saveSessionState(entry.state);
+      broadcastEvent(sessionId, {
+        v: PROTOCOL_VERSION,
+        kind: 'event',
+        sessionId,
+        runId: childRunId,
+        seq: entry.state.eventSeq,
+        ts: Date.now(),
+        type: 'subagent.completed',
+        payload: completePayload,
+      });
+    }
+  })();
+
+  return ack;
+}
+
 // ─── Request dispatcher ──────────────────────────────────────────
 
 const HANDLERS = {
@@ -1406,6 +1693,7 @@ const HANDLERS = {
   configure_role_routing: handleConfigureRoleRouting,
   submit_task_graph: handleSubmitTaskGraph,
   delegate_explorer: handleDelegateExplorer,
+  delegate_reviewer: handleDelegateReviewer,
   cancel_delegation: handleCancelDelegation,
   fetch_delegation_events: handleFetchDelegationEvents,
 };
