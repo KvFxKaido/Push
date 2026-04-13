@@ -347,7 +347,7 @@ Recommended PR sequence:
 1. **Phase 5A — Pure tool protocol + detectors.**
    Move protocol text, parsing, diagnostics, and detector helpers that do not execute tools into `lib/`. Keep Web shims. Do not move tool execution yet.
 2. **Phase 5B — Tool runtime interface.**
-   Define a shared `ToolRuntime` / `ToolExecutionRuntime` seam in `lib/` for execution, approval requests, event emission, sandbox reads, and source-specific adapters. Web implements it using existing GitHub / sandbox / scratchpad / web-search / ask-user code. CLI implements it later.
+   Define a shared `ToolExecutionRuntime` seam in `lib/` for execution, approval requests, event emission, sandbox reads, and source-specific adapters. Web implements it using existing GitHub / sandbox / scratchpad / web-search / ask-user code. CLI implements it later. **Interface shape reviewed and documented in [phase-5-tool-runtime-brief.md](phase-5-tool-runtime-brief.md) — read that before implementing.**
 3. **Phase 5C — Move deep-reviewer.**
    Use deep-reviewer as the proof that the tool-loop seam is right. It should move only after 5A/5B reduce its DI surface from the current ~12 Web-coupled imports to a small runtime interface.
 4. **Phase 5D — Move Explorer and Coder kernels.**
