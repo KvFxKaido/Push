@@ -279,28 +279,48 @@ Moves of files with no Web-module coupling. Both use the re-export-shim pattern 
 
 **Verification:** `tsc -b` clean after both moves. 29/29 capability tests pass (`capabilities.test.ts`, `approval-gates-capabilities.test.ts`).
 
-### Phase 2 — Provider-streaming abstraction (BLOCKS all role extractions)
+### Phase 2 — Provider-streaming abstraction (SHIPPED 2026-04-12, PR #273)
 
-**The blocker Phase 1 discovered.** Every role agent in Web imports `getProviderStreamFn` from `./orchestrator` and `getModelForRole` from `./providers`. Both depend on React hooks and the 16K-line orchestrator. Until this is inverted, no role agent can move to `lib/`.
+**The blocker Phase 1 discovered.** Every role agent in Web imported `getProviderStreamFn` from `./orchestrator` and `getModelForRole` from `./providers`, both depending on React hooks and the orchestrator monolith. PR #273 inverted this for reviewer and deep-reviewer: `ReviewerOptions` now takes an injected `streamFn: StreamChatFn` and `modelId: string`, and the WeakMap-backed `streamFnIds` in `reviewer-agent.ts` ensures concurrent reviews with distinct stream implementations don't coalesce into each other's results (regression caught in review).
 
-Plan:
-1. Define `ProviderStreamFn` type in `lib/runtime-contract.ts` (or a new `lib/provider-contract.ts`).
-2. Extract a minimal `ProviderConfig` shape that doesn't assume React or app state.
-3. Refactor `ReviewerOptions`, `AuditorOptions`, `CoderOptions`, `ExplorerOptions` to accept an injected `streamFn` and `modelId` instead of reaching into `./orchestrator` and `./providers`.
-4. Web's `orchestrator.ts` `getProviderStreamFn` becomes one *implementation* of the interface, not the only one. CLI provides its own implementation that wraps `cli/provider.ts`.
+**What shipped:**
+- `streamFn` + `modelId` injected into `ReviewerOptions` (58bc289).
+- Coalesce-key regression fix hashing streamFn identity via WeakMap (f51ab23).
+- Context-side cleanups from the review (1176cd9).
 
-**Estimated scope:** 4-8 hours. Touches `orchestrator.ts`, all four role agents, and the chat-send glue in `app/src/hooks/chat-send.ts`. Risk: the orchestrator's `getProviderStreamFn` is load-bearing and used by Web's non-role code paths too; the refactor needs to preserve those.
+**Still pending for auditor / explorer / coder:** same treatment — those role agents still reach into `./orchestrator` for `getProviderStreamFn` and will need the same DI pattern before they can move. The `ProviderStreamFn` type itself is now canonical in `lib/provider-contract.ts` (see Phase 3 session 2 below).
 
 ### Phase 3 — Role agent extractions
 
 After Phase 2, the role agents become moveable. Order of increasing difficulty:
 
-1. **`reviewer-agent.ts` → `lib/`** — 9 imports. 3 already resolve via `@push/lib/*` (diff-utils, role-context, system-prompt-builder). 4 need Phase 2 (orchestrator, providers) or small utility moves (utils, role-memory-context). 2 are optional (sandbox-client for file structure fetch — can be injected as optional).
-2. **`auditor-agent.ts` → `lib/`** — 12 imports. Same shape plus `./coder-agent` (for `formatCoderState`), `./verification-policy`, `./auditor-file-context`, `./comment-check`. Needs Phase 2 plus extraction of `comment-check` and `verification-policy` as helper utilities.
-3. **`explorer-agent.ts` → `lib/`** — smaller surface. Main coupling is `getUserProfile()` hook; replace with injected `profile` parameter.
-4. **`coder-agent.ts` → `lib/`** — larger surface. Same `getUserProfile()` hook issue. Working memory is already in `lib/working-memory.ts`.
+1. **`reviewer-agent.ts` → `lib/`** (SHIPPED 2026-04-12, session 2) — see sub-section below.
+2. **`auditor-agent.ts` → `lib/`** — 12 imports. Same shape plus `./coder-agent` (for `formatCoderState`), `./verification-policy`, `./auditor-file-context`, `./comment-check`. Needs Phase 2 done for non-reviewer agents plus extraction of `comment-check` and `verification-policy` as helper utilities.
+3. **`explorer-agent.ts` → `lib/`** — smaller surface. Main coupling is `getUserProfile()` hook; `getUserProfile` is already verified to be a non-hook storage getter (safe to call from lib/ once it's moved or injected), and `UserProfile` itself now lives at `lib/user-identity.ts` (session 2).
+4. **`coder-agent.ts` → `lib/`** — larger surface. Same `getUserProfile()` path. Working memory is already in `lib/working-memory.ts`.
+
+**Not in the Phase 3 step list — deferred to Phase 5:** `deep-reviewer-agent.ts`. Session 2 auditing revealed that deep-reviewer transitively couples to the full tool-dispatch subsystem via `./agent-loop-utils` (which imports `./tool-dispatch` → `./orchestrator`), `./tool-dispatch` detect/diagnose functions, `./tool-call-recovery` (same chain), `./web-search-tools` (React hooks at module load), `./explorer-agent`'s `createExplorerToolHooks`, and the `executeReadOnlyTool` helper — ~12 injection points if forced now. Extracting deep-reviewer cleanly requires Phase 5's tool-dispatch subsystem split to promote the 6 per-source detectors (github / sandbox / scratchpad / web-search / ask-user / delegation) to `lib/` first. After that, deep-reviewer's DI surface shrinks from ~12 to ~3-4 and the move becomes durable. Attempting it ahead of Phase 5 produces a hollow `lib/deep-reviewer-agent.ts` that CLI still can't run without reimplementing the tool-execution layer, and commits an interface shape that Phase 5 will almost certainly want to change.
 
 Each move uses the re-export-shim pattern. Web continues to import from `@/lib/<role>-agent`; the shim forwards to `@push/lib/<role>-agent`.
+
+#### Phase 3 — Step 1 (reviewer) SHIPPED 2026-04-12 (session 2)
+
+Five commits landed as a single bundled refactor. The sequence did reviewer + Phase 5-aligned cleanup, not reviewer + deep-reviewer — the deep-reviewer blocker was discovered mid-session by an audit with a tighter brief than the opening scope.
+
+| Commit | Scope | Summary |
+|---|---|---|
+| `6c1a068` | `refactor(context)` | Lift `LlmMessage`, `AIProviderType`, `ProviderStreamFn<M, W>` (generic), `StreamUsage`, `ChunkMetadata`, `PreCompactEvent`, `ReviewComment`, `ReviewResult` to `lib/provider-contract.ts`; lift `asRecord`, `JsonRecord`, `streamWithTimeout` to `lib/stream-utils.ts`. Web shims (`@/types`, `utils.ts`, `orchestrator-streaming.ts`, `orchestrator-provider-routing.ts`) preserve existing call sites. The generic `ProviderStreamFn` defaults to `LlmMessage` with `W = unknown`; Web keeps its richer shape via `StreamChatFn = ProviderStreamFn<ChatMessage, WorkspaceContext>`. The contravariance-unsafe cast is documented: `streamSSEChat` reads every `ChatMessage`-only field (`attachments`, `isToolResult`) via optional chaining, so passing a plain `LlmMessage` is runtime-safe in this codebase. |
+| `000cafd` | `refactor(context)` | Move `reviewer-agent.ts` to `lib/reviewer-agent.ts`. `ReviewerOptions` gains `resolveRuntimeContext` and `readSymbols` as injected callbacks; the Web shim at `app/src/lib/reviewer-agent.ts` wires them to `buildReviewerRuntimeContext` / `readSymbolsFromSandbox` so the `reviewer-agent.test.ts` `vi.mock('./role-memory-context')` + `vi.mock('./sandbox-client')` boundary still intercepts correctly. Coalesce-key semantics preserved 1:1 including the PR #273 WeakMap streamFn identity fix. Web shim collapsed from 408 LOC to 29. |
+| `11ebd9e` | `refactor(context)` | Lift pure text → tool-call JSON parsing primitives to `lib/tool-call-parsing.ts`: `diagnoseJsonSyntaxError` + `JsonSyntaxDiagnosis`, `repairToolJson` + private helpers, `detectTruncatedToolCall`, `extractBareToolJsonObjects`, `detectToolFromText`. These are tool-wrapper-aware (they look for a top-level `"tool"` key) but have no dependency on any per-source detector. Phase 3's top-level tool-typed detection (`detectAnyToolCall`, `detectAllToolCalls`, `diagnoseToolCallFailure`) stays in Web — see the Phase 5 note below. |
+| `ded2622` | `refactor(context)` | Move `tool-registry.ts` (599 LOC) to `lib/tool-registry.ts` as-is. An Explore-agent audit verified zero top-level value imports and one clean `export ... from './capabilities'` at line 599 (lib/capabilities is already in place from Phase 1). 14 Web call sites keep working through the re-export shim. |
+| `2683c18` | `refactor(context)` | Extract `buildUserIdentityBlock` (23 LOC pure function) from `orchestrator.ts` to `lib/user-identity.ts`, along with the `UserProfile` data shape. `UserProfile` is now canonical in `lib/` and re-exported from `@/types`. |
+
+**What Phase 5 needs to split in tool-dispatch.ts (1499 LOC) before deep-reviewer can move:**
+- The top-level `detectAnyToolCall` / `detectAllToolCalls` / `detectUnimplementedToolCall` / `diagnoseToolCallFailure` functions are thin wrappers around per-source detectors from `./github-tools`, `./sandbox-tools`, `./scratchpad-tools`, `./web-search-tools`, `./ask-user-tools`, plus a local `detectDelegationTool`. Moving the wrappers requires moving (or cleanly inverting) every per-source detector, which in turn depends on moving `tool-hooks.ts`, `approval-gates.ts`, and the tool execution layer (`executeToolCall` / `executeSandboxToolCall` / etc.). This is the tool-dispatch subsystem extraction called out in Phase 5.
+- `tool-call-recovery.ts` is blocked because it imports `./tool-dispatch` at module load, which imports `./orchestrator` at line 37. No way around this until tool-dispatch is split.
+- `web-search-tools.ts` is blocked because it imports `@/hooks/useOllamaConfig` and `@/hooks/useTavilyConfig` at module load. The `WEB_SEARCH_TOOL_PROTOCOL` constant *could* be extracted to a new lib file in isolation, but the work is marginal until tool-dispatch itself moves.
+
+**Verification for all 5 commits:** `tsc -b --force` clean; test suites that exercise the touched surface pass uninterrupted — `tool-dispatch` (77), `reviewer-agent` (7), `deep-reviewer-agent` (2), `orchestrator` (9), `capabilities` (21), `approval-gates-capabilities` (8). Each commit verified individually before landing.
 
 ### Phase 4 — Approval callback seam
 
