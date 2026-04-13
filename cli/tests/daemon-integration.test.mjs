@@ -926,7 +926,10 @@ async function waitForDelegationComplete(entry, subagentId, sessionId = null, ti
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  throw new Error(`delegate_explorer background run did not complete within ${timeoutMs}ms`);
+  const details = sessionId
+    ? `subagentId=${subagentId}, sessionId=${sessionId}`
+    : `subagentId=${subagentId}`;
+  throw new Error(`delegation background run did not complete within ${timeoutMs}ms (${details})`);
 }
 
 describe('delegate_explorer', () => {
