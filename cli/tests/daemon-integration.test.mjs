@@ -532,18 +532,19 @@ describe('daemon version', () => {
     assert.ok(content.includes("const VERSION = '0.3.0'"));
   });
 
-  it('hello capabilities include role_routing but do not advertise unimplemented graph work', async () => {
+  it('hello capabilities advertise delegation_explorer_v1 but not multi_agent', async () => {
     const response = await handleRequest(makeRequest('hello', { clientName: 'test' }), () => {});
     assert.equal(response.ok, true);
     assert.ok(response.payload.capabilities.includes('multi_client'));
     assert.ok(response.payload.capabilities.includes('replay_attach'));
     assert.ok(response.payload.capabilities.includes('crash_recovery'));
     assert.ok(response.payload.capabilities.includes('role_routing'));
+    assert.ok(response.payload.capabilities.includes('delegation_explorer_v1'));
     assert.ok(!response.payload.capabilities.includes('multi_agent'));
     assert.ok(!response.payload.capabilities.includes('task_graph'));
   });
 
-  it('all 12 handler types are registered', async () => {
+  it('all 13 handler types are registered', async () => {
     const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
     const handlers = [
       'hello',
@@ -556,6 +557,7 @@ describe('daemon version', () => {
       'cancel_run',
       'configure_role_routing',
       'submit_task_graph',
+      'delegate_explorer',
       'cancel_delegation',
       'fetch_delegation_events',
     ];
@@ -885,6 +887,204 @@ describe('submit_task_graph scaffold', () => {
     assert.equal(response.ok, false);
     assert.equal(response.error.code, 'NOT_IMPLEMENTED');
     assert.equal(response.error.retryable, false);
+  });
+});
+
+// ─── delegate_explorer ──────────────────────────────────────────
+
+async function waitForDelegationComplete(entry, subagentId, timeoutMs = 5000) {
+  const startWait = Date.now();
+  while (Date.now() - startWait < timeoutMs) {
+    if (!entry.activeDelegations || !entry.activeDelegations.has(subagentId)) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`delegate_explorer background run did not complete within ${timeoutMs}ms`);
+}
+
+describe('delegate_explorer', () => {
+  it('rejects missing sessionId', async () => {
+    const response = await handleRequest(
+      makeRequest('delegate_explorer', { task: 'explore the daemon' }),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'INVALID_REQUEST');
+    assert.ok(response.error.message.includes('sessionId'));
+  });
+
+  it('rejects missing task', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-explorer-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest('delegate_explorer', { sessionId, attachToken }, sessionId),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_REQUEST');
+      assert.ok(response.error.message.includes('task'));
+
+      const emptyTask = await handleRequest(
+        makeRequest('delegate_explorer', { sessionId, attachToken, task: '   ' }, sessionId),
+        () => {},
+      );
+      assert.equal(emptyTask.ok, false);
+      assert.equal(emptyTask.error.code, 'INVALID_REQUEST');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid attach token', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-explorer2-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_explorer',
+          { sessionId, attachToken: 'att_wrong', task: 'find files' },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_TOKEN');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns SESSION_NOT_FOUND for unknown session', async () => {
+    const response = await handleRequest(
+      makeRequest(
+        'delegate_explorer',
+        { sessionId: 'sess_abc123_def456', task: 'find files' },
+        'sess_abc123_def456',
+      ),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'SESSION_NOT_FOUND');
+  });
+
+  it('runs the lib kernel end-to-end and persists an inconclusive outcome', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-explorer-happy-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const broadcasted = [];
+      const attached = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        (event) => broadcasted.push(event),
+      );
+      assert.equal(attached.ok, true);
+      broadcasted.length = 0;
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_explorer',
+          { sessionId, attachToken, task: 'scaffold exploration' },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(response.ok, true);
+      assert.equal(response.payload.accepted, true);
+      assert.ok(response.payload.subagentId);
+      assert.ok(response.payload.subagentId.startsWith('sub_explorer_'));
+      assert.ok(response.payload.childRunId);
+      assert.ok(response.payload.childRunId.startsWith('run_'));
+
+      const { subagentId, childRunId } = response.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+      assert.ok(entry.activeDelegations);
+      assert.equal(entry.activeDelegations.has(subagentId), true);
+
+      await waitForDelegationComplete(entry, subagentId);
+
+      assert.equal(entry.activeDelegations.has(subagentId), false);
+
+      const events = await loadSessionEvents(sessionId);
+      const started = events.find(
+        (e) => e.type === 'subagent.started' && e.payload.subagentId === subagentId,
+      );
+      const completed = events.find(
+        (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+      );
+      assert.ok(started, 'expected subagent.started event');
+      assert.ok(completed, 'expected subagent.completed event');
+      assert.equal(started.runId, childRunId);
+      assert.equal(started.payload.agent, 'explorer');
+      assert.equal(started.payload.role, 'explorer');
+      assert.equal(started.payload.detail, 'scaffold exploration');
+      assert.equal(completed.runId, childRunId);
+      assert.equal(completed.payload.agent, 'explorer');
+      assert.ok(completed.payload.delegationOutcome);
+      assert.equal(completed.payload.delegationOutcome.agent, 'explorer');
+      assert.equal(completed.payload.delegationOutcome.status, 'inconclusive');
+      assert.ok(completed.payload.delegationOutcome.summary.includes('[pushd scaffold]'));
+      assert.ok(Array.isArray(completed.payload.delegationOutcome.missingRequirements));
+      assert.ok(completed.payload.delegationOutcome.missingRequirements.length >= 2);
+      assert.ok(completed.payload.delegationOutcome.nextRequiredAction);
+
+      const loaded = await loadSessionState(sessionId);
+      assert.ok(Array.isArray(loaded.delegationOutcomes));
+      const record = loaded.delegationOutcomes.find((r) => r.subagentId === subagentId);
+      assert.ok(record, 'expected delegationOutcome record in session state');
+      assert.equal(record.outcome.status, 'inconclusive');
+      assert.equal(record.outcome.agent, 'explorer');
+
+      const broadcastStarted = broadcasted.find(
+        (e) => e.type === 'subagent.started' && e.payload.subagentId === subagentId,
+      );
+      const broadcastCompleted = broadcasted.find(
+        (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+      );
+      assert.ok(broadcastStarted, 'expected subagent.started broadcast');
+      assert.ok(broadcastCompleted, 'expected subagent.completed broadcast');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
   });
 });
 

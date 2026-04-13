@@ -17,6 +17,7 @@
  *   cancel_run       — abort active run
  *   configure_role_routing — set per-role provider/model routing
  *   submit_task_graph      — scaffold for future task graph execution
+ *   delegate_explorer      — launch read-only Explorer sub-agent (stubbed streamFn/toolExec)
  *   cancel_delegation      — cancel active sub-agent delegation
  *   fetch_delegation_events — replay delegation event stream
  */
@@ -43,6 +44,7 @@ import {
 } from './session-store.js';
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
+import { runExplorerAgent } from '../lib/explorer-agent.ts';
 
 const VERSION = '0.3.0';
 const CAPABILITIES = [
@@ -52,6 +54,7 @@ const CAPABILITIES = [
   'multi_client',
   'crash_recovery',
   'role_routing',
+  'delegation_explorer_v1',
 ];
 
 const VALID_AGENT_ROLES = new Set(['orchestrator', 'explorer', 'coder', 'reviewer', 'auditor']);
@@ -1038,6 +1041,313 @@ async function handleFetchDelegationEvents(req) {
   });
 }
 
+// ─── Delegate Explorer (scaffold + real lib-kernel integration) ─
+
+/**
+ * `delegate_explorer` — daemon-side Explorer launch.
+ *
+ * This slice wires the full delegate_explorer RPC path from handler →
+ * runExplorerAgent (the Phase 5D step 1 lib kernel) → DelegationOutcome
+ * persistence. The two lib-kernel DI slots that need daemon-specific
+ * adapters are stubbed for this slice:
+ *
+ *   - streamFn: returns a canned plain-text report so the lib loop exits
+ *     on round 1 via the no-tool-call path. No LLM is called.
+ *   - toolExec: returns a "not wired" marker for any call; the stub
+ *     detectors below mean this is never actually invoked.
+ *
+ * The capability flag is `delegation_explorer_v1`, not `multi_agent`, so
+ * clients see that the RPC path is wired end-to-end against the real lib
+ * kernel while the daemon-side provider + tool-execution adapters are
+ * separately-scoped follow-ups. A later Phase 6B sprint replaces the
+ * stubs with real adapters and flips the capability to `multi_agent`.
+ */
+async function handleDelegateExplorer(req) {
+  const sessionId = req.sessionId || req.payload?.sessionId;
+  const providedToken = req.payload?.attachToken;
+  const task = req.payload?.task;
+  const allowedRepo = typeof req.payload?.allowedRepo === 'string' ? req.payload.allowedRepo : '';
+  const parentRunIdPayload =
+    typeof req.payload?.parentRunId === 'string' ? req.payload.parentRunId : null;
+
+  if (!sessionId) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_explorer',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
+  }
+
+  if (!task || typeof task !== 'string' || !task.trim()) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_explorer',
+      'INVALID_REQUEST',
+      'task is required and must be a non-empty string',
+    );
+  }
+
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: makeAttachToken() };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return makeErrorResponse(
+        req.requestId,
+        'delegate_explorer',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
+    }
+  }
+
+  if (!validateAttachToken(entry, providedToken)) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_explorer',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
+  ensureRuntimeState(entry);
+
+  const subagentId = `sub_explorer_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
+  const childRunId = makeRunId();
+  const parentRunId = parentRunIdPayload || entry.activeRunId || null;
+  const abortController = new AbortController();
+  const startedAt = Date.now();
+  const trimmedTask = task.trim();
+
+  entry.activeDelegations.set(subagentId, {
+    role: 'explorer',
+    agent: 'explorer',
+    parentRunId,
+    childRunId,
+    abortController,
+    startedAt,
+    task: trimmedTask,
+  });
+
+  const startEventPayload = {
+    executionId: subagentId,
+    subagentId,
+    ...(parentRunId ? { parentRunId } : {}),
+    childRunId,
+    agent: 'explorer',
+    role: 'explorer',
+    detail: trimmedTask.slice(0, 280),
+  };
+  await appendSessionEvent(entry.state, 'subagent.started', startEventPayload, childRunId);
+  await saveSessionState(entry.state);
+  broadcastEvent(sessionId, {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId,
+    runId: childRunId,
+    seq: entry.state.eventSeq,
+    ts: Date.now(),
+    type: 'subagent.started',
+    payload: startEventPayload,
+  });
+
+  const ack = makeResponse(req.requestId, 'delegate_explorer', sessionId, true, {
+    subagentId,
+    childRunId,
+    accepted: true,
+  });
+
+  // Background run. The RPC has already acked. Events are broadcast as the
+  // lib kernel progresses. Race with cancel_delegation is handled below by
+  // checking activeDelegations.has() before emitting subagent.completed /
+  // subagent.failed — cancel_delegation always wins when it fires first.
+  (async () => {
+    const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
+    const stubDetectAllToolCalls = () => emptyDetection;
+    const stubDetectAnyToolCall = () => null;
+    const stubToolExec = async () => ({
+      resultText: '[pushd scaffold] daemon-side Explorer tool execution is not yet wired',
+    });
+    const stubEvaluateAfterModel = async () => null;
+    const cannedReport = [
+      'Summary:',
+      '[pushd scaffold] Daemon-side Explorer delegation path is wired end-to-end against',
+      'the real lib kernel (runExplorerAgent), but the streamFn and toolExec DI slots are',
+      'stubbed. This response is generated by a stub streamFn that returns immediately',
+      'without calling any LLM or executing any tool.',
+      '',
+      'Findings:',
+      '- delegate_explorer RPC path flows from handler to runExplorerAgent',
+      '- activeDelegations bookkeeping, subagent.started/completed events, and',
+      '  DelegationOutcome persistence all exercise real code paths',
+      '- streamFn, toolExec, and detectors are stubbed for this slice',
+      '',
+      'Relevant files:',
+      '- cli/pushd.ts (handleDelegateExplorer)',
+      '- lib/explorer-agent.ts (runExplorerAgent)',
+      '',
+      'Open questions:',
+      '- How should a daemon-side ProviderStreamFn resolve the active provider and model for this role?',
+      '- How should daemon-side tool execution bridge to engine.ts tool execution?',
+      '',
+      'Recommended next step:',
+      'Wire a real daemon ProviderStreamFn adapter and tool executor before advertising multi_agent.',
+    ].join('\n');
+    const stubStreamFn = async (_messages, onToken, onDone, _onError) => {
+      onToken(cannedReport);
+      onDone();
+    };
+
+    let outcome;
+    let runError = null;
+    try {
+      const result = await runExplorerAgent(
+        {
+          provider: entry.state.provider,
+          streamFn: stubStreamFn,
+          modelId: entry.state.model,
+          sandboxId: null,
+          allowedRepo,
+          userProfile: null,
+          taskPreamble: trimmedTask,
+          symbolSummary: null,
+          toolExec: stubToolExec,
+          detectAllToolCalls: stubDetectAllToolCalls,
+          detectAnyToolCall: stubDetectAnyToolCall,
+          webSearchToolProtocol: '',
+          evaluateAfterModel: stubEvaluateAfterModel,
+        },
+        {
+          onStatus: () => {
+            // Quiet for now — later slices can emit agent_status events here.
+          },
+          signal: abortController.signal,
+        },
+      );
+
+      outcome = {
+        agent: 'explorer',
+        status: 'inconclusive',
+        summary: result.summary,
+        evidence: [],
+        checks: [],
+        gateVerdicts: [],
+        missingRequirements: [
+          'Daemon-side ProviderStreamFn adapter (stubbed in handleDelegateExplorer)',
+          'Daemon-side Explorer tool executor (stubbed in handleDelegateExplorer)',
+        ],
+        nextRequiredAction:
+          'Wire real daemon provider streaming and tool execution before using delegate_explorer in production',
+        rounds: result.rounds,
+        checkpoints: 0,
+        elapsedMs: Date.now() - startedAt,
+      };
+    } catch (err) {
+      runError = err;
+      const isAbort =
+        err &&
+        ((err instanceof Error && err.name === 'AbortError') ||
+          (typeof err?.message === 'string' && err.message.includes('cancelled')));
+      const message = err instanceof Error ? err.message : String(err);
+      outcome = {
+        agent: 'explorer',
+        status: 'inconclusive',
+        summary: isAbort
+          ? 'Explorer cancelled during daemon scaffold run.'
+          : `Explorer failed during daemon scaffold run: ${message}`,
+        evidence: [],
+        checks: [],
+        gateVerdicts: [],
+        missingRequirements: [],
+        nextRequiredAction: null,
+        rounds: 0,
+        checkpoints: 0,
+        elapsedMs: Date.now() - startedAt,
+      };
+    }
+
+    // Persist the outcome record even if cancel_delegation already emitted —
+    // the session-state record must reflect what the scaffold run produced.
+    if (!Array.isArray(entry.state.delegationOutcomes)) {
+      entry.state.delegationOutcomes = [];
+    }
+    entry.state.delegationOutcomes.push({ subagentId, outcome });
+
+    const stillActive = Boolean(entry.activeDelegations?.has(subagentId));
+    if (!stillActive) {
+      // cancel_delegation already removed the entry and emitted subagent.failed.
+      // Persist outcome only, no event emission to avoid duplicates.
+      await saveSessionState(entry.state);
+      return;
+    }
+
+    if (runError) {
+      const isAbort =
+        (runError instanceof Error && runError.name === 'AbortError') ||
+        (typeof runError?.message === 'string' && runError.message.includes('cancelled'));
+      const message = runError instanceof Error ? runError.message : String(runError);
+      const failPayload = {
+        executionId: subagentId,
+        subagentId,
+        ...(parentRunId ? { parentRunId } : {}),
+        childRunId,
+        agent: 'explorer',
+        role: 'explorer',
+        error: message,
+        errorDetails: {
+          code: isAbort ? 'CANCELLED' : 'EXPLORER_FAILED',
+          message,
+          retryable: false,
+        },
+      };
+      await appendSessionEvent(entry.state, 'subagent.failed', failPayload, childRunId);
+      await saveSessionState(entry.state);
+      broadcastEvent(sessionId, {
+        v: PROTOCOL_VERSION,
+        kind: 'event',
+        sessionId,
+        runId: childRunId,
+        seq: entry.state.eventSeq,
+        ts: Date.now(),
+        type: 'subagent.failed',
+        payload: failPayload,
+      });
+    } else {
+      const completePayload = {
+        executionId: subagentId,
+        subagentId,
+        ...(parentRunId ? { parentRunId } : {}),
+        childRunId,
+        agent: 'explorer',
+        role: 'explorer',
+        summary: outcome.summary.slice(0, 280),
+        delegationOutcome: outcome,
+      };
+      await appendSessionEvent(entry.state, 'subagent.completed', completePayload, childRunId);
+      await saveSessionState(entry.state);
+      broadcastEvent(sessionId, {
+        v: PROTOCOL_VERSION,
+        kind: 'event',
+        sessionId,
+        runId: childRunId,
+        seq: entry.state.eventSeq,
+        ts: Date.now(),
+        type: 'subagent.completed',
+        payload: completePayload,
+      });
+    }
+
+    if (entry.activeDelegations?.has(subagentId)) {
+      entry.activeDelegations.delete(subagentId);
+    }
+  })();
+
+  return ack;
+}
+
 // ─── Request dispatcher ──────────────────────────────────────────
 
 const HANDLERS = {
@@ -1051,6 +1361,7 @@ const HANDLERS = {
   cancel_run: handleCancelRun,
   configure_role_routing: handleConfigureRoleRouting,
   submit_task_graph: handleSubmitTaskGraph,
+  delegate_explorer: handleDelegateExplorer,
   cancel_delegation: handleCancelDelegation,
   fetch_delegation_events: handleFetchDelegationEvents,
 };
