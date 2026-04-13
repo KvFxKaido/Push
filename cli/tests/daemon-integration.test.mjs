@@ -15,6 +15,8 @@ import {
   DEFAULT_RESTART_POLICY,
   VALID_AGENT_ROLES,
   handleRequest,
+  ensureRuntimeState,
+  __getActiveSessionForTesting,
 } from '../pushd.ts';
 import {
   PROTOCOL_VERSION,
@@ -24,6 +26,8 @@ import {
   scanInterruptedSessions,
   makeSessionId,
   loadSessionState,
+  appendSessionEvent,
+  loadSessionEvents,
 } from '../session-store.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -539,7 +543,7 @@ describe('daemon version', () => {
     assert.ok(!response.payload.capabilities.includes('task_graph'));
   });
 
-  it('all 11 handler types are registered', async () => {
+  it('all 12 handler types are registered', async () => {
     const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
     const handlers = [
       'hello',
@@ -553,6 +557,7 @@ describe('daemon version', () => {
       'configure_role_routing',
       'submit_task_graph',
       'cancel_delegation',
+      'fetch_delegation_events',
     ];
     for (const h of handlers) {
       assert.ok(content.includes(`${h}: handle`), `Missing handler: ${h}`);
@@ -883,19 +888,486 @@ describe('submit_task_graph scaffold', () => {
   });
 });
 
-// ─── cancel_delegation scaffold ─────────────────────────────────
+// ─── cancel_delegation ──────────────────────────────────────────
 
-describe('cancel_delegation scaffold', () => {
-  it('handler returns a non-retryable scaffold error', async () => {
+describe('cancel_delegation', () => {
+  it('returns DELEGATION_NOT_FOUND when no active delegation exists', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-cancel-deleg-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      assert.equal(start.ok, true);
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'cancel_delegation',
+          { sessionId, attachToken, subagentId: 'sub_nonexistent' },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'DELEGATION_NOT_FOUND');
+      assert.equal(response.error.retryable, false);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects missing sessionId', async () => {
     const response = await handleRequest(
-      makeRequest('cancel_delegation', {
-        sessionId: 'sess_abc_def123',
-        subagentId: 'sub_test_123',
-      }),
+      makeRequest('cancel_delegation', { subagentId: 'sub_1' }),
       () => {},
     );
     assert.equal(response.ok, false);
-    assert.equal(response.error.code, 'NOT_IMPLEMENTED');
-    assert.equal(response.error.retryable, false);
+    assert.equal(response.error.code, 'INVALID_REQUEST');
+  });
+
+  it('rejects missing subagentId', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-cancel-deleg2-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest('cancel_delegation', { sessionId, attachToken }, sessionId),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_REQUEST');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid attach token', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-cancel-deleg3-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'cancel_delegation',
+          { sessionId, attachToken: 'att_wrong', subagentId: 'sub_1' },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_TOKEN');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('cancels an active delegation and emits a cancellation event', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-cancel-deleg4-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      assert.equal(start.ok, true);
+      const { sessionId, attachToken } = start.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+
+      const abortController = new AbortController();
+      ensureRuntimeState(entry).activeDelegations.set('sub_active', {
+        childRunId: 'run_child_cancel',
+        parentRunId: 'run_parent_1',
+        role: 'coder',
+        abortController,
+        messages: [],
+      });
+
+      const broadcasted = [];
+      const attached = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        (event) => broadcasted.push(event),
+      );
+      assert.equal(attached.ok, true);
+      broadcasted.length = 0;
+
+      const response = await handleRequest(
+        makeRequest(
+          'cancel_delegation',
+          { sessionId, attachToken, subagentId: 'sub_active' },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(response.ok, true);
+      assert.equal(response.payload.accepted, true);
+      assert.equal(abortController.signal.aborted, true);
+      assert.equal(entry.activeDelegations.has('sub_active'), false);
+
+      const events = await loadSessionEvents(sessionId);
+      const failed = events.find((event) => event.type === 'subagent.failed');
+      assert.ok(failed);
+      assert.equal(failed.runId, 'run_child_cancel');
+      assert.equal(failed.payload.executionId, 'sub_active');
+      assert.equal(failed.payload.subagentId, 'sub_active');
+      assert.equal(failed.payload.parentRunId, 'run_parent_1');
+      assert.equal(failed.payload.childRunId, 'run_child_cancel');
+      assert.equal(failed.payload.agent, 'coder');
+      assert.equal(failed.payload.role, 'coder');
+      assert.equal(failed.payload.error, 'Cancelled by client');
+      assert.equal(failed.payload.errorDetails.code, 'CANCELLED');
+      assert.equal(failed.payload.errorDetails.retryable, false);
+
+      assert.equal(broadcasted.length, 1);
+      assert.equal(broadcasted[0].type, 'subagent.failed');
+      assert.equal(broadcasted[0].seq, failed.seq);
+
+      const loaded = await loadSessionState(sessionId);
+      assert.equal(loaded.eventSeq, failed.seq);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── fetch_delegation_events ────────────────────────────────────
+
+describe('fetch_delegation_events', () => {
+  it('rejects missing sessionId', async () => {
+    const response = await handleRequest(
+      makeRequest('fetch_delegation_events', { subagentId: 'sub_1' }),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'INVALID_REQUEST');
+  });
+
+  it('requires at least one of subagentId or childRunId', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-fetch-deleg-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest('fetch_delegation_events', { sessionId, attachToken }, sessionId),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_REQUEST');
+      assert.ok(response.error.message.includes('subagentId'));
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid attach token', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-fetch-deleg2-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'fetch_delegation_events',
+          { sessionId, attachToken: 'att_wrong', subagentId: 'sub_1' },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_TOKEN');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns SESSION_NOT_FOUND for unknown session', async () => {
+    const response = await handleRequest(
+      makeRequest(
+        'fetch_delegation_events',
+        { sessionId: 'sess_abc123_def456', subagentId: 'sub_1' },
+        'sess_abc123_def456',
+      ),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'SESSION_NOT_FOUND');
+  });
+
+  it('filters events by subagentId and childRunId', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-fetch-deleg3-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      // Load the state so we can append events to it
+      const state = await loadSessionState(sessionId);
+
+      // Append events with different delegation markers
+      await appendSessionEvent(state, 'subagent.started', {
+        executionId: 'sub_a',
+        agent: 'coder',
+      });
+      await appendSessionEvent(
+        state,
+        'subagent.completed',
+        { executionId: 'sub_a', agent: 'coder', summary: 'done' },
+        'run_child_1',
+      );
+      await appendSessionEvent(state, 'subagent.started', {
+        executionId: 'sub_b',
+        agent: 'explorer',
+      });
+      await appendSessionEvent(state, 'user_message', { chars: 5, preview: 'hello' });
+
+      // Filter by subagentId (matches executionId)
+      const bySub = await handleRequest(
+        makeRequest(
+          'fetch_delegation_events',
+          { sessionId, attachToken, subagentId: 'sub_a' },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(bySub.ok, true);
+      assert.equal(bySub.payload.events.length, 2);
+      assert.equal(bySub.payload.events[0].payload.executionId, 'sub_a');
+      assert.equal(bySub.payload.events[1].payload.executionId, 'sub_a');
+      assert.equal(bySub.payload.replay.completed, true);
+
+      // Filter by childRunId (matches event.runId)
+      const byRun = await handleRequest(
+        makeRequest(
+          'fetch_delegation_events',
+          { sessionId, attachToken, childRunId: 'run_child_1' },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(byRun.ok, true);
+      assert.equal(byRun.payload.events.length, 1);
+      assert.equal(byRun.payload.events[0].runId, 'run_child_1');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('applies sinceSeq and limit', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-fetch-deleg4-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+      const state = await loadSessionState(sessionId);
+
+      // Append 4 events all tagged with the same subagentId
+      for (let i = 0; i < 4; i++) {
+        await appendSessionEvent(state, 'subagent.started', {
+          executionId: 'sub_x',
+          agent: 'coder',
+          n: i,
+        });
+      }
+
+      // sinceSeq: skip events with seq <= 3 (first event is seq 2 since session_started is seq 1)
+      const sinceFetch = await handleRequest(
+        makeRequest(
+          'fetch_delegation_events',
+          { sessionId, attachToken, subagentId: 'sub_x', sinceSeq: 3 },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(sinceFetch.ok, true);
+      assert.ok(sinceFetch.payload.events.length > 0);
+      for (const e of sinceFetch.payload.events) {
+        assert.ok(e.seq > 3, `expected seq > 3 but got ${e.seq}`);
+      }
+
+      // limit: only return first 2
+      const limitFetch = await handleRequest(
+        makeRequest(
+          'fetch_delegation_events',
+          { sessionId, attachToken, subagentId: 'sub_x', limit: 2 },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(limitFetch.ok, true);
+      assert.equal(limitFetch.payload.events.length, 2);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns empty events array when no matches', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-fetch-deleg5-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'fetch_delegation_events',
+          { sessionId, attachToken, subagentId: 'sub_nonexistent' },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, true);
+      assert.equal(response.payload.events.length, 0);
+      assert.equal(response.payload.replay.fromSeq, 0);
+      assert.equal(response.payload.replay.toSeq, 0);
+      assert.equal(response.payload.replay.completed, true);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── ensureRuntimeState ─────────────────────────────────────────
+
+describe('ensureRuntimeState', () => {
+  it('initializes activeDelegations and activeGraphs maps', () => {
+    const entry = { state: {}, attachToken: 'att_test' };
+    ensureRuntimeState(entry);
+    assert.ok(entry.activeDelegations instanceof Map);
+    assert.ok(entry.activeGraphs instanceof Map);
+    assert.equal(entry.activeDelegations.size, 0);
+    assert.equal(entry.activeGraphs.size, 0);
+  });
+
+  it('does not overwrite existing maps', () => {
+    const entry = { state: {}, attachToken: 'att_test' };
+    const delegMap = new Map([['sub_1', { agent: 'coder' }]]);
+    entry.activeDelegations = delegMap;
+    ensureRuntimeState(entry);
+    assert.equal(entry.activeDelegations, delegMap);
+    assert.equal(entry.activeDelegations.size, 1);
+  });
+});
+
+// ─── start_session defaults ─────────────────────────────────────
+
+describe('start_session defaults', () => {
+  it('new session includes delegationOutcomes: []', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-start-defaults-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      assert.equal(start.ok, true);
+      const { sessionId } = start.payload;
+
+      const loaded = await loadSessionState(sessionId);
+      assert.ok(Array.isArray(loaded.delegationOutcomes));
+      assert.equal(loaded.delegationOutcomes.length, 0);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
   });
 });

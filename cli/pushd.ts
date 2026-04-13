@@ -17,7 +17,8 @@
  *   cancel_run       — abort active run
  *   configure_role_routing — set per-role provider/model routing
  *   submit_task_graph      — scaffold for future task graph execution
- *   cancel_delegation      — scaffold for future sub-agent cancellation
+ *   cancel_delegation      — cancel active sub-agent delegation
+ *   fetch_delegation_events — replay delegation event stream
  */
 import net from 'node:net';
 import { promises as fs } from 'node:fs';
@@ -178,8 +179,18 @@ export function validateAttachToken(entry, providedToken) {
 
 // ─── Session registry (in-memory) ────────────────────────────────
 
-// sessionId → { state, attachToken, abortController?, activeRunId?, pendingApproval? }
+// sessionId → { state, attachToken, abortController?, activeRunId?, pendingApproval?, activeDelegations?, activeGraphs? }
 const activeSessions = new Map();
+
+export function ensureRuntimeState(entry) {
+  if (!entry.activeDelegations) entry.activeDelegations = new Map();
+  if (!entry.activeGraphs) entry.activeGraphs = new Map();
+  return entry;
+}
+
+export function __getActiveSessionForTesting(sessionId) {
+  return activeSessions.get(sessionId) || null;
+}
 
 // ─── Shared approval builder ─────────────────────────────────────
 
@@ -330,6 +341,7 @@ async function handleStartSession(req) {
     cwd,
     restartPolicy,
     roleRouting: {},
+    delegationOutcomes: [],
     rounds: 0,
     eventSeq: 0,
     messages: [{ role: 'system', content: await buildSystemPrompt(cwd) }],
@@ -843,13 +855,187 @@ async function handleSubmitTaskGraph(req) {
 }
 
 async function handleCancelDelegation(req) {
-  return makeErrorResponse(
-    req.requestId,
-    'cancel_delegation',
-    'NOT_IMPLEMENTED',
-    'Delegation cancellation is not yet available (Phase 6B)',
-    false,
-  );
+  const sessionId = req.sessionId || req.payload?.sessionId;
+  const providedToken = req.payload?.attachToken;
+  const subagentId = req.payload?.subagentId;
+
+  if (!sessionId) {
+    return makeErrorResponse(
+      req.requestId,
+      'cancel_delegation',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
+  }
+
+  if (!subagentId) {
+    return makeErrorResponse(
+      req.requestId,
+      'cancel_delegation',
+      'INVALID_REQUEST',
+      'subagentId is required',
+    );
+  }
+
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: makeAttachToken() };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return makeErrorResponse(
+        req.requestId,
+        'cancel_delegation',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
+    }
+  }
+
+  if (!validateAttachToken(entry, providedToken)) {
+    return makeErrorResponse(
+      req.requestId,
+      'cancel_delegation',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
+  ensureRuntimeState(entry);
+  const delegation = entry.activeDelegations.get(subagentId);
+
+  if (!delegation) {
+    return makeErrorResponse(
+      req.requestId,
+      'cancel_delegation',
+      'DELEGATION_NOT_FOUND',
+      `No active delegation with subagentId: ${subagentId}`,
+      false,
+    );
+  }
+
+  if (delegation.abortController) {
+    delegation.abortController.abort();
+  }
+  entry.activeDelegations.delete(subagentId);
+
+  const childRunId = typeof delegation.childRunId === 'string' ? delegation.childRunId : null;
+  const parentRunId = typeof delegation.parentRunId === 'string' ? delegation.parentRunId : null;
+  const agent = delegation.agent || delegation.role || 'subagent';
+  const message = 'Cancelled by client';
+  const eventPayload = {
+    executionId: subagentId,
+    subagentId,
+    ...(parentRunId ? { parentRunId } : {}),
+    ...(childRunId ? { childRunId } : {}),
+    agent,
+    role: delegation.role || agent,
+    error: message,
+    errorDetails: { code: 'CANCELLED', message, retryable: false },
+  };
+  await appendSessionEvent(entry.state, 'subagent.failed', eventPayload, childRunId);
+  await saveSessionState(entry.state);
+  broadcastEvent(sessionId, {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId,
+    runId: childRunId,
+    seq: entry.state.eventSeq,
+    ts: Date.now(),
+    type: 'subagent.failed',
+    payload: eventPayload,
+  });
+
+  return makeResponse(req.requestId, 'cancel_delegation', sessionId, true, {
+    accepted: true,
+  });
+}
+
+// ─── Delegation event replay ────────────────────────────────────
+
+async function handleFetchDelegationEvents(req) {
+  const sessionId = req.sessionId || req.payload?.sessionId;
+  const providedToken = req.payload?.attachToken;
+  const subagentId = req.payload?.subagentId;
+  const childRunId = req.payload?.childRunId;
+  const sinceSeq = req.payload?.sinceSeq;
+  const limit = req.payload?.limit;
+
+  if (!sessionId) {
+    return makeErrorResponse(
+      req.requestId,
+      'fetch_delegation_events',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
+  }
+
+  if (!subagentId && !childRunId) {
+    return makeErrorResponse(
+      req.requestId,
+      'fetch_delegation_events',
+      'INVALID_REQUEST',
+      'At least one of subagentId or childRunId is required',
+    );
+  }
+
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: makeAttachToken() };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return makeErrorResponse(
+        req.requestId,
+        'fetch_delegation_events',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
+    }
+  }
+
+  if (!validateAttachToken(entry, providedToken)) {
+    return makeErrorResponse(
+      req.requestId,
+      'fetch_delegation_events',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
+  const allEvents = await loadSessionEvents(sessionId);
+
+  let filtered = allEvents.filter((e) => {
+    const p = e.payload && typeof e.payload === 'object' ? e.payload : {};
+    if (subagentId && p.subagentId === subagentId) return true;
+    if (subagentId && p.executionId === subagentId) return true;
+    if (childRunId && p.childRunId === childRunId) return true;
+    if (childRunId && e.runId === childRunId) return true;
+    return false;
+  });
+
+  if (typeof sinceSeq === 'number' && Number.isFinite(sinceSeq)) {
+    filtered = filtered.filter((e) => e.seq > sinceSeq);
+  }
+
+  const fromSeq = filtered.length > 0 ? filtered[0].seq : 0;
+
+  if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) {
+    filtered = filtered.slice(0, limit);
+  }
+
+  const toSeq = filtered.length > 0 ? filtered[filtered.length - 1].seq : fromSeq;
+
+  return makeResponse(req.requestId, 'fetch_delegation_events', sessionId, true, {
+    events: filtered,
+    replay: {
+      fromSeq,
+      toSeq,
+      completed: true,
+    },
+  });
 }
 
 // ─── Request dispatcher ──────────────────────────────────────────
@@ -866,6 +1052,7 @@ const HANDLERS = {
   configure_role_routing: handleConfigureRoleRouting,
   submit_task_graph: handleSubmitTaskGraph,
   cancel_delegation: handleCancelDelegation,
+  fetch_delegation_events: handleFetchDelegationEvents,
 };
 
 export async function handleRequest(req, emitEvent) {

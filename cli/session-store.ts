@@ -4,11 +4,18 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
+import type { DelegationOutcome } from '../lib/runtime-contract.ts';
+
 // ─── Interfaces ──────────────────────────────────────────────────
 
 export interface RoleRoutingEntry {
   provider: string;
   model: string;
+}
+
+export interface DelegationOutcomeRecord {
+  subagentId: string;
+  outcome: DelegationOutcome;
 }
 
 export interface SessionState {
@@ -23,6 +30,7 @@ export interface SessionState {
   sessionName: string;
   workingMemory: unknown;
   roleRouting?: Record<string, RoleRoutingEntry>;
+  delegationOutcomes?: DelegationOutcomeRecord[];
   [key: string]: unknown;
 }
 

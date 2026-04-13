@@ -332,6 +332,69 @@ describe('roleRouting persistence', () => {
   });
 });
 
+// ─── delegationOutcomes persistence ─────────────────────────────
+
+describe('delegationOutcomes persistence', () => {
+  it('saves and loads delegationOutcomes', async () => {
+    const id = makeSessionId();
+    const outcomes = [
+      {
+        subagentId: 'sub_1',
+        outcome: {
+          agent: 'coder',
+          status: 'complete',
+          summary: 'done',
+          evidence: [],
+          checks: [],
+          gateVerdicts: [],
+          missingRequirements: [],
+          nextRequiredAction: null,
+          rounds: 1,
+          checkpoints: 0,
+          elapsedMs: 10,
+        },
+      },
+    ];
+    const state = {
+      sessionId: id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'test',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+      delegationOutcomes: outcomes,
+    };
+    await saveSessionState(state);
+    const loaded = await loadSessionState(id);
+    assert.ok(Array.isArray(loaded.delegationOutcomes));
+    assert.equal(loaded.delegationOutcomes.length, 1);
+    assert.equal(loaded.delegationOutcomes[0].subagentId, 'sub_1');
+    assert.equal(loaded.delegationOutcomes[0].outcome.agent, 'coder');
+    assert.equal(loaded.delegationOutcomes[0].outcome.status, 'complete');
+  });
+
+  it('loads old sessions without delegationOutcomes as undefined', async () => {
+    const id = makeSessionId();
+    const state = {
+      sessionId: id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'test',
+      cwd: '/tmp',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+    };
+    await saveSessionState(state);
+    const loaded = await loadSessionState(id);
+    assert.equal(loaded.delegationOutcomes, undefined);
+  });
+});
+
 // ─── getSessionDir traversal guard ──────────────────────────────
 
 describe('getSessionDir security', () => {
