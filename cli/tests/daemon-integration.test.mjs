@@ -16,6 +16,8 @@ import {
   VALID_AGENT_ROLES,
   handleRequest,
   ensureRuntimeState,
+  collectOrphanedDelegations,
+  formatDelegationInterruptedNote,
   __getActiveSessionForTesting,
   __setDelegateExplorerHooksForTesting,
 } from '../pushd.ts';
@@ -883,20 +885,364 @@ describe('configure_role_routing behavior', () => {
   });
 });
 
-// ─── submit_task_graph scaffold ─────────────────────────────────
+// ─── submit_task_graph ──────────────────────────────────────────
 
-describe('submit_task_graph scaffold', () => {
-  it('handler returns a non-retryable scaffold error', async () => {
+// Wait for a task-graph background run to emit its terminal
+// task_graph.graph_completed event — the executor claims terminal
+// ownership by deleting from activeGraphs BEFORE emitting, but the
+// append + broadcast happen after, so polling activeGraphs alone
+// races the write to the events log.
+async function waitForTaskGraphComplete(entry, executionId, sessionId, timeoutMs = 5000) {
+  const startWait = Date.now();
+  while (Date.now() - startWait < timeoutMs) {
+    const stillActive = entry.activeGraphs && entry.activeGraphs.has(executionId);
+    if (!stillActive) {
+      const events = await loadSessionEvents(sessionId);
+      const terminal = events.find(
+        (e) =>
+          e.type === 'task_graph.graph_completed' && e.payload?.executionId === executionId,
+      );
+      if (terminal) return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(
+    `task-graph background run did not complete within ${timeoutMs}ms (executionId=${executionId})`,
+  );
+}
+
+describe('submit_task_graph', () => {
+  it('rejects missing sessionId', async () => {
     const response = await handleRequest(
-      makeRequest('submit_task_graph', {
-        sessionId: 'sess_abc_def123',
-        graph: { tasks: [] },
-      }),
+      makeRequest('submit_task_graph', { graph: { tasks: [] } }),
       () => {},
     );
     assert.equal(response.ok, false);
-    assert.equal(response.error.code, 'NOT_IMPLEMENTED');
-    assert.equal(response.error.retryable, false);
+    assert.equal(response.error.code, 'INVALID_REQUEST');
+    assert.ok(response.error.message.includes('sessionId'));
+  });
+
+  it('rejects missing or malformed graph.tasks', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-submit-graph-shape-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const missingGraph = await handleRequest(
+        makeRequest('submit_task_graph', { sessionId, attachToken }, sessionId),
+        () => {},
+      );
+      assert.equal(missingGraph.ok, false);
+      assert.equal(missingGraph.error.code, 'INVALID_REQUEST');
+      assert.ok(missingGraph.error.message.includes('graph.tasks'));
+
+      const malformed = await handleRequest(
+        makeRequest(
+          'submit_task_graph',
+          { sessionId, attachToken, graph: { tasks: 'not-an-array' } },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(malformed.ok, false);
+      assert.equal(malformed.error.code, 'INVALID_REQUEST');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns INVALID_TASK_GRAPH on empty task list', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-submit-graph-empty-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'submit_task_graph',
+          { sessionId, attachToken, graph: { tasks: [] } },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_TASK_GRAPH');
+      assert.ok(response.error.message.includes('empty_graph'));
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns INVALID_TASK_GRAPH on duplicate ids', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-submit-graph-dupe-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'submit_task_graph',
+          {
+            sessionId,
+            attachToken,
+            graph: {
+              tasks: [
+                { id: 'a', agent: 'explorer', task: 'first' },
+                { id: 'a', agent: 'explorer', task: 'second' },
+              ],
+            },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_TASK_GRAPH');
+      assert.ok(response.error.message.includes('duplicate_id'));
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid attach token', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-submit-graph-token-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'submit_task_graph',
+          {
+            sessionId,
+            attachToken: 'att_wrong',
+            graph: {
+              tasks: [{ id: 'a', agent: 'explorer', task: 'explore' }],
+            },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_TOKEN');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns SESSION_NOT_FOUND for unknown session', async () => {
+    const response = await handleRequest(
+      makeRequest(
+        'submit_task_graph',
+        {
+          sessionId: 'sess_unknown_xyz',
+          graph: { tasks: [{ id: 'a', agent: 'explorer', task: 'explore' }] },
+        },
+        'sess_unknown_xyz',
+      ),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'SESSION_NOT_FOUND');
+  });
+
+  it('executes a single explorer node end-to-end and emits task_graph.* events', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-submit-graph-happy-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    const mock = await startMockProviderServer({
+      tokens: ['MOCK_TG_ALPHA ', 'MOCK_TG_OMEGA'],
+    });
+    const restoreConfig = patchProviderConfig('ollama', {
+      url: mock.url,
+      apiKey: 'test-mock-key',
+    });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const broadcasted = [];
+      const attached = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        (event) => broadcasted.push(event),
+      );
+      assert.equal(attached.ok, true);
+      broadcasted.length = 0;
+
+      const response = await handleRequest(
+        makeRequest(
+          'submit_task_graph',
+          {
+            sessionId,
+            attachToken,
+            graph: {
+              tasks: [{ id: 'explore-1', agent: 'explorer', task: 'explore daemon surface' }],
+            },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(response.ok, true);
+      assert.equal(response.payload.accepted, true);
+      assert.equal(response.payload.nodeCount, 1);
+      assert.ok(response.payload.executionId);
+      assert.ok(response.payload.executionId.startsWith('graph_'));
+
+      const { executionId } = response.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+      assert.ok(entry.activeGraphs);
+      assert.equal(entry.activeGraphs.has(executionId), true);
+
+      await waitForTaskGraphComplete(entry, executionId, sessionId);
+      assert.equal(entry.activeGraphs.has(executionId), false);
+
+      const events = await loadSessionEvents(sessionId);
+      const started = events.find(
+        (e) =>
+          e.type === 'task_graph.task_started' && e.payload.executionId === executionId,
+      );
+      const completedTask = events.find(
+        (e) =>
+          e.type === 'task_graph.task_completed' && e.payload.executionId === executionId,
+      );
+      const completedGraph = events.find(
+        (e) =>
+          e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
+      );
+      assert.ok(started, 'expected task_graph.task_started event');
+      assert.ok(completedTask, 'expected task_graph.task_completed event');
+      assert.ok(completedGraph, 'expected task_graph.graph_completed event');
+      assert.equal(started.payload.agent, 'explorer');
+      assert.equal(started.payload.taskId, 'explore-1');
+      assert.equal(completedTask.payload.agent, 'explorer');
+      assert.equal(completedGraph.payload.success, true);
+      assert.equal(completedGraph.payload.nodeCount, 1);
+      assert.equal(completedGraph.payload.aborted, false);
+
+      const broadcastGraphCompleted = broadcasted.find(
+        (e) =>
+          e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
+      );
+      assert.ok(broadcastGraphCompleted, 'expected task_graph.graph_completed broadcast');
+    } finally {
+      restoreConfig();
+      await mock.stop();
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('fails a coder node fast and marks the graph as unsuccessful', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-submit-graph-coder-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    // Coder executor throws before touching the provider, so no mock server
+    // is needed — but start_session still needs a configured provider.
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'submit_task_graph',
+          {
+            sessionId,
+            attachToken,
+            graph: {
+              tasks: [{ id: 'build-1', agent: 'coder', task: 'write some code' }],
+            },
+          },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(response.ok, true);
+      const { executionId } = response.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+
+      await waitForTaskGraphComplete(entry, executionId, sessionId);
+
+      const events = await loadSessionEvents(sessionId);
+      const failed = events.find(
+        (e) =>
+          e.type === 'task_graph.task_failed' && e.payload.executionId === executionId,
+      );
+      const completedGraph = events.find(
+        (e) =>
+          e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
+      );
+      assert.ok(failed, 'expected task_graph.task_failed event for coder node');
+      assert.ok(failed.payload.error.includes('Coder delegation is not yet wired'));
+      assert.ok(completedGraph);
+      assert.equal(completedGraph.payload.success, false);
+      assert.equal(completedGraph.payload.aborted, false);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
   });
 });
 
@@ -2054,6 +2400,156 @@ describe('ensureRuntimeState', () => {
     ensureRuntimeState(entry);
     assert.equal(entry.activeDelegations, delegMap);
     assert.equal(entry.activeDelegations.size, 1);
+  });
+});
+
+// ─── collectOrphanedDelegations / DELEGATION_INTERRUPTED ─────────
+
+describe('collectOrphanedDelegations', () => {
+  const runId = 'run_parent_abc';
+
+  it('returns empty lists when no delegations ever ran', () => {
+    const orphans = collectOrphanedDelegations([], runId);
+    assert.deepEqual(orphans, { subagents: [], graphs: [] });
+  });
+
+  it('ignores subagents whose parentRunId does not match', () => {
+    const events = [
+      {
+        type: 'subagent.started',
+        runId: 'run_child_1',
+        payload: { subagentId: 'sub_1', agent: 'explorer', parentRunId: 'run_other' },
+      },
+    ];
+    const orphans = collectOrphanedDelegations(events, runId);
+    assert.equal(orphans.subagents.length, 0);
+  });
+
+  it('reports an unterminated subagent as orphaned', () => {
+    const events = [
+      {
+        type: 'subagent.started',
+        runId: 'run_child_1',
+        payload: { subagentId: 'sub_1', agent: 'explorer', parentRunId: runId },
+      },
+    ];
+    const orphans = collectOrphanedDelegations(events, runId);
+    assert.equal(orphans.subagents.length, 1);
+    assert.equal(orphans.subagents[0].subagentId, 'sub_1');
+    assert.equal(orphans.subagents[0].agent, 'explorer');
+  });
+
+  it('does not report a subagent that completed', () => {
+    const events = [
+      {
+        type: 'subagent.started',
+        runId: 'run_child_1',
+        payload: { subagentId: 'sub_1', agent: 'explorer', parentRunId: runId },
+      },
+      {
+        type: 'subagent.completed',
+        runId: 'run_child_1',
+        payload: { subagentId: 'sub_1', agent: 'explorer' },
+      },
+    ];
+    const orphans = collectOrphanedDelegations(events, runId);
+    assert.equal(orphans.subagents.length, 0);
+  });
+
+  it('does not report a subagent that failed', () => {
+    const events = [
+      {
+        type: 'subagent.started',
+        runId: 'run_child_1',
+        payload: { subagentId: 'sub_1', agent: 'explorer', parentRunId: runId },
+      },
+      {
+        type: 'subagent.failed',
+        runId: 'run_child_1',
+        payload: { subagentId: 'sub_1', agent: 'explorer', error: 'boom' },
+      },
+    ];
+    const orphans = collectOrphanedDelegations(events, runId);
+    assert.equal(orphans.subagents.length, 0);
+  });
+
+  it('reports an unfinished task graph as orphaned', () => {
+    const events = [
+      {
+        type: 'task_graph.task_started',
+        runId,
+        payload: { executionId: 'graph_1', taskId: 'a', agent: 'explorer' },
+      },
+    ];
+    const orphans = collectOrphanedDelegations(events, runId);
+    assert.equal(orphans.graphs.length, 1);
+    assert.equal(orphans.graphs[0].executionId, 'graph_1');
+  });
+
+  it('does not report a task graph that emitted graph_completed', () => {
+    const events = [
+      {
+        type: 'task_graph.task_started',
+        runId,
+        payload: { executionId: 'graph_1', taskId: 'a', agent: 'explorer' },
+      },
+      {
+        type: 'task_graph.graph_completed',
+        runId,
+        payload: { executionId: 'graph_1', success: true },
+      },
+    ];
+    const orphans = collectOrphanedDelegations(events, runId);
+    assert.equal(orphans.graphs.length, 0);
+  });
+
+  it('ignores task graphs bound to a different parent runId', () => {
+    const events = [
+      {
+        type: 'task_graph.task_started',
+        runId: 'run_other',
+        payload: { executionId: 'graph_other', taskId: 'a', agent: 'explorer' },
+      },
+    ];
+    const orphans = collectOrphanedDelegations(events, runId);
+    assert.equal(orphans.graphs.length, 0);
+  });
+});
+
+describe('formatDelegationInterruptedNote', () => {
+  it('returns null when nothing is orphaned', () => {
+    assert.equal(formatDelegationInterruptedNote({ subagents: [], graphs: [] }), null);
+  });
+
+  it('lists orphaned subagents', () => {
+    const note = formatDelegationInterruptedNote({
+      subagents: [{ subagentId: 'sub_1', agent: 'explorer' }],
+      graphs: [],
+    });
+    assert.ok(note);
+    assert.ok(note.includes('[DELEGATION_INTERRUPTED]'));
+    assert.ok(note.includes('explorer (sub_1)'));
+    assert.ok(note.includes('[/DELEGATION_INTERRUPTED]'));
+  });
+
+  it('lists orphaned task graphs', () => {
+    const note = formatDelegationInterruptedNote({
+      subagents: [],
+      graphs: [{ executionId: 'graph_1' }],
+    });
+    assert.ok(note);
+    assert.ok(note.includes('Unfinished task graphs'));
+    assert.ok(note.includes('graph_1'));
+  });
+
+  it('lists both subagents and graphs when both are orphaned', () => {
+    const note = formatDelegationInterruptedNote({
+      subagents: [{ subagentId: 'sub_1', agent: 'coder' }],
+      graphs: [{ executionId: 'graph_1' }],
+    });
+    assert.ok(note);
+    assert.ok(note.includes('coder (sub_1)'));
+    assert.ok(note.includes('graph_1'));
   });
 });
 

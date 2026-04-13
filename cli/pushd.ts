@@ -49,6 +49,11 @@ import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
+import {
+  validateTaskGraph,
+  executeTaskGraph,
+  formatTaskGraphResult,
+} from '../lib/task-graph.ts';
 
 const VERSION = '0.3.0';
 const CAPABILITIES = [
@@ -60,6 +65,11 @@ const CAPABILITIES = [
   'role_routing',
   'delegation_explorer_v1',
   'delegation_reviewer_v1',
+  // v2 task-graph execution: submit_task_graph accepts graphs, runs them
+  // through lib/task-graph.executeTaskGraph, and streams task_graph.* events.
+  // Explorer nodes use the same scaffold path as delegation_explorer_v1
+  // (streaming LLM with stubbed tool executor); coder nodes fail fast.
+  'task_graph_v1',
 ];
 
 const VALID_AGENT_ROLES = new Set(['orchestrator', 'explorer', 'coder', 'reviewer', 'auditor']);
@@ -870,14 +880,309 @@ async function handleConfigureRoleRouting(req) {
 
 // ─── Task graph / delegation scaffolds ──────────────────────────
 
-async function handleSubmitTaskGraph(req) {
-  return makeErrorResponse(
-    req.requestId,
-    'submit_task_graph',
-    'NOT_IMPLEMENTED',
-    'Task graph execution is not yet available (Phase 6B)',
-    false,
+/**
+ * Resolve {provider, model} for a given role on an active session.
+ * Honours configure_role_routing entries; falls back to session defaults.
+ * Throws an Error with a descriptive message if nothing usable is available.
+ */
+function resolveRoleRouting(entry, role) {
+  const routeEntry = entry.state.roleRouting?.[role];
+  const routedProvider = normalizeProviderInput(routeEntry?.provider);
+  if (routedProvider && !PROVIDER_CONFIGS[routedProvider]) {
+    throw new Error(`Unknown provider "${routedProvider}" for ${role} role routing`);
+  }
+  const sessionProvider = normalizeProviderInput(entry.state.provider);
+  if (!routedProvider && (!sessionProvider || !PROVIDER_CONFIGS[sessionProvider])) {
+    throw new Error(`Unknown provider "${sessionProvider || '(missing)'}" in session state`);
+  }
+  const provider = routedProvider || sessionProvider;
+  const model =
+    (typeof routeEntry?.model === 'string' && routeEntry.model.trim()) ||
+    (typeof entry.state.model === 'string' && entry.state.model.trim()) ||
+    PROVIDER_CONFIGS[provider].defaultModel;
+  return { provider, model };
+}
+
+/**
+ * Scaffold-level Explorer invocation for task-graph nodes.
+ *
+ * Mirrors the stubbed tool-executor path inside handleDelegateExplorer but
+ * without the delegation-registry bookkeeping — the task-graph executor owns
+ * lifecycle emission via its onProgress callback. Used only for task-graph
+ * explorer nodes; the direct `delegate_explorer` RPC path still goes through
+ * handleDelegateExplorer for its race-safe terminal-claim semantics.
+ */
+async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
+  const { provider, model } = resolveRoleRouting(entry, 'explorer');
+  const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
+  const stubDetectAllToolCalls = () => emptyDetection;
+  const stubDetectAnyToolCall = () => null;
+  const stubToolExec = async () => ({
+    resultText:
+      '[pushd scaffold] daemon-side Explorer tool execution is not yet wired',
+  });
+  const stubEvaluateAfterModel = async () => null;
+  const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
+
+  const result = await runExplorerAgent(
+    {
+      provider,
+      streamFn: daemonStreamFn,
+      modelId: model,
+      sandboxId: null,
+      allowedRepo: '',
+      userProfile: null,
+      taskPreamble: node.task,
+      symbolSummary: null,
+      toolExec: stubToolExec,
+      detectAllToolCalls: stubDetectAllToolCalls,
+      detectAnyToolCall: stubDetectAnyToolCall,
+      webSearchToolProtocol: '',
+      evaluateAfterModel: stubEvaluateAfterModel,
+    },
+    {
+      onStatus: () => {},
+      signal,
+    },
   );
+
+  const delegationOutcome = {
+    agent: 'explorer',
+    status: 'inconclusive',
+    summary: result.summary,
+    evidence: [],
+    checks: [],
+    gateVerdicts: [],
+    missingRequirements: [
+      'Daemon-side Explorer tool executor (stubbed in runScaffoldExplorerForTaskGraph)',
+    ],
+    nextRequiredAction:
+      'Wire a real daemon Explorer tool executor before advertising multi_agent',
+    rounds: result.rounds,
+    checkpoints: 0,
+    elapsedMs: 0,
+  };
+
+  return {
+    summary: result.summary,
+    delegationOutcome,
+    rounds: result.rounds,
+  };
+}
+
+async function handleSubmitTaskGraph(req) {
+  const sessionId = req.sessionId || req.payload?.sessionId;
+  const providedToken = req.payload?.attachToken;
+  const graph = req.payload?.graph;
+  const parentRunIdPayload =
+    typeof req.payload?.parentRunId === 'string' ? req.payload.parentRunId : null;
+
+  if (!sessionId) {
+    return makeErrorResponse(
+      req.requestId,
+      'submit_task_graph',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
+  }
+
+  if (!graph || typeof graph !== 'object' || !Array.isArray(graph.tasks)) {
+    return makeErrorResponse(
+      req.requestId,
+      'submit_task_graph',
+      'INVALID_REQUEST',
+      'graph.tasks must be an array of task nodes',
+    );
+  }
+
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: makeAttachToken() };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return makeErrorResponse(
+        req.requestId,
+        'submit_task_graph',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
+    }
+  }
+
+  if (!validateAttachToken(entry, providedToken)) {
+    return makeErrorResponse(
+      req.requestId,
+      'submit_task_graph',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
+  const validationErrors = validateTaskGraph(graph.tasks);
+  if (validationErrors.length > 0) {
+    return makeErrorResponse(
+      req.requestId,
+      'submit_task_graph',
+      'INVALID_TASK_GRAPH',
+      validationErrors.map((e) => `${e.type}: ${e.message}`).join('; '),
+    );
+  }
+
+  ensureRuntimeState(entry);
+
+  const executionId = `graph_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
+  const parentRunId = parentRunIdPayload || entry.activeRunId || null;
+  const abortController = new AbortController();
+  const startedAt = Date.now();
+  const nodeCount = graph.tasks.length;
+
+  entry.activeGraphs.set(executionId, {
+    executionId,
+    parentRunId,
+    abortController,
+    startedAt,
+    nodeCount,
+  });
+
+  const ack = makeResponse(req.requestId, 'submit_task_graph', sessionId, true, {
+    executionId,
+    accepted: true,
+    nodeCount,
+  });
+
+  // Background execution — RPC has already acked. Events flow through
+  // appendSessionEvent + broadcastEvent as lib/task-graph makes progress.
+  (async () => {
+    // Index nodes by id so onProgress can recover the agent kind from taskId.
+    const nodesById = new Map();
+    for (const node of graph.tasks) nodesById.set(node.id, node);
+
+    const emitTaskGraphEvent = async (type, payload) => {
+      await appendSessionEvent(entry.state, type, payload, parentRunId).catch(() => {});
+      broadcastEvent(sessionId, {
+        v: PROTOCOL_VERSION,
+        kind: 'event',
+        sessionId,
+        runId: parentRunId,
+        seq: entry.state.eventSeq,
+        ts: Date.now(),
+        type,
+        payload,
+      });
+    };
+
+    const onProgress = (evt) => {
+      if (evt.type === 'graph_complete') {
+        // Final graph_completed event is emitted explicitly below with
+        // richer metadata (success/aborted/counters) from the result object.
+        return;
+      }
+      const node = evt.taskId ? nodesById.get(evt.taskId) : null;
+      const agent = node?.agent || 'explorer';
+      switch (evt.type) {
+        case 'task_ready':
+          emitTaskGraphEvent('task_graph.task_ready', {
+            executionId,
+            taskId: evt.taskId,
+            agent,
+            detail: evt.detail,
+          }).catch(() => {});
+          return;
+        case 'task_started':
+          emitTaskGraphEvent('task_graph.task_started', {
+            executionId,
+            taskId: evt.taskId,
+            agent,
+            detail: evt.detail,
+          }).catch(() => {});
+          return;
+        case 'task_completed':
+          emitTaskGraphEvent('task_graph.task_completed', {
+            executionId,
+            taskId: evt.taskId,
+            agent,
+            summary: evt.detail || '',
+            elapsedMs: evt.elapsedMs,
+          }).catch(() => {});
+          return;
+        case 'task_failed':
+          emitTaskGraphEvent('task_graph.task_failed', {
+            executionId,
+            taskId: evt.taskId,
+            agent,
+            error: evt.detail || 'Task failed',
+            elapsedMs: evt.elapsedMs,
+          }).catch(() => {});
+          return;
+        case 'task_cancelled':
+          emitTaskGraphEvent('task_graph.task_cancelled', {
+            executionId,
+            taskId: evt.taskId,
+            agent,
+            reason: evt.detail || 'Task cancelled',
+            elapsedMs: evt.elapsedMs,
+          }).catch(() => {});
+          return;
+        default:
+          return;
+      }
+    };
+
+    const executor = async (node, _enrichedContext, signal) => {
+      if (node.agent === 'coder') {
+        throw new Error(
+          'Coder delegation is not yet wired in pushd (Phase 6 scaffold). ' +
+            'Only explorer nodes can currently execute inside a daemon-hosted task graph.',
+        );
+      }
+      if (node.agent !== 'explorer') {
+        throw new Error(`Unsupported task-graph agent: ${node.agent}`);
+      }
+      return runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal);
+    };
+
+    let result;
+    let execError = null;
+    try {
+      result = await executeTaskGraph(graph.tasks, executor, {
+        signal: abortController.signal,
+        onProgress,
+      });
+    } catch (err) {
+      // executeTaskGraph normally does not throw (cancellation surfaces via
+      // aborted=true), but defensively emit a terminal event so clients are
+      // never left waiting on a silent graph.
+      execError = err instanceof Error ? err : new Error(String(err));
+    }
+
+    const completedPayload = result
+      ? {
+          executionId,
+          summary: formatTaskGraphResult(result),
+          success: result.success,
+          aborted: result.aborted,
+          nodeCount,
+          totalRounds: result.totalRounds,
+          wallTimeMs: result.wallTimeMs,
+        }
+      : {
+          executionId,
+          summary: `Task graph crashed: ${execError?.message ?? 'unknown error'}`,
+          success: false,
+          aborted: false,
+          nodeCount,
+          totalRounds: 0,
+          wallTimeMs: Date.now() - startedAt,
+        };
+
+    await emitTaskGraphEvent('task_graph.graph_completed', completedPayload);
+    entry.activeGraphs.delete(executionId);
+    await saveSessionState(entry.state).catch(() => {});
+  })();
+
+  return ack;
 }
 
 async function handleCancelDelegation(req) {
@@ -931,7 +1236,23 @@ async function handleCancelDelegation(req) {
   ensureRuntimeState(entry);
   const delegation = entry.activeDelegations.get(subagentId);
 
+  // If the id doesn't map to an active delegation, treat it as a task-graph
+  // executionId. We reuse cancel_delegation here so v2 task-graph clients
+  // don't need a new RPC just to abort a graph.
   if (!delegation) {
+    const graph = entry.activeGraphs.get(subagentId);
+    if (graph) {
+      if (graph.abortController) graph.abortController.abort();
+      // The background executor loop observes `signal.aborted`, drives each
+      // running node to a `task_graph.task_cancelled` event, and emits the
+      // final `task_graph.graph_completed` with aborted=true before removing
+      // the entry from activeGraphs.
+      return makeResponse(req.requestId, 'cancel_delegation', sessionId, true, {
+        accepted: true,
+        kind: 'task_graph',
+        executionId: subagentId,
+      });
+    }
     return makeErrorResponse(
       req.requestId,
       'cancel_delegation',
@@ -1813,6 +2134,107 @@ function handleConnection(socket) {
  * Recovery injects a [SESSION_RECOVERED] reconciliation message so the model
  * knows context was interrupted and can adjust.
  */
+/**
+ * Scan a session event log and return delegations/task-graphs that were
+ * tied to the given parent run but never reached a terminal event. Used by
+ * crash recovery to build the `[DELEGATION_INTERRUPTED]` reconciliation note.
+ *
+ * A subagent delegation is "orphaned" if there is a `subagent.started` event
+ * whose `payload.parentRunId === parentRunId` AND no matching
+ * `subagent.completed` / `subagent.failed` for the same `subagentId`.
+ *
+ * A task graph is "orphaned" if there is any `task_graph.*` event whose
+ * envelope `runId === parentRunId` AND no matching `task_graph.graph_completed`
+ * for the same `executionId`.
+ *
+ * We deliberately restrict to events bound to the interrupted parent run —
+ * older fire-and-forget failures from prior runs are not this recovery's
+ * problem.
+ */
+export function collectOrphanedDelegations(events, parentRunId) {
+  const startedSubagents = new Map(); // subagentId -> { agent }
+  const terminatedSubagents = new Set(); // subagentId
+  const seenGraphs = new Map(); // executionId -> true
+  const completedGraphs = new Set(); // executionId
+
+  for (const event of events) {
+    if (!event || typeof event.type !== 'string') continue;
+    const payload = (event.payload || {});
+
+    if (event.type === 'subagent.started') {
+      if (payload.parentRunId !== parentRunId) continue;
+      const subagentId = typeof payload.subagentId === 'string' ? payload.subagentId : null;
+      if (!subagentId) continue;
+      startedSubagents.set(subagentId, {
+        agent: typeof payload.agent === 'string' ? payload.agent : 'subagent',
+      });
+      continue;
+    }
+    if (event.type === 'subagent.completed' || event.type === 'subagent.failed') {
+      const subagentId = typeof payload.subagentId === 'string' ? payload.subagentId : null;
+      if (subagentId) terminatedSubagents.add(subagentId);
+      continue;
+    }
+    if (event.type.startsWith('task_graph.')) {
+      if (event.runId !== parentRunId) continue;
+      const executionId = typeof payload.executionId === 'string' ? payload.executionId : null;
+      if (!executionId) continue;
+      if (event.type === 'task_graph.graph_completed') {
+        completedGraphs.add(executionId);
+      } else {
+        seenGraphs.set(executionId, true);
+      }
+      continue;
+    }
+  }
+
+  const orphanedSubagents = [];
+  for (const [subagentId, meta] of startedSubagents) {
+    if (!terminatedSubagents.has(subagentId)) {
+      orphanedSubagents.push({ subagentId, agent: meta.agent });
+    }
+  }
+
+  const orphanedGraphs = [];
+  for (const [executionId] of seenGraphs) {
+    if (!completedGraphs.has(executionId)) {
+      orphanedGraphs.push({ executionId });
+    }
+  }
+
+  return { subagents: orphanedSubagents, graphs: orphanedGraphs };
+}
+
+/**
+ * Build the `[DELEGATION_INTERRUPTED]` reconciliation note injected into the
+ * message history on recovery. Returns null if nothing was orphaned.
+ */
+export function formatDelegationInterruptedNote(orphans) {
+  const { subagents, graphs } = orphans;
+  if (subagents.length === 0 && graphs.length === 0) return null;
+  const lines = ['[DELEGATION_INTERRUPTED]'];
+  lines.push(
+    'One or more sub-agents launched during the interrupted run never reported a terminal result.',
+  );
+  if (subagents.length > 0) {
+    lines.push('Unfinished delegations:');
+    for (const { subagentId, agent } of subagents) {
+      lines.push(`  - ${agent} (${subagentId})`);
+    }
+  }
+  if (graphs.length > 0) {
+    lines.push('Unfinished task graphs:');
+    for (const { executionId } of graphs) {
+      lines.push(`  - ${executionId}`);
+    }
+  }
+  lines.push(
+    'Assume their work is lost. If you still need their results, re-delegate explicitly — do not wait for ghost completions.',
+  );
+  lines.push('[/DELEGATION_INTERRUPTED]');
+  return lines.join('\n');
+}
+
 async function recoverInterruptedRuns() {
   let interrupted;
   try {
@@ -1884,6 +2306,29 @@ async function recoverInterruptedRuns() {
       role: 'user',
       content: `[SESSION_RECOVERED]\nThe previous run (${marker.runId}) was interrupted by a daemon crash.\nYou are resuming in a new run (${recoveryRunId}). Review your working memory and continue where you left off.\nDo NOT restart from scratch — pick up from the last completed step.\n[/SESSION_RECOVERED]`,
     });
+
+    // Crash recovery is narrow: we recover the parent only. Any sub-agents or
+    // task graphs that were in-flight when the daemon died are lost. Detect
+    // them from the event log and append a DELEGATION_INTERRUPTED note so the
+    // recovered parent Orchestrator re-delegates rather than waiting on ghost
+    // completions that will never arrive.
+    let orphans = { subagents: [], graphs: [] };
+    try {
+      const events = await loadSessionEvents(sessionId);
+      orphans = collectOrphanedDelegations(events, marker.runId);
+    } catch {
+      // Event-log scan is best-effort — if we can't read it, skip the note.
+    }
+    const interruptedNote = formatDelegationInterruptedNote(orphans);
+    if (interruptedNote) {
+      state.messages.push({ role: 'user', content: interruptedNote });
+      await appendSessionEvent(state, 'delegation_interrupted', {
+        originalRunId: marker.runId,
+        recoveryRunId,
+        subagents: orphans.subagents,
+        graphs: orphans.graphs,
+      }).catch(() => {});
+    }
 
     await appendSessionEvent(state, 'run_recovered', {
       originalRunId: marker.runId,
