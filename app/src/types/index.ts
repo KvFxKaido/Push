@@ -45,6 +45,8 @@ export type {
   ReviewComment,
   ReviewResult,
 } from '@push/lib/provider-contract';
+import type { AuditVerdictCardData } from '@push/lib/auditor-agent';
+export type { AuditVerdictCardData } from '@push/lib/auditor-agent';
 
 // User profile — canonical shape lives in lib/user-identity.ts; re-exported
 // here so existing Web call sites using `@/types` don't have to churn.
@@ -566,13 +568,6 @@ export interface DiffPreviewCardData {
   additions: number;
   deletions: number;
   truncated: boolean;
-}
-
-export interface AuditVerdictCardData {
-  verdict: 'safe' | 'unsafe';
-  summary: string;
-  risks: { level: 'low' | 'medium' | 'high'; description: string }[];
-  filesReviewed: number;
 }
 
 // Phase 4 — User Confirmation + CI Status

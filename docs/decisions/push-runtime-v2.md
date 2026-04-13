@@ -288,18 +288,15 @@ Moves of files with no Web-module coupling. Both use the re-export-shim pattern 
 - Coalesce-key regression fix hashing streamFn identity via WeakMap (f51ab23).
 - Context-side cleanups from the review (1176cd9).
 
-**Still pending for auditor / explorer / coder:** same treatment — those role agents still reach into `./orchestrator` for `getProviderStreamFn` and will need the same DI pattern before they can move. The `ProviderStreamFn` type itself is now canonical in `lib/provider-contract.ts` (see Phase 3 session 2 below).
+**Still pending for explorer / coder:** same treatment is not enough anymore — those role agents are tool-loop agents, not one-shot provider calls. They still depend on Web's tool-dispatch / tool-execution subsystem and should move after Phase 5 splits that layer. The `ProviderStreamFn` type itself is now canonical in `lib/provider-contract.ts` (see Phase 3 session 2 below).
 
 ### Phase 3 — Role agent extractions
 
-After Phase 2, the role agents become moveable. Order of increasing difficulty:
+Phase 3 is now scoped to **one-shot role kernels** that can run with provider/model/runtime-context DI. Tool-loop agents move after Phase 5.
 
 1. **`reviewer-agent.ts` → `lib/`** (SHIPPED 2026-04-12, session 2) — see sub-section below.
-2. **`auditor-agent.ts` → `lib/`** — 12 imports. Same shape plus `./coder-agent` (for `formatCoderState`), `./verification-policy`, `./auditor-file-context`, `./comment-check`. Needs Phase 2 done for non-reviewer agents plus extraction of `comment-check` and `verification-policy` as helper utilities.
-3. **`explorer-agent.ts` → `lib/`** — smaller surface. Main coupling is `getUserProfile()` hook; `getUserProfile` is already verified to be a non-hook storage getter (safe to call from lib/ once it's moved or injected), and `UserProfile` itself now lives at `lib/user-identity.ts` (session 2).
-4. **`coder-agent.ts` → `lib/`** — larger surface. Same `getUserProfile()` path. Working memory is already in `lib/working-memory.ts`.
-
-**Not in the Phase 3 step list — deferred to Phase 5:** `deep-reviewer-agent.ts`. Session 2 auditing revealed that deep-reviewer transitively couples to the full tool-dispatch subsystem via `./agent-loop-utils` (which imports `./tool-dispatch` → `./orchestrator`), `./tool-dispatch` detect/diagnose functions, `./tool-call-recovery` (same chain), `./web-search-tools` (React hooks at module load), `./explorer-agent`'s `createExplorerToolHooks`, and the `executeReadOnlyTool` helper — ~12 injection points if forced now. Extracting deep-reviewer cleanly requires Phase 5's tool-dispatch subsystem split to promote the 6 per-source detectors (github / sandbox / scratchpad / web-search / ask-user / delegation) to `lib/` first. After that, deep-reviewer's DI surface shrinks from ~12 to ~3-4 and the move becomes durable. Attempting it ahead of Phase 5 produces a hollow `lib/deep-reviewer-agent.ts` that CLI still can't run without reimplementing the tool-execution layer, and commits an interface shape that Phase 5 will almost certainly want to change.
+2. **`auditor-agent.ts` → `lib/`** (SHIPPED 2026-04-13, session 3) — see sub-section below.
+3. **Deferred to Phase 5:** `explorer-agent.ts`, `coder-agent.ts`, and `deep-reviewer-agent.ts`. They all transitively depend on Web's tool-dispatch / tool-execution subsystem (`tool-dispatch`, `agent-loop-utils`, tool hooks, per-source detectors, and Web-search/sandbox execution). Moving them before Phase 5 would create hollow `lib/` shells that CLI still cannot run without Web's tool layer, and would likely commit interfaces that Phase 5 would need to replace.
 
 Each move uses the re-export-shim pattern. Web continues to import from `@/lib/<role>-agent`; the shim forwards to `@push/lib/<role>-agent`.
 
@@ -321,6 +318,17 @@ Five commits landed as a single bundled refactor. The sequence did reviewer + Ph
 - `web-search-tools.ts` is blocked because it imports `@/hooks/useOllamaConfig` and `@/hooks/useTavilyConfig` at module load. The `WEB_SEARCH_TOOL_PROTOCOL` constant *could* be extracted to a new lib file in isolation, but the work is marginal until tool-dispatch itself moves.
 
 **Verification for all 5 commits:** `tsc -b --force` clean; test suites that exercise the touched surface pass uninterrupted — `tool-dispatch` (77), `reviewer-agent` (7), `deep-reviewer-agent` (2), `orchestrator` (9), `capabilities` (21), `approval-gates-capabilities` (8). Each commit verified individually before landing.
+
+#### Phase 3 — Step 2 (auditor) SHIPPED 2026-04-13 (session 3)
+
+Auditor moved as the second durable role kernel. The extraction deliberately stopped before Explorer/Coder/deep-reviewer because those are tool-loop agents and need Phase 5's tool-dispatch split first.
+
+- **`auditor-agent.ts` → `lib/auditor-agent.ts`** — `AuditorRunOptions` and `AuditorEvaluationOptions` now take injected `provider`, `streamFn`, `modelId`, and runtime-memory callbacks. The Web shim at `app/src/lib/auditor-agent.ts` preserves the old call signature and wires in `getActiveProvider`, `getProviderStreamFn`, `getModelForRole`, `buildAuditorRuntimeContext`, and `buildAuditorEvaluationMemoryBlock`.
+- **`auditor-file-context.ts` → `lib/auditor-file-context.ts`** — pure file-context budgeting stayed callback-based; the app wrapper preserves `@/lib/auditor-file-context`.
+- **`verification-policy.ts` → `lib/verification-policy.ts`** — policy formatting and preset helpers now live in shared lib; the app wrapper preserves `@/lib/verification-policy`.
+- **Coalescing guard:** Auditor now includes WeakMap-backed `streamFn` identity in its coalesce key, mirroring reviewer, so concurrent audits using distinct provider stream implementations cannot accidentally share a result.
+
+**Verification for Step 2:** direct NodeNext compile for the moved lib files; `tsc -b` in the Web app; focused suites for `auditor-agent`, `verification-policy`, `role-memory-context`, `capabilities`, and `approval-gates-capabilities`.
 
 ### Phase 4 — Approval callback seam
 
