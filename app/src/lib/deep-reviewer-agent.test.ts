@@ -50,11 +50,16 @@ vi.mock('./web-search-tools', async () => {
 
 vi.mock('./tool-dispatch', async () => {
   const actual = await vi.importActual<typeof import('./tool-dispatch')>('./tool-dispatch');
-  return {
-    ...actual,
-    executeAnyToolCall: (...args: unknown[]) => mockExecuteAnyToolCall(...args),
-  };
+  return actual;
 });
+
+vi.mock('./web-tool-execution-runtime', () => ({
+  WebToolExecutionRuntime: class {
+    execute(...args: unknown[]) {
+      return mockExecuteAnyToolCall(...args);
+    }
+  },
+}));
 
 import { runDeepReviewer } from './deep-reviewer-agent';
 

@@ -7,7 +7,8 @@
 
 import type { ChatCard } from '@/types';
 import { createDefaultApprovalGates } from './approval-gates';
-import { executeAnyToolCall, type AnyToolCall } from './tool-dispatch';
+import type { ToolExecutionRuntime } from '@push/lib/tool-execution-runtime';
+import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
 import type { ToolHookRegistry } from './tool-hooks';
 import type { ActiveProvider } from './orchestrator';
 import { formatToolResultEnvelope } from './tool-call-recovery';
@@ -46,6 +47,7 @@ export async function executeReadOnlyTool(
   activeModel: string | undefined,
   hooks: ToolHookRegistry,
   capabilityLedger?: import('./capabilities').CapabilityLedger,
+  runtime?: ToolExecutionRuntime,
 ): Promise<{ resultText: string; card?: ChatCard }> {
   return withActiveSpan(
     'tool.execute',
@@ -76,18 +78,17 @@ export async function executeReadOnlyTool(
         return { resultText, card };
       }
 
-      const result = await executeAnyToolCall(
-        toolCall,
+      const executor = runtime ?? new WebToolExecutionRuntime();
+      const result = (await executor.execute(toolCall, {
         allowedRepo,
         sandboxId,
-        false,
-        undefined,
-        activeProvider,
+        isMainProtected: false,
+        activeProvider: activeProvider,
         activeModel,
-        hooks,
-        DEFAULT_APPROVAL_GATES,
-        capabilityLedger,
-      );
+        hooks: hooks,
+        approvalGates: DEFAULT_APPROVAL_GATES,
+        capabilityLedger: capabilityLedger,
+      })) as import('@/types').ToolExecutionResult;
       resultText = result.text;
       const resultCard = result.card;
 

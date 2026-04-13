@@ -10,29 +10,19 @@
 import type {
   ToolExecutionResult,
   AcceptanceCriterion,
-  StructuredToolError,
-  ToolHookContext,
   CoderDelegationArgs,
   ExplorerDelegationArgs,
   TaskGraphArgs,
 } from '@/types';
-import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './tool-hooks';
+import { type ToolHookRegistry } from './tool-hooks';
 import type { ApprovalGateRegistry } from './approval-gates';
-import { detectToolCall, executeToolCall, type ToolCall } from './github-tools';
-import {
-  detectSandboxToolCall,
-  executeSandboxToolCall,
-  type SandboxToolCall,
-} from './sandbox-tools';
+import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
+import { detectToolCall, type ToolCall } from './github-tools';
+import { detectSandboxToolCall, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
-import {
-  detectWebSearchToolCall,
-  executeWebSearch,
-  type WebSearchToolCall,
-} from './web-search-tools';
+import { detectWebSearchToolCall, type WebSearchToolCall } from './web-search-tools';
 import { detectAskUserToolCall, type AskUserToolCall } from './ask-user-tools';
-import { getActiveProvider, type ActiveProvider } from './orchestrator';
-import { execInSandbox } from './sandbox-client';
+import { type ActiveProvider } from './orchestrator';
 import { ALL_CAPABILITIES, type Capability } from './capabilities';
 import { asRecord, detectToolFromText, extractBareToolJsonObjects } from './utils';
 import {
@@ -269,44 +259,6 @@ export type AnyToolCall =
   | { source: 'web-search'; call: WebSearchToolCall }
   | { source: 'ask-user'; call: AskUserToolCall };
 
-function getHookToolName(toolCall: AnyToolCall): string {
-  return toolCall.call.tool;
-}
-
-function getHookToolArgs(toolCall: AnyToolCall): Record<string, unknown> {
-  switch (toolCall.source) {
-    case 'github':
-    case 'sandbox':
-    case 'delegate':
-    case 'web-search':
-    case 'ask-user':
-      return { ...toolCall.call.args };
-    case 'scratchpad':
-      return toolCall.call.content ? { content: toolCall.call.content } : {};
-    default:
-      return {};
-  }
-}
-
-function applyHookToolArgs(toolCall: AnyToolCall, modifiedArgs: Record<string, unknown>): void {
-  switch (toolCall.source) {
-    case 'github':
-    case 'sandbox':
-    case 'delegate':
-    case 'web-search':
-    case 'ask-user':
-      Object.assign(toolCall.call.args, modifiedArgs);
-      return;
-    case 'scratchpad':
-      if (typeof modifiedArgs.content === 'string') {
-        toolCall.call.content = modifiedArgs.content;
-      }
-      return;
-    default:
-      return;
-  }
-}
-
 /**
  * Scan assistant output for any tool call (GitHub, Sandbox, Scratchpad, or delegation).
  * Returns the first match, or null if no tool call is detected.
@@ -344,24 +296,6 @@ export function detectAnyToolCall(text: string): AnyToolCall | null {
   return null;
 }
 
-/** Tools that modify the main branch (commit/push). Blocked when Protect Main is active. */
-const PROTECTED_MAIN_TOOLS = new Set(['sandbox_prepare_commit', 'sandbox_push']);
-
-/**
- * Check the current git branch in the sandbox. Returns the branch name or null on error.
- */
-async function getSandboxBranch(sandboxId: string): Promise<string | null> {
-  try {
-    const result = await execInSandbox(sandboxId, 'cd /workspace && git branch --show-current');
-    if (result.exitCode === 0 && result.stdout?.trim()) {
-      return result.stdout.trim();
-    }
-  } catch {
-    // Best-effort — fail-safe (return null → will block)
-  }
-  return null;
-}
-
 /**
  * Execute a detected tool call through the appropriate handler.
  *
@@ -371,6 +305,8 @@ async function getSandboxBranch(sandboxId: string): Promise<string | null> {
  * @param isMainProtected — when true, commit/push tools on the default branch are blocked.
  * @param defaultBranch — the repo's default branch name (e.g. 'main', 'master').
  */
+import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
+
 export async function executeAnyToolCall(
   toolCall: AnyToolCall,
   allowedRepo: string,
@@ -382,188 +318,21 @@ export async function executeAnyToolCall(
   hooks?: ToolHookRegistry,
   approvalGates?: ApprovalGateRegistry,
   capabilityLedger?: import('./capabilities').CapabilityLedger,
-  // Phase 4 seam — set by daemon adapter in Phase 6; unset in Web chat-loop.
   approvalCallback?: (toolName: string, reason: string, recoveryPath: string) => Promise<boolean>,
 ): Promise<ToolExecutionResult> {
-  const toolName = getHookToolName(toolCall);
-  const toolArgs = getHookToolArgs(toolCall);
-  const hookContext: ToolHookContext = {
-    sandboxId,
+  const runtime = new WebToolExecutionRuntime();
+  return runtime.execute(toolCall, {
     allowedRepo,
-    activeProvider,
+    sandboxId,
+    isMainProtected: isMainProtected ?? false,
+    defaultBranch,
+    activeProvider: activeProvider,
     activeModel,
+    hooks,
+    approvalGates,
     capabilityLedger,
-  };
-
-  try {
-    // --- Pre-hooks evaluation ---
-    if (hooks && hooks.pre.length > 0) {
-      const preResult = await evaluatePreHooks(hooks, toolName, toolArgs, hookContext);
-
-      if (preResult?.decision === 'deny') {
-        const result: ToolExecutionResult = {
-          text: `[Tool Blocked] ${preResult.reason || 'Blocked by pre-execution hook.'}`,
-        };
-        return result;
-      }
-
-      // Apply modified args if a hook rewrote them
-      if (preResult?.modifiedArgs) {
-        Object.assign(toolArgs, preResult.modifiedArgs);
-        applyHookToolArgs(toolCall, preResult.modifiedArgs);
-      }
-    }
-
-    // --- Approval gate evaluation ---
-    if (approvalGates) {
-      const gateResult = await approvalGates.evaluate(toolName, toolArgs, hookContext);
-      if (gateResult) {
-        if (gateResult.decision === 'blocked') {
-          const err: StructuredToolError = {
-            type: 'APPROVAL_GATE_BLOCKED',
-            retryable: false,
-            message: gateResult.reason,
-            detail: gateResult.recoveryPath,
-          };
-          return {
-            text: `[Tool Blocked — ${toolName}] ${gateResult.reason}\n\nRecovery: ${gateResult.recoveryPath}`,
-            structuredError: err,
-          };
-        }
-        if (gateResult.decision === 'ask_user') {
-          if (approvalCallback) {
-            const approved = await approvalCallback(
-              toolName,
-              gateResult.reason,
-              gateResult.recoveryPath,
-            );
-            if (!approved) {
-              return {
-                text: `[Approval Denied — ${toolName}] User denied approval.\n\nReason: ${gateResult.reason}`,
-              };
-            }
-            // Approved — fall through to normal tool execution below.
-          } else {
-            return {
-              text: `[Approval Required — ${toolName}] This action requires explicit user approval.\n\nReason: ${gateResult.reason}\n\nUse ask_user to request permission before proceeding. Explain what you want to do and why.\n\nRecovery: ${gateResult.recoveryPath}`,
-              structuredError: {
-                type: 'APPROVAL_GATE_BLOCKED',
-                retryable: true,
-                message: gateResult.reason,
-                detail: `Use ask_user to get approval. ${gateResult.recoveryPath}`,
-              },
-            };
-          }
-        }
-      }
-    }
-
-    // Enforce Protect Main: block commit/push tools when on the default branch
-    if (
-      isMainProtected &&
-      toolCall.source === 'sandbox' &&
-      PROTECTED_MAIN_TOOLS.has(toolCall.call.tool) &&
-      sandboxId
-    ) {
-      const currentBranch = await getSandboxBranch(sandboxId);
-      const mainBranches = new Set(['main', 'master']);
-      if (defaultBranch) mainBranches.add(defaultBranch);
-      // Block if we can't determine the branch (fail-safe) or if we're on the default branch
-      if (!currentBranch || mainBranches.has(currentBranch)) {
-        return {
-          text: `[Tool Error] Protect Main is enabled. Commits and pushes to the main/default branch are blocked. Create a new branch first (e.g. sandbox_exec with "git checkout -b feature/my-change"), then retry.`,
-        };
-      }
-    }
-
-    // Execute through the appropriate handler
-    let result: ToolExecutionResult;
-
-    switch (toolCall.source) {
-      case 'github':
-        result = await executeToolCall(toolCall.call, allowedRepo);
-        break;
-
-      case 'sandbox':
-        if (!sandboxId) {
-          const err: StructuredToolError = {
-            type: 'SANDBOX_UNREACHABLE',
-            retryable: true,
-            message: 'No active sandbox session',
-            detail: `Attempted tool: ${toolCall.call.tool}`,
-          };
-          result = {
-            text: `[Tool Error] No active sandbox. The sandbox may still be starting — wait a moment and retry. If this persists, the user needs to start a sandbox from the UI.\nerror_type: ${err.type}\nretryable: ${err.retryable}`,
-            structuredError: err,
-          };
-          break;
-        }
-        result = await executeSandboxToolCall(toolCall.call, sandboxId, {
-          auditorProviderOverride: activeProvider,
-          auditorModelOverride: activeModel,
-        });
-        break;
-
-      case 'delegate':
-        result = { text: '[Tool Error] Delegation must be handled by the chat hook.' };
-        break;
-
-      case 'scratchpad':
-        result = { text: '[Tool Error] Scratchpad must be handled by the chat hook.' };
-        break;
-
-      case 'web-search': {
-        const provider = activeProvider || getActiveProvider();
-        result = await executeWebSearch(toolCall.call.args.query, provider);
-        break;
-      }
-
-      case 'ask-user':
-        result = {
-          text: '[Tool Result] Question sent to user. The system will wait for their response.',
-          card: { type: 'ask-user', data: toolCall.call.args },
-        };
-        break;
-
-      default:
-        result = { text: '[Tool Error] Unknown tool source.' };
-    }
-
-    // --- Record capability usage ---
-    if (capabilityLedger) {
-      capabilityLedger.recordToolUse(toolName);
-    }
-
-    // --- Post-hooks evaluation ---
-    if (hooks && hooks.post.length > 0) {
-      const postResult = await evaluatePostHooks(hooks, toolName, toolArgs, result, hookContext);
-
-      if (postResult?.resultOverride) {
-        result = { ...result, text: postResult.resultOverride };
-      }
-      // systemMessage is returned to the caller for injection into the conversation
-      if (postResult?.systemMessage) {
-        result = { ...result, text: `${result.text}\n\n[Hook] ${postResult.systemMessage}` };
-      }
-      // Policy actions: inject/halt flow through ToolExecutionResult to the caller
-      if (postResult?.action === 'inject' && postResult.injectMessage) {
-        result = { ...result, postHookInject: postResult.injectMessage };
-      }
-      if (postResult?.action === 'halt' && postResult.haltSummary) {
-        result = { ...result, postHookHalt: postResult.haltSummary };
-      }
-    }
-
-    return result;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const structuredError: StructuredToolError = {
-      type: 'UNKNOWN',
-      retryable: true,
-      message: `Unexpected error executing ${toolName}: ${message}`,
-    };
-    return { text: `[Tool Error] ${structuredError.message}`, structuredError };
-  }
+    approvalCallback,
+  }) as Promise<ToolExecutionResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -753,4 +522,3 @@ function detectDelegationTool(text: string): AnyToolCall | null {
     return null;
   });
 }
-

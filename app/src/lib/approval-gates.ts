@@ -15,7 +15,7 @@ import type {
   ToolHookContext,
   ApprovalGateDecision,
 } from '@/types';
-import { getApprovalMode } from './approval-mode';
+import { getApprovalMode, type ApprovalMode } from './approval-mode';
 import { getToolCapabilities, CAPABILITY_LABELS, type Capability } from './capabilities';
 
 // ---------------------------------------------------------------------------
@@ -82,12 +82,18 @@ export class ApprovalGateRegistry {
 // Default rules factory
 // ---------------------------------------------------------------------------
 
+export interface ApprovalGateOptions {
+  /** Provide a dynamic mode. Defaults to getApprovalMode() reading safeStorage. */
+  modeProvider?: () => ApprovalMode;
+}
+
 /**
  * Creates an ApprovalGateRegistry pre-loaded with the standard gates.
  * Callers can register additional rules after creation.
  */
-export function createDefaultApprovalGates(): ApprovalGateRegistry {
+export function createDefaultApprovalGates(options?: ApprovalGateOptions): ApprovalGateRegistry {
   const registry = new ApprovalGateRegistry();
+  const getMode = options?.modeProvider ?? getApprovalMode;
 
   // --- destructive-sandbox-exec ---
   // Blocks destructive shell commands unless approval mode permits them.
@@ -104,7 +110,7 @@ export function createDefaultApprovalGates(): ApprovalGateRegistry {
       void toolName;
       void context;
       if (!isDestructiveCommand(args.command)) return 'allowed';
-      const mode = getApprovalMode();
+      const mode = getMode();
       if (mode === 'full-auto' || mode === 'autonomous') return 'allowed';
       return 'ask_user';
     },
@@ -129,7 +135,7 @@ export function createDefaultApprovalGates(): ApprovalGateRegistry {
       void toolName;
       void context;
       if (args.allowDirectGit !== true) return 'allowed';
-      const mode = getApprovalMode();
+      const mode = getMode();
       if (mode === 'full-auto' || mode === 'autonomous') return 'allowed';
       return 'ask_user';
     },
@@ -154,7 +160,7 @@ export function createDefaultApprovalGates(): ApprovalGateRegistry {
       void toolName;
       void args;
       void context;
-      const mode = getApprovalMode();
+      const mode = getMode();
       if (mode === 'full-auto' || mode === 'autonomous') return 'allowed';
       return 'ask_user';
     },
