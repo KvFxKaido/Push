@@ -19,6 +19,8 @@ import {
   collectOrphanedDelegations,
   formatDelegationInterruptedNote,
   broadcastEvent,
+  wrapCliDetectAllToolCalls,
+  makeDaemonCoderToolExec,
   __getActiveSessionForTesting,
   __evictActiveSessionForTesting,
   __setDelegateExplorerHooksForTesting,
@@ -1437,7 +1439,7 @@ describe('submit_task_graph', () => {
     }
   });
 
-  it('executes a coder node through the scaffold kernel and marks the graph successful', async () => {
+  it('executes a coder node through the real daemon tool executor and marks the graph successful', async () => {
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-submit-graph-coder-'));
     process.env.PUSH_SESSION_DIR = tmpRoot;
@@ -2139,7 +2141,7 @@ describe('delegate_coder', () => {
     }
   });
 
-  it('runs the lib Coder kernel end-to-end with a real streamFn adapter and persists an inconclusive outcome', async () => {
+  it('runs the lib Coder kernel end-to-end with real streamFn + real tool executor and persists a complete outcome', async () => {
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-coder-happy-'));
     process.env.PUSH_SESSION_DIR = tmpRoot;
@@ -2220,24 +2222,25 @@ describe('delegate_coder', () => {
       assert.equal(completed.payload.agent, 'coder');
       assert.ok(completed.payload.delegationOutcome);
       assert.equal(completed.payload.delegationOutcome.agent, 'coder');
-      assert.equal(completed.payload.delegationOutcome.status, 'inconclusive');
-
-      // missingRequirements should list the Coder tool executor so a
-      // future real-tool-exec slice has a structured pointer to the gap.
-      const missing = completed.payload.delegationOutcome.missingRequirements;
-      assert.ok(Array.isArray(missing));
-      assert.ok(missing.length >= 1);
-      assert.ok(
-        missing.some((entry) => /coder tool executor/i.test(entry)),
-        `expected coder tool executor requirement, got ${JSON.stringify(missing)}`,
-      );
-      assert.ok(completed.payload.delegationOutcome.nextRequiredAction);
+      // With the real daemon tool executor wired (replacing the
+      // scaffold stub that always returned `inconclusive`), a clean
+      // kernel return now lands as `'complete'`. Structural failures
+      // still fall through to `'inconclusive'` via the caller's
+      // catch block, covered by a separate test if needed.
+      assert.equal(completed.payload.delegationOutcome.status, 'complete');
+      // The real executor clears `missingRequirements` because the
+      // kernel is no longer running against stubs. If the model didn't
+      // emit any tool calls (the mock provider just returns plain
+      // tokens), the outcome is still 'complete' — it just has no
+      // evidence or checks.
+      assert.deepEqual(completed.payload.delegationOutcome.missingRequirements, []);
+      assert.equal(completed.payload.delegationOutcome.nextRequiredAction, null);
 
       const loaded = await loadSessionState(sessionId);
       assert.ok(Array.isArray(loaded.delegationOutcomes));
       const record = loaded.delegationOutcomes.find((r) => r.subagentId === subagentId);
       assert.ok(record, 'expected delegationOutcome record in session state');
-      assert.equal(record.outcome.status, 'inconclusive');
+      assert.equal(record.outcome.status, 'complete');
       assert.equal(record.outcome.agent, 'coder');
 
       const broadcastStarted = broadcasted.find(
@@ -2348,6 +2351,213 @@ describe('delegate_coder', () => {
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── Daemon Coder tool executor (direct unit tests) ────────────
+
+// Rather than drive `runCoderAgent` through a multi-round mock provider
+// to test the tool executor end-to-end (which would require either a
+// stateful mock that emits a tool call on round 1 and plain text on
+// round 2, or tolerating the kernel's own round cap), these tests call
+// the exported `makeDaemonCoderToolExec` and `wrapCliDetectAllToolCalls`
+// helpers directly. That proves the two load-bearing pieces — the CLI
+// detector → lib `DetectedToolCalls` shape transform, and the closure
+// that routes the kernel's `toolExec` slot through `executeToolCall`
+// from `cli/tools.ts` — without coupling the test to kernel-loop
+// internals that are already covered elsewhere.
+describe('wrapCliDetectAllToolCalls', () => {
+  it('classifies read_file as read-only', () => {
+    const text = [
+      '```json',
+      JSON.stringify({ tool: 'read_file', args: { path: 'a.txt' } }),
+      '```',
+    ].join('\n');
+    const detected = wrapCliDetectAllToolCalls(text);
+    assert.equal(detected.readOnly.length, 1);
+    assert.equal(detected.readOnly[0].source, 'cli');
+    assert.equal(detected.readOnly[0].call.tool, 'read_file');
+    assert.equal(detected.mutating, null);
+    assert.deepEqual(detected.extraMutations, []);
+  });
+
+  it('classifies write_file as mutating', () => {
+    const text = [
+      '```json',
+      JSON.stringify({ tool: 'write_file', args: { path: 'a.txt', content: 'x' } }),
+      '```',
+    ].join('\n');
+    const detected = wrapCliDetectAllToolCalls(text);
+    assert.deepEqual(detected.readOnly, []);
+    assert.ok(detected.mutating);
+    assert.equal(detected.mutating.source, 'cli');
+    assert.equal(detected.mutating.call.tool, 'write_file');
+    assert.deepEqual(detected.extraMutations, []);
+  });
+
+  it('puts first mutation in `mutating` and subsequent mutations in `extraMutations`', () => {
+    const write1 = JSON.stringify({ tool: 'write_file', args: { path: 'a.txt', content: '1' } });
+    const write2 = JSON.stringify({ tool: 'write_file', args: { path: 'b.txt', content: '2' } });
+    const text = `\`\`\`json\n${write1}\n\`\`\`\n\n\`\`\`json\n${write2}\n\`\`\``;
+    const detected = wrapCliDetectAllToolCalls(text);
+    assert.deepEqual(detected.readOnly, []);
+    assert.ok(detected.mutating);
+    assert.equal(detected.mutating.call.tool, 'write_file');
+    assert.equal(detected.mutating.call.args.path, 'a.txt');
+    assert.equal(detected.extraMutations.length, 1);
+    assert.equal(detected.extraMutations[0].call.args.path, 'b.txt');
+  });
+
+  it('collects parallel reads and a trailing mutation', () => {
+    const read1 = JSON.stringify({ tool: 'read_file', args: { path: 'a.txt' } });
+    const read2 = JSON.stringify({ tool: 'list_dir', args: { path: '.' } });
+    const write = JSON.stringify({ tool: 'write_file', args: { path: 'c.txt', content: '3' } });
+    const text = `\`\`\`json\n${read1}\n\`\`\`\n\`\`\`json\n${read2}\n\`\`\`\n\`\`\`json\n${write}\n\`\`\``;
+    const detected = wrapCliDetectAllToolCalls(text);
+    assert.equal(detected.readOnly.length, 2);
+    assert.equal(detected.readOnly[0].call.tool, 'read_file');
+    assert.equal(detected.readOnly[1].call.tool, 'list_dir');
+    assert.ok(detected.mutating);
+    assert.equal(detected.mutating.call.tool, 'write_file');
+    assert.deepEqual(detected.extraMutations, []);
+  });
+
+  it('returns empty slots when text has no tool calls', () => {
+    const detected = wrapCliDetectAllToolCalls('just some prose with no fenced json at all.');
+    assert.deepEqual(detected.readOnly, []);
+    assert.equal(detected.mutating, null);
+    assert.deepEqual(detected.extraMutations, []);
+  });
+});
+
+describe('makeDaemonCoderToolExec', () => {
+  it('reads a real file off disk and returns an executed result', async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-coder-exec-read-'));
+    try {
+      const FILE_CONTENT = 'DAEMON_CODER_REAL_READ_SENTINEL_0x1F';
+      await fs.writeFile(path.join(workspaceRoot, 'fixture.txt'), FILE_CONTENT, 'utf8');
+
+      // Fake session entry shape — we only need `state.cwd` for the
+      // tool executor closure, and a `pendingApproval` slot that
+      // buildApprovalFn will attach to if any high-risk exec is
+      // attempted (not triggered by `read_file`).
+      const entry = { state: { cwd: workspaceRoot, eventSeq: 0 } };
+      const abortController = new AbortController();
+
+      const toolExec = makeDaemonCoderToolExec({
+        sessionId: 'sess_test_coder_read_fake1',
+        entry,
+        runId: 'run_test',
+        signal: abortController.signal,
+      });
+
+      const result = await toolExec(
+        { tool: 'read_file', args: { path: 'fixture.txt' } },
+        { round: 1 },
+      );
+
+      assert.equal(result.kind, 'executed');
+      assert.ok(
+        result.resultText.includes(FILE_CONTENT),
+        `expected sentinel in result, got ${JSON.stringify(result.resultText)}`,
+      );
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('writes a real file to disk and returns an executed result', async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-coder-exec-write-'));
+    try {
+      const FILE_CONTENT = 'WRITTEN_BY_DAEMON_CODER_0xBEEF';
+      const entry = { state: { cwd: workspaceRoot, eventSeq: 0 } };
+      const abortController = new AbortController();
+
+      const toolExec = makeDaemonCoderToolExec({
+        sessionId: 'sess_test_coder_write_fake',
+        entry,
+        runId: 'run_test',
+        signal: abortController.signal,
+      });
+
+      const result = await toolExec(
+        { tool: 'write_file', args: { path: 'output.txt', content: FILE_CONTENT } },
+        { round: 1 },
+      );
+
+      assert.equal(result.kind, 'executed');
+
+      // The real assertion: the file landed on disk. If the stub is
+      // still wired, this read fails.
+      const written = await fs.readFile(path.join(workspaceRoot, 'output.txt'), 'utf8');
+      assert.equal(written, FILE_CONTENT);
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('lists a directory', async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-coder-exec-list-'));
+    try {
+      await fs.writeFile(path.join(workspaceRoot, 'a.txt'), 'a', 'utf8');
+      await fs.writeFile(path.join(workspaceRoot, 'b.txt'), 'b', 'utf8');
+      const entry = { state: { cwd: workspaceRoot, eventSeq: 0 } };
+      const abortController = new AbortController();
+
+      const toolExec = makeDaemonCoderToolExec({
+        sessionId: 'sess_test_coder_list_fake',
+        entry,
+        runId: 'run_test',
+        signal: abortController.signal,
+      });
+
+      const result = await toolExec({ tool: 'list_dir', args: { path: '.' } }, { round: 1 });
+      assert.equal(result.kind, 'executed');
+      assert.ok(
+        result.resultText.includes('a.txt') && result.resultText.includes('b.txt'),
+        `expected both files in list output, got ${JSON.stringify(result.resultText)}`,
+      );
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns an executed result with an errorType when the tool fails', async () => {
+    // Force an error by trying to read a file that doesn't exist.
+    // `executeToolCall` returns `{ ok: false, structuredError: {...} }`;
+    // the wrapper translates that into `{ kind: 'executed', resultText,
+    // errorType }` so the kernel's mutation-failure tracker can count
+    // repeated failures. The `errorType` must be present and non-empty.
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-coder-exec-err-'));
+    try {
+      const entry = { state: { cwd: workspaceRoot, eventSeq: 0 } };
+      const abortController = new AbortController();
+
+      const toolExec = makeDaemonCoderToolExec({
+        sessionId: 'sess_test_coder_err_fake',
+        entry,
+        runId: 'run_test',
+        signal: abortController.signal,
+      });
+
+      const result = await toolExec(
+        { tool: 'read_file', args: { path: 'does-not-exist.txt' } },
+        { round: 1 },
+      );
+
+      assert.equal(result.kind, 'executed');
+      assert.equal(typeof result.resultText, 'string');
+      // `errorType` is what feeds the mutation-failure tracker; for a
+      // missing file, `executeToolCall` sets a structured error code.
+      // Assert it's a non-empty string (exact code is an impl detail
+      // of cli/tools.ts — we just pin "something is set").
+      assert.ok(
+        typeof result.errorType === 'string' && result.errorType.length > 0,
+        `expected non-empty errorType for missing file, got ${JSON.stringify(result.errorType)}`,
+      );
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
     }
   });
 });

@@ -33,6 +33,13 @@ import { randomBytes } from 'node:crypto';
 import { PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
 import { createDaemonProviderStream } from './daemon-provider-stream.js';
 import {
+  executeToolCall,
+  detectAllToolCalls as cliDetectAllToolCalls,
+  detectToolCall as cliDetectToolCall,
+  READ_ONLY_TOOLS,
+  TOOL_PROTOCOL,
+} from './tools.js';
+import {
   makeSessionId,
   makeRunId,
   saveSessionState,
@@ -65,18 +72,21 @@ const CAPABILITIES = [
   'role_routing',
   'delegation_explorer_v1',
   'delegation_reviewer_v1',
-  // `delegation_coder_v1`: `delegate_coder` RPC + task-graph coder nodes run
-  // through `runCoderAgent` with a stubbed tool executor. LLM streams real
-  // tokens via the daemon provider adapter, but any tool call the model
-  // emits gets a canned "not yet wired" result. Outcomes are marked
-  // `inconclusive` with a `missingRequirements` entry; flipping
-  // `multi_agent` still requires a real Coder tool executor.
+  // `delegation_coder_v1`: `delegate_coder` RPC + task-graph coder nodes
+  // run through `runCoderAgent` with a REAL daemon tool executor
+  // (`makeDaemonCoderToolExec`) that routes through `executeToolCall`
+  // from `cli/tools.ts` with approval gating via `buildApprovalFn`.
+  // Coder delegations now actually read/write files and run shell
+  // commands under approval gating; outcomes land as `'complete'` on
+  // clean kernel returns. Advertising `multi_agent` still waits on
+  // the real Explorer tool executor (same pattern, different shape).
   'delegation_coder_v1',
-  // v2 task-graph execution: submit_task_graph accepts graphs, runs them
-  // through lib/task-graph.executeTaskGraph, and streams task_graph.* events.
-  // Both explorer and coder nodes now route through the scaffold path
-  // (streaming LLM with stubbed tool executor); coder nodes previously
-  // failed fast.
+  // v2 task-graph execution: submit_task_graph accepts graphs, runs
+  // them through lib/task-graph.executeTaskGraph, and streams
+  // task_graph.* events. Coder nodes route through the real daemon
+  // tool executor (see `delegation_coder_v1` above); explorer nodes
+  // still run through the scaffold stub executor until the Explorer
+  // real tool executor ships.
   'task_graph_v1',
   // `event_v2`: the daemon emits raw `subagent.*` / `task_graph.*` envelopes
   // to clients that advertise this cap back in `attach_session.capabilities`.
@@ -269,7 +279,15 @@ function buildApprovalFn(sessionId, entry, runId) {
         reject(new Error('Approval timed out'));
       }, APPROVAL_TIMEOUT_MS);
 
-      entry.pendingApproval = { approvalId, resolve, reject, timer };
+      // Store the runId alongside the approvalId so `handleSubmitApproval`
+      // can emit `approval_received` on the SAME runId we emitted
+      // `approval_required` on. Without this, delegation + task-graph
+      // approvals mismatched: the required event fired on the child
+      // runId while the received event fell back to `entry.activeRunId`
+      // (which is the parent for delegations, and null for task-graph
+      // nodes), making client-side correlation impossible (codex P1
+      // on PR #282).
+      entry.pendingApproval = { approvalId, resolve, reject, timer, runId };
     });
 
     const approvalPayload = {
@@ -878,20 +896,33 @@ async function handleSubmitApproval(req) {
   entry.pendingApproval = null;
   pending.resolve(decision);
 
-  // Emit approval_received to all clients
+  // Emit approval_received to all clients on the SAME runId we used
+  // for `approval_required` (stored alongside in `buildApprovalFn`).
+  // Falling back to `entry.activeRunId` — which is the parent run for
+  // a main loop, but null for delegations and task-graph nodes —
+  // caused the received event to mismatch the required event for
+  // anything routed through `delegate_coder` /
+  // `handleSubmitTaskGraph`, making client-side correlation
+  // impossible.
+  const approvalRunId = typeof pending.runId === 'string' ? pending.runId : entry.activeRunId;
   const eventPayload = { approvalId, decision, by: 'client' };
-  await appendSessionEvent(entry.state, 'approval_received', eventPayload, entry.activeRunId);
-  // Build envelope after appendSessionEvent so seq matches the persisted event
-  broadcastEvent(sessionId, {
+  await appendSessionEvent(entry.state, 'approval_received', eventPayload, approvalRunId);
+  // Build envelope after appendSessionEvent so seq matches the persisted event.
+  // Omit `runId` when falsy (protocol-schema strict mode rejects
+  // `runId: null` on wire envelopes — see PR #276 review).
+  const envelope = {
     v: PROTOCOL_VERSION,
     kind: 'event',
     sessionId,
-    runId: entry.activeRunId,
     seq: entry.state.eventSeq,
     ts: Date.now(),
     type: 'approval_received',
     payload: eventPayload,
-  });
+  };
+  if (typeof approvalRunId === 'string' && approvalRunId.length > 0) {
+    envelope.runId = approvalRunId;
+  }
+  broadcastEvent(sessionId, envelope);
 
   return makeResponse(req.requestId, 'submit_approval', sessionId, true, {
     accepted: true,
@@ -1094,6 +1125,144 @@ function resolveRoleRouting(entry, role) {
   return { provider, model };
 }
 
+// ─── Daemon Coder tool executor (real lib-kernel integration) ──
+
+/**
+ * Wrap a raw CLI tool call (`{ tool, args }`) into the nested shape
+ * the lib Coder kernel reads: `{ call: { tool, args } }`. The kernel
+ * does a structural cast and reaches for `toolCall.call.tool` /
+ * `toolCall.call.args` in both the parallel-reads and single-call
+ * branches (`lib/coder-agent.ts` around lines 1437 and 1760). If we
+ * hand the kernel a raw flat call, accessing `.call.tool` throws a
+ * runtime TypeError and the delegation fails on the first tool turn
+ * (codex P1 feedback on PR #282). The `source: 'cli'` tag is a hint
+ * to future log inspectors but the kernel itself ignores it.
+ */
+function wrapCall(call) {
+  return { source: 'cli', call };
+}
+
+/**
+ * Wrap `cli/tools.ts`'s flat `{ calls, malformed }` detector output into
+ * the `DetectedToolCalls` shape the lib Coder kernel expects
+ * (`{ readOnly, mutating, extraMutations }` from
+ * `lib/deep-reviewer-agent.ts`). `READ_ONLY_TOOLS` in `cli/tools.ts` is
+ * the source of truth for which tool names are read-only; everything
+ * else is treated as mutating. The first mutating call slots into
+ * `mutating`; any subsequent mutating calls fall into `extraMutations`
+ * so the kernel can surface a "only one mutating call per turn" warning.
+ *
+ * Each slot holds a kernel-shaped `{ call: { tool, args } }` wrapper
+ * (see `wrapCall`) — NOT the raw CLI call shape — so the kernel's
+ * structural cast `toolCall.call.tool` resolves correctly.
+ *
+ * Exported so unit tests can assert the classification directly without
+ * having to drive a full kernel loop through a mock provider.
+ */
+export function wrapCliDetectAllToolCalls(text) {
+  const { calls } = cliDetectAllToolCalls(text);
+  const readOnly = [];
+  const extraMutations = [];
+  let mutating = null;
+  for (const call of calls) {
+    const wrapped = wrapCall(call);
+    if (READ_ONLY_TOOLS.has(call.tool)) {
+      readOnly.push(wrapped);
+      continue;
+    }
+    if (mutating === null) {
+      mutating = wrapped;
+    } else {
+      extraMutations.push(wrapped);
+    }
+  }
+  return { readOnly, mutating, extraMutations };
+}
+
+/**
+ * Wraps the CLI single-call detector into the kernel's nested shape.
+ * Returns `null` when no tool call is present, matching the kernel's
+ * `detectAnyToolCall` slot contract.
+ */
+function wrapCliDetectAnyToolCall(text) {
+  const call = cliDetectToolCall(text);
+  if (!call) return null;
+  return wrapCall(call);
+}
+
+/**
+ * Build a `CoderToolExecResult`-shaped tool executor bound to a running
+ * delegation. The closure runs `executeToolCall` from `cli/tools.ts`
+ * (the same production tool executor the non-delegated CLI engine
+ * loop uses at `cli/engine.ts:runAssistantLoop`) against the session's
+ * `state.cwd`, with approval gating routed through `buildApprovalFn`
+ * so any high-risk exec emits an `approval_required` event on the
+ * child `runId` and blocks on a `submit_approval` RPC.
+ *
+ * The result is translated from CLI's
+ * `{ ok, text, meta?, structuredError? }` shape to lib's discriminated
+ * union (`{ kind: 'executed', resultText, errorType? } | { kind: 'denied', reason }`).
+ * `errorType` feeds the kernel's mutation-failure tracker
+ * (`lib/coder-agent.ts` guards against repeated same-tool+file failures).
+ *
+ * Non-goals: no sandbox layer (runs directly against `state.cwd`, same
+ * model as the CLI engine), no OpenTelemetry spans, no
+ * `CapabilityLedger` gating, no `TurnPolicyRegistry` (all Web-side).
+ * Pushd is an RPC transport + approval gate, nothing more.
+ */
+export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
+  const approvalFn = buildApprovalFn(sessionId, entry, runId);
+  const workspaceRoot = entry.state.cwd;
+  return async (toolCall, _execCtx) => {
+    // The kernel passes the nested wrapper we returned from
+    // `wrapCliDetectAllToolCalls` / `wrapCliDetectAnyToolCall` — a
+    // `{ source, call: { tool, args } }` shape. Unwrap once to get the
+    // flat `{ tool, args }` form `executeToolCall` expects. If a
+    // caller somehow hands us a bare CLI call (e.g. tests that call
+    // the executor directly), fall through and pass it as-is.
+    const rawCall =
+      toolCall && typeof toolCall === 'object' && toolCall.call ? toolCall.call : toolCall;
+    try {
+      const result = await executeToolCall(rawCall, workspaceRoot, {
+        approvalFn,
+        signal,
+        // Daemon delegations are expected to run the full tool surface;
+        // the approval gate above keeps high-risk exec commands behind
+        // an explicit user decision. `execMode: 'auto'` mirrors the
+        // non-delegated CLI engine's default, which gates only the
+        // commands `isHighRiskCommand()` flags.
+        allowExec: true,
+        execMode: 'auto',
+      });
+      const resultText = typeof result?.text === 'string' ? result.text : '';
+      if (result && result.ok === true) {
+        return {
+          kind: 'executed',
+          resultText,
+        };
+      }
+      // Tool ran to completion but reported failure. Feed the opaque
+      // structured-error code into the kernel's mutation-failure
+      // tracker via `errorType` so repeated same-tool+file failures
+      // trigger the kernel's halt guard (`lib/coder-agent.ts`
+      // ~line 1407).
+      return {
+        kind: 'executed',
+        resultText,
+        errorType: result?.structuredError?.code,
+      };
+    } catch (err) {
+      // `executeToolCall` throwing is the rare exception path —
+      // approval-timeout, abort during exec, catastrophic I/O. Surface
+      // as a `denied` result so the kernel doesn't spin on the same
+      // call forever. The kernel injects the `reason` into the next
+      // user message so the model can react to it.
+      const message = err instanceof Error ? err.message : String(err);
+      return { kind: 'denied', reason: `daemon tool executor error: ${message}` };
+    }
+  };
+}
+
 /**
  * Scaffold-level Explorer invocation for task-graph nodes.
  *
@@ -1161,54 +1330,54 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
 }
 
 /**
- * Scaffold-level Coder invocation for task-graph nodes.
+ * Task-graph Coder node invocation — wires `runCoderAgent` from
+ * `lib/coder-agent.ts` to the real daemon tool executor.
  *
- * Mirrors `runScaffoldExplorerForTaskGraph` but calls `runCoderAgent` from
- * `lib/coder-agent.ts` instead. The LLM streams real tokens through
- * `createDaemonProviderStream`. In this scaffold path tool calls are NOT
- * detected or executed: `stubDetectAllToolCalls` always returns an empty
- * detection set and `stubDetectAnyToolCall` always returns null, so any
- * tool-call JSON the model emits passes through as ordinary model text
- * and `stubToolExec` is effectively dead code. `stubToolExec` is still
- * shaped as a valid `CoderToolExecResult` (`{ kind: 'denied', reason }`)
- * so that incrementally flipping one of the detectors to a real
- * implementation won't crash the kernel on its `result.kind` checks.
+ * Mirrors `runScaffoldExplorerForTaskGraph` structurally, but plugs in
+ * `makeDaemonCoderToolExec` (production tool surface + approval gating)
+ * and `wrapCliDetect*` (real detectors over `cli/tools.ts`) instead of
+ * stubs. The LLM streams real tokens, tool calls are detected, and
+ * `executeToolCall` runs them against `entry.state.cwd` — this is the
+ * full-fat daemon Coder path, not the scaffold it replaces.
  *
- * The resulting `DelegationOutcome` is marked `inconclusive` with a
- * `missingRequirements` entry pointing at this helper, so graph clients
- * see a structured "kernel reachable, tool executor still stubbed" signal
- * instead of the hard "fail fast" error previously emitted for coder nodes.
+ * Approval events from tool calls emit on the `parentRunId` passed in
+ * by `handleSubmitTaskGraph`, so a task-graph client that's attached
+ * to the session sees approval prompts routed through the parent run's
+ * stream (the task graph is part of the parent's work — this matches
+ * the semantic the synthetic-downgrade path relies on for v1 clients).
  *
- * Coder-specific option-shape differences from explorer (all filled with
- * null/empty defaults because the stub tool path doesn't touch them):
- *   - `sandboxId: ''`               — required string on the coder interface
- *   - `sandboxToolProtocol: ''`     — required string; prompt-builder block
- *   - `verificationPolicyBlock: null` — optional, no policy in scaffold mode
- *   - `approvalModeBlock: null`     — optional, no approval gating yet
+ * Coder-specific option fields that don't apply to a daemon run are
+ * filled with null/empty defaults so the kernel's branches short-circuit:
+ *   - `sandboxId: ''`               — no sandbox layer; runs against `cwd`
+ *   - `sandboxToolProtocol: ''`     — prompt block supplied by tool detectors
+ *   - `verificationPolicyBlock: null` — no daemon-side verification policy yet
+ *   - `approvalModeBlock: null`     — approval gating happens inside `toolExec`
  *
- * Acceptance criteria / harness overrides are deliberately omitted so the
- * kernel's defaults apply: no criteria to run, no context resets, no
- * enforced round cap beyond the kernel's own `DEFAULT_MAX_ROUNDS`.
+ * Acceptance criteria / harness overrides are omitted so the kernel's
+ * defaults apply (no criteria, no context resets, default round cap).
  */
-async function runScaffoldCoderForTaskGraph(sessionId, entry, node, signal) {
+async function runCoderForTaskGraph(sessionId, entry, node, parentRunId, signal) {
   const startedAt = Date.now();
   const { provider, model } = resolveRoleRouting(entry, 'coder');
-  const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
-  const stubDetectAllToolCalls = () => emptyDetection;
-  const stubDetectAnyToolCall = () => null;
-  // Defensive-shape stub: `CoderToolExecResult` is a discriminated union
-  // (`{ kind: 'executed', resultText, ... } | { kind: 'denied', reason }`)
-  // and the kernel inspects `result.kind` on every return. The stub
-  // detectors above guarantee this function is never reached today, but
-  // returning a shape-correct `denied` result keeps the scaffold safe
-  // under an incremental rollout where detection turns on before the
-  // real tool executor does.
-  const stubToolExec = async () => ({
-    kind: 'denied',
-    reason: '[pushd scaffold] daemon-side Coder tool execution is not yet wired',
-  });
-  const stubEvaluateAfterModel = async () => null;
   const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
+  // `parentRunId` can be null when `submit_task_graph` is called on a
+  // session with no active run AND no `parentRunId` payload override.
+  // `buildApprovalFn` would emit `approval_required` events with
+  // `runId: null` on the wire envelope, which violates the
+  // protocol-schema strict-mode rule that `runId` must be omitted or
+  // a non-empty string (codex P1 on PR #282). Mint a fresh child run
+  // id for the task-graph node in that case so approval events still
+  // carry a valid runId, even if no client is specifically listening
+  // for this execution's run.
+  const effectiveRunId =
+    typeof parentRunId === 'string' && parentRunId.trim().length > 0 ? parentRunId : makeRunId();
+  const toolExec = makeDaemonCoderToolExec({
+    sessionId,
+    entry,
+    runId: effectiveRunId,
+    signal,
+  });
+  const evaluateAfterModel = async () => null;
 
   const result = await runCoderAgent(
     {
@@ -1220,14 +1389,19 @@ async function runScaffoldCoderForTaskGraph(sessionId, entry, node, signal) {
       userProfile: null,
       taskPreamble: node.task,
       symbolSummary: null,
-      toolExec: stubToolExec,
-      detectAllToolCalls: stubDetectAllToolCalls,
-      detectAnyToolCall: stubDetectAnyToolCall,
+      toolExec,
+      detectAllToolCalls: wrapCliDetectAllToolCalls,
+      detectAnyToolCall: wrapCliDetectAnyToolCall,
       webSearchToolProtocol: '',
-      sandboxToolProtocol: '',
+      // `sandboxToolProtocol` is the tool-instruction block the kernel
+      // splices into its system prompt — without it the model has no
+      // guidance on what tool-call JSON to emit (codex P1 on PR #282).
+      // Feed in `TOOL_PROTOCOL` from `cli/tools.ts`, the same block the
+      // non-delegated CLI engine uses.
+      sandboxToolProtocol: TOOL_PROTOCOL,
       verificationPolicyBlock: null,
       approvalModeBlock: null,
-      evaluateAfterModel: stubEvaluateAfterModel,
+      evaluateAfterModel,
     },
     {
       onStatus: () => {},
@@ -1237,15 +1411,20 @@ async function runScaffoldCoderForTaskGraph(sessionId, entry, node, signal) {
 
   const delegationOutcome = {
     agent: 'coder',
-    status: 'inconclusive',
+    // Runs that return from `runCoderAgent` without throwing have made
+    // it through the kernel's loop. The kernel itself doesn't classify
+    // "complete vs incomplete"; that's a delegation-outcome concern.
+    // We default to 'complete' on a clean return — any structural
+    // failure (thrown error) lands in the catch block in the caller
+    // and marks the outcome 'inconclusive'. A richer classifier that
+    // inspects working memory + acceptance criteria is a follow-up.
+    status: 'complete',
     summary: result.summary,
     evidence: [],
     checks: [],
     gateVerdicts: [],
-    missingRequirements: [
-      'Daemon-side Coder tool executor (stubbed in runScaffoldCoderForTaskGraph)',
-    ],
-    nextRequiredAction: 'Wire a real daemon Coder tool executor before advertising multi_agent',
+    missingRequirements: [],
+    nextRequiredAction: null,
     rounds: result.rounds,
     checkpoints: result.checkpoints,
     elapsedMs: Date.now() - startedAt,
@@ -1450,7 +1629,7 @@ async function handleSubmitTaskGraph(req) {
         return runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal);
       }
       if (node.agent === 'coder') {
-        return runScaffoldCoderForTaskGraph(sessionId, entry, node, signal);
+        return runCoderForTaskGraph(sessionId, entry, node, parentRunId, signal);
       }
       throw new Error(`Unsupported task-graph agent: ${node.agent}`);
     };
@@ -2055,25 +2234,24 @@ async function handleDelegateExplorer(req) {
 /**
  * `delegate_coder` — daemon-side Coder launch.
  *
- * Mirrors `handleDelegateExplorer` exactly: resolves role routing, validates
- * input, mints ids, emits `subagent.started`, acks the RPC, and then runs
- * the lib Coder kernel in the background with a stubbed tool executor. The
- * LLM streams real tokens via `createDaemonProviderStream`. In this scaffold
- * path tool calls are NOT detected or executed — `stubDetectAllToolCalls`
- * returns an empty set and `stubDetectAnyToolCall` returns null, so tool-call
- * JSON the model emits passes through as ordinary model text and
- * `stubToolExec` is effectively dead code. The stub is still shaped as a
- * valid `CoderToolExecResult` (`{ kind: 'denied', reason }`) so an
- * incremental rollout that flips one detector on without the other won't
- * crash the kernel on its `result.kind` checks.
+ * Resolves role routing, validates input, mints ids, emits
+ * `subagent.started`, acks the RPC, and runs the lib Coder kernel in the
+ * background. The kernel consumes `makeDaemonCoderToolExec` (a real
+ * `executeToolCall`-backed tool executor from `cli/tools.ts`) and
+ * `wrapCliDetect*` (the production detectors from `cli/tools.ts`). LLM
+ * streams real tokens via `createDaemonProviderStream`; tool calls the
+ * model emits are parsed, classified into read-only / mutating by
+ * `READ_ONLY_TOOLS`, and executed against `entry.state.cwd` with
+ * approval gating routed through `buildApprovalFn` on `childRunId`. This
+ * is the full-fat daemon Coder path — no scaffolding, no stubs.
  *
  * Why a separate handler from `delegate_explorer` when the shapes are so
  * similar: the explorer kernel's option interface is narrower (no
- * `sandboxToolProtocol`, no approval/verification policy slots), and a
- * future slice that wires a real coder tool executor will need to diverge
- * further (sandbox integration, file ledger threading, checkpoint handling
- * via `onCheckpointRequest`). Forking now keeps the "scaffold → real" seam
- * clean for each role.
+ * `sandboxToolProtocol`, no approval/verification policy slots), and
+ * the coder kernel's `CoderToolExecResult` discriminated union has its
+ * own shape rules (`errorType` feeds the mutation-failure tracker,
+ * `policyPost` drives the kernel's halt guard). Explorer still runs
+ * through the scaffold executor — its real tool wiring is a follow-up.
  *
  * Provider / model resolution honours `entry.state.roleRouting.coder` —
  * set via `configure_role_routing` — and falls back to session defaults
@@ -2081,9 +2259,9 @@ async function handleDelegateExplorer(req) {
  * the `modelId` option on the kernel.
  *
  * Capability flag: `delegation_coder_v1`. Flipping `multi_agent` still
- * requires a real daemon-side Coder tool executor (filesystem ops,
- * approval binding, acceptance-criteria runner) — this handler only
- * proves the kernel is reachable and produces structured outcomes.
+ * needs (a) real explorer tool execution and (b) the v1 synthetic
+ * downgrade path — both are separate follow-up slices, not blockers for
+ * this handler.
  */
 async function handleDelegateCoder(req) {
   const sessionId = req.sessionId || req.payload?.sessionId;
@@ -2219,21 +2397,20 @@ async function handleDelegateCoder(req) {
   // by deleting the delegation registry entry BEFORE any awaited terminal
   // event so `cancel_delegation` wins whenever it removes the entry first.
   (async () => {
-    const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
-    const stubDetectAllToolCalls = () => emptyDetection;
-    const stubDetectAnyToolCall = () => null;
-    // Defensive-shape stub: `CoderToolExecResult` is a discriminated union
-    // (`{ kind: 'executed', resultText, ... } | { kind: 'denied', reason }`)
-    // and the kernel inspects `result.kind` on every return. The stub
-    // detectors above guarantee this function is never reached today, but
-    // returning a shape-correct `denied` result keeps the scaffold safe
-    // under an incremental rollout where detection turns on before the
-    // real tool executor does.
-    const stubToolExec = async () => ({
-      kind: 'denied',
-      reason: '[pushd scaffold] daemon-side Coder tool execution is not yet wired',
+    // Real daemon tool executor + real CLI detectors. Replaces the
+    // scaffold stubs that returned `{ kind: 'denied', reason: 'not yet wired' }`.
+    // Tool calls now actually read/write files and run shell commands
+    // under approval gating — high-risk exec commands emit an
+    // `approval_required` event on `childRunId` and block on a
+    // `submit_approval` RPC via `buildApprovalFn` (baked into the
+    // executor closure itself).
+    const toolExec = makeDaemonCoderToolExec({
+      sessionId,
+      entry,
+      runId: childRunId,
+      signal: abortController.signal,
     });
-    const stubEvaluateAfterModel = async () => null;
+    const evaluateAfterModel = async () => null;
 
     let outcome;
     let runError = null;
@@ -2249,14 +2426,19 @@ async function handleDelegateCoder(req) {
           userProfile: null,
           taskPreamble: trimmedTask,
           symbolSummary: null,
-          toolExec: stubToolExec,
-          detectAllToolCalls: stubDetectAllToolCalls,
-          detectAnyToolCall: stubDetectAnyToolCall,
+          toolExec,
+          detectAllToolCalls: wrapCliDetectAllToolCalls,
+          detectAnyToolCall: wrapCliDetectAnyToolCall,
           webSearchToolProtocol: '',
-          sandboxToolProtocol: '',
+          // `sandboxToolProtocol` is the tool-instruction block the kernel
+          // splices into its system prompt — without it the model has no
+          // guidance on what tool-call JSON to emit (codex P1 on PR #282).
+          // Feed in `TOOL_PROTOCOL` from `cli/tools.ts`, the same block the
+          // non-delegated CLI engine uses.
+          sandboxToolProtocol: TOOL_PROTOCOL,
           verificationPolicyBlock: null,
           approvalModeBlock: null,
-          evaluateAfterModel: stubEvaluateAfterModel,
+          evaluateAfterModel,
         },
         {
           onStatus: () => {
@@ -2268,13 +2450,18 @@ async function handleDelegateCoder(req) {
 
       outcome = {
         agent: 'coder',
-        status: 'inconclusive',
+        // Kernel returned cleanly — default to 'complete'. Deeper
+        // classification (incomplete on unfinished acceptance criteria,
+        // inconclusive on policy halts) is a follow-up that inspects
+        // working memory + criteriaResults. For now, structural success
+        // (no thrown error) lands as 'complete'.
+        status: 'complete',
         summary: result.summary,
         evidence: [],
         checks: [],
         gateVerdicts: [],
-        missingRequirements: ['Daemon-side Coder tool executor (stubbed in handleDelegateCoder)'],
-        nextRequiredAction: 'Wire a real daemon Coder tool executor before advertising multi_agent',
+        missingRequirements: [],
+        nextRequiredAction: null,
         rounds: result.rounds,
         checkpoints: result.checkpoints,
         elapsedMs: Date.now() - startedAt,
@@ -2290,8 +2477,8 @@ async function handleDelegateCoder(req) {
         agent: 'coder',
         status: 'inconclusive',
         summary: isAbort
-          ? 'Coder cancelled during daemon scaffold run.'
-          : `Coder failed during daemon scaffold run: ${message}`,
+          ? 'Coder cancelled during daemon run.'
+          : `Coder failed during daemon run: ${message}`,
         evidence: [],
         checks: [],
         gateVerdicts: [],
