@@ -186,7 +186,7 @@ Split view:
   - 51 files / ~16,600 lines (was 28 files / ~7,000 lines)
   - Role kernels are now canonical in `lib/`: `reviewer-agent`, `auditor-agent`, `deep-reviewer-agent`, `explorer-agent`, and `coder-agent` all live in `lib/`, with Web-side shims at `app/src/lib/` preserving existing imports
   - Supporting surfaces followed the kernels: `tool-execution-runtime`, `tool-registry`, `tool-call-parsing`, `tool-call-diagnosis`, `tool-call-recovery`, `ask-user-tools`, `scratchpad-tools`, `agent-loop-utils`, `user-identity`, `stream-utils`
-  - `orchestrator-prompt-builder` and `message-context-manager` extracted as optional pushd reuse helpers, Web bound via shims
+  - `orchestrator-prompt-builder` and `message-context-manager` extracted as optional `pushd` reuse helpers, Web bound via shims
 - `pushd` Phase 6 is complete on 2026-04-14 (today), not just scaffolded:
   - Real daemon-side Coder tool executor via `makeDaemonCoderToolExec` wrapping `executeToolCall` from `cli/tools.ts` with approval gating via `buildApprovalFn`
   - Real daemon-side Explorer tool executor via `makeDaemonExplorerToolExec` enforcing `READ_ONLY_TOOLS` with read-only policy and no approval gate
@@ -214,7 +214,7 @@ Split view:
   - `useChat.ts`: 1,662 → **1,733 lines** (+4%)
   - The fossilization prediction from the prior snapshot is holding: these modules accumulate behavior faster than anyone splits them
 - `coder-agent.ts` is now a two-headed module — a shared kernel in `lib/` plus a 608-line Web shim — which increases total surface area even though the kernel itself is now reusable. This is the right direction for CLI/Web parity but it is not net simplification yet.
-- Cross-surface tracing is still immature relative to how much substrate is now shared. As pushd becomes the primary transport, "where did this go wrong" needs to route cleanly across client/daemon/kernel boundaries.
+- Cross-surface tracing is still immature relative to how much substrate is now shared. As `pushd` becomes the primary transport, "where did this go wrong" needs to route cleanly across client/daemon/kernel boundaries.
 - Tool-protocol namespace mismatches between Web-side names (`read`, `repo_read`, `search`) and CLI names (`read_file`, `list_dir`, `search_files`) are currently managed by explicit `sandboxToolProtocol` overrides at each daemon call site. This works but is the kind of seam that needs a regression test as the only discipline (one exists at `cli/tests/daemon-integration.test.mjs`, which is good).
 
 ### Does the rating change? Yes — by a half point.
@@ -380,7 +380,7 @@ Current difference in emphasis:
 Blended takeaway:
 
 - Push looks like a system with very good long-term bones whose shared runtime substrate has materially caught up to the architecture. The next gains are now mostly:
-  - extraction of the four densest modules (`sandbox-tools`, `coder-agent`, `useAgentDelegation`, `useChat`) — this is the single biggest lever all three models agree on
+  - extraction of the four densest modules (`sandbox-tools.ts`, `coder-agent.ts`, `useAgentDelegation.ts`, `useChat.ts`) — this is the single biggest lever all three models agree on
   - enforcement hardening where policy intent is still softer than runtime guarantees
   - continued cleanup of migration seams and the old execution hooks that predate `pushd`
   - distributed tracing maturing from "some instrumentation" to "routine cross-boundary diagnosis"
