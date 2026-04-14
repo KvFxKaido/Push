@@ -5,7 +5,7 @@ Status: Reference snapshot, full panel refresh on 2026-04-14
 
 Refresh note:
 - Claude reassessed on 2026-04-14 after the Phase 1–5 role-kernel migration into `lib/`, `pushd` Phase 6 closing with real daemon-side Coder + Explorer tool executors, v1 synthetic downgrade, and protocol schema hardening. Implementation shape moves 7.5 → 8; dense modules have grown rather than shrunk.
-- Codex reassessed on 2026-04-14 against the current architecture docs. Nudges overall down slightly (8.5 → 8.3) on a more conservative read of "settled vs. intended" — the architecture doc and snapshot reasoning are coherent, but docs can overstate how boring the heaviest modules actually are.
+- Codex reassessed on 2026-04-14 after reviewing the refreshed snapshot and merged PR #290 context. Rating holds at **8.5/10** on an honest update: the architecture question that mattered most — whether shared runtime semantics were truly canonical across surfaces — now looks materially stronger.
 - Gemini reassessed on 2026-04-14 and holds at 8.5/10. The split of 9 architecture / 8 implementation still fits the state of the repo; no change to the top-line number.
 - Codex's earlier 2026-04-08 assessment refreshed after the orchestration, typed-memory, shared-runtime convergence, workspace publish, and hashline follow-through work.
 - Claude's earlier 2026-04-08 reassessment was based on codebase review of work since 2026-03-30: shared runtime substrate, memory hardening, task graph completion, CLI convergence, sandbox lifecycle awareness, and hashline reliability.
@@ -15,7 +15,7 @@ Refresh note:
 
 | Model | Overall | Status | Notes |
 |---|---|---|---|
-| Codex | **8.3/10** | Reassessed 2026-04-14 | Nudge down from 8.5 on a more conservative read — architecture taste 8.8–9.0, implementation shape 7.7–8.0. Dense orchestration modules and soft-enforcement surfaces keep the ceiling below 9. |
+| Codex | **8.5/10** | Reassessed 2026-04-14 | Honest update after the PR #290 refresh: shared runtime semantics now look materially more canonical across surfaces. Remaining ceiling is still dense orchestration modules and softer-than-ideal enforcement at some seams. |
 | Claude | **8.5/10** | Reassessed 2026-04-14 | Implementation shape bumped a half point (7.5 → 8) after `lib/` role-kernel migration and `pushd` Phase 6 closing with real daemon-side Coder + Explorer tool executors. Dense modules still cap the ceiling and have grown, not shrunk. |
 | Gemini | **8.5/10** | Held 2026-04-14 | Rating holds steady — 9 architecture, 8 implementation. Shared runtime reality, unified `emit` streaming, and the pure run-engine reducer carry the score; the "big four" dense modules, distributed tracing, and legacy hook cleanup cap it. |
 
@@ -23,64 +23,73 @@ Refresh note:
 
 ### Rating (2026-04-14)
 
-Overall: **8.3/10** (snapshot-informed read: ~8.3–8.4; standalone doc read: ~8.2)
+Overall: **8.5/10**
 
 Split view:
 
-- **8.8–9.0/10** on architecture taste / system design
-- **7.7–8.0/10** on current implementation shape
+- **8.9/10** on architecture taste / system design
+- **8.1/10** on current implementation shape
 
-### Why the rating sits here
+### Why the rating moved up honestly
 
-The architecture doc's core thesis holds up and the shared runtime story is genuinely strong:
+The update is not about aligning with the panel. It changed because the refreshed snapshot adds stronger evidence on the architectural question that mattered most: whether the shared runtime is truly canonical across web and CLI, or still partly aspirational.
 
-- **The system model is unusually clear**
-  - fixed agent roles
-  - branch-scoped chats
-  - explicit branch/sandbox lifecycle
-  - PR-only merge flow
-  - chat-locked provider routing
+What materially changed that read:
 
-  That's real architecture, not just "some prompts and tools."
+- **Role kernels are canonical in `lib/` now**
+  - `reviewer-agent`
+  - `auditor-agent`
+  - `deep-reviewer-agent`
+  - `explorer-agent`
+  - `coder-agent`
 
-- **The shared runtime story is strong.** `docs/architecture.md` explicitly centers `lib/` as the canonical substrate for:
-  - task-graph execution
-  - typed memory
-  - delegation briefs / role context
-  - run phases / event vocabulary
+  That is stronger than shared utilities. It suggests the system’s core behavioral seams are converging at the right layer.
 
-  That's the biggest maturity signal. Shared semantics across web + CLI is where a lot of systems either get serious or slowly fork themselves to death.
+- **`pushd` Phase 6 is closed with real daemon-side executors**
+  - real daemon-side Coder tool execution
+  - real daemon-side Explorer tool execution
+  - task graph execution end-to-end
+  - capability advertising and routing
 
-- **Operational boundaries are thoughtful.** The sandbox awareness, verification policy, reviewer/auditor split, and branch-scoped repo model all suggest the system is being designed for failure modes, not just happy-path demos.
+  That materially reduces the risk that web/CLI parity is still mostly conceptual.
 
-### Why the rating is slightly below the other panelists
+- **Protocol compatibility and recovery work looks architecture-grade**
+  - v1 synthetic downgrade
+  - protocol schema hardening
+  - interruption reconciliation for orphaned delegations
 
-Same ceiling the snapshot itself calls out, weighted a little more conservatively:
+  Systems start to feel real when they solve mixed-version, failure, and recovery seams deliberately.
 
-- **Central orchestration density is still the ceiling.**
-- **Some enforcement remains policy-shaped instead of runtime-hard.**
-- **CLI/web convergence is strong conceptually, but still maturing operationally.**
-- **Observability / tracing sounds present, but not yet "easy to diagnose anything" mature.**
+### Why it is still not a 9
 
-That's the difference between an 8.x system and a 9+ one. A 9 usually feels like:
-- boundaries are not just well-designed but routinely *boring*
-- the heaviest modules have already been defused
-- migration seams are mostly gone
-- invariants are enforced by the runtime more than by disciplined behavior
+- The densest coordination modules are still the ceiling, and the refreshed snapshot says plainly that some have grown rather than shrunk.
+- Some guarantees are still softer than ideal and depend partly on policy/harness discipline instead of being fully runtime-hard at every seam.
+- Cross-boundary diagnosis and tracing still sound like an area that is improving, but not yet effortless.
 
-### Does the snapshot change the view?
+That keeps the score in the strong-8 range rather than 9+.
 
-Slightly upward — not because the numbers are trusted automatically, but because the reasoning is coherent and matches the architecture doc: shared runtime substrate in `lib/`, stronger memory + task-graph semantics, CLI consuming shared contracts, explicit reliability focus. The snapshot doesn't convince from scratch; it **confirms** the system is being judged on the right axes.
+### Current read
 
-The remaining delta vs. the Claude/Gemini 8.5 readings:
+Fact:
+- Push has moved beyond “promising architecture waiting for the codebase to catch up.”
+- Shared runtime convergence now appears structural, not just directional.
+- The codebase looks more like a mature platform substrate with a few concentrated load-bearing hotspots.
 
-- the docs show strong architecture intent and good system boundaries
-- but docs alone can overstate how "settled" a system is
-- the snapshot itself admits key load-bearing modules remain dense and some guarantees are still soft
+Inference:
+- The main architectural risk is no longer weak fundamentals.
+- The remaining risk is concentrated complexity: orchestration density, enforcement maturity, and tracing maturity.
+- That is a better kind of problem for a system at this stage.
+
+### What would move it higher
+
+- Defuse the densest orchestration modules rather than continuing to let them absorb feature pressure.
+- Convert more policy-shaped invariants into hard runtime guarantees.
+- Make cross-boundary debugging routine, especially as `pushd` becomes more central.
+- Let the shared runtime substrate stay boring under more real usage time across both surfaces.
 
 ### Rating sentence
 
-**Push feels like a serious, platform-shaped system with strong long-term bones, where the remaining risk is concentrated more in orchestration density and enforcement maturity than in flawed core architecture.**
+**Push now reads as a mature architecture with a few concentrated load-bearing hotspots, not an architecture that is still waiting for the implementation to catch up.**
 
 ## Codex (2026-04-08 — prior snapshot)
 
