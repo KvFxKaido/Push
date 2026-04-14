@@ -79,4 +79,4 @@ Local coding agent for the terminal. It shares the same role-based architecture 
 
 ## Design System
 
-Visual tokens, color palette, typography, spacing, components, and motion specs are in [`design-system.md`](design-system.md).
+Visual tokens, color palette, typography, spacing, components, and motion specs are in [`DESIGN.md`](DESIGN.md).
