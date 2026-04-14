@@ -1,6 +1,6 @@
 # Decisions Folder
 
-Status reviewed: 2026-04-05
+Status reviewed: 2026-04-14
 
 This folder contains architecture decisions, research, analysis, and shipped design references. It merges the former `analysis/` and `design/` folders.
 
