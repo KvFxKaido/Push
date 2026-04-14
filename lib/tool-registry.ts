@@ -548,6 +548,31 @@ export function isReadOnlyToolName(name: string | null | undefined): boolean {
   return Boolean(getToolSpec(name)?.readOnly);
 }
 
+/**
+ * Sandbox tools that mutate files in-place but carry no side effects outside
+ * the workspace. These are safe to batch within a single turn: the dispatcher
+ * runs them sequentially as one mutation transaction before any trailing
+ * side-effecting call (exec, commit, push, delegate, etc.).
+ *
+ * Kept deliberately narrow — only pure file writes/edits belong here. Tools
+ * that run commands, touch git state, or cross the sandbox boundary stay in
+ * the "trailing side-effect" slot so the one-side-effect-per-turn rule still
+ * holds. Scratchpad writes are handled separately (they don't touch files).
+ */
+const FILE_MUTATION_CANONICAL_NAMES: ReadonlySet<string> = new Set([
+  'sandbox_write_file',
+  'sandbox_edit_file',
+  'sandbox_edit_range',
+  'sandbox_search_replace',
+  'sandbox_apply_patchset',
+]);
+
+export function isFileMutationToolName(name: string | null | undefined): boolean {
+  const canonical = resolveToolName(name);
+  if (!canonical) return false;
+  return FILE_MUTATION_CANONICAL_NAMES.has(canonical);
+}
+
 export function getToolStatusLabelFromName(name: string | null | undefined): string | null {
   return getToolSpec(name)?.statusLabel ?? null;
 }

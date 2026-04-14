@@ -594,12 +594,16 @@ export async function processAssistantTurn(
     return roundSandboxStatus;
   };
 
-  // --- Parallel tool calls (multiple reads + optional trailing mutation) ---
-  if (
-    parallelToolCalls.length > 1 ||
-    (parallelToolCalls.length > 0 && Boolean(detected.mutating))
-  ) {
-    console.log(`[Push] Parallel tool calls detected:`, parallelToolCalls);
+  // --- Batched tool calls (reads ‖ file-mutation batch ≫ optional trailing side-effect) ---
+  const fileMutationBatch = detected.fileMutations;
+  const totalBatchedCalls =
+    parallelToolCalls.length + fileMutationBatch.length + (detected.mutating ? 1 : 0);
+  if (totalBatchedCalls > 1) {
+    console.log(`[Push] Batched tool calls detected:`, {
+      reads: parallelToolCalls.length,
+      fileMutations: fileMutationBatch.length,
+      trailing: detected.mutating ? getToolName(detected.mutating) : null,
+    });
     const parallelExecutionIds = parallelToolCalls.map(() => createId());
 
     setConversations((prev) => {
@@ -612,22 +616,28 @@ export async function processAssistantTurn(
       return { ...prev, [chatId]: { ...conv, messages: msgs } };
     });
 
-    updateAgentStatus(
-      { active: true, phase: `Executing ${parallelToolCalls.length} tool calls...` },
-      { chatId },
-    );
-    parallelToolCalls.forEach((call, index) => {
-      appendRunEvent(chatId, {
-        type: 'tool.execution_start',
-        round,
-        executionId: parallelExecutionIds[index],
-        toolName: getToolName(call),
-        toolSource: call.source,
+    if (parallelToolCalls.length > 0) {
+      updateAgentStatus(
+        { active: true, phase: `Executing ${parallelToolCalls.length} tool calls...` },
+        { chatId },
+      );
+      parallelToolCalls.forEach((call, index) => {
+        appendRunEvent(chatId, {
+          type: 'tool.execution_start',
+          round,
+          executionId: parallelExecutionIds[index],
+          toolName: getToolName(call),
+          toolSource: call.source,
+        });
       });
-    });
+    }
 
     const hasParallelSandboxCalls = parallelToolCalls.some((call) => call.source === 'sandbox');
-    if (hasParallelSandboxCalls && !sandboxIdRef.current && ensureSandboxRef.current) {
+    const batchNeedsSandbox =
+      hasParallelSandboxCalls ||
+      fileMutationBatch.some((call) => call.source === 'sandbox') ||
+      detected.mutating?.source === 'sandbox';
+    if (batchNeedsSandbox && !sandboxIdRef.current && ensureSandboxRef.current) {
       updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
       const newId = await ensureSandboxRef.current();
       if (newId) sandboxIdRef.current = newId;
@@ -733,12 +743,136 @@ export async function processAssistantTurn(
       return parallelPolicyAction;
     }
 
-    // Execute trailing mutation after the parallel reads
+    // --- File-mutation batch (sequential, between reads and trailing side-effect) ---
+    // Runs pure file writes/edits in the order the model emitted them.
+    // Each call's result is appended before the next runs so errors
+    // propagate naturally. On the first hard failure we short-circuit
+    // the batch and suppress the trailing side-effect so the model can
+    // correct before we commit or exec against partial state.
+    let batchHadHardFailure = false;
+    if (fileMutationBatch.length > 0) {
+      updateAgentStatus(
+        {
+          active: true,
+          phase: `Applying ${fileMutationBatch.length} file mutation${fileMutationBatch.length === 1 ? '' : 's'}...`,
+        },
+        { chatId },
+      );
+
+      const batchCtx: ToolExecRunContext = {
+        repoFullName: repoRef.current,
+        sandboxId: sandboxIdRef.current,
+        isMainProtected: isMainProtectedRef.current,
+        defaultBranch: branchInfoRef.current?.defaultBranch,
+        provider: lockedProvider,
+        model: resolvedModel,
+      };
+
+      for (let i = 0; i < fileMutationBatch.length; i++) {
+        if (abortRef.current) {
+          return {
+            nextApiMessages,
+            nextRecoveryState: recoveryState,
+            loopAction: 'break',
+            loopCompletedNormally: false,
+          };
+        }
+        const batchCall = fileMutationBatch[i];
+        const batchExecutionId = createId();
+        appendRunEvent(chatId, {
+          type: 'tool.execution_start',
+          round,
+          executionId: batchExecutionId,
+          toolName: getToolName(batchCall),
+          toolSource: batchCall.source,
+        });
+
+        const batchRawResult = await executeTool(batchCall, batchCtx);
+
+        roundSandboxStatusFetched = false;
+        const batchSandboxStatus = await getRoundSandboxStatus();
+        const batchMetaLine = buildMetaLine(
+          round,
+          nextApiMessages,
+          lockedProvider,
+          resolvedModel,
+          batchSandboxStatus,
+          { includePulse: true, pulseReason: 'mutation' },
+        );
+        const batchOutcome = buildToolOutcome(batchRawResult, batchMetaLine, lockedProvider);
+        const isBatchError = batchOutcome.raw.text.includes('[Tool Error]');
+        appendRunEvent(chatId, {
+          type: 'tool.execution_complete',
+          round,
+          executionId: batchExecutionId,
+          toolName: getToolName(batchCall),
+          toolSource: batchCall.source,
+          durationMs: batchRawResult.durationMs,
+          isError: isBatchError,
+          preview: summarizeToolResultPreview(batchOutcome.raw.text),
+        });
+
+        if (batchOutcome.raw.structuredError?.type === 'SANDBOX_UNREACHABLE') {
+          runtimeHandlersRef.current?.onSandboxUnreachable?.(
+            batchOutcome.raw.structuredError.message,
+          );
+        }
+
+        // Single state update per batch member: apply cards (if any)
+        // and append the result message in one pass so React only
+        // re-renders once instead of twice per mutation.
+        setConversations((prev) => {
+          const conv = prev[chatId];
+          if (!conv) return prev;
+          const withCards =
+            batchOutcome.cards.length > 0
+              ? appendCardsToLatestToolCall(conv.messages, batchOutcome.cards)
+              : conv.messages;
+          return {
+            ...prev,
+            [chatId]: {
+              ...conv,
+              messages: [...withCards, batchOutcome.resultMessage],
+              lastMessageAt: Date.now(),
+            },
+          };
+        });
+
+        nextApiMessages = [...nextApiMessages, batchOutcome.resultMessage];
+        checkpointRefs.apiMessages.current = nextApiMessages;
+        flushCheckpoint();
+
+        const batchPolicyAction = applyPostToolPolicyEffects(nextApiMessages, [batchOutcome.raw]);
+        if (batchPolicyAction) {
+          return batchPolicyAction;
+        }
+
+        if (isBatchError) {
+          // Stop the batch on the first hard error so the model sees the
+          // failure and can correct before we commit or exec. The trailing
+          // side-effect is also suppressed — partial mutation state is
+          // already visible through the results we injected.
+          batchHadHardFailure = true;
+          break;
+        }
+      }
+    }
+
+    // Execute trailing side-effect after the batch, unless the batch
+    // hard-failed above (in which case we return to the model for a fix).
     if (detected.mutating && abortRef.current) {
       return {
         nextApiMessages,
         nextRecoveryState: recoveryState,
         loopAction: 'break',
+        loopCompletedNormally: false,
+      };
+    }
+    if (detected.mutating && batchHadHardFailure) {
+      return {
+        nextApiMessages,
+        nextRecoveryState: recoveryState,
+        loopAction: 'continue',
         loopCompletedNormally: false,
       };
     }

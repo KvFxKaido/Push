@@ -28,6 +28,7 @@ import { asRecord, detectToolFromText, extractBareToolJsonObjects } from './util
 import {
   getToolCanonicalNames,
   getRecognizedToolNames,
+  isFileMutationToolName,
   isReadOnlyToolName,
   resolveToolName,
 } from './tool-registry';
@@ -68,6 +69,14 @@ export const PARALLEL_READ_ONLY_SANDBOX_TOOLS = new Set(
 );
 
 export const MAX_PARALLEL_TOOL_CALLS = 6;
+/**
+ * Cap on the number of file mutations the dispatcher will execute as a
+ * single batch in one turn. Generous enough to cover realistic scaffolds
+ * (a handful of new docs, a coordinated multi-file config update) but
+ * bounded so a runaway tool-call loop still surfaces a clear overflow
+ * error instead of executing thousands of writes sequentially.
+ */
+export const MAX_FILE_MUTATION_BATCH = 8;
 const KNOWN_CAPABILITIES = new Set<Capability>(ALL_CAPABILITIES);
 
 function asTrimmedString(value: unknown): string | undefined {
@@ -90,29 +99,75 @@ export function isReadOnlyToolCall(toolCall: AnyToolCall): boolean {
   return isReadOnlyToolName(toolCall.call.tool);
 }
 
+/**
+ * Check whether a tool call is a pure file mutation — safe to batch
+ * sequentially within a single turn without any side-effect ordering.
+ */
+export function isFileMutationToolCall(toolCall: AnyToolCall): boolean {
+  return isFileMutationToolName(toolCall.call.tool);
+}
+
 /** Result of scanning a response for all tool calls. */
 export interface DetectedToolCalls {
   /** Read-only calls that can safely execute in parallel. */
   readOnly: AnyToolCall[];
-  /** Optional trailing mutating call that must execute after reads. */
+  /**
+   * Contiguous batch of safe file-mutation calls (write/edit/patch). Runs
+   * sequentially after the parallel reads and before the trailing
+   * side-effect. Execution stops on the first hard failure — the batch is
+   * NOT atomic, partial state can remain on-disk after an error.
+   */
+  fileMutations: AnyToolCall[];
+  /**
+   * Optional trailing side-effecting call (exec, commit, push, delegate,
+   * workflow dispatch, etc.). At most one per turn. Runs after the
+   * fileMutations batch.
+   */
   mutating: AnyToolCall | null;
-  /** Additional mutating calls that were rejected to preserve single-mutation safety. */
+  /**
+   * Overflow calls that the turn couldn't accommodate. Sources include:
+   * a second side-effect, any call after a side-effect, a read emitted
+   * after the mutation transaction began, and file-mutation batch
+   * overflow (more than MAX_FILE_MUTATION_BATCH). Callers reject these
+   * with a structured error so the model can correct on the next turn.
+   */
   extraMutations: AnyToolCall[];
 }
 
 /**
- * Scan assistant output for ALL tool calls — reads + optional trailing mutation.
- * Returns the read-only calls (parallelizable) and the last mutating call (if any).
- * Falls back to single-call detection if only one call is found.
+ * Scan assistant output for ALL tool calls and group them into a single
+ * mutation transaction per turn.
+ *
+ * Grouping rule:
+ *   1. A contiguous prefix of read-only calls goes into `readOnly` (parallel).
+ *   2. Any number of contiguous file-mutation calls (write/edit/patch) go
+ *      into `fileMutations` (executed sequentially; stops on first hard
+ *      failure, NOT atomic).
+ *   3. At most one trailing side-effecting call (exec, commit, push,
+ *      delegate, workflow dispatch, etc.) goes into `mutating`.
+ *   4. Anything that violates that ordering — a read after mutations
+ *      started, a second side-effect, any call after a side-effect, or
+ *      file-mutation overflow beyond MAX_FILE_MUTATION_BATCH — goes into
+ *      `extraMutations` so the caller can surface a structured error and
+ *      let the model correct on the next turn.
+ *
+ * Falls back cleanly when only one call is present.
  */
 export function detectAllToolCalls(text: string): DetectedToolCalls {
+  const empty: DetectedToolCalls = {
+    readOnly: [],
+    fileMutations: [],
+    mutating: null,
+    extraMutations: [],
+  };
+
   const explicitToolObjects = extractBareToolJsonObjects(text);
-  if (explicitToolObjects.length === 0) return { readOnly: [], mutating: null, extraMutations: [] };
+  if (explicitToolObjects.length === 0) return empty;
 
   // Preserve current safety behavior: only do broad bare-object scanning
   // when the response already contains at least one explicit tool wrapper.
   const parsedObjects = extractAllBareJsonObjects(text);
-  if (parsedObjects.length === 0) return { readOnly: [], mutating: null, extraMutations: [] };
+  if (parsedObjects.length === 0) return empty;
 
   const allCalls: AnyToolCall[] = [];
   const seen = new Set<string>();
@@ -125,51 +180,80 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     if (seen.has(key)) continue;
     seen.add(key);
     allCalls.push(call);
-    if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + 1) break; // +1 for possible trailing mutation
+    // Soft cap: leave headroom for the batch + trailing side-effect. We
+    // don't want to parse an unbounded number of calls — the tail beyond
+    // the cap falls out on the next round if the model really needs it.
+    if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
   }
 
-  if (allCalls.length === 0) return { readOnly: [], mutating: null, extraMutations: [] };
+  if (allCalls.length === 0) return empty;
 
-  // Single call — classify as read or mutation
+  // Single call — classify directly.
   if (allCalls.length === 1) {
-    if (isReadOnlyToolCall(allCalls[0])) {
-      return { readOnly: allCalls, mutating: null, extraMutations: [] };
-    }
-    return { readOnly: [], mutating: allCalls[0], extraMutations: [] };
+    const only = allCalls[0];
+    if (isReadOnlyToolCall(only)) return { ...empty, readOnly: [only] };
+    if (isFileMutationToolCall(only)) return { ...empty, fileMutations: [only] };
+    return { ...empty, mutating: only };
   }
 
-  // Multiple calls — split into reads + optional trailing mutation.
-  // Strategy: collect the longest valid prefix of read-only calls,
-  // then accept one trailing mutation. If a mutation appears mid-sequence,
-  // treat it as the boundary — keep the reads before it and the mutation,
-  // but discard anything after.
+  // Multi-call state machine: reads → fileMutations → trailing side-effect.
   const readOnly: AnyToolCall[] = [];
+  const fileMutations: AnyToolCall[] = [];
   let mutating: AnyToolCall | null = null;
   const extraMutations: AnyToolCall[] = [];
+  let phase: 'reads' | 'mutations' | 'done' = 'reads';
 
-  for (let i = 0; i < allCalls.length; i++) {
-    if (isReadOnlyToolCall(allCalls[i])) {
-      if (mutating) {
-        // Read after a mutation — stop here (don't process further calls)
-        break;
-      }
-      readOnly.push(allCalls[i]);
-    } else {
-      if (mutating) {
-        // Second mutation — stop here, keep what we have
-        extraMutations.push(allCalls[i]);
-        break;
-      }
-      mutating = allCalls[i];
+  for (const call of allCalls) {
+    const isRead = isReadOnlyToolCall(call);
+    const isFileMut = !isRead && isFileMutationToolCall(call);
+
+    if (phase === 'done') {
+      // A side-effect already landed — anything else is overflow.
+      extraMutations.push(call);
+      continue;
     }
+
+    if (isRead) {
+      if (phase === 'reads') {
+        readOnly.push(call);
+        continue;
+      }
+      // Read after a mutation has started — ordering violation. Push it
+      // (and treat subsequent calls from here as overflow too) into
+      // extraMutations so the caller can surface a structured error and
+      // the model can correct on the next turn. Falling through to the
+      // `done` branch on the next iteration keeps that behavior.
+      extraMutations.push(call);
+      phase = 'done';
+      continue;
+    }
+
+    if (isFileMut) {
+      // Transition into the mutation batch. Further file mutations keep
+      // appending to it; a side-effect will terminate it.
+      phase = 'mutations';
+      fileMutations.push(call);
+      continue;
+    }
+
+    // Side-effecting call. Only one allowed per turn.
+    mutating = call;
+    phase = 'done';
   }
 
-  // Cap parallel reads — truncate to the limit instead of bailing entirely
+  // Cap parallel reads — truncate instead of bailing entirely.
   if (readOnly.length > MAX_PARALLEL_TOOL_CALLS) {
     readOnly.length = MAX_PARALLEL_TOOL_CALLS;
   }
 
-  return { readOnly, mutating, extraMutations };
+  // Cap file-mutation batch — push overflow to extraMutations so the caller
+  // surfaces a clear "too many writes" error instead of silently dropping.
+  if (fileMutations.length > MAX_FILE_MUTATION_BATCH) {
+    const overflow = fileMutations.splice(MAX_FILE_MUTATION_BATCH);
+    extraMutations.unshift(...overflow);
+  }
+
+  return { readOnly, fileMutations, mutating, extraMutations };
 }
 
 /** Extract the tool name from a unified tool call. */

@@ -37,6 +37,7 @@ import {
   detectAllToolCalls as cliDetectAllToolCalls,
   detectToolCall as cliDetectToolCall,
   READ_ONLY_TOOLS,
+  FILE_MUTATION_TOOLS,
   TOOL_PROTOCOL,
   READ_ONLY_TOOL_PROTOCOL,
 } from './tools.js';
@@ -1154,12 +1155,20 @@ function wrapCall(call) {
 /**
  * Wrap `cli/tools.ts`'s flat `{ calls, malformed }` detector output into
  * the `DetectedToolCalls` shape the lib Coder kernel expects
- * (`{ readOnly, mutating, extraMutations }` from
- * `lib/deep-reviewer-agent.ts`). `READ_ONLY_TOOLS` in `cli/tools.ts` is
- * the source of truth for which tool names are read-only; everything
- * else is treated as mutating. The first mutating call slots into
- * `mutating`; any subsequent mutating calls fall into `extraMutations`
- * so the kernel can surface a "only one mutating call per turn" warning.
+ * (`{ readOnly, fileMutations, mutating, extraMutations }` from
+ * `lib/deep-reviewer-agent.ts`).
+ *
+ * Classification:
+ * - `READ_ONLY_TOOLS` → `readOnly`
+ * - `FILE_MUTATION_TOOLS` (pure file writes/edits) → `fileMutations`,
+ *   batched into one mutation transaction per turn
+ * - Anything else (`exec`, `git_commit`, etc.) → the trailing `mutating`
+ *   side-effect slot (at most one)
+ * - Overflow after the trailing slot, or a second side-effect → `extraMutations`
+ *
+ * Reads that appear after a mutation has started are treated as a
+ * boundary: the sequence stops there so we don't silently reorder the
+ * model's intent.
  *
  * Each slot holds a kernel-shaped `{ call: { tool, args } }` wrapper
  * (see `wrapCall`) — NOT the raw CLI call shape — so the kernel's
@@ -1171,21 +1180,45 @@ function wrapCall(call) {
 export function wrapCliDetectAllToolCalls(text) {
   const { calls } = cliDetectAllToolCalls(text);
   const readOnly = [];
+  const fileMutations = [];
   const extraMutations = [];
   let mutating = null;
+  let phase = 'reads'; // 'reads' → 'mutations' → 'done'
   for (const call of calls) {
     const wrapped = wrapCall(call);
-    if (READ_ONLY_TOOLS.has(call.tool)) {
-      readOnly.push(wrapped);
+    const isRead = READ_ONLY_TOOLS.has(call.tool);
+    const isFileMut = !isRead && FILE_MUTATION_TOOLS.has(call.tool);
+
+    if (phase === 'done') {
+      extraMutations.push(wrapped);
       continue;
     }
-    if (mutating === null) {
-      mutating = wrapped;
-    } else {
+
+    if (isRead) {
+      if (phase === 'reads') {
+        readOnly.push(wrapped);
+        continue;
+      }
+      // Read after a mutation started — ordering violation. Push it
+      // into `extraMutations` (and flip `phase` so any remaining calls
+      // land there too) so the caller can surface a structured error
+      // instead of silently dropping the call.
       extraMutations.push(wrapped);
+      phase = 'done';
+      continue;
     }
+
+    if (isFileMut) {
+      phase = 'mutations';
+      fileMutations.push(wrapped);
+      continue;
+    }
+
+    // Side-effecting call (exec, git_commit, save_memory, etc.)
+    mutating = wrapped;
+    phase = 'done';
   }
-  return { readOnly, mutating, extraMutations };
+  return { readOnly, fileMutations, mutating, extraMutations };
 }
 
 /**

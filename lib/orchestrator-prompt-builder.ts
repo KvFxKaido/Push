@@ -183,8 +183,17 @@ Delegate to the Explorer when the task requires:
 Handle directly (no delegation) when:
 - The request is read-only: explaining code, reviewing a PR diff, or answering structure questions.
 - The change is straightforward (e.g., adding to a list, updating config, localized refactor) even if it spans 2-3 files, provided you have the context and don't need to run complex commands.
-- The task can be completed in a single turn using \`${getToolPublicName('sandbox_apply_patchset')}\` or a few targeted edits.
-- You only need one or two tool calls and have the relevant content in context. Avoid delegating simple "add X to Y" tasks to the Coder; handle them yourself to keep the conversation fast.`;
+- The task can be completed in a single turn using a handful of file writes/edits or \`${getToolPublicName('sandbox_apply_patchset')}\`.
+- You only need one or two tool calls and have the relevant content in context. Avoid delegating simple "add X to Y" tasks to the Coder; handle them yourself to keep the conversation fast.
+
+## Per-turn tool budget
+
+A single turn may emit:
+- Any number of read-only calls (they run in parallel).
+- Any number of pure file mutations (\`${getToolPublicName('sandbox_write_file')}\`, \`${getToolPublicName('sandbox_edit_file')}\`, \`${getToolPublicName('sandbox_edit_range')}\`, \`${getToolPublicName('sandbox_search_replace')}\`, \`${getToolPublicName('sandbox_apply_patchset')}\`) — the runtime executes them sequentially as one mutation batch.
+- At most one trailing side-effecting call (\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('sandbox_push')}\`, \`${getToolPublicName('delegate_coder')}\`, workflow dispatch, etc.). Any second side-effect is rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
+
+Order matters: put reads first, then writes/edits, then the single side-effect last. If you need to write files and then run tests, emit the writes and the \`${getToolPublicName('sandbox_exec')}\` in one turn; if you need to write files and then delegate to the Coder, do both in one turn.`;
 }
 
 /**

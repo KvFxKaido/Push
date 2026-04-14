@@ -88,9 +88,21 @@ const REVIEWER_MUTATION_BLOCKLIST = [
  * Structural shape of the multi-call tool detector result. The real Web
  * `DetectedToolCalls` (from `tool-dispatch.ts`) is structurally assignable
  * when `TCall` is bound to `AnyToolCall`.
+ *
+ * Slot semantics (one mutation batch per turn):
+ *   - `readOnly`: contiguous prefix of read-only calls, safe to run in parallel.
+ *   - `fileMutations`: contiguous batch of safe file-mutation calls
+ *     (write/edit/patch/etc.). Executed sequentially as one mutation
+ *     transaction. May be empty.
+ *   - `mutating`: the optional trailing side-effecting call (exec, commit,
+ *     push, delegate, workflow dispatch, etc.). At most one per turn.
+ *   - `extraMutations`: overflow calls that violated the one-side-effect
+ *     rule or appeared after a side-effect. Callers are expected to reject
+ *     these with a structured error.
  */
 export interface DetectedToolCalls<TCall> {
   readOnly: TCall[];
+  fileMutations: TCall[];
   mutating: TCall | null;
   extraMutations: TCall[];
 }
@@ -497,9 +509,11 @@ export async function runDeepReviewer<TCall, TCard>(
       }
     }
 
-    // Handle tool calls (same pattern as Explorer)
+    // Handle tool calls (same pattern as Explorer). Deep Reviewer is
+    // read-only, so any file-mutation batch is folded into the same
+    // rejection path as true overflow side-effects.
     const detected = detectAllToolCalls(accumulated);
-    if (detected.extraMutations.length > 0) {
+    if (detected.extraMutations.length > 0 || detected.fileMutations.length > 0) {
       messages.push({
         id: `deep-review-parse-error-${round}`,
         role: 'user',

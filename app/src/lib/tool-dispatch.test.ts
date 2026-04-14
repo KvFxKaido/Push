@@ -533,8 +533,8 @@ describe('detectAllToolCalls', () => {
     }
   });
 
-  it('stops at second mutation, keeping first mutation + preceding reads', () => {
-    // [read, mutate, mutate] — should keep 1 read + first mutation
+  it('rejects a file mutation that comes after a side-effect', () => {
+    // [read, side-effect, write] — write lands in extraMutations
     const text = [
       '{"tool":"sandbox_read_file","args":{"path":"/workspace/a.ts"}}',
       '{"tool":"sandbox_exec","args":{"command":"npm test"}}',
@@ -543,6 +543,7 @@ describe('detectAllToolCalls', () => {
 
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(1);
+    expect(detected.fileMutations).toHaveLength(0);
     expect(detected.mutating).not.toBeNull();
     expect(detected.extraMutations).toHaveLength(1);
     if (detected.mutating?.source === 'sandbox') {
@@ -550,6 +551,147 @@ describe('detectAllToolCalls', () => {
     }
     if (detected.extraMutations[0]?.source === 'sandbox') {
       expect(detected.extraMutations[0].call.tool).toBe('sandbox_write_file');
+    }
+  });
+
+  it('batches multiple file mutations with no side effect', () => {
+    // [write, write] — should batch into fileMutations, no trailing side-effect
+    const text = [
+      '{"tool":"sandbox_write_file","args":{"path":"/workspace/a.md","content":"one"}}',
+      '{"tool":"sandbox_write_file","args":{"path":"/workspace/b.md","content":"two"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.fileMutations).toHaveLength(2);
+    expect(detected.mutating).toBeNull();
+    expect(detected.extraMutations).toHaveLength(0);
+    if (detected.fileMutations[0]?.source === 'sandbox') {
+      expect(detected.fileMutations[0].call.tool).toBe('sandbox_write_file');
+    }
+  });
+
+  it('batches file mutations followed by one trailing side-effect', () => {
+    // [write, edit, exec] — 2 file mutations batch + 1 trailing exec
+    const text = [
+      '{"tool":"sandbox_write_file","args":{"path":"/workspace/a.ts","content":"one"}}',
+      '{"tool":"sandbox_search_replace","args":{"path":"/workspace/b.ts","search":"old","replace":"new"}}',
+      '{"tool":"sandbox_exec","args":{"command":"npm test"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.fileMutations).toHaveLength(2);
+    expect(detected.mutating?.source).toBe('sandbox');
+    if (detected.mutating?.source === 'sandbox') {
+      expect(detected.mutating.call.tool).toBe('sandbox_exec');
+    }
+    expect(detected.extraMutations).toHaveLength(0);
+  });
+
+  it('captures reads + file mutation batch + trailing side-effect in order', () => {
+    // [read, read, write, write, commit] — all three slots populated
+    const text = [
+      '{"tool":"sandbox_read_file","args":{"path":"/workspace/a.ts"}}',
+      '{"tool":"sandbox_read_file","args":{"path":"/workspace/b.ts"}}',
+      '{"tool":"sandbox_write_file","args":{"path":"/workspace/c.md","content":"one"}}',
+      '{"tool":"sandbox_write_file","args":{"path":"/workspace/d.md","content":"two"}}',
+      '{"tool":"sandbox_prepare_commit","args":{"message":"chore: add docs"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(2);
+    expect(detected.fileMutations).toHaveLength(2);
+    expect(detected.mutating?.source).toBe('sandbox');
+    if (detected.mutating?.source === 'sandbox') {
+      expect(detected.mutating.call.tool).toBe('sandbox_prepare_commit');
+    }
+    expect(detected.extraMutations).toHaveLength(0);
+  });
+
+  it('rejects a second side-effect after a file mutation batch', () => {
+    // [write, exec, exec] — second exec is extraMutations
+    const text = [
+      '{"tool":"sandbox_write_file","args":{"path":"/workspace/a.md","content":"one"}}',
+      '{"tool":"sandbox_exec","args":{"command":"npm test"}}',
+      '{"tool":"sandbox_exec","args":{"command":"npm run build"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.fileMutations).toHaveLength(1);
+    expect(detected.mutating?.source).toBe('sandbox');
+    expect(detected.extraMutations).toHaveLength(1);
+    if (detected.extraMutations[0]?.source === 'sandbox') {
+      expect(detected.extraMutations[0].call.tool).toBe('sandbox_exec');
+    }
+  });
+
+  it('classifies a single file mutation into fileMutations, not mutating', () => {
+    const text = '{"tool":"sandbox_write_file","args":{"path":"/workspace/a.md","content":"one"}}';
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.fileMutations).toHaveLength(1);
+    expect(detected.mutating).toBeNull();
+    expect(detected.extraMutations).toHaveLength(0);
+  });
+
+  it('caps the file-mutation batch at MAX_FILE_MUTATION_BATCH and routes overflow into extraMutations', () => {
+    // 10 distinct file writes (MAX_FILE_MUTATION_BATCH = 8) — first 8
+    // should land in fileMutations (in order), last 2 in extraMutations.
+    const calls = Array.from(
+      { length: 10 },
+      (_, i) =>
+        `{"tool":"sandbox_write_file","args":{"path":"/workspace/file${i}.md","content":"v${i}"}}`,
+    );
+    const text = calls.join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.fileMutations).toHaveLength(8);
+    expect(detected.mutating).toBeNull();
+    expect(detected.extraMutations).toHaveLength(2);
+
+    // Order preserved inside fileMutations
+    detected.fileMutations.forEach((call, i) => {
+      if (call.source === 'sandbox' && call.call.tool === 'sandbox_write_file') {
+        expect(call.call.args.path).toBe(`/workspace/file${i}.md`);
+      }
+    });
+    // Overflow appears in emission order
+    if (
+      detected.extraMutations[0]?.source === 'sandbox' &&
+      detected.extraMutations[0].call.tool === 'sandbox_write_file'
+    ) {
+      expect(detected.extraMutations[0].call.args.path).toBe('/workspace/file8.md');
+    }
+    if (
+      detected.extraMutations[1]?.source === 'sandbox' &&
+      detected.extraMutations[1].call.tool === 'sandbox_write_file'
+    ) {
+      expect(detected.extraMutations[1].call.args.path).toBe('/workspace/file9.md');
+    }
+  });
+
+  it('rejects a read emitted after the mutation batch starts', () => {
+    // [write, read, exec] — the read is an ordering violation and should
+    // land in extraMutations; the subsequent exec should also go to
+    // extraMutations because the phase flipped to done.
+    const text = [
+      '{"tool":"sandbox_write_file","args":{"path":"/workspace/a.md","content":"one"}}',
+      '{"tool":"sandbox_read_file","args":{"path":"/workspace/b.ts"}}',
+      '{"tool":"sandbox_exec","args":{"command":"npm test"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.fileMutations).toHaveLength(1);
+    expect(detected.mutating).toBeNull();
+    expect(detected.extraMutations).toHaveLength(2);
+    if (detected.extraMutations[0]?.source === 'sandbox') {
+      expect(detected.extraMutations[0].call.tool).toBe('sandbox_read_file');
+    }
+    if (detected.extraMutations[1]?.source === 'sandbox') {
+      expect(detected.extraMutations[1].call.tool).toBe('sandbox_exec');
     }
   });
 

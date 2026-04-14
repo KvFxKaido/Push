@@ -47,6 +47,17 @@ export const READ_ONLY_TOOLS = new Set([
   'exec_list_sessions',
 ]);
 
+// CLI-side classification of pure file-mutation tools (safe to batch in one
+// turn). Mirrors the `FILE_MUTATION_CANONICAL_NAMES` set in
+// `lib/tool-registry.ts`, but named with CLI tool names. The daemon dispatch
+// uses this to group contiguous file mutations into a single mutation batch
+// before any trailing side-effecting call (exec, git_commit, etc.).
+export const FILE_MUTATION_TOOLS = new Set(['write_file', 'edit_file', 'undo_edit']);
+
+export function isFileMutationToolCall(call) {
+  return Boolean(call && FILE_MUTATION_TOOLS.has(call.tool));
+}
+
 // Shared symbol-detection patterns used by read_symbols and read_symbol
 const SYMBOL_PATTERNS = [
   {
@@ -701,7 +712,7 @@ Rules:
 - Paths are relative to workspace root unless absolute inside workspace.
 - Never attempt paths outside workspace.
 - You may emit multiple tool calls in one assistant reply.
-- Emit at most one mutating filesystem/exec tool call per reply; read-only calls can be batched.
+- Per-turn tool budget: read-only calls first (they run in parallel), then any number of file mutations (write_file / edit_file / undo_edit — run sequentially as one batch), then at most one trailing side-effect (exec / git_commit / save_memory). A second side-effect is rejected with MULTI_MUTATION_NOT_ALLOWED.
 - Prefer edit_file over full-file rewrites when possible.
 - If a tool fails, correct the call and retry when appropriate.
 - Do not describe tool calls in prose. Emit only JSON blocks for tool calls.
