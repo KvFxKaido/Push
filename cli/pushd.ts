@@ -37,6 +37,7 @@ import {
   detectAllToolCalls as cliDetectAllToolCalls,
   detectToolCall as cliDetectToolCall,
   READ_ONLY_TOOLS,
+  TOOL_PROTOCOL,
 } from './tools.js';
 import {
   makeSessionId,
@@ -71,18 +72,21 @@ const CAPABILITIES = [
   'role_routing',
   'delegation_explorer_v1',
   'delegation_reviewer_v1',
-  // `delegation_coder_v1`: `delegate_coder` RPC + task-graph coder nodes run
-  // through `runCoderAgent` with a stubbed tool executor. LLM streams real
-  // tokens via the daemon provider adapter, but any tool call the model
-  // emits gets a canned "not yet wired" result. Outcomes are marked
-  // `inconclusive` with a `missingRequirements` entry; flipping
-  // `multi_agent` still requires a real Coder tool executor.
+  // `delegation_coder_v1`: `delegate_coder` RPC + task-graph coder nodes
+  // run through `runCoderAgent` with a REAL daemon tool executor
+  // (`makeDaemonCoderToolExec`) that routes through `executeToolCall`
+  // from `cli/tools.ts` with approval gating via `buildApprovalFn`.
+  // Coder delegations now actually read/write files and run shell
+  // commands under approval gating; outcomes land as `'complete'` on
+  // clean kernel returns. Advertising `multi_agent` still waits on
+  // the real Explorer tool executor (same pattern, different shape).
   'delegation_coder_v1',
-  // v2 task-graph execution: submit_task_graph accepts graphs, runs them
-  // through lib/task-graph.executeTaskGraph, and streams task_graph.* events.
-  // Both explorer and coder nodes now route through the scaffold path
-  // (streaming LLM with stubbed tool executor); coder nodes previously
-  // failed fast.
+  // v2 task-graph execution: submit_task_graph accepts graphs, runs
+  // them through lib/task-graph.executeTaskGraph, and streams
+  // task_graph.* events. Coder nodes route through the real daemon
+  // tool executor (see `delegation_coder_v1` above); explorer nodes
+  // still run through the scaffold stub executor until the Explorer
+  // real tool executor ships.
   'task_graph_v1',
   // `event_v2`: the daemon emits raw `subagent.*` / `task_graph.*` envelopes
   // to clients that advertise this cap back in `attach_session.capabilities`.
@@ -275,7 +279,15 @@ function buildApprovalFn(sessionId, entry, runId) {
         reject(new Error('Approval timed out'));
       }, APPROVAL_TIMEOUT_MS);
 
-      entry.pendingApproval = { approvalId, resolve, reject, timer };
+      // Store the runId alongside the approvalId so `handleSubmitApproval`
+      // can emit `approval_received` on the SAME runId we emitted
+      // `approval_required` on. Without this, delegation + task-graph
+      // approvals mismatched: the required event fired on the child
+      // runId while the received event fell back to `entry.activeRunId`
+      // (which is the parent for delegations, and null for task-graph
+      // nodes), making client-side correlation impossible (codex P1
+      // on PR #282).
+      entry.pendingApproval = { approvalId, resolve, reject, timer, runId };
     });
 
     const approvalPayload = {
@@ -884,20 +896,33 @@ async function handleSubmitApproval(req) {
   entry.pendingApproval = null;
   pending.resolve(decision);
 
-  // Emit approval_received to all clients
+  // Emit approval_received to all clients on the SAME runId we used
+  // for `approval_required` (stored alongside in `buildApprovalFn`).
+  // Falling back to `entry.activeRunId` — which is the parent run for
+  // a main loop, but null for delegations and task-graph nodes —
+  // caused the received event to mismatch the required event for
+  // anything routed through `delegate_coder` /
+  // `handleSubmitTaskGraph`, making client-side correlation
+  // impossible.
+  const approvalRunId = typeof pending.runId === 'string' ? pending.runId : entry.activeRunId;
   const eventPayload = { approvalId, decision, by: 'client' };
-  await appendSessionEvent(entry.state, 'approval_received', eventPayload, entry.activeRunId);
-  // Build envelope after appendSessionEvent so seq matches the persisted event
-  broadcastEvent(sessionId, {
+  await appendSessionEvent(entry.state, 'approval_received', eventPayload, approvalRunId);
+  // Build envelope after appendSessionEvent so seq matches the persisted event.
+  // Omit `runId` when falsy (protocol-schema strict mode rejects
+  // `runId: null` on wire envelopes — see PR #276 review).
+  const envelope = {
     v: PROTOCOL_VERSION,
     kind: 'event',
     sessionId,
-    runId: entry.activeRunId,
     seq: entry.state.eventSeq,
     ts: Date.now(),
     type: 'approval_received',
     payload: eventPayload,
-  });
+  };
+  if (typeof approvalRunId === 'string' && approvalRunId.length > 0) {
+    envelope.runId = approvalRunId;
+  }
+  broadcastEvent(sessionId, envelope);
 
   return makeResponse(req.requestId, 'submit_approval', sessionId, true, {
     accepted: true,
@@ -1103,6 +1128,21 @@ function resolveRoleRouting(entry, role) {
 // ─── Daemon Coder tool executor (real lib-kernel integration) ──
 
 /**
+ * Wrap a raw CLI tool call (`{ tool, args }`) into the nested shape
+ * the lib Coder kernel reads: `{ call: { tool, args } }`. The kernel
+ * does a structural cast and reaches for `toolCall.call.tool` /
+ * `toolCall.call.args` in both the parallel-reads and single-call
+ * branches (`lib/coder-agent.ts` around lines 1437 and 1760). If we
+ * hand the kernel a raw flat call, accessing `.call.tool` throws a
+ * runtime TypeError and the delegation fails on the first tool turn
+ * (codex P1 feedback on PR #282). The `source: 'cli'` tag is a hint
+ * to future log inspectors but the kernel itself ignores it.
+ */
+function wrapCall(call) {
+  return { source: 'cli', call };
+}
+
+/**
  * Wrap `cli/tools.ts`'s flat `{ calls, malformed }` detector output into
  * the `DetectedToolCalls` shape the lib Coder kernel expects
  * (`{ readOnly, mutating, extraMutations }` from
@@ -1111,6 +1151,10 @@ function resolveRoleRouting(entry, role) {
  * else is treated as mutating. The first mutating call slots into
  * `mutating`; any subsequent mutating calls fall into `extraMutations`
  * so the kernel can surface a "only one mutating call per turn" warning.
+ *
+ * Each slot holds a kernel-shaped `{ call: { tool, args } }` wrapper
+ * (see `wrapCall`) — NOT the raw CLI call shape — so the kernel's
+ * structural cast `toolCall.call.tool` resolves correctly.
  *
  * Exported so unit tests can assert the classification directly without
  * having to drive a full kernel loop through a mock provider.
@@ -1121,22 +1165,29 @@ export function wrapCliDetectAllToolCalls(text) {
   const extraMutations = [];
   let mutating = null;
   for (const call of calls) {
+    const wrapped = wrapCall(call);
     if (READ_ONLY_TOOLS.has(call.tool)) {
-      readOnly.push(call);
+      readOnly.push(wrapped);
       continue;
     }
     if (mutating === null) {
-      mutating = call;
+      mutating = wrapped;
     } else {
-      extraMutations.push(call);
+      extraMutations.push(wrapped);
     }
   }
   return { readOnly, mutating, extraMutations };
 }
 
-/** Passthrough wrapper so the naming matches `runCoderAgent`'s option slot. */
+/**
+ * Wraps the CLI single-call detector into the kernel's nested shape.
+ * Returns `null` when no tool call is present, matching the kernel's
+ * `detectAnyToolCall` slot contract.
+ */
 function wrapCliDetectAnyToolCall(text) {
-  return cliDetectToolCall(text);
+  const call = cliDetectToolCall(text);
+  if (!call) return null;
+  return wrapCall(call);
 }
 
 /**
@@ -1162,9 +1213,17 @@ function wrapCliDetectAnyToolCall(text) {
 export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
   const approvalFn = buildApprovalFn(sessionId, entry, runId);
   const workspaceRoot = entry.state.cwd;
-  return async (call, _execCtx) => {
+  return async (toolCall, _execCtx) => {
+    // The kernel passes the nested wrapper we returned from
+    // `wrapCliDetectAllToolCalls` / `wrapCliDetectAnyToolCall` — a
+    // `{ source, call: { tool, args } }` shape. Unwrap once to get the
+    // flat `{ tool, args }` form `executeToolCall` expects. If a
+    // caller somehow hands us a bare CLI call (e.g. tests that call
+    // the executor directly), fall through and pass it as-is.
+    const rawCall =
+      toolCall && typeof toolCall === 'object' && toolCall.call ? toolCall.call : toolCall;
     try {
-      const result = await executeToolCall(call, workspaceRoot, {
+      const result = await executeToolCall(rawCall, workspaceRoot, {
         approvalFn,
         signal,
         // Daemon delegations are expected to run the full tool surface;
@@ -1175,10 +1234,11 @@ export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
         allowExec: true,
         execMode: 'auto',
       });
+      const resultText = typeof result?.text === 'string' ? result.text : '';
       if (result && result.ok === true) {
         return {
           kind: 'executed',
-          resultText: typeof result.text === 'string' ? result.text : '',
+          resultText,
         };
       }
       // Tool ran to completion but reported failure. Feed the opaque
@@ -1188,7 +1248,7 @@ export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
       // ~line 1407).
       return {
         kind: 'executed',
-        resultText: typeof result?.text === 'string' ? result.text : '',
+        resultText,
         errorType: result?.structuredError?.code,
       };
     } catch (err) {
@@ -1300,10 +1360,21 @@ async function runCoderForTaskGraph(sessionId, entry, node, parentRunId, signal)
   const startedAt = Date.now();
   const { provider, model } = resolveRoleRouting(entry, 'coder');
   const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
+  // `parentRunId` can be null when `submit_task_graph` is called on a
+  // session with no active run AND no `parentRunId` payload override.
+  // `buildApprovalFn` would emit `approval_required` events with
+  // `runId: null` on the wire envelope, which violates the
+  // protocol-schema strict-mode rule that `runId` must be omitted or
+  // a non-empty string (codex P1 on PR #282). Mint a fresh child run
+  // id for the task-graph node in that case so approval events still
+  // carry a valid runId, even if no client is specifically listening
+  // for this execution's run.
+  const effectiveRunId =
+    typeof parentRunId === 'string' && parentRunId.trim().length > 0 ? parentRunId : makeRunId();
   const toolExec = makeDaemonCoderToolExec({
     sessionId,
     entry,
-    runId: parentRunId,
+    runId: effectiveRunId,
     signal,
   });
   const evaluateAfterModel = async () => null;
@@ -1322,7 +1393,12 @@ async function runCoderForTaskGraph(sessionId, entry, node, parentRunId, signal)
       detectAllToolCalls: wrapCliDetectAllToolCalls,
       detectAnyToolCall: wrapCliDetectAnyToolCall,
       webSearchToolProtocol: '',
-      sandboxToolProtocol: '',
+      // `sandboxToolProtocol` is the tool-instruction block the kernel
+      // splices into its system prompt — without it the model has no
+      // guidance on what tool-call JSON to emit (codex P1 on PR #282).
+      // Feed in `TOOL_PROTOCOL` from `cli/tools.ts`, the same block the
+      // non-delegated CLI engine uses.
+      sandboxToolProtocol: TOOL_PROTOCOL,
       verificationPolicyBlock: null,
       approvalModeBlock: null,
       evaluateAfterModel,
@@ -2354,7 +2430,12 @@ async function handleDelegateCoder(req) {
           detectAllToolCalls: wrapCliDetectAllToolCalls,
           detectAnyToolCall: wrapCliDetectAnyToolCall,
           webSearchToolProtocol: '',
-          sandboxToolProtocol: '',
+          // `sandboxToolProtocol` is the tool-instruction block the kernel
+          // splices into its system prompt — without it the model has no
+          // guidance on what tool-call JSON to emit (codex P1 on PR #282).
+          // Feed in `TOOL_PROTOCOL` from `cli/tools.ts`, the same block the
+          // non-delegated CLI engine uses.
+          sandboxToolProtocol: TOOL_PROTOCOL,
           verificationPolicyBlock: null,
           approvalModeBlock: null,
           evaluateAfterModel,

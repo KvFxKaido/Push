@@ -2376,7 +2376,8 @@ describe('wrapCliDetectAllToolCalls', () => {
     ].join('\n');
     const detected = wrapCliDetectAllToolCalls(text);
     assert.equal(detected.readOnly.length, 1);
-    assert.equal(detected.readOnly[0].tool, 'read_file');
+    assert.equal(detected.readOnly[0].source, 'cli');
+    assert.equal(detected.readOnly[0].call.tool, 'read_file');
     assert.equal(detected.mutating, null);
     assert.deepEqual(detected.extraMutations, []);
   });
@@ -2390,7 +2391,8 @@ describe('wrapCliDetectAllToolCalls', () => {
     const detected = wrapCliDetectAllToolCalls(text);
     assert.deepEqual(detected.readOnly, []);
     assert.ok(detected.mutating);
-    assert.equal(detected.mutating.tool, 'write_file');
+    assert.equal(detected.mutating.source, 'cli');
+    assert.equal(detected.mutating.call.tool, 'write_file');
     assert.deepEqual(detected.extraMutations, []);
   });
 
@@ -2401,10 +2403,10 @@ describe('wrapCliDetectAllToolCalls', () => {
     const detected = wrapCliDetectAllToolCalls(text);
     assert.deepEqual(detected.readOnly, []);
     assert.ok(detected.mutating);
-    assert.equal(detected.mutating.tool, 'write_file');
-    assert.equal(detected.mutating.args.path, 'a.txt');
+    assert.equal(detected.mutating.call.tool, 'write_file');
+    assert.equal(detected.mutating.call.args.path, 'a.txt');
     assert.equal(detected.extraMutations.length, 1);
-    assert.equal(detected.extraMutations[0].args.path, 'b.txt');
+    assert.equal(detected.extraMutations[0].call.args.path, 'b.txt');
   });
 
   it('collects parallel reads and a trailing mutation', () => {
@@ -2414,10 +2416,10 @@ describe('wrapCliDetectAllToolCalls', () => {
     const text = `\`\`\`json\n${read1}\n\`\`\`\n\`\`\`json\n${read2}\n\`\`\`\n\`\`\`json\n${write}\n\`\`\``;
     const detected = wrapCliDetectAllToolCalls(text);
     assert.equal(detected.readOnly.length, 2);
-    assert.equal(detected.readOnly[0].tool, 'read_file');
-    assert.equal(detected.readOnly[1].tool, 'list_dir');
+    assert.equal(detected.readOnly[0].call.tool, 'read_file');
+    assert.equal(detected.readOnly[1].call.tool, 'list_dir');
     assert.ok(detected.mutating);
-    assert.equal(detected.mutating.tool, 'write_file');
+    assert.equal(detected.mutating.call.tool, 'write_file');
     assert.deepEqual(detected.extraMutations, []);
   });
 
