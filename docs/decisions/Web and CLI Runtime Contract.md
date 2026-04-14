@@ -203,6 +203,27 @@ It lives in `cli/` rather than `lib/` because today only pushd emits these envel
 
 If a later surface starts consuming the same wire format directly (e.g., the Phase 7 "Web-as-daemon-client" flow in `docs/decisions/push-runtime-v2.md`), this module should graduate to `lib/` so both shells validate against the same code — not just the same comment.
 
+### Role kernels: shared substrate plus shell-local dependency injection
+
+The role kernels — `reviewer-agent`, `auditor-agent`, `deep-reviewer-agent`, `explorer-agent`, and `coder-agent` — live canonically in `lib/`. Each shell imports the kernel and supplies its own dependency injection for the pieces that are irreducibly shell-specific: tool execution, approval gating, sandbox/session context, and working-memory adapters.
+
+For `coder-agent` this produces a two-headed shape:
+
+- `lib/coder-agent.ts` — the canonical kernel: agent loop, prompt assembly, working-memory shape, delegation-outcome protocol
+- `app/src/lib/coder-agent.ts` — the Web binding: wires `executeSandboxToolCall`, chat-message approval UI, Web-side memory adapters, and browser lifecycle into the kernel's `ToolExec` and approval contracts
+- `makeDaemonCoderToolExec` in `cli/pushd.ts` — the CLI binding: wires `cli/tools.ts` execution, socket-RPC approvals, and daemon session storage into the same kernel
+
+This is **not** a transition artifact. The Phase 7 "Web-as-daemon-client" flow in `docs/decisions/push-runtime-v2.md` is explicitly out of scope for v2.0, and would require substantial Web-side refactoring (`useChat.ts` → daemon RPC, approval → socket callback, working memory → shared daemon state) to land. Until that migration is committed, the dual-binding shape is the correct way to satisfy each shell's DI contract without pushing shell concerns down into `lib/`.
+
+The operating rule for this pattern:
+
+- Kernel changes must work for both bindings. If they don't, the change belongs in the bindings, not the kernel.
+- Shell-specific concerns (sandbox client, approval UX, session storage, memory persistence) stay in their binding. They must not leak into `lib/`.
+- If a concern needs to change both bindings identically, that is the signal it belongs in the kernel — not in one binding as a "web fix the CLI will mirror later."
+- Treat either binding as load-bearing architecture, not pending cleanup. The web binding shrinks or collapses only if Phase 7 lands.
+
+The same rule applies to the other role kernels. `explorer-agent` already uses it (Web consumes the kernel directly from `useAgentDelegation.ts`; CLI consumes it through `makeDaemonExplorerToolExec`). The `coder-agent` case is the most visible because the Web binding is the largest — but the shape is the shared pattern, not an exception.
+
 ## Decision Filter
 
 When deciding whether a new capability belongs in shared runtime code or shell-local code, use this test:
