@@ -635,6 +635,66 @@ describe('detectAllToolCalls', () => {
     expect(detected.extraMutations).toHaveLength(0);
   });
 
+  it('caps the file-mutation batch at MAX_FILE_MUTATION_BATCH and routes overflow into extraMutations', () => {
+    // 10 distinct file writes (MAX_FILE_MUTATION_BATCH = 8) — first 8
+    // should land in fileMutations (in order), last 2 in extraMutations.
+    const calls = Array.from(
+      { length: 10 },
+      (_, i) =>
+        `{"tool":"sandbox_write_file","args":{"path":"/workspace/file${i}.md","content":"v${i}"}}`,
+    );
+    const text = calls.join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.fileMutations).toHaveLength(8);
+    expect(detected.mutating).toBeNull();
+    expect(detected.extraMutations).toHaveLength(2);
+
+    // Order preserved inside fileMutations
+    detected.fileMutations.forEach((call, i) => {
+      if (call.source === 'sandbox' && call.call.tool === 'sandbox_write_file') {
+        expect(call.call.args.path).toBe(`/workspace/file${i}.md`);
+      }
+    });
+    // Overflow appears in emission order
+    if (
+      detected.extraMutations[0]?.source === 'sandbox' &&
+      detected.extraMutations[0].call.tool === 'sandbox_write_file'
+    ) {
+      expect(detected.extraMutations[0].call.args.path).toBe('/workspace/file8.md');
+    }
+    if (
+      detected.extraMutations[1]?.source === 'sandbox' &&
+      detected.extraMutations[1].call.tool === 'sandbox_write_file'
+    ) {
+      expect(detected.extraMutations[1].call.args.path).toBe('/workspace/file9.md');
+    }
+  });
+
+  it('rejects a read emitted after the mutation batch starts', () => {
+    // [write, read, exec] — the read is an ordering violation and should
+    // land in extraMutations; the subsequent exec should also go to
+    // extraMutations because the phase flipped to done.
+    const text = [
+      '{"tool":"sandbox_write_file","args":{"path":"/workspace/a.md","content":"one"}}',
+      '{"tool":"sandbox_read_file","args":{"path":"/workspace/b.ts"}}',
+      '{"tool":"sandbox_exec","args":{"command":"npm test"}}',
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.fileMutations).toHaveLength(1);
+    expect(detected.mutating).toBeNull();
+    expect(detected.extraMutations).toHaveLength(2);
+    if (detected.extraMutations[0]?.source === 'sandbox') {
+      expect(detected.extraMutations[0].call.tool).toBe('sandbox_read_file');
+    }
+    if (detected.extraMutations[1]?.source === 'sandbox') {
+      expect(detected.extraMutations[1].call.tool).toBe('sandbox_exec');
+    }
+  });
+
   it('captures extra delegate_coder mutations so the caller can reject them', () => {
     const text = [
       '{"tool":"delegate_coder","args":{"task":"refactor the auth module to use tokens"}}',

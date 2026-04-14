@@ -1199,9 +1199,13 @@ export function wrapCliDetectAllToolCalls(text) {
         readOnly.push(wrapped);
         continue;
       }
-      // Read after a mutation started — stop processing to preserve
-      // the model's intended ordering. Remaining calls are dropped.
-      break;
+      // Read after a mutation started — ordering violation. Push it
+      // into `extraMutations` (and flip `phase` so any remaining calls
+      // land there too) so the caller can surface a structured error
+      // instead of silently dropping the call.
+      extraMutations.push(wrapped);
+      phase = 'done';
+      continue;
     }
 
     if (isFileMut) {

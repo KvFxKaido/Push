@@ -744,11 +744,11 @@ export async function processAssistantTurn(
     }
 
     // --- File-mutation batch (sequential, between reads and trailing side-effect) ---
-    // Runs pure file writes/edits as a single mutation transaction in the
-    // order the model emitted them. Each call's result is appended before
-    // the next runs so errors propagate naturally — on the first hard
-    // failure we still drain the remaining batch (so the model sees a
-    // complete picture) but stop feeding the trailing side-effect.
+    // Runs pure file writes/edits in the order the model emitted them.
+    // Each call's result is appended before the next runs so errors
+    // propagate naturally. On the first hard failure we short-circuit
+    // the batch and suppress the trailing side-effect so the model can
+    // correct before we commit or exec against partial state.
     let batchHadHardFailure = false;
     if (fileMutationBatch.length > 0) {
       updateAgentStatus(
@@ -818,23 +818,21 @@ export async function processAssistantTurn(
           );
         }
 
-        if (batchOutcome.cards.length > 0) {
-          setConversations((prev) => {
-            const conv = prev[chatId];
-            if (!conv) return prev;
-            const msgs = appendCardsToLatestToolCall(conv.messages, batchOutcome.cards);
-            return { ...prev, [chatId]: { ...conv, messages: msgs } };
-          });
-        }
-
+        // Single state update per batch member: apply cards (if any)
+        // and append the result message in one pass so React only
+        // re-renders once instead of twice per mutation.
         setConversations((prev) => {
           const conv = prev[chatId];
           if (!conv) return prev;
+          const withCards =
+            batchOutcome.cards.length > 0
+              ? appendCardsToLatestToolCall(conv.messages, batchOutcome.cards)
+              : conv.messages;
           return {
             ...prev,
             [chatId]: {
               ...conv,
-              messages: [...conv.messages, batchOutcome.resultMessage],
+              messages: [...withCards, batchOutcome.resultMessage],
               lastMessageAt: Date.now(),
             },
           };

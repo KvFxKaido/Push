@@ -113,8 +113,9 @@ export interface DetectedToolCalls {
   readOnly: AnyToolCall[];
   /**
    * Contiguous batch of safe file-mutation calls (write/edit/patch). Runs
-   * sequentially as one mutation transaction between the parallel reads and
-   * the trailing side-effect.
+   * sequentially after the parallel reads and before the trailing
+   * side-effect. Execution stops on the first hard failure — the batch is
+   * NOT atomic, partial state can remain on-disk after an error.
    */
   fileMutations: AnyToolCall[];
   /**
@@ -124,9 +125,11 @@ export interface DetectedToolCalls {
    */
   mutating: AnyToolCall | null;
   /**
-   * Overflow calls that violated the one-side-effect-per-turn rule — a
-   * second side-effect, or any call after a side-effect. Callers reject
-   * these with a structured error.
+   * Overflow calls that the turn couldn't accommodate. Sources include:
+   * a second side-effect, any call after a side-effect, a read emitted
+   * after the mutation transaction began, and file-mutation batch
+   * overflow (more than MAX_FILE_MUTATION_BATCH). Callers reject these
+   * with a structured error so the model can correct on the next turn.
    */
   extraMutations: AnyToolCall[];
 }
@@ -138,15 +141,15 @@ export interface DetectedToolCalls {
  * Grouping rule:
  *   1. A contiguous prefix of read-only calls goes into `readOnly` (parallel).
  *   2. Any number of contiguous file-mutation calls (write/edit/patch) go
- *      into `fileMutations` (sequential, all-or-nothing semantics).
+ *      into `fileMutations` (executed sequentially; stops on first hard
+ *      failure, NOT atomic).
  *   3. At most one trailing side-effecting call (exec, commit, push,
  *      delegate, workflow dispatch, etc.) goes into `mutating`.
- *   4. Anything after the trailing side-effect — or a second side-effect —
- *      falls into `extraMutations` for the caller to reject.
- *
- * Reads that appear mid-sequence (after a mutation has started) are
- * treated as a boundary: the sequence stops there. File mutations that
- * appear after a side-effect go into `extraMutations`.
+ *   4. Anything that violates that ordering — a read after mutations
+ *      started, a second side-effect, any call after a side-effect, or
+ *      file-mutation overflow beyond MAX_FILE_MUTATION_BATCH — goes into
+ *      `extraMutations` so the caller can surface a structured error and
+ *      let the model correct on the next turn.
  *
  * Falls back cleanly when only one call is present.
  */
@@ -215,9 +218,14 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
         readOnly.push(call);
         continue;
       }
-      // Read after a mutation has started — boundary. Stop processing
-      // further calls so we don't silently reorder the model's intent.
-      break;
+      // Read after a mutation has started — ordering violation. Push it
+      // (and treat subsequent calls from here as overflow too) into
+      // extraMutations so the caller can surface a structured error and
+      // the model can correct on the next turn. Falling through to the
+      // `done` branch on the next iteration keeps that behavior.
+      extraMutations.push(call);
+      phase = 'done';
+      continue;
     }
 
     if (isFileMut) {

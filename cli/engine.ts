@@ -898,31 +898,59 @@ export async function runAssistantLoop(
       return { outcome: 'error', finalAssistantText: loopText, rounds: round, runId };
     }
 
-    const readCalls: ToolCall[] = toolCalls.filter(isReadOnlyToolCall);
-    const nonReadCalls: ToolCall[] = toolCalls.filter(
-      (call: ToolCall) => !isReadOnlyToolCall(call),
-    );
-
-    // Split non-read calls into the per-turn mutation transaction:
-    //   - `fileMutationBatch`: contiguous pure file writes/edits, executed
-    //     sequentially as one batch
+    // --- Per-turn mutation transaction grouping (state machine) ---
+    // Walk the ordered tool-call list exactly once so we preserve the
+    // model's intended ordering (reads first, then the file-mutation
+    // batch, then at most one trailing side-effect). This mirrors the
+    // web dispatcher (`detectAllToolCalls` in app/src/lib/tool-dispatch.ts)
+    // and the daemon wrapper (`wrapCliDetectAllToolCalls` in cli/pushd.ts)
+    // so all three runtimes enforce the same contract.
+    //
+    //   - `readCalls`: contiguous prefix of read-only calls, parallel
+    //   - `fileMutationBatch`: contiguous file mutations (write/edit/undo),
+    //     executed sequentially with fail-fast on the first error
     //   - `trailingSideEffect`: at most one trailing side-effecting call
-    //     (exec, git_commit, save_memory, etc.), runs after the batch
-    //   - `rejectedMutations`: overflow that violates the one-side-effect
-    //     rule, rejected with `MULTI_MUTATION_NOT_ALLOWED`
+    //     (exec, git_commit, save_memory, etc.)
+    //   - `rejectedMutations`: overflow — a second side-effect, a read
+    //     emitted after the mutation transaction started, or any call
+    //     that arrived after the trailing side-effect. Surfaced as
+    //     `MULTI_MUTATION_NOT_ALLOWED` below.
+    const readCalls: ToolCall[] = [];
     const fileMutationBatch: ToolCall[] = [];
     let trailingSideEffect: ToolCall | null = null;
     const rejectedMutations: ToolCall[] = [];
-    for (const call of nonReadCalls) {
-      if (trailingSideEffect) {
+    let groupingPhase: 'reads' | 'mutations' | 'done' = 'reads';
+    for (const call of toolCalls) {
+      const isRead = isReadOnlyToolCall(call);
+      const isFileMut = !isRead && isFileMutationToolCall(call);
+
+      if (groupingPhase === 'done') {
         rejectedMutations.push(call);
         continue;
       }
-      if (isFileMutationToolCall(call)) {
-        fileMutationBatch.push(call);
-      } else {
-        trailingSideEffect = call;
+
+      if (isRead) {
+        if (groupingPhase === 'reads') {
+          readCalls.push(call);
+          continue;
+        }
+        // Read after the mutation transaction started — ordering
+        // violation. Push into rejectedMutations and flip to `done` so
+        // remaining calls land there too.
+        rejectedMutations.push(call);
+        groupingPhase = 'done';
+        continue;
       }
+
+      if (isFileMut) {
+        groupingPhase = 'mutations';
+        fileMutationBatch.push(call);
+        continue;
+      }
+
+      // Side-effecting call. Only one allowed per turn.
+      trailingSideEffect = call;
+      groupingPhase = 'done';
     }
     const mutateCalls: ToolCall[] = [
       ...fileMutationBatch,
@@ -1033,15 +1061,25 @@ export async function runAssistantLoop(
         continue;
       }
 
-      // Execute the mutation transaction sequentially:
+      // Execute the mutation transaction sequentially with fail-fast:
       //   1. Every call in the file-mutation batch (write/edit/undo_edit)
       //   2. The trailing side-effect, if any
+      // On the first `ok: false` result we break out so later calls —
+      // including any trailing exec/git_commit — don't run against
+      // partial or incorrect state. The model still sees the results
+      // from the calls that ran (they were appended to state.messages
+      // inside executeOneToolCall) and can correct on the next turn.
       // All members share the single before-tool gate check above — if
-      // the first call was blocked we already bailed out. Later calls
-      // still get their own `executeOneToolCall`, which records per-call
-      // events and updates the ledger.
-      for (const call of mutateCalls) {
-        await executeOneToolCall(call, round, call === mutateCalls[mutateCalls.length - 1]);
+      // the first call was blocked we already bailed out.
+      for (let i = 0; i < mutateCalls.length; i++) {
+        const call = mutateCalls[i];
+        const isLast = i === mutateCalls.length - 1;
+        const mutResult = await executeOneToolCall(call, round, isLast);
+        if (!mutResult.ok) {
+          // Batch short-circuited — stop here so partial state doesn't
+          // propagate into a trailing side-effect.
+          break;
+        }
       }
 
       // Overflow side-effects (second exec, commit after exec, etc.) are
