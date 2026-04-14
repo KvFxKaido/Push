@@ -2233,19 +2233,31 @@ describe('delegate_coder', () => {
     }
   });
 
-  it('honours coder role routing via configure_role_routing', async () => {
+  it('honours coder role routing via configure_role_routing (distinct provider)', async () => {
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-coder-routing-'));
     process.env.PUSH_SESSION_DIR = tmpRoot;
 
-    // Guard test: configure_role_routing.coder should override the
-    // session-level provider. Point the override at a mock server
-    // distinct from the session default and assert the stream comes
-    // from the override.
-    const mock = await startMockProviderServer({ tokens: ['ROUTED_CODER_TOKEN'] });
-    const restoreConfig = patchProviderConfig('ollama', {
-      url: mock.url,
-      apiKey: 'test-mock-key',
+    // Proof-of-routing test: spin up TWO mock servers and pin the
+    // session default to one (`ollama` → sessionMock) while routing
+    // `coder` to the other (`openrouter` → routedMock). Each mock
+    // emits a distinct token so the delegation summary tells us
+    // unambiguously which backend served the request. Routing the
+    // coder role to `ollama` (the session default) would only prove
+    // the RPC accepts the `coder` key, not that role routing is
+    // consulted at request time — hence the extra mock.
+    const SESSION_ONLY_TOKEN = 'SESSION_PROVIDER_SHOULD_NOT_APPEAR';
+    const ROUTED_ONLY_TOKEN = 'ROUTED_CODER_PROVIDER_DID_APPEAR';
+
+    const sessionMock = await startMockProviderServer({ tokens: [SESSION_ONLY_TOKEN] });
+    const routedMock = await startMockProviderServer({ tokens: [ROUTED_ONLY_TOKEN] });
+    const restoreSession = patchProviderConfig('ollama', {
+      url: sessionMock.url,
+      apiKey: 'session-mock-key',
+    });
+    const restoreRouted = patchProviderConfig('openrouter', {
+      url: routedMock.url,
+      apiKey: 'routed-mock-key',
     });
 
     try {
@@ -2261,13 +2273,13 @@ describe('delegate_coder', () => {
       const routing = await handleRequest(
         makeRequest(
           'configure_role_routing',
-          { sessionId, attachToken, routing: { coder: { provider: 'ollama' } } },
+          { sessionId, attachToken, routing: { coder: { provider: 'openrouter' } } },
           sessionId,
         ),
         () => {},
       );
       assert.equal(routing.ok, true);
-      assert.equal(routing.payload.roleRouting.coder.provider, 'ollama');
+      assert.equal(routing.payload.roleRouting.coder.provider, 'openrouter');
 
       const response = await handleRequest(
         makeRequest(
@@ -2289,9 +2301,26 @@ describe('delegate_coder', () => {
       );
       assert.ok(completed);
       assert.equal(completed.payload.agent, 'coder');
+
+      // The only way these tokens end up in the delegation summary is
+      // if the Coder kernel's streamFn actually connected to the mock
+      // server we pointed the openrouter config at. If the routing
+      // override were silently ignored, the summary would carry the
+      // ollama session-mock token instead.
+      const summary = completed.payload.delegationOutcome.summary;
+      assert.ok(
+        summary.includes(ROUTED_ONLY_TOKEN),
+        `expected routed-provider token in summary, got ${JSON.stringify(summary)}`,
+      );
+      assert.ok(
+        !summary.includes(SESSION_ONLY_TOKEN),
+        `session-provider token should not appear — routing override was bypassed. summary=${JSON.stringify(summary)}`,
+      );
     } finally {
-      restoreConfig();
-      await mock.stop();
+      restoreRouted();
+      restoreSession();
+      await routedMock.stop();
+      await sessionMock.stop();
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });

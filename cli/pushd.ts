@@ -1024,10 +1024,16 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
  * Scaffold-level Coder invocation for task-graph nodes.
  *
  * Mirrors `runScaffoldExplorerForTaskGraph` but calls `runCoderAgent` from
- * `lib/coder-agent.ts` instead. Same stub-tool-executor pattern: the LLM
- * streams real tokens through `createDaemonProviderStream`, but any tool
- * call the model emits gets a canned "not yet wired" result back, and
- * `evaluateAfterModel` never advances the loop past its own observation.
+ * `lib/coder-agent.ts` instead. The LLM streams real tokens through
+ * `createDaemonProviderStream`. In this scaffold path tool calls are NOT
+ * detected or executed: `stubDetectAllToolCalls` always returns an empty
+ * detection set and `stubDetectAnyToolCall` always returns null, so any
+ * tool-call JSON the model emits passes through as ordinary model text
+ * and `stubToolExec` is effectively dead code. `stubToolExec` is still
+ * shaped as a valid `CoderToolExecResult` (`{ kind: 'denied', reason }`)
+ * so that incrementally flipping one of the detectors to a real
+ * implementation won't crash the kernel on its `result.kind` checks.
+ *
  * The resulting `DelegationOutcome` is marked `inconclusive` with a
  * `missingRequirements` entry pointing at this helper, so graph clients
  * see a structured "kernel reachable, tool executor still stubbed" signal
@@ -1050,8 +1056,16 @@ async function runScaffoldCoderForTaskGraph(sessionId, entry, node, signal) {
   const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
   const stubDetectAllToolCalls = () => emptyDetection;
   const stubDetectAnyToolCall = () => null;
+  // Defensive-shape stub: `CoderToolExecResult` is a discriminated union
+  // (`{ kind: 'executed', resultText, ... } | { kind: 'denied', reason }`)
+  // and the kernel inspects `result.kind` on every return. The stub
+  // detectors above guarantee this function is never reached today, but
+  // returning a shape-correct `denied` result keeps the scaffold safe
+  // under an incremental rollout where detection turns on before the
+  // real tool executor does.
   const stubToolExec = async () => ({
-    resultText: '[pushd scaffold] daemon-side Coder tool execution is not yet wired',
+    kind: 'denied',
+    reason: '[pushd scaffold] daemon-side Coder tool execution is not yet wired',
   });
   const stubEvaluateAfterModel = async () => null;
   const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
@@ -1904,10 +1918,14 @@ async function handleDelegateExplorer(req) {
  * Mirrors `handleDelegateExplorer` exactly: resolves role routing, validates
  * input, mints ids, emits `subagent.started`, acks the RPC, and then runs
  * the lib Coder kernel in the background with a stubbed tool executor. The
- * LLM streams real tokens via `createDaemonProviderStream`; any tool call
- * the model emits receives a canned "not yet wired" result because the stub
- * detectors never produce a `TCall` and the stub `toolExec` returns a single
- * `resultText` string with no side effects.
+ * LLM streams real tokens via `createDaemonProviderStream`. In this scaffold
+ * path tool calls are NOT detected or executed — `stubDetectAllToolCalls`
+ * returns an empty set and `stubDetectAnyToolCall` returns null, so tool-call
+ * JSON the model emits passes through as ordinary model text and
+ * `stubToolExec` is effectively dead code. The stub is still shaped as a
+ * valid `CoderToolExecResult` (`{ kind: 'denied', reason }`) so an
+ * incremental rollout that flips one detector on without the other won't
+ * crash the kernel on its `result.kind` checks.
  *
  * Why a separate handler from `delegate_explorer` when the shapes are so
  * similar: the explorer kernel's option interface is narrower (no
@@ -2064,8 +2082,16 @@ async function handleDelegateCoder(req) {
     const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
     const stubDetectAllToolCalls = () => emptyDetection;
     const stubDetectAnyToolCall = () => null;
+    // Defensive-shape stub: `CoderToolExecResult` is a discriminated union
+    // (`{ kind: 'executed', resultText, ... } | { kind: 'denied', reason }`)
+    // and the kernel inspects `result.kind` on every return. The stub
+    // detectors above guarantee this function is never reached today, but
+    // returning a shape-correct `denied` result keeps the scaffold safe
+    // under an incremental rollout where detection turns on before the
+    // real tool executor does.
     const stubToolExec = async () => ({
-      resultText: '[pushd scaffold] daemon-side Coder tool execution is not yet wired',
+      kind: 'denied',
+      reason: '[pushd scaffold] daemon-side Coder tool execution is not yet wired',
     });
     const stubEvaluateAfterModel = async () => null;
 
