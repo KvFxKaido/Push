@@ -1147,7 +1147,11 @@ describe('submit_task_graph', () => {
 
       const broadcasted = [];
       const attached = await handleRequest(
-        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, capabilities: ['event_v2'] },
+          sessionId,
+        ),
         (event) => broadcasted.push(event),
       );
       assert.equal(attached.ok, true);
@@ -1249,7 +1253,11 @@ describe('submit_task_graph', () => {
 
       const broadcasted = [];
       const attached = await handleRequest(
-        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, capabilities: ['event_v2'] },
+          sessionId,
+        ),
         (event) => broadcasted.push(event),
       );
       assert.equal(attached.ok, true);
@@ -1362,7 +1370,11 @@ describe('submit_task_graph', () => {
       const { sessionId, attachToken } = start.payload;
       const broadcasted = [];
       await handleRequest(
-        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, capabilities: ['event_v2'] },
+          sessionId,
+        ),
         (event) => broadcasted.push(event),
       );
       broadcasted.length = 0;
@@ -1713,7 +1725,11 @@ describe('delegate_explorer', () => {
 
       const broadcasted = [];
       const attached = await handleRequest(
-        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, capabilities: ['event_v2'] },
+          sessionId,
+        ),
         (event) => broadcasted.push(event),
       );
       assert.equal(attached.ok, true);
@@ -1857,7 +1873,11 @@ describe('delegate_explorer', () => {
 
       const broadcasted = [];
       const attached = await handleRequest(
-        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, capabilities: ['event_v2'] },
+          sessionId,
+        ),
         (event) => broadcasted.push(event),
       );
       assert.equal(attached.ok, true);
@@ -2147,7 +2167,11 @@ describe('delegate_coder', () => {
 
       const broadcasted = [];
       const attached = await handleRequest(
-        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, capabilities: ['event_v2'] },
+          sessionId,
+        ),
         (event) => broadcasted.push(event),
       );
       assert.equal(attached.ok, true);
@@ -2489,7 +2513,11 @@ describe('delegate_reviewer', () => {
 
       const broadcasted = [];
       const attached = await handleRequest(
-        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, capabilities: ['event_v2'] },
+          sessionId,
+        ),
         (event) => broadcasted.push(event),
       );
       assert.equal(attached.ok, true);
@@ -2705,7 +2733,11 @@ describe('cancel_delegation', () => {
 
       const broadcasted = [];
       const attached = await handleRequest(
-        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, capabilities: ['event_v2'] },
+          sessionId,
+        ),
         (event) => broadcasted.push(event),
       );
       assert.equal(attached.ok, true);
@@ -3662,5 +3694,284 @@ describe('broadcastEvent strict-mode schema enforcement', () => {
       },
     };
     assert.doesNotThrow(() => broadcastEvent(SESSION_ID, ok));
+  });
+});
+
+// ─── v1 synthetic downgrade ──────────────────────────────────────
+
+// Exercises Option C from docs/decisions/push-runtime-v2.md: clients
+// that don't advertise `event_v2` at attach time receive
+// `subagent.*` / `task_graph.*` events synthesized into plain
+// `assistant_token` events on the parent runId, prefixed with
+// `[Role]`. v2 clients (those that include `event_v2` in
+// `attach_session.capabilities`) continue to receive raw envelopes.
+describe('v1 synthetic downgrade', () => {
+  async function startTestSession() {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-v1-downgrade-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    const start = await handleRequest(
+      makeRequest('start_session', {
+        provider: 'ollama',
+        repo: { rootPath: process.cwd() },
+      }),
+      () => {},
+    );
+    assert.equal(start.ok, true);
+    const { sessionId, attachToken } = start.payload;
+    return {
+      sessionId,
+      attachToken,
+      cleanup: async () => {
+        if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+        else process.env.PUSH_SESSION_DIR = originalSessionDir;
+        await fs.rm(tmpRoot, { recursive: true, force: true });
+      },
+    };
+  }
+
+  function makeSubagentStarted(sessionId) {
+    return {
+      v: PROTOCOL_VERSION,
+      kind: 'event',
+      sessionId,
+      runId: 'run_child_downgrade',
+      seq: 50,
+      ts: Date.now(),
+      type: 'subagent.started',
+      payload: {
+        executionId: 'sub_downgrade_1',
+        subagentId: 'sub_downgrade_1',
+        parentRunId: 'run_parent_downgrade',
+        childRunId: 'run_child_downgrade',
+        agent: 'explorer',
+        role: 'explorer',
+        detail: 'inspect repo layout',
+      },
+    };
+  }
+
+  function makeTaskGraphCompleted(sessionId) {
+    return {
+      v: PROTOCOL_VERSION,
+      kind: 'event',
+      sessionId,
+      runId: 'run_parent_graph_downgrade',
+      seq: 77,
+      ts: Date.now(),
+      type: 'task_graph.task_completed',
+      payload: {
+        executionId: 'graph_downgrade_1',
+        taskId: 'step-a',
+        agent: 'coder',
+        summary: 'wrote hello.ts',
+        elapsedMs: 42,
+      },
+    };
+  }
+
+  it('v2 client with capabilities: ["event_v2"] sees raw delegation events', async () => {
+    const ctx = await startTestSession();
+    try {
+      const events = [];
+      const attach = await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId: ctx.sessionId, attachToken: ctx.attachToken, capabilities: ['event_v2'] },
+          ctx.sessionId,
+        ),
+        (event) => events.push(event),
+      );
+      assert.equal(attach.ok, true, `attach failed: ${JSON.stringify(attach.error)}`);
+
+      // Drain replay events first; only assert on what `broadcastEvent`
+      // pushes from here on out.
+      const baseline = events.length;
+      broadcastEvent(ctx.sessionId, makeSubagentStarted(ctx.sessionId));
+
+      const newEvents = events.slice(baseline);
+      assert.equal(newEvents.length, 1, `v2 client got ${newEvents.length} events, expected 1`);
+      assert.equal(newEvents[0].type, 'subagent.started');
+      assert.equal(newEvents[0].payload.agent, 'explorer');
+      assert.equal(newEvents[0].payload.detail, 'inspect repo layout');
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('v1 client (no capabilities field) sees assistant_token synthesized from subagent.started', async () => {
+    const ctx = await startTestSession();
+    try {
+      const events = [];
+      const attach = await handleRequest(
+        // No `capabilities` field at all — that's a stock v1 client.
+        makeRequest(
+          'attach_session',
+          { sessionId: ctx.sessionId, attachToken: ctx.attachToken },
+          ctx.sessionId,
+        ),
+        (event) => events.push(event),
+      );
+      assert.equal(attach.ok, true);
+
+      const baseline = events.length;
+      broadcastEvent(ctx.sessionId, makeSubagentStarted(ctx.sessionId));
+
+      const newEvents = events.slice(baseline);
+      assert.equal(newEvents.length, 1, 'v1 client should receive exactly one shadow event');
+      assert.equal(newEvents[0].type, 'assistant_token');
+      // Parent runId attribution per Option C.
+      assert.equal(newEvents[0].runId, 'run_parent_downgrade');
+      assert.ok(
+        newEvents[0].payload.text.startsWith('[Explorer] started:'),
+        `unexpected text: ${newEvents[0].payload.text}`,
+      );
+      // The v1 client MUST NOT see the raw subagent.started envelope.
+      assert.equal(
+        newEvents.filter((e) => e.type === 'subagent.started').length,
+        0,
+        'v1 client should not receive raw subagent.started',
+      );
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('v1 client (explicit empty capabilities array) is still treated as v1', async () => {
+    const ctx = await startTestSession();
+    try {
+      const events = [];
+      const attach = await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId: ctx.sessionId, attachToken: ctx.attachToken, capabilities: [] },
+          ctx.sessionId,
+        ),
+        (event) => events.push(event),
+      );
+      assert.equal(attach.ok, true);
+
+      const baseline = events.length;
+      broadcastEvent(ctx.sessionId, makeSubagentStarted(ctx.sessionId));
+
+      const newEvents = events.slice(baseline);
+      assert.equal(newEvents.length, 1);
+      assert.equal(newEvents[0].type, 'assistant_token');
+      assert.equal(newEvents[0].runId, 'run_parent_downgrade');
+      assert.ok(newEvents[0].payload.text.startsWith('[Explorer] started:'));
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('mixed fleet: v1 and v2 clients on the same session each get the right stream', async () => {
+    const ctx = await startTestSession();
+    try {
+      const v1Events = [];
+      const v2Events = [];
+      const v1Attach = await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId: ctx.sessionId, attachToken: ctx.attachToken },
+          ctx.sessionId,
+        ),
+        (event) => v1Events.push(event),
+      );
+      assert.equal(v1Attach.ok, true);
+
+      const v2Attach = await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId: ctx.sessionId, attachToken: ctx.attachToken, capabilities: ['event_v2'] },
+          ctx.sessionId,
+        ),
+        (event) => v2Events.push(event),
+      );
+      assert.equal(v2Attach.ok, true);
+
+      const v1Baseline = v1Events.length;
+      const v2Baseline = v2Events.length;
+      broadcastEvent(ctx.sessionId, makeTaskGraphCompleted(ctx.sessionId));
+
+      const newV1 = v1Events.slice(v1Baseline);
+      const newV2 = v2Events.slice(v2Baseline);
+
+      assert.equal(newV1.length, 1);
+      assert.equal(newV1[0].type, 'assistant_token');
+      assert.equal(newV1[0].runId, 'run_parent_graph_downgrade');
+      assert.ok(
+        newV1[0].payload.text.startsWith('[TaskGraph] task completed: step-a (coder)'),
+        `unexpected v1 text: ${newV1[0].payload.text}`,
+      );
+
+      assert.equal(newV2.length, 1);
+      assert.equal(newV2[0].type, 'task_graph.task_completed');
+      assert.equal(newV2[0].payload.taskId, 'step-a');
+      assert.equal(newV2[0].payload.summary, 'wrote hello.ts');
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('non-delegation events pass through unchanged to both v1 and v2 clients', async () => {
+    const ctx = await startTestSession();
+    try {
+      const v1Events = [];
+      const v2Events = [];
+      await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId: ctx.sessionId, attachToken: ctx.attachToken },
+          ctx.sessionId,
+        ),
+        (event) => v1Events.push(event),
+      );
+      await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId: ctx.sessionId, attachToken: ctx.attachToken, capabilities: ['event_v2'] },
+          ctx.sessionId,
+        ),
+        (event) => v2Events.push(event),
+      );
+
+      const v1Baseline = v1Events.length;
+      const v2Baseline = v2Events.length;
+
+      // A plain `assistant_token` event — the shape and type both v1
+      // and v2 clients already expect today.
+      const passthrough = {
+        v: PROTOCOL_VERSION,
+        kind: 'event',
+        sessionId: ctx.sessionId,
+        runId: 'run_parent_passthrough',
+        seq: 42,
+        ts: Date.now(),
+        type: 'assistant_token',
+        payload: { text: 'hello from parent' },
+      };
+      broadcastEvent(ctx.sessionId, passthrough);
+
+      const newV1 = v1Events.slice(v1Baseline);
+      const newV2 = v2Events.slice(v2Baseline);
+      assert.equal(newV1.length, 1);
+      assert.equal(newV2.length, 1);
+      // Both clients see the exact same envelope.
+      assert.equal(newV1[0].type, 'assistant_token');
+      assert.equal(newV2[0].type, 'assistant_token');
+      assert.equal(newV1[0].payload.text, 'hello from parent');
+      assert.equal(newV2[0].payload.text, 'hello from parent');
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('hello response advertises event_v2 capability', async () => {
+    const response = await handleRequest(makeRequest('hello', { clientName: 'test' }), () => {});
+    assert.equal(response.ok, true);
+    assert.ok(
+      response.payload.capabilities.includes('event_v2'),
+      `expected event_v2 in capabilities, got: ${JSON.stringify(response.payload.capabilities)}`,
+    );
   });
 });
