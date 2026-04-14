@@ -76,17 +76,15 @@ const CAPABILITIES = [
   // run through `runCoderAgent` with a REAL daemon tool executor
   // (`makeDaemonCoderToolExec`) that routes through `executeToolCall`
   // from `cli/tools.ts` with approval gating via `buildApprovalFn`.
-  // Coder delegations now actually read/write files and run shell
-  // commands under approval gating; outcomes land as `'complete'` on
-  // clean kernel returns. Advertising `multi_agent` still waits on
-  // the real Explorer tool executor (same pattern, different shape).
+  // Coder delegations actually read/write files and run shell commands
+  // under approval gating; outcomes land as `'complete'` on clean
+  // kernel returns.
   'delegation_coder_v1',
   // v2 task-graph execution: submit_task_graph accepts graphs, runs
   // them through lib/task-graph.executeTaskGraph, and streams
-  // task_graph.* events. Coder nodes route through the real daemon
-  // tool executor (see `delegation_coder_v1` above); explorer nodes
-  // still run through the scaffold stub executor until the Explorer
-  // real tool executor ships.
+  // task_graph.* events. Both `agent: 'coder'` and `agent: 'explorer'`
+  // nodes route through their respective real daemon tool executors
+  // (see `delegation_coder_v1` above and `multi_agent` below).
   'task_graph_v1',
   // `event_v2`: the daemon emits raw `subagent.*` / `task_graph.*` envelopes
   // to clients that advertise this cap back in `attach_session.capabilities`.
@@ -95,6 +93,16 @@ const CAPABILITIES = [
   // instead — see `cli/v1-downgrade.ts` and the "v1 Client Handling —
   // Option C" section of `docs/decisions/push-runtime-v2.md`.
   'event_v2',
+  // `multi_agent`: both Explorer and Coder daemon-side tool executors
+  // are wired to real production tool surfaces (`executeToolCall` from
+  // `cli/tools.ts`). Explorer runs `makeDaemonExplorerToolExec` with
+  // `READ_ONLY_TOOLS` enforcement and no approval gating; Coder runs
+  // `makeDaemonCoderToolExec` with full tool surface + approval gating.
+  // Delegation outcomes land as `'complete'` for both agents on clean
+  // kernel returns — the daemon can host end-to-end multi-agent flows
+  // (direct delegation RPCs + dependency-ordered task graphs).
+  // Reviewer stays single-turn JSON-only by design.
+  'multi_agent',
 ];
 
 const VALID_AGENT_ROLES = new Set(['orchestrator', 'explorer', 'coder', 'reviewer', 'auditor']);
@@ -1264,24 +1272,103 @@ export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
 }
 
 /**
- * Scaffold-level Explorer invocation for task-graph nodes.
+ * Build an Explorer-shaped tool executor bound to a running delegation.
  *
- * Mirrors the stubbed tool-executor path inside handleDelegateExplorer but
- * without the delegation-registry bookkeeping — the task-graph executor owns
- * lifecycle emission via its onProgress callback. Used only for task-graph
- * explorer nodes; the direct `delegate_explorer` RPC path still goes through
- * handleDelegateExplorer for its race-safe terminal-claim semantics.
+ * Mirrors `makeDaemonCoderToolExec` but returns the simpler Explorer
+ * shape `{ resultText, card? }` instead of the Coder kernel's
+ * discriminated union. Two other differences:
+ *
+ *   1. **No approval gating.** Explorer's contract is read-only — it
+ *      inspects the workspace but never mutates it. High-risk exec is
+ *      moot because the executor refuses mutating tools outright. We
+ *      therefore skip `buildApprovalFn` entirely and pass
+ *      `approvalFn: null` / `allowExec: false` to `executeToolCall`.
+ *
+ *   2. **Mutation refusal.** Even with a read-only contract, the
+ *      Explorer kernel still routes the optional `mutating` slot
+ *      (returned by `wrapCliDetectAllToolCalls`) through `toolExec`
+ *      when the model emits one — see `lib/explorer-agent.ts:470`.
+ *      We check `READ_ONLY_TOOLS` inside the executor and return a
+ *      polite denial `resultText` for any tool that isn't in the
+ *      allowlist, so the kernel feeds the refusal back into the next
+ *      round and the model can course-correct.
+ *
+ * We skip `card` entirely. The web-side Explorer tool executor attaches
+ * rich metadata cards pulled from structured tool output (e.g. a
+ * `read_file` card with the file path + first N lines). Daemon-side we
+ * don't have that layer yet, so the `card?` field is simply omitted —
+ * the kernel handles `undefined` cards fine (see the `if (entry.card)`
+ * guard around line 460).
+ *
+ * Non-goals (same as Coder): no sandbox layer, no OTel spans, no
+ * `CapabilityLedger` gating, no `TurnPolicyRegistry`.
  */
-async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
+export function makeDaemonExplorerToolExec({ entry, signal }) {
+  const workspaceRoot = entry.state.cwd;
+  return async (toolCall, _execCtx) => {
+    // Unwrap the `{ source, call: { tool, args } }` shape produced by
+    // `wrapCliDetectAllToolCalls` / `wrapCliDetectAnyToolCall`. Tests
+    // that hand in a bare CLI call fall through unchanged.
+    const rawCall =
+      toolCall && typeof toolCall === 'object' && toolCall.call ? toolCall.call : toolCall;
+
+    // Enforce the read-only contract. The Explorer kernel happily
+    // routes a mutating slot through `toolExec` when the model emits
+    // one — but Explorer is inspection-only by design. Return a denial
+    // resultText so the kernel feeds the refusal back into the next
+    // round as a user message and the model can adapt.
+    const toolName = typeof rawCall?.tool === 'string' ? rawCall.tool : null;
+    if (!toolName || !READ_ONLY_TOOLS.has(toolName)) {
+      return {
+        resultText: `[pushd] tool "${toolName ?? '(unknown)'}" is not available to Explorer (read-only contract; use delegate_coder for mutations)`,
+      };
+    }
+
+    try {
+      const result = await executeToolCall(rawCall, workspaceRoot, {
+        // Explorer never gates on approvals — it's read-only.
+        approvalFn: null,
+        signal,
+        // `allowExec: false` keeps the tool surface genuinely read-only
+        // even if `READ_ONLY_TOOLS` ever accidentally admits an exec
+        // variant. Defense in depth.
+        allowExec: false,
+        execMode: 'auto',
+      });
+      const resultText = typeof result?.text === 'string' ? result.text : '';
+      return { resultText };
+    } catch (err) {
+      // `executeToolCall` throwing is the rare exception path (abort
+      // during read, catastrophic I/O). Surface the message as a
+      // resultText so the kernel can see what went wrong rather than
+      // crashing the delegation. Matches Coder's "don't spin forever"
+      // stance.
+      const message = err instanceof Error ? err.message : String(err);
+      return { resultText: `[pushd] Explorer tool executor error: ${message}` };
+    }
+  };
+}
+
+/**
+ * Task-graph Explorer node invocation — wires `runExplorerAgent` from
+ * `lib/explorer-agent.ts` to the real daemon tool executor
+ * (`makeDaemonExplorerToolExec`) so explorer nodes actually read the
+ * workspace instead of running against a stub. Mirrors
+ * `runCoderForTaskGraph` structurally but without approval gating
+ * (Explorer is read-only) and with the simpler `{ resultText }`
+ * executor return shape.
+ *
+ * Used only for task-graph explorer nodes; the direct
+ * `delegate_explorer` RPC path still goes through
+ * `handleDelegateExplorer` for its race-safe terminal-claim
+ * semantics — both call sites share the same `makeDaemonExplorerToolExec`
+ * factory.
+ */
+async function runExplorerForTaskGraph(sessionId, entry, node, signal) {
   const startedAt = Date.now();
   const { provider, model } = resolveRoleRouting(entry, 'explorer');
-  const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
-  const stubDetectAllToolCalls = () => emptyDetection;
-  const stubDetectAnyToolCall = () => null;
-  const stubToolExec = async () => ({
-    resultText: '[pushd scaffold] daemon-side Explorer tool execution is not yet wired',
-  });
-  const stubEvaluateAfterModel = async () => null;
+  const toolExec = makeDaemonExplorerToolExec({ entry, signal });
+  const evaluateAfterModel = async () => null;
   const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
 
   const result = await runExplorerAgent(
@@ -1294,11 +1381,11 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
       userProfile: null,
       taskPreamble: node.task,
       symbolSummary: null,
-      toolExec: stubToolExec,
-      detectAllToolCalls: stubDetectAllToolCalls,
-      detectAnyToolCall: stubDetectAnyToolCall,
+      toolExec,
+      detectAllToolCalls: wrapCliDetectAllToolCalls,
+      detectAnyToolCall: wrapCliDetectAnyToolCall,
       webSearchToolProtocol: '',
-      evaluateAfterModel: stubEvaluateAfterModel,
+      evaluateAfterModel,
     },
     {
       onStatus: () => {},
@@ -1308,15 +1395,13 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
 
   const delegationOutcome = {
     agent: 'explorer',
-    status: 'inconclusive',
+    status: 'complete',
     summary: result.summary,
     evidence: [],
     checks: [],
     gateVerdicts: [],
-    missingRequirements: [
-      'Daemon-side Explorer tool executor (stubbed in runScaffoldExplorerForTaskGraph)',
-    ],
-    nextRequiredAction: 'Wire a real daemon Explorer tool executor before advertising multi_agent',
+    missingRequirements: [],
+    nextRequiredAction: null,
     rounds: result.rounds,
     checkpoints: 0,
     elapsedMs: Date.now() - startedAt,
@@ -1333,12 +1418,12 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
  * Task-graph Coder node invocation — wires `runCoderAgent` from
  * `lib/coder-agent.ts` to the real daemon tool executor.
  *
- * Mirrors `runScaffoldExplorerForTaskGraph` structurally, but plugs in
+ * Mirrors `runExplorerForTaskGraph` structurally, but plugs in
  * `makeDaemonCoderToolExec` (production tool surface + approval gating)
  * and `wrapCliDetect*` (real detectors over `cli/tools.ts`) instead of
  * stubs. The LLM streams real tokens, tool calls are detected, and
  * `executeToolCall` runs them against `entry.state.cwd` — this is the
- * full-fat daemon Coder path, not the scaffold it replaces.
+ * full-fat daemon Coder path.
  *
  * Approval events from tool calls emit on the `parentRunId` passed in
  * by `handleSubmitTaskGraph`, so a task-graph client that's attached
@@ -1626,7 +1711,7 @@ async function handleSubmitTaskGraph(req) {
 
     const executor = async (node, _enrichedContext, signal) => {
       if (node.agent === 'explorer') {
-        return runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal);
+        return runExplorerForTaskGraph(sessionId, entry, node, signal);
       }
       if (node.agent === 'coder') {
         return runCoderForTaskGraph(sessionId, entry, node, parentRunId, signal);
@@ -2049,13 +2134,11 @@ async function handleDelegateExplorer(req) {
   // deleting the delegation entry before any awaited terminal-event work so
   // cancel_delegation wins whenever it removes the entry first.
   (async () => {
-    const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
-    const stubDetectAllToolCalls = () => emptyDetection;
-    const stubDetectAnyToolCall = () => null;
-    const stubToolExec = async () => ({
-      resultText: '[pushd scaffold] daemon-side Explorer tool execution is not yet wired',
+    const toolExec = makeDaemonExplorerToolExec({
+      entry,
+      signal: abortController.signal,
     });
-    const stubEvaluateAfterModel = async () => null;
+    const evaluateAfterModel = async () => null;
 
     let outcome;
     let runError = null;
@@ -2071,11 +2154,11 @@ async function handleDelegateExplorer(req) {
           userProfile: null,
           taskPreamble: trimmedTask,
           symbolSummary: null,
-          toolExec: stubToolExec,
-          detectAllToolCalls: stubDetectAllToolCalls,
-          detectAnyToolCall: stubDetectAnyToolCall,
+          toolExec,
+          detectAllToolCalls: wrapCliDetectAllToolCalls,
+          detectAnyToolCall: wrapCliDetectAnyToolCall,
           webSearchToolProtocol: '',
-          evaluateAfterModel: stubEvaluateAfterModel,
+          evaluateAfterModel,
         },
         {
           onStatus: () => {
@@ -2087,16 +2170,13 @@ async function handleDelegateExplorer(req) {
 
       outcome = {
         agent: 'explorer',
-        status: 'inconclusive',
+        status: 'complete',
         summary: result.summary,
         evidence: [],
         checks: [],
         gateVerdicts: [],
-        missingRequirements: [
-          'Daemon-side Explorer tool executor (stubbed in handleDelegateExplorer)',
-        ],
-        nextRequiredAction:
-          'Wire a real daemon Explorer tool executor before advertising multi_agent',
+        missingRequirements: [],
+        nextRequiredAction: null,
         rounds: result.rounds,
         checkpoints: 0,
         elapsedMs: Date.now() - startedAt,
@@ -2112,8 +2192,8 @@ async function handleDelegateExplorer(req) {
         agent: 'explorer',
         status: 'inconclusive',
         summary: isAbort
-          ? 'Explorer cancelled during daemon scaffold run.'
-          : `Explorer failed during daemon scaffold run: ${message}`,
+          ? 'Explorer cancelled during daemon run.'
+          : `Explorer failed during daemon run: ${message}`,
         evidence: [],
         checks: [],
         gateVerdicts: [],

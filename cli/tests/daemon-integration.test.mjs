@@ -21,6 +21,7 @@ import {
   broadcastEvent,
   wrapCliDetectAllToolCalls,
   makeDaemonCoderToolExec,
+  makeDaemonExplorerToolExec,
   __getActiveSessionForTesting,
   __evictActiveSessionForTesting,
   __setDelegateExplorerHooksForTesting,
@@ -578,7 +579,7 @@ describe('daemon version', () => {
     assert.ok(content.includes("const VERSION = '0.3.0'"));
   });
 
-  it('hello capabilities advertise delegation_explorer_v1 but not multi_agent', async () => {
+  it('hello capabilities advertise the full multi-agent stack', async () => {
     const response = await handleRequest(makeRequest('hello', { clientName: 'test' }), () => {});
     assert.equal(response.ok, true);
     assert.ok(response.payload.capabilities.includes('multi_client'));
@@ -586,7 +587,16 @@ describe('daemon version', () => {
     assert.ok(response.payload.capabilities.includes('crash_recovery'));
     assert.ok(response.payload.capabilities.includes('role_routing'));
     assert.ok(response.payload.capabilities.includes('delegation_explorer_v1'));
-    assert.ok(!response.payload.capabilities.includes('multi_agent'));
+    assert.ok(response.payload.capabilities.includes('delegation_coder_v1'));
+    assert.ok(response.payload.capabilities.includes('delegation_reviewer_v1'));
+    assert.ok(response.payload.capabilities.includes('task_graph_v1'));
+    assert.ok(response.payload.capabilities.includes('event_v2'));
+    // `multi_agent` now advertised — both Explorer and Coder daemon-side
+    // tool executors are real (see `makeDaemonExplorerToolExec` +
+    // `makeDaemonCoderToolExec` in cli/pushd.ts).
+    assert.ok(response.payload.capabilities.includes('multi_agent'));
+    // The versioned-suffix form is the canonical name; bare `task_graph`
+    // (without `_v1`) is still NOT advertised.
     assert.ok(!response.payload.capabilities.includes('task_graph'));
   });
 
@@ -1445,12 +1455,10 @@ describe('submit_task_graph', () => {
     process.env.PUSH_SESSION_DIR = tmpRoot;
 
     // Phase 6 wrap-up: coder task-graph nodes route through
-    // runScaffoldCoderForTaskGraph instead of throwing "not yet wired".
-    // The scaffold runs runCoderAgent with the same stub-tool-executor
-    // pattern as the explorer scaffold, so the LLM streams real tokens
-    // through the mock provider and the node completes with an
-    // inconclusive DelegationOutcome. The graph itself succeeds because
-    // the executor does not throw — only individual nodes can fail.
+    // `runCoderForTaskGraph` against `runCoderAgent` with the real
+    // daemon tool executor (`makeDaemonCoderToolExec`). The LLM streams
+    // real tokens through the mock provider, the node completes with a
+    // `'complete'` DelegationOutcome, and the graph succeeds.
     const MOCK_TOKENS = ['MOCK_CODER_ALPHA ', 'MOCK_CODER_OMEGA'];
     const mock = await startMockProviderServer({ tokens: MOCK_TOKENS });
     const restoreConfig = patchProviderConfig('ollama', {
@@ -1695,7 +1703,7 @@ describe('delegate_explorer', () => {
     }
   });
 
-  it('runs the lib kernel end-to-end with a real streamFn adapter and persists an inconclusive outcome', async () => {
+  it('runs the lib kernel end-to-end with a real streamFn adapter and persists a complete outcome', async () => {
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-explorer-happy-'));
     process.env.PUSH_SESSION_DIR = tmpRoot;
@@ -1780,7 +1788,10 @@ describe('delegate_explorer', () => {
       assert.equal(completed.payload.agent, 'explorer');
       assert.ok(completed.payload.delegationOutcome);
       assert.equal(completed.payload.delegationOutcome.agent, 'explorer');
-      assert.equal(completed.payload.delegationOutcome.status, 'inconclusive');
+      // Real Explorer tool executor landed — a clean kernel return now
+      // marks the outcome as `'complete'` with an empty missingRequirements
+      // list (previously `'inconclusive'` with a tool-executor gate).
+      assert.equal(completed.payload.delegationOutcome.status, 'complete');
 
       // Proof that the real streamFn adapter ran: the mock's canned tokens
       // land in the delegation outcome (either in summary or in the broadcast
@@ -1793,26 +1804,20 @@ describe('delegate_explorer', () => {
         'stub canned report should no longer appear — adapter must stream from provider',
       );
 
-      // missingRequirements should list the tool executor (still stubbed) but
-      // NOT the streamFn adapter (wired by this slice).
+      // `missingRequirements` is now empty — both the streamFn adapter
+      // (wired earlier) and the tool executor (wired in this slice) are
+      // live. Keeping the explicit length assertion so a regression that
+      // re-introduces a scaffold-level gate fails loudly.
       const missing = completed.payload.delegationOutcome.missingRequirements;
       assert.ok(Array.isArray(missing));
-      assert.ok(missing.length >= 1);
-      assert.ok(
-        missing.some((entry) => /tool executor/i.test(entry)),
-        'expected tool-executor requirement to remain listed',
-      );
-      assert.ok(
-        !missing.some((entry) => /ProviderStreamFn adapter/i.test(entry)),
-        'streamFn adapter requirement should no longer be listed',
-      );
-      assert.ok(completed.payload.delegationOutcome.nextRequiredAction);
+      assert.equal(missing.length, 0, 'expected no remaining Explorer requirements');
+      assert.equal(completed.payload.delegationOutcome.nextRequiredAction, null);
 
       const loaded = await loadSessionState(sessionId);
       assert.ok(Array.isArray(loaded.delegationOutcomes));
       const record = loaded.delegationOutcomes.find((r) => r.subagentId === subagentId);
       assert.ok(record, 'expected delegationOutcome record in session state');
-      assert.equal(record.outcome.status, 'inconclusive');
+      assert.equal(record.outcome.status, 'complete');
       assert.equal(record.outcome.agent, 'explorer');
 
       const broadcastStarted = broadcasted.find(
@@ -1996,11 +2001,12 @@ const MINIMAL_REVIEWER_DIFF = [
 
 // Mirrors the delegate_explorer suite: validates input, token, stale
 // routing, and a happy-path kernel run where the lib Coder streams
-// through a mock provider and the handler persists an inconclusive
-// DelegationOutcome with `missingRequirements` pointing at the stubbed
-// tool executor. Cancellation race coverage is deliberately omitted for
-// this tranche — the explorer race test already pins the shared
-// terminal-claim pattern and the coder handler uses the same flow.
+// through a mock provider and the handler persists a `'complete'`
+// DelegationOutcome backed by the real daemon tool executor
+// (`makeDaemonCoderToolExec`). Cancellation race coverage is
+// deliberately omitted for this tranche — the explorer race test
+// already pins the shared terminal-claim pattern and the coder handler
+// uses the same flow.
 describe('delegate_coder', () => {
   it('rejects missing sessionId', async () => {
     const response = await handleRequest(
@@ -2556,6 +2562,143 @@ describe('makeDaemonCoderToolExec', () => {
         typeof result.errorType === 'string' && result.errorType.length > 0,
         `expected non-empty errorType for missing file, got ${JSON.stringify(result.errorType)}`,
       );
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── Daemon Explorer tool executor (direct unit tests) ────────────
+
+// Mirrors the `makeDaemonCoderToolExec` tests but for Explorer's
+// simpler `{ resultText, card? }` return shape. Pins (1) real file
+// reads off disk via `executeToolCall`, (2) mutation refusal on the
+// read-only contract, (3) the wrapped `{ call: { tool, args } }` vs
+// flat `{ tool, args }` unwrap path. The Explorer kernel end-to-end
+// smoke path is covered by the `delegate_explorer` integration test
+// further up.
+describe('makeDaemonExplorerToolExec', () => {
+  it('reads a real file off disk via the wrapped CLI call shape', async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-explorer-exec-read-'));
+    try {
+      const FILE_CONTENT = 'DAEMON_EXPLORER_READ_SENTINEL_0xFACE';
+      await fs.writeFile(path.join(workspaceRoot, 'notes.md'), FILE_CONTENT, 'utf8');
+
+      const entry = { state: { cwd: workspaceRoot, eventSeq: 0 } };
+      const abortController = new AbortController();
+
+      const toolExec = makeDaemonExplorerToolExec({
+        entry,
+        signal: abortController.signal,
+      });
+
+      // The kernel hands the executor the wrapped `{ source, call }`
+      // shape that `wrapCliDetectAllToolCalls` produces. The executor
+      // must unwrap it internally before calling `executeToolCall`.
+      const result = await toolExec(
+        { source: 'cli', call: { tool: 'read_file', args: { path: 'notes.md' } } },
+        { round: 1 },
+      );
+
+      assert.equal(typeof result.resultText, 'string');
+      assert.ok(
+        result.resultText.includes(FILE_CONTENT),
+        `expected sentinel in result, got ${JSON.stringify(result.resultText)}`,
+      );
+      // Explorer kernel shape is `{ resultText, card? }` — no `kind`
+      // discriminant (that's Coder's shape).
+      assert.equal(result.kind, undefined);
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts a bare CLI call (unwrapped shape) for direct test use', async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-explorer-exec-bare-'));
+    try {
+      await fs.writeFile(path.join(workspaceRoot, 'a.txt'), 'a', 'utf8');
+      await fs.writeFile(path.join(workspaceRoot, 'b.txt'), 'b', 'utf8');
+
+      const entry = { state: { cwd: workspaceRoot, eventSeq: 0 } };
+      const abortController = new AbortController();
+
+      const toolExec = makeDaemonExplorerToolExec({
+        entry,
+        signal: abortController.signal,
+      });
+
+      const result = await toolExec({ tool: 'list_dir', args: { path: '.' } }, { round: 1 });
+
+      assert.ok(
+        result.resultText.includes('a.txt') && result.resultText.includes('b.txt'),
+        `expected both files in list output, got ${JSON.stringify(result.resultText)}`,
+      );
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses mutating tools with a denial resultText (read-only contract)', async () => {
+    // Even though the Explorer kernel is "read-only", it still routes
+    // the optional `mutating` slot from `wrapCliDetectAllToolCalls`
+    // through `toolExec` when the model emits one. The executor must
+    // reject by returning a polite denial resultText — the kernel
+    // surfaces it as a user message in the next round and the model
+    // can course-correct. It must NOT touch the file system.
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-explorer-exec-deny-'));
+    try {
+      const entry = { state: { cwd: workspaceRoot, eventSeq: 0 } };
+      const abortController = new AbortController();
+
+      const toolExec = makeDaemonExplorerToolExec({
+        entry,
+        signal: abortController.signal,
+      });
+
+      const result = await toolExec(
+        {
+          source: 'cli',
+          call: { tool: 'write_file', args: { path: 'should-not-exist.txt', content: 'x' } },
+        },
+        { round: 1 },
+      );
+
+      assert.equal(typeof result.resultText, 'string');
+      assert.ok(
+        result.resultText.includes('write_file') &&
+          result.resultText.toLowerCase().includes('not available'),
+        `expected denial mentioning the tool name, got ${JSON.stringify(result.resultText)}`,
+      );
+
+      // The file must not have been created.
+      await assert.rejects(
+        fs.access(path.join(workspaceRoot, 'should-not-exist.txt')),
+        /ENOENT/,
+        'Explorer executor wrote a mutation despite the read-only contract',
+      );
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns a denial resultText when the call has no tool name', async () => {
+    // Defensive: a malformed call that reaches the executor (e.g. a
+    // test stubbing the detector wrong) should still get a deterministic
+    // denial rather than crashing the delegation.
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-explorer-exec-malformed-'));
+    try {
+      const entry = { state: { cwd: workspaceRoot, eventSeq: 0 } };
+      const abortController = new AbortController();
+
+      const toolExec = makeDaemonExplorerToolExec({
+        entry,
+        signal: abortController.signal,
+      });
+
+      const result = await toolExec({ source: 'cli', call: {} }, { round: 1 });
+
+      assert.equal(typeof result.resultText, 'string');
+      assert.ok(result.resultText.includes('(unknown)'));
     } finally {
       await fs.rm(workspaceRoot, { recursive: true, force: true });
     }
