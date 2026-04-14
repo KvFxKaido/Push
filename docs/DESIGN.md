@@ -5,6 +5,7 @@
 Dark-only, mobile-first interface for a developer productivity tool.
 High information density, minimal visual noise, careful motion timing.
 Built on Tailwind CSS + shadcn/ui (New York style) with Radix primitives.
+This document defines the visual system for the graphical app surfaces. CLI/TUI presentation is documented separately and may follow shared semantic intent without matching these exact tokens or components.
 
 ## Colors
 
