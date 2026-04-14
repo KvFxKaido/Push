@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { promises as fs } from 'node:fs';
@@ -37,16 +37,34 @@ import {
 } from '../session-store.ts';
 import { startMockProviderServer, patchProviderConfig } from './mock-provider-server.mjs';
 
-// Enable protocol strict mode for every test in this file. `broadcastEvent`
-// reads `PUSH_PROTOCOL_STRICT` at call time via `isStrictModeEnabled()`,
-// so setting it after imports here is intentional and sufficient — every
-// handler dispatched below runs with the validator wired in, and any
-// drift between the wire-format contract (`cli/protocol-schema.ts`) and
-// what a handler actually produces lands as a test failure instead of
-// silent consumer-side breakage. Tests that need to bypass the check
-// can `delete process.env.PUSH_PROTOCOL_STRICT` in their own setup —
-// none today.
-process.env.PUSH_PROTOCOL_STRICT = '1';
+// Enable protocol strict mode for every test in this file via
+// `before`/`after` hooks rather than a raw module-scope assignment.
+// `broadcastEvent` reads `PUSH_PROTOCOL_STRICT` at call time via
+// `isStrictModeEnabled()`, so setting it in a top-level `before` is
+// sufficient — the hook fires before any `it` runs, and any handler
+// dispatched below executes with the validator wired in. Drift between
+// the wire-format contract (`cli/protocol-schema.ts`) and what a
+// handler actually produces lands as a test failure instead of silent
+// consumer-side breakage.
+//
+// Why hooks instead of `process.env.PUSH_PROTOCOL_STRICT = '1'` at
+// module top? Node's `--test` runner defaults to one subprocess per
+// test file, but if a caller runs with `--test-concurrency=1` or
+// otherwise shares a process, a bare module-scope env mutation can
+// leak into unrelated test files. Scoping via `before`/`after` keeps
+// the flag's lifetime pinned to this file's test run and unsets it on
+// completion so the next file starts clean. The strict-mode-toggle
+// test lower in this file explicitly manages the var in its own
+// try/finally so the hook-set value is restored on exit.
+let previousStrictMode;
+before(() => {
+  previousStrictMode = process.env.PUSH_PROTOCOL_STRICT;
+  process.env.PUSH_PROTOCOL_STRICT = '1';
+});
+after(() => {
+  if (previousStrictMode === undefined) delete process.env.PUSH_PROTOCOL_STRICT;
+  else process.env.PUSH_PROTOCOL_STRICT = previousStrictMode;
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

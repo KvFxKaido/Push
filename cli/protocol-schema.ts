@@ -185,8 +185,16 @@ export function validateEventEnvelope(event: unknown): ValidationIssue[] {
     });
   }
 
-  if (!('payload' in event)) {
-    issues.push({ path: 'payload', message: 'missing required field' });
+  // Require the `payload` key AND a non-undefined value. A bare
+  // `payload: undefined` passes `'payload' in event` but gets dropped
+  // by `JSON.stringify` on the wire, so the downstream receiver sees
+  // an envelope missing the field — a silent contract violation that
+  // strict mode should catch at emission time.
+  if (!('payload' in event) || event.payload === undefined) {
+    issues.push({
+      path: 'payload',
+      message: 'missing required field (must be present and not undefined)',
+    });
   }
 
   return issues;
@@ -197,6 +205,14 @@ export function validateEventEnvelope(event: unknown): ValidationIssue[] {
 // ---------------------------------------------------------------------------
 
 type PayloadValidator = (payload: unknown, basePath: string) => ValidationIssue[];
+
+// NOTE: Gemini suggested extracting the repeated `if (!isPlainObject(...)) { ... return; }`
+// block into a single `expectPlainObject` helper. Tried that — TypeScript loses the
+// `unknown → Record<string, unknown>` narrowing through a helper's return type
+// without a type-predicate signature, which forced a `payload as Record<...>` cast
+// in every caller. One extra cast per validator eats most of the boilerplate win,
+// so the inline pattern stays. If the set of payload validators grows significantly,
+// revisit with an explicit type predicate.
 
 function expectNonEmptyString(
   obj: Record<string, unknown>,
@@ -258,7 +274,14 @@ function expectAgentValue(
   return null;
 }
 
-const SUBAGENT_AGENTS = [
+/**
+ * Allowed values for the `agent` field on `subagent.*` event payloads.
+ * Mirrors `RunEventSubagent` in `lib/runtime-contract.ts` — kept in
+ * sync by a regex-extracting guard-rail test in
+ * `cli/tests/protocol-schema.test.mjs` so drift between this list and
+ * the source-of-truth type declaration lands as a test failure.
+ */
+export const SUBAGENT_AGENTS = [
   'planner',
   'coder',
   'explorer',
@@ -266,7 +289,14 @@ const SUBAGENT_AGENTS = [
   'auditor',
   'task_graph',
 ] as const;
-const TASK_GRAPH_AGENTS = ['explorer', 'coder'] as const;
+
+/**
+ * Allowed values for the `agent` field on `task_graph.*` event payloads.
+ * Mirrors the `agent` field of `TaskGraphNode` in
+ * `lib/runtime-contract.ts` — same guard-rail pattern as
+ * `SUBAGENT_AGENTS` above.
+ */
+export const TASK_GRAPH_AGENTS = ['explorer', 'coder'] as const;
 
 function validateSubagentStarted(payload: unknown, basePath: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];

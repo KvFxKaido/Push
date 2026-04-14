@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 
 import {
   validateEventEnvelope,
@@ -8,8 +10,18 @@ import {
   assertValidEvent,
   isStrictModeEnabled,
   SCHEMA_VALIDATED_EVENT_TYPES,
+  SUBAGENT_AGENTS,
+  TASK_GRAPH_AGENTS,
 } from '../protocol-schema.ts';
 import { PROTOCOL_VERSION } from '../session-store.ts';
+
+// Cache the runtime-contract source file once per suite. The three
+// drift guard-rail tests (event types, RunEventSubagent roles,
+// TaskGraphNode agent) all read from the same file.
+async function loadRuntimeContractSource() {
+  const contractPath = path.join(import.meta.dirname, '..', '..', 'lib', 'runtime-contract.ts');
+  return fs.readFile(contractPath, 'utf8');
+}
 
 // Helper to build a known-good envelope that we can then mutate in
 // each failure-case test. Keeps test cases compact by starting from a
@@ -411,22 +423,141 @@ describe('validateRunEventPayload — task_graph events', () => {
     assert.deepEqual(issues, []);
   });
 
-  it('exports the full set of schema-covered event types', () => {
-    // Guard rail: if a new delegation event type lands in the shared
-    // runtime contract and we forget to add a validator, the test
-    // suite should tell us. This is the list of types we currently
-    // cover. Update BOTH this set and the schema map in lockstep.
-    assert.deepEqual([...SCHEMA_VALIDATED_EVENT_TYPES].sort(), [
-      'subagent.completed',
-      'subagent.failed',
-      'subagent.started',
-      'task_graph.graph_completed',
-      'task_graph.task_cancelled',
-      'task_graph.task_completed',
-      'task_graph.task_failed',
-      'task_graph.task_ready',
-      'task_graph.task_started',
-    ]);
+  it('covers every delegation variant declared in RunEventInput', async () => {
+    // This is the real drift guard: parse `lib/runtime-contract.ts` to
+    // find the `RunEventInput` discriminated union, extract every
+    // `type: '...'` literal inside its body, and filter to the
+    // delegation-event subset (`subagent.*` and `task_graph.*`). The
+    // result is the authoritative list of types any CLI/Web client
+    // should expect on the wire. `SCHEMA_VALIDATED_EVENT_TYPES` must
+    // equal that list — otherwise a new delegation variant has landed
+    // in the shared runtime contract without a matching schema, and a
+    // strict-mode broadcast of it would slip through this PR's
+    // validator entirely.
+    //
+    // Reading source text is brittler than importing a runtime const,
+    // but the RunEvent union is TypeScript-only (erased at runtime) and
+    // the union-member syntax is produced deterministically by biome
+    // format, so a regex over the file text is a reasonable trade-off.
+    // If runtime-contract.ts ever grows its own runtime-const mirror of
+    // the delegation types, this test should switch to importing that
+    // mirror instead.
+    const source = await loadRuntimeContractSource();
+
+    // Find the body of `export type RunEventInput = ...;`. The block
+    // ends at the semicolon that closes the entire union declaration,
+    // which is the first `;` encountered at brace depth 0 — naive
+    // `indexOf(';')` would land on an interior semicolon like
+    // `round: number;` inside the first union member.
+    const unionStart = source.indexOf('export type RunEventInput');
+    assert.ok(unionStart >= 0, 'RunEventInput type not found in runtime-contract.ts');
+    let unionEnd = -1;
+    let depth = 0;
+    for (let i = unionStart; i < source.length; i += 1) {
+      const c = source[i];
+      if (c === '{') depth += 1;
+      else if (c === '}') depth -= 1;
+      else if (c === ';' && depth === 0) {
+        unionEnd = i;
+        break;
+      }
+    }
+    assert.ok(unionEnd > unionStart, 'RunEventInput type block not terminated');
+    const unionBody = source.slice(unionStart, unionEnd);
+
+    // Extract every `type: '...'` literal in the union body.
+    const typeLiteralRe = /type:\s*'([^']+)'/g;
+    const allTypes = new Set();
+    for (const match of unionBody.matchAll(typeLiteralRe)) {
+      allTypes.add(match[1]);
+    }
+    assert.ok(
+      allTypes.size > 0,
+      `expected RunEventInput to declare at least one type literal, got ${JSON.stringify([...allTypes])}`,
+    );
+
+    // Filter to the delegation-event subset we want to schema-validate.
+    // The other RunEvent types (assistant.*, tool.*, user.*) are left
+    // to envelope-only validation per this PR's scope.
+    const delegationTypes = [...allTypes]
+      .filter((t) => t.startsWith('subagent.') || t.startsWith('task_graph.'))
+      .sort();
+
+    assert.deepEqual(
+      [...SCHEMA_VALIDATED_EVENT_TYPES].sort(),
+      delegationTypes,
+      `SCHEMA_VALIDATED_EVENT_TYPES drifted from RunEventInput's delegation variants.\n` +
+        `If you just added a new \`subagent.*\` or \`task_graph.*\` variant to ` +
+        `lib/runtime-contract.ts, you also need to register a payload validator ` +
+        `in cli/protocol-schema.ts (see the PAYLOAD_VALIDATORS map).`,
+    );
+  });
+
+  it('SUBAGENT_AGENTS matches the RunEventSubagent type literals', async () => {
+    // Drift guard for the agent list used by `subagent.*` payload
+    // validators. If someone adds a new role to the
+    // `RunEventSubagent` string-literal union in
+    // `lib/runtime-contract.ts`, the payload validators here will
+    // start rejecting legitimate events carrying that new role. This
+    // test catches that drift by re-extracting the union from source.
+    const source = await loadRuntimeContractSource();
+
+    const typeStart = source.indexOf('export type RunEventSubagent');
+    assert.ok(typeStart >= 0, 'RunEventSubagent not found in runtime-contract.ts');
+    const typeEnd = source.indexOf(';', typeStart);
+    assert.ok(typeEnd > typeStart, 'RunEventSubagent declaration not terminated');
+    const typeBody = source.slice(typeStart, typeEnd);
+
+    const literals = [...typeBody.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+    assert.ok(
+      literals.length > 0,
+      `expected RunEventSubagent to declare at least one literal, got ${JSON.stringify(literals)}`,
+    );
+
+    assert.deepEqual(
+      [...SUBAGENT_AGENTS].sort(),
+      literals,
+      `SUBAGENT_AGENTS drifted from RunEventSubagent in lib/runtime-contract.ts. ` +
+        `If you just added a new agent role to the union, also add it to ` +
+        `SUBAGENT_AGENTS in cli/protocol-schema.ts — otherwise subagent.* ` +
+        `events carrying the new role will be rejected by strict-mode validation.`,
+    );
+  });
+
+  it('TASK_GRAPH_AGENTS matches TaskGraphNode.agent literals', async () => {
+    // Drift guard for the narrower set of agents allowed on task_graph
+    // nodes. `TaskGraphNode.agent` is declared inline as a string-literal
+    // union on the interface field, so the regex is targeted at that
+    // specific field declaration rather than a full type export.
+    const source = await loadRuntimeContractSource();
+
+    // Locate `export interface TaskGraphNode { ... }` and carve out the
+    // `agent: '...' | '...';` line inside it. A simple regex on the
+    // field is enough because biome format writes each field on its
+    // own line.
+    const ifaceStart = source.indexOf('export interface TaskGraphNode');
+    assert.ok(ifaceStart >= 0, 'TaskGraphNode interface not found');
+    const ifaceEnd = source.indexOf('}', ifaceStart);
+    assert.ok(ifaceEnd > ifaceStart, 'TaskGraphNode interface not terminated');
+    const ifaceBody = source.slice(ifaceStart, ifaceEnd);
+
+    const agentField = ifaceBody.match(/agent:\s*([^;]+);/);
+    assert.ok(agentField, 'TaskGraphNode.agent field not found — has the interface shape changed?');
+
+    const literals = [...agentField[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+    assert.ok(
+      literals.length > 0,
+      `expected TaskGraphNode.agent to declare at least one literal, got ${JSON.stringify(literals)}`,
+    );
+
+    assert.deepEqual(
+      [...TASK_GRAPH_AGENTS].sort(),
+      literals,
+      `TASK_GRAPH_AGENTS drifted from TaskGraphNode.agent in lib/runtime-contract.ts. ` +
+        `If you just broadened the agent type (e.g. added 'auditor'), also add it to ` +
+        `TASK_GRAPH_AGENTS in cli/protocol-schema.ts — otherwise task_graph.* events ` +
+        `carrying the new agent will be rejected by strict-mode validation.`,
+    );
   });
 });
 
