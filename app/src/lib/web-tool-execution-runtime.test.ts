@@ -164,6 +164,43 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
 
       expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
     });
+
+    it('emits a paired toolExecutionComplete event on denial so observers see a terminal lifecycle', async () => {
+      // Copilot PR #295 review finding: the ROLE_CAPABILITY_DENIED
+      // early-return must pair its toolExecutionStart with a matching
+      // complete event, otherwise any attached emitter sees the tool
+      // as in-flight forever.
+      const events: Array<{
+        kind: 'start' | 'complete' | 'malformed';
+        payload: unknown;
+      }> = [];
+      const emit = {
+        toolExecutionStart: (event: unknown) => events.push({ kind: 'start', payload: event }),
+        toolExecutionComplete: (event: unknown) =>
+          events.push({ kind: 'complete', payload: event }),
+        toolCallMalformed: (event: unknown) => events.push({ kind: 'malformed', payload: event }),
+      };
+
+      await runtime.execute(mutationCall(), {
+        allowedRepo: 'owner/repo',
+        sandboxId: 'sb-1',
+        isMainProtected: false,
+        role: 'explorer',
+        emit,
+      });
+
+      const kinds = events.map((e) => e.kind);
+      expect(kinds).toEqual(['start', 'complete']);
+      const completeEvent = events[1].payload as {
+        toolName: string;
+        durationMs: number;
+        error?: { type: string; retryable?: boolean };
+      };
+      expect(completeEvent.toolName).toBe('sandbox_write_file');
+      expect(completeEvent.error?.type).toBe('ROLE_CAPABILITY_DENIED');
+      expect(completeEvent.error?.retryable).toBe(false);
+      expect(typeof completeEvent.durationMs).toBe('number');
+    });
   });
 
   describe('role=explorer allows read-only tools through the runtime layer', () => {
@@ -194,6 +231,112 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
 
       expect(result.structuredError).toBeUndefined();
       expect(vi.mocked(githubTools.executeToolCall)).toHaveBeenCalledTimes(1);
+    });
+
+    it('allows GitHub PR read tools (pr:read grant)', async () => {
+      // Regression pin for the Codex P1 finding on PR #295: without
+      // `pr:read` in the Explorer capability grant, `fetch_pr` and
+      // friends returned ROLE_CAPABILITY_DENIED even though they are
+      // in `EXPLORER_ALLOWED_TOOLS`. The grant was widened alongside
+      // the runtime invariant; these tools must now pass through.
+      const prReadCalls: AnyToolCall[] = [
+        {
+          source: 'github',
+          call: { tool: 'fetch_pr', args: { repo: 'owner/repo', pr: 42 } },
+        },
+        {
+          source: 'github',
+          call: { tool: 'list_prs', args: { repo: 'owner/repo' } },
+        },
+        {
+          source: 'github',
+          call: { tool: 'check_pr_mergeable', args: { repo: 'owner/repo', pr_number: 1 } },
+        },
+        {
+          source: 'github',
+          call: { tool: 'find_existing_pr', args: { repo: 'owner/repo', head_branch: 'f' } },
+        },
+      ];
+
+      for (const call of prReadCalls) {
+        const result = await runtime.execute(call, {
+          allowedRepo: 'owner/repo',
+          sandboxId: 'sb-1',
+          isMainProtected: false,
+          role: 'explorer',
+        });
+        expect(result.structuredError).toBeUndefined();
+      }
+
+      expect(vi.mocked(githubTools.executeToolCall)).toHaveBeenCalledTimes(prReadCalls.length);
+    });
+
+    it('allows GitHub workflow read tools (workflow:read grant)', async () => {
+      // Regression pin for the Codex P1 finding: `get_workflow_runs`
+      // and `get_workflow_logs` are in `EXPLORER_ALLOWED_TOOLS` but
+      // require `workflow:read`, which was also missing from the
+      // Explorer grant alongside `pr:read`.
+      const workflowReadCalls: AnyToolCall[] = [
+        {
+          source: 'github',
+          call: { tool: 'get_workflow_runs', args: { repo: 'owner/repo' } },
+        },
+        {
+          source: 'github',
+          call: { tool: 'get_workflow_logs', args: { repo: 'owner/repo', run_id: 1 } },
+        },
+      ];
+
+      for (const call of workflowReadCalls) {
+        const result = await runtime.execute(call, {
+          allowedRepo: 'owner/repo',
+          sandboxId: 'sb-1',
+          isMainProtected: false,
+          role: 'explorer',
+        });
+        expect(result.structuredError).toBeUndefined();
+      }
+
+      expect(vi.mocked(githubTools.executeToolCall)).toHaveBeenCalledTimes(
+        workflowReadCalls.length,
+      );
+    });
+
+    it('still refuses write-side GitHub tools (pr:write / workflow:trigger)', async () => {
+      // The grant widened for read capabilities; it must NOT have
+      // accidentally picked up write grants. Verify the invariant
+      // still fires for the mutating GitHub tools Explorer never had.
+      const writeCalls: AnyToolCall[] = [
+        {
+          source: 'github',
+          call: {
+            tool: 'create_pr',
+            args: { repo: 'owner/repo', title: 't', body: 'b', head: 'f', base: 'main' },
+          },
+        },
+        {
+          source: 'github',
+          call: { tool: 'merge_pr', args: { repo: 'owner/repo', pr_number: 1 } },
+        },
+        {
+          source: 'github',
+          call: { tool: 'delete_branch', args: { repo: 'owner/repo', branch_name: 'f' } },
+        },
+        {
+          source: 'github',
+          call: { tool: 'trigger_workflow', args: { repo: 'owner/repo', workflow: 'w.yml' } },
+        },
+      ];
+
+      for (const call of writeCalls) {
+        const result = await runtime.execute(call, {
+          allowedRepo: 'owner/repo',
+          sandboxId: 'sb-1',
+          isMainProtected: false,
+          role: 'explorer',
+        });
+        expect(result.structuredError?.type).toBe('ROLE_CAPABILITY_DENIED');
+      }
     });
   });
 

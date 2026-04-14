@@ -155,6 +155,18 @@ export class WebToolExecutionRuntime
             message: `Role "${context.role}" is not allowed to use tool "${toolName}".`,
             detail: `Required: ${required.join(', ') || '(none)'} | Granted: ${granted.join(', ') || '(none)'}`,
           };
+          // Pair the start event with a matching complete event so any
+          // attached observer sees the block as a terminal tool lifecycle
+          // rather than an in-flight tool stuck forever. The other
+          // pre-execution denial paths in this function (pre-hook,
+          // approval gate, Protect Main) omit the complete emit today —
+          // that is a pre-existing inconsistency, out of scope here;
+          // the new code path at least gets it right.
+          context.emit?.toolExecutionComplete({
+            toolName,
+            durationMs: Date.now() - startTime,
+            error: { type: err.type, message: err.message, retryable: err.retryable },
+          });
           return {
             text: `[Tool Blocked — ${toolName}] ${err.message}\n\n${err.detail}`,
             structuredError: err,

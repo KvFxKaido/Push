@@ -32,15 +32,35 @@ type WebRuntime = ToolExecutionRuntime<
 const DEFAULT_APPROVAL_GATES = createDefaultApprovalGates();
 
 /**
+ * Optional tail parameters for `executeReadOnlyTool`.
+ *
+ * Promoted to an options bag so new opt-in fields (like the step-6
+ * runtime invariant `role`) can be added without making call sites
+ * pass positional `undefined` placeholders. The required per-run
+ * bindings (repo, sandbox, provider, model, hooks) stay positional
+ * because every caller has to know them.
+ */
+export interface ExecuteReadOnlyToolOptions {
+  capabilityLedger?: import('./capabilities').CapabilityLedger;
+  runtime?: WebRuntime;
+  /**
+   * Opt in to the runtime-level role capability check in
+   * `WebToolExecutionRuntime`. When set, the runtime refuses any tool
+   * the role cannot use — independent of whether the policy hook was
+   * registered and independent of whether the read-only tool registry
+   * was wired correctly for this call site.
+   *
+   * Explorer opts in. Deep Reviewer does not opt in yet because the
+   * `reviewer` role's capability grant does not currently include
+   * `web:search` but the deep-reviewer flow emits web-search tool
+   * calls — that mismatch needs its own audit first.
+   */
+  role?: AgentRole;
+}
+
+/**
  * Execute a single read-only tool call with a no-repo guard.
  * Thin wrapper around executeAnyToolCall used by Explorer and Deep Reviewer.
- *
- * `role` is optional for backward compatibility — Explorer opts in so the
- * runtime-level capability check in `WebToolExecutionRuntime` refuses any
- * mutating tool independent of the policy hook. Deep Reviewer does not opt
- * in yet because the `reviewer` role's capability grant does not include
- * `web:search` today and the deep-reviewer flow emits web-search calls;
- * that mismatch needs its own audit before it can safely opt in.
  */
 export async function executeReadOnlyTool(
   toolCall: AnyToolCall,
@@ -49,10 +69,9 @@ export async function executeReadOnlyTool(
   activeProvider: ActiveProvider,
   activeModel: string | undefined,
   hooks: ToolHookRegistry,
-  capabilityLedger?: import('./capabilities').CapabilityLedger,
-  runtime?: WebRuntime,
-  role?: AgentRole,
+  options: ExecuteReadOnlyToolOptions = {},
 ): Promise<{ resultText: string; card?: ChatCard }> {
+  const { capabilityLedger, runtime, role } = options;
   return withActiveSpan(
     'tool.execute',
     {

@@ -186,6 +186,11 @@ export async function runExplorerAgent(
     taskPreamble: buildExplorerDelegationBrief(envelope),
     symbolSummary: symbolLedger.getSummary(),
     toolExec: async (call) => {
+      // Opt in to the runtime-level capability check in
+      // WebToolExecutionRuntime. With role='explorer', a mutating
+      // tool gets refused at the runtime seam even if the Explorer
+      // turn policy hook was never registered and the read-only
+      // registry was built incorrectly for this call site.
       const entry = await executeReadOnlyTool(
         call,
         allowedRepo,
@@ -193,14 +198,7 @@ export async function runExplorerAgent(
         activeProvider,
         explorerModelId,
         hooks,
-        capabilityLedger,
-        undefined,
-        // Opt in to the runtime-level capability check in
-        // WebToolExecutionRuntime. With role='explorer', a mutating
-        // tool gets refused at the runtime seam even if the Explorer
-        // turn policy hook was never registered and the read-only
-        // registry was built incorrectly for this call site.
-        'explorer',
+        { capabilityLedger, role: 'explorer' },
       );
       capabilityLedger.recordToolUse(call.call.tool);
       return entry;
