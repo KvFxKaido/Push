@@ -35,6 +35,6 @@ Push is being built around a few strong constraints:
 - chat-first, repo-anchored workflows
 - self-hosted and provider-flexible execution
 - mobile-first usefulness
-- reliability and observability over automation theater
+- reliability and observability over black-box automation
 
 Those constraints are part of the product, not temporary limitations.
