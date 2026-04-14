@@ -188,11 +188,20 @@ These are the kinds of modules that should remain local unless a later product n
 - `app/src/lib/role-context.ts` app-facing envelope adapters
 - `cli/engine.ts`
 - `cli/pushd.ts`
+- `cli/protocol-schema.ts` (runtime validator for the pushd wire envelope + delegation payloads; see note below)
 - terminal UI modules under `cli/`
 
 The semantic extraction line is now much cleaner: shared runtime in `lib/`, shell coordination in `app/` and `cli/`.
 
 These coordinate a shell around the runtime contract. They should consume shared semantics, not become shared themselves.
+
+### Runtime schema validation (cli-local today, lib candidate once web attaches)
+
+`cli/protocol-schema.ts` (shipped 2026-04-14) is the canonical runtime validator for the daemon's wire envelopes and the nine delegation event payloads (`subagent.*` × 3, `task_graph.*` × 6). It enforces the `SessionEvent` contract defined in `cli/session-store.ts` — including the explicit "`runId` must be omitted, never `null`" rule — and is wired into `broadcastEvent` under a `PUSH_PROTOCOL_STRICT=1` env var so the daemon-integration test harness fails on drift.
+
+It lives in `cli/` rather than `lib/` because today only pushd emits these envelopes and only CLI clients consume them. The shapes themselves come from the shared `RunEventInput` union in `lib/runtime-contract.ts`, and drift-guard tests re-extract those literals from the contract source at test time so anyone adding a new delegation variant breaks both sides' tests in lockstep.
+
+If a later surface starts consuming the same wire format directly (e.g., the Phase 7 "Web-as-daemon-client" flow in `docs/decisions/push-runtime-v2.md`), this module should graduate to `lib/` so both shells validate against the same code — not just the same comment.
 
 ## Decision Filter
 

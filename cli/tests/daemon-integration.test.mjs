@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { promises as fs } from 'node:fs';
@@ -18,6 +18,7 @@ import {
   ensureRuntimeState,
   collectOrphanedDelegations,
   formatDelegationInterruptedNote,
+  broadcastEvent,
   __getActiveSessionForTesting,
   __evictActiveSessionForTesting,
   __setDelegateExplorerHooksForTesting,
@@ -35,6 +36,35 @@ import {
   loadSessionEvents,
 } from '../session-store.ts';
 import { startMockProviderServer, patchProviderConfig } from './mock-provider-server.mjs';
+
+// Enable protocol strict mode for every test in this file via
+// `before`/`after` hooks rather than a raw module-scope assignment.
+// `broadcastEvent` reads `PUSH_PROTOCOL_STRICT` at call time via
+// `isStrictModeEnabled()`, so setting it in a top-level `before` is
+// sufficient — the hook fires before any `it` runs, and any handler
+// dispatched below executes with the validator wired in. Drift between
+// the wire-format contract (`cli/protocol-schema.ts`) and what a
+// handler actually produces lands as a test failure instead of silent
+// consumer-side breakage.
+//
+// Why hooks instead of `process.env.PUSH_PROTOCOL_STRICT = '1'` at
+// module top? Node's `--test` runner defaults to one subprocess per
+// test file, but if a caller runs with `--test-concurrency=1` or
+// otherwise shares a process, a bare module-scope env mutation can
+// leak into unrelated test files. Scoping via `before`/`after` keeps
+// the flag's lifetime pinned to this file's test run and unsets it on
+// completion so the next file starts clean. The strict-mode-toggle
+// test lower in this file explicitly manages the var in its own
+// try/finally so the hook-set value is restored on exit.
+let previousStrictMode;
+before(() => {
+  previousStrictMode = process.env.PUSH_PROTOCOL_STRICT;
+  process.env.PUSH_PROTOCOL_STRICT = '1';
+});
+after(() => {
+  if (previousStrictMode === undefined) delete process.env.PUSH_PROTOCOL_STRICT;
+  else process.env.PUSH_PROTOCOL_STRICT = previousStrictMode;
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -3143,5 +3173,109 @@ describe('attach_session resume from lastSeenSeq', () => {
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── Protocol strict mode wiring ─────────────────────────────────
+
+// End-to-end guard that `broadcastEvent` actually runs the schema
+// validator when `PUSH_PROTOCOL_STRICT=1` is set. The dedicated
+// `cli/tests/protocol-schema.test.mjs` suite covers the validator
+// functions in isolation; this block proves the wiring inside
+// pushd.ts catches bad events before they reach attached clients.
+describe('broadcastEvent strict-mode schema enforcement', () => {
+  const SESSION_ID = 'sess_strict_abcdef';
+
+  it('throws when a malformed event is broadcast under strict mode', () => {
+    // Confirm we're actually running under strict mode (the top-of-file
+    // `process.env.PUSH_PROTOCOL_STRICT = '1'` should have taken effect).
+    assert.equal(process.env.PUSH_PROTOCOL_STRICT, '1');
+
+    // A malformed event mirroring the PR #276 review regression: `runId`
+    // serialised as `null` instead of omitted. No client listener needs
+    // to be attached — the strict check runs before the fan-out loop.
+    const bogus = {
+      v: PROTOCOL_VERSION,
+      kind: 'event',
+      sessionId: SESSION_ID,
+      runId: null,
+      seq: 42,
+      ts: Date.now(),
+      type: 'subagent.started',
+      payload: { executionId: 'sub_1', agent: 'explorer' },
+    };
+    assert.throws(
+      () => broadcastEvent(SESSION_ID, bogus),
+      /Protocol schema violation.*subagent\.started/s,
+    );
+  });
+
+  it('throws when a delegation payload is missing a required field', () => {
+    const bogus = {
+      v: PROTOCOL_VERSION,
+      kind: 'event',
+      sessionId: SESSION_ID,
+      seq: 7,
+      ts: Date.now(),
+      type: 'task_graph.task_failed',
+      payload: {
+        executionId: 'graph_1',
+        taskId: 'a',
+        agent: 'coder',
+        // `error` missing — required by schema.
+      },
+    };
+    assert.throws(
+      () => broadcastEvent(SESSION_ID, bogus),
+      /Protocol schema violation.*task_graph\.task_failed.*error/s,
+    );
+  });
+
+  it('is a no-op when strict mode is disabled', () => {
+    // Temporarily unset the env var to prove strict mode is gated on it.
+    // No listeners are attached, so broadcastEvent should return silently
+    // even for an obviously bad event.
+    const prev = process.env.PUSH_PROTOCOL_STRICT;
+    delete process.env.PUSH_PROTOCOL_STRICT;
+    try {
+      assert.doesNotThrow(() =>
+        broadcastEvent(SESSION_ID, {
+          v: PROTOCOL_VERSION,
+          kind: 'event',
+          sessionId: SESSION_ID,
+          runId: null,
+          seq: -1,
+          ts: Date.now(),
+          type: 'subagent.started',
+          payload: {},
+        }),
+      );
+    } finally {
+      if (prev !== undefined) process.env.PUSH_PROTOCOL_STRICT = prev;
+    }
+  });
+
+  it('lets a valid event through when strict mode is on (no listeners)', () => {
+    // With no clients attached for this sessionId, broadcastEvent
+    // should validate then return without emitting. This guards against
+    // the validator failing an otherwise-legitimate event shape.
+    const ok = {
+      v: PROTOCOL_VERSION,
+      kind: 'event',
+      sessionId: SESSION_ID,
+      seq: 99,
+      ts: Date.now(),
+      type: 'task_graph.graph_completed',
+      payload: {
+        executionId: 'graph_1',
+        summary: 'done',
+        success: true,
+        aborted: false,
+        nodeCount: 2,
+        totalRounds: 3,
+        wallTimeMs: 42,
+      },
+    };
+    assert.doesNotThrow(() => broadcastEvent(SESSION_ID, ok));
   });
 });
