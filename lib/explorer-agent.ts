@@ -279,11 +279,15 @@ export interface ExplorerAgentOptions<TCall, TCard> {
    * the Explorer system prompt's `tool_instructions` slot. When
    * provided, replaces the built-in `EXPLORER_TOOL_PROTOCOL` constant
    * entirely (but `webSearchToolProtocol` is still appended afterward
-   * as today). Daemon consumers (`cli/pushd.ts:makeDaemonExplorerToolExec`)
-   * pass a CLI-named read-only protocol block here because their
-   * detector + executor live in a different tool-name namespace from
-   * the web-side tool registry. Undefined → fall back to the built-in
-   * `EXPLORER_TOOL_PROTOCOL`, preserving web-shim behavior.
+   * as today). Daemon entrypoints pass a CLI-named read-only protocol
+   * block here when calling `runExplorerAgent` (for example
+   * `handleDelegateExplorer` and `runExplorerForTaskGraph` in
+   * `cli/pushd.ts`, both of which pass `READ_ONLY_TOOL_PROTOCOL` from
+   * `cli/tools.ts` alongside `toolExec: makeDaemonExplorerToolExec(...)`)
+   * because their detector + executor live in a different tool-name
+   * namespace from the web-side tool registry. Undefined → fall back
+   * to the built-in `EXPLORER_TOOL_PROTOCOL`, preserving web-shim
+   * behavior.
    */
   sandboxToolProtocol?: string;
 

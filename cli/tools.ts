@@ -620,10 +620,14 @@ export function isReadOnlyToolCall(call) {
  * and every entry in that set should have a corresponding bullet (web_search
  * uses the same wording as the main protocol).
  *
- * Used via `sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL` in
- * `cli/pushd.ts:makeDaemonExplorerToolExec`'s two call sites
- * (`handleDelegateExplorer` + `runExplorerForTaskGraph`) so the model
- * sees CLI tool names (`read_file`, `list_dir`) that match the
+ * Passed as `sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL` in the
+ * `runExplorerAgent` options bag inside `cli/pushd.ts` — specifically
+ * `handleDelegateExplorer` (direct-RPC path) and
+ * `runExplorerForTaskGraph` (task-graph node path). Note that
+ * `makeDaemonExplorerToolExec` only builds the tool executor closure;
+ * it does not participate in prompt construction, so the override
+ * must be passed alongside `toolExec` in the kernel options. So the
+ * model sees CLI tool names (`read_file`, `list_dir`) that match the
  * daemon's detector + executor + `READ_ONLY_TOOLS` namespace. Without
  * this override the lib kernel falls back to `EXPLORER_TOOL_PROTOCOL`
  * from `lib/explorer-agent.ts`, which advertises the web-side public
@@ -645,10 +649,10 @@ Available tools (all read-only — Explorer has no filesystem or exec mutation s
 - list_dir(path?) — list files/directories
 - search_files(pattern, path?, max_results?) — text search in workspace
 - read_symbols(path) — extract function/class/type declarations from a file
-- read_symbol(path, symbol) — read a specific symbol's full body; more efficient than reading a whole file when you know which symbol you need
+- read_symbol(path, symbol) — read a specific symbol's full body (function, class, type, interface) by name; more efficient than reading a whole file when you know which symbol you need
 - git_status() — workspace git status (branch, dirty files)
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
-- lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters to one file
+- lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
 - exec_poll(session_id, from_seq?, max_chars?) — read incremental output from a previously-started command session
 - exec_list_sessions() — list active/finished command sessions
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
