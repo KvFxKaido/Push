@@ -1,5 +1,15 @@
 # Architecture
 
+
+## Design Philosophy
+
+Push is built around execution-first reliability. We favor explicit state and human-in-the-loop validation over black-box automation. Key constraints:
+
+- **Repo-anchored context** — behavior is always bound to a specific branch and repository state.
+- **Role-based delegation** — distinct agents (Explorer, Coder, Auditor) provide separation of concerns and layered verification.
+- **Surgical edits** — preference for hashline-anchored changes and patchset transactions over broad file overwrites.
+- **Audited delivery** — the Auditor role serves as a mandatory safety gate for all standard commits.
+
 ## Tech Stack
 
 - React 19 + TypeScript 6 + Vite 7
