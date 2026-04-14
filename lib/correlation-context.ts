@@ -5,7 +5,7 @@
  * See `docs/decisions/CorrelationContext Contract.md` for the full
  * contract, field semantics, and the hard rule that this module exists
  * to codify. The short version lives here as JSDoc so that reaching for
- * intellisense surfaces it at the call site.
+ * IntelliSense surfaces it at the call site.
  *
  * ## The hard rule
  *
@@ -14,7 +14,7 @@
  * The fields on this object MUST NOT be used to:
  *
  *   1. alter tool call arguments or results,
- *   2. alter prompt text or system prompt composition,
+ *   2. alter prompt text or system-prompt composition,
  *   3. alter pushd wire payloads beyond the existing envelope fields
  *      (`sessionId`, optional `runId`) that the protocol already defines,
  *   4. alter sandbox commands, filesystem state, or workspace behavior,
@@ -235,7 +235,9 @@ export const EMPTY_CORRELATION_CONTEXT: Readonly<CorrelationContext> = Object.fr
  * not a full replacement.
  *
  * Pure: never mutates `base` or `patch`. Safe to call inside React
- * render paths.
+ * render paths, and safe to pass the shared `EMPTY_CORRELATION_CONTEXT`
+ * (hence the `Readonly<>` on the parameter types — the return value is
+ * a fresh, mutable copy either way).
  *
  * @example
  *   const ctx = extendCorrelation(
@@ -245,14 +247,14 @@ export const EMPTY_CORRELATION_CONTEXT: Readonly<CorrelationContext> = Object.fr
  *   // ctx === { surface: 'web', chatId: 'c1', runId: 'r42' }
  */
 export function extendCorrelation(
-  base: CorrelationContext,
-  patch: CorrelationContext,
+  base: Readonly<CorrelationContext>,
+  patch: Readonly<CorrelationContext>,
 ): CorrelationContext {
   const next: CorrelationContext = { ...base };
   for (const key of CORRELATION_FIELD_NAMES) {
     const value = patch[key];
     if (value !== undefined) {
-      // `as any` is localized: we've just indexed by a literal union
+      // The cast is localized: we've just indexed by a literal union
       // of keys of CorrelationContext, so the assignment is sound.
       (next as Record<string, unknown>)[key] = value;
     }
@@ -263,14 +265,19 @@ export function extendCorrelation(
 /**
  * Convert a correlation context into an OTel span-attribute record.
  *
- * Only fields with a defined value are emitted, so the returned object
- * can be passed directly into `span.setAttributes(...)` without
- * worrying about clobbering upstream attributes with `undefined`.
+ * Only fields with a defined, non-empty string value are emitted, so
+ * the returned object can be passed directly into `span.setAttributes(...)`
+ * without worrying about clobbering upstream attributes with `undefined`
+ * or empty-string values. This matches the zero-value convention used
+ * elsewhere in the codebase (e.g. `runId: ''` in `app/src/lib/run-engine.ts`
+ * means "no run yet").
  *
  * The attribute keys come from `CORRELATION_SPAN_ATTRIBUTE_KEYS`; do
  * not rebuild this mapping in call sites.
  */
-export function correlationToSpanAttributes(ctx: CorrelationContext): Record<string, string> {
+export function correlationToSpanAttributes(
+  ctx: Readonly<CorrelationContext>,
+): Record<string, string> {
   const attrs: Record<string, string> = {};
   for (const key of CORRELATION_FIELD_NAMES) {
     const value = ctx[key];
@@ -281,10 +288,21 @@ export function correlationToSpanAttributes(ctx: CorrelationContext): Record<str
   return attrs;
 }
 
-/** True when `ctx` has at least one correlation field set. */
-export function hasAnyCorrelation(ctx: CorrelationContext): boolean {
+/**
+ * True when `ctx` has at least one correlation field set to a
+ * non-empty string.
+ *
+ * Empty strings are treated as unset — the codebase uses `runId: ''` /
+ * `chatId: ''` as an idle zero-value (see `app/src/lib/run-engine.ts`),
+ * and this helper matches the same convention that
+ * `correlationToSpanAttributes` and `hasRunCorrelation` already use.
+ * A caller holding `{ runId: '' }` will get `false` here, which is
+ * consistent with the "no attributes will be emitted" reality downstream.
+ */
+export function hasAnyCorrelation(ctx: Readonly<CorrelationContext>): boolean {
   for (const key of CORRELATION_FIELD_NAMES) {
-    if (ctx[key] !== undefined) return true;
+    const value = ctx[key];
+    if (typeof value === 'string' && value.length > 0) return true;
   }
   return false;
 }
@@ -294,7 +312,7 @@ export function hasAnyCorrelation(ctx: CorrelationContext): boolean {
  * belongs to a specific run").
  */
 export function hasRunCorrelation(
-  ctx: CorrelationContext,
-): ctx is CorrelationContext & { runId: string } {
+  ctx: Readonly<CorrelationContext>,
+): ctx is Readonly<CorrelationContext> & { runId: string } {
   return typeof ctx.runId === 'string' && ctx.runId.length > 0;
 }

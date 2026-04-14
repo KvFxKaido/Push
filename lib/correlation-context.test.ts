@@ -88,9 +88,20 @@ describe('CorrelationContext', () => {
       expect(hasAnyCorrelation({})).toBe(false);
     });
 
-    it('hasAnyCorrelation is true when any field is set', () => {
+    it('hasAnyCorrelation is true when any field is set to a non-empty string', () => {
       expect(hasAnyCorrelation({ surface: 'sandbox' })).toBe(true);
       expect(hasAnyCorrelation({ toolCallId: 'tc1' })).toBe(true);
+    });
+
+    it('hasAnyCorrelation treats empty strings as unset for consistency', () => {
+      // Codebase convention: `runId: ''` / `chatId: ''` means "no run
+      // yet" (see app/src/lib/run-engine.ts). hasAnyCorrelation must
+      // match the same convention that correlationToSpanAttributes and
+      // hasRunCorrelation already use, otherwise callers will think
+      // correlation exists while no attributes will actually be emitted.
+      expect(hasAnyCorrelation({ runId: '' })).toBe(false);
+      expect(hasAnyCorrelation({ chatId: '', runId: '' })).toBe(false);
+      expect(hasAnyCorrelation({ chatId: '', runId: 'r1' })).toBe(true);
     });
 
     it('hasRunCorrelation requires a non-empty runId', () => {
@@ -98,6 +109,18 @@ describe('CorrelationContext', () => {
       expect(hasRunCorrelation({ runId: '' })).toBe(false);
       expect(hasRunCorrelation({ chatId: 'c1' })).toBe(false);
       expect(hasRunCorrelation({ runId: 'r1' })).toBe(true);
+    });
+
+    it('helpers accept the shared Readonly EMPTY_CORRELATION_CONTEXT', () => {
+      // Compile-time check: passing the frozen empty const through the
+      // public helper signatures must not fail typechecking. Runtime
+      // expectations are cheap sanity: the helpers still behave.
+      expect(hasAnyCorrelation(EMPTY_CORRELATION_CONTEXT)).toBe(false);
+      expect(hasRunCorrelation(EMPTY_CORRELATION_CONTEXT)).toBe(false);
+      expect(correlationToSpanAttributes(EMPTY_CORRELATION_CONTEXT)).toEqual({});
+      expect(extendCorrelation(EMPTY_CORRELATION_CONTEXT, { runId: 'r1' })).toEqual({
+        runId: 'r1',
+      });
     });
   });
 

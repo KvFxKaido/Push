@@ -1,7 +1,7 @@
 # CorrelationContext Contract
 
 Date: 2026-04-14
-Status: Draft, docs-and-types only (step 1 of the Architecture Remediation Plan)
+Status: Current, docs-and-types only (step 1 of the Architecture Remediation Plan)
 Companion to: [`Architecture Remediation Plan — Defusing the Big Four.md`](./Architecture%20Remediation%20Plan%20%E2%80%94%20Defusing%20the%20Big%20Four.md), [`Web and CLI Runtime Contract.md`](./Web%20and%20CLI%20Runtime%20Contract.md)
 Code: [`lib/correlation-context.ts`](../../lib/correlation-context.ts)
 
