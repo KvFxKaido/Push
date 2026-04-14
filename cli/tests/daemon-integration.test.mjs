@@ -588,7 +588,7 @@ describe('daemon version', () => {
     assert.ok(!response.payload.capabilities.includes('task_graph'));
   });
 
-  it('all 13 handler types are registered', async () => {
+  it('all 15 handler types are registered', async () => {
     const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
     const handlers = [
       'hello',
@@ -602,6 +602,8 @@ describe('daemon version', () => {
       'configure_role_routing',
       'submit_task_graph',
       'delegate_explorer',
+      'delegate_coder',
+      'delegate_reviewer',
       'cancel_delegation',
       'fetch_delegation_events',
     ];
@@ -1423,13 +1425,25 @@ describe('submit_task_graph', () => {
     }
   });
 
-  it('fails a coder node fast and marks the graph as unsuccessful', async () => {
+  it('executes a coder node through the scaffold kernel and marks the graph successful', async () => {
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-submit-graph-coder-'));
     process.env.PUSH_SESSION_DIR = tmpRoot;
 
-    // Coder executor throws before touching the provider, so no mock server
-    // is needed — but start_session still needs a configured provider.
+    // Phase 6 wrap-up: coder task-graph nodes route through
+    // runScaffoldCoderForTaskGraph instead of throwing "not yet wired".
+    // The scaffold runs runCoderAgent with the same stub-tool-executor
+    // pattern as the explorer scaffold, so the LLM streams real tokens
+    // through the mock provider and the node completes with an
+    // inconclusive DelegationOutcome. The graph itself succeeds because
+    // the executor does not throw — only individual nodes can fail.
+    const MOCK_TOKENS = ['MOCK_CODER_ALPHA ', 'MOCK_CODER_OMEGA'];
+    const mock = await startMockProviderServer({ tokens: MOCK_TOKENS });
+    const restoreConfig = patchProviderConfig('ollama', {
+      url: mock.url,
+      apiKey: 'test-mock-key',
+    });
+
     try {
       const start = await handleRequest(
         makeRequest('start_session', {
@@ -1463,18 +1477,31 @@ describe('submit_task_graph', () => {
       await waitForTaskGraphComplete(entry, executionId, sessionId);
 
       const events = await loadSessionEvents(sessionId);
-      const failed = events.find(
+      const taskStarted = events.find(
+        (e) => e.type === 'task_graph.task_started' && e.payload.executionId === executionId,
+      );
+      const taskCompleted = events.find(
+        (e) => e.type === 'task_graph.task_completed' && e.payload.executionId === executionId,
+      );
+      const taskFailed = events.find(
         (e) => e.type === 'task_graph.task_failed' && e.payload.executionId === executionId,
       );
       const completedGraph = events.find(
         (e) => e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
       );
-      assert.ok(failed, 'expected task_graph.task_failed event for coder node');
-      assert.ok(failed.payload.error.includes('Coder delegation is not yet wired'));
+
+      assert.ok(taskStarted, 'expected task_graph.task_started event');
+      assert.equal(taskStarted.payload.agent, 'coder');
+      assert.ok(!taskFailed, 'coder nodes should no longer fail fast');
+      assert.ok(taskCompleted, 'expected task_graph.task_completed event');
+      assert.equal(taskCompleted.payload.agent, 'coder');
       assert.ok(completedGraph);
-      assert.equal(completedGraph.payload.success, false);
+      assert.equal(completedGraph.payload.success, true);
       assert.equal(completedGraph.payload.aborted, false);
+      assert.equal(completedGraph.payload.nodeCount, 1);
     } finally {
+      restoreConfig();
+      await mock.stop();
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });
@@ -1942,6 +1969,364 @@ const MINIMAL_REVIEWER_DIFF = [
   ' line three',
   '',
 ].join('\n');
+
+// ─── delegate_coder ─────────────────────────────────────────────
+
+// Mirrors the delegate_explorer suite: validates input, token, stale
+// routing, and a happy-path kernel run where the lib Coder streams
+// through a mock provider and the handler persists an inconclusive
+// DelegationOutcome with `missingRequirements` pointing at the stubbed
+// tool executor. Cancellation race coverage is deliberately omitted for
+// this tranche — the explorer race test already pins the shared
+// terminal-claim pattern and the coder handler uses the same flow.
+describe('delegate_coder', () => {
+  it('rejects missing sessionId', async () => {
+    const response = await handleRequest(
+      makeRequest('delegate_coder', { task: 'write a script' }),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'INVALID_REQUEST');
+    assert.ok(response.error.message.includes('sessionId'));
+  });
+
+  it('rejects missing task', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-coder-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest('delegate_coder', { sessionId, attachToken }, sessionId),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_REQUEST');
+      assert.ok(response.error.message.includes('task'));
+
+      const emptyTask = await handleRequest(
+        makeRequest('delegate_coder', { sessionId, attachToken, task: '   ' }, sessionId),
+        () => {},
+      );
+      assert.equal(emptyTask.ok, false);
+      assert.equal(emptyTask.error.code, 'INVALID_REQUEST');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid attach token', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-coder-token-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId } = start.payload;
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_coder',
+          { sessionId, attachToken: 'att_wrong', task: 'write a script' },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'INVALID_TOKEN');
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns SESSION_NOT_FOUND for unknown session', async () => {
+    const response = await handleRequest(
+      makeRequest(
+        'delegate_coder',
+        { sessionId: 'sess_abc123_def456', task: 'write a script' },
+        'sess_abc123_def456',
+      ),
+      () => {},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, 'SESSION_NOT_FOUND');
+  });
+
+  it('rejects stale coder role routing with an unknown provider before acking', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-coder-stale-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      assert.equal(start.ok, true);
+      const { sessionId, attachToken } = start.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+      entry.state.roleRouting = {
+        coder: {
+          provider: 'google',
+          model: 'stale-model',
+        },
+      };
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_coder',
+          { sessionId, attachToken, task: 'scaffold coding' },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(response.ok, false);
+      assert.equal(response.error.code, 'PROVIDER_NOT_CONFIGURED');
+      assert.ok(response.error.message.includes('google'));
+      assert.equal(entry.activeDelegations?.size ?? 0, 0);
+
+      const events = await loadSessionEvents(sessionId);
+      const subagentEvents = events.filter((event) => event.type.startsWith('subagent.'));
+      assert.equal(subagentEvents.length, 0);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('runs the lib Coder kernel end-to-end with a real streamFn adapter and persists an inconclusive outcome', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-coder-happy-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    const MOCK_TOKENS = [
+      'MOCK_CODER_TOKEN_ALPHA ',
+      'scaffold-coder-result ',
+      'MOCK_CODER_TOKEN_OMEGA',
+    ];
+    const mock = await startMockProviderServer({ tokens: MOCK_TOKENS });
+    const restoreConfig = patchProviderConfig('ollama', {
+      url: mock.url,
+      apiKey: 'test-mock-key',
+    });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const broadcasted = [];
+      const attached = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        (event) => broadcasted.push(event),
+      );
+      assert.equal(attached.ok, true);
+      broadcasted.length = 0;
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_coder',
+          { sessionId, attachToken, task: 'scaffold coding' },
+          sessionId,
+        ),
+        () => {},
+      );
+
+      assert.equal(response.ok, true);
+      assert.equal(response.payload.accepted, true);
+      assert.ok(response.payload.subagentId);
+      assert.ok(response.payload.subagentId.startsWith('sub_coder_'));
+      assert.ok(response.payload.childRunId);
+      assert.ok(response.payload.childRunId.startsWith('run_'));
+
+      const { subagentId, childRunId } = response.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry);
+      assert.ok(entry.activeDelegations);
+      assert.equal(entry.activeDelegations.has(subagentId), true);
+
+      await waitForDelegationComplete(entry, subagentId, sessionId);
+
+      assert.equal(entry.activeDelegations.has(subagentId), false);
+
+      const events = await loadSessionEvents(sessionId);
+      const started = events.find(
+        (e) => e.type === 'subagent.started' && e.payload.subagentId === subagentId,
+      );
+      const completed = events.find(
+        (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+      );
+      assert.ok(started, 'expected subagent.started event');
+      assert.ok(completed, 'expected subagent.completed event');
+      assert.equal(started.runId, childRunId);
+      assert.equal(started.payload.agent, 'coder');
+      assert.equal(started.payload.role, 'coder');
+      assert.equal(started.payload.detail, 'scaffold coding');
+      assert.equal(completed.runId, childRunId);
+      assert.equal(completed.payload.agent, 'coder');
+      assert.ok(completed.payload.delegationOutcome);
+      assert.equal(completed.payload.delegationOutcome.agent, 'coder');
+      assert.equal(completed.payload.delegationOutcome.status, 'inconclusive');
+
+      // missingRequirements should list the Coder tool executor so a
+      // future real-tool-exec slice has a structured pointer to the gap.
+      const missing = completed.payload.delegationOutcome.missingRequirements;
+      assert.ok(Array.isArray(missing));
+      assert.ok(missing.length >= 1);
+      assert.ok(
+        missing.some((entry) => /coder tool executor/i.test(entry)),
+        `expected coder tool executor requirement, got ${JSON.stringify(missing)}`,
+      );
+      assert.ok(completed.payload.delegationOutcome.nextRequiredAction);
+
+      const loaded = await loadSessionState(sessionId);
+      assert.ok(Array.isArray(loaded.delegationOutcomes));
+      const record = loaded.delegationOutcomes.find((r) => r.subagentId === subagentId);
+      assert.ok(record, 'expected delegationOutcome record in session state');
+      assert.equal(record.outcome.status, 'inconclusive');
+      assert.equal(record.outcome.agent, 'coder');
+
+      const broadcastStarted = broadcasted.find(
+        (e) => e.type === 'subagent.started' && e.payload.subagentId === subagentId,
+      );
+      const broadcastCompleted = broadcasted.find(
+        (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+      );
+      assert.ok(broadcastStarted, 'expected subagent.started broadcast');
+      assert.ok(broadcastCompleted, 'expected subagent.completed broadcast');
+    } finally {
+      restoreConfig();
+      await mock.stop();
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('honours coder role routing via configure_role_routing (distinct provider)', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-coder-routing-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+
+    // Proof-of-routing test: spin up TWO mock servers and pin the
+    // session default to one (`ollama` → sessionMock) while routing
+    // `coder` to the other (`openrouter` → routedMock). Each mock
+    // emits a distinct token so the delegation summary tells us
+    // unambiguously which backend served the request. Routing the
+    // coder role to `ollama` (the session default) would only prove
+    // the RPC accepts the `coder` key, not that role routing is
+    // consulted at request time — hence the extra mock.
+    const SESSION_ONLY_TOKEN = 'SESSION_PROVIDER_SHOULD_NOT_APPEAR';
+    const ROUTED_ONLY_TOKEN = 'ROUTED_CODER_PROVIDER_DID_APPEAR';
+
+    const sessionMock = await startMockProviderServer({ tokens: [SESSION_ONLY_TOKEN] });
+    const routedMock = await startMockProviderServer({ tokens: [ROUTED_ONLY_TOKEN] });
+    const restoreSession = patchProviderConfig('ollama', {
+      url: sessionMock.url,
+      apiKey: 'session-mock-key',
+    });
+    const restoreRouted = patchProviderConfig('openrouter', {
+      url: routedMock.url,
+      apiKey: 'routed-mock-key',
+    });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      const routing = await handleRequest(
+        makeRequest(
+          'configure_role_routing',
+          { sessionId, attachToken, routing: { coder: { provider: 'openrouter' } } },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(routing.ok, true);
+      assert.equal(routing.payload.roleRouting.coder.provider, 'openrouter');
+
+      const response = await handleRequest(
+        makeRequest(
+          'delegate_coder',
+          { sessionId, attachToken, task: 'routed coder task' },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(response.ok, true);
+
+      const { subagentId } = response.payload;
+      const entry = __getActiveSessionForTesting(sessionId);
+      await waitForDelegationComplete(entry, subagentId, sessionId);
+
+      const events = await loadSessionEvents(sessionId);
+      const completed = events.find(
+        (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+      );
+      assert.ok(completed);
+      assert.equal(completed.payload.agent, 'coder');
+
+      // The only way these tokens end up in the delegation summary is
+      // if the Coder kernel's streamFn actually connected to the mock
+      // server we pointed the openrouter config at. If the routing
+      // override were silently ignored, the summary would carry the
+      // ollama session-mock token instead.
+      const summary = completed.payload.delegationOutcome.summary;
+      assert.ok(
+        summary.includes(ROUTED_ONLY_TOKEN),
+        `expected routed-provider token in summary, got ${JSON.stringify(summary)}`,
+      );
+      assert.ok(
+        !summary.includes(SESSION_ONLY_TOKEN),
+        `session-provider token should not appear — routing override was bypassed. summary=${JSON.stringify(summary)}`,
+      );
+    } finally {
+      restoreRouted();
+      restoreSession();
+      await routedMock.stop();
+      await sessionMock.stop();
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('delegate_reviewer', () => {
   it('rejects missing sessionId', async () => {
