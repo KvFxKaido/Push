@@ -62,6 +62,8 @@ interface RunCheckpoint {
   model: string;
   // Sandbox identity — used to validate the checkpoint matches the current sandbox
   sandboxSessionId: string;
+  // Optional snapshot key — if present, recovery can use this to restore a dead sandbox
+  snapshotKey?: string;
   activeBranch: string;
   repoId: string;
 }

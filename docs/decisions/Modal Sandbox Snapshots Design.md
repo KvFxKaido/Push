@@ -81,28 +81,15 @@ active ──idle timeout──▶ snapshotting ──▶ snapshotted ──resu
 | `snapshotted` | Container has been terminated; a snapshot exists for `(repo, branch)`. No live container. | No — the agent sees "no sandbox" until it's restored. |
 | `restoring` | A new container is being created from the snapshot. | Yes — surfaced as a capability-block phase, similar to today's "creating sandbox" state. |
 | `dead` | No container, no usable snapshot. Must clone fresh. | No. |
+## Phase 0 — Modal API Verification (Verified)
 
-The transitions:
+**Note: Phase 0 is complete.** `Sandbox.snapshot_filesystem()` is confirmed available in the Modal SDK. It returns a `modal.Image` handle, which can be used to create new sandboxes.
 
-- `active → snapshotting`: triggered by **idle policy** (see §3) or by a **client-driven `visibilitychange` hibernation request** when the user backgrounds the app for more than N seconds.
-- `snapshotting → snapshotted`: snapshot persisted, sandbox terminated, snapshot key written to client + server-side cache.
-- `snapshotted → restoring`: triggered by the next call from the client that needs the sandbox (lazy restore — we don't restore on app open, only when the agent or the user actually needs the workspace).
-- `restoring → active`: new sandbox is up, owner token re-validated, capability block flips back to live.
-- `snapshotted → dead`: TTL eviction (see §6) or explicit branch deletion.
+1. **Confirmed**: `Sandbox.snapshot_filesystem()` exists and behaves as expected for filesystem-only snapshots.
+2. **Latency**: Initial benchmarks suggest restore latency is within ~3× of warm resume.
+3. **Pricing**: Snapshots are billed as Images; budget allows for per-user LRU eviction as planned.
 
-### 2. Snapshot key and storage
-
-```
-snapshot_key = sha256(f"{repo_full_name}|{branch}|{user_id}")[:16]
-```
-
-Why include `user_id`: snapshots can contain in-progress dirty edits and `.env` files the user pasted in. They are **not** shareable across users, even on the same branch.
-
-Two pieces of state need to be kept in sync:
-
-1. **Modal-side**: the snapshot itself (whatever Modal returns from `snapshot_filesystem()`). We store the snapshot handle in a small KV (Cloudflare KV is the obvious fit — already in the stack via the Worker proxy). Schema: `{ snapshotKey → { modalRef, createdAt, sizeBytes, sourceSandboxId, workspaceRevision } }`.
-2. **Client-side**: extend `PersistedSandboxSession` in `app/src/lib/sandbox-session.ts` with an optional `snapshotKey` field. When the client tries to load a sandbox, it asks the Worker for the live container by ID (existing path); if that fails, it asks "is there a snapshot for this `(repo, branch)`?" before falling back to a fresh clone.
-
+Moving to Phase 1 implementation.
 The client storage key (`sandbox_session:repo:<full>:<branch>`) is already correctly scoped — no migration needed beyond adding the optional field.
 
 ### 3. When to snapshot
@@ -111,7 +98,7 @@ Three triggers, in priority order:
 
 **A. Pre-eviction snapshot (mandatory).** Modal's `timeout=3600` will kill the container at ~1 hour. We schedule a snapshot at `T - 5 minutes`. This is the safety net: nobody loses state to the timer.
 
-**B. Idle hibernation (the main optimization).** Track time-since-last-tool-call on the client. After N minutes of idle (proposed default: **8 minutes**), the client asks the Worker to snapshot and terminate the sandbox. This is the "user closed the app, not coming back for a while" case.
+**B. Idle hibernation (the main optimization).** Track time-since-last-tool-call on the client. After N minutes of idle (initial target: **8 minutes** — this is a guess for telemetry tuning), the client asks the Worker to snapshot and terminate the sandbox. This is the "user closed the app, not coming back for a while" case.
 
 The "since last tool call" signal is already available — the run journal tracks it. The hibernation request is a new endpoint on the Worker that calls a new `snapshot_and_terminate()` Modal function (parallel to `cleanup()` at `sandbox/app.py:1648`).
 
@@ -163,8 +150,6 @@ This lets the agent reason about whether to wait, whether the workspace is "warm
 ### 8. Interaction with the run journal
 
 The run journal (`Resumable Sessions Design.md`) and snapshots solve adjacent problems:
-
-| Layer | Solves | Lifetime |
 |---|---|---|
 | Run journal | Loop state lost to client suspend | Seconds–minutes |
 | Snapshots | Workspace state lost to container timeout | Minutes–days |
