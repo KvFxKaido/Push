@@ -2461,6 +2461,19 @@ describe('wrapCliDetectAllToolCalls', () => {
     assert.deepEqual(detected.extraMutations, []);
   });
 
+  it('rejects a read that appears after the mutation batch starts', () => {
+    const write = JSON.stringify({ tool: 'write_file', args: { path: 'a.txt', content: '1' } });
+    const read = JSON.stringify({ tool: 'read_file', args: { path: 'b.txt' } });
+    const text = `\`\`\`json\n${write}\n\`\`\`\n\`\`\`json\n${read}\n\`\`\``;
+    const detected = wrapCliDetectAllToolCalls(text);
+    assert.deepEqual(detected.readOnly, []);
+    assert.equal(detected.fileMutations.length, 1);
+    assert.equal(detected.fileMutations[0].call.tool, 'write_file');
+    assert.equal(detected.mutating, null);
+    assert.equal(detected.extraMutations.length, 1);
+    assert.equal(detected.extraMutations[0].call.tool, 'read_file');
+  });
+
   it('returns empty slots when text has no tool calls', () => {
     const detected = wrapCliDetectAllToolCalls('just some prose with no fenced json at all.');
     assert.deepEqual(detected.readOnly, []);
