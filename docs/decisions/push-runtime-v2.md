@@ -1,7 +1,7 @@
 # Push Runtime v2 — Multi-Agent Daemon Protocol
 
 Date: 2026-04-12
-Status: **In progress** — Phases 1-5 are shipped/closed for the durable scope. Phase 6 daemon wiring has started: `submit_task_graph` now executes graphs end-to-end through `lib/task-graph.executeTaskGraph` with `task_graph.*` events on the wire (2026-04-13); crash recovery injects `[DELEGATION_INTERRUPTED]` reconciliation notes. Real coder-node tool execution and v1 synthetic downgrade are still outstanding. Phase 5E decided Orchestrator stays Web-side; prompt-builder and context-manager extraction are optional pushd reuse follow-ups, not blockers.
+Status: **In progress** — Phases 1-5 are shipped/closed for the durable scope. Phase 6 daemon-wiring portion is effectively complete as of 2026-04-14: `submit_task_graph` executes graphs end-to-end through `lib/task-graph.executeTaskGraph` with `task_graph.*` events on the wire (2026-04-13); crash recovery injects `[DELEGATION_INTERRUPTED]` reconciliation notes; explorer, reviewer, **and coder** delegation all run through their lib kernels via `handleDelegateExplorer` / `handleDelegateReviewer` / `handleDelegateCoder` (coder scaffold landed 2026-04-14). The remaining Phase 6 gates for advertising `multi_agent` are a real daemon-side Coder tool executor (filesystem ops, approval binding, acceptance-criteria runner) and the v1 synthetic-downgrade path. Phase 5E decided Orchestrator stays Web-side; prompt-builder and context-manager extraction are optional pushd reuse follow-ups, not blockers.
 Owner: ishaw
 Related: [Web and CLI Runtime Contract](Web%20and%20CLI%20Runtime%20Contract.md), [Resumable Sessions Design](Resumable%20Sessions%20Design.md), [Multi-Agent Orchestration Research — open-multi-agent](Multi-Agent%20Orchestration%20Research%20%E2%80%94%20open-multi-agent.md)
 
@@ -54,10 +54,10 @@ A surprising amount of the machinery is already in place. The audit that motivat
 
 ## What Still Remains
 
-1. **Daemon wiring for multi-agent delegation.** `pushd` hosts Explorer delegation, Reviewer delegation, and (2026-04-13) task-graph execution through `lib/task-graph.executeTaskGraph`. The `task_graph.task_ready` / `task_started` / `task_completed` / `task_failed` / `task_cancelled` / `graph_completed` events all flow through `broadcastEvent()` and persist to the session event log. **Still missing:** a real daemon-side coder kernel — coder task-graph nodes currently fail fast with a "not yet wired" error (`cli/pushd.ts` `handleSubmitTaskGraph`).
-2. **Per-role provider routing on the wire.** `configure_role_routing` is shipped and honoured by `handleDelegateExplorer`, `handleDelegateReviewer`, and the task-graph explorer executor via `resolveRoleRouting()` in `cli/pushd.ts`. **Still missing:** coder-role routing, which lands when the coder kernel does.
+1. **Daemon wiring for multi-agent delegation.** `pushd` hosts Explorer, Coder, and Reviewer delegation plus (2026-04-13) task-graph execution through `lib/task-graph.executeTaskGraph`. Coder scaffold landed 2026-04-14 — `delegate_coder` is a real RPC handler + task-graph coder nodes route through `runScaffoldCoderForTaskGraph`, both invoking `runCoderAgent` from `lib/coder-agent.ts` with a stubbed tool executor. The `task_graph.task_ready` / `task_started` / `task_completed` / `task_failed` / `task_cancelled` / `graph_completed` events all flow through `broadcastEvent()` and persist to the session event log. **Still missing:** a real daemon-side Coder tool executor (filesystem ops, approval binding, acceptance-criteria runner). Today the LLM streams real tokens but every tool call receives a canned "not yet wired" result, so outcomes are marked `status: 'inconclusive'` with `missingRequirements: ['Daemon-side Coder tool executor...']`. Explorer has the same scaffold-level gap.
+2. **Per-role provider routing on the wire.** `configure_role_routing` is shipped and honoured by `handleDelegateExplorer`, `handleDelegateCoder` (2026-04-14), `handleDelegateReviewer`, and both task-graph scaffold executors via `resolveRoleRouting()` in `cli/pushd.ts`. Full role-routing coverage for the three shipped delegation types.
 3. **Delegation events in the daemon event log.** SHIPPED 2026-04-13. `collectOrphanedDelegations()` scans the session event log for unfinished `subagent.started` / `task_graph.task_*` events bound to the interrupted parent `runId`, and `recoverInterruptedRuns()` injects a `[DELEGATION_INTERRUPTED]` user message plus a `delegation_interrupted` session event. Recovery stays narrow: we do not resume children in place.
-4. **Approval callback wiring into the daemon.** The Web seam exists (`approvalCallback?` in `executeAnyToolCall()` / `WebToolExecutionRuntime`), but Phase 6 still has to bind it to pushd's RPC approval flow.
+4. **Approval callback wiring into the daemon.** The Web seam exists (`approvalCallback?` in `executeAnyToolCall()` / `WebToolExecutionRuntime`), but Phase 6 still has to bind it to pushd's RPC approval flow. Blocked on the same "real Coder tool executor" item above — there is no kernel-side tool to gate approvals on until that lands.
 5. **Optional pushd reuse helpers.** Orchestrator stays Web-side by design. If Phase 6 wants reuse instead of duplication, extract the pure prompt-builder helpers and generic context-manager helpers called out in Phase 5E; neither blocks daemon wiring.
 6. **v1 client synthetic downgrade.** Option C from the Wire Format section is still unimplemented — a v1 client attached to a v2 daemon currently sees raw `task_graph.*` events it does not recognize instead of the advertised synthetic `assistant_token` rewrite.
 
@@ -94,16 +94,16 @@ Shipped 2026-04-14 in `cli/protocol-schema.ts`. The module is the canonical runt
 
 ### Capability Negotiation (v2 additions)
 
-Current capabilities at `cli/pushd.ts:54-72` now advertise: `stream_tokens`, `approvals`, `replay_attach`, `multi_client`, `crash_recovery`, `role_routing`, `delegation_explorer_v1`, `delegation_reviewer_v1`, `task_graph_v1`.
+Current capabilities at `cli/pushd.ts:54-72` now advertise: `stream_tokens`, `approvals`, `replay_attach`, `multi_client`, `crash_recovery`, `role_routing`, `delegation_explorer_v1`, `delegation_reviewer_v1`, `delegation_coder_v1`, `task_graph_v1`.
 
 Future v2 caps still to add:
-- `multi_agent` — advertised once the daemon hosts a fully-wired coder kernel and can host Orchestrator + sub-agent delegation end-to-end (today explorer and task-graph explorer nodes run through a scaffold tool executor; task-graph coder nodes fail fast)
+- `multi_agent` — advertised once the daemon hosts a fully-wired Coder tool executor (filesystem ops, approval binding, acceptance-criteria runner) and can host Orchestrator + sub-agent delegation end-to-end. Today explorer, coder, and their task-graph counterparts all run through scaffold tool executors — the kernels are reachable and produce structured `inconclusive` outcomes but do no real work.
 - `event_v2` — advertised once the v1 synthetic-downgrade path is implemented (see "v1 Client Handling" below)
 
 Already shipped under the `_v1` suffix naming convention:
 - `role_routing` — daemon supports per-role `{provider, model}` selection via `configure_role_routing`
-- `delegation_explorer_v1` / `delegation_reviewer_v1` — RPC paths for direct single-agent delegation
-- `task_graph_v1` — `submit_task_graph` accepts dependency-ordered task graphs, executes them via `lib/task-graph.executeTaskGraph`, and streams the full `task_graph.*` RunEvent lifecycle through `broadcastEvent()`
+- `delegation_explorer_v1` / `delegation_reviewer_v1` / `delegation_coder_v1` — RPC paths for direct single-agent delegation. Explorer and Coder both run through `runExplorerAgent` / `runCoderAgent` with stubbed tool executors; Reviewer is the only one with a real wired path (single-turn JSON review, no tool loop).
+- `task_graph_v1` — `submit_task_graph` accepts dependency-ordered task graphs, executes them via `lib/task-graph.executeTaskGraph`, and streams the full `task_graph.*` RunEvent lifecycle through `broadcastEvent()`. Both `agent: 'explorer'` and `agent: 'coder'` nodes route through the same scaffold helpers as their direct-RPC counterparts.
 
 v1-only clients filter capabilities they don't understand. A v1 client talking to a v2 daemon reads the `hello` response, ignores unknown capabilities, and proceeds with v1 semantics. The daemon detects v1 clients by the absence of `event_v2` in any subsequent request and degrades its event emission (see below).
 
@@ -505,15 +505,15 @@ None of the three requires modifying `lib/tool-execution-runtime.ts`, so this is
 
 Wire everything into `cli/pushd.ts`:
 
-1. Add v2 capabilities to the `CAPABILITIES` list. **Partial** — `role_routing`, `delegation_explorer_v1`, `delegation_reviewer_v1`, and `task_graph_v1` advertised. `multi_agent` and `event_v2` still gated on items 7 and a real coder kernel.
-2. Implement `submit_task_graph`, `configure_role_routing`, `cancel_delegation` request handlers. **SHIPPED 2026-04-13** (task graph closes out this item; `configure_role_routing` and `cancel_delegation` already shipped earlier in Phase 6). `cancel_delegation` now accepts a task-graph `executionId` and aborts the graph's executor via the session's `AbortController`.
-3. Wire delegation events into `broadcastEvent()`. **SHIPPED** — `subagent.*` events flow through `handleDelegateExplorer` / `handleDelegateReviewer`; `task_graph.*` events flow through the background runner inside `handleSubmitTaskGraph`.
+1. Add v2 capabilities to the `CAPABILITIES` list. **Partial** — `role_routing`, `delegation_explorer_v1`, `delegation_reviewer_v1`, `delegation_coder_v1` (2026-04-14), and `task_graph_v1` advertised. `multi_agent` and `event_v2` still gated on items 7 and a real Coder tool executor.
+2. Implement `submit_task_graph`, `configure_role_routing`, `cancel_delegation` request handlers. **SHIPPED 2026-04-13** (task graph closes out this item; `configure_role_routing` and `cancel_delegation` already shipped earlier in Phase 6). `cancel_delegation` now accepts a task-graph `executionId` and aborts the graph's executor via the session's `AbortController`. Coder scaffold landed 2026-04-14: `delegate_coder` is a real RPC + task-graph coder nodes no longer fail fast.
+3. Wire delegation events into `broadcastEvent()`. **SHIPPED** — `subagent.*` events flow through `handleDelegateExplorer` / `handleDelegateCoder` / `handleDelegateReviewer`; `task_graph.*` events flow through the background runner inside `handleSubmitTaskGraph`.
 4. Extend `state` to track `roleRouting`, `activeDelegations`, `delegationOutcomes`, `activeGraphs`. **SHIPPED** — `state.roleRouting` and `state.delegationOutcomes` persist to disk via `saveSessionState`; `entry.activeDelegations` and `entry.activeGraphs` live on the in-memory session entry and are initialized via `ensureRuntimeState()`.
 5. Extend `recoverInterruptedRuns()` to inject `[DELEGATION_INTERRUPTED]` reconciliation notes for parents whose children were lost on crash. **SHIPPED 2026-04-13** — `collectOrphanedDelegations()` scans the session event log for unterminated `subagent.started` and `task_graph.task_*` events bound to the interrupted parent `runId`, then `recoverInterruptedRuns()` injects a user message via `formatDelegationInterruptedNote()` and emits a `delegation_interrupted` session event.
 6. Add `fetch_delegation_events` request handler for clients that want to drill into a specific sub-agent's event stream (used by `push session show --delegation <id>`). **SHIPPED**.
-7. Implement v1 client synthetic-downgrade logic (Option C above). **Still outstanding** — real daemon-side coder tool execution is also outstanding and is the precondition for advertising `multi_agent`.
+7. Implement v1 client synthetic-downgrade logic (Option C above). **Still outstanding** — a real daemon-side Coder tool executor (filesystem ops, approval binding, acceptance-criteria runner) is the other remaining gate for advertising `multi_agent`.
 
-**Estimated scope:** 1 week.
+**Estimated scope:** 1 week. As of 2026-04-14 the daemon-wiring portion is effectively complete; the remaining work is the real-tool-exec tranche (large) + v1 synthetic downgrade (small, independent).
 
 ### Phase 7 — Web-as-daemon-client (OPTIONAL, FUTURE)
 

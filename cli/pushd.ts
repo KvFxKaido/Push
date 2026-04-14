@@ -18,6 +18,7 @@
  *   configure_role_routing — set per-role provider/model routing
  *   submit_task_graph      — scaffold for future task graph execution
  *   delegate_explorer      — launch read-only Explorer sub-agent (real streamFn via daemon-provider-stream; toolExec still stubbed)
+ *   delegate_coder         — launch mutating Coder sub-agent (real streamFn via daemon-provider-stream; toolExec still stubbed)
  *   delegate_reviewer      — launch advisory Reviewer sub-agent (real streamFn, single-turn JSON review; no tool loop)
  *   cancel_delegation      — cancel active sub-agent delegation
  *   fetch_delegation_events — replay delegation event stream
@@ -47,6 +48,7 @@ import {
 import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
+import { runCoderAgent } from '../lib/coder-agent.ts';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
@@ -62,10 +64,18 @@ const CAPABILITIES = [
   'role_routing',
   'delegation_explorer_v1',
   'delegation_reviewer_v1',
+  // `delegation_coder_v1`: `delegate_coder` RPC + task-graph coder nodes run
+  // through `runCoderAgent` with a stubbed tool executor. LLM streams real
+  // tokens via the daemon provider adapter, but any tool call the model
+  // emits gets a canned "not yet wired" result. Outcomes are marked
+  // `inconclusive` with a `missingRequirements` entry; flipping
+  // `multi_agent` still requires a real Coder tool executor.
+  'delegation_coder_v1',
   // v2 task-graph execution: submit_task_graph accepts graphs, runs them
   // through lib/task-graph.executeTaskGraph, and streams task_graph.* events.
-  // Explorer nodes use the same scaffold path as delegation_explorer_v1
-  // (streaming LLM with stubbed tool executor); coder nodes fail fast.
+  // Both explorer and coder nodes now route through the scaffold path
+  // (streaming LLM with stubbed tool executor); coder nodes previously
+  // failed fast.
   'task_graph_v1',
 ];
 
@@ -1009,6 +1019,89 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
   };
 }
 
+/**
+ * Scaffold-level Coder invocation for task-graph nodes.
+ *
+ * Mirrors `runScaffoldExplorerForTaskGraph` but calls `runCoderAgent` from
+ * `lib/coder-agent.ts` instead. Same stub-tool-executor pattern: the LLM
+ * streams real tokens through `createDaemonProviderStream`, but any tool
+ * call the model emits gets a canned "not yet wired" result back, and
+ * `evaluateAfterModel` never advances the loop past its own observation.
+ * The resulting `DelegationOutcome` is marked `inconclusive` with a
+ * `missingRequirements` entry pointing at this helper, so graph clients
+ * see a structured "kernel reachable, tool executor still stubbed" signal
+ * instead of the hard "fail fast" error previously emitted for coder nodes.
+ *
+ * Coder-specific option-shape differences from explorer (all filled with
+ * null/empty defaults because the stub tool path doesn't touch them):
+ *   - `sandboxId: ''`               — required string on the coder interface
+ *   - `sandboxToolProtocol: ''`     — required string; prompt-builder block
+ *   - `verificationPolicyBlock: null` — optional, no policy in scaffold mode
+ *   - `approvalModeBlock: null`     — optional, no approval gating yet
+ *
+ * Acceptance criteria / harness overrides are deliberately omitted so the
+ * kernel's defaults apply: no criteria to run, no context resets, no
+ * enforced round cap beyond the kernel's own `DEFAULT_MAX_ROUNDS`.
+ */
+async function runScaffoldCoderForTaskGraph(sessionId, entry, node, signal) {
+  const { provider, model } = resolveRoleRouting(entry, 'coder');
+  const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
+  const stubDetectAllToolCalls = () => emptyDetection;
+  const stubDetectAnyToolCall = () => null;
+  const stubToolExec = async () => ({
+    resultText: '[pushd scaffold] daemon-side Coder tool execution is not yet wired',
+  });
+  const stubEvaluateAfterModel = async () => null;
+  const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
+
+  const result = await runCoderAgent(
+    {
+      provider,
+      streamFn: daemonStreamFn,
+      modelId: model,
+      sandboxId: '',
+      allowedRepo: '',
+      userProfile: null,
+      taskPreamble: node.task,
+      symbolSummary: null,
+      toolExec: stubToolExec,
+      detectAllToolCalls: stubDetectAllToolCalls,
+      detectAnyToolCall: stubDetectAnyToolCall,
+      webSearchToolProtocol: '',
+      sandboxToolProtocol: '',
+      verificationPolicyBlock: null,
+      approvalModeBlock: null,
+      evaluateAfterModel: stubEvaluateAfterModel,
+    },
+    {
+      onStatus: () => {},
+      signal,
+    },
+  );
+
+  const delegationOutcome = {
+    agent: 'coder',
+    status: 'inconclusive',
+    summary: result.summary,
+    evidence: [],
+    checks: [],
+    gateVerdicts: [],
+    missingRequirements: [
+      'Daemon-side Coder tool executor (stubbed in runScaffoldCoderForTaskGraph)',
+    ],
+    nextRequiredAction: 'Wire a real daemon Coder tool executor before advertising multi_agent',
+    rounds: result.rounds,
+    checkpoints: result.checkpoints,
+    elapsedMs: 0,
+  };
+
+  return {
+    summary: result.summary,
+    delegationOutcome,
+    rounds: result.rounds,
+  };
+}
+
 async function handleSubmitTaskGraph(req) {
   const sessionId = req.sessionId || req.payload?.sessionId;
   const providedToken = req.payload?.attachToken;
@@ -1197,16 +1290,13 @@ async function handleSubmitTaskGraph(req) {
     };
 
     const executor = async (node, _enrichedContext, signal) => {
+      if (node.agent === 'explorer') {
+        return runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal);
+      }
       if (node.agent === 'coder') {
-        throw new Error(
-          'Coder delegation is not yet wired in pushd (Phase 6 scaffold). ' +
-            'Only explorer nodes can currently execute inside a daemon-hosted task graph.',
-        );
+        return runScaffoldCoderForTaskGraph(sessionId, entry, node, signal);
       }
-      if (node.agent !== 'explorer') {
-        throw new Error(`Unsupported task-graph agent: ${node.agent}`);
-      }
-      return runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal);
+      throw new Error(`Unsupported task-graph agent: ${node.agent}`);
     };
 
     let result;
@@ -1804,6 +1894,321 @@ async function handleDelegateExplorer(req) {
   return ack;
 }
 
+// ─── Delegate Coder (scaffold + real lib-kernel integration) ───
+
+/**
+ * `delegate_coder` — daemon-side Coder launch.
+ *
+ * Mirrors `handleDelegateExplorer` exactly: resolves role routing, validates
+ * input, mints ids, emits `subagent.started`, acks the RPC, and then runs
+ * the lib Coder kernel in the background with a stubbed tool executor. The
+ * LLM streams real tokens via `createDaemonProviderStream`; any tool call
+ * the model emits receives a canned "not yet wired" result because the stub
+ * detectors never produce a `TCall` and the stub `toolExec` returns a single
+ * `resultText` string with no side effects.
+ *
+ * Why a separate handler from `delegate_explorer` when the shapes are so
+ * similar: the explorer kernel's option interface is narrower (no
+ * `sandboxToolProtocol`, no approval/verification policy slots), and a
+ * future slice that wires a real coder tool executor will need to diverge
+ * further (sandbox integration, file ledger threading, checkpoint handling
+ * via `onCheckpointRequest`). Forking now keeps the "scaffold → real" seam
+ * clean for each role.
+ *
+ * Provider / model resolution honours `entry.state.roleRouting.coder` —
+ * set via `configure_role_routing` — and falls back to session defaults
+ * otherwise. The resolved values feed both the daemon stream adapter and
+ * the `modelId` option on the kernel.
+ *
+ * Capability flag: `delegation_coder_v1`. Flipping `multi_agent` still
+ * requires a real daemon-side Coder tool executor (filesystem ops,
+ * approval binding, acceptance-criteria runner) — this handler only
+ * proves the kernel is reachable and produces structured outcomes.
+ */
+async function handleDelegateCoder(req) {
+  const sessionId = req.sessionId || req.payload?.sessionId;
+  const providedToken = req.payload?.attachToken;
+  const task = req.payload?.task;
+  const allowedRepo = typeof req.payload?.allowedRepo === 'string' ? req.payload.allowedRepo : '';
+  const parentRunIdPayload =
+    typeof req.payload?.parentRunId === 'string' ? req.payload.parentRunId : null;
+
+  if (!sessionId) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_coder',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
+  }
+
+  if (!task || typeof task !== 'string' || !task.trim()) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_coder',
+      'INVALID_REQUEST',
+      'task is required and must be a non-empty string',
+    );
+  }
+
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: state.attachToken };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return makeErrorResponse(
+        req.requestId,
+        'delegate_coder',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
+    }
+  }
+
+  if (!validateAttachToken(entry, providedToken)) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_coder',
+      'INVALID_TOKEN',
+      'Invalid or missing attach token',
+    );
+  }
+
+  // Resolve provider/model with role-routing precedence for the coder role.
+  // Mirrors the explorer block; we inline rather than delegate to
+  // `resolveRoleRouting()` (used by the task-graph scaffold path) so we can
+  // produce structured `PROVIDER_NOT_CONFIGURED` errors before any state
+  // mutation or subagent.started event — same contract as explorer.
+  const coderRoute = entry.state.roleRouting?.coder;
+  const routedProvider = normalizeProviderInput(coderRoute?.provider);
+  if (routedProvider && !PROVIDER_CONFIGS[routedProvider]) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_coder',
+      'PROVIDER_NOT_CONFIGURED',
+      `Unknown provider "${routedProvider}" for coder role routing`,
+    );
+  }
+  const sessionProvider = normalizeProviderInput(entry.state.provider);
+  if (!routedProvider && (!sessionProvider || !PROVIDER_CONFIGS[sessionProvider])) {
+    return makeErrorResponse(
+      req.requestId,
+      'delegate_coder',
+      'PROVIDER_NOT_CONFIGURED',
+      `Unknown provider "${sessionProvider || '(missing)'}" in session state`,
+    );
+  }
+  const resolvedProvider = routedProvider || sessionProvider;
+  const resolvedModel =
+    (typeof coderRoute?.model === 'string' && coderRoute.model.trim()) ||
+    (typeof entry.state.model === 'string' && entry.state.model.trim()) ||
+    PROVIDER_CONFIGS[resolvedProvider].defaultModel;
+
+  ensureRuntimeState(entry);
+
+  const subagentId = `sub_coder_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
+  const childRunId = makeRunId();
+  const parentRunId = parentRunIdPayload || entry.activeRunId || null;
+  const abortController = new AbortController();
+  const startedAt = Date.now();
+  const trimmedTask = task.trim();
+
+  entry.activeDelegations.set(subagentId, {
+    role: 'coder',
+    agent: 'coder',
+    parentRunId,
+    childRunId,
+    abortController,
+    startedAt,
+    task: trimmedTask,
+  });
+
+  const startEventPayload = {
+    executionId: subagentId,
+    subagentId,
+    ...(parentRunId ? { parentRunId } : {}),
+    childRunId,
+    agent: 'coder',
+    role: 'coder',
+    detail: trimmedTask.slice(0, 280),
+  };
+  await appendSessionEvent(entry.state, 'subagent.started', startEventPayload, childRunId);
+  await saveSessionState(entry.state);
+  broadcastEvent(sessionId, {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId,
+    runId: childRunId,
+    seq: entry.state.eventSeq,
+    ts: Date.now(),
+    type: 'subagent.started',
+    payload: startEventPayload,
+  });
+
+  const ack = makeResponse(req.requestId, 'delegate_coder', sessionId, true, {
+    subagentId,
+    childRunId,
+    accepted: true,
+  });
+
+  // Background run — identical lifecycle to handleDelegateExplorer: the
+  // RPC has already acked, the lib kernel streams real tokens through the
+  // daemon provider adapter, and terminal ownership is claimed synchronously
+  // by deleting the delegation registry entry BEFORE any awaited terminal
+  // event so `cancel_delegation` wins whenever it removes the entry first.
+  (async () => {
+    const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
+    const stubDetectAllToolCalls = () => emptyDetection;
+    const stubDetectAnyToolCall = () => null;
+    const stubToolExec = async () => ({
+      resultText: '[pushd scaffold] daemon-side Coder tool execution is not yet wired',
+    });
+    const stubEvaluateAfterModel = async () => null;
+
+    let outcome;
+    let runError = null;
+    try {
+      const daemonStreamFn = createDaemonProviderStream(resolvedProvider, sessionId);
+      const result = await runCoderAgent(
+        {
+          provider: resolvedProvider,
+          streamFn: daemonStreamFn,
+          modelId: resolvedModel,
+          sandboxId: '',
+          allowedRepo,
+          userProfile: null,
+          taskPreamble: trimmedTask,
+          symbolSummary: null,
+          toolExec: stubToolExec,
+          detectAllToolCalls: stubDetectAllToolCalls,
+          detectAnyToolCall: stubDetectAnyToolCall,
+          webSearchToolProtocol: '',
+          sandboxToolProtocol: '',
+          verificationPolicyBlock: null,
+          approvalModeBlock: null,
+          evaluateAfterModel: stubEvaluateAfterModel,
+        },
+        {
+          onStatus: () => {
+            // Quiet for now — later slices can emit agent_status events here.
+          },
+          signal: abortController.signal,
+        },
+      );
+
+      outcome = {
+        agent: 'coder',
+        status: 'inconclusive',
+        summary: result.summary,
+        evidence: [],
+        checks: [],
+        gateVerdicts: [],
+        missingRequirements: ['Daemon-side Coder tool executor (stubbed in handleDelegateCoder)'],
+        nextRequiredAction: 'Wire a real daemon Coder tool executor before advertising multi_agent',
+        rounds: result.rounds,
+        checkpoints: result.checkpoints,
+        elapsedMs: Date.now() - startedAt,
+      };
+    } catch (err) {
+      runError = err;
+      const isAbort =
+        err &&
+        ((err instanceof Error && err.name === 'AbortError') ||
+          (typeof err?.message === 'string' && err.message.includes('cancelled')));
+      const message = err instanceof Error ? err.message : String(err);
+      outcome = {
+        agent: 'coder',
+        status: 'inconclusive',
+        summary: isAbort
+          ? 'Coder cancelled during daemon scaffold run.'
+          : `Coder failed during daemon scaffold run: ${message}`,
+        evidence: [],
+        checks: [],
+        gateVerdicts: [],
+        missingRequirements: [],
+        nextRequiredAction: null,
+        rounds: 0,
+        checkpoints: 0,
+        elapsedMs: Date.now() - startedAt,
+      };
+    }
+
+    if (!Array.isArray(entry.state.delegationOutcomes)) {
+      entry.state.delegationOutcomes = [];
+    }
+    entry.state.delegationOutcomes.push({ subagentId, outcome });
+
+    const activeDelegation = entry.activeDelegations?.get(subagentId);
+    if (!activeDelegation) {
+      // cancel_delegation already removed the entry and emitted subagent.failed.
+      // Persist outcome only, no event emission to avoid duplicates.
+      await saveSessionState(entry.state);
+      return;
+    }
+    entry.activeDelegations.delete(subagentId);
+
+    if (runError) {
+      const isAbort =
+        (runError instanceof Error && runError.name === 'AbortError') ||
+        (typeof runError?.message === 'string' && runError.message.includes('cancelled'));
+      const message = runError instanceof Error ? runError.message : String(runError);
+      const failPayload = {
+        executionId: subagentId,
+        subagentId,
+        ...(parentRunId ? { parentRunId } : {}),
+        childRunId,
+        agent: 'coder',
+        role: 'coder',
+        error: message,
+        errorDetails: {
+          code: isAbort ? 'CANCELLED' : 'CODER_FAILED',
+          message,
+          retryable: false,
+        },
+      };
+      await appendSessionEvent(entry.state, 'subagent.failed', failPayload, childRunId);
+      await saveSessionState(entry.state);
+      broadcastEvent(sessionId, {
+        v: PROTOCOL_VERSION,
+        kind: 'event',
+        sessionId,
+        runId: childRunId,
+        seq: entry.state.eventSeq,
+        ts: Date.now(),
+        type: 'subagent.failed',
+        payload: failPayload,
+      });
+    } else {
+      const completePayload = {
+        executionId: subagentId,
+        subagentId,
+        ...(parentRunId ? { parentRunId } : {}),
+        childRunId,
+        agent: 'coder',
+        role: 'coder',
+        summary: outcome.summary.slice(0, 280),
+        delegationOutcome: outcome,
+      };
+      await appendSessionEvent(entry.state, 'subagent.completed', completePayload, childRunId);
+      await saveSessionState(entry.state);
+      broadcastEvent(sessionId, {
+        v: PROTOCOL_VERSION,
+        kind: 'event',
+        sessionId,
+        runId: childRunId,
+        seq: entry.state.eventSeq,
+        ts: Date.now(),
+        type: 'subagent.completed',
+        payload: completePayload,
+      });
+    }
+  })();
+
+  return ack;
+}
+
 // ─── Delegate Reviewer (advisory diff review, single-turn) ──────
 
 /**
@@ -2108,6 +2513,7 @@ const HANDLERS = {
   configure_role_routing: handleConfigureRoleRouting,
   submit_task_graph: handleSubmitTaskGraph,
   delegate_explorer: handleDelegateExplorer,
+  delegate_coder: handleDelegateCoder,
   delegate_reviewer: handleDelegateReviewer,
   cancel_delegation: handleCancelDelegation,
   fetch_delegation_events: handleFetchDelegationEvents,
