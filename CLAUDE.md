@@ -26,7 +26,7 @@ npm install
 
 ## Pointers
 
-- [`docs/architecture.md`](docs/architecture.md) — tech stack, agent roles, key systems, and repo map
+- [`docs/architecture.md`](docs/architecture.md) — tech stack, agent roles, key systems, repo/session model, delivery rules, and repo map
 - [`docs/DESIGN.md`](docs/DESIGN.md) — visual tokens, colors, typography, and components
 - [`AGENTS.md`](AGENTS.md) — startup contract for AI agents (provider routing, workflow rules)
 - [`ROADMAP.md`](ROADMAP.md) — current product priorities
@@ -34,4 +34,4 @@ npm install
 
 ## Notes
 
-Keep `docs/architecture.md` as the detailed source of truth. This file is a quick-start entry point. `AGENTS.md` carries the agent startup contract. `ROADMAP.md` carries priorities. If a new operational detail is needed, add it to `docs/` and point to it from here.
+Keep `docs/architecture.md` as the detailed source of truth for architecture and operating model details. This file is a quick-start entry point. `AGENTS.md` carries the agent startup contract. `ROADMAP.md` carries priorities. If a new operational detail is needed, add it to `docs/` and point to it from here.

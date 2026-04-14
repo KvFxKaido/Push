@@ -48,10 +48,28 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 - **Context and memory** — staged compaction, Coder working memory, graph-scoped task memory, typed retrieval/invalidation, and sectioned prompt packing
 - **Shared runtime contract** — canonical task-graph, memory, delegation-brief, role-context, and run-event semantics live in root `lib/` and are consumed by both web and CLI
 - **Sandbox awareness** — session capability blocks expose container lifetime, creation/download events, and recent workspace lifecycle state directly to the agent
+- **Workspace Hub** — scratchpad, console, files, diff, PRs, review, and commit/push live in a single branch-scoped coding surface
 - **Review sources** — Branch diff, Last commit, Working tree
 - **Harness reliability** — adaptive hashline edits, patchset transactions, resumable sessions, and active branch handling
 - **GitHub flow** — PR merge flow, branch-scoped chats, commit/push, and workspace publish-to-GitHub
 - **Project instructions** — loading order: `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md`
+
+## Repo / Session Model
+
+- Exactly one active branch exists per repo session.
+- The active branch is the commit target, push target, diff base, and chat context.
+- Chats are branch-scoped and stay bound to the branch where they started.
+- Switching branches is explicit and tears down the current sandbox before starting fresh on the target branch.
+- Branch creation is UI-owned; assistants should not create or switch branches themselves.
+
+## Delivery and Review Rules
+
+- Standard commits go through the Auditor as a required SAFE/UNSAFE gate.
+- Reviewer is advisory and can review the branch diff, last commit, or working tree.
+- Only PR-backed branch diff reviews can be posted back to GitHub as PR reviews.
+- Standard merges happen through the GitHub pull request flow only.
+- Push never runs local `git merge`.
+- Repository protections such as Protect Main may block direct commits to `main`.
 
 ## Workspace Modes
 
@@ -85,7 +103,7 @@ The web app and CLI still keep shell-specific coordinators local. The target is 
 
 ## CLI
 
-Local coding agent for the terminal. It shares the same role-based architecture and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination local. Current direction is transcript-first CLI ergonomics, selective adoption of the shared runtime substrate, and TUI-lite improvements; the existing TUI surface is experimental, not a ground-up rewrite target.
+Local coding agent for the terminal. It shares the same role-based architecture and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination local. Current terminal work is centered on the full-screen TUI, with classic REPL and headless runs still supported. The target is a stronger shared runtime contract across web and CLI, not identical UX across surfaces.
 
 ## Design System
 
