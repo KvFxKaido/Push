@@ -74,6 +74,7 @@ npm install
 ## Start here
 
 - [ROADMAP.md](ROADMAP.md) — current product and engineering priorities
+- [CONTRIBUTING.md](CONTRIBUTING.md) — project philosophy and contribution guidelines
 - [AGENTS.md](AGENTS.md) — project context for AI collaborators
 - [CLAUDE.md](CLAUDE.md) — quick start and entry points
 - [docs/architecture.md](docs/architecture.md) — tech stack, agent roles, and key systems
