@@ -964,6 +964,7 @@ function resolveRoleRouting(entry, role) {
  * handleDelegateExplorer for its race-safe terminal-claim semantics.
  */
 async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
+  const startedAt = Date.now();
   const { provider, model } = resolveRoleRouting(entry, 'explorer');
   const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
   const stubDetectAllToolCalls = () => emptyDetection;
@@ -1009,7 +1010,7 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
     nextRequiredAction: 'Wire a real daemon Explorer tool executor before advertising multi_agent',
     rounds: result.rounds,
     checkpoints: 0,
-    elapsedMs: 0,
+    elapsedMs: Date.now() - startedAt,
   };
 
   return {
@@ -1044,6 +1045,7 @@ async function runScaffoldExplorerForTaskGraph(sessionId, entry, node, signal) {
  * enforced round cap beyond the kernel's own `DEFAULT_MAX_ROUNDS`.
  */
 async function runScaffoldCoderForTaskGraph(sessionId, entry, node, signal) {
+  const startedAt = Date.now();
   const { provider, model } = resolveRoleRouting(entry, 'coder');
   const emptyDetection = { readOnly: [], mutating: null, extraMutations: [] };
   const stubDetectAllToolCalls = () => emptyDetection;
@@ -1092,7 +1094,7 @@ async function runScaffoldCoderForTaskGraph(sessionId, entry, node, signal) {
     nextRequiredAction: 'Wire a real daemon Coder tool executor before advertising multi_agent',
     rounds: result.rounds,
     checkpoints: result.checkpoints,
-    elapsedMs: 0,
+    elapsedMs: Date.now() - startedAt,
   };
 
   return {
