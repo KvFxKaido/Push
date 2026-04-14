@@ -147,6 +147,7 @@ Vercel introduced [skills.sh](https://vercel.com/changelog/introducing-skills-th
 
 - [vercel-labs/open-agents](https://github.com/vercel-labs/open-agents)
 - [Open Agents Vercel template](https://vercel.com/templates/template/open-agents)
-- [Introducing skills, the open agent skills ecosystem](https://vercel.com/changelog/introducing-skills-the-open-agent-skills-ecosystem)
+- [Modal Checkpoints](https://modal.com/docs/guide/checkpoints)
+- Internal: `docs/decisions/Resumable Sessions Design.md`, `docs/architecture.md`, `app/src/lib/snapshot-manager.ts`, `app/src/lib/run-journal.ts`, `lib/tool-registry.ts`
 - [Vercel Agentic Infrastructure](https://vercel.com/blog/agentic-infrastructure)
 - Internal: `docs/decisions/Resumable Sessions Design.md`, `docs/architecture.md`, `app/src/lib/snapshot-manager.ts`, `app/src/lib/run-journal.ts`, `lib/tool-registry.ts`
