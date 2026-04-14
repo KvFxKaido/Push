@@ -7,6 +7,7 @@
 
 import type { ChatCard, ToolExecutionResult } from '@/types';
 import { createDefaultApprovalGates, type ApprovalGateRegistry } from './approval-gates';
+import type { AgentRole } from '@push/lib/runtime-contract';
 import type { ToolExecutionRuntime } from '@push/lib/tool-execution-runtime';
 import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
 import { type AnyToolCall } from './tool-dispatch';
@@ -33,6 +34,13 @@ const DEFAULT_APPROVAL_GATES = createDefaultApprovalGates();
 /**
  * Execute a single read-only tool call with a no-repo guard.
  * Thin wrapper around executeAnyToolCall used by Explorer and Deep Reviewer.
+ *
+ * `role` is optional for backward compatibility — Explorer opts in so the
+ * runtime-level capability check in `WebToolExecutionRuntime` refuses any
+ * mutating tool independent of the policy hook. Deep Reviewer does not opt
+ * in yet because the `reviewer` role's capability grant does not include
+ * `web:search` today and the deep-reviewer flow emits web-search calls;
+ * that mismatch needs its own audit before it can safely opt in.
  */
 export async function executeReadOnlyTool(
   toolCall: AnyToolCall,
@@ -43,6 +51,7 @@ export async function executeReadOnlyTool(
   hooks: ToolHookRegistry,
   capabilityLedger?: import('./capabilities').CapabilityLedger,
   runtime?: WebRuntime,
+  role?: AgentRole,
 ): Promise<{ resultText: string; card?: ChatCard }> {
   return withActiveSpan(
     'tool.execute',
@@ -54,7 +63,9 @@ export async function executeReadOnlyTool(
         'push.tool.source': toolCall.source,
         'push.provider': activeProvider,
         'push.model': activeModel,
-        'push.agent.role': 'explorer',
+        // Default 'explorer' preserves the pre-existing span label for
+        // callers that do not pass an explicit role (deep-reviewer today).
+        'push.agent.role': role ?? 'explorer',
         'push.has_repo': Boolean(allowedRepo),
         'push.has_sandbox': Boolean(sandboxId),
       },
@@ -83,6 +94,7 @@ export async function executeReadOnlyTool(
         hooks,
         approvalGates: DEFAULT_APPROVAL_GATES,
         capabilityLedger,
+        role,
       });
       resultText = result.text;
       const resultCard = result.card;
