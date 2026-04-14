@@ -50,6 +50,7 @@ import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
+import { assertValidEvent, isStrictModeEnabled } from './protocol-schema.js';
 
 const VERSION = '0.3.0';
 const CAPABILITIES = [
@@ -301,7 +302,16 @@ function removeSessionClient(sessionId, emitFn) {
   }
 }
 
-function broadcastEvent(sessionId, event) {
+export function broadcastEvent(sessionId, event) {
+  // Strict-mode schema check. Opt-in via `PUSH_PROTOCOL_STRICT=1` — the
+  // daemon-integration test harness flips this on at module load so any
+  // drift between the wire-format contract (`cli/protocol-schema.ts`)
+  // and what a handler actually produces lands as a test failure
+  // instead of silent consumer-side breakage. Production leaves this
+  // off to avoid any per-event overhead.
+  if (isStrictModeEnabled()) {
+    assertValidEvent(event);
+  }
   const clients = sessionClients.get(sessionId);
   if (!clients) return;
   for (const emitFn of clients) {
