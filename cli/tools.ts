@@ -28,7 +28,12 @@ const TAVILY_API_KEY_ENV_VARS = ['PUSH_TAVILY_API_KEY', 'TAVILY_API_KEY', 'VITE_
 const OLLAMA_API_KEY_ENV_VARS = ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'];
 const WEB_SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 
-const READ_ONLY_TOOLS = new Set([
+// Exported so daemon-side delegation handlers can reuse the same
+// classification when bucketing detected tool calls into read-only
+// vs mutating slots for the lib Coder kernel (which expects the
+// `{ readOnly, mutating, extraMutations }` `DetectedToolCalls` shape
+// from `lib/deep-reviewer-agent.ts`).
+export const READ_ONLY_TOOLS = new Set([
   'read_file',
   'list_dir',
   'search_files',
