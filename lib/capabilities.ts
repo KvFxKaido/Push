@@ -161,7 +161,18 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'user:ask',
   ]),
 
-  explorer: new Set<Capability>(['repo:read', 'web:search']),
+  // Explorer is the read-only investigator. The grant is intentionally
+  // wider than just `repo:read` because `EXPLORER_ALLOWED_TOOLS` (built
+  // from `{ source: 'github', readOnly: true }` + `{ source: 'sandbox',
+  // readOnly: true }`) already exposes PR inspection (`fetch_pr`,
+  // `list_prs`, `check_pr_mergeable`, `find_existing_pr`) and CI
+  // inspection (`get_workflow_runs`, `get_workflow_logs`) — all of
+  // which require `pr:read` / `workflow:read`. Leaving the grant at
+  // just `repo:read` used to be safe because the runtime did not
+  // enforce capabilities; after the step-6 runtime invariant lands
+  // the grant has to match what the registry actually exposes, or
+  // PR-focused investigations fail with ROLE_CAPABILITY_DENIED.
+  explorer: new Set<Capability>(['repo:read', 'pr:read', 'workflow:read', 'web:search']),
 
   coder: new Set<Capability>([
     'repo:read',

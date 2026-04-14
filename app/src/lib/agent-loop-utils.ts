@@ -7,6 +7,7 @@
 
 import type { ChatCard, ToolExecutionResult } from '@/types';
 import { createDefaultApprovalGates, type ApprovalGateRegistry } from './approval-gates';
+import type { AgentRole } from '@push/lib/runtime-contract';
 import type { ToolExecutionRuntime } from '@push/lib/tool-execution-runtime';
 import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
 import { type AnyToolCall } from './tool-dispatch';
@@ -31,6 +32,33 @@ type WebRuntime = ToolExecutionRuntime<
 const DEFAULT_APPROVAL_GATES = createDefaultApprovalGates();
 
 /**
+ * Optional tail parameters for `executeReadOnlyTool`.
+ *
+ * Promoted to an options bag so new opt-in fields (like the step-6
+ * runtime invariant `role`) can be added without making call sites
+ * pass positional `undefined` placeholders. The required per-run
+ * bindings (repo, sandbox, provider, model, hooks) stay positional
+ * because every caller has to know them.
+ */
+export interface ExecuteReadOnlyToolOptions {
+  capabilityLedger?: import('./capabilities').CapabilityLedger;
+  runtime?: WebRuntime;
+  /**
+   * Opt in to the runtime-level role capability check in
+   * `WebToolExecutionRuntime`. When set, the runtime refuses any tool
+   * the role cannot use — independent of whether the policy hook was
+   * registered and independent of whether the read-only tool registry
+   * was wired correctly for this call site.
+   *
+   * Explorer opts in. Deep Reviewer does not opt in yet because the
+   * `reviewer` role's capability grant does not currently include
+   * `web:search` but the deep-reviewer flow emits web-search tool
+   * calls — that mismatch needs its own audit first.
+   */
+  role?: AgentRole;
+}
+
+/**
  * Execute a single read-only tool call with a no-repo guard.
  * Thin wrapper around executeAnyToolCall used by Explorer and Deep Reviewer.
  */
@@ -41,9 +69,9 @@ export async function executeReadOnlyTool(
   activeProvider: ActiveProvider,
   activeModel: string | undefined,
   hooks: ToolHookRegistry,
-  capabilityLedger?: import('./capabilities').CapabilityLedger,
-  runtime?: WebRuntime,
+  options: ExecuteReadOnlyToolOptions = {},
 ): Promise<{ resultText: string; card?: ChatCard }> {
+  const { capabilityLedger, runtime, role } = options;
   return withActiveSpan(
     'tool.execute',
     {
@@ -54,7 +82,9 @@ export async function executeReadOnlyTool(
         'push.tool.source': toolCall.source,
         'push.provider': activeProvider,
         'push.model': activeModel,
-        'push.agent.role': 'explorer',
+        // Default 'explorer' preserves the pre-existing span label for
+        // callers that do not pass an explicit role (deep-reviewer today).
+        'push.agent.role': role ?? 'explorer',
         'push.has_repo': Boolean(allowedRepo),
         'push.has_sandbox': Boolean(sandboxId),
       },
@@ -83,6 +113,7 @@ export async function executeReadOnlyTool(
         hooks,
         approvalGates: DEFAULT_APPROVAL_GATES,
         capabilityLedger,
+        role,
       });
       resultText = result.text;
       const resultCard = result.card;

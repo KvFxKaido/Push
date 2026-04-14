@@ -26,6 +26,7 @@
  */
 
 import type { CapabilityLedger } from './capabilities.js';
+import type { AgentRole } from './runtime-contract.js';
 import type { ToolCallDiagnosis } from './tool-call-diagnosis.js';
 
 // ---------------------------------------------------------------------------
@@ -98,6 +99,24 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
   capabilityLedger?: CapabilityLedger;
   approvalCallback?: ApprovalCallback;
   emit?: ToolEventEmitter;
+  /**
+   * The agent role making the call, when known.
+   *
+   * When set, the runtime adapter is expected to enforce a capability-based
+   * refusal for any tool the role cannot use — independent of whether
+   * hooks or approval gates are registered, and independent of how the
+   * prompt-side tool registry was built. This is the runtime-hard
+   * backstop behind the policy-shaped hook layer: the "Explorer cannot
+   * mutate" guarantee (and the equivalent for any future read-only
+   * role) stops relying on the call site being correctly wired.
+   *
+   * Left `undefined` by call sites that have not yet opted in. Opt-in
+   * is intentional: Web-runtime enforcement lands against the Explorer
+   * path first (see `app/src/lib/agent-loop-utils.ts:executeReadOnlyTool`)
+   * and extends to Coder / Deep Reviewer / Auditor in later PRs as each
+   * role's capability grant is audited.
+   */
+  role?: AgentRole;
 }
 
 // ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ export type ToolErrorType =
   | 'RATE_LIMITED'
   | 'STALE_FILE'
   | 'EDIT_GUARD_BLOCKED'
+  | 'ROLE_CAPABILITY_DENIED'
   | 'WRITE_FAILED'
   | 'INVALID_ARGUMENT'
   | 'UNKNOWN';
