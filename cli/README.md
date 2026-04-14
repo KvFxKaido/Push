@@ -2,6 +2,12 @@
 
 Local coding agent for your terminal. Push currently ships three terminal surfaces: an interactive REPL, headless runs, and an experimental full-screen TUI. The current product direction is transcript-first CLI ergonomics and TUI-lite improvements, not a ground-up full-screen TUI rewrite. It uses the same role-based agent architecture as the Push mobile app, but operates directly on your filesystem.
 
+## Pointers
+
+- [`architecture.md`](architecture.md) — CLI-specific architecture, runtime layers, and terminal surfaces
+- [`DESIGN.md`](DESIGN.md) — CLI/TUI presentation guidance and terminal design principles
+- [`../docs/architecture.md`](../docs/architecture.md) — shared Push architecture and operating model
+- [`../docs/DESIGN.md`](../docs/DESIGN.md) — graphical app visual system
 ## Quick start
 
 ```bash
