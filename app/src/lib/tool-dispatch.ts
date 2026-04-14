@@ -112,10 +112,11 @@ export interface DetectedToolCalls {
   /** Read-only calls that can safely execute in parallel. */
   readOnly: AnyToolCall[];
   /**
-   * Contiguous batch of safe file-mutation calls (write/edit/patch). Runs
-   * sequentially after the parallel reads and before the trailing
-   * side-effect. Execution stops on the first hard failure — the batch is
-   * NOT atomic, partial state can remain on-disk after an error.
+   * Contiguous batch of safe file-mutation calls (such as
+   * write/edit/patch on sandbox-backed surfaces). Runs sequentially
+   * after the parallel reads and before the trailing side-effect.
+   * Execution stops on the first hard failure — the batch is NOT
+   * atomic, partial state can remain on-disk after an error.
    */
   fileMutations: AnyToolCall[];
   /**
@@ -140,9 +141,9 @@ export interface DetectedToolCalls {
  *
  * Grouping rule:
  *   1. A contiguous prefix of read-only calls goes into `readOnly` (parallel).
- *   2. Any number of contiguous file-mutation calls (write/edit/patch) go
- *      into `fileMutations` (executed sequentially; stops on first hard
- *      failure, NOT atomic).
+ *   2. Any number of contiguous file-mutation calls (such as write/edit/patch
+ *      on sandbox-backed surfaces) go into `fileMutations` (executed sequentially;
+ *      stops on first hard failure, NOT atomic).
  *   3. At most one trailing side-effecting call (exec, commit, push,
  *      delegate, workflow dispatch, etc.) goes into `mutating`.
  *   4. Anything that violates that ordering — a read after mutations

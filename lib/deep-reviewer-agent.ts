@@ -92,13 +92,13 @@ const REVIEWER_MUTATION_BLOCKLIST = [
  * Slot semantics (one mutation batch per turn):
  *   - `readOnly`: contiguous prefix of read-only calls, safe to run in parallel.
  *   - `fileMutations`: contiguous batch of safe file-mutation calls
- *     (write/edit/patch/etc.). Executed sequentially as one mutation
- *     transaction. May be empty.
+ *     (such as write/edit/patch on sandbox-backed surfaces, plus
+ *     surface-specific variants like CLI `undo_edit` where available).
+ *     Executed sequentially as one mutation transaction. May be empty.
  *   - `mutating`: the optional trailing side-effecting call (exec, commit,
  *     push, delegate, workflow dispatch, etc.). At most one per turn.
- *   - `extraMutations`: overflow calls that violated the one-side-effect
- *     rule or appeared after a side-effect. Callers are expected to reject
- *     these with a structured error.
+ *   - `extraMutations`: overflow calls that violated ordering or batch-size
+ *     rules. Callers are expected to reject these with a structured error.
  */
 export interface DetectedToolCalls<TCall> {
   readOnly: TCall[];

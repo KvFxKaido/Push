@@ -436,7 +436,7 @@ export function handleMultipleMutationsError(
   const parseErrorHeader = buildToolCallParseErrorBlock({
     errorType: 'multiple_mutating_calls',
     problem: `Extra tool calls detected after the turn's mutation transaction: ${rejectedToolNames.join(', ')}.`,
-    hint: 'A turn may emit read-only calls first, then up to MAX_FILE_MUTATION_BATCH (8) file mutations (write/edit/patch) as one batch, then at most one trailing side-effect (exec, commit, push, delegate, workflow_run). Any of the following lands here: a second side-effect, a file mutation or read emitted after a side-effect, a read emitted after the mutation batch starts, or file-mutation overflow beyond the batch limit. Reorder your calls or split them across turns.',
+    hint: 'A turn may emit read-only calls first, then up to MAX_FILE_MUTATION_BATCH (8) pure file mutations as one batch (for example write/edit/patch on sandbox-backed surfaces, or CLI-only undo_edit where available), then at most one trailing side-effect (exec, commit, push, delegate, workflow_run). Any of the following lands here: a second side-effect, a file mutation or read emitted after a side-effect, a read emitted after the mutation batch starts, or file-mutation overflow beyond the batch limit. Reorder your calls or split them across turns.',
   });
 
   const primaryMutation = rejectedMutations[0];
