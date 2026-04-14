@@ -6,7 +6,7 @@ Use this file to navigate active design/planning docs versus historical referenc
 ## Structure
 
 - `architecture.md` — tech stack, agent roles, key systems, and repo map
-- `design-system.md` — visual tokens, colors, typography, spacing, and component specs
+- `DESIGN.md` — visual tokens, colors, typography, spacing, and component specs
 - `decisions/` — architecture decisions, research, analysis, and shipped design references
 - `runbooks/` — active, draft, or deferred product plans
 - `security/` — security reviews, audits, and provider usage policies
@@ -21,7 +21,7 @@ Use this file to navigate active design/planning docs versus historical referenc
 
 - `architecture.md`
   - Status: Canonical architecture reference (tech stack, agent roles, key systems, repo map).
-- `design-system.md`
+- `DESIGN.md`
   - Status: Canonical design system reference (colors, typography, spacing, components, motion).
 
 ## Decisions

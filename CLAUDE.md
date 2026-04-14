@@ -27,7 +27,7 @@ npm install
 ## Pointers
 
 - [`docs/architecture.md`](docs/architecture.md) — tech stack, agent roles, key systems, and repo map
-- [`docs/design-system.md`](docs/design-system.md) — visual tokens, colors, typography, and components
+- [`docs/DESIGN.md`](docs/DESIGN.md) — visual tokens, colors, typography, and components
 - [`AGENTS.md`](AGENTS.md) — startup contract for AI agents (provider routing, workflow rules)
 - [`ROADMAP.md`](ROADMAP.md) — current product priorities
 - [`docs/`](docs/) — decisions, runbooks, security policies, and archived references
