@@ -84,7 +84,7 @@ Modal supports memory snapshots and filesystem checkpoints. Adopting them would 
 - Modal snapshot lifecycle: what's the actual resume latency, snapshot size budget, and pricing impact per session?
 - Where snapshots live in the runtime contract: is "hibernated" a new sandbox phase exposed to the agent via the session capability block in [`docs/architecture.md`'s sandbox/session architecture section](../architecture.md#sandbox-architecture)?
 - Interaction with the existing `run-journal` checkpoint flow — is the journal still authoritative, or does the snapshot become the source of truth and the journal degrade to an audit log?
-- Branch switching tears down the sandbox (`docs/architecture.md:67`). Should snapshots be keyed by `(repo, branch)` so per-branch resume is instant?
+- Branch switching tears down the sandbox (`docs/architecture.md:62`). Should snapshots be keyed by `(repo, branch)` so per-branch resume is instant?
 - Multi-tenant cleanup: TTL, eviction policy, and how we handle stale snapshots on Modal.
 - CLI parity: snapshots are useless in the local CLI (the FS *is* the user's repo), so this is a web-only feature. Confirm the runtime contract still holds.
 
