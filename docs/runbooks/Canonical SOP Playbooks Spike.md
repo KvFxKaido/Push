@@ -62,6 +62,18 @@ export type Playbook<Params> = {
 
 Parameter resolution is deliberately one narrow LLM step at most. The executor steps after that are the existing Explorer/Coder/Auditor agents running the compiled task graph. The playbook does **not** get to invent new runtime behavior; it gets to choose and parameterize existing behavior.
 
+#### `resolve` Failure Semantics
+
+`resolve` returns `Promise<Params>` and can fail. A failure here means the LLM extraction step could not produce the parameters the playbook declared as required — for example, the user asked to apply a PR review comment but the recent context does not contain enough detail to identify which comment. The behavior is:
+
+- **Silent fallback, not a user-facing error.** A `resolve` failure must fall through to freeform Orchestrator planning as if the playbook had never matched. The user should see the freeform plan run, not an error dialog.
+- **Single trace event.** The runtime emits a `playbook.resolve_failed` trace event (added to the run-event vocabulary alongside the other `playbook.*` events) carrying the playbook id and a short machine-readable reason (`missing_param`, `ambiguous_param`, `extraction_error`). This is how measurement sees the failure — not through user-visible surfaces.
+- **No partial parameters.** If `resolve` cannot produce the full `Params` object that `compile` expects, it fails. The playbook is not allowed to ship a half-populated graph and hope the agents figure it out.
+- **No retry inside the playbook.** One extraction attempt per turn. Retry is the Orchestrator's problem once we have fallen through.
+- **Deterministic on success.** Given the same input, `resolve` is allowed to be probabilistic (it calls an LLM), but `compile` must be deterministic: same `Params` in, same `TaskGraph` out. This is what makes playbook behavior reviewable and measurable.
+
+A playbook whose `resolve_failed` rate is high in measurement should either be tightened (narrower `match`) or removed. A failing `resolve` is telling us the match function was too optimistic about the playbook's fit.
+
 ### Canonical Starter Playbooks
 
 Three flows worth starting with, chosen because they are high-frequency, bounded, and currently under-served by freeform planning:
@@ -101,7 +113,7 @@ No playbook auto-executes without the user being able to see that it was chosen.
 - New `lib/playbooks/` module with registry + the three starter playbooks. Shared between web and CLI.
 - `app/src/lib/orchestrator.ts` consults the registry before the freeform planning path.
 - Task-graph execution is unchanged — playbooks produce the same graph shape `plan_tasks` already runs.
-- Trace events: `playbook.match_considered`, `playbook.selected`, `playbook.skipped`, `playbook.completed`. Added to the run-event vocabulary and validated by the CLI protocol schema harness.
+- Trace events: `playbook.match_considered`, `playbook.selected`, `playbook.skipped`, `playbook.resolve_failed`, `playbook.completed`. Added to the run-event vocabulary and validated by the CLI protocol schema harness.
 
 ### Relationship to `plan_tasks`
 

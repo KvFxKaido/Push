@@ -67,12 +67,28 @@ Starting with delegation and Auditor keeps the blast radius small and targets th
 
 ## Integration Points
 
-- `lib/context-memory.ts` (retrieval) — expose an optional rerank hook between filter and return.
-- `app/src/lib/role-context.ts` (delegation brief formatter) — opt into rerank for Coder/Explorer briefs.
-- `app/src/lib/auditor-agent.ts` — opt into rerank when assembling the patchset-scoped memory block.
-- Shared `lib/` so CLI gets the same behavior without a second implementation.
+The relevant call sites today are:
 
-The rerank interface should be a plain function `(query, records, budget) => records` with no I/O assumptions; strategies plug in behind it. That way the lexical path is synchronous and the cross-encoder path can be async without forcing the whole pipeline async-first.
+- **Retrieved-memory construction (web)** — `app/src/lib/context-memory.ts` already exposes `buildRetrievedMemoryKnownContext`, which is the function that turns deterministic retrieval output into the string block fed into delegation briefs. This is the natural home for the rerank hook on the delegation path.
+- **Role-memory assembly (web)** — `app/src/lib/role-memory-context.ts` is where retrieved-memory blocks are actually built per role. It owns `buildAuditorEvaluationMemoryBlock` (around `role-memory-context.ts:124`) as well as the equivalent helpers for other role prompts. This is the second call site that needs to opt into rerank.
+- **Auditor runtime (shared)** — `lib/auditor-agent.ts` receives the memory block through the injected `resolveEvaluationMemoryBlock` callback; the app shim at `app/src/lib/auditor-agent.ts:118` wires `buildAuditorEvaluationMemoryBlock` in. The shared module itself does not need to change: rerank lives behind the callback.
+- **Delegation brief formatter** — `app/src/lib/role-context.ts` is a thin re-export shim over `@push/lib/delegation-brief` and simply passes `envelope.knownContext` through. It is not where retrieved memory is packed, so it is **not** a rerank integration point. The work happens upstream, before `knownContext` is set on the envelope.
+
+**CLI parity note.** The memory-assembly call sites above (`context-memory.ts`, `role-memory-context.ts`, and the `buildAuditorEvaluationMemoryBlock` wiring) currently live under `app/src/lib/`, not shared `lib/`. This spike therefore ships rerank **web-first by construction**. True CLI parity requires either (a) lifting the relevant memory-assembly helpers into shared `lib/` as part of the selective shared-runtime tranche, or (b) re-implementing the rerank hook on whatever CLI-side memory path exists today. Pick one and call it out in the measurement follow-up — do not leave it ambiguous.
+
+### Rerank Function Shape
+
+The rerank interface is a plain async function:
+
+```ts
+type Rerank = (
+  query: string,
+  records: MemoryRecord[],
+  budget: number,
+) => Promise<MemoryRecord[]>;
+```
+
+Strategies plug in behind this type. The lexical strategy is effectively synchronous and resolves immediately; the cross-encoder strategy performs a real provider call. Returning `Promise` uniformly avoids a sync/async split at the call site and keeps the pipeline from collapsing into sync-over-async anti-patterns when a strategy does I/O.
 
 ## Measurement
 

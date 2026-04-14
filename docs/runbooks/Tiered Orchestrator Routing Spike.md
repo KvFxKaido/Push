@@ -68,11 +68,13 @@ Candidate starter rules:
 | Intent | Action |
 |---|---|
 | `what branch am i on` / `current branch` | `answer` from session state |
-| `show diff` / `what changed` | `tool: sandbox_branch_diff` |
+| `show diff` / `what changed` | `tool: sandbox_diff` (public name `diff`) |
 | `open <path>` / `show <path>` | `tool: sandbox_read_file` |
-| `list files in <path>` | `tool: sandbox_list_files` |
+| `list files in <path>` | `tool: sandbox_list_dir` (public name `ls`) |
 | `run tests` (no qualifier) | `escalate` — too ambiguous, still cheap-to-frontier |
 | single emoji / `ok` / `thanks` | `answer` with acknowledgement, no provider call |
+
+Tool names here match the canonical names in `lib/tool-registry.ts`. Any rule action that dispatches a tool must use the registered name; the router is not the place to invent new tools.
 
 Escalation is the default. If no rule fires confidently, the router falls through to Phase 2.
 
@@ -85,6 +87,8 @@ For turns that don't match a rule but still look like they might be a single-int
 - instruction to output a single JSON object: `{ "skill": string | null, "confidence": "high" | "low" }`
 
 If the classifier returns a high-confidence skill, we dispatch through the same rule-engine action path. Otherwise we fall through to the full Orchestrator.
+
+**Timeout policy.** The ~300–500 ms range is a best-case estimate and does not hold on slow networks or during provider backpressure. Phase 2 therefore runs under a hard deadline (v1 target: 400 ms from dispatch to response). If the classifier has not returned by the deadline, we abandon its result, emit a `router.phase2_timeout` trace event, and escalate to the full Orchestrator as if Phase 2 had never fired. A classifier call that misses the deadline is strictly worse than no classifier call — it burns tokens and latency to produce nothing useful — so the deadline must be enforced rather than hoped for. If the timeout fires on more than a small single-digit percentage of runs, Phase 2 should be disabled by feature gate until the latency floor improves.
 
 Phase 2 is strictly optional for v1. The rule engine alone should cover the obvious wins. Phase 2 is listed here so the design isn't a dead end if we want to grow the cheap path later.
 
