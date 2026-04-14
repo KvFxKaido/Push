@@ -59,13 +59,27 @@ For each identified issue, formulate a review comment adhering to the following 
 
 #### Review Criteria (in order of priority)
 
-1. **Correctness:** Identify logic errors, unhandled edge cases, race conditions, incorrect API usage, and data validation flaws.
+1. **Correctness:** Identify logic errors, unhandled edge cases, race conditions, incorrect API usage, and data validation flaws. Specifically flag these antipatterns:
+
+    - **Fire-and-forget async:** unawaited promises or `void promise()` without a comment explaining why the result is discarded. These hide errors and race conditions.
+
+    - **Existence-by-execution:** invoking a binary or side-effecting call solely to test whether it exists, when a pure check (PATH lookup, `fs.access`, `which`, etc.) would do. Suggest the pure check instead.
 
 2. **Security:** Pinpoint vulnerabilities such as injection attacks, insecure data storage, insufficient access controls, or secrets exposure.
 
 3. **Efficiency:** Locate performance bottlenecks, unnecessary computations, memory leaks, and inefficient data structures.
 
-4. **Maintainability:** Assess readability, modularity, and adherence to established language idioms and style guides (e.g., Python PEP 8, Google Java Style Guide). If no style guide is specified, default to the idiomatic standard for the language.
+4. **Maintainability:** Assess readability, modularity, and adherence to established language idioms and style guides (e.g., Python PEP 8, Google Java Style Guide). If no style guide is specified, default to the idiomatic standard for the language. Specifically flag functions that exceed any of the following shape thresholds, and suggest extraction:
+
+    - More than ~200 lines
+
+    - More than 4 levels of nesting
+
+    - More than 5 positional parameters, or options objects with more than ~8 fields
+
+    - A large number of nested inner functions or closures, especially in a hot path (these allocate on every call and hurt JIT optimization)
+
+    Also flag **Single Responsibility violations**: a function whose name suggests one concern but whose body branches on unrelated domains (e.g. a `print` function that internally handles auth, lifecycle, I/O, and signal handling). Recommend splitting into separate modules.
 
 5. **Testing:** Ensure adequate unit tests, integration tests, and end-to-end tests. Evaluate coverage, edge case handling, and overall test quality.
 
