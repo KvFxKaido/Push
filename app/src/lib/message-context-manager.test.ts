@@ -248,4 +248,116 @@ describe('lib/message-context-manager (generic)', () => {
       expect(hardTrim?.messagesDropped).toBe(4);
     });
   });
+
+  /**
+   * Regression coverage for the Copilot edge case flagged on PR #285: the
+   * hard-trim fallback previously only excluded `digestMessage` and protected
+   * `idx === 0` / the recent tail. That works when the pinned first user
+   * message lands at `kept[0]` (the common case, where `firstUserIdx === 0`
+   * in the original array). But when the history starts with tool results or
+   * an assistant preamble BEFORE the first user message, those earlier
+   * messages can survive Phase 2 and push the pinned user message to
+   * `kept[>= 1]`. In that layout, the hard-trim `findIndex` filter would
+   * happily remove the pinned user once its index > 0 — violating the
+   * "Always keep the first user message" guarantee that the earlier phases
+   * enforce. See
+   * https://github.com/KvFxKaido/Push/pull/285#discussion_r3076833967.
+   *
+   * The fix captures the pinned message **by reference** after Phase 1 (so
+   * the reference tracks the possibly-compacted object that actually lands
+   * in `kept`), and adds `msg !== pinnedUserMessage` to the `findIndex`
+   * filter alongside `msg !== digestMessage`. Index-tracking would be
+   * fragile under splice shifts; reference equality survives splicing.
+   */
+  describe('hard-trim fallback (PR #285 pinned-message protection)', () => {
+    /**
+     * Build a scenario where the pinned first user message is NOT at
+     * `kept[0]`. Layout (29 messages):
+     *   - msg[0]        : assistant, 25 chars (Phase 1 compacts to 10 chars;
+     *                     Phase 2 drops it because of budget pressure)
+     *   - msg[1]        : assistant, 2 chars (survives Phase 2 — after
+     *                     dropping msg[0], currentTokens == targetTokens
+     *                     and Phase 2 exits, so msg[1] and msg[2] are
+     *                     never reached by the Phase 2 drop loop)
+     *   - msg[2]        : assistant, 2 chars (same)
+     *   - msg[3]        : user, 1 char — firstUserIdx = 3 (the pinned one)
+     *   - msg[4..28]    : assistant, 1 char each (25 messages)
+     *
+     * After Phase 1 + Phase 2 + digest insertion:
+     *   kept = [msg[1], msg[2], user, digest, msg[4..28]] — length 29
+     *   → pinned user sits at kept[2], NOT kept[0]
+     *
+     * Kept token count (2 + 2 + 1 + digest-10 + 25) = 40 > maxTokens (35),
+     * so hard-trim runs. Without the fix, the `findIndex` filter would
+     * remove msg[2] on iter 1 (shifting user to idx 1), then remove the
+     * user on iter 2. With the fix, the pinned-reference check blocks
+     * the user and hard-trim peels from the assistant tail instead.
+     */
+    const buildPinnedMessageScenario = () => {
+      const mgr = createContextManager<FakeMsg>({
+        getContextMode: () => 'graceful',
+        estimateMessageTokens: (m) => m.content.length,
+        estimateContextTokens: (ms) => ms.reduce((sum, m) => sum + m.content.length, 0),
+        // Less-aggressive compaction than the PR #283 scenario — we need
+        // msg[0] to compact to 10 chars (not 4) so dropping it alone
+        // gets Phase 2 exactly to `targetTokens`, leaving msg[1] and
+        // msg[2] in place and pushing the pinned user to kept[2].
+        compactMessage: (m) => ({ ...m, content: m.content.slice(0, 10) }),
+        buildContextDigestBlock: (removed) => `[digest ${removed.length}]`,
+        createDigestMessage: (content) => ({
+          id: 'digest-sentinel',
+          role: 'user',
+          content,
+          isToolResult: true,
+        }),
+        log: () => {},
+      });
+
+      const PINNED_USER_ID = 'pinned-user';
+      const messages: FakeMsg[] = [
+        { id: 'heavy-0', role: 'assistant', content: 'x'.repeat(25) },
+        { id: 'small-1', role: 'assistant', content: 'aa' },
+        { id: 'small-2', role: 'assistant', content: 'bb' },
+        { id: PINNED_USER_ID, role: 'user', content: 'u' },
+        ...Array.from({ length: 25 }, (_, i) => ({
+          id: `tail-${i}`,
+          role: 'assistant' as const,
+          content: 'c',
+        })),
+      ];
+
+      const budget: ContextBudget = {
+        maxTokens: 35,
+        targetTokens: 30,
+        summarizeTokens: 30,
+      };
+
+      return { mgr, messages, budget, pinnedUserId: PINNED_USER_ID };
+    };
+
+    it('preserves the pinned first user message when it is not at kept[0]', () => {
+      const { mgr, messages, budget, pinnedUserId } = buildPinnedMessageScenario();
+      const out = mgr.manageContext(messages, budget);
+
+      // Identify the pinned user by its stable id rather than by object
+      // reference: Phase 1 replaces `result[i]` with a new `compactMessage`
+      // copy for every message it visits, so the object reference that
+      // ends up in `kept`/`out` is NOT the same as the input `messages[3]`
+      // object. The id survives unchanged (compactMessage spreads the
+      // whole message and only rewrites `content`), so id-based lookup is
+      // the robust check. Before the pinned-message fix, the hard-trim
+      // `findIndex` filter would remove this message once it landed at
+      // `idx === 1` after the first iteration dropped `msg[2]`.
+      const pinnedInOut = out.find(
+        (m) => m.id === pinnedUserId && m.role === 'user' && !m.isToolResult,
+      );
+      expect(pinnedInOut).toBeDefined();
+
+      // Sanity: the pinned user is the only `role === 'user' && !isToolResult`
+      // message in the input, so if the id lookup above fails it's
+      // genuinely gone — no other user message could stand in.
+      const userCount = out.filter((m) => m.role === 'user' && !m.isToolResult).length;
+      expect(userCount).toBe(1);
+    });
+  });
 });
