@@ -163,16 +163,33 @@ Rules:
 /**
  * Build the base Explorer system prompt builder. Exported for reuse where
  * runtime context is layered on top (e.g. `runExplorerAgent`).
+ *
+ * The optional `sandboxToolProtocol` parameter lets a caller replace the
+ * built-in `EXPLORER_TOOL_PROTOCOL` block entirely — useful when the
+ * consumer's tool detector and executor live in a different tool-name
+ * namespace than the web-side tool registry. The daemon (`cli/pushd.ts`)
+ * passes its CLI-named `READ_ONLY_TOOL_PROTOCOL` here so the model emits
+ * tool calls the daemon can actually detect + execute; the web shim
+ * passes `undefined` and retains the default behavior unchanged. This
+ * mirrors `runCoderAgent`'s `sandboxToolProtocol` option slot (see
+ * `lib/coder-agent.ts`) for symmetry.
  */
-export function buildExplorerBaseBuilder(webSearchToolProtocol: string): SystemPromptBuilder {
+export function buildExplorerBaseBuilder(
+  webSearchToolProtocol: string,
+  sandboxToolProtocol?: string,
+): SystemPromptBuilder {
+  const toolProtocol = sandboxToolProtocol ?? EXPLORER_TOOL_PROTOCOL;
   return new SystemPromptBuilder()
     .set('identity', EXPLORER_IDENTITY)
     .set('guidelines', EXPLORER_GUIDELINES)
-    .set('tool_instructions', EXPLORER_TOOL_PROTOCOL + '\n\n' + webSearchToolProtocol);
+    .set('tool_instructions', toolProtocol + '\n\n' + webSearchToolProtocol);
 }
 
-export function buildExplorerSystemPrompt(webSearchToolProtocol: string): string {
-  return buildExplorerBaseBuilder(webSearchToolProtocol).build();
+export function buildExplorerSystemPrompt(
+  webSearchToolProtocol: string,
+  sandboxToolProtocol?: string,
+): string {
+  return buildExplorerBaseBuilder(webSearchToolProtocol, sandboxToolProtocol).build();
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +275,19 @@ export interface ExplorerAgentOptions<TCall, TCard> {
   webSearchToolProtocol: string;
 
   /**
+   * Optional override for the full tool-protocol block spliced into
+   * the Explorer system prompt's `tool_instructions` slot. When
+   * provided, replaces the built-in `EXPLORER_TOOL_PROTOCOL` constant
+   * entirely (but `webSearchToolProtocol` is still appended afterward
+   * as today). Daemon consumers (`cli/pushd.ts:makeDaemonExplorerToolExec`)
+   * pass a CLI-named read-only protocol block here because their
+   * detector + executor live in a different tool-name namespace from
+   * the web-side tool registry. Undefined → fall back to the built-in
+   * `EXPLORER_TOOL_PROTOCOL`, preserving web-shim behavior.
+   */
+  sandboxToolProtocol?: string;
+
+  /**
    * After-model policy callback. Lib kernel calls this once per round after
    * streaming the assistant response but before treating the round as a
    * final report. Web shim translates the flattened return into its own
@@ -316,13 +346,16 @@ export async function runExplorerAgent<TCall, TCard>(
     detectAllToolCalls,
     detectAnyToolCall,
     webSearchToolProtocol,
+    sandboxToolProtocol,
     evaluateAfterModel,
   } = options;
 
   const explorerModelId = modelId;
 
-  // Build system prompt via the shared SystemPromptBuilder.
-  const builder = buildExplorerBaseBuilder(webSearchToolProtocol);
+  // Build system prompt via the shared SystemPromptBuilder. The optional
+  // `sandboxToolProtocol` override replaces `EXPLORER_TOOL_PROTOCOL` entirely
+  // when provided (daemon consumers pass their CLI-named protocol here).
+  const builder = buildExplorerBaseBuilder(webSearchToolProtocol, sandboxToolProtocol);
 
   const identityBlock = buildUserIdentityBlock(userProfile ?? undefined);
   if (identityBlock) {

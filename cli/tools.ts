@@ -607,6 +607,61 @@ export function isReadOnlyToolCall(call) {
   return Boolean(call && READ_ONLY_TOOLS.has(call.tool));
 }
 
+/**
+ * Read-only subset of `TOOL_PROTOCOL`, used by daemon-side Explorer
+ * delegation. The Explorer kernel is contractually read-only, so its
+ * system prompt must only advertise tools in `READ_ONLY_TOOLS` — giving
+ * it the full `TOOL_PROTOCOL` would repeatedly prompt the model to call
+ * `write_file` / `exec` / etc., which the daemon executor then refuses,
+ * wasting rounds on dead-end attempts.
+ *
+ * Kept deliberately in sync with the `READ_ONLY_TOOLS` set above: every
+ * bullet below must name a tool that `READ_ONLY_TOOLS.has(name) === true`,
+ * and every entry in that set should have a corresponding bullet (web_search
+ * uses the same wording as the main protocol).
+ *
+ * Used via `sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL` in
+ * `cli/pushd.ts:makeDaemonExplorerToolExec`'s two call sites
+ * (`handleDelegateExplorer` + `runExplorerForTaskGraph`) so the model
+ * sees CLI tool names (`read_file`, `list_dir`) that match the
+ * daemon's detector + executor + `READ_ONLY_TOOLS` namespace. Without
+ * this override the lib kernel falls back to `EXPLORER_TOOL_PROTOCOL`
+ * from `lib/explorer-agent.ts`, which advertises the web-side public
+ * names (`read`, `repo_read`, `search`) that the daemon's detector
+ * does not recognize — so every Explorer tool call silently fails
+ * detection, the model never gets a tool result, and the delegation
+ * spins rounds without investigating anything (codex + Copilot P1 on
+ * PR #284).
+ */
+export const READ_ONLY_TOOL_PROTOCOL = `TOOL PROTOCOL (read-only)
+
+When you need tools, output one or more fenced JSON blocks:
+\`\`\`json
+{"tool":"tool_name","args":{"key":"value"}}
+\`\`\`
+
+Available tools (all read-only — Explorer has no filesystem or exec mutation surface):
+- read_file(path, start_line?, end_line?) — read file content; ranged reads supported for large files
+- list_dir(path?) — list files/directories
+- search_files(pattern, path?, max_results?) — text search in workspace
+- read_symbols(path) — extract function/class/type declarations from a file
+- read_symbol(path, symbol) — read a specific symbol's full body; more efficient than reading a whole file when you know which symbol you need
+- git_status() — workspace git status (branch, dirty files)
+- git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
+- lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters to one file
+- exec_poll(session_id, from_seq?, max_chars?) — read incremental output from a previously-started command session
+- exec_list_sessions() — list active/finished command sessions
+- web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
+
+Rules:
+- Paths are relative to workspace root unless absolute inside workspace.
+- Never attempt paths outside workspace.
+- You may emit multiple read-only tool calls in one reply; they run in parallel.
+- Do NOT emit any mutating tool (\`write_file\`, \`edit_file\`, \`exec\`, \`git_commit\`, etc.). Explorer is read-only; if mutation is needed, the orchestrator will request a Coder delegation after you report.
+- Prefer read_symbol over read_file when you know which function/class you need.
+- Prefer search_files before large file reads to locate evidence.
+- Do not describe tool calls in prose. Emit only JSON blocks for tool calls.`;
+
 export const TOOL_PROTOCOL = `TOOL PROTOCOL
 
 When you need tools, output one or more fenced JSON blocks:

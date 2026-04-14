@@ -38,6 +38,8 @@ import {
   appendSessionEvent,
   loadSessionEvents,
 } from '../session-store.ts';
+import { READ_ONLY_TOOLS, READ_ONLY_TOOL_PROTOCOL } from '../tools.ts';
+import { buildExplorerSystemPrompt } from '../../lib/explorer-agent.ts';
 import { startMockProviderServer, patchProviderConfig } from './mock-provider-server.mjs';
 
 // Enable protocol strict mode for every test in this file via
@@ -2670,6 +2672,17 @@ describe('makeDaemonExplorerToolExec', () => {
         `expected denial mentioning the tool name, got ${JSON.stringify(result.resultText)}`,
       );
 
+      // Denial phrasing must NOT name `delegate_coder` as a fallback:
+      // the Explorer model cannot invoke it from inside the kernel
+      // (delegation is an RPC initiated by the orchestrator / client,
+      // not a tool the Explorer model can emit). Naming it would send
+      // the model down a dead-end loop of trying to call it as a tool
+      // (Copilot review on PR #284).
+      assert.ok(
+        !result.resultText.includes('delegate_coder'),
+        `denial must not name delegate_coder as a tool; got ${JSON.stringify(result.resultText)}`,
+      );
+
       // The file must not have been created.
       await assert.rejects(
         fs.access(path.join(workspaceRoot, 'should-not-exist.txt')),
@@ -2702,6 +2715,109 @@ describe('makeDaemonExplorerToolExec', () => {
     } finally {
       await fs.rm(workspaceRoot, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── Explorer daemon-side tool protocol namespace ──────────────────
+
+// Regression coverage for codex + Copilot P1 on PR #284: the
+// `runExplorerAgent` kernel splices `EXPLORER_TOOL_PROTOCOL` from
+// `lib/explorer-agent.ts` into its system prompt, which advertises
+// web-side public tool names (`read`, `repo_read`, `search`, …) that
+// the daemon's `wrapCliDetectAllToolCalls` + `executeToolCall` stack
+// doesn't recognize. Without the `sandboxToolProtocol` override, a
+// real model follows the prompt, emits web names, and every tool call
+// silently fails detection — the delegation spins rounds without
+// investigating anything, despite the daemon advertising `multi_agent`.
+//
+// The fix is a read-only CLI-named tool protocol in `cli/tools.ts`
+// (`READ_ONLY_TOOL_PROTOCOL`) that pushd passes as the
+// `sandboxToolProtocol` override on both Explorer call sites. These
+// tests pin (1) the protocol block and `READ_ONLY_TOOLS` set stay in
+// sync, and (2) the lib kernel's builder actually replaces the default
+// when the override is passed.
+describe('Explorer daemon tool protocol namespace', () => {
+  it('READ_ONLY_TOOL_PROTOCOL advertises exactly the tools in READ_ONLY_TOOLS', () => {
+    // Parse tool names out of the protocol block. Each read-only tool
+    // is documented on a line like `- <name>(<args>) — <desc>`.
+    const toolLinePattern = /^- (\w+)\(/gm;
+    const advertised = new Set();
+    for (const match of READ_ONLY_TOOL_PROTOCOL.matchAll(toolLinePattern)) {
+      advertised.add(match[1]);
+    }
+
+    // Every advertised tool must exist in the executor's allowlist,
+    // otherwise the model will emit a call that the executor refuses.
+    for (const name of advertised) {
+      assert.ok(
+        READ_ONLY_TOOLS.has(name),
+        `READ_ONLY_TOOL_PROTOCOL advertises "${name}" but READ_ONLY_TOOLS does not contain it`,
+      );
+    }
+
+    // Every entry in READ_ONLY_TOOLS must be advertised in the
+    // protocol, otherwise the model won't know it's available. If
+    // this ever fails because a new read-only tool landed in
+    // `cli/tools.ts`, add a bullet to `READ_ONLY_TOOL_PROTOCOL`.
+    for (const name of READ_ONLY_TOOLS) {
+      assert.ok(
+        advertised.has(name),
+        `READ_ONLY_TOOLS contains "${name}" but READ_ONLY_TOOL_PROTOCOL does not document it`,
+      );
+    }
+  });
+
+  it('buildExplorerSystemPrompt default path still advertises web-side public tool names', () => {
+    // Web-shim contract: when the daemon-specific override is NOT
+    // passed, the kernel must fall through to the built-in
+    // `EXPLORER_TOOL_PROTOCOL` block that documents web public names
+    // (`repo_read`, `read`, etc.). This test guards against a
+    // regression where someone changes the default to CLI names and
+    // silently breaks the web shim.
+    const prompt = buildExplorerSystemPrompt('');
+    assert.ok(
+      prompt.includes('repo_read'),
+      'default prompt should contain web public name repo_read',
+    );
+    assert.ok(prompt.includes('You may use only these read-only tools'));
+  });
+
+  it('buildExplorerSystemPrompt override path swaps in the daemon tool protocol', () => {
+    // Daemon contract: when `sandboxToolProtocol` is passed, the
+    // kernel must replace the default `EXPLORER_TOOL_PROTOCOL` block
+    // entirely with the caller's CLI-named protocol. Web public names
+    // from the default block must NOT leak into the final system
+    // prompt, and the CLI tool names must be present verbatim so the
+    // daemon detector can match them.
+    const prompt = buildExplorerSystemPrompt('', READ_ONLY_TOOL_PROTOCOL);
+
+    // CLI names the daemon's detector + executor + READ_ONLY_TOOLS
+    // actually recognize must be present.
+    assert.ok(prompt.includes('read_file'), 'override prompt must contain CLI name read_file');
+    assert.ok(prompt.includes('list_dir'), 'override prompt must contain CLI name list_dir');
+    assert.ok(
+      prompt.includes('search_files'),
+      'override prompt must contain CLI name search_files',
+    );
+
+    // The default block's distinctive phrasing must NOT survive. This
+    // is the narrow assertion that makes the override meaningful —
+    // presence of the CLI names alone wouldn't prove we replaced the
+    // default (both blocks could coexist in the system prompt).
+    assert.ok(
+      !prompt.includes('You may use only these read-only tools'),
+      'override must replace the default EXPLORER_TOOL_PROTOCOL block, not append to it',
+    );
+
+    // Web public names from the default sandbox listing must not
+    // leak through when the override is active. We target the most
+    // ambiguous name — `repo_read` — which appears in the default
+    // `EXPLORER_TOOL_PROTOCOL` via `EXPLORER_GITHUB_TOOL_NAMES` but
+    // has no corresponding CLI tool.
+    assert.ok(
+      !prompt.includes('repo_read'),
+      'override prompt must not leak default-block web public name repo_read',
+    );
   });
 });
 

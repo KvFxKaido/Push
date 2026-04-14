@@ -38,6 +38,7 @@ import {
   detectToolCall as cliDetectToolCall,
   READ_ONLY_TOOLS,
   TOOL_PROTOCOL,
+  READ_ONLY_TOOL_PROTOCOL,
 } from './tools.js';
 import {
   makeSessionId,
@@ -1319,8 +1320,14 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
     // round as a user message and the model can adapt.
     const toolName = typeof rawCall?.tool === 'string' ? rawCall.tool : null;
     if (!toolName || !READ_ONLY_TOOLS.has(toolName)) {
+      // Phrasing note: we deliberately do NOT name `delegate_coder`
+      // here because Explorer cannot invoke it from inside the kernel
+      // (delegation is an RPC initiated by the orchestrator / client,
+      // not a tool the Explorer model can emit). Naming it would send
+      // the model down a dead-end loop of trying to call it as a tool
+      // (Copilot review on PR #284).
       return {
-        resultText: `[pushd] tool "${toolName ?? '(unknown)'}" is not available to Explorer (read-only contract; use delegate_coder for mutations)`,
+        resultText: `[pushd] tool "${toolName ?? '(unknown)'}" is not available to Explorer. Explorer is read-only; if mutation is needed, report it in your summary and the orchestrator will request a Coder delegation after you finish.`,
       };
     }
 
@@ -1385,6 +1392,15 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal) {
       detectAllToolCalls: wrapCliDetectAllToolCalls,
       detectAnyToolCall: wrapCliDetectAnyToolCall,
       webSearchToolProtocol: '',
+      // `sandboxToolProtocol` replaces the kernel's default
+      // `EXPLORER_TOOL_PROTOCOL` block (which advertises web-side
+      // public names like `read` / `repo_read` / `search`) with the
+      // CLI-named read-only subset (`read_file` / `list_dir` /
+      // `search_files` / …). Without this override the model emits
+      // tool calls our detector can't recognize and every round
+      // silently fails to execute anything (codex + Copilot P1 on
+      // PR #284).
+      sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL,
       evaluateAfterModel,
     },
     {
@@ -2158,6 +2174,14 @@ async function handleDelegateExplorer(req) {
           detectAllToolCalls: wrapCliDetectAllToolCalls,
           detectAnyToolCall: wrapCliDetectAnyToolCall,
           webSearchToolProtocol: '',
+          // See `runExplorerForTaskGraph` above for why this matters:
+          // the kernel's default `EXPLORER_TOOL_PROTOCOL` advertises
+          // web-side public tool names (`read`, `repo_read`, `search`)
+          // that the daemon's detector doesn't recognize. Overriding
+          // with `READ_ONLY_TOOL_PROTOCOL` from `cli/tools.ts` makes
+          // the model emit CLI tool names that match
+          // `READ_ONLY_TOOLS` + `executeToolCall`'s dispatch table.
+          sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL,
           evaluateAfterModel,
         },
         {
