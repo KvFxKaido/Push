@@ -2603,10 +2603,11 @@ export async function executeSandboxToolCall(
         let command = '';
         let tool: TypeCheckCardData['tool'] = 'unknown';
 
-        // Check for TypeScript first (most common)
+        // Explicit priority order: TypeScript checkers first, then Python.
+        // A bare `ls` would alphabetize and return `mypy.ini` ahead of `tsconfig.json`.
         const detectResult = await execInSandbox(
           sandboxId,
-          'cd /workspace && ls -1 tsconfig.json pyrightconfig.json mypy.ini 2>/dev/null | head -1',
+          'cd /workspace && for f in tsconfig.json tsconfig.app.json tsconfig.node.json pyrightconfig.json mypy.ini; do [ -f "$f" ] && echo "$f" && break; done',
         );
         const detected = detectResult.stdout.trim();
 
