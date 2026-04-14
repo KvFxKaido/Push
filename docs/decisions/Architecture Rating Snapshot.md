@@ -1,22 +1,88 @@
 # Push Architecture Rating Snapshot
 
-Date: 2026-04-08
-Status: Reference snapshot, fully refreshed
+Date: 2026-04-14
+Status: Reference snapshot, full panel refresh on 2026-04-14
 
 Refresh note:
-- Codex local assessment was refreshed on 2026-04-08 after the orchestration, typed-memory, shared-runtime convergence, workspace publish, and hashline follow-through work.
-- Claude local reassessment on 2026-04-08 based on codebase review of work since the 2026-03-30 snapshot: shared runtime substrate, memory hardening, task graph completion, CLI convergence, sandbox lifecycle awareness, and hashline reliability.
-- Gemini reassessment on 2026-04-08 noting full point implementation bump (7 → 8) due to event-streaming convergence, `pushd` CLI adoption, and mitigation of adapter layer risks.
+- Claude reassessed on 2026-04-14 after the Phase 1–5 role-kernel migration into `lib/`, `pushd` Phase 6 closing with real daemon-side Coder + Explorer tool executors, v1 synthetic downgrade, and protocol schema hardening. Implementation shape moves 7.5 → 8; dense modules have grown rather than shrunk.
+- Codex reassessed on 2026-04-14 against the current architecture docs. Nudges overall down slightly (8.5 → 8.3) on a more conservative read of "settled vs. intended" — the architecture doc and snapshot reasoning are coherent, but docs can overstate how boring the heaviest modules actually are.
+- Gemini reassessed on 2026-04-14 and holds at 8.5/10. The split of 9 architecture / 8 implementation still fits the state of the repo; no change to the top-line number.
+- Codex's earlier 2026-04-08 assessment refreshed after the orchestration, typed-memory, shared-runtime convergence, workspace publish, and hashline follow-through work.
+- Claude's earlier 2026-04-08 reassessment was based on codebase review of work since 2026-03-30: shared runtime substrate, memory hardening, task graph completion, CLI convergence, sandbox lifecycle awareness, and hashline reliability.
+- Gemini's earlier 2026-04-08 reassessment noted a full-point implementation bump (7 → 8) due to event-streaming convergence, `pushd` CLI adoption, and mitigation of adapter layer risks.
 
 ## Panel Summary
 
 | Model | Overall | Status | Notes |
 |---|---|---|---|
-| Codex | **8.5/10** | Refreshed 2026-04-08 | Current local assessment after task-graph orchestration, typed context memory, shared runtime convergence, and follow-through reliability work. |
-| Claude | **8/10** | Reassessed 2026-04-08 | Implementation shape bumped a full point (6.5 → 7.5) after shared runtime, memory hardening, and task graph work. Dense modules still cap the ceiling. |
-| Gemini | **8.5/10** | Reassessed 2026-04-08 | Implementation shape bumped a full point (7 → 8). Architecture concerns mitigated by `pushd` daemon streaming convergence and `lib/` shared semantics. |
+| Codex | **8.3/10** | Reassessed 2026-04-14 | Nudge down from 8.5 on a more conservative read — architecture taste 8.8–9.0, implementation shape 7.7–8.0. Dense orchestration modules and soft-enforcement surfaces keep the ceiling below 9. |
+| Claude | **8.5/10** | Reassessed 2026-04-14 | Implementation shape bumped a half point (7.5 → 8) after `lib/` role-kernel migration and `pushd` Phase 6 closing with real daemon-side Coder + Explorer tool executors. Dense modules still cap the ceiling and have grown, not shrunk. |
+| Gemini | **8.5/10** | Held 2026-04-14 | Rating holds steady — 9 architecture, 8 implementation. Shared runtime reality, unified `emit` streaming, and the pure run-engine reducer carry the score; the "big four" dense modules, distributed tracing, and legacy hook cleanup cap it. |
 
 ## Codex
+
+### Rating (2026-04-14)
+
+Overall: **8.3/10** (snapshot-informed read: ~8.3–8.4; standalone doc read: ~8.2)
+
+Split view:
+
+- **8.8–9.0/10** on architecture taste / system design
+- **7.7–8.0/10** on current implementation shape
+
+### Why the rating sits here
+
+The architecture doc's core thesis holds up and the shared runtime story is genuinely strong:
+
+- **The system model is unusually clear**
+  - fixed agent roles
+  - branch-scoped chats
+  - explicit branch/sandbox lifecycle
+  - PR-only merge flow
+  - chat-locked provider routing
+
+  That's real architecture, not just "some prompts and tools."
+
+- **The shared runtime story is strong.** `docs/architecture.md` explicitly centers `lib/` as the canonical substrate for:
+  - task-graph execution
+  - typed memory
+  - delegation briefs / role context
+  - run phases / event vocabulary
+
+  That's the biggest maturity signal. Shared semantics across web + CLI is where a lot of systems either get serious or slowly fork themselves to death.
+
+- **Operational boundaries are thoughtful.** The sandbox awareness, verification policy, reviewer/auditor split, and branch-scoped repo model all suggest the system is being designed for failure modes, not just happy-path demos.
+
+### Why the rating is slightly below the other panelists
+
+Same ceiling the snapshot itself calls out, weighted a little more conservatively:
+
+- **Central orchestration density is still the ceiling.**
+- **Some enforcement remains policy-shaped instead of runtime-hard.**
+- **CLI/web convergence is strong conceptually, but still maturing operationally.**
+- **Observability / tracing sounds present, but not yet "easy to diagnose anything" mature.**
+
+That's the difference between an 8.x system and a 9+ one. A 9 usually feels like:
+- boundaries are not just well-designed but routinely *boring*
+- the heaviest modules have already been defused
+- migration seams are mostly gone
+- invariants are enforced by the runtime more than by disciplined behavior
+
+### Does the snapshot change the view?
+
+Slightly upward — not because the numbers are trusted automatically, but because the reasoning is coherent and matches the architecture doc: shared runtime substrate in `lib/`, stronger memory + task-graph semantics, CLI consuming shared contracts, explicit reliability focus. The snapshot doesn't convince from scratch; it **confirms** the system is being judged on the right axes.
+
+The remaining delta vs. the Claude/Gemini 8.5 readings:
+
+- the docs show strong architecture intent and good system boundaries
+- but docs alone can overstate how "settled" a system is
+- the snapshot itself admits key load-bearing modules remain dense and some guarantees are still soft
+
+### Rating sentence
+
+**Push feels like a serious, platform-shaped system with strong long-term bones, where the remaining risk is concentrated more in orchestration density and enforcement maturity than in flawed core architecture.**
+
+## Codex (2026-04-08 — prior snapshot)
 
 ### Rating
 
@@ -105,6 +171,64 @@ Push has strong architecture taste, strong product boundaries, and a much more m
 
 ## Claude
 
+### Rating (2026-04-14)
+
+Overall: **8.5/10**
+
+Split view:
+
+- **8.5/10** on product and systems architecture instincts (unchanged)
+- **8/10** on current implementation shape (was 7.5 at the 2026-04-08 snapshot, 6.5 at 2026-03-30)
+
+### Why implementation shape moved another half point
+
+- `lib/` has roughly doubled in size and scope since the 2026-04-08 snapshot:
+  - 51 files / ~16,600 lines (was 28 files / ~7,000 lines)
+  - Role kernels are now canonical in `lib/`: `reviewer-agent`, `auditor-agent`, `deep-reviewer-agent`, `explorer-agent`, and `coder-agent` all live in `lib/`, with Web-side shims at `app/src/lib/` preserving existing imports
+  - Supporting surfaces followed the kernels: `tool-execution-runtime`, `tool-registry`, `tool-call-parsing`, `tool-call-diagnosis`, `tool-call-recovery`, `ask-user-tools`, `scratchpad-tools`, `agent-loop-utils`, `user-identity`, `stream-utils`
+  - `orchestrator-prompt-builder` and `message-context-manager` extracted as optional `pushd` reuse helpers, Web bound via shims
+- `pushd` Phase 6 is complete on 2026-04-14 (today), not just scaffolded:
+  - Real daemon-side Coder tool executor via `makeDaemonCoderToolExec` wrapping `executeToolCall` from `cli/tools.ts` with approval gating via `buildApprovalFn`
+  - Real daemon-side Explorer tool executor via `makeDaemonExplorerToolExec` enforcing `READ_ONLY_TOOLS` with read-only policy and no approval gate
+  - `submit_task_graph` executes graphs end-to-end through `lib/task-graph.executeTaskGraph` with `task_graph.*` events on the wire
+  - `configure_role_routing` honoured across Explorer, Coder, Reviewer, and task-graph scaffold executors
+  - `multi_agent` is now advertised in `CAPABILITIES`
+- Protocol migration discipline is real, not theoretical:
+  - v1 synthetic downgrade lets mixed v1/v2 clients on the same session each see the appropriate stream (`event_v2` opt-in)
+  - Protocol schema hardening with strict-mode drift guards
+  - Crash recovery injects `[DELEGATION_INTERRUPTED]` reconciliation notes for orphaned sub-agents
+
+### Top strengths (updated)
+
+- The run engine is a real event-sourced reducer, not ad hoc runtime state
+- Role isolation is disciplined and now doubly-isolated: web-side hooks delegate through shared kernels, daemon-side delegation uses the same kernels with a different tool-execution closure
+- The shared substrate is no longer "promising" — it is the structural backbone for both surfaces
+- Migration discipline around `push.runtime.v1` → `v2` is unusually careful: capability negotiation, synthetic downgrade, backwards-compat shims in `app/src/lib/`
+
+### Top risks (updated)
+
+- The four densest modules have **grown**, not shrunk, since the 2026-04-08 snapshot:
+  - `sandbox-tools.ts`: 3,489 → **4,112 lines** (+18%)
+  - `coder-agent.ts`: 1,815 → **1,935 lines in `lib/`** plus a **608-line `app/src/lib/` shim** = 2,543 lines combined across the kernel and its Web binding
+  - `useAgentDelegation.ts`: 1,717 → **1,839 lines** (+7%)
+  - `useChat.ts`: 1,662 → **1,733 lines** (+4%)
+  - The fossilization prediction from the prior snapshot is holding: these modules accumulate behavior faster than anyone splits them
+- `coder-agent.ts` is now a two-headed module — a shared kernel in `lib/` plus a 608-line Web shim — which increases total surface area even though the kernel itself is now reusable. This is the right direction for CLI/Web parity but it is not net simplification yet.
+- Cross-surface tracing is still immature relative to how much substrate is now shared. As `pushd` becomes the primary transport, "where did this go wrong" needs to route cleanly across client/daemon/kernel boundaries.
+- Tool-protocol namespace mismatches between Web-side names (`read`, `repo_read`, `search`) and CLI names (`read_file`, `list_dir`, `search_files`) are currently managed by explicit `sandboxToolProtocol` overrides at each daemon call site. This works but is the kind of seam that needs a regression test as the only discipline (one exists at `cli/tests/daemon-integration.test.mjs`, which is good).
+
+### Does the rating change? Yes — by a half point.
+
+- Architecture instincts: **8.5/10**, unchanged. The design was already strong; nothing in the last six days changed the taste level.
+- Implementation shape: **7.5 → 8/10**. The `lib/` doubling plus `pushd` Phase 6 closing materially shifted the ratio of "shared substrate" to "surface-specific glue." The concerning signal is that the four dense modules have grown rather than shrunk, so the ceiling on *this* axis is unchanged.
+- Overall: **8 → 8.5/10**. The gap between architecture and implementation is now ~0.5 point, down from 1.0 at the 2026-04-08 snapshot and 2.0 at 2026-03-30. This is the narrowest the gap has been since the panel started rating.
+
+### Short summary
+
+Since the 2026-04-08 snapshot, `lib/` has roughly doubled, the role kernels have moved there wholesale, and `pushd` Phase 6 closed with real daemon-side multi-agent delegation landing today. The shared runtime substrate is now load-bearing for both Web and CLI rather than aspirational. The remaining weakness is the same one: the four dense coordination modules have grown rather than shrunk, and `coder-agent.ts` is now a two-headed kernel+shim construct that increases total surface area as the price of CLI/Web parity. The architecture is now at a point where the next gains come from tracing maturity, dense-module extraction, and collapsing the Web-side compatibility shims once the daemon is the primary transport.
+
+## Claude (2026-04-08 — prior snapshot)
+
 ### Rating
 
 Overall: **8/10**
@@ -165,6 +289,33 @@ Once the boundaries around a complex module are good enough, it becomes easy to 
 
 ## Gemini
 
+### Rating (2026-04-14 — held)
+
+Overall: **8.5/10** (unchanged)
+
+Split view:
+
+- **9/10** on architecture (unchanged)
+- **8/10** on current implementation shape (unchanged)
+
+The rating holds steady right where the snapshot had it. The split of 9 architecture / 8 implementation still fits the state of the repo today. The gap between how the system is designed to work and how it actually runs has closed significantly, but it's not entirely gone.
+
+**Why the 8.5 sticks**
+
+- **Shared runtime reality.** Shifting the task-graph, delegation briefs, and typed memory contracts into `lib/` so both the CLI and web app consume them was a massive step. It fundamentally resolved the adapter drift issues.
+- **Event streaming parity.** Unifying the `emit` callback mechanism across the `pushd` daemon and engine makes the execution paths significantly more predictable.
+- **The run engine.** Having a pure, deterministic reducer handling side-effect-free state transitions and the append-only run journal is a remarkably resilient foundation.
+
+**Why it's not a 9 or higher**
+
+- **The "big four" files.** The snapshot nails this. `sandbox-tools.ts`, `coder-agent.ts`, `useAgentDelegation.ts`, and `useChat.ts` have become gravity wells for complexity. They are too load-bearing to easily refactor, so they keep absorbing new features (capability systems, graph orchestration).
+- **Distributed tracing.** When something fails across the CLI, daemon, and Modal sandbox boundaries, diagnosing it end-to-end is still much harder than it needs to be.
+- **Legacy hooks.** Migration bridges are stabilizing, but there's still cleanup needed to fully deprecate the older execution patterns.
+
+To push the implementation score higher, the next big lever isn't adding new architecture — it's finally breaking apart those dense, multi-thousand-line orchestration files.
+
+## Gemini (2026-04-08 — prior snapshot)
+
 ### Rating
 
 Overall: **8.5/10**
@@ -207,32 +358,39 @@ Split view:
 
 Gemini’s updated read is that Push has unusually strong architecture instincts for an AI-agent system. The previous concerns around adapter layers and streaming divergence have been significantly mitigated by the unified `emit` callback mechanism in the engine and `pushd` daemon. The architecture is now much closer to the code shape, leaving only tracing maturity and full phase-out of older hooks as the main architectural gaps.
 
-## Synthesis
+## Synthesis (2026-04-14)
+
+Panel spread: **Codex 8.3, Claude 8.5, Gemini 8.5**. Very tight — 0.2 of a point across three independent reads. The blended number lands at roughly **8.4/10**.
 
 Current agreement across Codex, Claude, and Gemini:
 
-- Push has strong architecture instincts and a real systems model.
-- The runtime-evolution pass materially improved the harness, particularly the move to `lib/` shared runtime contracts.
-- The main remaining weakness is concentrated complexity, not weak fundamentals.
-- The densest risk surfaces are still the central orchestration and coder paths.
-- The architecture still grades higher than the implementation shape, but the gap has narrowed for all three models.
+- Push has strong architecture instincts and a real systems model. All three put the architecture axis in the 8.5–9.0 range.
+- The shared runtime story in `lib/` is the dominant maturity signal. Moving the role kernels, task-graph, typed memory, delegation briefs, and run-event vocabulary into a canonical substrate is where the system stopped forking itself across web and CLI.
+- `pushd` Phase 6 closing with real daemon-side Coder + Explorer tool executors (2026-04-14) is a genuine milestone — the daemon is no longer a scaffold.
+- The main remaining weakness is concentrated complexity, not weak fundamentals. The "big four" dense modules — `sandbox-tools.ts`, `coder-agent.ts`, `useAgentDelegation.ts`, `useChat.ts` — are still the ceiling. All three models flag them.
+- Enforcement is stronger than it was but still partly policy-shaped rather than runtime-hard at every seam.
+- Distributed tracing across client/daemon/sandbox boundaries is the next observability lever.
 
 Current difference in emphasis:
 
-- All three models are highly aligned on implementation shape (8.5, 7.5, and 8 respectively).
-- Claude puts more weight on the four dense modules as a hard ceiling and the remaining enforcement softness.
-- Gemini's historical concerns about adapter drift have been resolved, and it now focuses more closely on completing the migration from old hooks and improving distributed tracing across the new daemon/CLI boundaries.
+- **Claude (8.5)** moved up half a point on implementation shape after directly measuring the `lib/` doubling (28 → 51 files, ~7k → ~16.6k lines) and confirming the dense modules have **grown**, not shrunk, since the prior snapshot. Claude weights the fossilization risk heavily.
+- **Gemini (8.5)** held steady. The previous bump already priced in shared runtime reality and `emit` streaming parity; nothing in the last six days changed the ratio enough to move the top-line number.
+- **Codex (8.3)** nudged slightly down, not because the direction is wrong but because the more conservative read separates "strong architecture intent in docs" from "heaviest modules being routinely boring." Codex wants to see the big four defused before conceding 8.5.
 
 Blended takeaway:
 
 - Push looks like a system with very good long-term bones whose shared runtime substrate has materially caught up to the architecture. The next gains are now mostly:
-  - extraction of the four densest modules (sandbox-tools, coder-agent, useAgentDelegation, useChat)
+  - extraction of the four densest modules (`sandbox-tools.ts`, `coder-agent.ts`, `useAgentDelegation.ts`, `useChat.ts`) — this is the single biggest lever all three models agree on
   - enforcement hardening where policy intent is still softer than runtime guarantees
-  - continued cleanup of migration seams and old hooks
+  - continued cleanup of migration seams and the old execution hooks that predate `pushd`
   - distributed tracing maturing from "some instrumentation" to "routine cross-boundary diagnosis"
+- A 9+ rating requires the big four to stop being gravity wells and the invariants to be enforced by the runtime rather than by disciplined behavior. That is a refactor conversation, not an architecture conversation.
 
 Refresh notes:
 
-- 2026-04-08 Codex reassessment: full-point bump on implementation shape (7.5 → 8.5). Overall moves from 8 → 8.5 because the remaining gap is concentrated in dense coordination modules and enforcement maturity.
-- 2026-04-08 Claude reassessment: full-point bump on implementation shape (6.5 → 7.5). Overall moves from 7.5 → 8 because shared runtime, memory hardening, task graph, and CLI convergence have materially closed the design-vs-code gap. Dense modules remain the ceiling.
-- 2026-04-08 Gemini reassessment: full-point bump on implementation shape (7 → 8). Overall moves from 8 → 8.5. The adapter layer synchronization risks and migration bridge fragilities have been largely resolved by the daemon's streaming event convergence and CLI consumption of shared `lib/` contracts.
+- 2026-04-14 Claude reassessment: half-point bump on implementation shape (7.5 → 8). Overall moves from 8 → 8.5 because `lib/` roughly doubled (28 → 51 files, ~7k → ~16.6k lines), the role kernels migrated there as canonical, and `pushd` Phase 6 closed today with real daemon-side Coder + Explorer tool executors. The gap between architecture and implementation is now the narrowest it has been (~0.5 point). The four dense modules have grown rather than shrunk and remain the ceiling.
+- 2026-04-14 Codex reassessment: slight downward nudge (8.5 → 8.3) on a more conservative "settled vs. intended" read. Architecture taste 8.8–9.0, implementation shape 7.7–8.0. The snapshot reasoning is coherent and matches the architecture doc, but docs can overstate how boring the heaviest modules actually are; the big four dense modules and soft-enforcement surfaces keep the ceiling below 9.
+- 2026-04-14 Gemini reassessment: held at 8.5. Split of 9 architecture / 8 implementation still fits the state of the repo. Shared runtime reality, unified `emit` streaming, and the pure run-engine reducer carry the score; the big four dense modules, distributed tracing, and legacy hook cleanup cap it.
+- 2026-04-08 Codex reassessment: full-point bump on implementation shape (7.5 → 8.5). Overall moved from 8 → 8.5 because the remaining gap was concentrated in dense coordination modules and enforcement maturity.
+- 2026-04-08 Claude reassessment: full-point bump on implementation shape (6.5 → 7.5). Overall moved from 7.5 → 8 because shared runtime, memory hardening, task graph, and CLI convergence materially closed the design-vs-code gap. Dense modules remained the ceiling.
+- 2026-04-08 Gemini reassessment: full-point bump on implementation shape (7 → 8). Overall moved from 8 → 8.5. Adapter layer synchronization risks and migration bridge fragilities were largely resolved by the daemon's streaming event convergence and CLI consumption of shared `lib/` contracts.
