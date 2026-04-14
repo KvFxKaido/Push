@@ -275,9 +275,16 @@ export function createContextManager<M extends Message>(
 
     if (deps.estimateContextTokens(kept) > budget.maxTokens) {
       // Last resort hard trim from oldest non-protected while keeping digest and recent tail.
+      // Invariants: (1) digest is never removed, (2) recent tail is never removed,
+      // (3) loop terminates if no removable candidates remain.
       const hardResult = [...kept];
       while (deps.estimateContextTokens(hardResult) > budget.maxTokens && hardResult.length > 16) {
-        hardResult.splice(1, 1);
+        const tailStart = Math.max(1, hardResult.length - 15);
+        const removeIndex = hardResult.findIndex(
+          (msg, idx) => idx >= 1 && idx < tailStart && msg !== digestMessage,
+        );
+        if (removeIndex === -1) break;
+        hardResult.splice(removeIndex, 1);
       }
       const hardAfter = deps.estimateContextTokens(hardResult);
       deps.recordContextMetric?.({
@@ -285,7 +292,9 @@ export function createContextManager<M extends Message>(
         beforeTokens: totalTokens,
         afterTokens: hardAfter,
         provider,
-        messagesDropped: messages.length - hardResult.length,
+        // Baseline is `kept` (post Phase 2 + digest insertion), not the original
+        // `messages` array — we're counting drops within the hard-trim phase only.
+        messagesDropped: kept.length - hardResult.length,
       });
       log(`[Push] Context managed (hard fallback): ${totalTokens} → ${hardAfter} tokens`);
       return hardResult;
