@@ -53,6 +53,7 @@ import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
 import { assertValidEvent, isStrictModeEnabled } from './protocol-schema.js';
+import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
 
 const VERSION = '0.3.0';
 const CAPABILITIES = [
@@ -77,6 +78,13 @@ const CAPABILITIES = [
   // (streaming LLM with stubbed tool executor); coder nodes previously
   // failed fast.
   'task_graph_v1',
+  // `event_v2`: the daemon emits raw `subagent.*` / `task_graph.*` envelopes
+  // to clients that advertise this cap back in `attach_session.capabilities`.
+  // Clients that omit the cap (including v1 clients that don't know to send
+  // it) receive synthesized `assistant_token` events on the parent runId
+  // instead — see `cli/v1-downgrade.ts` and the "v1 Client Handling —
+  // Option C" section of `docs/decisions/push-runtime-v2.md`.
+  'event_v2',
 ];
 
 const VALID_AGENT_ROLES = new Set(['orchestrator', 'explorer', 'coder', 'reviewer', 'auditor']);
@@ -294,14 +302,35 @@ function buildApprovalFn(sessionId, entry, runId) {
 
 // ─── Multi-client fan-out ────────────────────────────────────────
 
-// sessionId → Set<emitFn>
+// sessionId → Map<emitFn, { capabilities: Set<string> }>
+//
+// Keyed on the emitFn itself so `removeSessionClient(sessionId, emitFn)`
+// can find the entry without the caller needing to hold on to an
+// opaque handle. The Map is iterated in insertion order, so the
+// effective broadcast order matches the v1 Set-based implementation
+// and existing tests that assert "client A attached first, so it gets
+// events first" still hold.
 const sessionClients = new Map();
 
-function addSessionClient(sessionId, emitFn) {
+/**
+ * Register a client listener for a session.
+ *
+ * @param sessionId     the session the client is attached to
+ * @param emitFn        a function that takes an event envelope and
+ *                      writes it to the client
+ * @param capabilities  optional list of v2 capability names the
+ *                      client advertises. Clients that include
+ *                      `'event_v2'` receive raw delegation events;
+ *                      clients that omit it (including the v1
+ *                      default) receive synthesized `assistant_token`
+ *                      shadows built by `cli/v1-downgrade.ts`.
+ */
+function addSessionClient(sessionId, emitFn, capabilities = []) {
   if (!sessionClients.has(sessionId)) {
-    sessionClients.set(sessionId, new Set());
+    sessionClients.set(sessionId, new Map());
   }
-  sessionClients.get(sessionId).add(emitFn);
+  const caps = new Set(Array.isArray(capabilities) ? capabilities : []);
+  sessionClients.get(sessionId).set(emitFn, { capabilities: caps });
 }
 
 function removeSessionClient(sessionId, emitFn) {
@@ -324,9 +353,100 @@ export function broadcastEvent(sessionId, event) {
   }
   const clients = sessionClients.get(sessionId);
   if (!clients) return;
-  for (const emitFn of clients) {
+
+  // Fast path: non-delegation events pass through unchanged to every
+  // client regardless of capabilities. This covers the vast majority
+  // of traffic (`assistant_token`, `tool_call`, `tool_result`,
+  // `status`, `run_complete`, `error`, `session_started`,
+  // `approval_required`, etc.).
+  const isDelegation = isV2DelegationEvent(event.type);
+  if (!isDelegation) {
+    for (const [emitFn] of clients) {
+      try {
+        emitFn(event);
+      } catch {
+        /* client may have disconnected */
+      }
+    }
+    return;
+  }
+
+  // Slow path: a v2 delegation event. Every client that advertised
+  // `event_v2` at attach time gets the raw envelope; every other
+  // client gets the synthesized v1-shaped `assistant_token` shadow(s)
+  // built by `cli/v1-downgrade.ts`. A single synthesis per v1 event
+  // is sufficient even with multiple v1 clients — the envelope is
+  // pure data and can be fanned out as-is.
+  //
+  // Approval events are NOT delegation events (see
+  // `isV2DelegationEvent` in `cli/v1-downgrade.ts`) and take the fast
+  // path above. They reach v1 clients verbatim, and the daemon's
+  // internal approvalId → delegation map routes the response back to
+  // the correct child — the v1 client never has to know a delegation
+  // was involved.
+  let synthesized = null;
+  for (const [emitFn, meta] of clients) {
+    if (meta.capabilities.has('event_v2')) {
+      try {
+        emitFn(event);
+      } catch {
+        /* client may have disconnected */
+      }
+      continue;
+    }
+    // v1 client: build the downgrade lazily on first need so sessions
+    // with only v2 clients pay nothing.
+    if (synthesized === null) {
+      synthesized = synthesizeV1DelegationEvent(event);
+      if (isStrictModeEnabled()) {
+        for (const synth of synthesized) assertValidEvent(synth);
+      }
+    }
+    for (const synth of synthesized) {
+      try {
+        emitFn(synth);
+      } catch {
+        /* client may have disconnected */
+      }
+    }
+  }
+}
+
+/**
+ * Emit a single event to a single client applying the same v1 synthetic
+ * downgrade rules as `broadcastEvent`'s live-fanout slow path. Used by
+ * the replay path inside `handleAttachSession` so a v1 client that
+ * reconnects with `lastSeenSeq` doesn't receive raw `subagent.*` /
+ * `task_graph.*` events from disk and silently drop them.
+ *
+ * Fixes the PR #281 codex P1 feedback: before this helper, the replay
+ * loop called `emitEvent(event)` directly, which reintroduced the exact
+ * "unknown event gets dropped" gap the live broadcast was meant to
+ * close. Now every path that emits a delegation event to a client goes
+ * through capability-aware synthesis.
+ *
+ * `capabilities` is a `Set<string>` matching the shape stored in
+ * `sessionClients`. Callers that track capabilities as arrays should
+ * wrap in `new Set(arr)` before calling.
+ */
+function emitEventWithDowngrade(event, emitFn, capabilities) {
+  const isDelegation = isV2DelegationEvent(event.type);
+  if (!isDelegation || capabilities.has('event_v2')) {
     try {
       emitFn(event);
+    } catch {
+      /* client may have disconnected */
+    }
+    return;
+  }
+  // v1 client + delegation event — synthesize the downgrade shadow(s).
+  const synthesized = synthesizeV1DelegationEvent(event);
+  if (isStrictModeEnabled()) {
+    for (const synth of synthesized) assertValidEvent(synth);
+  }
+  for (const synth of synthesized) {
+    try {
+      emitFn(synth);
     } catch {
       /* client may have disconnected */
     }
@@ -629,7 +749,12 @@ async function handleSendUserMessage(req, emitEvent) {
 }
 
 async function handleAttachSession(req, emitEvent) {
-  const { sessionId, lastSeenSeq, attachToken: providedToken } = req.payload || {};
+  const {
+    sessionId,
+    lastSeenSeq,
+    attachToken: providedToken,
+    capabilities: clientCapabilities,
+  } = req.payload || {};
   if (!sessionId) {
     return makeErrorResponse(
       req.requestId,
@@ -671,19 +796,34 @@ async function handleAttachSession(req, emitEvent) {
     );
   }
 
-  // Register this client for multi-client fan-out
-  addSessionClient(sessionId, emitEvent);
+  // Register this client for multi-client fan-out. Capabilities drive
+  // the v1 synthetic-downgrade path in `broadcastEvent` — clients that
+  // include `'event_v2'` receive raw delegation envelopes, clients
+  // that omit it (or pass `capabilities: []`, or don't include the
+  // field at all) receive synthesized `assistant_token` shadows.
+  const capabilitiesArray = Array.isArray(clientCapabilities) ? clientCapabilities : [];
+  addSessionClient(sessionId, emitEvent, capabilitiesArray);
+  // Same capability set is used to drive the replay path below so v1
+  // clients see synthesized events for missed delegation rounds as
+  // well as live ones (codex P1 on PR #281).
+  const replayCapabilities = new Set(capabilitiesArray);
 
   const { state } = entry;
   const currentSeq = state.eventSeq;
   const fromSeq = (lastSeenSeq || 0) + 1;
 
-  // Replay missed events from disk
+  // Replay missed events from disk. Route each through
+  // `emitEventWithDowngrade` so v1 clients don't silently drop raw
+  // `subagent.*` / `task_graph.*` envelopes that landed on disk while
+  // they were disconnected. The live fan-out path already does this
+  // via `broadcastEvent`; the replay path has to do it too or
+  // reconnects on `lastSeenSeq` reintroduce the gap this PR was meant
+  // to close.
   try {
     const allEvents = await loadSessionEvents(sessionId);
     const missed = allEvents.filter((e) => e.seq >= fromSeq && e.seq <= currentSeq);
     for (const event of missed) {
-      emitEvent(event);
+      emitEventWithDowngrade(event, emitEvent, replayCapabilities);
     }
   } catch {
     // best-effort replay
@@ -2589,6 +2729,24 @@ export async function handleRequest(req, emitEvent) {
 function handleConnection(socket) {
   let buffer = '';
   const attachedSessions = new Set(); // track which sessions this socket is observing
+  // Remember the capabilities the client most recently advertised at
+  // attach-time so that a later auto-attach (start_session /
+  // send_user_message on the same socket) inherits them. Without this
+  // a client that sends `start_session` or `send_user_message` with
+  // capabilities but no prior `attach_session` would have the
+  // auto-attach register it as a v1 client, and delegation events
+  // would get synthesized into `assistant_token`s even though the
+  // client is v2-capable (codex P1 feedback on PR #281).
+  //
+  // Capabilities are pinned on the FIRST observed request that
+  // carries a `capabilities` array — any request type (attach_session,
+  // start_session, send_user_message). Subsequent requests with
+  // capability arrays are ignored to prevent a client from flipping
+  // between v1/v2 behaviour mid-connection, which would change how
+  // delegation events route for clients attached via auto-attach.
+  // `null` sentinel means "not yet observed"; once pinned the value
+  // persists until the socket closes.
+  let socketCapabilities = null;
 
   const emitEvent = (event) => {
     try {
@@ -2607,6 +2765,19 @@ function handleConnection(socket) {
       if (!line.trim()) continue;
       try {
         const req = JSON.parse(line);
+        // Pin capabilities on first-observed request of ANY type that
+        // carries a `capabilities` array. This covers:
+        //   - explicit `attach_session` (the documented path)
+        //   - `start_session` (first request on a fresh socket)
+        //   - `send_user_message` (clients that only ever send turns)
+        //   - `hello` (capability negotiation handshake)
+        // The second-and-later capability arrays are ignored — pin-on-
+        // first keeps the socket's classification stable for the
+        // lifetime of the connection so delegation-event routing can't
+        // flip mid-session.
+        if (socketCapabilities === null && Array.isArray(req.payload?.capabilities)) {
+          socketCapabilities = req.payload.capabilities;
+        }
         const response = await handleRequest(req, emitEvent);
         socket.write(JSON.stringify(response) + '\n');
 
@@ -2622,7 +2793,7 @@ function handleConnection(socket) {
             req.sessionId ||
             req.payload?.sessionId;
           if (sid) {
-            addSessionClient(sid, emitEvent);
+            addSessionClient(sid, emitEvent, socketCapabilities);
             attachedSessions.add(sid);
           }
         }
