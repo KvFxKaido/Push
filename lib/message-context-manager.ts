@@ -254,6 +254,17 @@ export function createContextManager<M extends Message>(
 
     const digestMessage = deps.createDigestMessage(buildContextDigest(removed));
 
+    // Capture the pinned first user message by reference (not index) so it
+    // survives any later splicing in `kept`/`hardResult` and remains
+    // identifiable in the hard-trim loop even when its index shifts. This is
+    // the "Always keep the first user message" guarantee — when the history
+    // starts with tool results or an assistant preamble, the pinned message
+    // may not be at index 0 of `kept`, and without an explicit reference
+    // check the hard-trim fallback could drop it (Copilot review on #285).
+    // Captured after Phase 1 so the reference matches the (possibly compacted)
+    // object that actually gets pushed into `kept`.
+    const pinnedUserMessage: M | null = firstUserIdx >= 0 ? result[firstUserIdx] : null;
+
     const kept: M[] = [];
     let digestInserted = false;
     for (let i = 0; i < result.length; i++) {
@@ -276,12 +287,14 @@ export function createContextManager<M extends Message>(
     if (deps.estimateContextTokens(kept) > budget.maxTokens) {
       // Last resort hard trim from oldest non-protected while keeping digest and recent tail.
       // Invariants: (1) digest is never removed, (2) recent tail is never removed,
-      // (3) loop terminates if no removable candidates remain.
+      // (3) pinned first user message is never removed, (4) loop terminates if
+      // no removable candidates remain.
       const hardResult = [...kept];
       while (deps.estimateContextTokens(hardResult) > budget.maxTokens && hardResult.length > 16) {
         const tailStart = Math.max(1, hardResult.length - 15);
         const removeIndex = hardResult.findIndex(
-          (msg, idx) => idx >= 1 && idx < tailStart && msg !== digestMessage,
+          (msg, idx) =>
+            idx >= 1 && idx < tailStart && msg !== digestMessage && msg !== pinnedUserMessage,
         );
         if (removeIndex === -1) break;
         hardResult.splice(removeIndex, 1);
