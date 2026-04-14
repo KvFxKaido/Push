@@ -2,6 +2,7 @@ import process from 'node:process';
 import {
   detectAllToolCalls,
   executeToolCall,
+  isFileMutationToolCall,
   isReadOnlyToolCall,
   truncateText,
   TOOL_PROTOCOL,
@@ -898,7 +899,35 @@ export async function runAssistantLoop(
     }
 
     const readCalls: ToolCall[] = toolCalls.filter(isReadOnlyToolCall);
-    const mutateCalls: ToolCall[] = toolCalls.filter((call: ToolCall) => !isReadOnlyToolCall(call));
+    const nonReadCalls: ToolCall[] = toolCalls.filter(
+      (call: ToolCall) => !isReadOnlyToolCall(call),
+    );
+
+    // Split non-read calls into the per-turn mutation transaction:
+    //   - `fileMutationBatch`: contiguous pure file writes/edits, executed
+    //     sequentially as one batch
+    //   - `trailingSideEffect`: at most one trailing side-effecting call
+    //     (exec, git_commit, save_memory, etc.), runs after the batch
+    //   - `rejectedMutations`: overflow that violates the one-side-effect
+    //     rule, rejected with `MULTI_MUTATION_NOT_ALLOWED`
+    const fileMutationBatch: ToolCall[] = [];
+    let trailingSideEffect: ToolCall | null = null;
+    const rejectedMutations: ToolCall[] = [];
+    for (const call of nonReadCalls) {
+      if (trailingSideEffect) {
+        rejectedMutations.push(call);
+        continue;
+      }
+      if (isFileMutationToolCall(call)) {
+        fileMutationBatch.push(call);
+      } else {
+        trailingSideEffect = call;
+      }
+    }
+    const mutateCalls: ToolCall[] = [
+      ...fileMutationBatch,
+      ...(trailingSideEffect ? [trailingSideEffect] : []),
+    ];
 
     if (readCalls.length > 0) {
       await Promise.all(
@@ -909,7 +938,7 @@ export async function runAssistantLoop(
     }
 
     if (mutateCalls.length > 0) {
-      // Phase-aware tool gating — check before executing mutation
+      // Phase-aware tool gating — check before executing the first mutation
       const gateResult = policyRegistry.evaluateBeforeTool(
         mutateCalls[0].tool,
         mutateCalls[0].args || {},
@@ -1004,16 +1033,28 @@ export async function runAssistantLoop(
         continue;
       }
 
-      await executeOneToolCall(mutateCalls[0], round, true);
+      // Execute the mutation transaction sequentially:
+      //   1. Every call in the file-mutation batch (write/edit/undo_edit)
+      //   2. The trailing side-effect, if any
+      // All members share the single before-tool gate check above — if
+      // the first call was blocked we already bailed out. Later calls
+      // still get their own `executeOneToolCall`, which records per-call
+      // events and updates the ledger.
+      for (const call of mutateCalls) {
+        await executeOneToolCall(call, round, call === mutateCalls[mutateCalls.length - 1]);
+      }
 
-      for (let i = 1; i < mutateCalls.length; i++) {
-        const call: ToolCall = mutateCalls[i];
+      // Overflow side-effects (second exec, commit after exec, etc.) are
+      // rejected with a structured error so the model can correct on the
+      // next turn. File mutations never land here — they were already
+      // executed as part of the batch above.
+      for (const call of rejectedMutations) {
         const result: ToolResult = {
           ok: false,
-          text: `Skipped mutating tool call ${call.tool}: only one mutating tool call is allowed per assistant turn.`,
+          text: `Skipped side-effecting tool call ${call.tool}: a turn may contain at most one side-effect (exec, commit, save_memory) after the file-mutation batch.`,
           structuredError: {
             code: 'MULTI_MUTATION_NOT_ALLOWED',
-            message: 'Only one mutating tool call allowed per turn',
+            message: 'At most one side-effect tool call allowed per turn',
             retryable: true,
           },
         };

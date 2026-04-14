@@ -468,7 +468,12 @@ export async function runExplorerAgent<TCall, TCard>(
     }
 
     const detected = detectAllToolCalls(accumulated);
-    if (detected.extraMutations.length > 0) {
+    // Explorer is strictly read-only: file mutations emitted here are
+    // treated as protocol violations alongside any true side-effect
+    // overflow. We fold them into the same rejection path so the model
+    // gets a single corrective message instead of silently running the
+    // batch through an executor that would refuse them anyway.
+    if (detected.extraMutations.length > 0 || detected.fileMutations.length > 0) {
       messages.push({
         id: `explorer-parse-error-${round}`,
         role: 'user',

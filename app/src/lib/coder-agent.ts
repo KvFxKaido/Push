@@ -297,9 +297,11 @@ export async function runCoderAgent(
   const detectAllToolCallsFiltered = (text: string) => {
     const raw = detectAllToolCalls(text);
     const sandboxReads = raw.readOnly.filter((c) => c.source === 'sandbox');
+    const sandboxFileMutations = raw.fileMutations.filter((c) => c.source === 'sandbox');
     const sandboxMutating = raw.mutating?.source === 'sandbox' ? raw.mutating : null;
     return {
       readOnly: sandboxReads,
+      fileMutations: sandboxFileMutations,
       mutating: sandboxMutating,
       extraMutations: raw.extraMutations,
     };

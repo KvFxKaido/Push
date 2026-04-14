@@ -435,8 +435,8 @@ export function handleMultipleMutationsError(
 
   const parseErrorHeader = buildToolCallParseErrorBlock({
     errorType: 'multiple_mutating_calls',
-    problem: `Only one mutating tool call can run per turn. Received ${rejectedToolNames.length}: ${rejectedToolNames.join(', ')}.`,
-    hint: 'Put read-only tools first and one mutating tool last. For multiple coding tasks, use one coder call with "tasks".',
+    problem: `Extra side-effecting calls detected after the turn's mutation batch: ${rejectedToolNames.join(', ')}.`,
+    hint: 'A turn may emit any number of file mutations (write/edit/patch) as one batch, but at most one trailing side-effect (exec, commit, push, delegate, workflow_run). Reorder your calls so side-effects come last, or split the extras across turns.',
   });
 
   const primaryMutation = rejectedMutations[0];

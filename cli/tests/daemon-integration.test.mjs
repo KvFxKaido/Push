@@ -2386,11 +2386,12 @@ describe('wrapCliDetectAllToolCalls', () => {
     assert.equal(detected.readOnly.length, 1);
     assert.equal(detected.readOnly[0].source, 'cli');
     assert.equal(detected.readOnly[0].call.tool, 'read_file');
+    assert.deepEqual(detected.fileMutations, []);
     assert.equal(detected.mutating, null);
     assert.deepEqual(detected.extraMutations, []);
   });
 
-  it('classifies write_file as mutating', () => {
+  it('classifies write_file as a file mutation (batchable)', () => {
     const text = [
       '```json',
       JSON.stringify({ tool: 'write_file', args: { path: 'a.txt', content: 'x' } }),
@@ -2398,42 +2399,72 @@ describe('wrapCliDetectAllToolCalls', () => {
     ].join('\n');
     const detected = wrapCliDetectAllToolCalls(text);
     assert.deepEqual(detected.readOnly, []);
-    assert.ok(detected.mutating);
-    assert.equal(detected.mutating.source, 'cli');
-    assert.equal(detected.mutating.call.tool, 'write_file');
+    assert.equal(detected.fileMutations.length, 1);
+    assert.equal(detected.fileMutations[0].source, 'cli');
+    assert.equal(detected.fileMutations[0].call.tool, 'write_file');
+    assert.equal(detected.mutating, null);
     assert.deepEqual(detected.extraMutations, []);
   });
 
-  it('puts first mutation in `mutating` and subsequent mutations in `extraMutations`', () => {
+  it('batches multiple file mutations in one turn', () => {
     const write1 = JSON.stringify({ tool: 'write_file', args: { path: 'a.txt', content: '1' } });
     const write2 = JSON.stringify({ tool: 'write_file', args: { path: 'b.txt', content: '2' } });
     const text = `\`\`\`json\n${write1}\n\`\`\`\n\n\`\`\`json\n${write2}\n\`\`\``;
     const detected = wrapCliDetectAllToolCalls(text);
     assert.deepEqual(detected.readOnly, []);
-    assert.ok(detected.mutating);
-    assert.equal(detected.mutating.call.tool, 'write_file');
-    assert.equal(detected.mutating.call.args.path, 'a.txt');
-    assert.equal(detected.extraMutations.length, 1);
-    assert.equal(detected.extraMutations[0].call.args.path, 'b.txt');
+    assert.equal(detected.fileMutations.length, 2);
+    assert.equal(detected.fileMutations[0].call.args.path, 'a.txt');
+    assert.equal(detected.fileMutations[1].call.args.path, 'b.txt');
+    assert.equal(detected.mutating, null);
+    assert.deepEqual(detected.extraMutations, []);
   });
 
-  it('collects parallel reads and a trailing mutation', () => {
+  it('classifies exec as a trailing side-effect', () => {
+    const write = JSON.stringify({ tool: 'write_file', args: { path: 'a.txt', content: '1' } });
+    const exec = JSON.stringify({ tool: 'exec', args: { command: 'npm test' } });
+    const text = `\`\`\`json\n${write}\n\`\`\`\n\`\`\`json\n${exec}\n\`\`\``;
+    const detected = wrapCliDetectAllToolCalls(text);
+    assert.equal(detected.fileMutations.length, 1);
+    assert.ok(detected.mutating);
+    assert.equal(detected.mutating.call.tool, 'exec');
+    assert.deepEqual(detected.extraMutations, []);
+  });
+
+  it('rejects a second side-effect after the batch', () => {
+    const write = JSON.stringify({ tool: 'write_file', args: { path: 'a.txt', content: '1' } });
+    const exec1 = JSON.stringify({ tool: 'exec', args: { command: 'npm test' } });
+    const exec2 = JSON.stringify({ tool: 'exec', args: { command: 'npm run build' } });
+    const text = `\`\`\`json\n${write}\n\`\`\`\n\`\`\`json\n${exec1}\n\`\`\`\n\`\`\`json\n${exec2}\n\`\`\``;
+    const detected = wrapCliDetectAllToolCalls(text);
+    assert.equal(detected.fileMutations.length, 1);
+    assert.ok(detected.mutating);
+    assert.equal(detected.mutating.call.tool, 'exec');
+    assert.equal(detected.mutating.call.args.command, 'npm test');
+    assert.equal(detected.extraMutations.length, 1);
+    assert.equal(detected.extraMutations[0].call.tool, 'exec');
+  });
+
+  it('collects parallel reads + file-mutation batch + trailing side-effect', () => {
     const read1 = JSON.stringify({ tool: 'read_file', args: { path: 'a.txt' } });
     const read2 = JSON.stringify({ tool: 'list_dir', args: { path: '.' } });
     const write = JSON.stringify({ tool: 'write_file', args: { path: 'c.txt', content: '3' } });
-    const text = `\`\`\`json\n${read1}\n\`\`\`\n\`\`\`json\n${read2}\n\`\`\`\n\`\`\`json\n${write}\n\`\`\``;
+    const exec = JSON.stringify({ tool: 'exec', args: { command: 'npm test' } });
+    const text = `\`\`\`json\n${read1}\n\`\`\`\n\`\`\`json\n${read2}\n\`\`\`\n\`\`\`json\n${write}\n\`\`\`\n\`\`\`json\n${exec}\n\`\`\``;
     const detected = wrapCliDetectAllToolCalls(text);
     assert.equal(detected.readOnly.length, 2);
     assert.equal(detected.readOnly[0].call.tool, 'read_file');
     assert.equal(detected.readOnly[1].call.tool, 'list_dir');
+    assert.equal(detected.fileMutations.length, 1);
+    assert.equal(detected.fileMutations[0].call.tool, 'write_file');
     assert.ok(detected.mutating);
-    assert.equal(detected.mutating.call.tool, 'write_file');
+    assert.equal(detected.mutating.call.tool, 'exec');
     assert.deepEqual(detected.extraMutations, []);
   });
 
   it('returns empty slots when text has no tool calls', () => {
     const detected = wrapCliDetectAllToolCalls('just some prose with no fenced json at all.');
     assert.deepEqual(detected.readOnly, []);
+    assert.deepEqual(detected.fileMutations, []);
     assert.equal(detected.mutating, null);
     assert.deepEqual(detected.extraMutations, []);
   });
