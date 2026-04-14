@@ -1,11 +1,12 @@
 # Push Architecture Rating Snapshot
 
-Date: 2026-04-08
-Status: Reference snapshot, fully refreshed
+Date: 2026-04-14
+Status: Reference snapshot, Claude refresh on 2026-04-14
 
 Refresh note:
 - Codex local assessment was refreshed on 2026-04-08 after the orchestration, typed-memory, shared-runtime convergence, workspace publish, and hashline follow-through work.
-- Claude local reassessment on 2026-04-08 based on codebase review of work since the 2026-03-30 snapshot: shared runtime substrate, memory hardening, task graph completion, CLI convergence, sandbox lifecycle awareness, and hashline reliability.
+- Claude reassessed on 2026-04-14 after the Phase 1–5 role-kernel migration into `lib/`, `pushd` Phase 6 closing with real daemon-side Coder + Explorer tool executors, v1 synthetic downgrade, and protocol schema hardening. Implementation shape moves 7.5 → 8; dense modules have grown rather than shrunk.
+- Claude earlier reassessment on 2026-04-08 based on codebase review of work since the 2026-03-30 snapshot: shared runtime substrate, memory hardening, task graph completion, CLI convergence, sandbox lifecycle awareness, and hashline reliability.
 - Gemini reassessment on 2026-04-08 noting full point implementation bump (7 → 8) due to event-streaming convergence, `pushd` CLI adoption, and mitigation of adapter layer risks.
 
 ## Panel Summary
@@ -13,7 +14,7 @@ Refresh note:
 | Model | Overall | Status | Notes |
 |---|---|---|---|
 | Codex | **8.5/10** | Refreshed 2026-04-08 | Current local assessment after task-graph orchestration, typed context memory, shared runtime convergence, and follow-through reliability work. |
-| Claude | **8/10** | Reassessed 2026-04-08 | Implementation shape bumped a full point (6.5 → 7.5) after shared runtime, memory hardening, and task graph work. Dense modules still cap the ceiling. |
+| Claude | **8.5/10** | Reassessed 2026-04-14 | Implementation shape bumped a half point (7.5 → 8) after `lib/` role-kernel migration and `pushd` Phase 6 closing with real daemon-side Coder + Explorer tool executors. Dense modules still cap the ceiling and have grown, not shrunk. |
 | Gemini | **8.5/10** | Reassessed 2026-04-08 | Implementation shape bumped a full point (7 → 8). Architecture concerns mitigated by `pushd` daemon streaming convergence and `lib/` shared semantics. |
 
 ## Codex
@@ -104,6 +105,64 @@ Inference:
 Push has strong architecture taste, strong product boundaries, and a much more mature implementation than it had at the prior snapshot. The biggest step change is that several important layers are now real shared runtime substrate instead of promising local abstractions.
 
 ## Claude
+
+### Rating (2026-04-14)
+
+Overall: **8.5/10**
+
+Split view:
+
+- **8.5/10** on product and systems architecture instincts (unchanged)
+- **8/10** on current implementation shape (was 7.5 at the 2026-04-08 snapshot, 6.5 at 2026-03-30)
+
+### Why implementation shape moved another half point
+
+- `lib/` has roughly doubled in size and scope since the 2026-04-08 snapshot:
+  - 51 files / ~16,600 lines (was 28 files / ~7,000 lines)
+  - Role kernels are now canonical in `lib/`: `reviewer-agent`, `auditor-agent`, `deep-reviewer-agent`, `explorer-agent`, and `coder-agent` all live in `lib/`, with Web-side shims at `app/src/lib/` preserving existing imports
+  - Supporting surfaces followed the kernels: `tool-execution-runtime`, `tool-registry`, `tool-call-parsing`, `tool-call-diagnosis`, `tool-call-recovery`, `ask-user-tools`, `scratchpad-tools`, `agent-loop-utils`, `user-identity`, `stream-utils`
+  - `orchestrator-prompt-builder` and `message-context-manager` extracted as optional pushd reuse helpers, Web bound via shims
+- `pushd` Phase 6 is complete on 2026-04-14 (today), not just scaffolded:
+  - Real daemon-side Coder tool executor via `makeDaemonCoderToolExec` wrapping `executeToolCall` from `cli/tools.ts` with approval gating via `buildApprovalFn`
+  - Real daemon-side Explorer tool executor via `makeDaemonExplorerToolExec` enforcing `READ_ONLY_TOOLS` with read-only policy and no approval gate
+  - `submit_task_graph` executes graphs end-to-end through `lib/task-graph.executeTaskGraph` with `task_graph.*` events on the wire
+  - `configure_role_routing` honoured across Explorer, Coder, Reviewer, and task-graph scaffold executors
+  - `multi_agent` is now advertised in `CAPABILITIES`
+- Protocol migration discipline is real, not theoretical:
+  - v1 synthetic downgrade lets mixed v1/v2 clients on the same session each see the appropriate stream (`event_v2` opt-in)
+  - Protocol schema hardening with strict-mode drift guards
+  - Crash recovery injects `[DELEGATION_INTERRUPTED]` reconciliation notes for orphaned sub-agents
+
+### Top strengths (updated)
+
+- The run engine is a real event-sourced reducer, not ad hoc runtime state
+- Role isolation is disciplined and now doubly-isolated: web-side hooks delegate through shared kernels, daemon-side delegation uses the same kernels with a different tool-execution closure
+- The shared substrate is no longer "promising" — it is the structural backbone for both surfaces
+- Migration discipline around `push.runtime.v1` → `v2` is unusually careful: capability negotiation, synthetic downgrade, backwards-compat shims in `app/src/lib/`
+
+### Top risks (updated)
+
+- The four densest modules have **grown**, not shrunk, since the 2026-04-08 snapshot:
+  - `sandbox-tools.ts`: 3,489 → **4,112 lines** (+18%)
+  - `coder-agent.ts`: 1,815 → **1,935 lines in `lib/`** plus a **608-line `app/src/lib/` shim** = 2,543 lines combined across the kernel and its Web binding
+  - `useAgentDelegation.ts`: 1,717 → **1,839 lines** (+7%)
+  - `useChat.ts`: 1,662 → **1,733 lines** (+4%)
+  - The fossilization prediction from the prior snapshot is holding: these modules accumulate behavior faster than anyone splits them
+- `coder-agent.ts` is now a two-headed module — a shared kernel in `lib/` plus a 608-line Web shim — which increases total surface area even though the kernel itself is now reusable. This is the right direction for CLI/Web parity but it is not net simplification yet.
+- Cross-surface tracing is still immature relative to how much substrate is now shared. As pushd becomes the primary transport, "where did this go wrong" needs to route cleanly across client/daemon/kernel boundaries.
+- Tool-protocol namespace mismatches between Web-side names (`read`, `repo_read`, `search`) and CLI names (`read_file`, `list_dir`, `search_files`) are currently managed by explicit `sandboxToolProtocol` overrides at each daemon call site. This works but is the kind of seam that needs a regression test as the only discipline (one exists at `cli/tests/daemon-integration.test.mjs`, which is good).
+
+### Does the rating change? Yes — by a half point.
+
+- Architecture instincts: **8.5/10**, unchanged. The design was already strong; nothing in the last six days changed the taste level.
+- Implementation shape: **7.5 → 8/10**. The `lib/` doubling plus `pushd` Phase 6 closing materially shifted the ratio of "shared substrate" to "surface-specific glue." The concerning signal is that the four dense modules have grown rather than shrunk, so the ceiling on *this* axis is unchanged.
+- Overall: **8 → 8.5/10**. The gap between architecture and implementation is now ~0.5 point, down from 1.0 at the 2026-04-08 snapshot and 2.0 at 2026-03-30. This is the narrowest the gap has been since the panel started rating.
+
+### Short summary
+
+Since the 2026-04-08 snapshot, `lib/` has roughly doubled, the role kernels have moved there wholesale, and `pushd` Phase 6 closed with real daemon-side multi-agent delegation landing today. The shared runtime substrate is now load-bearing for both Web and CLI rather than aspirational. The remaining weakness is the same one: the four dense coordination modules have grown rather than shrunk, and `coder-agent.ts` is now a two-headed kernel+shim construct that increases total surface area as the price of CLI/Web parity. The architecture is now at a point where the next gains come from tracing maturity, dense-module extraction, and collapsing the Web-side compatibility shims once the daemon is the primary transport.
+
+## Claude (2026-04-08 — prior snapshot)
 
 ### Rating
 
@@ -233,6 +292,7 @@ Blended takeaway:
 
 Refresh notes:
 
+- 2026-04-14 Claude reassessment: half-point bump on implementation shape (7.5 → 8). Overall moves from 8 → 8.5 because `lib/` roughly doubled (28 → 51 files, ~7k → ~16.6k lines), the role kernels migrated there as canonical, and `pushd` Phase 6 closed today with real daemon-side Coder + Explorer tool executors. The gap between architecture and implementation is now the narrowest it has been (~0.5 point). The four dense modules have grown rather than shrunk and remain the ceiling.
 - 2026-04-08 Codex reassessment: full-point bump on implementation shape (7.5 → 8.5). Overall moves from 8 → 8.5 because the remaining gap is concentrated in dense coordination modules and enforcement maturity.
 - 2026-04-08 Claude reassessment: full-point bump on implementation shape (6.5 → 7.5). Overall moves from 7.5 → 8 because shared runtime, memory hardening, task graph, and CLI convergence have materially closed the design-vs-code gap. Dense modules remain the ceiling.
 - 2026-04-08 Gemini reassessment: full-point bump on implementation shape (7 → 8). Overall moves from 8 → 8.5. The adapter layer synchronization risks and migration bridge fragilities have been largely resolved by the daemon's streaming event convergence and CLI consumption of shared `lib/` contracts.
