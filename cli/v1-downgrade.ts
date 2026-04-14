@@ -90,20 +90,37 @@ function pickString(obj: Record<string, unknown>, key: string): string | undefin
 }
 
 /**
- * Resolve the parent runId to attribute synthesized tokens to. For
- * `subagent.*` events, the envelope's `runId` is the *childRunId* and
- * the parent is in `payload.parentRunId`. For `task_graph.*` events,
- * the envelope's `runId` is already the parent. Fallback order:
+ * Resolve the parent runId to attribute synthesized tokens to. The
+ * resolution differs by event family because the wire envelope's
+ * `runId` field carries different values depending on the emitter:
  *
- *   1. `payload.parentRunId` (preferred for subagent.*)
- *   2. `event.runId` (the envelope field — already parent for task_graph.*)
- *   3. null → caller should drop the synthesized event entirely,
- *      since there is no legitimate runId to attribute it to.
+ *   - `subagent.*` events — pushd sets the envelope `runId` to the
+ *     *childRunId* and puts the parent in `payload.parentRunId`. The
+ *     envelope runId must NEVER be used as a fallback here or
+ *     synthesized tokens will attribute to the sub-agent's own run,
+ *     which a v1 client that's only listening to the parent run will
+ *     silently drop (Gemini 🟡 feedback on PR #281). If
+ *     `payload.parentRunId` is missing, give up and return null —
+ *     the caller drops the synthesized event entirely.
+ *
+ *   - `task_graph.*` events — pushd sets the envelope `runId` to the
+ *     parent run directly (task graphs are bound to the parent's
+ *     stream). Fallback to `event.runId` is safe for these because
+ *     it *is* the parent.
+ *
+ * Callers that can't resolve a parent runId drop the synthesized
+ * event rather than attribute it to the wrong stream.
  */
 function resolveParentRunId(event: DowngradeEventEnvelope): string | null {
   const payload = isPlainObject(event.payload) ? event.payload : {};
   const fromPayload = pickString(payload, 'parentRunId');
   if (fromPayload) return fromPayload;
+  // `subagent.*` events must NOT fall through to `event.runId` — that
+  // field is the child's run id and would mis-route the synthesized
+  // token away from v1 clients listening on the parent.
+  if (typeof event.type === 'string' && event.type.startsWith('subagent.')) {
+    return null;
+  }
   if (typeof event.runId === 'string' && event.runId.length > 0) return event.runId;
   return null;
 }

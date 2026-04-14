@@ -412,6 +412,47 @@ export function broadcastEvent(sessionId, event) {
   }
 }
 
+/**
+ * Emit a single event to a single client applying the same v1 synthetic
+ * downgrade rules as `broadcastEvent`'s live-fanout slow path. Used by
+ * the replay path inside `handleAttachSession` so a v1 client that
+ * reconnects with `lastSeenSeq` doesn't receive raw `subagent.*` /
+ * `task_graph.*` events from disk and silently drop them.
+ *
+ * Fixes the PR #281 codex P1 feedback: before this helper, the replay
+ * loop called `emitEvent(event)` directly, which reintroduced the exact
+ * "unknown event gets dropped" gap the live broadcast was meant to
+ * close. Now every path that emits a delegation event to a client goes
+ * through capability-aware synthesis.
+ *
+ * `capabilities` is a `Set<string>` matching the shape stored in
+ * `sessionClients`. Callers that track capabilities as arrays should
+ * wrap in `new Set(arr)` before calling.
+ */
+function emitEventWithDowngrade(event, emitFn, capabilities) {
+  const isDelegation = isV2DelegationEvent(event.type);
+  if (!isDelegation || capabilities.has('event_v2')) {
+    try {
+      emitFn(event);
+    } catch {
+      /* client may have disconnected */
+    }
+    return;
+  }
+  // v1 client + delegation event — synthesize the downgrade shadow(s).
+  const synthesized = synthesizeV1DelegationEvent(event);
+  if (isStrictModeEnabled()) {
+    for (const synth of synthesized) assertValidEvent(synth);
+  }
+  for (const synth of synthesized) {
+    try {
+      emitFn(synth);
+    } catch {
+      /* client may have disconnected */
+    }
+  }
+}
+
 // ─── Request handlers ────────────────────────────────────────────
 
 async function handleHello(req) {
@@ -760,22 +801,29 @@ async function handleAttachSession(req, emitEvent) {
   // include `'event_v2'` receive raw delegation envelopes, clients
   // that omit it (or pass `capabilities: []`, or don't include the
   // field at all) receive synthesized `assistant_token` shadows.
-  addSessionClient(
-    sessionId,
-    emitEvent,
-    Array.isArray(clientCapabilities) ? clientCapabilities : [],
-  );
+  const capabilitiesArray = Array.isArray(clientCapabilities) ? clientCapabilities : [];
+  addSessionClient(sessionId, emitEvent, capabilitiesArray);
+  // Same capability set is used to drive the replay path below so v1
+  // clients see synthesized events for missed delegation rounds as
+  // well as live ones (codex P1 on PR #281).
+  const replayCapabilities = new Set(capabilitiesArray);
 
   const { state } = entry;
   const currentSeq = state.eventSeq;
   const fromSeq = (lastSeenSeq || 0) + 1;
 
-  // Replay missed events from disk
+  // Replay missed events from disk. Route each through
+  // `emitEventWithDowngrade` so v1 clients don't silently drop raw
+  // `subagent.*` / `task_graph.*` envelopes that landed on disk while
+  // they were disconnected. The live fan-out path already does this
+  // via `broadcastEvent`; the replay path has to do it too or
+  // reconnects on `lastSeenSeq` reintroduce the gap this PR was meant
+  // to close.
   try {
     const allEvents = await loadSessionEvents(sessionId);
     const missed = allEvents.filter((e) => e.seq >= fromSeq && e.seq <= currentSeq);
     for (const event of missed) {
-      emitEvent(event);
+      emitEventWithDowngrade(event, emitEvent, replayCapabilities);
     }
   } catch {
     // best-effort replay
@@ -2684,12 +2732,21 @@ function handleConnection(socket) {
   // Remember the capabilities the client most recently advertised at
   // attach-time so that a later auto-attach (start_session /
   // send_user_message on the same socket) inherits them. Without this
-  // a client that attached with `event_v2`, then later sent a new
-  // `send_user_message`, would have the auto-attach register it as a
-  // v1 client and the subsequent delegation events would get
-  // synthesized into `assistant_token`s even though the client is v2-
-  // capable. Capabilities stay pinned for the lifetime of the socket.
-  let socketCapabilities = [];
+  // a client that sends `start_session` or `send_user_message` with
+  // capabilities but no prior `attach_session` would have the
+  // auto-attach register it as a v1 client, and delegation events
+  // would get synthesized into `assistant_token`s even though the
+  // client is v2-capable (codex P1 feedback on PR #281).
+  //
+  // Capabilities are pinned on the FIRST observed request that
+  // carries a `capabilities` array — any request type (attach_session,
+  // start_session, send_user_message). Subsequent requests with
+  // capability arrays are ignored to prevent a client from flipping
+  // between v1/v2 behaviour mid-connection, which would change how
+  // delegation events route for clients attached via auto-attach.
+  // `null` sentinel means "not yet observed"; once pinned the value
+  // persists until the socket closes.
+  let socketCapabilities = null;
 
   const emitEvent = (event) => {
     try {
@@ -2708,12 +2765,17 @@ function handleConnection(socket) {
       if (!line.trim()) continue;
       try {
         const req = JSON.parse(line);
-        // Pick up capabilities as soon as the client declares them,
-        // before dispatching — handlers (specifically
-        // `handleAttachSession`) will re-use these via their own
-        // `addSessionClient` call, but auto-attach paths below also
-        // need to see them.
-        if (req.type === 'attach_session' && Array.isArray(req.payload?.capabilities)) {
+        // Pin capabilities on first-observed request of ANY type that
+        // carries a `capabilities` array. This covers:
+        //   - explicit `attach_session` (the documented path)
+        //   - `start_session` (first request on a fresh socket)
+        //   - `send_user_message` (clients that only ever send turns)
+        //   - `hello` (capability negotiation handshake)
+        // The second-and-later capability arrays are ignored — pin-on-
+        // first keeps the socket's classification stable for the
+        // lifetime of the connection so delegation-event routing can't
+        // flip mid-session.
+        if (socketCapabilities === null && Array.isArray(req.payload?.capabilities)) {
           socketCapabilities = req.payload.capabilities;
         }
         const response = await handleRequest(req, emitEvent);

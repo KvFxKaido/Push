@@ -120,7 +120,16 @@ describe('synthesizeV1DelegationEvent — subagent events', () => {
     assertValidEnvelope(out[0]);
   });
 
-  it('falls back to envelope.runId when payload.parentRunId is missing', () => {
+  it('drops subagent events when payload.parentRunId is missing (no envelope.runId fallback)', () => {
+    // Gemini 🟡 feedback on PR #281: for `subagent.*` events the
+    // envelope `runId` is the CHILD's run id, not the parent's. An
+    // earlier version of `resolveParentRunId` fell through to
+    // `event.runId` when `payload.parentRunId` was missing, which
+    // mis-attributed the synthesized `assistant_token` to the child
+    // run — v1 clients listening to the parent's stream silently
+    // dropped it. The fix: no envelope-runId fallback for
+    // subagent.* events. If parentRunId is absent, drop the
+    // synthesized event entirely rather than attribute it wrong.
     const envelope = makeEnvelope(
       'subagent.started',
       {
@@ -128,11 +137,24 @@ describe('synthesizeV1DelegationEvent — subagent events', () => {
         agent: 'reviewer',
         detail: 'single-turn review',
       },
-      { runId: 'run_parent_fallback' },
+      { runId: 'run_child_would_be_wrong' },
+    );
+    const out = synthesizeV1DelegationEvent(envelope);
+    assert.equal(out.length, 0);
+  });
+
+  it('still uses envelope.runId fallback for task_graph events (parent runId is on the envelope)', () => {
+    // task_graph.* events are emitted with the envelope runId set to
+    // the parent run directly (task graphs are bound to the parent
+    // stream), so the fallback is safe for these.
+    const envelope = makeEnvelope(
+      'task_graph.task_ready',
+      { executionId: 'graph_1', taskId: 'a', agent: 'explorer', detail: 'ready' },
+      { runId: 'run_parent_direct' },
     );
     const out = synthesizeV1DelegationEvent(envelope);
     assert.equal(out.length, 1);
-    assert.equal(out[0].runId, 'run_parent_fallback');
+    assert.equal(out[0].runId, 'run_parent_direct');
   });
 
   it('returns [] when both parentRunId and envelope.runId are missing', () => {
