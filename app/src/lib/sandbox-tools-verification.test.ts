@@ -166,9 +166,13 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
   });
 
   it('auto-detects pytest from pyproject.toml and parses pytest-style output', async () => {
+    // Internally consistent all-pass scenario: exit code 0 and the parsed
+    // counts agree. The cargo failure test below pins the parsed-with-failure
+    // branch; keeping this scenario clean avoids any ambiguity about whether
+    // PASS/FAIL keys off exit code or parsed counts.
     vi.mocked(sandboxClient.execInSandbox)
       .mockResolvedValueOnce(ok('pyproject.toml\n'))
-      .mockResolvedValueOnce(ok('3 passed, 1 failed in 0.12s\n', ''));
+      .mockResolvedValueOnce(ok('3 passed, 0 failed in 0.12s\n', ''));
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_run_tests', args: {} }, 'sb-py');
 
@@ -187,7 +191,7 @@ describe('executeSandboxToolCall -- sandbox_run_tests', () => {
     };
     expect(data.framework).toBe('pytest');
     expect(data.passed).toBe(3);
-    expect(data.failed).toBe(1);
+    expect(data.failed).toBe(0);
   });
 
   it('falls back to npm test when auto-detection finds nothing', async () => {
