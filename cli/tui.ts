@@ -2042,6 +2042,16 @@ export async function runTUI(options = {}) {
 
   // ── Engine event handler ─────────────────────────────────────────
 
+  // Visible-emission counter for the active run. Reset at `runPrompt()` start.
+  // Incremented whenever an engine event causes a transcript-length delta,
+  // so `run_complete` can detect a fully silent run (no text, no tool calls,
+  // no status/warning/error entries) and surface a diagnostic instead of
+  // rendering nothing. Silent runs are a known failure mode when the CLI
+  // tool-call parser drops a malformed fenced tool call before either the
+  // assistant prose or `tool.call_malformed` events can reach the transcript
+  // — see docs/decisions/Tool-Call Parser Convergence Gap.md.
+  let runVisibleEmissionCount = 0;
+
   function flushPendingAssistantStream() {
     if (!tuiState.streamBuf) return;
     addTranscriptEntry(tuiState, 'assistant', tuiState.streamBuf);
@@ -2049,6 +2059,8 @@ export async function runTUI(options = {}) {
   }
 
   function handleEngineEvent(event) {
+    const transcriptLenBefore = tuiState.transcript.length;
+    const streamBufBefore = tuiState.streamBuf;
     switch (event.type) {
       case 'assistant_thinking_token':
         if (!tuiState.reasoningStreaming) {
@@ -2224,7 +2236,7 @@ export async function runTUI(options = {}) {
         }
         break;
 
-      case 'run_complete':
+      case 'run_complete': {
         tuiState.runState = 'idle';
         // assistant_done normally flushes the stream; this is a fallback for
         // failed/aborted runs that ended after partial output.
@@ -2233,10 +2245,31 @@ export async function runTUI(options = {}) {
         if (tuiState.reasoningBuf.trim()) {
           tuiState.lastReasoning = tuiState.reasoningBuf;
         }
+        // Layer 3 safety net for the tool-call parser convergence gap:
+        // if the run produced zero visible output (no streamed prose, no
+        // tool calls, no status/warning/error entries), the TUI would
+        // otherwise render nothing and the user would see silence. The
+        // most common cause is the CLI's `detectAllToolCalls` silently
+        // dropping a malformed fenced tool call emitted by a model that
+        // knows tool-call *shape* but omits the opening fence. Surface a
+        // diagnostic so "empty transcript on daemon" stops being invisible.
+        // See docs/decisions/Tool-Call Parser Convergence Gap.md.
+        if (runVisibleEmissionCount === 0) {
+          addTranscriptEntry(
+            tuiState,
+            'warning',
+            'Assistant response was empty — no text, tool calls, or status events. ' +
+              'This can happen when the model emits a malformed fenced tool call ' +
+              'that the CLI parser silently drops. See ' +
+              'docs/decisions/Tool-Call Parser Convergence Gap.md.',
+          );
+        }
+        runVisibleEmissionCount = 0;
         tuiState.dirty.add('all');
         process.stdout.write('\x07'); // bell
         scheduler.schedule();
         break;
+      }
 
       default:
         // Delegation lifecycle events (`subagent.*`, `task_graph.*`) are
@@ -2254,6 +2287,21 @@ export async function runTUI(options = {}) {
           }
         }
         break;
+    }
+
+    // Track whether this event produced user-visible output for the current
+    // run. A transcript-length delta captures every case that calls
+    // `addTranscriptEntry` / `pushTranscriptEntry` (assistant text,
+    // tool_call, tool.call_malformed, status, warning, error, delegation
+    // entries). A streamBuf delta captures partial prose that has not yet
+    // been flushed to the transcript — we still count the run as having
+    // produced output, so a later flush on `run_complete` does not
+    // double-count. See the comment on `runVisibleEmissionCount`.
+    if (
+      tuiState.transcript.length > transcriptLenBefore ||
+      (streamBufBefore === '' && tuiState.streamBuf !== '')
+    ) {
+      runVisibleEmissionCount += 1;
     }
   }
 
@@ -2418,6 +2466,9 @@ export async function runTUI(options = {}) {
     tuiState.runState = 'running';
     tuiState.reasoningBuf = '';
     tuiState.reasoningStreaming = false;
+    // Reset visible-emission counter so the run_complete safety net can
+    // detect a fully silent run (see docs/decisions/Tool-Call Parser Convergence Gap.md).
+    runVisibleEmissionCount = 0;
     tuiState.dirty.add('all');
     scheduler.flush();
 
