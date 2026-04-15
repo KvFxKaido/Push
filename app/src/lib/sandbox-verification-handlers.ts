@@ -25,7 +25,8 @@
  *     All sandbox/platform functions enter through the handler context.
  *   - **API:** the dispatcher's `executeSandboxToolCall` remains the
  *     public entry point. This module exports the three handler
- *     functions plus the context type; nothing else.
+ *     functions plus the `VerificationHandlerContext` and
+ *     `VerificationExecInSandbox` types; nothing else.
  *   - **Dependency:** no import cycles. No barrel masking. No import
  *     from `./sandbox-tools`.
  *   - **Locality:** a future verification change should touch only this
