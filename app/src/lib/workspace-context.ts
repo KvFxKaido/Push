@@ -182,3 +182,17 @@ export function buildSessionCapabilityBlock(
     '[/SESSION_CAPABILITIES]',
   ].join('\n');
 }
+export function buildSandboxEnvironmentBlock(hasSandbox?: boolean): string {
+  if (!hasSandbox) return '';
+  const env = getSandboxEnvironment();
+  if (!env) return '';
+
+  const payload = {
+    uptime_seconds: env.uptime_seconds,
+    container_ttl: env.container_ttl,
+  };
+
+  return ['[SANDBOX_ENVIRONMENT]', JSON.stringify(payload, null, 2), '[/SANDBOX_ENVIRONMENT]'].join(
+    '\n',
+  );
+}

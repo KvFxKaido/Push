@@ -12,7 +12,7 @@ import { buildUserIdentityBlock } from '@push/lib/user-identity';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { buildModelCapabilityAwarenessBlock } from './model-capabilities';
 import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
-import { buildSessionCapabilityBlock } from './workspace-context';
+import { buildSessionCapabilityBlock, buildSandboxEnvironmentBlock } from './workspace-context';
 import { diffSnapshots, formatSnapshotDiff, type PromptSnapshot } from './system-prompt-builder';
 import {
   buildOrchestratorBaseBuilder,
@@ -222,6 +222,10 @@ function toLLMMessages(
         envContent += '\n' + TOOL_PROTOCOL;
       }
       builder.set('environment', envContent);
+
+      if (hasSandbox) {
+        builder.set('sandbox_environment', buildSandboxEnvironmentBlock(true));
+      }
     }
 
     // Session-level verification policy (from workspace context)

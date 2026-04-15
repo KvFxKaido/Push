@@ -33,6 +33,7 @@ export interface SandboxEnvironment {
   scripts?: Record<string, string>; // e.g. { test: "vitest run", lint: "eslint ." }
   git_available?: boolean; // whether git works in the sandbox
   container_ttl?: string; // e.g. "30m"
+  uptime_seconds?: number; // seconds since sandbox start
   writable_root?: string; // e.g. "/workspace"
   readiness?: {
     package_manager?: string;
@@ -657,6 +658,13 @@ export function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null
     );
   }
 
+  const uptimeLines = sections['UPTIME'] || [];
+  const uptimeRaw = uptimeLines[0];
+  let uptimeSeconds: number | undefined;
+  if (uptimeRaw && uptimeRaw !== 'MISSING') {
+    uptimeSeconds = Math.floor(parseFloat(uptimeRaw.split(' ')[0]));
+  }
+
   const result: SandboxEnvironment = { tools };
   if (markers.length) result.project_markers = markers;
   if (warnings.length) result.warnings = warnings;
@@ -665,6 +673,7 @@ export function parseEnvironmentProbe(stdout: string): SandboxEnvironment | null
   result.git_available = gitAvailable;
   result.container_ttl = '30m';
   result.writable_root = '/workspace';
+  if (uptimeSeconds !== undefined) result.uptime_seconds = uptimeSeconds;
   if (Object.keys(readiness).length > 0) result.readiness = readiness;
   return result;
 }
@@ -678,6 +687,8 @@ const ENVIRONMENT_PROBE_SCRIPT =
   'echo "python:$(python3 -V 2>/dev/null || echo MISSING)";' +
   'echo "---DISK---";' +
   "df -BM /workspace 2>/dev/null | tail -1 | awk '{print $4}';" +
+  'echo "---UPTIME---";' +
+  'cat /proc/uptime 2>/dev/null || echo MISSING;' +
   'echo "---MARKERS---";' +
   'cd /workspace 2>/dev/null && for f in package.json package-lock.json yarn.lock pnpm-lock.yaml' +
   ' requirements.txt pyproject.toml setup.py Cargo.toml go.mod pom.xml Gemfile Makefile; do' +
