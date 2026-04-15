@@ -78,6 +78,10 @@ import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
 import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
 import { createCoderPolicy } from './turn-policies/coder-policy';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
+import {
+  correlationToSpanAttributes,
+  EMPTY_CORRELATION_CONTEXT,
+} from '@push/lib/correlation-context';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
 
 // ---------------------------------------------------------------------------
@@ -182,6 +186,12 @@ export async function runCoderAgent(
     plannerBrief?: string;
     verificationPolicy?: VerificationPolicy;
     declaredCapabilities?: import('./capabilities').Capability[];
+    /**
+     * Passive correlation tags captured by the caller and threaded into
+     * tool-execution spans (`push.chat_id`, `push.execution_id`, etc.).
+     * Never alters tool behavior — see `lib/correlation-context.ts`.
+     */
+    correlation?: import('@push/lib/correlation-context').CorrelationContext;
   },
 ): Promise<CoderResult> {
   // --- Normalise: envelope-based call → unified locals ---
@@ -227,6 +237,7 @@ export async function runCoderAgent(
       branchContext: envelope.branchContext,
       instructionFilename: envelope.instructionFilename,
       verificationPolicy: envelope.verificationPolicy,
+      correlation: envelope.correlation,
     };
   } else {
     task = taskOrEnvelope;
@@ -363,6 +374,9 @@ export async function runCoderAgent(
           scope: 'push.coder',
           kind: SpanKind.INTERNAL,
           attributes: {
+            ...correlationToSpanAttributes(
+              effectiveDelegationContext?.correlation ?? EMPTY_CORRELATION_CONTEXT,
+            ),
             'push.agent.role': 'coder',
             'push.round': execCtx.round,
             'push.tool.name': 'web_search',
@@ -432,6 +446,9 @@ export async function runCoderAgent(
         scope: 'push.coder',
         kind: SpanKind.INTERNAL,
         attributes: {
+          ...correlationToSpanAttributes(
+            effectiveDelegationContext?.correlation ?? EMPTY_CORRELATION_CONTEXT,
+          ),
           'push.agent.role': 'coder',
           'push.round': execCtx.round,
           'push.tool.name': sandboxCall.call.tool,

@@ -40,6 +40,11 @@ import {
 import { formatElapsedTime } from '@/lib/utils';
 import { createId } from '@/hooks/chat-persistence';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
+import {
+  correlationToSpanAttributes,
+  extendCorrelation,
+  type CorrelationContext,
+} from '@push/lib/correlation-context';
 import type { RunEngineEvent } from '@/lib/run-engine';
 import type { VerificationPolicy } from '@/lib/verification-policy';
 import type {
@@ -239,6 +244,14 @@ export function useAgentDelegation({
     ): Promise<ToolExecutionResult> => {
       let toolExecResult: ToolExecutionResult = { text: '' };
       const verificationPolicy = getVerificationPolicyForChat(chatId);
+      // Base correlation context for every span emitted in this delegation.
+      // Per-role extensions (executionId, taskGraphId, taskId) are built
+      // by `extendCorrelation` at each span site so the merge is
+      // copy-on-write rather than mutation.
+      const baseCorrelation: CorrelationContext = {
+        surface: 'web',
+        chatId,
+      };
 
       if (toolCall.call.tool === 'delegate_explorer') {
         const executionId = createId();
@@ -273,14 +286,15 @@ export function useAgentDelegation({
             explorerArgs.files,
           );
           try {
+            const explorerCorrelation = extendCorrelation(baseCorrelation, { executionId });
             const explorerResult = await withActiveSpan(
               'subagent.explorer',
               {
                 scope: 'push.delegation',
                 kind: SpanKind.INTERNAL,
                 attributes: {
+                  ...correlationToSpanAttributes(explorerCorrelation),
                   'push.agent.role': 'explorer',
-                  'push.execution_id': executionId,
                   'push.task_count': 1,
                   'push.provider': lockedProviderForChat,
                   'push.model': resolvedModelForChat,
@@ -534,14 +548,17 @@ export function useAgentDelegation({
                   },
                   { chatId, source: 'coder' },
                 );
+                const plannerCorrelation = extendCorrelation(baseCorrelation, {
+                  executionId: plannerExecutionId,
+                });
                 const plan = await withActiveSpan(
                   'subagent.planner',
                   {
                     scope: 'push.delegation',
                     kind: SpanKind.INTERNAL,
                     attributes: {
+                      ...correlationToSpanAttributes(plannerCorrelation),
                       'push.agent.role': 'planner',
-                      'push.execution_id': plannerExecutionId,
                       'push.provider': lockedProviderForChat,
                       'push.model': resolvedModelForChat,
                     },
@@ -649,14 +666,15 @@ export function useAgentDelegation({
                   verificationCommandsById.set(criterionId, command);
                 }
                 const seqBi = branchInfoRef.current;
+                const coderCorrelation = extendCorrelation(baseCorrelation, { executionId });
                 const coderResult = await withActiveSpan(
                   'subagent.coder',
                   {
                     scope: 'push.delegation',
                     kind: SpanKind.INTERNAL,
                     attributes: {
+                      ...correlationToSpanAttributes(coderCorrelation),
                       'push.agent.role': 'coder',
-                      'push.execution_id': executionId,
                       'push.task_index': taskIndex,
                       'push.task_count': taskList.length,
                       'push.provider': lockedProviderForChat,
@@ -703,6 +721,7 @@ export function useAgentDelegation({
                         plannerBrief,
                         verificationPolicy,
                         declaredCapabilities: delegateArgs.declaredCapabilities,
+                        correlation: coderCorrelation,
                       },
                     );
                     setSpanAttributes(span, {
@@ -801,14 +820,17 @@ export function useAgentDelegation({
                   // falsely trigger the "hit round cap" signal.
                   const evalMaxRounds =
                     harnessSettings.maxCoderRounds * Math.max(taskList.length, 1);
+                  const auditorCorrelation = extendCorrelation(baseCorrelation, {
+                    executionId: auditorExecutionId,
+                  });
                   coderEvalResult = await withActiveSpan(
                     'subagent.auditor',
                     {
                       scope: 'push.delegation',
                       kind: SpanKind.INTERNAL,
                       attributes: {
+                        ...correlationToSpanAttributes(auditorCorrelation),
                         'push.agent.role': 'auditor',
-                        'push.execution_id': auditorExecutionId,
                         'push.provider': lockedProviderForChat,
                         'push.model': resolvedModelForChat,
                         'push.criteria_count': allCriteriaResults.length,
@@ -1169,12 +1191,18 @@ export function useAgentDelegation({
                   const explorerStartMs = Date.now();
                   let explorerResult;
                   try {
+                    const nodeCorrelation = extendCorrelation(baseCorrelation, {
+                      executionId,
+                      taskGraphId: executionId,
+                      taskId: node.id,
+                    });
                     explorerResult = await withActiveSpan(
                       'taskgraph.explorer',
                       {
                         scope: 'push.delegation',
                         kind: SpanKind.INTERNAL,
                         attributes: {
+                          ...correlationToSpanAttributes(nodeCorrelation),
                           'push.agent.role': 'explorer',
                           'push.taskgraph.node_id': node.id,
                           'push.provider': lockedProviderForChat,
@@ -1270,12 +1298,18 @@ export function useAgentDelegation({
                   );
                   let coderResult;
                   try {
+                    const nodeCorrelation = extendCorrelation(baseCorrelation, {
+                      executionId,
+                      taskGraphId: executionId,
+                      taskId: node.id,
+                    });
                     coderResult = await withActiveSpan(
                       'taskgraph.coder',
                       {
                         scope: 'push.delegation',
                         kind: SpanKind.INTERNAL,
                         attributes: {
+                          ...correlationToSpanAttributes(nodeCorrelation),
                           'push.agent.role': 'coder',
                           'push.taskgraph.node_id': node.id,
                           'push.provider': lockedProviderForChat,
@@ -1320,6 +1354,7 @@ export function useAgentDelegation({
                             instructionFilename: instructionFilenameRef.current || undefined,
                             harnessSettings: harnessSettings || undefined,
                             verificationPolicy,
+                            correlation: nodeCorrelation,
                           },
                         );
                         setSpanAttributes(span, {
@@ -1427,12 +1462,17 @@ export function useAgentDelegation({
               };
 
               // Execute the task graph
+              const graphCorrelation = extendCorrelation(baseCorrelation, {
+                executionId,
+                taskGraphId: executionId,
+              });
               const graphResult = await withActiveSpan(
                 'taskgraph.execute',
                 {
                   scope: 'push.delegation',
                   kind: SpanKind.INTERNAL,
                   attributes: {
+                    ...correlationToSpanAttributes(graphCorrelation),
                     'push.taskgraph.node_count': graphArgs.tasks.length,
                     'push.provider': lockedProviderForChat,
                     'push.model': resolvedModelForChat,
@@ -1627,14 +1667,18 @@ export function useAgentDelegation({
                     );
                     const evalWorkingMemory =
                       coderNodeStates.length <= 1 ? lastCoderStateRef.current : null;
+                    const graphAuditorCorrelation = extendCorrelation(baseCorrelation, {
+                      executionId: auditorExecutionId,
+                      taskGraphId: executionId,
+                    });
                     graphAuditResult = await withActiveSpan(
                       'subagent.auditor',
                       {
                         scope: 'push.delegation',
                         kind: SpanKind.INTERNAL,
                         attributes: {
+                          ...correlationToSpanAttributes(graphAuditorCorrelation),
                           'push.agent.role': 'auditor',
-                          'push.execution_id': auditorExecutionId,
                           'push.provider': lockedProviderForChat,
                           'push.model': resolvedModelForChat,
                           'push.criteria_count': aggregatedChecks.length,

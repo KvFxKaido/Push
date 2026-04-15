@@ -9,6 +9,11 @@ import type { ChatCard, ToolExecutionResult } from '@/types';
 import { createDefaultApprovalGates, type ApprovalGateRegistry } from './approval-gates';
 import type { AgentRole } from '@push/lib/runtime-contract';
 import type { ToolExecutionRuntime } from '@push/lib/tool-execution-runtime';
+import {
+  correlationToSpanAttributes,
+  EMPTY_CORRELATION_CONTEXT,
+  type CorrelationContext,
+} from '@push/lib/correlation-context';
 import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
 import { type AnyToolCall } from './tool-dispatch';
 import type { ToolHookRegistry } from './tool-hooks';
@@ -56,6 +61,12 @@ export interface ExecuteReadOnlyToolOptions {
    * calls — that mismatch needs its own audit first.
    */
   role?: AgentRole;
+  /**
+   * Passive correlation tags to attach to the tool-execution span as
+   * `push.*` attributes (see `lib/correlation-context.ts`). Never alters
+   * tool behavior.
+   */
+  correlation?: CorrelationContext;
 }
 
 /**
@@ -71,13 +82,14 @@ export async function executeReadOnlyTool(
   hooks: ToolHookRegistry,
   options: ExecuteReadOnlyToolOptions = {},
 ): Promise<{ resultText: string; card?: ChatCard }> {
-  const { capabilityLedger, runtime, role } = options;
+  const { capabilityLedger, runtime, role, correlation } = options;
   return withActiveSpan(
     'tool.execute',
     {
       scope: 'push.tools',
       kind: SpanKind.INTERNAL,
       attributes: {
+        ...correlationToSpanAttributes(correlation ?? EMPTY_CORRELATION_CONTEXT),
         'push.tool.name': toolCall.call.tool,
         'push.tool.source': toolCall.source,
         'push.provider': activeProvider,
