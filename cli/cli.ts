@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline/promises';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
@@ -1456,8 +1457,10 @@ async function runDaemonSubcommand(positionals) {
     // Launch pushd as a detached child process.
     const { spawn } = await import('node:child_process');
     // Derive pushd entry from the current runtime file extension (.js → .js, .ts → .ts, .mjs → .mjs).
+    // Use fileURLToPath so percent-encoded chars (spaces, etc.) decode correctly
+    // and Windows paths don't get a leading slash from URL.pathname.
     const currentExt = import.meta.url.match(/\.(m?[jt]s)$/)?.[1] ?? 'mjs';
-    const pushdPath = new URL(`./pushd.${currentExt}`, import.meta.url).pathname;
+    const pushdPath = fileURLToPath(new URL(`./pushd.${currentExt}`, import.meta.url));
 
     // When the parent is running under tsx (currentExt === 'ts'), the child
     // also needs the tsx loader — plain `node pushd.ts` dies with
@@ -1469,19 +1472,30 @@ async function runDaemonSubcommand(positionals) {
     // Redirect pushd's stdout/stderr to a log file. Previously stdio was
     // 'ignore', which hid every startup crash — a daemon that dies before
     // the socket comes up looked identical to one that's still initializing.
+    // Harden the dir + file perms explicitly: fs.open's mode arg only applies
+    // on first creation, so a pre-existing dir/file may retain looser perms.
     const logPath = getLogPath();
-    await fs.mkdir(path.dirname(logPath), { recursive: true });
+    const logDir = path.dirname(logPath);
+    await fs.mkdir(logDir, { recursive: true, mode: 0o700 });
+    await fs.chmod(logDir, 0o700);
     const logHandle = await fs.open(logPath, 'a', 0o600);
+    await fs.chmod(logPath, 0o600);
 
-    const child = spawn(process.execPath, nodeArgs, {
-      detached: true,
-      stdio: ['ignore', logHandle.fd, logHandle.fd],
-      env: { ...process.env },
-    });
-    child.unref();
-    // The child inherits the fd via dup(); release our own handle so the
-    // parent process can exit without holding the log file open.
-    await logHandle.close();
+    // try/finally so a spawn() throw (invalid execPath, bad args) can't leak
+    // the log file descriptor in the parent.
+    let child;
+    try {
+      child = spawn(process.execPath, nodeArgs, {
+        detached: true,
+        stdio: ['ignore', logHandle.fd, logHandle.fd],
+        env: { ...process.env },
+      });
+      child.unref();
+    } finally {
+      // The child inherits the fd via dup(); release our own handle so the
+      // parent process can exit without holding the log file open.
+      await logHandle.close();
+    }
 
     // Wait for daemon to become ready
     const socketPath = getSocketPath();
