@@ -17,8 +17,6 @@ import type {
   DiffPreviewCardData,
   CommitReviewCardData,
   FileListCardData,
-  TestResultsCardData,
-  TypeCheckCardData,
   ToolMutationCheckResult,
   ToolMutationDiagnostic,
   ToolMutationFilePostcondition,
@@ -123,6 +121,12 @@ import {
   runPerEditDiagnostics,
   runPatchsetDiagnostics,
 } from './sandbox-edit-ops';
+import {
+  handleRunTests,
+  handleCheckTypes,
+  handleVerifyWorkspace,
+  type VerificationHandlerContext,
+} from './sandbox-verification-handlers';
 
 // --- Barrel re-exports (preserve existing consumer import paths) ---
 export { clearFileVersionCache } from './sandbox-file-version-cache';
@@ -141,78 +145,6 @@ export {
 const POSTCONDITION_OUTPUT_LIMIT = 1200;
 const SUPPORTED_PER_EDIT_DIAGNOSTIC_EXT_RE = /\.(ts|tsx|js|jsx|py)$/i;
 const SUPPORTED_PATCHSET_DIAGNOSTIC_EXT_RE = /\.(ts|tsx)$/i;
-
-interface WorkspaceVerifyStep {
-  id: 'install' | 'typecheck' | 'test';
-  label: string;
-  command: string;
-  markWorkspaceMutated: boolean;
-}
-
-function getWorkspaceInstallCommand(packageManager: string | undefined): string | null {
-  switch (packageManager) {
-    case 'npm':
-      return 'npm install';
-    case 'yarn':
-      return 'yarn install';
-    case 'pnpm':
-      return 'pnpm install';
-    case 'bun':
-      return 'bun install';
-    default:
-      return null;
-  }
-}
-
-function buildWorkspaceVerifySteps(sandboxId: string): {
-  steps: WorkspaceVerifyStep[];
-  warnings: string[];
-} {
-  const readiness = getSandboxEnvironment(sandboxId)?.readiness;
-  const steps: WorkspaceVerifyStep[] = [];
-  const warnings: string[] = [];
-
-  if (readiness?.dependencies === 'missing') {
-    const installCommand = getWorkspaceInstallCommand(readiness.package_manager);
-    if (installCommand) {
-      steps.push({
-        id: 'install',
-        label: 'Install dependencies',
-        command: installCommand,
-        markWorkspaceMutated: true,
-      });
-    } else if (readiness.test_command || readiness.typecheck_command) {
-      warnings.push('Dependencies appear to be missing, but no install command could be inferred.');
-    }
-  }
-
-  if (readiness?.typecheck_command) {
-    steps.push({
-      id: 'typecheck',
-      label: 'Typecheck',
-      command: readiness.typecheck_command,
-      markWorkspaceMutated: false,
-    });
-  }
-
-  if (readiness?.test_command) {
-    steps.push({
-      id: 'test',
-      label: 'Test',
-      command: readiness.test_command,
-      markWorkspaceMutated: true,
-    });
-  }
-
-  return { steps, warnings };
-}
-
-function summarizeWorkspaceVerifyOutput(output: string, maxChars = 4000): string {
-  const trimmed = output.trim();
-  if (!trimmed) return '(no output)';
-  if (trimmed.length <= maxChars) return trimmed;
-  return `${trimmed.slice(0, maxChars)}\n[output truncated]`;
-}
 
 function buildLineRanges(
   lineNumbers: readonly number[],
@@ -460,6 +392,22 @@ function buildPatchsetTouchedFiles(
 }
 
 // --- Execution ---
+
+/**
+ * Wire up the verification-handler context with the dispatcher's actual
+ * infrastructure dependencies. Kept as a local helper (not exported) so
+ * the extraction boundary stays one-way: the handler module never imports
+ * from `sandbox-tools.ts`, and this wiring lives inside the dispatcher.
+ */
+function buildVerificationContext(sandboxId: string): VerificationHandlerContext {
+  return {
+    sandboxId,
+    execInSandbox,
+    getSandboxEnvironment,
+    clearFileVersionCache,
+    clearPrefetchedEditFileCache,
+  };
+}
 
 export async function executeSandboxToolCall(
   call: SandboxToolCall,
@@ -2449,436 +2397,15 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_run_tests': {
-        const start = Date.now();
-
-        // Auto-detect test framework if not specified
-        let command = '';
-        let framework: TestResultsCardData['framework'] = 'unknown';
-
-        if (call.args.framework) {
-          // User specified framework
-          switch (call.args.framework.toLowerCase()) {
-            case 'npm':
-            case 'jest':
-            case 'vitest':
-            case 'mocha':
-              command = 'npm test';
-              framework = 'npm';
-              break;
-            case 'pytest':
-            case 'python':
-              command = 'pytest -v';
-              framework = 'pytest';
-              break;
-            case 'cargo':
-            case 'rust':
-              command = 'cargo test';
-              framework = 'cargo';
-              break;
-            case 'go':
-              command = 'go test ./...';
-              framework = 'go';
-              break;
-            default:
-              command = call.args.framework;
-              framework = 'unknown';
-          }
-        } else {
-          // Auto-detect by checking for config files
-          const detectResult = await execInSandbox(
-            sandboxId,
-            'cd /workspace && ls -1 package.json Cargo.toml go.mod pytest.ini pyproject.toml setup.py 2>/dev/null | head -1',
-          );
-          const detected = detectResult.stdout.trim();
-
-          if (detected === 'package.json') {
-            command = 'npm test';
-            framework = 'npm';
-          } else if (detected === 'Cargo.toml') {
-            command = 'cargo test';
-            framework = 'cargo';
-          } else if (detected === 'go.mod') {
-            command = 'go test ./...';
-            framework = 'go';
-          } else if (['pytest.ini', 'pyproject.toml', 'setup.py'].includes(detected)) {
-            command = 'pytest -v';
-            framework = 'pytest';
-          } else {
-            // Fallback: try npm test
-            command = 'npm test';
-            framework = 'npm';
-          }
-        }
-
-        const result = await execInSandbox(sandboxId, `cd /workspace && ${command}`, undefined, {
-          markWorkspaceMutated: true,
-        });
-        const durationMs = Date.now() - start;
-        // Tests can generate artifacts, coverage files, snapshots, etc.
-        clearFileVersionCache(sandboxId);
-        clearPrefetchedEditFileCache(sandboxId);
-
-        // Parse test results from output
-        const output = result.stdout + '\n' + result.stderr;
-        let passed = 0,
-          failed = 0,
-          skipped = 0,
-          total = 0;
-
-        // npm/jest/vitest patterns
-        const jestMatch =
-          output.match(/Tests:\s*(\d+)\s*passed.*?(\d+)\s*failed.*?(\d+)\s*total/i) ||
-          output.match(/(\d+)\s*passing.*?(\d+)\s*failing/i);
-        // pytest patterns
-        const pytestMatch =
-          output.match(/(\d+)\s*passed.*?(\d+)\s*failed/i) ||
-          output.match(/passed:\s*(\d+).*?failed:\s*(\d+)/i);
-        // cargo patterns
-        const cargoMatch = output.match(/test result:.*?(\d+)\s*passed.*?(\d+)\s*failed/i);
-        // go patterns — count both passing and failing packages
-        const goPassMatch = output.match(/ok\s+.*?\s+(\d+\.\d+)s/g);
-        const goFailMatch = output.match(/FAIL\s+.*?\s+(\d+\.\d+)s/g);
-
-        if (jestMatch) {
-          passed = parseInt(jestMatch[1]) || 0;
-          failed = parseInt(jestMatch[2]) || 0;
-          total = jestMatch[3] ? parseInt(jestMatch[3]) || 0 : passed + failed;
-        } else if (pytestMatch) {
-          passed = parseInt(pytestMatch[1]) || 0;
-          failed = parseInt(pytestMatch[2]) || 0;
-          total = passed + failed;
-        } else if (cargoMatch) {
-          passed = parseInt(cargoMatch[1]) || 0;
-          failed = parseInt(cargoMatch[2]) || 0;
-          total = passed + failed;
-        } else if (goPassMatch || goFailMatch) {
-          passed = goPassMatch ? goPassMatch.length : 0;
-          failed = goFailMatch ? goFailMatch.length : 0;
-          total = passed + failed;
-        }
-
-        // Check for skipped tests
-        const skipMatch = output.match(/(\d+)\s*skipped/i);
-        if (skipMatch) {
-          skipped = parseInt(skipMatch[1]) || 0;
-          total += skipped;
-        }
-
-        const truncated = output.length > 8000;
-        const truncatedOutput = truncated
-          ? output.slice(0, 8000) + '\n\n[...output truncated]'
-          : output;
-
-        const statusIcon = result.exitCode === 0 ? '✓' : '✗';
-        const lines: string[] = [
-          `[Tool Result — sandbox_run_tests]`,
-          `${statusIcon} Tests ${result.exitCode === 0 ? 'PASSED' : 'FAILED'} (${framework})`,
-          `Command: ${command}`,
-          `Duration: ${(durationMs / 1000).toFixed(1)}s`,
-          total > 0
-            ? `Results: ${passed} passed, ${failed} failed${skipped > 0 ? `, ${skipped} skipped` : ''}`
-            : '',
-          `\nOutput:\n${truncatedOutput}`,
-        ].filter(Boolean);
-
-        const cardData: TestResultsCardData = {
-          framework,
-          passed,
-          failed,
-          skipped,
-          total,
-          durationMs,
-          exitCode: result.exitCode,
-          output: truncatedOutput,
-          truncated,
-        };
-
-        return { text: lines.join('\n'), card: { type: 'test-results', data: cardData } };
+        return handleRunTests(buildVerificationContext(sandboxId), call.args);
       }
 
       case 'sandbox_check_types': {
-        const start = Date.now();
-
-        // Auto-detect type checker
-        let command = '';
-        let tool: TypeCheckCardData['tool'] = 'unknown';
-
-        // Explicit priority order: TypeScript checkers first, then Python.
-        // A bare `ls` would alphabetize and return `mypy.ini` ahead of `tsconfig.json`.
-        const detectResult = await execInSandbox(
-          sandboxId,
-          'cd /workspace && for f in tsconfig.json tsconfig.app.json tsconfig.node.json pyrightconfig.json mypy.ini; do [ -f "$f" ] && echo "$f" && break; done',
-        );
-        const detected = detectResult.stdout.trim();
-
-        if (
-          detected === 'tsconfig.json' ||
-          detected === 'tsconfig.app.json' ||
-          detected === 'tsconfig.node.json'
-        ) {
-          // Check if node_modules exists, install if missing
-          const nodeModulesCheck = await execInSandbox(
-            sandboxId,
-            'cd /workspace && ls -d node_modules 2>/dev/null',
-          );
-          if (nodeModulesCheck.exitCode !== 0) {
-            const installResult = await execInSandbox(
-              sandboxId,
-              'cd /workspace && npm install',
-              undefined,
-              { markWorkspaceMutated: true },
-            );
-            if (installResult.exitCode !== 0) {
-              return {
-                text: `[Tool Result — sandbox_check_types]\nFailed to install dependencies:\n${installResult.stderr}`,
-              };
-            }
-            // npm install modifies node_modules, package-lock.json, etc.
-            clearFileVersionCache(sandboxId);
-            clearPrefetchedEditFileCache(sandboxId);
-          }
-
-          // Check if tsc is available and run type check
-          const tscCheck = await execInSandbox(
-            sandboxId,
-            'cd /workspace && npx tsc --version 2>/dev/null',
-          );
-          if (tscCheck.exitCode === 0) {
-            command = 'npx tsc --noEmit';
-            tool = 'tsc';
-          }
-        } else if (detected === 'pyrightconfig.json') {
-          // Check if pyright is available
-          const pyrightCheck = await execInSandbox(
-            sandboxId,
-            'cd /workspace && pyright --version 2>/dev/null',
-          );
-          if (pyrightCheck.exitCode === 0) {
-            command = 'pyright';
-            tool = 'pyright';
-          }
-        } else if (detected === 'mypy.ini') {
-          // Check if mypy is available
-          const mypyCheck = await execInSandbox(
-            sandboxId,
-            'cd /workspace && mypy --version 2>/dev/null',
-          );
-          if (mypyCheck.exitCode === 0) {
-            // Use 'mypy' without args to respect mypy.ini config paths
-            command = 'mypy';
-            tool = 'mypy';
-          }
-        }
-
-        if (!command) {
-          // Fallback: try tsc if package.json exists
-          const pkgCheck = await execInSandbox(
-            sandboxId,
-            'cd /workspace && cat package.json 2>/dev/null',
-          );
-          if (pkgCheck.stdout.includes('typescript')) {
-            command = 'npx tsc --noEmit';
-            tool = 'tsc';
-          } else {
-            return {
-              text: '[Tool Result — sandbox_check_types]\nNo type checker detected. Supported: TypeScript (tsc), Pyright, mypy.',
-            };
-          }
-        }
-
-        const result = await execInSandbox(sandboxId, `cd /workspace && ${command}`, undefined, {
-          markWorkspaceMutated: true,
-        });
-        const durationMs = Date.now() - start;
-
-        const output = result.stdout + '\n' + result.stderr;
-        const errors: TypeCheckCardData['errors'] = [];
-        let errorCount = 0;
-        let warningCount = 0;
-
-        // Parse TypeScript errors: file.ts(line,col): error TS1234: message
-        if (tool === 'tsc') {
-          const tsErrorRegex = /(.+?)\((\d+),(\d+)\):\s*(error|warning)\s*(TS\d+):\s*(.+)/g;
-          let match;
-          while ((match = tsErrorRegex.exec(output)) !== null && errors.length < 50) {
-            const isError = match[4] === 'error';
-            if (isError) errorCount++;
-            else warningCount++;
-            errors.push({
-              file: match[1],
-              line: parseInt(match[2]),
-              column: parseInt(match[3]),
-              message: match[6],
-              code: match[5],
-            });
-          }
-          // Also check for "Found N errors" summary
-          const summaryMatch = output.match(/Found (\d+) errors?/);
-          if (summaryMatch) {
-            errorCount = Math.max(errorCount, parseInt(summaryMatch[1]));
-          }
-        }
-
-        // Parse Pyright errors: file.py:line:col - error: message
-        if (tool === 'pyright') {
-          const pyrightRegex = /(.+?):(\d+):(\d+)\s*-\s*(error|warning):\s*(.+)/g;
-          let match;
-          while ((match = pyrightRegex.exec(output)) !== null && errors.length < 50) {
-            const isError = match[4] === 'error';
-            if (isError) errorCount++;
-            else warningCount++;
-            errors.push({
-              file: match[1],
-              line: parseInt(match[2]),
-              column: parseInt(match[3]),
-              message: match[5],
-            });
-          }
-        }
-
-        // Parse mypy errors: file.py:line: error: message
-        if (tool === 'mypy') {
-          const mypyRegex = /(.+?):(\d+):\s*(error|warning):\s*(.+)/g;
-          let match;
-          while ((match = mypyRegex.exec(output)) !== null && errors.length < 50) {
-            const isError = match[3] === 'error';
-            if (isError) errorCount++;
-            else warningCount++;
-            errors.push({
-              file: match[1],
-              line: parseInt(match[2]),
-              column: 0,
-              message: match[4],
-            });
-          }
-        }
-
-        const truncated = output.length > 8000;
-        const statusIcon = result.exitCode === 0 ? '✓' : '✗';
-        const lines: string[] = [
-          `[Tool Result — sandbox_check_types]`,
-          `${statusIcon} Type check ${result.exitCode === 0 ? 'PASSED' : 'FAILED'} (${tool})`,
-          `Command: ${command}`,
-          `Duration: ${(durationMs / 1000).toFixed(1)}s`,
-          errorCount > 0 || warningCount > 0
-            ? `Found: ${errorCount} error${errorCount !== 1 ? 's' : ''}${warningCount > 0 ? `, ${warningCount} warning${warningCount !== 1 ? 's' : ''}` : ''}`
-            : '',
-        ].filter(Boolean);
-
-        if (errors.length > 0) {
-          lines.push('\nErrors:');
-          for (const err of errors.slice(0, 10)) {
-            lines.push(
-              `  ${err.file}:${err.line}${err.column ? `:${err.column}` : ''} — ${err.message}`,
-            );
-          }
-          if (errors.length > 10) {
-            lines.push(`  ...and ${errors.length - 10} more`);
-          }
-        }
-
-        const cardData: TypeCheckCardData = {
-          tool,
-          errors,
-          errorCount,
-          warningCount,
-          exitCode: result.exitCode,
-          truncated,
-        };
-
-        return { text: lines.join('\n'), card: { type: 'type-check', data: cardData } };
+        return handleCheckTypes(buildVerificationContext(sandboxId));
       }
 
       case 'sandbox_verify_workspace': {
-        const start = Date.now();
-        const { steps, warnings } = buildWorkspaceVerifySteps(sandboxId);
-
-        if (steps.length === 0) {
-          const hint =
-            warnings[0] ??
-            'No install, typecheck, or test command could be inferred from the workspace readiness probe.';
-          return {
-            text: [
-              '[Tool Result — sandbox_verify_workspace]',
-              hint,
-              'Use test(), typecheck(), or exec() directly if you need a custom verification command.',
-            ].join('\n'),
-          };
-        }
-
-        const lines: string[] = ['[Tool Result — sandbox_verify_workspace]'];
-        if (warnings.length > 0) {
-          for (const warning of warnings) lines.push(`Warning: ${warning}`);
-        }
-
-        type StepResult = WorkspaceVerifyStep & {
-          exitCode: number;
-          durationMs: number;
-          output: string;
-        };
-
-        const stepResults: StepResult[] = [];
-        let failedStep: StepResult | null = null;
-
-        for (const step of steps) {
-          const stepStart = Date.now();
-          const result = await execInSandbox(
-            sandboxId,
-            `cd /workspace && ${step.command}`,
-            undefined,
-            { markWorkspaceMutated: step.markWorkspaceMutated },
-          );
-          const durationMs = Date.now() - stepStart;
-
-          if (step.markWorkspaceMutated) {
-            clearFileVersionCache(sandboxId);
-            clearPrefetchedEditFileCache(sandboxId);
-          }
-
-          const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
-          const recorded: StepResult = {
-            ...step,
-            exitCode: result.exitCode,
-            durationMs,
-            output,
-          };
-          stepResults.push(recorded);
-
-          if (result.exitCode !== 0) {
-            failedStep = recorded;
-            break;
-          }
-        }
-
-        const overallPassed = !failedStep;
-        lines.push(
-          `${overallPassed ? '✓' : '✗'} Workspace verification ${overallPassed ? 'PASSED' : `FAILED at ${failedStep?.id}`}`,
-          `Duration: ${((Date.now() - start) / 1000).toFixed(1)}s`,
-          '',
-          'Steps:',
-        );
-
-        for (const step of stepResults) {
-          lines.push(
-            `- ${step.exitCode === 0 ? '✓' : '✗'} ${step.label}: ${step.command} (${(step.durationMs / 1000).toFixed(1)}s)`,
-          );
-        }
-
-        if (failedStep) {
-          lines.push(
-            '',
-            `Output from failed step (${failedStep.label}):`,
-            summarizeWorkspaceVerifyOutput(failedStep.output),
-          );
-          if (failedStep.id !== 'install') {
-            lines.push(
-              '',
-              'Tip: rerun test() or typecheck() directly if you need more detailed output.',
-            );
-          }
-        }
-
-        return { text: lines.join('\n') };
+        return handleVerifyWorkspace(buildVerificationContext(sandboxId));
       }
 
       case 'sandbox_download': {
