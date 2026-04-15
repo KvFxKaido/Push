@@ -116,7 +116,7 @@ type WorkingMemory = CoderWorkingMemory;
 
 // ─── Constants ───────────────────────────────────────────────────
 
-export const DEFAULT_MAX_ROUNDS: number = 8;
+export const DEFAULT_MAX_ROUNDS: number = 30;
 
 // Sentinel appended to the base prompt — signals that workspace context
 // (git status, project instructions, memory) still needs to be loaded.
