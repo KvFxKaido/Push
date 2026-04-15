@@ -81,6 +81,7 @@ import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './t
 import {
   correlationToSpanAttributes,
   EMPTY_CORRELATION_CONTEXT,
+  type CorrelationContext,
 } from '@push/lib/correlation-context';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
 
@@ -191,7 +192,7 @@ export async function runCoderAgent(
      * tool-execution spans (`push.chat_id`, `push.execution_id`, etc.).
      * Never alters tool behavior — see `lib/correlation-context.ts`.
      */
-    correlation?: import('@push/lib/correlation-context').CorrelationContext;
+    correlation?: CorrelationContext;
   },
 ): Promise<CoderResult> {
   // --- Normalise: envelope-based call → unified locals ---
