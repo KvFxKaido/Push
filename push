@@ -15,11 +15,35 @@ LOCAL_TSX="$ROOT_DIR/node_modules/.bin/tsx"
 : "${PUSH_TUI_ENABLED:=1}"
 export PUSH_TUI_ENABLED
 
-# Prefer compiled JS if available, then tsx for TS, then direct .mjs fallback.
+# Prefer compiled JS if available and fresh, then tsx for TS, then direct .mjs fallback.
 # tsc emits to cli/dist/cli/cli.js because cli/tsconfig.json uses rootDir: ".."
 # to include ../lib/hashline.ts, which preserves the cli/ prefix in the output.
-if [ -f "$ROOT_DIR/cli/dist/cli/cli.js" ]; then
-  exec node "$ROOT_DIR/cli/dist/cli/cli.js" "$@"
+COMPILED="$ROOT_DIR/cli/dist/cli/cli.js"
+USE_COMPILED=""
+if [ -f "$COMPILED" ]; then
+  # Staleness check: if any cli/ or lib/ source is newer than the compiled
+  # dist, warn and fall through to tsx so edits don't silently run old code.
+  # Opt out with PUSH_SKIP_STALE_CHECK=1 for CI / production contexts where
+  # the dist is built intentionally and the source may drift during deploy.
+  if [ -n "${PUSH_SKIP_STALE_CHECK:-}" ]; then
+    USE_COMPILED=1
+  else
+    NEWER_SRC="$(find "$ROOT_DIR/cli" "$ROOT_DIR/lib" \
+         -type d \( -name dist -o -name node_modules -o -name tests \) -prune -o \
+         -type f -name '*.ts' -newer "$COMPILED" -print -quit 2>/dev/null)"
+    if [ -n "$NEWER_SRC" ]; then
+      REL="${NEWER_SRC#$ROOT_DIR/}"
+      echo "push: warning — $REL is newer than cli/dist/cli/cli.js." >&2
+      echo "push: running from source via tsx. Run 'npm run build:cli' to refresh the compiled dist," >&2
+      echo "push: or set PUSH_SKIP_STALE_CHECK=1 to silence this warning." >&2
+    else
+      USE_COMPILED=1
+    fi
+  fi
+fi
+
+if [ -n "$USE_COMPILED" ]; then
+  exec node "$COMPILED" "$@"
 elif [ -x "$LOCAL_TSX" ]; then
   exec "$LOCAL_TSX" "$ROOT_DIR/cli/cli.ts" "$@"
 elif command -v tsx >/dev/null 2>&1; then
