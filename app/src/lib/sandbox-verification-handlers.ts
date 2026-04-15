@@ -402,6 +402,14 @@ export async function handleCheckTypes(
     markWorkspaceMutated: true,
   });
   const durationMs = Date.now() - start;
+  // The typecheck command marks the workspace mutated (advancing the
+  // sandbox workspace revision), and tools like `tsc` and `mypy` can
+  // write `.tsbuildinfo` / `.mypy_cache` / etc. Clear both caches so
+  // subsequent file reads or edits in the same session don't fail with
+  // `WORKSPACE_CHANGED` against a stale cached revision. Same rationale
+  // as `handleRunTests` above.
+  clearFileVersionCache(sandboxId);
+  clearPrefetchedEditFileCache(sandboxId);
 
   const output = result.stdout + '\n' + result.stderr;
   const errors: TypeCheckCardData['errors'] = [];

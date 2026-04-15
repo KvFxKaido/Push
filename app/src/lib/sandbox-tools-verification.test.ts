@@ -310,11 +310,17 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_check_types', args: {} }, 'sb-ts');
 
-    // No npm install should have fired — so no cache clear either.
+    // No npm install should have fired on this path.
     const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls.map((c) => c[1] as string);
     expect(calls).not.toContain('cd /workspace && npm install');
-    expect(clearFileVersionCache).not.toHaveBeenCalled();
-    expect(clearPrefetchedEditFileCache).not.toHaveBeenCalled();
+    // Cache clearing now fires after the final typecheck exec (same
+    // rationale as sandbox_run_tests — the typecheck is marked mutated
+    // so the file-version/prefetch caches must be invalidated to avoid
+    // stale WORKSPACE_CHANGED errors on subsequent edits).
+    expect(clearFileVersionCache).toHaveBeenCalledTimes(1);
+    expect(clearFileVersionCache).toHaveBeenCalledWith('sb-ts');
+    expect(clearPrefetchedEditFileCache).toHaveBeenCalledTimes(1);
+    expect(clearPrefetchedEditFileCache).toHaveBeenCalledWith('sb-ts');
 
     // The actual typecheck exec call is marked mutated (matches current behavior).
     expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
@@ -367,10 +373,11 @@ describe('executeSandboxToolCall -- sandbox_check_types', () => {
       undefined,
       { markWorkspaceMutated: true },
     );
-    // Caches cleared once after the install
-    expect(clearFileVersionCache).toHaveBeenCalledTimes(1);
+    // Caches cleared twice: once after the npm install, and once after
+    // the final typecheck exec (which also marks the workspace mutated).
+    expect(clearFileVersionCache).toHaveBeenCalledTimes(2);
     expect(clearFileVersionCache).toHaveBeenCalledWith('sb-install');
-    expect(clearPrefetchedEditFileCache).toHaveBeenCalledTimes(1);
+    expect(clearPrefetchedEditFileCache).toHaveBeenCalledTimes(2);
     expect(clearPrefetchedEditFileCache).toHaveBeenCalledWith('sb-install');
 
     expect(result.text).toContain('✓ Type check PASSED (tsc)');
