@@ -61,7 +61,7 @@ If a role or delegation concept means one thing on web and another in CLI, the s
 - structured error taxonomy
 - shared rules for read vs mutate semantics where possible
 
-This is already partly converged through `lib/tool-protocol.ts` and `lib/error-types.ts`.
+This is already partly converged through `lib/tool-protocol.ts` and `lib/error-types.ts`. The "partly" is load-bearing: `detectAllToolCalls` and its sibling detectors are *not* shared and exist as independent implementations in `app/src/lib/tool-dispatch.ts` and `cli/tools.ts`. See [Tool-Call Parser Convergence Gap](Tool-Call%20Parser%20Convergence%20Gap.md) for the full analysis and the followup tranche this implies.
 
 ### 3. Edit safety and workspace reasoning
 
