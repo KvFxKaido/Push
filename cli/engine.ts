@@ -16,6 +16,9 @@ import {
   resetTurnBudget,
 } from './file-ledger.js';
 import { recordMalformedToolCall } from './tool-call-metrics.js';
+import { recordWriteFile } from './edit-metrics.js';
+import { recordContextTrim } from './context-metrics.js';
+import { computeAdaptation } from './harness-adaptation.js';
 import {
   buildWorkspaceSnapshot,
   loadProjectInstructions,
@@ -502,6 +505,14 @@ export async function runAssistantLoop(
       runId,
     );
 
+    if (call.tool === 'write_file' || call.tool === 'edit_file') {
+      const isStale = result.structuredError?.code === 'STALE_WRITE';
+      recordWriteFile(state.sessionId, {
+        error: !result.ok && !isStale,
+        stale: isStale,
+      });
+    }
+
     updateFileLedger(fileLedger, call, result);
 
     dispatchEvent('tool.execution_complete', {
@@ -568,6 +579,41 @@ export async function runAssistantLoop(
     await appendSessionEvent(state, 'assistant.turn_start', { round: turnIndex }, runId);
     dispatchEvent('assistant.turn_start', { round: turnIndex });
 
+    // Adaptive round-budget check: shrink maxRounds when in-session signals
+    // (malformed calls, edit errors) accumulate. Mirrors the web side's
+    // computeAdaptiveProfile. Never raises the ceiling — only reduces it.
+    // Each rule is one-shot per session, so calling this every round is safe.
+    const adaptation = computeAdaptation(state.sessionId, maxRounds);
+    if (adaptation.wasAdapted) {
+      const previousMaxRounds = maxRounds;
+      maxRounds = adaptation.adjustedMaxRounds;
+      turnCtx.maxRounds = maxRounds;
+      await appendSessionEvent(
+        state,
+        'harness.adaptation',
+        {
+          round: turnIndex,
+          previousMaxRounds,
+          newMaxRounds: maxRounds,
+          reasons: adaptation.reasons,
+          signals: adaptation.signals,
+        },
+        runId,
+      );
+      dispatchEvent('harness.adaptation', {
+        round: turnIndex,
+        previousMaxRounds,
+        newMaxRounds: maxRounds,
+        reasons: adaptation.reasons,
+      });
+      // If the new cap is already exceeded by the current round, exit the
+      // loop immediately instead of running one more provider call on a
+      // budget we just decided was exhausted.
+      if (round > maxRounds) {
+        break;
+      }
+    }
+
     // Trim context to fit provider budget (state.messages is never mutated)
     if (
       shouldDistillMidSession(
@@ -595,6 +641,7 @@ export async function runAssistantLoop(
       state.model,
     );
     lastTrimResult = trimResult;
+    recordContextTrim(state.sessionId, trimResult);
     if (trimResult.trimmed) {
       dispatchEvent('status', {
         source: 'orchestrator',
@@ -742,7 +789,7 @@ export async function runAssistantLoop(
 
     if (detected.malformed.length > 0) {
       for (const malformed of detected.malformed) {
-        recordMalformedToolCall(malformed.reason);
+        recordMalformedToolCall(malformed.reason, state.sessionId);
         await appendSessionEvent(
           state,
           'tool.call_malformed',
