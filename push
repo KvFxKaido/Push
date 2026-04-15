@@ -16,8 +16,10 @@ LOCAL_TSX="$ROOT_DIR/node_modules/.bin/tsx"
 export PUSH_TUI_ENABLED
 
 # Prefer compiled JS if available, then tsx for TS, then direct .mjs fallback.
-if [ -f "$ROOT_DIR/cli/dist/cli.js" ]; then
-  exec node "$ROOT_DIR/cli/dist/cli.js" "$@"
+# tsc emits to cli/dist/cli/cli.js because cli/tsconfig.json uses rootDir: ".."
+# to include ../lib/hashline.ts, which preserves the cli/ prefix in the output.
+if [ -f "$ROOT_DIR/cli/dist/cli/cli.js" ]; then
+  exec node "$ROOT_DIR/cli/dist/cli/cli.js" "$@"
 elif [ -x "$LOCAL_TSX" ]; then
   exec "$LOCAL_TSX" "$ROOT_DIR/cli/cli.ts" "$@"
 elif command -v tsx >/dev/null 2>&1; then
