@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline/promises';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
@@ -32,7 +33,7 @@ import {
 } from './config-store.js';
 import { aggregateStats, formatStats } from './stats.js';
 import { getToolCallMetrics } from './tool-call-metrics.js';
-import { getSocketPath, getPidPath } from './pushd.js';
+import { getSocketPath, getPidPath, getLogPath } from './pushd.js';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.js';
 import { createCompleter } from './completer.js';
 import { fmt, Spinner } from './format.js';
@@ -1453,17 +1454,48 @@ async function runDaemonSubcommand(positionals) {
       return 0;
     }
 
-    // Launch pushd as a detached child process
+    // Launch pushd as a detached child process.
     const { spawn } = await import('node:child_process');
-    // Derive pushd entry from the current runtime file extension (.js → .js, .ts → .ts, .mjs → .mjs)
+    // Derive pushd entry from the current runtime file extension (.js → .js, .ts → .ts, .mjs → .mjs).
+    // Use fileURLToPath so percent-encoded chars (spaces, etc.) decode correctly
+    // and Windows paths don't get a leading slash from URL.pathname.
     const currentExt = import.meta.url.match(/\.(m?[jt]s)$/)?.[1] ?? 'mjs';
-    const pushdPath = new URL(`./pushd.${currentExt}`, import.meta.url).pathname;
-    const child = spawn(process.execPath, [pushdPath], {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env },
-    });
-    child.unref();
+    const pushdPath = fileURLToPath(new URL(`./pushd.${currentExt}`, import.meta.url));
+
+    // When the parent is running under tsx (currentExt === 'ts'), the child
+    // also needs the tsx loader — plain `node pushd.ts` dies with
+    // "Unknown file extension .ts" at module-load time. Pass `--import tsx`
+    // so the child registers the same ESM loader the parent is using. This
+    // mirrors `dev:cli` in package.json.
+    const nodeArgs = currentExt === 'ts' ? ['--import', 'tsx', pushdPath] : [pushdPath];
+
+    // Redirect pushd's stdout/stderr to a log file. Previously stdio was
+    // 'ignore', which hid every startup crash — a daemon that dies before
+    // the socket comes up looked identical to one that's still initializing.
+    // Harden the dir + file perms explicitly: fs.open's mode arg only applies
+    // on first creation, so a pre-existing dir/file may retain looser perms.
+    const logPath = getLogPath();
+    const logDir = path.dirname(logPath);
+    await fs.mkdir(logDir, { recursive: true, mode: 0o700 });
+    await fs.chmod(logDir, 0o700);
+    const logHandle = await fs.open(logPath, 'a', 0o600);
+    await fs.chmod(logPath, 0o600);
+
+    // try/finally so a spawn() throw (invalid execPath, bad args) can't leak
+    // the log file descriptor in the parent.
+    let child;
+    try {
+      child = spawn(process.execPath, nodeArgs, {
+        detached: true,
+        stdio: ['ignore', logHandle.fd, logHandle.fd],
+        env: { ...process.env },
+      });
+      child.unref();
+    } finally {
+      // The child inherits the fd via dup(); release our own handle so the
+      // parent process can exit without holding the log file open.
+      await logHandle.close();
+    }
 
     // Wait for daemon to become ready
     const socketPath = getSocketPath();
@@ -1471,10 +1503,12 @@ async function runDaemonSubcommand(positionals) {
     const ready = await waitForReady(socketPath, { maxWaitMs: 3000, intervalMs: 200 });
 
     if (ready) {
-      process.stdout.write(`pushd started (pid: ${child.pid})\nsocket: ${socketPath}\n`);
+      process.stdout.write(
+        `pushd started (pid: ${child.pid})\nsocket: ${socketPath}\nlog: ${logPath}\n`,
+      );
     } else {
       process.stdout.write(
-        `pushd spawned (pid: ${child.pid}) but not yet responsive\nsocket: ${socketPath}\n`,
+        `pushd spawned (pid: ${child.pid}) but not yet responsive\nsocket: ${socketPath}\nlog: ${logPath}\n`,
       );
     }
     return 0;
