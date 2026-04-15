@@ -18,6 +18,7 @@ import {
 import { recordMalformedToolCall } from './tool-call-metrics.js';
 import { recordWriteFile } from './edit-metrics.js';
 import { recordContextTrim } from './context-metrics.js';
+import { computeAdaptation } from './harness-adaptation.js';
 import {
   buildWorkspaceSnapshot,
   loadProjectInstructions,
@@ -576,6 +577,34 @@ export async function runAssistantLoop(
 
     await appendSessionEvent(state, 'assistant.turn_start', { round: turnIndex }, runId);
     dispatchEvent('assistant.turn_start', { round: turnIndex });
+
+    // Adaptive round-budget check: shrink maxRounds when in-session signals
+    // (malformed calls, edit errors) accumulate. Mirrors the web side's
+    // computeAdaptiveProfile. Never raises the ceiling — only reduces it.
+    const adaptation = computeAdaptation(maxRounds);
+    if (adaptation.wasAdapted) {
+      const previousMaxRounds = maxRounds;
+      maxRounds = adaptation.adjustedMaxRounds;
+      turnCtx.maxRounds = maxRounds;
+      await appendSessionEvent(
+        state,
+        'harness.adaptation',
+        {
+          round: turnIndex,
+          previousMaxRounds,
+          newMaxRounds: maxRounds,
+          reasons: adaptation.reasons,
+          signals: adaptation.signals,
+        },
+        runId,
+      );
+      dispatchEvent('harness.adaptation', {
+        round: turnIndex,
+        previousMaxRounds,
+        newMaxRounds: maxRounds,
+        reasons: adaptation.reasons,
+      });
+    }
 
     // Trim context to fit provider budget (state.messages is never mutated)
     if (
