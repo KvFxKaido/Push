@@ -31,6 +31,11 @@ import {
 } from '@/lib/tool-call-recovery';
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
+import {
+  correlationToSpanAttributes,
+  EMPTY_CORRELATION_CONTEXT,
+  type CorrelationContext,
+} from '@push/lib/correlation-context';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,6 +52,14 @@ export interface ToolExecRunContext {
   provider: ActiveProvider;
   model: string | undefined;
   approvalGates?: ApprovalGateRegistry;
+  /**
+   * Passive correlation tags to attach to the tool-execution span as
+   * `push.*` attributes (see `lib/correlation-context.ts`). The caller
+   * builds this from whatever ids it already knows (`chatId`, `runId`,
+   * `executionId`, `toolCallId`, etc.) — this field never alters tool
+   * behavior, only observability.
+   */
+  correlation?: CorrelationContext;
 }
 
 /** Raw result from executing a tool call (before building the ChatMessage). */
@@ -81,6 +94,7 @@ export async function executeTool(
       scope: 'push.tools',
       kind: SpanKind.INTERNAL,
       attributes: {
+        ...correlationToSpanAttributes(ctx.correlation ?? EMPTY_CORRELATION_CONTEXT),
         'push.tool.name': call.call.tool,
         'push.tool.source': call.source,
         'push.provider': ctx.provider,

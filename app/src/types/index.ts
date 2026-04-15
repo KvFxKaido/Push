@@ -1092,6 +1092,13 @@ export interface DelegationEnvelope extends DelegationBriefFields {
    * capabilities are used. Logged for post-run audit.
    */
   declaredCapabilities?: import('../lib/capabilities').Capability[];
+  /**
+   * Passive correlation tags carried across the delegation boundary so
+   * tool-execution spans can attach `push.chat_id`, `push.execution_id`,
+   * `push.task_graph_id`, etc. See `lib/correlation-context.ts` for the
+   * hard rule that these fields never alter tool behavior.
+   */
+  correlation?: import('@push/lib/correlation-context').CorrelationContext;
 }
 
 /** Runtime callbacks for the Coder agent loop. */
