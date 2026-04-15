@@ -797,82 +797,28 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function parseToolCallCandidate(
-  candidate: string,
-):
-  | { ok: true; call: { tool: string; args: Record<string, unknown> } }
-  | { ok: false; reason: string } {
-  let parsed;
-  try {
-    parsed = JSON.parse(candidate);
-  } catch {
-    return { ok: false, reason: 'json_parse_error' };
-  }
+// CLI tool-call detection now routes through the shared kernel at
+// `lib/tool-dispatch.ts`. The kernel owns fenced-block extraction,
+// JSON.parse + repair, bare-object fallback (missing-fence tolerance),
+// dedup, and malformed-call reporting. The CLI registers a single
+// pass-through source — tool-name validation happens downstream in
+// `executeToolCall`, not at parse time.
+//
+// Before this wiring landed the CLI had its own fence-only implementation
+// that silently dropped tool-call JSON emitted without opening fences.
+// That bug surfaced as an empty TUI transcript when Gemini-3-flash on
+// Ollama Cloud emitted `json\n{...}` without the leading triple-backtick.
+// See docs/decisions/Tool-Call Parser Convergence Gap.md for the full
+// four-layer analysis.
+import { createToolDispatcher, PASS_THROUGH_CLI_SOURCE } from '../lib/tool-dispatch.js';
 
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { ok: false, reason: 'invalid_shape' };
-  }
-
-  if (typeof parsed.tool !== 'string') {
-    return { ok: false, reason: 'missing_tool' };
-  }
-
-  if (!parsed.args || typeof parsed.args !== 'object' || Array.isArray(parsed.args)) {
-    return { ok: false, reason: 'missing_args_object' };
-  }
-
-  return {
-    ok: true,
-    call: {
-      tool: parsed.tool,
-      args: parsed.args,
-    },
-  };
-}
-
-function isLikelyToolCallCandidate(candidate) {
-  if (!candidate) return false;
-  const trimmed = candidate.trim();
-  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return false;
-  return /"tool"\s*:/.test(trimmed);
-}
+const cliToolDispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE]);
 
 export function detectAllToolCalls(text: string): {
   calls: { tool: string; args: Record<string, unknown> }[];
   malformed: { reason: string; sample: string }[];
 } {
-  const calls: { tool: string; args: Record<string, unknown> }[] = [];
-  const malformed: { reason: string; sample: string }[] = [];
-
-  const fenceRegex = /```(?:\s*(\w+))?\s*\n?([\s\S]*?)\n?\s*```/g;
-  let match;
-  while ((match = fenceRegex.exec(text)) !== null) {
-    const lang = (match[1] || '').toLowerCase();
-    const candidate = (match[2] || '').trim();
-    if (!candidate) continue;
-    if (lang && lang !== 'json') continue;
-    if (!isLikelyToolCallCandidate(candidate)) continue;
-    const parsed = parseToolCallCandidate(candidate);
-    if (parsed.ok) {
-      calls.push(parsed.call);
-    } else {
-      malformed.push({ reason: parsed.reason, sample: candidate.slice(0, 120) });
-    }
-  }
-
-  if (calls.length === 0) {
-    const trimmed = text.trim();
-    if (isLikelyToolCallCandidate(trimmed)) {
-      const parsed = parseToolCallCandidate(trimmed);
-      if (parsed.ok) {
-        calls.push(parsed.call);
-      } else {
-        malformed.push({ reason: parsed.reason, sample: trimmed.slice(0, 120) });
-      }
-    }
-  }
-
-  return { calls, malformed };
+  return cliToolDispatcher.detectAllToolCalls(text);
 }
 
 export function detectToolCall(text) {
