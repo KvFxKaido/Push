@@ -28,7 +28,7 @@
  * grouping state machine on top.
  */
 
-import { extractBareToolJsonObjects, repairToolJson } from './tool-call-parsing.js';
+import { repairToolJson } from './tool-call-parsing.js';
 
 /**
  * Result of scanning assistant text for tool calls.
@@ -98,21 +98,31 @@ export interface ToolDispatcher<TCall> {
 /**
  * Create a tool dispatcher from a list of source detectors.
  *
- * The returned `detectAllToolCalls(text)` runs in two phases:
+ * The returned `detectAllToolCalls(text)` does a single textual-order
+ * scan in two collection phases:
  *
  *   1. Fenced-block phase — extract content from ` ```json ... ``` `,
- *      ` ```tool ... ``` `, and tilde-fence variants. Attempt
- *      JSON.parse, falling back to `repairToolJson` for common LLM
- *      garbling. Successful parses run through source detection;
+ *      ` ```tool ... ``` `, and tilde-fence variants (case-insensitive).
+ *      Attempt JSON.parse, falling back to `repairToolJson` for common
+ *      LLM garbling. Successful parses run through source detection;
  *      failures (parse error, shape error, no source claims the call)
  *      are recorded in `malformed` so the caller can emit
  *      `tool.call_malformed` events.
  *
- *   2. Bare-object phase — scan the whole text for brace-counted JSON
- *      objects with a `tool` string key. Successful parses run through
- *      source detection; failures are SILENT (see comment on
- *      `ToolDispatchResult`). This phase catches the missing-fence
- *      case documented in Tool-Call Parser Convergence Gap.md.
+ *   2. Bare-object phase — scan regions NOT covered by any fenced
+ *      block for brace-counted JSON objects with a `tool` string key.
+ *      Fenced regions (regardless of language tag) are skipped so
+ *      tool-call-shaped JSON inside illustrative ` ```ts ` / ` ```python `
+ *      code examples is not executed. This phase is gated by a
+ *      conservative contiguity check — see `isBareBlockEligible` — to
+ *      avoid mining a single prose-embedded `{...}` object and
+ *      executing it as a real tool call.
+ *
+ * All candidates are collected with their textual offsets, then
+ * sorted by offset before dedup + source match so the final `calls`
+ * list preserves the model's intended ordering across both phases.
+ * `cli/engine.ts` depends on that ordering to group reads → file
+ * mutations → trailing side-effect within one turn.
  *
  * Duplicate calls (same tool + same stable-key args) are collapsed
  * across both phases so a model that echoes the same call in both a
@@ -123,45 +133,75 @@ export function createToolDispatcher<TCall>(
 ): ToolDispatcher<TCall> {
   return {
     detectAllToolCalls(text: string): ToolDispatchResult<TCall> {
-      const calls: TCall[] = [];
       const malformed: ToolMalformedReport[] = [];
-      const seen = new Set<string>();
+      const candidates: DetectedCandidate[] = [];
 
-      // Phase 1: fenced blocks — strict, parse failures reported.
-      for (const candidate of extractFencedToolCandidates(text)) {
-        const parsed = parseToolCandidate(candidate);
+      // Phase 1: find all fenced regions so both phases can reason
+      // about them. Phase 1 processes the ones with a tool-call-eligible
+      // language tag; phase 2 excludes ALL fenced regions from its
+      // bare-object scan regardless of language (so code examples in
+      // `ts`/`python`/etc. fences can't accidentally execute).
+      const fences = findFencedRegions(text);
+
+      for (const fence of fences) {
+        if (!isToolCallLangTag(fence.lang)) continue;
+        const trimmed = fence.content.trim();
+        if (!trimmed || !trimmed.startsWith('{')) continue;
+        if (!/"tool"\s*:|'tool'\s*:/.test(trimmed) && !/\btool\s*:/.test(trimmed)) continue;
+        const parsed = parseToolCandidate(trimmed);
         if (!parsed.ok) {
-          malformed.push({ reason: parsed.reason, sample: truncateSample(candidate) });
+          malformed.push({ reason: parsed.reason, sample: truncateSample(trimmed) });
           continue;
         }
-        const matched = matchSources(sources, parsed.value);
-        if (matched.ok) {
-          const key = canonicalKey(parsed.value);
-          if (!seen.has(key)) {
-            seen.add(key);
-            calls.push(matched.call);
-          }
-        } else {
-          // Fenced block parsed as a tool-shaped object but no source
-          // claimed the tool name. Report as malformed so the caller
-          // can surface a "this tool name isn't recognized" hint.
-          malformed.push({ reason: 'unknown_tool', sample: truncateSample(candidate) });
+        candidates.push({
+          kind: 'fenced',
+          offset: fence.contentOffset,
+          parsed: parsed.value,
+          sample: trimmed,
+        });
+      }
+
+      // Phase 2: bare-object fallback — scans regions OUTSIDE any
+      // fenced block. Gated by `isBareBlockEligible` so prose-embedded
+      // documentation examples do not execute as tools.
+      const bareObjects = extractBareToolObjectsOutsideFences(text, fences);
+      if (bareObjects.length > 0 && isBareBlockEligible(text, fences, bareObjects)) {
+        for (const bare of bareObjects) {
+          const shaped = shapeParsedObject(bare.parsed);
+          if (!shaped.ok) continue;
+          candidates.push({
+            kind: 'bare',
+            offset: bare.start,
+            parsed: shaped.value,
+            sample: text.slice(bare.start, bare.end + 1),
+          });
         }
       }
 
-      // Phase 2: bare-object fallback — silent on failure. This is the
-      // convergence-gap fix: catches `json\n{...}` where the model knew
-      // tool-call shape but omitted the opening triple-backtick.
-      for (const bare of extractBareToolJsonObjects(text)) {
-        if (!isRecord(bare)) continue;
-        const shaped = shapeParsedObject(bare);
-        if (!shaped.ok) continue;
-        const matched = matchSources(sources, shaped.value);
-        if (!matched.ok) continue;
-        const key = canonicalKey(shaped.value);
+      // Sort by textual offset so the final call order matches the
+      // order the model intended. Dedup + source-match after sorting.
+      candidates.sort((a, b) => a.offset - b.offset);
+
+      const seen = new Set<string>();
+      const calls: TCall[] = [];
+      for (const candidate of candidates) {
+        const key = canonicalKey(candidate.parsed);
         if (seen.has(key)) continue;
         seen.add(key);
-        calls.push(matched.call);
+        const matched = matchSources(sources, candidate.parsed);
+        if (matched.ok) {
+          calls.push(matched.call);
+          continue;
+        }
+        if (candidate.kind === 'fenced') {
+          // Fenced block parsed as a tool-shaped object but no source
+          // claimed the tool name. Report as malformed so the caller
+          // can surface a "this tool name isn't recognized" hint.
+          malformed.push({ reason: 'unknown_tool', sample: truncateSample(candidate.sample) });
+        }
+        // Bare candidates that fail source match are silent — phase 2
+        // is already conservative; reporting would just spam
+        // tool.call_malformed on uninteresting bare objects.
       }
 
       return { calls, malformed };
@@ -187,27 +227,231 @@ export const PASS_THROUGH_CLI_SOURCE: ToolSource<{
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-const FENCE_REGEX =
-  /(?:`{3,}|~{3,})(?:json[c5]?|tool|javascript)?\s*\n?([\s\S]*?)\n?\s*(?:`{3,}|~{3,})/g;
+/**
+ * Captured shape of a fenced code block.
+ *
+ * `blockStart` / `blockEnd` cover the entire fenced region including
+ * opening and closing fences — phase 2's bare-object scanner uses these
+ * to skip over fence interiors regardless of language tag.
+ *
+ * `contentOffset` points at the first character of the captured content
+ * group and is the offset phase 1 attaches to a fenced candidate so the
+ * final textual-order sort places each fenced call where it originally
+ * appeared in the assistant message.
+ */
+interface FencedRegion {
+  blockStart: number;
+  blockEnd: number;
+  contentOffset: number;
+  content: string;
+  /** Lowercased language tag, possibly empty. */
+  lang: string;
+}
 
-function extractFencedToolCandidates(text: string): string[] {
-  const out: string[] = [];
-  // Regex state is per-instance; use exec in a loop. We rebuild the
-  // lastIndex window explicitly to avoid accidental state leakage if
-  // FENCE_REGEX is ever shared across calls.
+/**
+ * Match opening + optional language tag + content + closing fence.
+ * Uses the `d` flag so `match.indices` gives us per-group offsets, and
+ * the `i` flag so `JSON` / `Tool` / `JavaScript` language tags aren't
+ * skipped (the old CLI parser lowercased the tag before matching).
+ */
+const FENCE_REGEX = /(?:`{3,}|~{3,})([a-z0-9_+-]*)[ \t]*\n?([\s\S]*?)\n?[ \t]*(?:`{3,}|~{3,})/dgi;
+
+const TOOL_CALL_LANG_TAGS = new Set(['', 'json', 'jsonc', 'json5', 'tool', 'javascript']);
+
+function isToolCallLangTag(lang: string): boolean {
+  return TOOL_CALL_LANG_TAGS.has(lang.toLowerCase());
+}
+
+function findFencedRegions(text: string): FencedRegion[] {
+  const out: FencedRegion[] = [];
   const regex = new RegExp(FENCE_REGEX.source, FENCE_REGEX.flags);
   let match: RegExpExecArray | null;
   while ((match = regex.exec(text)) !== null) {
-    const inner = (match[1] ?? '').trim();
-    if (!inner) continue;
-    // Must look like a JSON object with a tool-call key. We intentionally
-    // match on the raw (possibly unquoted) key here because repair may
-    // fix unquoted keys downstream.
-    if (!inner.startsWith('{')) continue;
-    if (!/"tool"\s*:|'tool'\s*:/.test(inner) && !/\btool\s*:/.test(inner)) continue;
-    out.push(inner);
+    const blockStart = match.index;
+    const blockEnd = match.index + match[0].length;
+    const contentIndices = match.indices?.[2];
+    const contentOffset = contentIndices ? contentIndices[0] : blockStart;
+    out.push({
+      blockStart,
+      blockEnd,
+      contentOffset,
+      content: match[2] ?? '',
+      lang: (match[1] ?? '').toLowerCase(),
+    });
   }
   return out;
+}
+
+interface BareToolObject {
+  /** Offset of the opening `{` in the source text. */
+  start: number;
+  /** Offset of the matching closing `}` in the source text. */
+  end: number;
+  parsed: Record<string, unknown>;
+}
+
+/**
+ * Scan `text` for brace-counted JSON objects containing a `tool` string
+ * key, skipping any region covered by a fenced block. Returns both the
+ * parsed object and its start/end offsets so the caller can reason
+ * about contiguity (see `isBareBlockEligible`) and can sort candidates
+ * by textual position.
+ *
+ * Mirrors `extractBareToolJsonObjects` from `lib/tool-call-parsing.ts`
+ * but inlined here so the offset plumbing stays local and the
+ * tool-call-parsing helper can keep its simpler shape for the Web
+ * dispatcher until the second convergence tranche lands.
+ */
+function extractBareToolObjectsOutsideFences(
+  text: string,
+  fences: readonly FencedRegion[],
+): BareToolObject[] {
+  const out: BareToolObject[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const braceIdx = text.indexOf('{', i);
+    if (braceIdx === -1) break;
+
+    // If this brace is inside any fenced block, jump past the fence.
+    const containing = fences.find((f) => braceIdx >= f.blockStart && braceIdx < f.blockEnd);
+    if (containing) {
+      i = containing.blockEnd;
+      continue;
+    }
+
+    // Brace-counting scan with string/escape awareness.
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let j = braceIdx; j < text.length; j++) {
+      const ch = text[j];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\' && inString) {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === '{') depth++;
+      if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          end = j;
+          break;
+        }
+      }
+    }
+    if (end === -1) {
+      i = braceIdx + 1;
+      continue;
+    }
+
+    const candidate = text.slice(braceIdx, end + 1);
+    try {
+      const parsed = JSON.parse(candidate);
+      if (isRecord(parsed) && typeof parsed.tool === 'string') {
+        out.push({ start: braceIdx, end, parsed });
+      }
+    } catch {
+      const repaired = repairToolJson(candidate);
+      if (repaired) {
+        out.push({ start: braceIdx, end, parsed: repaired });
+      }
+    }
+    i = end + 1;
+  }
+  return out;
+}
+
+/**
+ * Gate for the bare-object fallback. Returns true iff the text looks
+ * like the model intended to emit tool calls without fences, and false
+ * iff it looks like the model is describing/documenting tool calls
+ * (prose-embedded examples).
+ *
+ * Accepted shapes:
+ *
+ *   - The whole text is exactly one bare `{tool, args}` object,
+ *     possibly prefixed by whitespace and an optional `json` / `tool`
+ *     language marker on its own line. Matches the old CLI's
+ *     whole-message fallback behavior.
+ *   - Two or more bare `{tool, args}` objects appear in sequence, with
+ *     only whitespace (and optional `json` / `tool` markers) between
+ *     them, and the entire text consists of those objects plus
+ *     allowed whitespace/markers. Matches the Gemini-3-flash failure
+ *     mode documented in Tool-Call Parser Convergence Gap.md.
+ *
+ * Rejected shapes (false negatives are acceptable for safety):
+ *
+ *   - A single bare `{tool, args}` object preceded or followed by
+ *     prose — looks like a documentation example, not an invocation.
+ *   - Multiple bare objects separated by prose (`"use {...} or {...}"`)
+ *     — looks like inline documentation.
+ *   - Any shape where non-whitespace prose sits between bare objects.
+ *
+ * The regex allows an optional stray ` ``` ` or `~~~` marker so we
+ * handle models that produce almost-correct fences (missing only the
+ * closing or opening triple-backtick but still marking the language).
+ */
+const BARE_GAP_REGEX =
+  /^\s*(?:`{3,}|~{3,})?\s*(?:json[c5]?|tool|javascript)?\s*(?:`{3,}|~{3,})?\s*$/i;
+
+function isBareBlockEligible(
+  text: string,
+  fences: readonly FencedRegion[],
+  bareObjects: readonly BareToolObject[],
+): boolean {
+  if (bareObjects.length === 0) return false;
+
+  // Extract a `[start, end)` slice of `text` with any overlapping
+  // fenced regions removed. Fenced blocks are handled by phase 1, so
+  // from phase 2's perspective they behave as "gaps the user is
+  // allowed to put between bare tool calls" — we test only the
+  // non-fenced residue against BARE_GAP_REGEX.
+  const sliceWithoutFences = (start: number, end: number): string => {
+    if (end <= start) return '';
+    let out = '';
+    let cursor = start;
+    for (const fence of fences) {
+      if (fence.blockEnd <= start || fence.blockStart >= end) continue;
+      if (fence.blockStart > cursor) out += text.slice(cursor, fence.blockStart);
+      cursor = Math.max(cursor, fence.blockEnd);
+      if (cursor >= end) break;
+    }
+    if (cursor < end) out += text.slice(cursor, end);
+    return out;
+  };
+
+  // Prefix before the first bare object must be allowed.
+  if (!BARE_GAP_REGEX.test(sliceWithoutFences(0, bareObjects[0].start))) return false;
+
+  // Each gap between consecutive bare objects must be allowed —
+  // whitespace, optional language markers, and fenced blocks only.
+  for (let i = 1; i < bareObjects.length; i++) {
+    const gap = sliceWithoutFences(bareObjects[i - 1].end + 1, bareObjects[i].start);
+    if (!BARE_GAP_REGEX.test(gap)) return false;
+  }
+
+  // Suffix after the last bare object must be allowed.
+  const suffix = sliceWithoutFences(bareObjects[bareObjects.length - 1].end + 1, text.length);
+  if (!BARE_GAP_REGEX.test(suffix)) return false;
+
+  return true;
+}
+
+interface DetectedCandidate {
+  kind: 'fenced' | 'bare';
+  offset: number;
+  parsed: ParsedToolObject;
+  /** Truncatable sample for malformed reports. */
+  sample: string;
 }
 
 type ParseOutcome =

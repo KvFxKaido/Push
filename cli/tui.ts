@@ -2061,6 +2061,7 @@ export async function runTUI(options = {}) {
   function handleEngineEvent(event) {
     const transcriptLenBefore = tuiState.transcript.length;
     const streamBufBefore = tuiState.streamBuf;
+    const reasoningBufBefore = tuiState.reasoningBuf;
     switch (event.type) {
       case 'assistant_thinking_token':
         if (!tuiState.reasoningStreaming) {
@@ -2296,10 +2297,16 @@ export async function runTUI(options = {}) {
     // entries). A streamBuf delta captures partial prose that has not yet
     // been flushed to the transcript — we still count the run as having
     // produced output, so a later flush on `run_complete` does not
-    // double-count. See the comment on `runVisibleEmissionCount`.
+    // double-count. A reasoningBuf delta captures thinking tokens
+    // streamed before any `assistant_thinking_done` — a run that only
+    // streams reasoning (model thinking but no final answer) should
+    // NOT trigger the empty-run diagnostic, because the user saw live
+    // thinking output in the footer / reasoning modal. See the
+    // comment on `runVisibleEmissionCount`.
     if (
       tuiState.transcript.length > transcriptLenBefore ||
-      (streamBufBefore === '' && tuiState.streamBuf !== '')
+      (streamBufBefore === '' && tuiState.streamBuf !== '') ||
+      (reasoningBufBefore === '' && tuiState.reasoningBuf !== '')
     ) {
       runVisibleEmissionCount += 1;
     }
