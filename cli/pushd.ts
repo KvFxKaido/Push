@@ -123,6 +123,11 @@ export function getPidPath() {
   return path.join(os.homedir(), '.push', 'run', 'pushd.pid');
 }
 
+export function getLogPath() {
+  if (process.env.PUSHD_LOG) return process.env.PUSHD_LOG;
+  return path.join(os.homedir(), '.push', 'run', 'pushd.log');
+}
+
 async function writePidFile() {
   const pidPath = getPidPath();
   await fs.mkdir(path.dirname(pidPath), { recursive: true });
