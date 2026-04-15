@@ -20,6 +20,12 @@
  *   `json_parse_error`, which triggers Rule 1 below.
  * - Context pressure and edit stale rate are collected as diagnostic
  *   signals but do not currently trigger round reduction on the CLI.
+ *
+ * Each adaptation rule is one-shot per session: once a rule applies, it
+ * does not fire again for the same session, even if `computeAdaptation`
+ * is called every round and the signal remains above threshold. State is
+ * scoped by `sessionId` so that multiple concurrent sessions in the same
+ * process (e.g., under `pushd`) do not interfere.
  */
 
 import { getToolCallMetrics } from './tool-call-metrics.js';
@@ -41,15 +47,31 @@ export interface AdaptationResult {
   signals: AdaptationSignals;
 }
 
+interface AdaptationState {
+  malformedRuleApplied: boolean;
+  editErrorRuleApplied: boolean;
+}
+
+const stateBySession = new Map<string, AdaptationState>();
+
+function getOrCreateState(sessionId: string): AdaptationState {
+  let s = stateBySession.get(sessionId);
+  if (!s) {
+    s = { malformedRuleApplied: false, editErrorRuleApplied: false };
+    stateBySession.set(sessionId, s);
+  }
+  return s;
+}
+
 export const THRESHOLDS = {
   MALFORMED_CALL_ESCALATION: 3,
   EDIT_ERROR_RATE_ESCALATION: 0.25,
 } as const;
 
-export function collectAdaptationSignals(): AdaptationSignals {
-  const toolMetrics = getToolCallMetrics();
-  const contextMetrics = getContextMetrics();
-  const writeMetrics = getWriteFileMetrics();
+export function collectAdaptationSignals(sessionId: string): AdaptationSignals {
+  const toolMetrics = getToolCallMetrics(sessionId);
+  const contextMetrics = getContextMetrics(sessionId);
+  const writeMetrics = getWriteFileMetrics(sessionId);
 
   let malformedCallCount = 0;
   for (const value of Object.values(toolMetrics.malformed || {})) {
@@ -72,25 +94,36 @@ export function collectAdaptationSignals(): AdaptationSignals {
 /**
  * Compute a possibly-reduced max-rounds value based on in-session signals.
  * Never raises the current ceiling — only shrinks it when signals degrade.
+ * Each rule is one-shot per session: calling this every round is safe and
+ * does not progressively shrink on stable signals.
  */
-export function computeAdaptation(currentMaxRounds: number): AdaptationResult {
-  const signals = collectAdaptationSignals();
+export function computeAdaptation(sessionId: string, currentMaxRounds: number): AdaptationResult {
+  const signals = collectAdaptationSignals(sessionId);
+  const state = getOrCreateState(sessionId);
   const reasons: string[] = [];
   let adjusted = currentMaxRounds;
 
-  // Rule 1: high malformed call rate → floor at 20.
-  if (signals.malformedCallCount >= THRESHOLDS.MALFORMED_CALL_ESCALATION) {
+  // Rule 1: high malformed call rate → floor at 20. Fires at most once.
+  if (
+    !state.malformedRuleApplied &&
+    signals.malformedCallCount >= THRESHOLDS.MALFORMED_CALL_ESCALATION
+  ) {
     if (adjusted > 20) {
       adjusted = 20;
+      state.malformedRuleApplied = true;
       reasons.push(`Reduce max rounds to 20: ${signals.malformedCallCount} malformed tool calls`);
     }
   }
 
-  // Rule 2: high edit error rate → shrink by 5, floor at 15.
-  if (signals.editErrorRate >= THRESHOLDS.EDIT_ERROR_RATE_ESCALATION) {
+  // Rule 2: high edit error rate → shrink by 5, floor at 15. Fires at most once.
+  if (
+    !state.editErrorRuleApplied &&
+    signals.editErrorRate >= THRESHOLDS.EDIT_ERROR_RATE_ESCALATION
+  ) {
     const reduced = Math.max(15, adjusted - 5);
     if (reduced < adjusted) {
       adjusted = reduced;
+      state.editErrorRuleApplied = true;
       reasons.push(
         `Reduce max rounds to ${reduced}: ${(signals.editErrorRate * 100).toFixed(0)}% edit error rate`,
       );
@@ -103,4 +136,12 @@ export function computeAdaptation(currentMaxRounds: number): AdaptationResult {
     reasons,
     signals,
   };
+}
+
+export function resetAdaptationState(sessionId?: string): void {
+  if (sessionId === undefined) {
+    stateBySession.clear();
+    return;
+  }
+  stateBySession.delete(sessionId);
 }

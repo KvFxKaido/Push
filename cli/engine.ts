@@ -506,9 +506,10 @@ export async function runAssistantLoop(
     );
 
     if (call.tool === 'write_file' || call.tool === 'edit_file') {
-      recordWriteFile({
-        error: !result.ok,
-        stale: result.structuredError?.code === 'STALE_WRITE',
+      const isStale = result.structuredError?.code === 'STALE_WRITE';
+      recordWriteFile(state.sessionId, {
+        error: !result.ok && !isStale,
+        stale: isStale,
       });
     }
 
@@ -581,7 +582,8 @@ export async function runAssistantLoop(
     // Adaptive round-budget check: shrink maxRounds when in-session signals
     // (malformed calls, edit errors) accumulate. Mirrors the web side's
     // computeAdaptiveProfile. Never raises the ceiling — only reduces it.
-    const adaptation = computeAdaptation(maxRounds);
+    // Each rule is one-shot per session, so calling this every round is safe.
+    const adaptation = computeAdaptation(state.sessionId, maxRounds);
     if (adaptation.wasAdapted) {
       const previousMaxRounds = maxRounds;
       maxRounds = adaptation.adjustedMaxRounds;
@@ -604,6 +606,12 @@ export async function runAssistantLoop(
         newMaxRounds: maxRounds,
         reasons: adaptation.reasons,
       });
+      // If the new cap is already exceeded by the current round, exit the
+      // loop immediately instead of running one more provider call on a
+      // budget we just decided was exhausted.
+      if (round > maxRounds) {
+        break;
+      }
     }
 
     // Trim context to fit provider budget (state.messages is never mutated)
@@ -633,7 +641,7 @@ export async function runAssistantLoop(
       state.model,
     );
     lastTrimResult = trimResult;
-    recordContextTrim(trimResult);
+    recordContextTrim(state.sessionId, trimResult);
     if (trimResult.trimmed) {
       dispatchEvent('status', {
         source: 'orchestrator',
@@ -781,7 +789,7 @@ export async function runAssistantLoop(
 
     if (detected.malformed.length > 0) {
       for (const malformed of detected.malformed) {
-        recordMalformedToolCall(malformed.reason);
+        recordMalformedToolCall(malformed.reason, state.sessionId);
         await appendSessionEvent(
           state,
           'tool.call_malformed',

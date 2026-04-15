@@ -4,6 +4,11 @@
  * Mirrors the substrate that `app/src/lib/context-metrics.ts` provides on
  * the web side. Read by `cli/harness-adaptation.ts` via `getContextMetrics()`
  * to detect sustained context pressure.
+ *
+ * Counters are scoped per `sessionId` so that multiple concurrent sessions
+ * in the same process (e.g., under `pushd`) do not leak signals into each
+ * other. Callers that omit `sessionId` read an aggregate view across every
+ * tracked session.
  */
 
 interface ContextMetrics {
@@ -11,10 +16,20 @@ interface ContextMetrics {
   totalTokensSaved: number;
 }
 
-const metrics: ContextMetrics = {
-  totalEvents: 0,
-  totalTokensSaved: 0,
-};
+const metricsBySession = new Map<string, ContextMetrics>();
+
+function zero(): ContextMetrics {
+  return { totalEvents: 0, totalTokensSaved: 0 };
+}
+
+function getOrCreate(sessionId: string): ContextMetrics {
+  let m = metricsBySession.get(sessionId);
+  if (!m) {
+    m = zero();
+    metricsBySession.set(sessionId, m);
+  }
+  return m;
+}
 
 interface TrimResultLike {
   trimmed: boolean;
@@ -22,21 +37,33 @@ interface TrimResultLike {
   afterTokens?: number;
 }
 
-export function recordContextTrim(result: TrimResultLike): void {
+export function recordContextTrim(sessionId: string, result: TrimResultLike): void {
   if (!result.trimmed) return;
-  metrics.totalEvents += 1;
+  const m = getOrCreate(sessionId);
+  m.totalEvents += 1;
   const before = result.beforeTokens ?? 0;
   const after = result.afterTokens ?? 0;
   if (before > after) {
-    metrics.totalTokensSaved += before - after;
+    m.totalTokensSaved += before - after;
   }
 }
 
-export function getContextMetrics(): ContextMetrics {
-  return { ...metrics };
+export function getContextMetrics(sessionId?: string): ContextMetrics {
+  if (sessionId !== undefined) {
+    return { ...(metricsBySession.get(sessionId) ?? zero()) };
+  }
+  const total = zero();
+  for (const m of metricsBySession.values()) {
+    total.totalEvents += m.totalEvents;
+    total.totalTokensSaved += m.totalTokensSaved;
+  }
+  return total;
 }
 
-export function resetContextMetrics(): void {
-  metrics.totalEvents = 0;
-  metrics.totalTokensSaved = 0;
+export function resetContextMetrics(sessionId?: string): void {
+  if (sessionId === undefined) {
+    metricsBySession.clear();
+    return;
+  }
+  metricsBySession.delete(sessionId);
 }
