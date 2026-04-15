@@ -16,6 +16,8 @@ import {
   resetTurnBudget,
 } from './file-ledger.js';
 import { recordMalformedToolCall } from './tool-call-metrics.js';
+import { recordWriteFile } from './edit-metrics.js';
+import { recordContextTrim } from './context-metrics.js';
 import {
   buildWorkspaceSnapshot,
   loadProjectInstructions,
@@ -502,6 +504,13 @@ export async function runAssistantLoop(
       runId,
     );
 
+    if (call.tool === 'write_file' || call.tool === 'edit_file') {
+      recordWriteFile({
+        error: !result.ok,
+        stale: result.structuredError?.code === 'STALE_WRITE',
+      });
+    }
+
     updateFileLedger(fileLedger, call, result);
 
     dispatchEvent('tool.execution_complete', {
@@ -595,6 +604,7 @@ export async function runAssistantLoop(
       state.model,
     );
     lastTrimResult = trimResult;
+    recordContextTrim(trimResult);
     if (trimResult.trimmed) {
       dispatchEvent('status', {
         source: 'orchestrator',
