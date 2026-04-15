@@ -9,10 +9,20 @@
  * sandbox, scratchpad, etc.) — they only understand the tool-call wrapper
  * shape `{"tool": "...", "args": {...}}`.
  *
- * The higher-level tool-typed detection functions (`detectAnyToolCall`,
- * `detectAllToolCalls`, `diagnoseToolCallFailure`) still live in
- * `app/src/lib/tool-dispatch.ts` because they delegate to per-source
- * detectors that are Web-side today.
+ * Higher-level tool-typed detection now has two layers:
+ *
+ *   - `lib/tool-dispatch.ts` owns the shared `createToolDispatcher` kernel
+ *     the CLI routes through. It handles fence extraction, bare-object
+ *     fallback (the fix for the "empty TUI on daemon" convergence-gap
+ *     bug), parse + repair, dedup, and malformed reporting.
+ *
+ *   - `app/src/lib/tool-dispatch.ts` still owns the Web-side
+ *     `detectAnyToolCall` / `detectAllToolCalls` / `diagnoseToolCallFailure`
+ *     implementations because the Web result shape groups calls by
+ *     execution phase (readOnly / fileMutations / mutating /
+ *     extraMutations) rather than returning a flat list. Unifying the Web
+ *     path on top of `createToolDispatcher` is a future convergence
+ *     tranche — see docs/decisions/Tool-Call Parser Convergence Gap.md.
  */
 
 import { asRecord } from './stream-utils.js';
