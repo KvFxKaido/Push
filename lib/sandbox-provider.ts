@@ -89,6 +89,8 @@ export interface SandboxSession {
 
 export interface SnapshotHandle {
   snapshotId: string;
+  /** Authorization token required to restore this snapshot. */
+  restoreToken?: string;
   /** Provider-specific metadata (e.g. Modal Image ID, size, creation time). */
   metadata?: Record<string, unknown>;
 }
@@ -327,8 +329,10 @@ export interface SandboxProvider {
   // Providers that set capabilities.snapshots = true must implement these.
 
   /**
-   * Snapshot the sandbox filesystem. Returns a handle that can be passed
-   * to `restore()` later to spin up a new sandbox with the same state.
+   * Snapshot the sandbox filesystem and terminate the container.
+   * Returns a handle that can be passed to `restore()` later to spin up
+   * a new sandbox with the same state. The original sandbox is no longer
+   * usable after this call — callers must use `restore()` to continue.
    */
   snapshot?(sandboxId: string): Promise<SnapshotHandle>;
 

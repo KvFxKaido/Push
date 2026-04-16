@@ -10,6 +10,8 @@ export const SANDBOX_ROUTES: Record<string, string> = {
   restore: 'file-ops',
   'batch-write': 'file-ops',
   download: 'create-archive',
+  hibernate: 'snapshot-and-terminate',
+  'restore-snapshot': 'restore-from-snapshot',
 };
 
 export function resolveModalSandboxBase(

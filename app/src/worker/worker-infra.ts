@@ -118,7 +118,12 @@ export async function handleSandbox(
   // exec can run arbitrary shell commands (npm install, test suites, builds) that
   // legitimately take 2+ minutes. Modal's exec_command waits up to 110s internally,
   // so give it 120s here to receive that response. All other routes stay at 60s.
-  const routeTimeoutMs = route === 'exec' ? 120_000 : 60_000;
+  const routeTimeoutMs =
+    route === 'exec'
+      ? 120_000
+      : route === 'hibernate' || route === 'restore-snapshot'
+        ? 120_000
+        : 60_000;
 
   // Create child context for the sandbox upstream call
   const sandboxUpstreamCtx = createChildContext(spanCtx);
