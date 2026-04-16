@@ -34,6 +34,7 @@ import type {
   FileEntry,
   DiffResult,
   ArchiveResult,
+  SnapshotHandle,
 } from '@push/lib/sandbox-provider';
 import { SandboxError } from '@push/lib/sandbox-provider';
 
@@ -53,6 +54,8 @@ import {
   setSandboxOwnerToken,
   clearSandboxEnvironment,
   mapSandboxErrorCode,
+  hibernateSandbox,
+  restoreFromSnapshot,
 } from './sandbox-client';
 
 // ---------------------------------------------------------------------------
@@ -110,9 +113,7 @@ export class ModalSandboxProvider implements SandboxProvider {
   readonly name = 'modal';
 
   readonly capabilities: SandboxProviderCapabilities = {
-    // Snapshots will be enabled once Modal Sandbox Snapshots Design Phase 0
-    // spike confirms the API works on our plan.
-    snapshots: false,
+    snapshots: true,
     portForwarding: false,
     externalStorage: false,
   };
@@ -358,10 +359,39 @@ export class ModalSandboxProvider implements SandboxProvider {
     });
   }
 
-  // -- Snapshots (not yet available) ----------------------------------------
-  // These methods will be implemented once Modal Sandbox Snapshots Design
-  // Phase 0 spike confirms the API. For now, capabilities.snapshots = false
-  // tells callers not to call these.
+  // -- Snapshots --------------------------------------------------------------
+
+  async snapshot(sandboxId: string): Promise<SnapshotHandle> {
+    return wrapErrors(async () => {
+      const result = await hibernateSandbox(sandboxId);
+      if (!result.ok || !result.snapshotId) {
+        throw new SandboxError(result.error || 'Snapshot failed', 'SNAPSHOT_FAILED');
+      }
+      return { snapshotId: result.snapshotId };
+    });
+  }
+
+  async restore(handle: SnapshotHandle): Promise<SandboxSession> {
+    return wrapErrors(async () => {
+      const session = await restoreFromSnapshot(handle.snapshotId);
+      if (session.status === 'error') {
+        throw new SandboxError(session.error || 'Restore failed', 'SNAPSHOT_NOT_FOUND');
+      }
+      return {
+        sandboxId: session.sandboxId,
+        ownerToken: session.ownerToken ?? '',
+        status: session.status,
+        workspaceRevision: session.workspaceRevision,
+        environment: session.environment as SandboxEnvironment | undefined,
+      };
+    });
+  }
+
+  async deleteSnapshot(_handle: SnapshotHandle): Promise<void> {
+    // Modal filesystem snapshots persist as Images and are managed by
+    // Modal's retention policy. Explicit deletion will be implemented
+    // in Phase 4 (eviction cron) when we add the KV snapshot index.
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1619,6 +1619,73 @@ export async function sandboxStatus(sandboxId: string): Promise<SandboxStatusRes
   };
 }
 
+// --- Snapshot / hibernate ---
+
+const HIBERNATE_TIMEOUT_MS = 120_000; // 120s — snapshotting can take time
+const RESTORE_SNAPSHOT_TIMEOUT_MS = 120_000; // 120s — restore + probe
+
+export interface HibernateResult {
+  ok: boolean;
+  snapshotId?: string;
+  error?: string;
+}
+
+export async function hibernateSandbox(sandboxId: string): Promise<HibernateResult> {
+  const raw = await sandboxFetch<{
+    ok: boolean;
+    snapshot_id?: string;
+    error?: string;
+  }>('hibernate', withOwnerToken({ sandbox_id: sandboxId }, sandboxId), HIBERNATE_TIMEOUT_MS);
+
+  if (raw.ok && raw.snapshot_id) {
+    recordSandboxLifecycleEvent(sandboxId, `Workspace hibernated (snapshot: ${raw.snapshot_id})`);
+  }
+
+  // Clear local state for the old sandbox — it's been terminated.
+  setSandboxOwnerToken(null, sandboxId);
+  clearSandboxEnvironment(sandboxId);
+
+  return {
+    ok: raw.ok,
+    snapshotId: raw.snapshot_id,
+    error: raw.error,
+  };
+}
+
+export async function restoreFromSnapshot(snapshotId: string): Promise<SandboxSession> {
+  const raw = await sandboxFetch<{
+    ok: boolean;
+    sandbox_id?: string;
+    owner_token?: string;
+    workspace_revision?: number;
+    environment?: SandboxEnvironment | null;
+    error?: string;
+  }>('restore-snapshot', { snapshot_id: snapshotId }, RESTORE_SNAPSHOT_TIMEOUT_MS);
+
+  if (!raw.ok || !raw.sandbox_id || !raw.owner_token) {
+    return { sandboxId: '', status: 'error', error: raw.error || 'Restore failed' };
+  }
+
+  setSandboxOwnerToken(raw.owner_token);
+  setSandboxOwnerToken(raw.owner_token, raw.sandbox_id);
+  if (typeof raw.workspace_revision === 'number') {
+    setSandboxWorkspaceRevision(raw.sandbox_id, raw.workspace_revision);
+  }
+
+  const environment = raw.environment || undefined;
+  if (environment) setSandboxEnvironment(raw.sandbox_id, environment);
+
+  recordSandboxLifecycleEvent(raw.sandbox_id, `Workspace restored from snapshot ${snapshotId}`);
+
+  return {
+    sandboxId: raw.sandbox_id,
+    ownerToken: raw.owner_token,
+    status: 'ready',
+    workspaceRevision: raw.workspace_revision,
+    environment,
+  };
+}
+
 const DIFF_MAX_BYTES = 30 * 1024; // 30KB cap — keeps checkpoint size bounded
 const DIFF_TRUNCATION_SUFFIX = '\n...(diff truncated at 30KB)';
 const SANDBOX_DIFF_CAPTURE_COMMAND = [

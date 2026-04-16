@@ -1645,6 +1645,103 @@ def get_diff(data: dict):
 
 @app.function(image=endpoint_image)
 @modal.fastapi_endpoint(method="POST")
+def snapshot_and_terminate(data: dict):
+    """Snapshot a sandbox's filesystem and terminate the container.
+
+    Returns the snapshot_id which can be passed to restore_from_snapshot()
+    later to spin up a new sandbox with the same working tree.
+    """
+    sandbox_id = data.get("sandbox_id")
+    owner_token = data.get("owner_token", "")
+
+    if not sandbox_id:
+        return {"ok": False, "error": "Missing sandbox_id"}
+
+    sb, sandbox_error = _load_sandbox(str(sandbox_id))
+    if not sb:
+        return {"ok": False, "error": sandbox_error or "Sandbox unavailable"}
+    if not _validate_owner_token(sb, owner_token):
+        return {"ok": False, "error": "Unauthorized sandbox access"}
+
+    try:
+        t0 = time.time()
+        snapshot = sb.snapshot_filesystem()
+        snapshot_id = snapshot.object_id
+        sb.terminate()
+        duration_ms = round((time.time() - t0) * 1000)
+        _log_action(str(sandbox_id), "snapshot_and_terminate",
+                     snapshot_id=snapshot_id, duration_ms=duration_ms)
+        return {
+            "ok": True,
+            "snapshot_id": snapshot_id,
+        }
+    except Exception as exc:
+        return _sandbox_error_response(exc, {"ok": False})
+
+
+@app.function(image=endpoint_image)
+@modal.fastapi_endpoint(method="POST")
+def restore_from_snapshot(data: dict):
+    """Create a new sandbox from a previously-captured filesystem snapshot.
+
+    The snapshot_id must come from a prior snapshot_and_terminate() call.
+    Returns a fresh sandbox_id, owner_token, and environment probe — the
+    caller treats the result identically to a create() response.
+    """
+    snapshot_id = data.get("snapshot_id")
+
+    if not snapshot_id:
+        return {"ok": False, "error": "Missing snapshot_id"}
+
+    try:
+        t0 = time.time()
+        # Rehydrate the snapshot and create a new sandbox from it.
+        # The snapshot image contains the full workspace filesystem,
+        # layered on top of the original sandbox_image.
+        snapshot_image = modal.Image.from_id(str(snapshot_id))
+        sb = modal.Sandbox.create(
+            "sleep",
+            "infinity",
+            app=app,
+            image=snapshot_image,
+            timeout=3600,
+        )
+
+        # Always issue a fresh owner token for the new sandbox, regardless
+        # of whether the old token survived in /tmp. The client needs a
+        # token that maps to this new sandbox ID.
+        owner_token = _issue_owner_token(sb)
+        if not owner_token:
+            sb.terminate()
+            return {"ok": False, "error": "Failed to initialize sandbox access token after restore"}
+
+        # Read workspace revision from the snapshot if it survived.
+        revision, rev_err = _get_workspace_revision(sb)
+        if revision is None:
+            # /tmp didn't survive or file was missing — reset to 0.
+            _set_workspace_revision(sb, 0)
+            revision = 0
+
+        environment = _run_environment_probe(sb)
+
+        duration_ms = round((time.time() - t0) * 1000)
+        _log_action(sb.object_id, "restore_from_snapshot",
+                     source_snapshot=str(snapshot_id), duration_ms=duration_ms)
+        return {
+            "ok": True,
+            "sandbox_id": sb.object_id,
+            "owner_token": owner_token,
+            "workspace_revision": revision,
+            "environment": environment,
+        }
+    except modal.exception.NotFoundError:
+        return {"ok": False, "error": "Snapshot not found or expired", "code": "SNAPSHOT_NOT_FOUND"}
+    except Exception as exc:
+        return _sandbox_error_response(exc, {"ok": False})
+
+
+@app.function(image=endpoint_image)
+@modal.fastapi_endpoint(method="POST")
 def cleanup(data: dict):
     """Terminate a sandbox."""
     sandbox_id = data.get("sandbox_id")

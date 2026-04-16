@@ -10,6 +10,8 @@ export interface PersistedSandboxSession {
   repoFullName: string;
   branch: string;
   createdAt: number;
+  /** Snapshot ID from a prior hibernate. Used to restore when the container is gone. */
+  snapshotId?: string;
 }
 
 function normalizeSandboxSessionBranch(
