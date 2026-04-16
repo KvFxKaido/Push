@@ -205,6 +205,19 @@ const EXEC_TIMEOUT_MS = 120_000; // 120s for command execution
 let sandboxOwnerToken: string | null = null;
 const sandboxOwnerTokensById = new Map<string, string>();
 
+// --- Idle tracking (used by useSandbox for hibernation timer) ---
+
+let lastSandboxCallAt = 0;
+
+function touchSandboxActivity(): void {
+  lastSandboxCallAt = Date.now();
+}
+
+/** Returns ms since the last sandbox API call, or Infinity if no call has been made. */
+export function msSinceLastSandboxCall(): number {
+  return lastSandboxCallAt ? Date.now() - lastSandboxCallAt : Infinity;
+}
+
 function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -915,6 +928,7 @@ async function sandboxFetch<T>(
           },
         );
 
+        touchSandboxActivity();
         setSpanAttributes(span, {
           'push.request_id': requestId,
           'push.retry_count': retryCount,

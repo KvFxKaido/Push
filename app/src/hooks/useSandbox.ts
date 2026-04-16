@@ -21,6 +21,9 @@ import {
   setActiveSandboxEnvironment,
   clearSandboxEnvironment,
   probeSandboxEnvironment,
+  hibernateSandbox,
+  restoreFromSnapshot,
+  msSinceLastSandboxCall,
 } from '@/lib/sandbox-client';
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet } from '@/lib/safe-storage';
@@ -157,8 +160,41 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     setSandboxOwnerToken(saved.ownerToken);
     setSandboxOwnerToken(saved.ownerToken, saved.sandboxId);
 
+    const attemptSnapshotRestore = async (): Promise<string | null> => {
+      if (!saved.snapshotId) return null;
+      console.log(`[useSandbox] Attempting restore from snapshot ${saved.snapshotId}`);
+      setStatus('reconnecting');
+      try {
+        const session = await restoreFromSnapshot(saved.snapshotId);
+        if (cancelled || session.status !== 'ready') return null;
+        setSandboxId(session.sandboxId);
+        sandboxIdRef.current = session.sandboxId;
+        sessionStorageKeyRef.current = activeSessionStorageKey;
+        setActiveSandboxEnvironment(session.sandboxId);
+        setStatus('ready');
+        const symbolKey = saved.repoFullName
+          ? `${saved.repoFullName}:${saved.branch || 'main'}`
+          : 'scratch';
+        symbolLedger.setRepo(symbolKey);
+        void symbolLedger.hydrate();
+        // Persist the new sandbox ID (snapshot consumed).
+        saveSandboxSession(saved.repoFullName, saved.branch, {
+          sandboxId: session.sandboxId,
+          ownerToken: session.ownerToken || '',
+          repoFullName: saved.repoFullName,
+          branch: saved.branch,
+          createdAt: Date.now(),
+        });
+        console.log(`[useSandbox] Restored from snapshot → ${session.sandboxId}`);
+        return session.sandboxId;
+      } catch (restoreErr) {
+        console.debug('[useSandbox] Snapshot restore failed:', restoreErr);
+        return null;
+      }
+    };
+
     const reconnectPromise = execInSandbox(saved.sandboxId, 'true')
-      .then((result) => {
+      .then(async (result) => {
         if (cancelled) return null;
         if (result.exitCode === 0) {
           setSandboxId(saved.sandboxId);
@@ -166,46 +202,44 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           sessionStorageKeyRef.current = activeSessionStorageKey;
           setActiveSandboxEnvironment(saved.sandboxId);
           setStatus('ready');
-          // Hydrate the symbol persistence ledger scoped to repo+branch on reconnect
           const symbolKey = saved.repoFullName
             ? `${saved.repoFullName}:${saved.branch || 'main'}`
             : 'scratch';
           symbolLedger.setRepo(symbolKey);
           void symbolLedger.hydrate();
-          // Fire-and-forget environment probe on reconnect
           probeSandboxEnvironment(saved.sandboxId).catch(() => {});
           console.log('[useSandbox] Reconnected to saved sandbox:', saved.sandboxId);
           return saved.sandboxId;
         }
-        // Mirror the refresh() policy: gate teardown on the error text,
-        // not the exit code, because exit_code -1 is overloaded on the
-        // backend (used for unauthorized-token races and command timeouts
-        // in addition to the real "sandbox not found" case).
         const reason = result.error || 'Sandbox is no longer reachable';
-        setStatus('idle');
         if (isDefinitivelyGoneMessage(reason)) {
           console.debug(`[useSandbox] Reconnect: container gone for ${saved.sandboxId}: ${reason}`);
+          // Attempt snapshot restore before giving up.
+          const restored = await attemptSnapshotRestore();
+          if (restored) return restored;
           clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
         } else {
           console.debug(
             `[useSandbox] Reconnect: transient failure for ${saved.sandboxId} (exit ${result.exitCode}): ${reason} — keeping session`,
           );
         }
+        setStatus('idle');
         return null;
       })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setStatus('idle');
-          const msg = err instanceof Error ? err.message : String(err);
-          if (isDefinitivelyGoneError(err)) {
-            console.debug(`[useSandbox] Reconnect: container gone for ${saved.sandboxId}: ${msg}`);
-            clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
-          } else {
-            console.debug(
-              `[useSandbox] Reconnect: transient error for ${saved.sandboxId}: ${msg} — keeping session`,
-            );
-          }
+      .catch(async (err: unknown) => {
+        if (cancelled) return null;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (isDefinitivelyGoneError(err)) {
+          console.debug(`[useSandbox] Reconnect: container gone for ${saved.sandboxId}: ${msg}`);
+          const restored = await attemptSnapshotRestore();
+          if (restored) return restored;
+          clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
+        } else {
+          console.debug(
+            `[useSandbox] Reconnect: transient error for ${saved.sandboxId}: ${msg} — keeping session`,
+          );
         }
+        setStatus('idle');
         return null;
       })
       .finally(() => {
@@ -223,6 +257,56 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       reconnectPromiseRef.current = null;
     };
   }, [activeBranch, activeRepoFullName, activeSessionStorageKey, status]);
+
+  // Idle hibernation timer — snapshot the sandbox after 8 min of no tool calls.
+  // The snapshot preserves the full working tree so restore is fast. Without this,
+  // the container silently dies at the 1-hour Modal timeout and the user loses
+  // all uncommitted state.
+  const IDLE_HIBERNATE_MS = 8 * 60 * 1000; // 8 min
+  const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // check every minute
+
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const id = sandboxIdRef.current;
+    if (!id) return;
+
+    const timer = setInterval(() => {
+      const idle = msSinceLastSandboxCall();
+      if (idle < IDLE_HIBERNATE_MS) return;
+
+      // Don't hibernate if something else already changed the status.
+      if (statusRef.current !== 'ready') return;
+
+      console.log(`[useSandbox] Idle for ${Math.round(idle / 1000)}s — hibernating sandbox ${id}`);
+
+      // Fire-and-forget: hibernate in the background. On success, persist
+      // the snapshotId so the next reconnect can restore from it.
+      hibernateSandbox(id)
+        .then((result) => {
+          if (!result.ok || !result.snapshotId) {
+            console.debug('[useSandbox] Idle hibernate failed:', result.error);
+            return;
+          }
+          // Persist the snapshotId for restore on next app open.
+          if (activeRepoFullName != null && activeBranch) {
+            saveSandboxSession(activeRepoFullName, activeBranch, {
+              sandboxId: id,
+              ownerToken: getSandboxOwnerToken(id) || '',
+              repoFullName: activeRepoFullName,
+              branch: activeBranch,
+              createdAt: Date.now(),
+              snapshotId: result.snapshotId,
+            });
+          }
+          console.log(`[useSandbox] Hibernated → snapshot ${result.snapshotId}`);
+        })
+        .catch((err: unknown) => {
+          console.debug('[useSandbox] Idle hibernate error:', err);
+        });
+    }, IDLE_CHECK_INTERVAL_MS);
+
+    return () => clearInterval(timer);
+  }, [activeBranch, activeRepoFullName, status]);
 
   const start = useCallback(async (repo: string, branch?: string): Promise<string | null> => {
     if (startPromiseRef.current) return startPromiseRef.current;
