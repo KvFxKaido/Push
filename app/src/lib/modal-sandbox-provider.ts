@@ -387,6 +387,7 @@ export class ModalSandboxProvider implements SandboxProvider {
     });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async deleteSnapshot(_handle: SnapshotHandle): Promise<void> {
     // Modal filesystem snapshots persist as Images and are managed by
     // Modal's retention policy. Explicit deletion will be implemented

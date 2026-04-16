@@ -45,6 +45,8 @@ export type SandboxStatus = 'idle' | 'reconnecting' | 'creating' | 'ready' | 'er
 
 const APP_COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 const SANDBOX_MAX_AGE_MS = 25 * 60 * 1000; // 25 min (conservative vs Modal's 30 min)
+const IDLE_HIBERNATE_MS = 8 * 60 * 1000; // 8 min idle before snapshot
+const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // check every minute
 
 function getGitHubToken(): string {
   return getActiveGitHubToken();
@@ -262,9 +264,6 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   // The snapshot preserves the full working tree so restore is fast. Without this,
   // the container silently dies at the 1-hour Modal timeout and the user loses
   // all uncommitted state.
-  const IDLE_HIBERNATE_MS = 8 * 60 * 1000; // 8 min
-  const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // check every minute
-
   useEffect(() => {
     if (status !== 'ready') return;
     const id = sandboxIdRef.current;
