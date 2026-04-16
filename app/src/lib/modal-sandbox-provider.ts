@@ -127,10 +127,7 @@ export class ModalSandboxProvider implements SandboxProvider {
       );
 
       if (session.status === 'error') {
-        throw new SandboxError(
-          session.error || 'Sandbox creation failed',
-          'CONTAINER_ERROR',
-        );
+        throw new SandboxError(session.error || 'Sandbox creation failed', 'CONTAINER_ERROR');
       }
 
       return {
@@ -177,11 +174,7 @@ export class ModalSandboxProvider implements SandboxProvider {
 
   // -- Execution ------------------------------------------------------------
 
-  async exec(
-    sandboxId: string,
-    command: string,
-    options?: ExecOptions,
-  ): Promise<ExecResult> {
+  async exec(sandboxId: string, command: string, options?: ExecOptions): Promise<ExecResult> {
     return wrapErrors(async () => {
       const result = await execInSandbox(sandboxId, command, options?.workdir, {
         markWorkspaceMutated: options?.markWorkspaceMutated,
@@ -266,11 +259,7 @@ export class ModalSandboxProvider implements SandboxProvider {
     options?: DeleteFileOptions,
   ): Promise<{ workspace_revision: number }> {
     return wrapErrors(async () => {
-      const revision = await deleteFromSandbox(
-        sandboxId,
-        path,
-        options?.expectedWorkspaceRevision,
-      );
+      const revision = await deleteFromSandbox(sandboxId, path, options?.expectedWorkspaceRevision);
       return { workspace_revision: revision ?? 0 };
     });
   }
@@ -300,10 +289,7 @@ export class ModalSandboxProvider implements SandboxProvider {
     return wrapErrors(async () => {
       const result = await downloadFromSandbox(sandboxId, path);
       if (!result.ok) {
-        throw new SandboxError(
-          result.error || 'Archive creation failed',
-          'CONTAINER_ERROR',
-        );
+        throw new SandboxError(result.error || 'Archive creation failed', 'CONTAINER_ERROR');
       }
       return {
         archive: result.archiveBase64 ?? '',
@@ -312,18 +298,11 @@ export class ModalSandboxProvider implements SandboxProvider {
     });
   }
 
-  async hydrateArchive(
-    sandboxId: string,
-    archive: string,
-    path?: string,
-  ): Promise<void> {
+  async hydrateArchive(sandboxId: string, archive: string, path?: string): Promise<void> {
     return wrapErrors(async () => {
       const result = await hydrateSnapshotInSandbox(sandboxId, archive, path);
       if (!result.ok) {
-        throw new SandboxError(
-          result.error || 'Archive hydration failed',
-          'CONTAINER_ERROR',
-        );
+        throw new SandboxError(result.error || 'Archive hydration failed', 'CONTAINER_ERROR');
       }
     });
   }
