@@ -18,6 +18,8 @@ describe('SANDBOX_ROUTES — completeness', () => {
     'restore',
     'batch-write',
     'download',
+    'hibernate',
+    'restore-snapshot',
   ];
 
   for (const route of expectedRoutes) {
