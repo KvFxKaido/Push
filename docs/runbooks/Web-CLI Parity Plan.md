@@ -5,7 +5,7 @@
 - Updated: 2026-03-16
 - Reviewed against current code: 2026-03-30
 - Supersedes: Web-CLI Parity Plan (2026-03-11)
-- State: **Partially shipped** — TypeScript runtime cutover, TUI improvements, and daemon integration are in place; remaining work is selective convergence on shared modules where drift still matters
+- State: **Shipped foundation** — Tracks 1–4 all complete (TypeScript cutover, core module extraction, TUI usability, daemon integration). Remaining work is selective shared-runtime adoption tracked against roadmap priorities, not this plan.
 - Intent: Share core logic between web and CLI to eliminate dual implementations, prioritize TUI usability over feature parity
 
 ## What Changed from v1

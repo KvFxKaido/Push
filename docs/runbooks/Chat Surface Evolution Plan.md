@@ -1,7 +1,7 @@
 # Chat Surface Evolution Plan
 
 Date: 2026-03-31
-Status: **Current**
+Status: **Mostly shipped** — Tracks A, B, D, E, F shipped 2026-03-31; Track C (explicit context escalation) still open
 Owner: Push
 Related:
 - `docs/runbooks/Workspace Route Follow-up Plan.md` — route-boundary cleanup that made the current workspace/chat shell possible

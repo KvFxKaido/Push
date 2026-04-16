@@ -1,39 +1,52 @@
 # Decisions Folder
 
-Status reviewed: 2026-04-14
+Status reviewed: 2026-04-16
 
-This folder contains architecture decisions, research, analysis, and shipped design references. It merges the former `analysis/` and `design/` folders.
+This folder contains architecture decisions, research, analysis, and shipped design references.
 
 ## How to use this folder
 
 - Prefer the docs marked **Current** when choosing new work.
 - Treat **Historical** docs as context and provenance, not open task lists.
+- Treat **Draft** docs as design-in-motion; implementation commitments still require a `ROADMAP.md` entry.
 - If a doc conflicts with the code, prefer the code and refresh the doc.
 
 ## Document Status
 
 | Document | Status | Notes |
 |---|---|---|
-| `Agent Experience Wishlist.md` | Historical | Shipped on 2026-02-19; useful for provenance and feature rationale. |
-| `Architecture Rating Snapshot.md` | Reference snapshot, added 2026-03-30 | Three-way architecture rating panel doc with Codex, Claude, and Gemini passes plus a synthesis section. |
-| `Architecture Remediation Plan — Defusing the Big Four.md` | Draft, added 2026-04-14, step 1 landed 2026-04-14 | Working discussion plan for the four dense coordination modules flagged by every panel: tracing spine, verification-family extraction, shim decision, and policy-to-runtime hardening. |
-| `CorrelationContext Contract.md` | Current, docs-and-types only, added 2026-04-14 | Step 1 of the remediation plan: the canonical shape for passive cross-surface correlation tags (`runId`, `chatId`, `sessionId`, `taskGraphId`, `taskId`, `executionId`, `toolCallId`, `surface`). Nothing imports `lib/correlation-context.ts` yet — propagation is step 3. |
-| `Agent Tool Patterns — Claude Code Cross-Reference.md` | Reference, refreshed 2026-03-30 | Comparative design notes; several February borrow items are now shipped or partial (`ask_user`, typed delegation, adaptive web-side working-memory reinjection). The remaining CLI follow-through is now narrower: broader memory adoption and later task-graph/product decisions rather than basic prompt/memory plumbing. |
-| `AgentScope Architecture Review.md` | Current, refreshed after tracing pass | Web-side OTel spans are now in place for model/tool/sandbox/delegation boundaries; the main remaining work is Worker/server propagation and sandbox-provider abstraction. |
-| `CLI Prompt Builder Convergence.md` | Implemented core path, refreshed 2026-04-05 | Shared `SystemPromptBuilder` now lives in root `lib/`, and the CLI prompt pipeline uses it with the existing lazy enrichment sentinel plus prompt debug metrics. |
-| `Context Memory and Retrieval Architecture.md` | Current, added 2026-04-05 | Concrete follow-up design for moving from transcript compaction to typed, invalidation-aware memory retrieval and prompt packing across orchestration flows. |
-| `Copilot SDK Research.md` | Current, partially superseded | Prompt sections, tool scoping, steering/queueing, and the live-vs-persisted event split are now in place; the main still-open carry-over is a dedicated task agent plus richer session/permission telemetry. |
-| `Duplication and Structural Symmetry Analysis.md` | Current, refreshed 2026-03-30 | `hashline` drift and shared provider-model catalog drift are now resolved; remaining cleanup is more about Settings state surfaces and other mirrored modules. |
-| `Harness Friction — Agent Self-Report.md` | Current, refreshed 2026-03-30 | Ambient runtime state, capability discovery, and structured mutation postconditions are now shipped on the main web path; working-memory evolution and richer structural navigation remain open. |
-| `Multi-Agent Orchestration Research — open-multi-agent.md` | Reference, added 2026-04-04 | Research on open-multi-agent framework: goal→DAG decomposition, coordinator pattern, shared memory, fan-out/aggregate. Core task-graph/memory work is now shipped; keep this for rationale and later follow-through. |
-| `Vercel Open Agents Review.md` | Current, added 2026-04-14 | Comparative review of `vercel-labs/open-agents`. Headline adoption target is Modal sandbox snapshots; secondary targets are sandbox port exposure, read-only share links, and server-side durable runs on Cloudflare. |
-| `Web and CLI Runtime Contract.md` | Current, refreshed 2026-04-05 | Defines the architecture rule for Push shells: share agent-runtime semantics across web and CLI, allow divergence in transport and UX shell. The main shared-runtime extraction tranche is now shipped. |
+| `Agent Experience Wishlist.md` | Historical | Shipped 2026-02-19; useful for provenance and feature rationale. |
+| `Agent Tool Patterns — Claude Code Cross-Reference.md` | Reference, refreshed 2026-03-30 | Comparative design notes; several February borrow items are now shipped or partial. Remaining CLI follow-through is narrower memory adoption and later task-graph/product decisions. |
+| `AgentScope Architecture Review.md` | Current, refreshed after tracing pass | Web-side OTel spans are now in place for model/tool/sandbox/delegation boundaries; main remaining work is Worker/server propagation and sandbox-provider abstraction. |
+| `Architecture Rating Snapshot.md` | Reference snapshot, added 2026-03-30 | Three-way architecture rating panel (Codex, Claude, Gemini) plus synthesis. |
+| `Architecture Remediation Plan — Defusing the Big Four.md` | Draft, added 2026-04-14, step 1 landed 2026-04-14 | Working plan for the four dense coordination modules flagged by every panel. |
+| `CLI Prompt Builder Convergence.md` | Implemented core path, refreshed 2026-04-05 | Shared `SystemPromptBuilder` lives in root `lib/`; CLI prompt pipeline consumes it. |
+| `Context Memory and Retrieval Architecture.md` | Current, added 2026-04-05 | Concrete follow-up design for typed, invalidation-aware memory retrieval and prompt packing. |
+| `Copilot SDK Research.md` | Current, partially superseded | Prompt sections, tool scoping, steering/queueing, and live-vs-persisted event split are now in place; main open carry-over is a dedicated task agent plus richer session/permission telemetry. |
+| `CorrelationContext Contract.md` | Current, docs-and-types only, added 2026-04-14 | Step 1 of the remediation plan: canonical shape for passive cross-surface correlation tags. Propagation is step 3. |
+| `Duplication and Structural Symmetry Analysis.md` | Current, refreshed 2026-03-30 | `hashline` drift and shared provider-model catalog drift are resolved; remaining cleanup is Settings state surfaces and other mirrored modules. |
+| `External Resource Review — Harness Engineering and Ralph Loop.md` | Reference | Source for the 2026-04-14 Tiered Orchestrator Routing and Canonical SOP Playbooks spikes. |
+| `Harness Friction — Agent Self-Report.md` | Current, refreshed 2026-03-30 | Ambient runtime state, capability discovery, and structured mutation postconditions shipped on main web path; working-memory evolution and richer structural navigation remain open. |
+| `Hashline System Review.md` | Current scorecard, added 2026-04-08 | Recommendations A, C, D, E shipped; B shipped as a tool-level patchset range form. Effectiveness measurement logged 2026-04-12. |
+| `Modal Sandbox Snapshots Design.md` | Draft, added 2026-04-14 | Phase 0 API verification complete; Phase 1 backend primitives pending. Headline item from the Vercel Open Agents review. |
+| `Multi-Agent Orchestration Research — open-multi-agent.md` | Reference, added 2026-04-04 | Research on open-multi-agent framework. Core task-graph/memory work shipped; keep for rationale. |
+| `Oh My OpenAgent Review.md` | Comparative review | Tier-1/2/3 quick-win list for Push. |
+| `OpenAI Agents SDK Evolution Review.md` | Reference | Comparative review of the OpenAI Agents SDK. |
+| `phase-5-tool-runtime-brief.md` | Draft, added 2026-04-12 | `ToolExecutionRuntime` interface brief for Phase 5B of the Big Four remediation. Pending review before implementation. |
+| `push-runtime-v2.md` | Working design doc | Ongoing design space for the Push runtime v2, including the runtime-schema validator landed 2026-04-14. |
+| `Rerank Before Prompt Packing.md` | Draft spike, added 2026-04-14 | Optional rerank stage between deterministic retrieval and sectioned packing for delegation briefs and Auditor. |
+| `Resumable Sessions Design.md` | Historical | Shipped 2026-02-19 (Phases 1–4); useful as provenance and for journal-adjacent designs like Modal Sandbox Snapshots. |
+| `Sectioned System Prompts.md` | Shipped design reference | Sectioned system prompt builder refactor. |
+| `Tool-Call Parser Convergence Gap.md` | CLI side resolved 2026-04-15, Web side pending | `lib/tool-dispatch.ts` now owns the CLI detection kernel; Web dispatcher migration deferred until the phase-grouping state machine can be unified. |
+| `Vercel Open Agents Review.md` | Current, added 2026-04-14 | Adoption target is Modal sandbox snapshots; secondary targets are sandbox port exposure, read-only share links, and server-side durable runs on Cloudflare. |
+| `Web and CLI Runtime Contract.md` | Current, refreshed 2026-04-05 | Architecture rule for Push shells: share agent-runtime semantics across web and CLI, allow divergence in transport and UX shell. |
 
 ## Quick Triage
 
 If we are choosing implementation work from this folder, the best live clusters are now:
 
 1. End-to-end tracing follow-through (Worker/server propagation, exporter rollout, metric retirement).
-2. Working-memory evolution and invalidation-aware investigation state, now with a concrete follow-up in `Context Memory and Retrieval Architecture.md`.
-3. Richer structural navigation (`read_symbol_body`, implementations, call-graph queries).
-4. Selective CLI adoption of the now-shared runtime substrate where it clearly improves the terminal product.
+2. Working-memory evolution and invalidation-aware investigation state, with a concrete follow-up in `Context Memory and Retrieval Architecture.md`.
+3. Modal sandbox snapshots Phase 1 (headline 2026-04-14 adoption target).
+4. Phase 5B `ToolExecutionRuntime` interface land + Phase 5C deep-reviewer move.
+5. Selective CLI adoption of the shared runtime substrate where it clearly improves the terminal product.

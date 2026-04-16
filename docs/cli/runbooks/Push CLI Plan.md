@@ -1,10 +1,10 @@
 # Push CLI Plan (V2)
 
 Date: 2026-02-20  
-Status: In Progress (as of 2026-03-29)  
+Status: Superseded baseline (reviewed 2026-04-16) — core phases shipped; the live CLI priority has moved to transcript-first muscle-memory UX in `ROADMAP.md`, not this phased plan  
 Owner: Push
 
-## Implementation Status Snapshot (2026-03-29)
+## Implementation Status Snapshot (2026-04-16)
 
 - Done: Phase 0 (runtime contract + `pushd` skeleton + IPC baseline).
 - Done: Phase 1 (interactive REPL MVP with streaming, tool timeline, approvals, and resume-by-session).
@@ -14,6 +14,8 @@ Owner: Push
 - Partial: Phase 5 (`pushd` + `push attach` shipped; full remote app client attach/reconnect UX still pending).
 - Done (post-bootstrap): CLI web search stack shipped (`web_search` + Tavily + Ollama native + DuckDuckGo fallback + configurable backend via `PUSH_WEB_SEARCH_BACKEND` and `push config set --search-backend`).
 - Done (experimental): Phase 6 full-screen TUI shell shipped behind `PUSH_TUI_ENABLED`; see `docs/archive/cli/runbooks/Push CLI TUI Phase 1 Plan.md`.
+
+> **Note:** ROADMAP now drives CLI priorities (Muscle-Memory UX, Selective Shared-Runtime Adoption, Attach + Event Stream UX). Treat this doc as the foundational rationale/architecture reference, not the current work list.
 
 ## Decision
 
