@@ -367,13 +367,16 @@ export class ModalSandboxProvider implements SandboxProvider {
       if (!result.ok || !result.snapshotId) {
         throw new SandboxError(result.error || 'Snapshot failed', 'SNAPSHOT_FAILED');
       }
-      return { snapshotId: result.snapshotId };
+      return { snapshotId: result.snapshotId, restoreToken: result.restoreToken };
     });
   }
 
   async restore(handle: SnapshotHandle): Promise<SandboxSession> {
     return wrapErrors(async () => {
-      const session = await restoreFromSnapshot(handle.snapshotId);
+      if (!handle.restoreToken) {
+        throw new SandboxError('Missing restore token', 'AUTH_FAILURE');
+      }
+      const session = await restoreFromSnapshot(handle.snapshotId, handle.restoreToken);
       if (session.status === 'error') {
         throw new SandboxError(session.error || 'Restore failed', 'SNAPSHOT_NOT_FOUND');
       }
@@ -387,12 +390,9 @@ export class ModalSandboxProvider implements SandboxProvider {
     });
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async deleteSnapshot(_handle: SnapshotHandle): Promise<void> {
-    // Modal filesystem snapshots persist as Images and are managed by
-    // Modal's retention policy. Explicit deletion will be implemented
-    // in Phase 4 (eviction cron) when we add the KV snapshot index.
-  }
+  // deleteSnapshot is intentionally not implemented — Modal filesystem
+  // snapshots persist as Images managed by Modal's retention policy.
+  // Explicit deletion will be added in Phase 4 (eviction cron + KV index).
 }
 
 // ---------------------------------------------------------------------------

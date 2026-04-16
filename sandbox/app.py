@@ -1665,6 +1665,24 @@ def snapshot_and_terminate(data: dict):
 
     try:
         t0 = time.time()
+        # Generate a restore token and write it into the sandbox BEFORE
+        # snapshotting so it's captured in the snapshot image. On restore,
+        # the server reads this token from the restored filesystem and
+        # compares it to the client-provided value — knowing the
+        # snapshot_id alone is not enough to restore.
+        restore_token = secrets.token_urlsafe(32)
+        p = sb.exec(
+            "python3", "-c",
+            (
+                "import pathlib,sys;"
+                "p=pathlib.Path('/tmp/push-restore-token');"
+                "p.write_text(sys.argv[1], encoding='utf-8');"
+                "p.chmod(0o600)"
+            ),
+            restore_token,
+        )
+        if not _wait_with_timeout(p, timeout_seconds=10):
+            return {"ok": False, "error": "Failed to write restore token"}
         snapshot = sb.snapshot_filesystem()
         snapshot_id = snapshot.object_id
         sb.terminate()
@@ -1674,6 +1692,7 @@ def snapshot_and_terminate(data: dict):
         return {
             "ok": True,
             "snapshot_id": snapshot_id,
+            "restore_token": restore_token,
         }
     except Exception as exc:
         return _sandbox_error_response(exc, {"ok": False})
@@ -1689,9 +1708,12 @@ def restore_from_snapshot(data: dict):
     caller treats the result identically to a create() response.
     """
     snapshot_id = data.get("snapshot_id")
+    restore_token = data.get("restore_token", "")
 
     if not snapshot_id:
         return {"ok": False, "error": "Missing snapshot_id"}
+    if not restore_token:
+        return {"ok": False, "error": "Missing restore_token"}
 
     try:
         t0 = time.time()
@@ -1706,6 +1728,24 @@ def restore_from_snapshot(data: dict):
             image=snapshot_image,
             timeout=3600,
         )
+
+        # Verify the restore token matches what was written before snapshotting.
+        try:
+            p = sb.exec(
+                "python3", "-c",
+                "import pathlib; p=pathlib.Path('/tmp/push-restore-token'); "
+                "print(p.read_text(encoding='utf-8') if p.exists() else '')"
+            )
+            if not _wait_with_timeout(p, timeout_seconds=10):
+                sb.terminate()
+                return {"ok": False, "error": "Restore token verification timed out"}
+            expected_token = p.stdout.read().strip()
+            if not expected_token or not hmac.compare_digest(expected_token, str(restore_token)):
+                sb.terminate()
+                return {"ok": False, "error": "Invalid restore token"}
+        except Exception:
+            sb.terminate()
+            return {"ok": False, "error": "Restore token verification failed"}
 
         # Always issue a fresh owner token for the new sandbox, regardless
         # of whether the old token survived in /tmp. The client needs a

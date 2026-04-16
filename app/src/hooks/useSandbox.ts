@@ -24,6 +24,7 @@ import {
   hibernateSandbox,
   restoreFromSnapshot,
   msSinceLastSandboxCall,
+  suppressIdleTouch,
 } from '@/lib/sandbox-client';
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet } from '@/lib/safe-storage';
@@ -163,11 +164,11 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     setSandboxOwnerToken(saved.ownerToken, saved.sandboxId);
 
     const attemptSnapshotRestore = async (): Promise<string | null> => {
-      if (!saved.snapshotId) return null;
+      if (!saved.snapshotId || !saved.restoreToken) return null;
       console.log(`[useSandbox] Attempting restore from snapshot ${saved.snapshotId}`);
       setStatus('reconnecting');
       try {
-        const session = await restoreFromSnapshot(saved.snapshotId);
+        const session = await restoreFromSnapshot(saved.snapshotId, saved.restoreToken);
         if (cancelled || session.status !== 'ready') return null;
         setSandboxId(session.sandboxId);
         sandboxIdRef.current = session.sandboxId;
@@ -195,6 +196,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       }
     };
 
+    suppressIdleTouch(); // Don't let reconnect probes reset idle clock
     const reconnectPromise = execInSandbox(saved.sandboxId, 'true')
       .then(async (result) => {
         if (cancelled) return null;
@@ -278,8 +280,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
       console.log(`[useSandbox] Idle for ${Math.round(idle / 1000)}s — hibernating sandbox ${id}`);
 
-      // Fire-and-forget: hibernate in the background. On success, persist
-      // the snapshotId so the next reconnect can restore from it.
+      // Capture the owner token BEFORE hibernate clears it.
+      const ownerToken = getSandboxOwnerToken(id) || '';
+
       hibernateSandbox(id)
         .then((result) => {
           if (!result.ok || !result.snapshotId) {
@@ -290,13 +293,20 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           if (activeRepoFullName != null && activeBranch) {
             saveSandboxSession(activeRepoFullName, activeBranch, {
               sandboxId: id,
-              ownerToken: getSandboxOwnerToken(id) || '',
+              ownerToken,
               repoFullName: activeRepoFullName,
               branch: activeBranch,
               createdAt: Date.now(),
               snapshotId: result.snapshotId,
+              restoreToken: result.restoreToken,
             });
           }
+          // Transition to idle — the container is terminated. This stops
+          // the interval from firing again (status !== 'ready' guard)
+          // and signals the UI that the sandbox needs a restore/create.
+          setSandboxId(null);
+          sandboxIdRef.current = null;
+          setStatus('idle');
           console.log(`[useSandbox] Hibernated → snapshot ${result.snapshotId}`);
         })
         .catch((err: unknown) => {
@@ -470,6 +480,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     if (!opts?.silent) setStatus('creating'); // reuse 'creating' as a "checking" state (shows spinner)
 
     try {
+      suppressIdleTouch(); // Don't let refresh probes reset idle clock
       const result = await execInSandbox(id, 'true');
 
       if (sandboxIdRef.current !== id) return false;

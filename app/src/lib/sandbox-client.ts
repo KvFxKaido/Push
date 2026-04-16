@@ -208,14 +208,27 @@ const sandboxOwnerTokensById = new Map<string, string>();
 // --- Idle tracking (used by useSandbox for hibernation timer) ---
 
 let lastSandboxCallAt = 0;
+let suppressActivityTouchCount = 0;
 
 function touchSandboxActivity(): void {
+  if (suppressActivityTouchCount > 0) {
+    suppressActivityTouchCount--;
+    return;
+  }
   lastSandboxCallAt = Date.now();
 }
 
 /** Returns ms since the last sandbox API call, or Infinity if no call has been made. */
 export function msSinceLastSandboxCall(): number {
   return lastSandboxCallAt ? Date.now() - lastSandboxCallAt : Infinity;
+}
+
+/**
+ * Suppress the next N sandboxFetch calls from resetting the idle clock.
+ * Used for health-check probes that shouldn't defeat idle hibernation.
+ */
+export function suppressIdleTouch(count = 1): void {
+  suppressActivityTouchCount += count;
 }
 
 function shellEscape(value: string): string {
@@ -729,6 +742,8 @@ export async function probeSandboxEnvironment(
   sandboxId: string,
 ): Promise<SandboxEnvironment | null> {
   try {
+    // Health probes should not reset the idle-hibernation clock.
+    suppressIdleTouch();
     const result = await execInSandbox(sandboxId, ENVIRONMENT_PROBE_SCRIPT);
     const env = parseEnvironmentProbe(result.stdout);
     if (env) setSandboxEnvironment(sandboxId, env);
@@ -1641,6 +1656,8 @@ const RESTORE_SNAPSHOT_TIMEOUT_MS = 120_000; // 120s — restore + probe
 export interface HibernateResult {
   ok: boolean;
   snapshotId?: string;
+  /** Token required to authorize restore. Store alongside snapshotId. */
+  restoreToken?: string;
   error?: string;
 }
 
@@ -1648,25 +1665,31 @@ export async function hibernateSandbox(sandboxId: string): Promise<HibernateResu
   const raw = await sandboxFetch<{
     ok: boolean;
     snapshot_id?: string;
+    restore_token?: string;
     error?: string;
   }>('hibernate', withOwnerToken({ sandbox_id: sandboxId }, sandboxId), HIBERNATE_TIMEOUT_MS);
 
   if (raw.ok && raw.snapshot_id) {
     recordSandboxLifecycleEvent(sandboxId, `Workspace hibernated (snapshot: ${raw.snapshot_id})`);
+    // Only clear local state after confirmed successful hibernate.
+    // On failure the container may still be alive — clearing tokens
+    // would strand an otherwise-recoverable session.
+    setSandboxOwnerToken(null, sandboxId);
+    clearSandboxEnvironment(sandboxId);
   }
-
-  // Clear local state for the old sandbox — it's been terminated.
-  setSandboxOwnerToken(null, sandboxId);
-  clearSandboxEnvironment(sandboxId);
 
   return {
     ok: raw.ok,
     snapshotId: raw.snapshot_id,
+    restoreToken: raw.restore_token,
     error: raw.error,
   };
 }
 
-export async function restoreFromSnapshot(snapshotId: string): Promise<SandboxSession> {
+export async function restoreFromSnapshot(
+  snapshotId: string,
+  restoreToken: string,
+): Promise<SandboxSession> {
   const raw = await sandboxFetch<{
     ok: boolean;
     sandbox_id?: string;
@@ -1674,7 +1697,11 @@ export async function restoreFromSnapshot(snapshotId: string): Promise<SandboxSe
     workspace_revision?: number;
     environment?: SandboxEnvironment | null;
     error?: string;
-  }>('restore-snapshot', { snapshot_id: snapshotId }, RESTORE_SNAPSHOT_TIMEOUT_MS);
+  }>(
+    'restore-snapshot',
+    { snapshot_id: snapshotId, restore_token: restoreToken },
+    RESTORE_SNAPSHOT_TIMEOUT_MS,
+  );
 
   if (!raw.ok || !raw.sandbox_id || !raw.owner_token) {
     return { sandboxId: '', status: 'error', error: raw.error || 'Restore failed' };

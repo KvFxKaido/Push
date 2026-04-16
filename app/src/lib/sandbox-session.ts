@@ -12,6 +12,8 @@ export interface PersistedSandboxSession {
   createdAt: number;
   /** Snapshot ID from a prior hibernate. Used to restore when the container is gone. */
   snapshotId?: string;
+  /** Token required to authorize snapshot restore. Stored alongside snapshotId. */
+  restoreToken?: string;
 }
 
 function normalizeSandboxSessionBranch(
@@ -33,7 +35,16 @@ function parsePersistedSandboxSession(raw: string | null): PersistedSandboxSessi
 
   try {
     const session = JSON.parse(raw) as PersistedSandboxSession;
-    if (!session.sandboxId || !session.ownerToken || !session.branch || !session.createdAt) {
+    // Sessions with a snapshotId can have an empty ownerToken (the
+    // container was terminated, token cleared). Accept them so the
+    // restore flow can find the snapshotId on next app open.
+    const hasSnapshot = !!session.snapshotId;
+    if (
+      !session.sandboxId ||
+      (!session.ownerToken && !hasSnapshot) ||
+      !session.branch ||
+      !session.createdAt
+    ) {
       return null;
     }
     if (typeof session.repoFullName !== 'string') return null;
