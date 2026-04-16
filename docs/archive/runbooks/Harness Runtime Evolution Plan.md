@@ -4,8 +4,8 @@ Date: 2026-03-30
 Status: **Complete**
 Owner: Push
 Related:
-- `docs/runbooks/Harness Reliability Plan.md` — historical rollout of the first reliability wave
-- `docs/runbooks/Runtime Enforcement Follow-up Plan.md` — completed follow-on for the runtime enforcement layer
+- `Harness Reliability Plan.md` — historical rollout of the first reliability wave
+- `Runtime Enforcement Follow-up Plan.md` — completed follow-on for the runtime enforcement layer
 - `docs/decisions/Harness Friction — Agent Self-Report.md`
 - `docs/decisions/AgentScope Architecture Review.md`
 - `docs/decisions/Copilot SDK Research.md`

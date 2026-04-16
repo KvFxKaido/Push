@@ -4,7 +4,7 @@ Date: 2026-03-30
 Status: **Complete**
 Owner: Push
 Related:
-- `docs/runbooks/Harness Runtime Evolution Plan.md` — completed foundation that made this follow-up possible
+- `Harness Runtime Evolution Plan.md` — completed foundation that made this follow-up possible
 - `docs/decisions/Architecture Rating Snapshot.md`
 - `docs/decisions/Harness Friction — Agent Self-Report.md`
 - `docs/decisions/Agent Tool Patterns — Claude Code Cross-Reference.md`

@@ -1,5 +1,7 @@
 # Docs Index
 
+Status reviewed: 2026-04-16
+
 Use this file to navigate active design/planning docs versus historical references.
 `docs/` is the canonical documentation home for this repo.
 
@@ -9,6 +11,7 @@ Use this file to navigate active design/planning docs versus historical referenc
 - `DESIGN.md` — visual tokens, colors, typography, spacing, and component specs
 - `decisions/` — architecture decisions, research, analysis, and shipped design references
 - `runbooks/` — active, draft, or deferred product plans
+- `research/` — external research notes that inform upcoming design work
 - `security/` — security reviews, audits, and provider usage policies
 - `cli/design/` — CLI/TUI architecture and UX specs
 - `cli/runbooks/` — active or proposed CLI work
@@ -26,53 +29,25 @@ Use this file to navigate active design/planning docs versus historical referenc
 
 ## Decisions
 
-- `decisions/Agent Experience Wishlist.md`
-  - Status: Wishlist + shipped outcomes reference.
-- `decisions/Agent Tool Patterns — Claude Code Cross-Reference.md`
-  - Status: Reference comparison against Claude Code's agent/tool patterns.
-- `decisions/Duplication and Structural Symmetry Analysis.md`
-  - Status: Structural/codebase analysis reference.
-- `decisions/Harness Friction — Agent Self-Report.md`
-  - Status: Source analysis that informed the harness ergonomics follow-up work.
-- `decisions/AgentScope Architecture Review.md`
-  - Status: Comparative architecture review with concrete recommendations worth borrowing from AgentScope.
-- `decisions/Copilot SDK Research.md`
-  - Status: Copilot SDK feature comparison and adoption notes for Push.
-- `decisions/Architecture Rating Snapshot.md`
-  - Status: Architecture quality ratings and improvement tracking.
-- `decisions/External Resource Review — Harness Engineering and Ralph Loop.md`
-  - Status: External resource review reference.
-- `decisions/Oh My OpenAgent Review.md`
-  - Status: Comparative review of the oh-my-openagent harness with Tier-1/2/3 quick-win list for Push.
-- `decisions/Resumable Sessions Design.md`
-  - Status: Shipped resumable sessions design and review log.
-- `decisions/Sectioned System Prompts.md`
-  - Status: Shipped design reference for the sectioned system prompt builder refactor.
-- `decisions/CLI Prompt Builder Convergence.md`
-  - Status: CLI prompt builder convergence design reference.
+Detailed per-doc status lives in [`decisions/README.md`](decisions/README.md). Summary by role:
+
+- **Shipped design references** — `Agent Experience Wishlist.md`, `Resumable Sessions Design.md`, `Sectioned System Prompts.md`, `CLI Prompt Builder Convergence.md`, `Hashline System Review.md`.
+- **Current working designs** — `AgentScope Architecture Review.md`, `Architecture Remediation Plan — Defusing the Big Four.md`, `Context Memory and Retrieval Architecture.md`, `CorrelationContext Contract.md`, `Copilot SDK Research.md`, `Harness Friction — Agent Self-Report.md`, `Duplication and Structural Symmetry Analysis.md`, `Vercel Open Agents Review.md`, `Web and CLI Runtime Contract.md`.
+- **Draft / in-motion** — `Modal Sandbox Snapshots Design.md`, `Rerank Before Prompt Packing.md`, `phase-5-tool-runtime-brief.md`, `push-runtime-v2.md`, `Tool-Call Parser Convergence Gap.md`.
+- **Reference / comparative** — `Agent Tool Patterns — Claude Code Cross-Reference.md`, `Architecture Rating Snapshot.md`, `External Resource Review — Harness Engineering and Ralph Loop.md`, `Multi-Agent Orchestration Research — open-multi-agent.md`, `Oh My OpenAgent Review.md`, `OpenAI Agents SDK Evolution Review.md`.
 
 ## Runbooks
 
-- `runbooks/Background Coder Tasks Plan.md`
-  - Status: Deferred design; intentionally not in code for the current PWA architecture.
-- `runbooks/Efficiency Plan.md`
-  - Status: Partially shipped; context trimming and the prompt-engineered tool path are in code, follow-up optimization remains open.
-- `runbooks/Harness Reliability Plan.md`
-  - Status: Mostly shipped; Tracks A/B/C/E are in code, while Track D remains deferred.
-- `runbooks/Hashline Effectiveness Metric.md`
-  - Status: Draft plan — fixture-based measurement of hashline edit-success delta, not yet executed.
-- `runbooks/UX Nice-to-Haves Plan.md`
-  - Status: Wishlist parking lot; treat as mostly not in code unless separately promoted.
-- `runbooks/Web-CLI Parity Plan.md`
-  - Status: In progress; shared root modules plus daemon/TUI convergence are in code, full CLI runtime TypeScript cutover is not.
-- `runbooks/Workspace Route Follow-up Plan.md`
-  - Status: Draft follow-up; some boundary cleanup is in code, but the route-shaping work tracked here is still open.
-- `runbooks/Harness Runtime Evolution Plan.md`
-  - Status: Completed implementation history for the harness runtime layer.
-- `runbooks/Runtime Enforcement Follow-up Plan.md`
-  - Status: Completed follow-on for the runtime enforcement layer.
-- `runbooks/Chat Surface Evolution Plan.md`
-  - Status: Chat surface evolution tracking.
+Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Summary by role:
+
+- **Current** — `Chat Surface Evolution Plan.md` (Track C remaining), `Workspace Publish to GitHub Plan.md` (follow-through), `Workspace Route Follow-up Plan.md` (measurement only), `Web-CLI Parity Plan.md` (foundation shipped).
+- **Draft spikes** — `Tiered Orchestrator Routing Spike.md`, `Canonical SOP Playbooks Spike.md`, `Hashline Effectiveness Metric.md`.
+- **Deferred reference** — `Background Coder Tasks Plan.md`, `UX Nice-to-Haves Plan.md`.
+
+## Research
+
+- `research/codex-compacting.md`
+  - Status: Research compiled 2026-04-12 on how Codex CLI handles context compaction; informs Push's own compaction strategy.
 
 ## Security
 
@@ -94,9 +69,9 @@ Use this file to navigate active design/planning docs versus historical referenc
 ## CLI Docs
 
 - `cli/runbooks/Push CLI Plan.md`
-  - Status: In progress; REPL, daemon, attach, and the experimental TUI are in code, while broader convergence work remains open.
+  - Status: Superseded baseline; core phases shipped. ROADMAP now drives CLI priorities directly.
 - `cli/design/Push Runtime Protocol.md`
-  - Status: Implemented baseline; protocol version/envelopes are in code and tests, but JSON Schema validation is not wired into runtime checks.
+  - Status: Implemented baseline; protocol version/envelopes and the `cli/protocol-schema.ts` runtime validator are in code.
 - `cli/design/Push CLI TUI Visual Language Spec.md`
   - Status: Shipped baseline for the experimental TUI visual language.
 - `cli/design/TUI Architecture.md`
@@ -133,8 +108,20 @@ Use this file to navigate active design/planning docs versus historical referenc
   - Status: Shipped sprint plan retained as implementation history.
 - `archive/runbooks/Architecture Follow-up Plan.md`
   - Status: Completed architecture cleanup plan retained as reference.
+- `archive/runbooks/Efficiency Plan.md`
+  - Status: Archived 2026-04-16; partially shipped rationale kept for provenance.
 - `archive/runbooks/Harness Ergonomics Plan.md`
   - Status: Shipped ergonomics sprint plan retained as reference.
+- `archive/runbooks/Harness Reliability Plan.md`
+  - Status: Archived 2026-04-16; Tracks A/B/C/E shipped, Track D deferred.
+- `archive/runbooks/Harness Runtime Evolution Plan.md`
+  - Status: Archived 2026-04-16; all five tracks shipped 2026-03-30.
+- `archive/runbooks/Runtime Enforcement Follow-up Plan.md`
+  - Status: Archived 2026-04-16; completed 2026-03-30.
+- `archive/runbooks/Shared Runtime Convergence Plan.md`
+  - Status: Archived 2026-04-16; major tranche shipped 2026-04-05.
+- `archive/runbooks/Task Graph Orchestration Plan.md`
+  - Status: Archived 2026-04-16; dependency-aware `plan_tasks` plus typed memory shipped 2026-04-05.
 - `archive/runbooks/Truncation-Aware Edit Safety Plan.md`
   - Status: Implemented track-specific rollout history retained as reference.
 - `archive/runbooks/Unified Workspace Plan.md`
@@ -154,6 +141,6 @@ Use this file to navigate active design/planning docs versus historical referenc
 
 - Put new active, draft, or deferred product work in `runbooks/` and new CLI work in `cli/runbooks/`.
 - Keep durable specs and shipped design references in `decisions/` or `cli/design/`.
-- Keep research, comparisons, and post-hoc analysis in `decisions/`.
+- Keep research, comparisons, and post-hoc analysis in `decisions/` (or `research/` for raw external source writeups).
 - When a plan is done but still worth keeping, move it into `archive/runbooks/` or `archive/cli/runbooks/`.
 - If a draft in `docs/` becomes an implementation commitment, promote a concise version into `../ROADMAP.md` first.

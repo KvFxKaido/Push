@@ -1,13 +1,13 @@
 # Runbooks Folder
 
-Status reviewed: 2026-04-05
+Status reviewed: 2026-04-16
 
-This folder contains active plans, partially completed roadmaps, deferred designs, and historical implementation records. Renamed from the former `plans/` folder.
+This folder contains active plans, draft spikes, and deferred designs. Shipped plans live in `../archive/runbooks/`.
 
 ## How To Read These Docs
 
 - Prefer docs marked **Current** when picking follow-up work.
-- Treat docs marked **Historical** as provenance, rationale, and implementation history.
+- Treat docs marked **Draft spike** as exploration that has not been promoted into `ROADMAP.md` yet.
 - Treat docs marked **Deferred** as reference designs, not pending commitments.
 - If a plan conflicts with the code, prefer the code and refresh the plan.
 
@@ -16,23 +16,34 @@ This folder contains active plans, partially completed roadmaps, deferred design
 | Document | Status | Notes |
 |---|---|---|
 | `Background Coder Tasks Plan.md` | Deferred reference | Intentionally deferred while Push remains a PWA; keep for native-app or daemon-first revisits. |
-| `Chat Surface Evolution Plan.md` | Current, created 2026-03-31 | Defines the next product/UI trajectory for chat mode: separate surface, shared platform. |
-| `Efficiency Plan.md` | Historical, partially shipped | Core decisions landed; doc still contains pre-ship reasoning and is useful mainly as rationale. |
-| `Harness Reliability Plan.md` | Historical tracking | Tracks A/B/C/E largely shipped; Track D deferred. Best used as implementation history and rationale. |
-| `Harness Runtime Evolution Plan.md` | Historical, completed 2026-03-30 | All five harness-runtime tracks shipped; use as implementation history and follow-up rationale, not as the live roadmap. |
-| `Runtime Enforcement Follow-up Plan.md` | Historical, completed 2026-03-30 | Structured delegation outcomes, post-tool bridge activation, and approval-sensitive runtime gates are now shipped; use this as implementation history. |
-| `Shared Runtime Convergence Plan.md` | Historical, major tranche shipped 2026-04-05 | The core semantic convergence work is now in shared `lib/`; use this as implementation history plus guidance for selective CLI follow-through. |
-| `Workspace Publish to GitHub Plan.md` | Current, Phase 1 shipped 2026-04-05 | Product and implementation plan for first-class in-app repo creation as a workspace-publish flow. The initial publish UI/transition flow is now landed; remaining work is follow-through and optional empty-repo creation. |
+| `Canonical SOP Playbooks Spike.md` | Draft spike, added 2026-04-14 | Named playbooks that compile to task graphs on top of the existing `plan_tasks` runtime. No code yet. |
+| `Chat Surface Evolution Plan.md` | Mostly shipped 2026-03-31 | Tracks A, B, D, E, F landed; Track C (explicit context escalation) remains open. |
+| `Hashline Effectiveness Metric.md` | Draft plan | Fixture-based measurement of hashline edit-success delta. Initial 3-fixture run logged in `../decisions/Hashline System Review.md`; full corpus not yet executed. |
+| `Tiered Orchestrator Routing Spike.md` | Draft spike, added 2026-04-14 | Rule-engine router in front of Orchestrator to resolve trivial intents without a frontier-model call. No code yet. |
 | `UX Nice-to-Haves Plan.md` | Wishlist / reference | Still a valid idea bank, but not current roadmap. |
-| `Web-CLI Parity Plan.md` | Current, refreshed 2026-03-30 | TypeScript runtime cutover, TUI, and daemon work landed; remaining work is selective convergence, not blanket migration. |
-| `Workspace Route Follow-up Plan.md` | Current, refreshed 2026-03-30 | Original draft phases largely landed; remaining work is targeted cleanup and measurement inside the new route boundaries. |
+| `Web-CLI Parity Plan.md` | Shipped foundation, refreshed 2026-04-16 | Tracks 1–4 complete. Remaining work is selective shared-runtime adoption tracked in `ROADMAP.md`. |
+| `Workspace Publish to GitHub Plan.md` | Current, Phase 1 shipped 2026-04-05 | Initial publish flow landed; remaining work is follow-through and optional empty-repo creation. |
+| `Workspace Route Follow-up Plan.md` | Largely shipped, refreshed 2026-03-30 | All route-boundary phases shipped; open measurement/decomposition question tracked in body. |
 
 ## Quick Triage
 
 If we are choosing implementation work from this folder, the live clusters are:
 
-1. Chat-surface evolution: make chat feel like a first-class app surface without splitting the platform.
-2. Selective CLI adoption of the now-shared runtime substrate where it clearly improves the terminal product.
-3. Optional workspace-route cleanup after the major boundary work already shipped.
-4. Workspace-to-GitHub publishing follow-through after the first in-app publish flow shipped.
-5. Deferred/background execution work only if product scope changes.
+1. Chat-surface Track C (explicit context escalation) once the plain-chat baseline has settled.
+2. Playbooks + Tiered Routing spikes — both are cheap-to-try wins that would reduce Orchestrator cost and latency; promote whichever measures better to `ROADMAP.md`.
+3. Workspace-to-GitHub publish follow-through after the first in-app publish flow shipped.
+4. Optional workspace-route decomposition only if bundle measurement justifies it.
+5. Deferred/background execution work (`Background Coder Tasks Plan.md`) only if product scope changes.
+
+## Where Shipped Plans Went
+
+The following plans were archived to `../archive/runbooks/` during the 2026-04-16 docs audit:
+
+- `Efficiency Plan.md`
+- `Harness Reliability Plan.md`
+- `Harness Runtime Evolution Plan.md`
+- `Runtime Enforcement Follow-up Plan.md`
+- `Shared Runtime Convergence Plan.md`
+- `Task Graph Orchestration Plan.md`
+
+All six describe work that has shipped per `ROADMAP.md`'s "Recently Completed" section.
