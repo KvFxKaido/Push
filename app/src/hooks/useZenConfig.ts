@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import {
   ZEN_DEFAULT_MODEL,
   ZEN_MODELS,
+  ZEN_GO_DEFAULT_MODEL,
   ZEN_GO_MODELS,
   getZenGoMode,
   setZenGoMode as persistZenGoMode,
@@ -26,7 +27,7 @@ export function useZenConfig() {
 
   useEffect(() => {
     if (goMode && !ZEN_GO_MODELS.includes(config.model)) {
-      setModel(ZEN_GO_MODELS[0]);
+      setModel(ZEN_GO_DEFAULT_MODEL);
     }
   }, [config.model, goMode, setModel]);
 
@@ -39,7 +40,7 @@ export function useZenConfig() {
       const currentModel = config.model;
       const compatibleWithTarget = enabled ? ZEN_GO_MODELS : ZEN_MODELS;
       if (!compatibleWithTarget.includes(currentModel)) {
-        setModel(enabled ? ZEN_GO_MODELS[0] : ZEN_DEFAULT_MODEL);
+        setModel(enabled ? ZEN_GO_DEFAULT_MODEL : ZEN_DEFAULT_MODEL);
       }
     },
     [setModel, config.model],
