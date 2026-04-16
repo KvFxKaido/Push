@@ -4,7 +4,7 @@ import { getVertexModelName } from '@/hooks/useVertexConfig';
 import { getModelCapabilities } from './model-capabilities';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 import { VERTEX_DEFAULT_MODEL as SHARED_VERTEX_DEFAULT_MODEL } from './vertex-provider';
-import { ZEN_GO_MODELS as SHARED_ZEN_GO_MODELS } from './zen-go';
+import { ZEN_GO_DEFAULT_MODEL, ZEN_GO_MODELS as SHARED_ZEN_GO_MODELS } from './zen-go';
 export {
   BLACKBOX_DEFAULT_MODEL,
   BLACKBOX_MODELS,
@@ -89,6 +89,7 @@ export const AZURE_DEFAULT_MODEL = 'gpt-4.1';
 export const BEDROCK_DEFAULT_MODEL = 'anthropic.claude-3-7-sonnet-20250219-v1:0';
 export const VERTEX_DEFAULT_MODEL = SHARED_VERTEX_DEFAULT_MODEL;
 export const ZEN_GO_MODELS: string[] = [...SHARED_ZEN_GO_MODELS];
+export { ZEN_GO_DEFAULT_MODEL };
 
 export const ZEN_GO_URLS = {
   chat: providerUrl('/opencode/zen/go/v1/chat/completions', '/api/zen/go/chat'),
