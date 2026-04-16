@@ -21,6 +21,7 @@ import type {
   SandboxManifest,
   SandboxSession,
   SandboxEnvironment,
+  SandboxErrorCode,
   ExecResult,
   ExecOptions,
   FileReadResult,
@@ -50,6 +51,7 @@ import {
   hydrateSnapshotInSandbox,
   probeSandboxEnvironment,
   setSandboxOwnerToken,
+  clearSandboxEnvironment,
   mapSandboxErrorCode,
 } from './sandbox-client';
 
@@ -72,7 +74,7 @@ function toSandboxError(err: unknown): SandboxError {
   // Map through the existing sandbox-client mapper, then to our codes
   const toolErrorType = rawCode ? mapSandboxErrorCode(rawCode) : 'UNKNOWN';
 
-  const codeMap: Record<string, import('@push/lib/sandbox-provider').SandboxErrorCode> = {
+  const codeMap: Record<string, SandboxErrorCode> = {
     EXEC_TIMEOUT: 'TIMEOUT',
     SANDBOX_UNREACHABLE: 'NETWORK_ERROR',
     AUTH_FAILURE: 'AUTH_FAILURE',
@@ -118,6 +120,13 @@ export class ModalSandboxProvider implements SandboxProvider {
   // -- Lifecycle ------------------------------------------------------------
 
   async create(manifest: SandboxManifest): Promise<SandboxSession> {
+    if (manifest.env?.length) {
+      throw new SandboxError(
+        'SandboxManifest.env is not yet supported by the Modal provider',
+        'CONTAINER_ERROR',
+      );
+    }
+
     return wrapErrors(async () => {
       const session = await createSandbox(
         manifest.repo,
@@ -130,13 +139,23 @@ export class ModalSandboxProvider implements SandboxProvider {
         throw new SandboxError(session.error || 'Sandbox creation failed', 'CONTAINER_ERROR');
       }
 
-      return {
+      const result: SandboxSession = {
         sandboxId: session.sandboxId,
         ownerToken: session.ownerToken ?? '',
         status: session.status,
         workspaceRevision: session.workspaceRevision,
         environment: session.environment as SandboxEnvironment | undefined,
       };
+
+      // Apply seed files after sandbox creation.
+      if (manifest.seedFiles?.length) {
+        await batchWriteToSandbox(
+          session.sandboxId,
+          manifest.seedFiles.map((f) => ({ path: f.path, content: f.content })),
+        );
+      }
+
+      return result;
     });
   }
 
@@ -163,10 +182,16 @@ export class ModalSandboxProvider implements SandboxProvider {
       try {
         await cleanupSandbox(sandboxId);
       } catch (err) {
-        // Idempotent — ignore "not found" (already dead).
-        if (err instanceof SandboxError && err.code === 'NOT_FOUND') return;
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes('MODAL_NOT_FOUND')) return;
+        // Idempotent — ignore "not found" (already dead), but still
+        // clear local cached state so stale tokens don't linger.
+        const isNotFound =
+          (err instanceof SandboxError && err.code === 'NOT_FOUND') ||
+          (err instanceof Error && err.message.includes('MODAL_NOT_FOUND'));
+        if (isNotFound) {
+          setSandboxOwnerToken(null, sandboxId);
+          clearSandboxEnvironment(sandboxId);
+          return;
+        }
         throw err;
       }
     });
@@ -221,8 +246,12 @@ export class ModalSandboxProvider implements SandboxProvider {
         error: result.error,
         code: result.code,
         bytes_written: result.bytes_written,
+        expected_version: result.expected_version,
+        current_version: result.current_version,
         new_version: result.new_version,
         workspace_revision: result.workspace_revision,
+        expected_workspace_revision: result.expected_workspace_revision,
+        current_workspace_revision: result.current_workspace_revision,
       };
     });
   }
@@ -242,13 +271,20 @@ export class ModalSandboxProvider implements SandboxProvider {
       return {
         ok: result.ok,
         error: result.error,
+        code: result.code,
         results: result.results?.map((r) => ({
           path: r.path,
           ok: r.ok,
           error: r.error,
+          code: r.code,
+          bytes_written: r.bytes_written,
           new_version: r.new_version,
+          expected_version: r.expected_version,
+          current_version: r.current_version,
         })),
         workspace_revision: result.workspace_revision,
+        expected_workspace_revision: result.expected_workspace_revision,
+        current_workspace_revision: result.current_workspace_revision,
       };
     });
   }
@@ -257,10 +293,10 @@ export class ModalSandboxProvider implements SandboxProvider {
     sandboxId: string,
     path: string,
     options?: DeleteFileOptions,
-  ): Promise<{ workspace_revision: number }> {
+  ): Promise<{ workspace_revision?: number }> {
     return wrapErrors(async () => {
       const revision = await deleteFromSandbox(sandboxId, path, options?.expectedWorkspaceRevision);
-      return { workspace_revision: revision ?? 0 };
+      return { workspace_revision: revision };
     });
   }
 
@@ -288,11 +324,11 @@ export class ModalSandboxProvider implements SandboxProvider {
   async createArchive(sandboxId: string, path?: string): Promise<ArchiveResult> {
     return wrapErrors(async () => {
       const result = await downloadFromSandbox(sandboxId, path);
-      if (!result.ok) {
+      if (!result.ok || !result.archiveBase64) {
         throw new SandboxError(result.error || 'Archive creation failed', 'CONTAINER_ERROR');
       }
       return {
-        archive: result.archiveBase64 ?? '',
+        archive: result.archiveBase64,
         size: result.sizeBytes,
       };
     });

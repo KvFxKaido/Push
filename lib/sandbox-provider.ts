@@ -116,6 +116,9 @@ export interface FileReadResult {
   start_line?: number;
   end_line?: number;
   workspace_revision?: number;
+  code?: string;
+  expected_workspace_revision?: number;
+  current_workspace_revision?: number;
 }
 
 export interface WriteResult {
@@ -123,20 +126,31 @@ export interface WriteResult {
   error?: string;
   code?: string;
   bytes_written?: number;
+  expected_version?: string;
+  current_version?: string | null;
   new_version?: string | null;
   workspace_revision?: number;
+  expected_workspace_revision?: number;
+  current_workspace_revision?: number;
 }
 
 export interface BatchWriteResult {
   ok: boolean;
   error?: string;
+  code?: string;
   results?: Array<{
     path: string;
     ok: boolean;
     error?: string;
+    code?: string;
+    bytes_written?: number;
     new_version?: string | null;
+    expected_version?: string;
+    current_version?: string | null;
   }>;
   workspace_revision?: number;
+  expected_workspace_revision?: number;
+  current_workspace_revision?: number;
 }
 
 export interface FileEntry {
@@ -164,7 +178,6 @@ export interface ArchiveResult {
 
 export interface ExecOptions {
   workdir?: string;
-  timeoutMs?: number;
   markWorkspaceMutated?: boolean;
 }
 
@@ -289,7 +302,7 @@ export interface SandboxProvider {
     sandboxId: string,
     path: string,
     options?: DeleteFileOptions,
-  ): Promise<{ workspace_revision: number }>;
+  ): Promise<{ workspace_revision?: number }>;
 
   listDirectory(sandboxId: string, path: string): Promise<FileEntry[]>;
 
