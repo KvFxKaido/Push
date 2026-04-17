@@ -16,14 +16,40 @@ const MAX_EXEC_SESSION_TIMEOUT_MS = 1_800_000;
 const DEFAULT_EXEC_POLL_MAX_CHARS = 8_000;
 const MAX_EXEC_POLL_MAX_CHARS = 64_000;
 const INTERACTIVE_TRAP_THRESHOLD_MS = 2_000;
+
+// Interactive prompt heuristics. Each regex is tested against `text.trim()`
+// for a single chunk. Design bias: prefer false negatives over false
+// positives — a missed trap degrades to the existing timeout, but a false
+// trap flips `interactive_trap: true` on healthy output and misleads agents.
+// The patterns therefore anchor to end-of-chunk where possible and avoid
+// bare keywords like "confirm" or a lone `?`.
 const INTERACTIVE_PROMPT_PATTERNS = [
-  /\[y\/n\]/i,
-  /\(y\/n\)/i,
-  /\?\s*$/,
-  /password:\s*$/i,
-  /enter passphrase/i,
-  /confirm/i,
+  // y/n confirmation brackets: [y/n], [Y/n], [yes/no], (y/n), (yes/no/[fingerprint])
+  /\[(?:y|yes)(?:[/|](?:n|no))?\]/i,
+  /\((?:y|yes)(?:[/|](?:n|no))?(?:[/|][^)]*)?\)/i,
+  // Password / passphrase prompts that end the chunk with a colon
+  /(?:^|\n)[^\n]*\bpassword[^\n:]*:\s*$/i,
+  /(?:^|\n)[^\n]*\bpassphrase[^\n:]*:\s*$/i,
+  // Git "Username for 'URL':"
+  /(?:^|\n)\s*username\s+for\b[^\n]*:\s*$/i,
+  // Question line that ends the chunk and contains a decision-style verb
+  /(?:^|\n)[^\n]*\b(?:continue|proceed|overwrite|replace|abort|retry|install|uninstall|upgrade|remove|delete|trust|keep)\b[^.\n]*\?\s*$/i,
 ];
+
+/**
+ * Return true if a single PTY/stdio chunk looks like an interactive prompt
+ * waiting for user input. Pure — no side effects. Exported for unit tests
+ * so the regex list can be pinned without spinning up a subprocess.
+ * `source` is the chunk provenance (`stdout` | `stderr` | `meta`); `meta`
+ * chunks never flag as prompts because they're harness bookkeeping.
+ */
+export function detectPromptPattern(text, source = 'stdout') {
+  if (source === 'meta') return false;
+  if (typeof text !== 'string' || text.length === 0) return false;
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return false;
+  return INTERACTIVE_PROMPT_PATTERNS.some((re) => re.test(trimmed));
+}
 
 const MAX_EXEC_SESSION_OUTPUT_CHARS = 220_000;
 const MAX_EXEC_SESSION_CHUNKS = 500;
@@ -268,12 +294,12 @@ function notifySessionExit(session) {
 }
 
 function markSessionClosed(session, exitCode, signal, { timedOut = false } = {}) {
+  if (!session || session.closed) return;
   if (session.trapTimer) {
     clearTimeout(session.trapTimer);
     session.trapTimer = null;
   }
   session.interactiveTrap = false;
-  if (!session || session.closed) return;
   session.closed = true;
   session.running = false;
   session.exitCode = typeof exitCode === 'number' ? exitCode : 1;
@@ -294,8 +320,7 @@ function appendSessionChunk(session, text, source = 'stdout') {
   session.interactiveTrap = false;
 
   // Check for potential interactive trap
-  const isPrompt =
-    source !== 'meta' && INTERACTIVE_PROMPT_PATTERNS.some((re) => re.test(text.trim()));
+  const isPrompt = detectPromptPattern(text, source);
   if (isPrompt && session.running) {
     session.trapTimer = setTimeout(() => {
       session.interactiveTrap = true;
