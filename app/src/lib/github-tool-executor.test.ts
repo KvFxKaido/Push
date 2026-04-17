@@ -171,6 +171,8 @@ describe('fetchRepoBranches', () => {
     const result = await fetchRepoBranches('owner/repo', 50);
     expect(fetchRepoBranchesViaWorkerMock).toHaveBeenCalledWith('owner/repo', 50);
     expect(result.defaultBranch).toBe('main');
+    expect(result.branches).toHaveLength(1);
+    expect(result.branches[0].name).toBe('main');
     expect(fetchRepoBranchesDataMock).not.toHaveBeenCalled();
   });
 
