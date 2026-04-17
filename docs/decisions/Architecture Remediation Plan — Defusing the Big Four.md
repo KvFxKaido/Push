@@ -1,7 +1,7 @@
 # Architecture Remediation Plan — Defusing the Big Four
 
 Date: 2026-04-14
-Status: Draft, working discussion (not a committed plan yet) — revised after council review on 2026-04-14, then revised 2026-04-15 to recast team-scale calendar prescriptions for a solo-dev cadence, then revised 2026-04-17 to hoist CLI runtime parity into a dedicated section once a third parity gap (orchestrator-driven task-graph + typed memory in CLI) surfaced
+Status: Draft, working discussion (not a committed plan yet) — revised after council review on 2026-04-14, then revised 2026-04-15 to recast team-scale calendar prescriptions for a solo-dev cadence, then revised 2026-04-17 to hoist CLI runtime parity into a dedicated section once a third parity gap (orchestrator-driven task-graph + typed memory in CLI) surfaced, then corrected the same day after reconnaissance showed Gap 1 had already shipped earlier in the cycle and the section was drafted from a stale premise
 Companion to: `Architecture Rating Snapshot.md`
 
 ## Context
@@ -182,14 +182,24 @@ Each gap below lists its origin in this document, its current state, and the sha
 
 ### Gap 1 — Harness-adaptation layer
 
-**Origin:** [Open Question #4](#open-questions) (resolved 2026-04-15: *port the adaptation layer, pending scoping*).
+~~**Origin:** [Open Question #4](#open-questions) (resolved 2026-04-15: *port the adaptation layer, pending scoping*).~~ **Resolved 2026-04-17** upon reconnaissance for the orchestrator-delegation tranche. The port shipped earlier in the cycle; the section above was drafted from a stale premise and is corrected here.
 
-**Current state:** Web runs `computeAdaptiveProfile()` at `app/src/lib/harness-profiles.ts:145–211` and shrinks `maxCoderRounds` mid-session based on four signal classes (malformed-call rate, truncation rate, context pressure, edit-error/stale rate). `cli/engine.ts:119` is a flat `DEFAULT_MAX_ROUNDS` (bumped `8 → 30` in commit `4b9ebb3` after a real session exhausted the 8-round budget mid-edit). A session running at 25% edit-error rate grinds all 30 rounds instead of cutting to 15 and exiting gracefully.
+**Evidence:**
+- `cli/harness-adaptation.ts` implements `computeAdaptation()` with two adaptation rules: **Rule 1** (high malformed calls → floor `maxCoderRounds` at 20) and **Rule 2** (high edit error rate → shrink by 5, floor 15). Each rule is one-shot per session; state is scoped by `sessionId` via `stateBySession` so concurrent sessions in one `pushd` process do not interfere.
+- `cli/engine.ts:584–615` calls `computeAdaptation(state.sessionId, maxRounds)` at the top of every round inside `runAssistantLoop`, emits a `harness.adaptation` session event and `dispatchEvent` when adaptation fires, and breaks the loop immediately if the new cap is already exceeded by the current round.
+- CLI-side signal counters exist in `cli/tool-call-metrics.ts`, `cli/edit-metrics.ts`, and `cli/context-metrics.ts`. They are wired into the engine at the points that produce each signal: `recordMalformedToolCall` at `cli/engine.ts:792`, `recordWriteFile` at `cli/engine.ts:510`, `recordContextTrim` at `cli/engine.ts:644`.
+- 16 passing tests in `cli/tests/harness-adaptation.test.mjs` cover signal collection, rule firing, idempotence across repeated per-round calls, the 15-round floor, session isolation, and the specific case where stale writes alone do not shrink via Rule 2 (error rate excludes stale).
+- Provenance: `049cc667` (port), `0b9af006` (wire into `runAssistantLoop`), `32303a70` (review fixes).
 
-**Shape of the work:**
-- (a) CLI-side signal counters — probably the largest piece, since `collectAdaptationSignals()` reads telemetry state the CLI doesn't track today.
-- (b) Port or parallel-implement `computeAdaptiveProfile` in the CLI engine.
-- (c) Wire into `runAssistantLoop` at the round-increment boundary.
+**Intentional narrowing vs. the web version.** The CLI implements 2 of web's 4 adaptation rules. The omissions are structural, not incomplete:
+
+- Web's "enable planner" branch is omitted because the CLI has no `plannerRequired` profile flag.
+- Web's "enable context resets" branch (triggered by context pressure and high edit stale rate) is omitted because the CLI has no `contextResetsEnabled` profile flag.
+- Web's truncation-specific rule is omitted because `cli/tools.ts` `detectAllToolCalls` does not emit a `truncated` malformed reason — truncated output surfaces as `json_parse_error`, which still counts toward Rule 1's malformed-call threshold.
+
+Context pressure and edit stale rate are collected into `AdaptationSignals` as diagnostic signals but do not currently trigger round reduction on the CLI. If a future CLI feature introduces the equivalent of a context-reset concept, the signals can be wired to it without a new port pass.
+
+**Retrospective note on the original scoping.** The remediation doc as of 2026-04-15 framed this port as three pieces (signal counters, `computeAdaptiveProfile`, wiring) with signal counters "probably the largest piece." All three were in fact already shipped before the 2026-04-17 CLI Runtime Parity section was drafted. The same-day correction is retained in place rather than deleted so future reads of this document understand that a drafted section can be overtaken by shipped work, and that a reconnaissance pass at section-draft time would have surfaced the state earlier.
 
 ### Gap 2 — Daemon-side role-capability enforcement
 
@@ -225,9 +235,10 @@ Each gap below lists its origin in this document, its current state, and the sha
 
 ### Dependencies and parallelism between the gaps
 
-- **Gap 3 Step 1 depends on Gap 2**, or at least on the Explorer-entry subset of it. Running Explorer task-graph nodes on CLI with a small model without execution-layer role-capability enforcement leaves a defense-in-depth hole that the web surface does not have.
-- **Gap 1 is orthogonal to Gap 3.** Different modules (`cli/engine.ts` round accounting vs. orchestrator wiring), different surfaces, no shared mutation points. This makes Gap 1 a genuine parallel-track candidate — appropriate for a worktree-scoped agent while Gap 3 Step 1 is worked in the main tree.
-- **Gap 1 and Gap 3 share their motivation** (small-model reliability). Whichever lands first informs the other's prioritization; if the harness-adaptation port dramatically improves small-model non-delegated runs, the Gap 3 case only gets stronger.
+With Gap 1 now resolved, the live gaps are Gap 2 and Gap 3:
+
+- **Gap 3 Step 1 depends on Gap 2**, or at least on the Explorer-entry subset of it. Running Explorer task-graph nodes on CLI with a small model without execution-layer role-capability enforcement leaves a defense-in-depth hole that the web surface does not have. Gap 2 is effectively a prerequisite to Gap 3 Step 1 being safe with small models on the CLI.
+- **Gap 1's already-shipped adaptation compounds with Gap 3's motivation.** The adaptive round-budget in `cli/harness-adaptation.ts` specifically helps the scenario a delegated small model will produce: more malformed calls and more edit errors than a frontier model on the same task. The graceful-degradation floor exists for Gap 3 to inherit; it is not a separate piece of work.
 
 ### What this section deliberately does **not** include
 
