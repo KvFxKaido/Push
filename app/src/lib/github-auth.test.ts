@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  APP_TOKEN_STORAGE_KEY,
-  OAUTH_STORAGE_KEY,
-  getActiveGitHubToken,
-  getGitHubAuthHeaders,
-} from './github-auth';
+
+// Clear VITE_GITHUB_TOKEN before loading the module under test. ENV_TOKEN is
+// captured at module load time (`const ENV_TOKEN = import.meta.env.VITE_GITHUB_TOKEN || ''`),
+// so the stub must be in place before the dynamic import resolves to keep
+// assertions deterministic across environments that set this var.
+vi.stubEnv('VITE_GITHUB_TOKEN', '');
+
+const { APP_TOKEN_STORAGE_KEY, OAUTH_STORAGE_KEY, getActiveGitHubToken, getGitHubAuthHeaders } =
+  await import('./github-auth');
 
 function createStorageMock() {
   const store = new Map<string, string>();
