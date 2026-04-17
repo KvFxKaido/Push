@@ -1,6 +1,6 @@
 # Test Coverage Plan
 
-Status: Current (Phase 1 shipped 2026-04-17). Added 2026-04-17.
+Status: Current (Phases 1–3 shipped 2026-04-17). Added 2026-04-17.
 
 Drives the post-audit push to close the biggest coverage gaps in Push. The
 baseline audit ran against commit `2cff2bb` and found ~142 test files for
@@ -62,26 +62,44 @@ factory-level coverage. `@cloudflare/vitest-pool-workers` proved
 unnecessary — `vi.stubGlobal('fetch', ...)` with a sequential-response
 queue was sufficient for the HTTP paths.
 
-## Phase 3 — Persistence & sandbox execution
+## Phase 3 — Persistence & sandbox execution (shipped 2026-04-17)
 
-Data-loss and destructive-operation risk; currently untested end-to-end.
+Landed across three slices. The acceptance bar (branch coverage on
+edit-ops and verification handlers, round-trip on `app-db`) is met, and
+both GitHub and web-search tool executors now have direct coverage of
+their retry/backoff and backend-selection paths.
 
-Targets:
+- **3a — PR #315** (27 tests): `app-db.test.ts` (16 tests) covers the
+  IndexedDB store end-to-end against `fake-indexeddb` —
+  open/upgrade/get/put/del/clear across every store plus the onerror
+  fallbacks. `checkpoint-store.test.ts` (8 tests) covers the
+  save → load → overwrite → clear round-trip and the legacy
+  localStorage → IndexedDB migration.
+  `checkpoint-store-errors.test.ts` (3 tests) isolates the
+  IDB-failure-tolerance specs (which swap `./app-db` via `vi.doMock`)
+  so they don't interfere with the real-IDB suite.
+- **3b — PR #316** (113 tests): `sandbox-routes.test.ts` (12 tests)
+  covers sandbox API routing; `sandbox-edit-ops.test.ts` (47 tests)
+  covers every branch of the in-sandbox edit/apply-diff paths including
+  truncation-aware safety; `sandbox-verification-handlers.test.ts`
+  (25 tests) covers the install → typecheck → test verification policy
+  matrix; `sandbox-tool-detection.test.ts` (29 tests) covers capability
+  detection and readiness inference.
+- **3c — PR #317** (39 tests): `github-tool-executor.test.ts` (21 tests)
+  covers base64 UTF-8 decode, fetch retry/backoff on 429 (honors
+  `Retry-After` + 1s buffer) and 5xx, `AbortError` timeout wrap, and
+  worker-vs-local fallback for both `fetchRepoBranches` and
+  `executeToolCall` (repo-mismatch denial, URL normalization,
+  unknown-tool error, thrown-error wrapping).
+  `web-search-tools.test.ts` (18 tests) covers protocol prompt shape,
+  `detectWebSearchToolCall`, result shaping (5-result cap, 500-char
+  snippet truncation), Ollama/Tavily key gating + `Bearer` header, and
+  backend selection (Tavily → Ollama → DuckDuckGo).
 
-- `app/src/lib/app-db.ts` (213 LOC) — IndexedDB chat/workspace store. Use
-  `fake-indexeddb` to drive real transactions.
-- `app/src/lib/checkpoint-store.ts` (54 LOC) — session persistence.
-- `app/src/lib/sandbox-routes.ts` (88 LOC) — sandbox API routing.
-- `app/src/lib/sandbox-edit-ops.ts` — in-sandbox file edit ops (surface for
-  truncation-aware edit safety).
-- `app/src/lib/sandbox-verification-handlers.ts` — verification policies.
-- `app/src/lib/sandbox-tool-detection.ts` — capability detection.
-- `app/src/lib/github-tool-executor.ts` (251 LOC) — GitHub action executor
-  (edit/delete/create PRs).
-- `app/src/lib/web-search-tools.ts` (251 LOC) — web search adapter.
-
-Acceptance: unit tests for every branch in edit-ops and verification
-handlers; round-trip test on `app-db` for chat save/restore.
+Net delta: ~180 tests; `app/src/lib` persistence and sandbox-execution
+surfaces are now covered. `vi.stubGlobal('fetch', ...)` plus the
+sequential-response queue pattern from Phase 2 carried over cleanly to
+the GitHub and web-search executors.
 
 ## Phase 4 — Components & hooks
 
