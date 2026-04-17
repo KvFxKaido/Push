@@ -11,6 +11,7 @@
     "format": "biome format --write",
     "format:check": "biome format",
     "test:cli": "node --import tsx --test cli/tests/*.test.mjs",
+    "test:mcp:github": "cd mcp/github-server && npm test",
     "typecheck": "cd cli && npx tsc --noEmit",
     "typecheck:mcp:github": "cd mcp/github-server && npm run typecheck"
   },
