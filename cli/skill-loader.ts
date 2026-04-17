@@ -33,6 +33,7 @@ export const RESERVED_COMMANDS: Set<string> = new Set([
   'skills',
   'config',
   'compact',
+  'copy',
 ]);
 
 type SkillSource = 'builtin' | 'workspace' | 'claude';

@@ -25,6 +25,17 @@ export const ESC = {
   bracketedPasteOff: '\x1b[?2004l',
 };
 
+/**
+ * Build an OSC 52 escape that pushes `text` to the terminal's system clipboard.
+ * `c` selects the clipboard buffer; BEL (\x07) terminator is the most broadly
+ * compatible (tmux/kitty/iTerm/Windows Terminal all accept it).
+ * Support depends on the terminal — no way to probe success from here.
+ */
+export function osc52Copy(text: string): string {
+  const b64 = Buffer.from(text, 'utf8').toString('base64');
+  return `\x1b]52;c;${b64}\x07`;
+}
+
 // ── Terminal size ───────────────────────────────────────────────────
 
 export interface TermSize {

@@ -163,6 +163,14 @@ export function createTabCompleter({
       return resolved;
     }
 
+    if (cmd === 'copy') {
+      const subs = ['last', 'code', 'tool'];
+      const resolved = subs.filter((s: string) => s.startsWith(arg)).map((s: string) => prefix + s);
+      lastResolvedText = text;
+      lastResolvedCandidates = resolved;
+      return resolved;
+    }
+
     if (cmd === 'config') {
       const parts = arg.split(' ');
       if (parts.length <= 1) {

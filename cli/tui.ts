@@ -17,6 +17,7 @@ import { delegationEventToTranscript, isDelegationEvent } from './tui-delegation
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
 import { filterSessions } from './tui-fuzzy.js';
+import { findLastAssistantText, findLastCodeBlock, formatByteSize } from './tui-copy.js';
 import {
   applySingleLineEditKey,
   getListNavigationAction,
@@ -46,6 +47,7 @@ import {
   createScreenBuffer,
   createRenderScheduler,
   computeLayout,
+  osc52Copy,
 } from './tui-renderer.js';
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
 import { getCuratedModels, fetchModels } from './model-catalog.js';
@@ -76,6 +78,11 @@ import { compactContext } from './context-manager.js';
 
 const MAX_TRANSCRIPT = 2000; // max lines in transcript buffer
 const MAX_TOOL_FEED = 200; // max items in tool feed
+
+// OSC 52 payload cap. Widely-supported terminals (Windows Terminal, iTerm2,
+// kitty, alacritty) accept at least ~100 KB; tmux historically capped lower
+// without `set -g set-clipboard on`. Truncate rather than silently fail.
+const OSC52_MAX_BYTES = 100_000;
 
 function safeRealpath(targetPath) {
   try {
@@ -195,6 +202,10 @@ function createTUIState() {
     gitStatus: null, // { branch, dirty, ahead, behind }
     // File awareness ledger (accumulated from engine tool_result events)
     fileAwareness: null, // { total, files: [{ path, status, reads, writes }] }
+    // Most recent full tool result text — used by /copy tool. The per-entry
+    // `resultPreview` on transcript tool_calls is truncated; this holds the
+    // untruncated payload dispatched on the live event.
+    lastToolResult: null, // { name, text, isError } | null
   };
 }
 
@@ -2131,6 +2142,7 @@ export async function runTUI(options = {}) {
       case 'tool.execution_complete': {
         const isError = event.payload.isError;
         const text = event.payload.text || event.payload.preview || '';
+        tuiState.lastToolResult = { name: event.payload.toolName, text, isError };
         addToolFeedEntry(tuiState, {
           type: 'result',
           name: event.payload.toolName,
@@ -3531,6 +3543,7 @@ export async function runTUI(options = {}) {
             '  /skills              List available skills',
             '  /skills reload       Reload workspace + Claude skills',
             `  /compact [turns]      Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)`,
+            '  /copy [last|code|tool]  Copy content to clipboard via OSC 52 (default: last)',
             '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
             '  /resume              Open resumable session picker',
             '  /resume <session-id> Switch to a saved session',
@@ -3538,6 +3551,11 @@ export async function runTUI(options = {}) {
             '  /session             Print session id',
             '  /session rename <name>  Rename current session (--clear to unset)',
             '  /exit                Exit TUI',
+            '',
+            'Selecting text:',
+            '  Shift+drag    Native selection (Linux/WSL/Windows Terminal, xterm)',
+            '  Option+drag   Native selection (iTerm2, macOS Terminal)',
+            '  /copy         Push semantic chunks to clipboard (survives scrollback)',
             '',
             'Keybinds:',
             '  Enter         Send message',
@@ -3642,6 +3660,47 @@ export async function runTUI(options = {}) {
       case 'compact':
         await compactSessionContext(arg || null);
         return true;
+
+      case 'copy': {
+        const target = (arg || 'last').toLowerCase();
+        let content = null;
+        let label = '';
+        if (target === 'last' || target === 'message') {
+          content = findLastAssistantText(tuiState);
+          label = 'last assistant message';
+        } else if (target === 'code') {
+          content = findLastCodeBlock(tuiState);
+          label = 'last code block';
+        } else if (target === 'tool') {
+          const t = tuiState.lastToolResult;
+          if (t && t.text) {
+            content = t.text;
+            label = `last tool result (${t.name})`;
+          } else {
+            label = 'last tool result';
+          }
+        } else {
+          addTranscriptEntry(tuiState, 'warning', 'Usage: /copy [last|code|tool]');
+          scheduler.flush();
+          return true;
+        }
+        if (!content) {
+          addTranscriptEntry(tuiState, 'warning', `Nothing to copy: no ${label} yet.`);
+          scheduler.flush();
+          return true;
+        }
+        let truncated = false;
+        if (content.length > OSC52_MAX_BYTES) {
+          content = content.slice(0, OSC52_MAX_BYTES);
+          truncated = true;
+        }
+        process.stdout.write(osc52Copy(content));
+        const size = formatByteSize(content.length);
+        const suffix = truncated ? ` (truncated to ${size})` : ` (${size})`;
+        addTranscriptEntry(tuiState, 'status', `Copied ${label}${suffix} via OSC 52.`);
+        scheduler.flush();
+        return true;
+      }
 
       default: {
         // Check if it's a skill name

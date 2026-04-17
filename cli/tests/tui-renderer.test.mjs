@@ -12,6 +12,7 @@ import {
   createScreenBuffer,
   createRenderScheduler,
   charWidth,
+  osc52Copy,
 } from '../tui-renderer.ts';
 import { createTheme, GLYPHS_UNICODE, GLYPHS_ASCII } from '../tui-theme.ts';
 
@@ -322,5 +323,24 @@ describe('visibleWidth (CJK)', () => {
 
   it('ignores ANSI codes around CJK', () => {
     assert.equal(visibleWidth('\x1b[31m中\x1b[0m'), 2);
+  });
+});
+
+// ─── osc52Copy ─────────────────────────────────────────────────
+
+describe('osc52Copy', () => {
+  it('wraps ASCII text in OSC 52 envelope with BEL terminator', () => {
+    const out = osc52Copy('hello');
+    assert.equal(out, '\x1b]52;c;aGVsbG8=\x07');
+  });
+
+  it('encodes UTF-8 correctly (no latin-1 mangling)', () => {
+    const out = osc52Copy('中文');
+    // "中文" → UTF-8 bytes E4 B8 AD E6 96 87 → base64 5Lit5paH
+    assert.equal(out, '\x1b]52;c;5Lit5paH\x07');
+  });
+
+  it('handles empty input as an empty base64 payload', () => {
+    assert.equal(osc52Copy(''), '\x1b]52;c;\x07');
   });
 });
