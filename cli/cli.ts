@@ -170,6 +170,7 @@ Options:
   --allow-exec                  Allow exec tool in headless mode (blocked by default)
   --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
   --json                        JSON output in headless mode / resume
+  --delegate                    Headless: plan the task and run it as a task graph (spike)
   --sandbox                     Enable local Docker sandbox
   --no-sandbox                  Disable local Docker sandbox
   -v, --version                 Show version

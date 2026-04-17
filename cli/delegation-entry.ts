@@ -36,7 +36,7 @@
  */
 
 import process from 'node:process';
-import { executeTaskGraph } from '../lib/task-graph.js';
+import { executeTaskGraph, validateTaskGraph } from '../lib/task-graph.js';
 import type { TaskGraphNode } from '../lib/runtime-contract.js';
 import type { CorrelationContext } from '../lib/correlation-context.js';
 import { extendCorrelation } from '../lib/correlation-context.js';
@@ -53,9 +53,6 @@ import { appendSessionEvent, makeRunId, saveSessionState } from './session-store
 import { buildHeadlessTaskBrief } from './task-brief.js';
 import { fmt } from './format.js';
 import { randomBytes } from 'node:crypto';
-
-const PER_NODE_MAX_ROUNDS = 10;
-const PLANNER_TIMEOUT_MS = 45_000;
 
 function mintGraphExecutionId() {
   return `graph_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
@@ -76,13 +73,15 @@ function buildPlannerStreamFn(
         { role: 'system', content: systemPrompt },
         ...messages.map((m) => ({ role: m.role, content: m.content })),
       ];
+      // planner-core wraps this with its own activity-based timeout via
+      // streamWithTimeout, so we don't pass one here (would double-enforce).
       await streamCompletion(
         providerConfig,
         apiKey,
         modelId || providerConfig.defaultModel,
         fullMessages,
         onToken,
-        PLANNER_TIMEOUT_MS,
+        undefined,
         signal,
       );
       onDone();
@@ -181,7 +180,7 @@ export async function runDelegatedHeadless(
         maxRounds,
         jsonOutput,
         acceptanceChecks,
-        { allowExec, safeExecPatterns, execMode, signal: ac.signal },
+        { allowExec, safeExecPatterns, execMode, signal: ac.signal, runId },
       );
     }
 
@@ -189,8 +188,37 @@ export async function runDelegatedHeadless(
       process.stderr.write(`${fmt.dim(formatPlannerBrief(plan))}\n\n`);
     }
 
-    // 3. Build graph + executor
+    // 3. Build graph + validate. A model-generated plan can contain cycles,
+    // duplicate ids, or dangling dependsOn; fail-open to the fallback path
+    // rather than handing executeTaskGraph something it will silently skip.
     const nodes = planToTaskGraph(plan);
+    const validationErrors = validateTaskGraph(nodes);
+    if (validationErrors.length > 0) {
+      if (!jsonOutput) {
+        process.stderr.write(
+          `${fmt.warn('[delegation]')} Planner produced an invalid graph (${validationErrors
+            .map((e) => e.type)
+            .join(', ')}); falling back.\n`,
+        );
+      }
+      await appendSessionEvent(
+        state,
+        'delegation.graph_invalid',
+        { ...graphCtx, errors: validationErrors },
+        runId,
+      );
+      return runNonDelegatedFallback(
+        state,
+        providerConfig,
+        apiKey,
+        task,
+        maxRounds,
+        jsonOutput,
+        acceptanceChecks,
+        { allowExec, safeExecPatterns, execMode, signal: ac.signal, runId },
+      );
+    }
+
     await appendSessionEvent(
       state,
       'delegation.graph_started',
@@ -199,7 +227,9 @@ export async function runDelegatedHeadless(
     );
 
     // Snapshot messages + working memory so per-node runs don't pollute
-    // the primary conversation state. We restore after the graph finishes.
+    // the primary conversation state. The inner try/finally restores even
+    // on exception — saving mutated scratch state to disk would corrupt
+    // the session's persisted history.
     const originalMessages = state.messages.slice();
     const originalWorkingMemory = state.workingMemory
       ? JSON.parse(JSON.stringify(state.workingMemory))
@@ -214,7 +244,7 @@ export async function runDelegatedHeadless(
       state.messages = [];
       state.workingMemory = undefined;
 
-      const preamble = buildHeadlessTaskBrief(node.task, []);
+      const preamble = buildHeadlessTaskBrief(node.task, acceptanceChecks);
       const contextBlock =
         enrichedContext.length > 0
           ? `[Prior task context]\n${enrichedContext.join('\n\n')}\n\n`
@@ -230,7 +260,7 @@ export async function runDelegatedHeadless(
         runId,
       );
 
-      const result = await runAssistantLoop(state, providerConfig, apiKey, PER_NODE_MAX_ROUNDS, {
+      const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, {
         signal,
         emit: null,
         allowExec,
@@ -264,15 +294,18 @@ export async function runDelegatedHeadless(
       process.stderr.write(`${tag} ${evt.detail || ''}\n`);
     };
 
-    // 4. Execute
-    const result = await executeTaskGraph(nodes, executor, {
-      signal: ac.signal,
-      onProgress,
-    });
-
-    // 5. Restore primary conversation state
-    state.messages = originalMessages;
-    if (originalWorkingMemory) state.workingMemory = originalWorkingMemory;
+    // 4. Execute — always restore in finally so a throw inside
+    // executeTaskGraph doesn't persist per-node scratch state.
+    let result;
+    try {
+      result = await executeTaskGraph(nodes, executor, {
+        signal: ac.signal,
+        onProgress,
+      });
+    } finally {
+      state.messages = originalMessages;
+      state.workingMemory = originalWorkingMemory;
+    }
 
     await appendSessionEvent(
       state,
@@ -338,20 +371,23 @@ async function runNonDelegatedFallback(
   task,
   maxRounds,
   jsonOutput,
-  _acceptanceChecks,
-  { allowExec, safeExecPatterns, execMode, signal },
+  acceptanceChecks,
+  { allowExec, safeExecPatterns, execMode, signal, runId },
 ) {
-  const taskPrompt = buildHeadlessTaskBrief(task, []);
+  const taskPrompt = buildHeadlessTaskBrief(task, acceptanceChecks);
   await appendUserMessageWithFileReferences(state, taskPrompt, state.cwd, {
     referenceSourceText: task,
   });
 
+  // Reuse the delegated runId so the fallback's events land on the same
+  // correlation thread as the planner_complete event that preceded it.
   const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, {
     signal,
     emit: null,
     allowExec,
     safeExecPatterns,
     execMode,
+    runId,
   });
   await saveSessionState(state);
 
@@ -360,7 +396,7 @@ async function runNonDelegatedFallback(
       `${JSON.stringify(
         {
           sessionId: state.sessionId,
-          runId: result.runId || null,
+          runId: result.runId || runId || null,
           outcome: result.outcome,
           rounds: result.rounds,
           assistant: result.finalAssistantText,
