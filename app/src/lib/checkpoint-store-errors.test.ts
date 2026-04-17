@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunCheckpoint } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -43,6 +43,12 @@ function makeCheckpoint(overrides: Partial<RunCheckpoint> = {}): RunCheckpoint {
 beforeEach(() => {
   for (const key of Object.keys(fakeStorage)) delete fakeStorage[key];
   vi.resetModules();
+});
+
+afterEach(() => {
+  // Restore any spies (notably console.warn) so warnings aren't suppressed
+  // in tests that run after this file.
+  vi.restoreAllMocks();
 });
 
 describe('checkpoint-store — IndexedDB failure tolerance', () => {

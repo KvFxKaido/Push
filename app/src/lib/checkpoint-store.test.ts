@@ -117,10 +117,11 @@ describe('checkpoint-store — legacy localStorage fallback', () => {
     const firstLoad = await mod.loadCheckpoint('legacy-1');
     expect(firstLoad).toEqual(legacy);
 
-    // Give the fire-and-forget migration a tick to flush.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    expect(fakeStorage[`run_checkpoint_legacy-1`]).toBeUndefined();
+    // Poll until the fire-and-forget migration clears the legacy key.
+    // Avoids a fixed setTimeout that would be flaky on slow CI runners.
+    await vi.waitFor(() => {
+      expect(fakeStorage[`run_checkpoint_legacy-1`]).toBeUndefined();
+    });
     // The record should now live in IndexedDB — a second load reads it back.
     const secondLoad = await mod.loadCheckpoint('legacy-1');
     expect(secondLoad).toEqual(legacy);
