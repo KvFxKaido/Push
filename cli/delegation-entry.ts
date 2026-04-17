@@ -1,0 +1,409 @@
+// @ts-nocheck — spike module; typing follows cli/cli.ts convention.
+/**
+ * CLI delegation entry — headless orchestrator spike.
+ *
+ * Wires `plan_tasks` (via the shared `lib/planner-core.ts`) into the CLI's
+ * headless path. The produced feature list is converted into a task graph
+ * and executed in-process through `lib/task-graph.executeTaskGraph`.
+ *
+ * Spike scope decisions (see docs/decisions/Architecture Remediation Plan
+ * §CLI Runtime Parity / Gap 3 Step 1):
+ *
+ * - In-process execution rather than pushd RPC. `handleSubmitTaskGraph`
+ *   validates attach tokens and broadcasts events to attached clients —
+ *   neither is needed for a headless single-process run. Calling
+ *   `executeTaskGraph` directly skips the RPC plumbing. Promoting to RPC
+ *   is a separate production step.
+ *
+ * - Minimum-viable executor: each task node runs the existing CLI
+ *   `runAssistantLoop` on a scoped messages buffer with the node's task
+ *   + enriched context. This is not the role-kernel (Explorer/Coder)
+ *   executor used by `cli/pushd.ts:runExplorerForTaskGraph`. The spike
+ *   measures the scope-shrinking hypothesis (narrow per-node prompts vs.
+ *   one kitchen-sink prompt), not the role-kernel hypothesis.
+ *
+ * - CorrelationContext threading: graph-level context constructed at
+ *   entry with `surface='cli'`, `sessionId`, `runId`, `taskGraphId`,
+ *   `executionId`. Extended per-node with `taskId` and passed through
+ *   `onProgress` event payloads. The CLI doesn't have tracing spine
+ *   wired yet (plan step 3 territory), so the context is used for event
+ *   payloads today.
+ *
+ * - Fail-open: planner returning `null` falls back to the non-delegated
+ *   `runAssistantLoop` path. A delegation-specific failure ("we asked
+ *   for a plan but the model gave us nothing") should not block the
+ *   user's task.
+ */
+
+import process from 'node:process';
+import { executeTaskGraph } from '../lib/task-graph.js';
+import type { TaskGraphNode } from '../lib/runtime-contract.js';
+import type { CorrelationContext } from '../lib/correlation-context.js';
+import { extendCorrelation } from '../lib/correlation-context.js';
+import {
+  runPlannerCore,
+  formatPlannerBrief,
+  type PlannerFeatureList,
+  type PlannerStreamFn,
+} from '../lib/planner-core.js';
+import { streamCompletion, type ProviderConfig } from './provider.js';
+import { runAssistantLoop } from './engine.js';
+import { appendUserMessageWithFileReferences } from './file-references.js';
+import { appendSessionEvent, makeRunId, saveSessionState } from './session-store.js';
+import { buildHeadlessTaskBrief } from './task-brief.js';
+import { fmt } from './format.js';
+import { randomBytes } from 'node:crypto';
+
+const PER_NODE_MAX_ROUNDS = 10;
+const PLANNER_TIMEOUT_MS = 45_000;
+
+function mintGraphExecutionId() {
+  return `graph_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
+}
+
+// ---------------------------------------------------------------------------
+// Planner stream adapter
+// ---------------------------------------------------------------------------
+
+function buildPlannerStreamFn(
+  providerConfig: ProviderConfig,
+  apiKey: string,
+  signal: AbortSignal,
+): PlannerStreamFn {
+  return async (messages, systemPrompt, modelId, { onToken, onDone, onError }) => {
+    try {
+      const fullMessages = [
+        { role: 'system', content: systemPrompt },
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
+      ];
+      await streamCompletion(
+        providerConfig,
+        apiKey,
+        modelId || providerConfig.defaultModel,
+        fullMessages,
+        onToken,
+        PLANNER_TIMEOUT_MS,
+        signal,
+      );
+      onDone();
+    } catch (err) {
+      onError(err instanceof Error ? err : new Error(String(err)));
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Feature list → task graph
+// ---------------------------------------------------------------------------
+
+function planToTaskGraph(plan: PlannerFeatureList): TaskGraphNode[] {
+  return plan.features.map((f) => {
+    const parts = [f.description];
+    if (f.files?.length) parts.push(`Relevant files: ${f.files.join(', ')}`);
+    if (f.verifyCommand) parts.push(`Verify with: ${f.verifyCommand}`);
+    return {
+      id: f.id,
+      // Spike: all nodes run as coder. Explorer/Coder split is a follow-up
+      // that requires per-node role classification in the planner output.
+      agent: 'coder' as const,
+      task: parts.join('\n'),
+      files: f.files,
+      dependsOn: f.dependsOn,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Headless delegation entry
+// ---------------------------------------------------------------------------
+
+export async function runDelegatedHeadless(
+  state,
+  providerConfig,
+  apiKey,
+  task,
+  maxRounds,
+  jsonOutput,
+  acceptanceChecks,
+  { allowExec = false, safeExecPatterns = [], execMode = 'auto' } = {},
+) {
+  const ac = new AbortController();
+  const onSigint = () => ac.abort();
+  process.on('SIGINT', onSigint);
+
+  const runId = makeRunId();
+  const taskGraphId = mintGraphExecutionId();
+  const executionId = taskGraphId;
+  const graphCtx: CorrelationContext = {
+    surface: 'cli',
+    sessionId: state.sessionId,
+    runId,
+    taskGraphId,
+    executionId,
+  };
+
+  try {
+    // 1. Plan
+    const plannerStreamFn = buildPlannerStreamFn(providerConfig, apiKey, ac.signal);
+    const plan = await runPlannerCore({
+      task,
+      files: [],
+      streamFn: plannerStreamFn,
+      modelId: state.model || providerConfig.defaultModel,
+      onStatus: (phase) => {
+        if (!jsonOutput) process.stderr.write(`${fmt.dim(`[planner] ${phase}`)}\n`);
+      },
+    });
+
+    await appendSessionEvent(
+      state,
+      'delegation.planner_complete',
+      {
+        ...graphCtx,
+        featureCount: plan?.features.length ?? 0,
+        approach: plan?.approach ?? null,
+      },
+      runId,
+    );
+
+    // 2. Fail-open fallback
+    if (!plan || plan.features.length === 0) {
+      if (!jsonOutput) {
+        process.stderr.write(
+          `${fmt.warn('[delegation]')} Planner returned no features; falling back to non-delegated loop.\n`,
+        );
+      }
+      return runNonDelegatedFallback(
+        state,
+        providerConfig,
+        apiKey,
+        task,
+        maxRounds,
+        jsonOutput,
+        acceptanceChecks,
+        { allowExec, safeExecPatterns, execMode, signal: ac.signal },
+      );
+    }
+
+    if (!jsonOutput) {
+      process.stderr.write(`${fmt.dim(formatPlannerBrief(plan))}\n\n`);
+    }
+
+    // 3. Build graph + executor
+    const nodes = planToTaskGraph(plan);
+    await appendSessionEvent(
+      state,
+      'delegation.graph_started',
+      { ...graphCtx, nodeCount: nodes.length },
+      runId,
+    );
+
+    // Snapshot messages + working memory so per-node runs don't pollute
+    // the primary conversation state. We restore after the graph finishes.
+    const originalMessages = state.messages.slice();
+    const originalWorkingMemory = state.workingMemory
+      ? JSON.parse(JSON.stringify(state.workingMemory))
+      : undefined;
+
+    const nodeSummaries = new Map<string, { summary: string; rounds: number }>();
+
+    const executor = async (node, enrichedContext, signal) => {
+      const nodeCtx = extendCorrelation(graphCtx, { taskId: node.id });
+
+      // Scoped per-node messages: fresh buffer, prior-node context folded in.
+      state.messages = [];
+      state.workingMemory = undefined;
+
+      const preamble = buildHeadlessTaskBrief(node.task, []);
+      const contextBlock =
+        enrichedContext.length > 0
+          ? `[Prior task context]\n${enrichedContext.join('\n\n')}\n\n`
+          : '';
+      await appendUserMessageWithFileReferences(state, `${contextBlock}${preamble}`, state.cwd, {
+        referenceSourceText: node.task,
+      });
+
+      await appendSessionEvent(
+        state,
+        'delegation.node_started',
+        { ...nodeCtx, task: node.task.slice(0, 280) },
+        runId,
+      );
+
+      const result = await runAssistantLoop(state, providerConfig, apiKey, PER_NODE_MAX_ROUNDS, {
+        signal,
+        emit: null,
+        allowExec,
+        safeExecPatterns,
+        execMode,
+        runId,
+      });
+
+      const summary = result.finalAssistantText || `[no summary — outcome=${result.outcome}]`;
+      nodeSummaries.set(node.id, { summary, rounds: result.rounds });
+
+      await appendSessionEvent(
+        state,
+        'delegation.node_completed',
+        {
+          ...nodeCtx,
+          outcome: result.outcome,
+          rounds: result.rounds,
+          summaryLength: summary.length,
+        },
+        runId,
+      );
+
+      return { summary, rounds: result.rounds };
+    };
+
+    const onProgress = (evt) => {
+      if (jsonOutput) return;
+      const ctx = evt.taskId ? extendCorrelation(graphCtx, { taskId: evt.taskId }) : graphCtx;
+      const tag = fmt.dim(`[${evt.type} ${ctx.taskId || 'graph'}]`);
+      process.stderr.write(`${tag} ${evt.detail || ''}\n`);
+    };
+
+    // 4. Execute
+    const result = await executeTaskGraph(nodes, executor, {
+      signal: ac.signal,
+      onProgress,
+    });
+
+    // 5. Restore primary conversation state
+    state.messages = originalMessages;
+    if (originalWorkingMemory) state.workingMemory = originalWorkingMemory;
+
+    await appendSessionEvent(
+      state,
+      'delegation.graph_completed',
+      {
+        ...graphCtx,
+        success: result.success,
+        aborted: result.aborted,
+        totalRounds: result.totalRounds,
+        wallTimeMs: result.wallTimeMs,
+      },
+      runId,
+    );
+    await saveSessionState(state);
+
+    // 6. Emit final summary
+    const finalText = synthesizeFinalSummary(plan, result, nodeSummaries);
+
+    if (jsonOutput) {
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            sessionId: state.sessionId,
+            runId,
+            executionId,
+            taskGraphId,
+            outcome: result.aborted ? 'aborted' : result.success ? 'success' : 'delegation_failed',
+            nodeCount: nodes.length,
+            totalRounds: result.totalRounds,
+            wallTimeMs: result.wallTimeMs,
+            approach: plan.approach,
+            summary: finalText,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    } else {
+      process.stdout.write(`${finalText}\n`);
+    }
+
+    if (result.aborted) return 130;
+    return result.success ? 0 : 1;
+  } catch (err) {
+    await saveSessionState(state).catch(() => {});
+    if (err && (err as Error).name === 'AbortError') return 130;
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`${fmt.error('[delegation error]')} ${message}\n`);
+    return 1;
+  } finally {
+    process.removeListener('SIGINT', onSigint);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Non-delegated fallback (fail-open when planner returns no features)
+// ---------------------------------------------------------------------------
+
+async function runNonDelegatedFallback(
+  state,
+  providerConfig,
+  apiKey,
+  task,
+  maxRounds,
+  jsonOutput,
+  _acceptanceChecks,
+  { allowExec, safeExecPatterns, execMode, signal },
+) {
+  const taskPrompt = buildHeadlessTaskBrief(task, []);
+  await appendUserMessageWithFileReferences(state, taskPrompt, state.cwd, {
+    referenceSourceText: task,
+  });
+
+  const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, {
+    signal,
+    emit: null,
+    allowExec,
+    safeExecPatterns,
+    execMode,
+  });
+  await saveSessionState(state);
+
+  if (jsonOutput) {
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          sessionId: state.sessionId,
+          runId: result.runId || null,
+          outcome: result.outcome,
+          rounds: result.rounds,
+          assistant: result.finalAssistantText,
+          fallback: 'planner_empty',
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else {
+    process.stdout.write(`${result.finalAssistantText}\n`);
+  }
+
+  if (result.outcome === 'aborted') return 130;
+  return result.outcome === 'success' ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// Summary synthesis
+// ---------------------------------------------------------------------------
+
+function synthesizeFinalSummary(
+  plan: PlannerFeatureList,
+  result,
+  nodeSummaries: Map<string, { summary: string; rounds: number }>,
+): string {
+  const lines: string[] = [];
+  lines.push(`Delegation complete — approach: ${plan.approach}`);
+  lines.push('');
+  for (const feature of plan.features) {
+    const entry = nodeSummaries.get(feature.id);
+    const nodeState = result.nodeStates?.get(feature.id);
+    const status = nodeState?.status || 'unknown';
+    lines.push(`[${feature.id}] (${status}) ${feature.description}`);
+    if (entry?.summary) {
+      lines.push(entry.summary);
+    } else if (nodeState?.error) {
+      lines.push(`  error: ${nodeState.error}`);
+    }
+    lines.push('');
+  }
+  lines.push(
+    `Total: ${plan.features.length} features, ${result.totalRounds} rounds, ${result.wallTimeMs}ms`,
+  );
+  return lines.join('\n').trim();
+}

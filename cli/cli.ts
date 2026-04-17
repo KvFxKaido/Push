@@ -83,6 +83,7 @@ const KNOWN_OPTIONS = new Set([
   'force',
   'no-resume',
   'noResume',
+  'delegate',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -1750,6 +1751,7 @@ export async function main() {
       'exec-mode': { type: 'string' },
       'no-sandbox': { type: 'boolean' },
       'no-resume': { type: 'boolean' },
+      delegate: { type: 'boolean', default: false },
       version: { type: 'boolean', short: 'v' },
     },
   });
@@ -2091,6 +2093,19 @@ export async function main() {
       ? persistedConfig.safeExecPatterns
       : [];
     const headlessExecMode = process.env.PUSH_EXEC_MODE || 'auto';
+    if (values.delegate) {
+      const { runDelegatedHeadless } = await import('./delegation-entry.js');
+      return runDelegatedHeadless(
+        state,
+        providerConfig,
+        apiKey,
+        task,
+        maxRounds,
+        values.json,
+        acceptanceChecks,
+        { allowExec, safeExecPatterns: headlessSafePatterns, execMode: headlessExecMode },
+      );
+    }
     return runHeadless(
       state,
       providerConfig,
