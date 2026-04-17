@@ -172,7 +172,7 @@ function makeApprovalId() {
 
 // ─── Envelope helpers ────────────────────────────────────────────
 
-function makeResponse(requestId, type, sessionId, ok, payload, error = null) {
+export function makeResponse(requestId, type, sessionId, ok, payload, error = null) {
   return {
     v: PROTOCOL_VERSION,
     kind: 'response',
@@ -185,7 +185,7 @@ function makeResponse(requestId, type, sessionId, ok, payload, error = null) {
   };
 }
 
-function makeErrorResponse(requestId, type, code, message, retryable = false) {
+export function makeErrorResponse(requestId, type, code, message, retryable = false) {
   return makeResponse(
     requestId,
     type,
@@ -235,7 +235,7 @@ export function validateAttachToken(entry, providedToken) {
   return entry.attachToken === providedToken;
 }
 
-function normalizeProviderInput(value) {
+export function normalizeProviderInput(value) {
   if (typeof value !== 'string') return '';
   const normalized = value.trim().toLowerCase();
   if (!normalized || normalized === 'undefined' || normalized === 'null') return '';
