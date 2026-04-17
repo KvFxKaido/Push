@@ -1,6 +1,6 @@
 # Decisions Folder
 
-Status reviewed: 2026-04-16
+Status reviewed: 2026-04-16 (Modal snapshot Phases 1+2 shipped check)
 
 This folder contains architecture decisions, research, analysis, and shipped design references.
 
@@ -28,7 +28,7 @@ This folder contains architecture decisions, research, analysis, and shipped des
 | `External Resource Review — Harness Engineering and Ralph Loop.md` | Reference | Source for the 2026-04-14 Tiered Orchestrator Routing and Canonical SOP Playbooks spikes. |
 | `Harness Friction — Agent Self-Report.md` | Current, refreshed 2026-03-30 | Ambient runtime state, capability discovery, and structured mutation postconditions shipped on main web path; working-memory evolution and richer structural navigation remain open. |
 | `Hashline System Review.md` | Current scorecard, added 2026-04-08 | Recommendations A, C, D, E shipped; B shipped as a tool-level patchset range form. Effectiveness measurement logged 2026-04-12. |
-| `Modal Sandbox Snapshots Design.md` | Draft, added 2026-04-14 | Phase 0 API verification complete; Phase 1 backend primitives pending. Headline item from the Vercel Open Agents review. |
+| `Modal Sandbox Snapshots Design.md` | Partially shipped, added 2026-04-14 | Phase 1 (backend primitives) shipped 2026-04-16 in `23fcb8e`; Phase 2 (auto-restore + idle hibernation timer) shipped 2026-04-16 in `f913f49` with follow-up hardening in `2613527`. Phase 3 (UX polish: explicit Hibernate/Forget controls, snapshot-age on resume banner, Settings list) and Phase 4 (eviction cron + KV index) still open. |
 | `Multi-Agent Orchestration Research — open-multi-agent.md` | Reference, added 2026-04-04 | Research on open-multi-agent framework. Core task-graph/memory work shipped; keep for rationale. |
 | `Oh My OpenAgent Review.md` | Comparative review | Tier-1/2/3 quick-win list for Push. |
 | `OpenAI Agents SDK Evolution Review.md` | Reference | Comparative review of the OpenAI Agents SDK. |
@@ -47,6 +47,6 @@ If we are choosing implementation work from this folder, the best live clusters 
 
 1. End-to-end tracing follow-through (Worker/server propagation, exporter rollout, metric retirement).
 2. Working-memory evolution and invalidation-aware investigation state, with a concrete follow-up in `Context Memory and Retrieval Architecture.md`.
-3. Modal sandbox snapshots Phase 1 (headline 2026-04-14 adoption target).
+3. Modal sandbox snapshots Phase 3 (explicit hibernate/forget UX in Workspace Hub, snapshot-age on resume banner, Settings "Hibernated sandboxes" list) and Phase 4 (eviction cron + KV index). Phases 1–2 landed 2026-04-16.
 4. Phase 5B `ToolExecutionRuntime` interface land + Phase 5C deep-reviewer move.
 5. Selective CLI adoption of the shared runtime substrate where it clearly improves the terminal product.
