@@ -91,6 +91,7 @@ import type {
   SettingsWorkspaceProps,
 } from '@/components/SettingsSheet';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
+import { formatSnapshotAge } from '@/hooks/useSnapshotManager';
 import type { PinnedArtifact } from '@/hooks/usePinnedArtifacts';
 import type {
   AIProviderType,
@@ -277,17 +278,6 @@ function escapeSingleQuotes(value: string): string {
   return value.replace(/'/g, `'"'"'`);
 }
 
-function formatSnapshotAge(createdAt: number): string {
-  const deltaMs = Math.max(0, Date.now() - createdAt);
-  const minutes = Math.floor(deltaMs / 60_000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
 function truncateCommitSubject(subject: string, type: string): string {
   const maxTotalLength = 72;
   const prefix = `${type}: `;
@@ -439,7 +429,7 @@ export function WorkspaceHubSheet({
     try {
       const ok = await onHibernateSandbox();
       if (ok) toast.success('Sandbox hibernated — workspace snapshot saved');
-      else toast.error('Hibernate failed — sandbox is still running');
+      else toast.error('Hibernate failed — please try again');
     } finally {
       setHibernating(false);
     }

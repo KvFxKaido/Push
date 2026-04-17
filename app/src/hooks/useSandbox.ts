@@ -465,9 +465,12 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
   // Snapshot info for UI affordances. Reads the persisted session and re-evaluates
   // on status/sandbox transitions and explicit tick bumps from hibernate/forget.
+  // Requires both snapshotId AND restoreToken — without the token the restore
+  // endpoint rejects the call, so advertising hibernated/Restore UX would lie
+  // and the user would silently fall back to a clean clone.
   const snapshotInfo = useMemo<{ snapshotId: string; createdAt: number } | null>(() => {
     const saved = loadSandboxSession(activeRepoFullName, activeBranch);
-    if (!saved?.snapshotId) return null;
+    if (!saved?.snapshotId || !saved.restoreToken) return null;
     return {
       snapshotId: saved.snapshotId,
       createdAt: saved.snapshotCreatedAt ?? saved.createdAt,
@@ -532,7 +535,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       });
     } else {
       const storageKey = buildSandboxSessionStorageKey(activeRepoFullName, activeBranch);
-      if (storageKey) clearSandboxSessionByStorageKey(storageKey);
+      // Pass the expected sandboxId so a newer session written by another tab
+      // between our read and delete doesn't get evicted by mistake.
+      if (storageKey) clearSandboxSessionByStorageKey(storageKey, saved.sandboxId);
     }
     setSnapshotInfoTick((n) => n + 1);
     console.log('[useSandbox] Forgot sandbox snapshot');
