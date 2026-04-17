@@ -28,9 +28,12 @@ const DESTRUCTIVE_PATTERNS = [
   /\bgit\s+clean\s+-[a-zA-Z]*f/, // git clean -f
   /\bgit\s+reset\s+--hard\b/, // git reset --hard
   /\bgit\s+checkout\s+--\s*\./, // git checkout -- .
-  // Anchor `.` to whitespace or end-of-string: a trailing `\b` never matches
-  // after a non-word char like `.`, so the prior `\.\b` form was a dead regex.
-  /\bgit\s+restore\s+\.(?:\s|$)/, // git restore .
+  // Anchor `.` so it terminates the argument: reject a following slash
+  // (e.g. `./path` — restores a single file) or word char (e.g. `.config`),
+  // but accept anything else — whitespace, end-of-string, or shell separators
+  // like `;`, `|`, `&&` that `bash -c` accepts without a preceding space.
+  // The prior `\.\b` form was a dead regex since `\b` never matches after `.`.
+  /\bgit\s+restore\s+\.(?![/\w])/, // git restore .
   // `\b-delete` fails when `-delete` is preceded by whitespace (both sides
   // non-word, so no word boundary). Require whitespace before `-delete`.
   /\bfind\b.*\s-delete\b/, // find ... -delete

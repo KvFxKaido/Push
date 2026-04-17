@@ -189,6 +189,11 @@ describe('destructive-sandbox-exec gate', () => {
     ['git checkout -- .'],
     ['git restore .'],
     ['git restore . && echo done'],
+    // sandbox_exec runs under `bash -c`, so shell separators don't require a
+    // preceding space — make sure these chained forms still trip the gate.
+    ['git restore .;echo done'],
+    ['git restore .|cat'],
+    ['git restore .&&pwd'],
     ['find . -name "*.log" -delete'],
     ['find /tmp -delete'],
     ['find /tmp -delete -print'],
@@ -220,6 +225,9 @@ describe('destructive-sandbox-exec gate', () => {
     // `git restore ./path` restores a single file — not the bare-dot form.
     ['git restore ./file.txt'],
     ['git restore src/file.ts'],
+    // Dot-prefixed filename is a single file, not the bare-dot form.
+    ['git restore .gitignore'],
+    ['git restore .config'],
     // Substring-looking inputs must still be word-bounded.
     ['mygit restore .'],
     ['gitx restore .'],
