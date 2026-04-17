@@ -15,6 +15,16 @@ const DEFAULT_EXEC_SESSION_TIMEOUT_MS = 600_000;
 const MAX_EXEC_SESSION_TIMEOUT_MS = 1_800_000;
 const DEFAULT_EXEC_POLL_MAX_CHARS = 8_000;
 const MAX_EXEC_POLL_MAX_CHARS = 64_000;
+const INTERACTIVE_TRAP_THRESHOLD_MS = 2_000;
+const INTERACTIVE_PROMPT_PATTERNS = [
+  /\[y\/n\]/i,
+  /\(y\/n\)/i,
+  /\?\s*$/,
+  /password:\s*$/i,
+  /enter passphrase/i,
+  /confirm/i,
+];
+
 const MAX_EXEC_SESSION_OUTPUT_CHARS = 220_000;
 const MAX_EXEC_SESSION_CHUNKS = 500;
 const MAX_EXEC_SESSIONS = 24;
@@ -258,6 +268,11 @@ function notifySessionExit(session) {
 }
 
 function markSessionClosed(session, exitCode, signal, { timedOut = false } = {}) {
+  if (session.trapTimer) {
+    clearTimeout(session.trapTimer);
+    session.trapTimer = null;
+  }
+  session.interactiveTrap = false;
   if (!session || session.closed) return;
   session.closed = true;
   session.running = false;
@@ -271,6 +286,22 @@ function markSessionClosed(session, exitCode, signal, { timedOut = false } = {})
 
 function appendSessionChunk(session, text, source = 'stdout') {
   if (!session || typeof text !== 'string' || text.length === 0) return;
+  // Clear trap state on new output
+  if (session.trapTimer) {
+    clearTimeout(session.trapTimer);
+    session.trapTimer = null;
+  }
+  session.interactiveTrap = false;
+
+  // Check for potential interactive trap
+  const isPrompt =
+    source !== 'meta' && INTERACTIVE_PROMPT_PATTERNS.some((re) => re.test(text.trim()));
+  if (isPrompt && session.running) {
+    session.trapTimer = setTimeout(() => {
+      session.interactiveTrap = true;
+    }, INTERACTIVE_TRAP_THRESHOLD_MS);
+  }
+
   const chunk = {
     seq: ++session.nextSeq,
     source,
@@ -572,6 +603,8 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
     child,
     timer: null,
     exitWaiters: [],
+    interactiveTrap: false,
+    trapTimer: null,
   };
 
   const timeoutTimer = setTimeout(() => {
@@ -1591,14 +1624,21 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const output = collected.text || '<no new output>';
         const status = formatSessionStatus(session);
 
+        let finalOutput = output;
+        if (session.interactiveTrap) {
+          finalOutput +=
+            '\n\n[push] [INTERACTIVE_PROMPT_DETECTED] The process appears to be waiting for input. Use exec_write to respond or exec_stop to kill it.';
+        }
+
         return {
           ok: true,
           text: truncateText(
-            `session_id: ${session.id}\nstatus: ${status}\nfrom_seq: ${fromSeq}\nnext_seq: ${latestSeq}\n\noutput:\n${output}`,
+            `session_id: ${session.id}\nstatus: ${status}\nfrom_seq: ${fromSeq}\nnext_seq: ${latestSeq}\n\noutput:\n${finalOutput}`,
           ),
           meta: {
             session_id: session.id,
             running: session.running,
+            interactive_trap: session.interactiveTrap,
             status,
             exit_code: session.exitCode,
             signal: session.exitSignal,
