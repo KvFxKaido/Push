@@ -46,20 +46,28 @@ const { privateKey: rsaPrivateKey } = generateKeyPairSync('rsa', {
   privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   publicKeyEncoding: { type: 'spki', format: 'pem' },
 });
-const RSA_PRIVATE_KEY_PEM = rsaPrivateKey as unknown as string;
+const RSA_PRIVATE_KEY_PEM = rsaPrivateKey as string;
+
+type SequentialFetchResponder = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Response | Promise<Response>;
 
 /**
  * Build a fetch stub that responds to successive calls with the supplied
- * responses, in order. Fails the test if a call is made past the queue end.
+ * responders, in order. Each responder receives the original fetch
+ * `(input, init)` arguments so tests can validate the exact URL/method/
+ * headers used for that step. Fails the test if a call is made past the
+ * queue end.
  */
-function sequentialFetch(responses: Array<() => Response | Promise<Response>>) {
+function sequentialFetch(responses: SequentialFetchResponder[]) {
   let i = 0;
-  return vi.fn(async () => {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (i >= responses.length) {
       throw new Error(`fetch called ${i + 1} times; only ${responses.length} responses queued`);
     }
     const response = responses[i++];
-    return await response();
+    return await response(input, init);
   });
 }
 
@@ -335,11 +343,26 @@ describe('handleGitHubAppOAuth happy path', () => {
   };
 
   it('returns installation token, user, and commit identity when everything succeeds', async () => {
+    // Record every call's URL + method so we can verify the exact 5-call
+    // sequence rather than just the call count.
+    const calls: Array<{ url: string; method: string }> = [];
+    const record = (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        input instanceof URL ? input.toString() : typeof input === 'string' ? input : input.url;
+      calls.push({ url, method: (init?.method ?? 'GET').toUpperCase() });
+    };
     const fetchStub = sequentialFetch([
-      () => jsonResponse({ access_token: 'user_token' }),
-      () => jsonResponse({ login: 'alice', avatar_url: 'https://avatar/alice' }),
-      () =>
-        jsonResponse({
+      (input, init) => {
+        record(input, init);
+        return jsonResponse({ access_token: 'user_token' });
+      },
+      (input, init) => {
+        record(input, init);
+        return jsonResponse({ login: 'alice', avatar_url: 'https://avatar/alice' });
+      },
+      (input, init) => {
+        record(input, init);
+        return jsonResponse({
           total_count: 1,
           installations: [
             {
@@ -349,15 +372,20 @@ describe('handleGitHubAppOAuth happy path', () => {
               account: { login: 'org', avatar_url: 'https://avatar/org' },
             },
           ],
-        }),
-      // POST /app/installations/123/access_tokens
-      () => jsonResponse({ token: 'inst_token', expires_at: '2030-01-01T00:00:00Z' }),
-      // GET /apps/push-auth — bot commit identity
-      () =>
-        jsonResponse({
-          slug: 'push-auth',
+        });
+      },
+      (input, init) => {
+        record(input, init);
+        return jsonResponse({ token: 'inst_token', expires_at: '2030-01-01T00:00:00Z' });
+      },
+      (input, init) => {
+        record(input, init);
+        return jsonResponse({
           id: 4242,
-        }),
+          login: 'push-auth[bot]',
+          avatar_url: 'https://avatar/bot',
+        });
+      },
     ]);
     vi.stubGlobal('fetch', fetchStub);
 
@@ -373,7 +401,28 @@ describe('handleGitHubAppOAuth happy path', () => {
     expect(body.installation_id).toBe('123');
     expect(body.user).toEqual({ login: 'alice', avatar_url: 'https://avatar/alice' });
     expect(body.expires_at).toBe('2030-01-01T00:00:00Z');
-    expect(fetchStub).toHaveBeenCalledTimes(5);
+    expect(body.commit_identity).toEqual({
+      name: 'push-auth[bot]',
+      email: '4242+push-auth[bot]@users.noreply.github.com',
+      login: 'push-auth[bot]',
+      avatar_url: 'https://avatar/bot',
+    });
+
+    // Verify the exact 5-call sequence: token exchange -> user lookup ->
+    // installations list -> installation access-token -> bot identity.
+    expect(calls).toHaveLength(5);
+    expect(calls[0]).toEqual({
+      url: 'https://github.com/login/oauth/access_token',
+      method: 'POST',
+    });
+    expect(calls[1]).toEqual({ url: 'https://api.github.com/user', method: 'GET' });
+    expect(calls[2]).toEqual({ url: 'https://api.github.com/user/installations', method: 'GET' });
+    expect(calls[3]).toEqual({
+      url: 'https://api.github.com/app/installations/123/access_tokens',
+      method: 'POST',
+    });
+    expect(calls[4].url).toBe('https://api.github.com/users/push-auth%5Bbot%5D');
+    expect(calls[4].method).toBe('GET');
   });
 });
 
@@ -483,7 +532,12 @@ describe('handleGitHubAppToken happy path', () => {
             app_slug: 'push-auth',
             account: { login: 'myorg', avatar_url: 'https://avatar/myorg' },
           }),
-        () => jsonResponse({ slug: 'push-auth' }),
+        () =>
+          jsonResponse({
+            id: 4242,
+            login: 'push-auth[bot]',
+            avatar_url: 'https://avatar/bot',
+          }),
       ]),
     );
     const response = await handleGitHubAppToken(
@@ -496,6 +550,12 @@ describe('handleGitHubAppToken happy path', () => {
     const body = await response.json();
     expect(body.token).toBe('inst_token');
     expect(body.user).toEqual({ login: 'myorg', avatar_url: 'https://avatar/myorg' });
+    expect(body.commit_identity).toEqual({
+      name: 'push-auth[bot]',
+      email: '4242+push-auth[bot]@users.noreply.github.com',
+      login: 'push-auth[bot]',
+      avatar_url: 'https://avatar/bot',
+    });
   });
 });
 
@@ -510,6 +570,20 @@ function decodeBase64Url(input: string): string {
 }
 
 describe('generateGitHubAppJWT', () => {
+  // Pin wall-clock time so iat/exp assertions are exact instead of
+  // tolerating a ~2s window that was flaky on slow CI runners.
+  const fixedNow = new Date('2026-01-01T00:00:00.000Z');
+  const fixedSeconds = Math.floor(fixedNow.getTime() / 1000);
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(fixedNow);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('produces a 3-part RS256 JWT with the supplied app id as issuer', async () => {
     const jwt = await generateGitHubAppJWT('12345', RSA_PRIVATE_KEY_PEM);
     const parts = jwt.split('.');
@@ -524,12 +598,10 @@ describe('generateGitHubAppJWT', () => {
   });
 
   it('back-dates iat by 60s and sets exp 600s ahead of "now"', async () => {
-    const now = Math.floor(Date.now() / 1000);
     const jwt = await generateGitHubAppJWT('12345', RSA_PRIVATE_KEY_PEM);
     const payload = JSON.parse(decodeBase64Url(jwt.split('.')[1]));
-    expect(payload.iat).toBeGreaterThanOrEqual(now - 61);
-    expect(payload.iat).toBeLessThanOrEqual(now - 59);
-    expect(payload.exp).toBe(payload.iat + 660);
+    expect(payload.iat).toBe(fixedSeconds - 60);
+    expect(payload.exp).toBe(fixedSeconds + 600);
   });
 
   it('normalises literal \\n sequences in the PEM before parsing', async () => {
