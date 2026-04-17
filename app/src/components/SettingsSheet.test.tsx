@@ -69,7 +69,7 @@ function emptyAI(): SettingsAIProps {
 
 function emptyWorkspace(): SettingsWorkspaceProps {
   return {
-    approvalMode: 'ask',
+    approvalMode: 'supervised',
     updateApprovalMode: vi.fn(),
     contextMode: 'normal',
     updateContextMode: vi.fn(),
@@ -83,7 +83,7 @@ function emptyWorkspace(): SettingsWorkspaceProps {
     fetchSandboxState: vi.fn(),
     protectMainGlobal: true,
     setProtectMainGlobal: vi.fn(),
-    protectMainRepoOverride: null,
+    protectMainRepoOverride: 'inherit',
     setProtectMainRepoOverride: vi.fn(),
     showToolActivity: true,
     setShowToolActivity: vi.fn(),

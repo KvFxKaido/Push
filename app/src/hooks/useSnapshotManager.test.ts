@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActiveRepo, WorkspaceSession } from '@/types';
 import type { SandboxStatus } from './useSandbox';
 
@@ -35,7 +35,7 @@ const windowShim: WindowLike = {
   setInterval: () => 0,
   clearInterval: () => {},
 };
-(globalThis as unknown as { window: WindowLike }).window = windowShim;
+vi.stubGlobal('window', windowShim);
 
 type Cell = { value: unknown };
 const reactState = vi.hoisted(() => ({
@@ -111,6 +111,8 @@ function render(
 }
 
 beforeEach(() => {
+  // Re-stub after any prior test's afterEach unstubbed globals.
+  vi.stubGlobal('window', windowShim);
   Object.values(snapshotLib).forEach((m) => m.mockReset());
   toast.success.mockReset();
   toast.error.mockReset();
@@ -119,6 +121,10 @@ beforeEach(() => {
   reactState.index = 0;
   reactState.refs = [];
   reactState.refIndex = 0;
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe('formatSnapshotAge', () => {

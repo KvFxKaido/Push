@@ -130,14 +130,26 @@ describe('useCIPoller', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     executeToolCall.mockRejectedValue(new Error('boom'));
 
+    vi.useFakeTimers();
     useCIPoller('chat-1', 'owner/repo', { currentBranch: 'main' });
     const cleanup = hookState.effects[0]?.fn() as (() => void) | undefined;
 
+    // First poll fails and is logged.
     await vi.waitFor(() => {
       expect(spy).toHaveBeenCalled();
+      expect(executeToolCall).toHaveBeenCalledTimes(1);
     });
     expect(hookState.setCiStatus).not.toHaveBeenCalled();
+
+    // Advance past the 60s interval and verify the poll retries rather
+    // than stopping after the first rejection.
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => {
+      expect(executeToolCall).toHaveBeenCalledTimes(2);
+    });
+
     spy.mockRestore();
     cleanup?.();
+    vi.useRealTimers();
   });
 });

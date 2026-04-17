@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const storage = vi.hoisted(() => ({
   get: vi.fn<(key: string, scope?: 'session' | 'local') => string | null>(),
@@ -21,7 +21,7 @@ vi.mock('@/lib/utils', () => ({
   isNetworkFetchError: (...args: unknown[]) => utils.isNetworkFetchError(...args),
 }));
 
-(globalThis as unknown as { fetch: typeof fetchMock }).fetch = fetchMock;
+vi.stubGlobal('fetch', fetchMock);
 
 type Cell = { value: unknown };
 const reactState = vi.hoisted(() => ({
@@ -76,6 +76,8 @@ function makeResponse(init: { ok: boolean; status?: number; body?: unknown; text
 }
 
 beforeEach(() => {
+  // Re-stub after any prior test's afterEach unstubbed globals.
+  vi.stubGlobal('fetch', fetchMock);
   storage.get.mockReset().mockReturnValue(null);
   storage.set.mockReset().mockReturnValue(true);
   storage.remove.mockReset();
@@ -86,6 +88,10 @@ beforeEach(() => {
   reactState.index = 0;
   reactState.refs = [];
   reactState.refIndex = 0;
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe('useGitHubAppAuth — initial state', () => {
