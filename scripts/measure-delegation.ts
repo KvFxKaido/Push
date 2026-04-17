@@ -218,7 +218,10 @@ function parseJsonOutput(stdout: string): { parsed: unknown; error: string | nul
       lastError = (err as Error).message;
     }
   }
-  return { parsed: null, error: lastError ? `no parsable object (last: ${lastError})` : 'no JSON object found' };
+  return {
+    parsed: null,
+    error: lastError ? `no parsable object (last: ${lastError})` : 'no JSON object found',
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -487,7 +490,7 @@ async function main(): Promise<number> {
     process.stderr.write(
       '\n[measure-delegation] warning: --accept runs acceptance commands on the baseline path but\n' +
         '  the delegated path does not currently execute or report them (see cli/delegation-entry.ts).\n' +
-        '  Wall-time comparisons will be biased by the baseline\'s acceptance duration. Consider\n' +
+        "  Wall-time comparisons will be biased by the baseline's acceptance duration. Consider\n" +
         '  running the two modes separately via --skip-delegated / --skip-baseline if comparing wall.\n',
     );
   }
