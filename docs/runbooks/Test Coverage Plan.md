@@ -20,7 +20,7 @@ tests).
   and header shape. Deterministic under a stubbed `VITE_GITHUB_TOKEN`.
 - `app/src/lib/approval-gates.test.ts` — registry semantics and all four
   default gates across all three approval modes. Catches regex regressions
-  via parameterised positive/negative cases.
+  via parameterized positive/negative cases.
 - `app/src/worker/worker-middleware.test.ts` — origin allowlist, body-size
   limits, client-IP derivation, auth builders, experimental upstream URL
   validation, and the full `runPreamble` guard chain.
@@ -41,7 +41,7 @@ Targets:
 - `app/src/worker/worker-providers.ts` (~856 LOC) — per-provider request
   shape, streaming/non-streaming dispatch, upstream error translation. Focus
   on the adapter boundaries (Anthropic, OpenAI, Vertex, Ollama, OpenRouter,
-  Zen, Blackbox, Kilocode) rather than upstream mocks.
+  Zen, Blackbox AI, Kilo Code) rather than upstream mocks.
 - `app/src/worker/worker-infra.ts` (~842 LOC) — OAuth endpoints, GitHub App
   token exchange, installation allowlist, `/api/health`. Use `@cloudflare/vitest-pool-workers`
   or `unstable_dev` to drive real requests.
@@ -50,9 +50,9 @@ Targets:
 - `app/src/worker/worker-tracing.ts` (148 LOC) — span context propagation and
   traceparent header handling.
 
-Acceptance: integration tests for at least two provider adapters (streaming
-+ error path) plus auth/health endpoints on `worker-infra`. Non-goal: full
-mock coverage of every provider.
+Acceptance: integration tests for at least two provider adapters
+(streaming plus error path) plus auth/health endpoints on `worker-infra`.
+Non-goal: full mock coverage of every provider.
 
 ## Phase 3 — Persistence & sandbox execution
 
@@ -129,6 +129,6 @@ token).
   silently permitted), but worth a dedicated pass across every entry to
   anchor to command boundaries consistently. Raised and deferred in PR #310.
 - **Coverage gates.** No automated coverage threshold is enforced in CI.
-  Once Phase 2 lands, revisit adding a floor in the app vitest config.
+  Once Phase 2 lands, revisit adding a floor in the app `vitest` config.
 - **Worker runtime env for tests.** Phase 2 integration tests may require
   `@cloudflare/vitest-pool-workers`; evaluate during Phase 2 kickoff.
