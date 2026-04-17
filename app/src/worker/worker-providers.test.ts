@@ -64,7 +64,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('handleOpenRouterChat', () => {
-  it('posts to openrouter.ai/v1/chat/completions with OPENROUTER_API_KEY', async () => {
+  it('posts to openrouter.ai/api/v1/chat/completions with OPENROUTER_API_KEY', async () => {
     let captured: { url: string; init: RequestInit } | undefined;
     vi.stubGlobal(
       'fetch',
@@ -144,7 +144,7 @@ describe('handleOpenRouterChat', () => {
 });
 
 describe('handleOpenRouterModels', () => {
-  it('GETs openrouter.ai/v1/models with no body', async () => {
+  it('GETs openrouter.ai/api/v1/models with no body', async () => {
     let captured: { url: string; init: RequestInit } | undefined;
     vi.stubGlobal(
       'fetch',
