@@ -253,9 +253,7 @@ function countEventTypes(events: unknown[]): {
 // Run + measure
 // ---------------------------------------------------------------------------
 
-async function measureRun(
-  mode: 'baseline' | 'delegated',
-): Promise<RunMetrics> {
+async function measureRun(mode: 'baseline' | 'delegated'): Promise<RunMetrics> {
   const extraArgs = mode === 'delegated' ? ['--delegate'] : [];
   process.stderr.write(`\n[measure-delegation] running ${mode}…\n`);
   const { exitCode, wallMs, stdout, stderr } = await runPush(extraArgs);
@@ -395,7 +393,7 @@ function buildMarkdownEntry(today: string, metrics: RunMetrics[]): string {
       );
       lines.push('');
       lines.push(
-        '_Operator: fill in the qualitative call. ≥, ≈, or < per the plan\'s decision tree, plus what actually shipped or didn\'t. The numbers above are inputs, not the verdict._',
+        "_Operator: fill in the qualitative call. ≥, ≈, or < per the plan's decision tree, plus what actually shipped or didn't. The numbers above are inputs, not the verdict._",
       );
       lines.push('');
     }
