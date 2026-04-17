@@ -1,6 +1,6 @@
 # Test Coverage Plan
 
-Status: Current (Phases 1–3 shipped 2026-04-17). Added 2026-04-17.
+Status: Current (Phases 1–5 shipped 2026-04-17). Added 2026-04-17.
 
 Drives the post-audit push to close the biggest coverage gaps in Push. The
 baseline audit ran against commit `2cff2bb` and found ~142 test files for
@@ -101,37 +101,64 @@ surfaces are now covered. `vi.stubGlobal('fetch', ...)` plus the
 sequential-response queue pattern from Phase 2 carried over cleanly to
 the GitHub and web-search executors.
 
-## Phase 4 — Components & hooks
+## Phase 4 — Components & hooks (shipped 2026-04-17)
 
-96% of React components and 84% of custom hooks are untested.
+Landed in PR #319 (165 tests). Covers render + interaction tests for
+7 components and isolated `renderHook` tests for 11 hooks, meeting the
+acceptance bar for auth flows, commit-push lifecycle, and sandbox states.
 
-Targets (priority):
+- **Components** (33 tests): `ChatScreen` (5), `SettingsSheet` (7),
+  `OnboardingScreen` (5), `WorkspaceChatRoute` (4), `FileBrowser` (5),
+  `SandboxCard` (5), `ChatSurfaceRoute` (3) — render, interaction, and
+  conditional-branch coverage.
+- **Hooks** (132 tests): `useSnapshotManager` (21),
+  `useApiKeyConfig` (18), `useSandbox` (16), `useCommitPush` (15),
+  `useBranchManager` (14), `useProtectMain` (11),
+  `useGitHubAppAuth` (9), `useGitHubAuth` (8),
+  `useAgentDelegation` (8), `useCIPoller` (7), `useChat` (4) —
+  smoke-to-deep tests covering auth token presence/absence,
+  stage → audit → commit → push lifecycle, and sandbox
+  start/stop/ready states.
 
-- Components: `ChatScreen`, `SettingsSheet`, `OnboardingScreen`,
-  `WorkspaceChatRoute`, `FileBrowser`, `SandboxCard`, `ChatSurfaceRoute`.
-- Hooks: `useGitHubAuth`, `useGitHubAppAuth`, `useSandbox`, `useChat`,
-  `useBranchManager`, `useCommitPush`, `useSnapshotManager`,
-  `useAgentDelegation`, `useApiKeyConfig`, `useCIPoller`, `useProtectMain`.
+## Phase 5 — MCP server & CLI module unit tests (shipped 2026-04-17)
 
-Acceptance: render + interaction tests for the top 7 components; isolated
-`renderHook` tests for the listed hooks covering the auth, commit-push, and
-sandbox-lifecycle branches.
+Landed across two workstreams (148 new tests total). MCP server at 92%
+branch coverage (acceptance bar was 60%); every listed CLI module has
+direct pure-logic unit tests.
 
-## Phase 5 — MCP server & CLI module unit tests
-
-Rounds out packages that currently only have integration-style coverage.
-
-Targets:
-
-- `mcp/github-server/src/github-client.ts` — REST client (mock `fetch`).
-- `mcp/github-server/src/index.ts` — MCP tool/resource registration.
-- CLI unit tests for pure-logic extracted from `cli.ts` (2153 LOC),
-  `engine.ts` (1332 LOC), `pushd.ts` (3543 LOC), and `provider.ts` (428
-  LOC). Likely requires a small extraction pass so modules are unit-testable
-  without spawning the daemon.
-
-Acceptance: MCP server at 60%+ branch coverage; at least one pure-logic unit
-test target per listed CLI module.
+- **5a — MCP server** (51 tests): `github-client.test.ts` (22 tests)
+  covers `buildHeaders`, `parseNextLink`, `formatGitHubError` (all
+  status branches), and `githubFetch` (retry on 429/5xx with
+  `Retry-After`, no retry on 4xx, AbortError/timeout wrapping,
+  options pass-through). `index.test.ts` (29 tests) covers ListTools
+  (20 tools with valid schemas), `github_server_info` (env var
+  reflection), `github_api_probe` (success/401/missing fields),
+  unknown-tool rejection, core tool dispatch with structured content,
+  invalid-args rejection for all 12 parametric tools, and sensitive
+  data redaction. Uses Node 22 `mock.module()` (experimental) to
+  intercept the MCP SDK without refactoring the side-effectful
+  `main()` call.
+- **5b — CLI pure-logic** (97 tests across 4 files): Exported 8
+  previously-private pure functions from `cli.ts`, `engine.ts`, and
+  `pushd.ts`, then tested them.
+  - `provider.test.mjs` (55 tests): `resolveApiKey` (6 — env
+    priority, trimming, throw), `getProviderList` (4 — shape,
+    hasKey probing), `createReasoningTokenParser` (22 — the crown
+    jewel: cross-chunk `<think>` splits, buffer holding via the -10
+    slice, null callbacks, flush semantics), `streamCompletion` (23 —
+    SSE parsing, retry/backoff on 429/5xx, timeout, external abort,
+    OpenRouter headers/session_id, JSON fallback).
+  - `pushd-helpers.test.mjs` (14 tests): `makeResponse` (5 —
+    envelope shape, null sessionId), `makeErrorResponse` (4 — error
+    shape, retryable flag), `normalizeProviderInput` (5 — sentinel
+    rejection, trim+lowercase).
+  - `engine-helpers.test.mjs` (8 tests): `shouldDistillMidSession`
+    (4 — round/plan/budget thresholds), `buildParseErrorMessage` (4 —
+    wrapping, guidance text, JSON structure).
+  - `cli-pure.test.mjs` (20 tests): `clamp` (6 — bounds, negatives),
+    `truncateText` (5 — truncation with `...`, falsy input),
+    `parseBoolFlag` (9 — strict coercion of string `"false"`/`"0"`,
+    throws on invalid with flag name in message).
 
 ## Phase 6 — End-to-end flows
 
@@ -155,6 +182,8 @@ token).
   silently permitted), but worth a dedicated pass across every entry to
   anchor to command boundaries consistently. Raised and deferred in PR #310.
 - **Coverage gates.** No automated coverage threshold is enforced in CI.
-  Once Phase 2 lands, revisit adding a floor in the app `vitest` config.
-- **Worker runtime env for tests.** Phase 2 integration tests may require
-  `@cloudflare/vitest-pool-workers`; evaluate during Phase 2 kickoff.
+  Revisit adding a floor in the app `vitest` config now that Phases 1–5
+  have landed.
+- **Worker runtime env for tests.** Resolved in Phase 2 —
+  `@cloudflare/vitest-pool-workers` proved unnecessary;
+  `vi.stubGlobal('fetch', ...)` was sufficient.

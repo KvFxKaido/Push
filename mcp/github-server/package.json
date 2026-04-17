@@ -12,7 +12,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "node --import tsx src/index.ts",
-    "test": "node --import tsx --test src/*.test.ts",
+    "test": "node --import tsx --experimental-test-module-mocks --test src/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

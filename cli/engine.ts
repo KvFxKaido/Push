@@ -133,7 +133,7 @@ const DEBUG_PROMPTS: boolean = process.env.PUSH_DEBUG === '1' || process.env.PUS
  * Determine if mid-session context distillation is needed.
  * Only distill if we're past round 4, have a plan, and are over half the token budget.
  */
-function shouldDistillMidSession(
+export function shouldDistillMidSession(
   messages: Message[],
   workingMemory: WorkingMemory | undefined,
   round: number,
@@ -316,7 +316,7 @@ export function buildToolResultMessage(
   return `[TOOL_RESULT]\n${JSON.stringify(payload, null, 2)}${metaLine}\n[/TOOL_RESULT]`;
 }
 
-function buildParseErrorMessage(malformed: { reason: string; sample: string }[]): string {
+export function buildParseErrorMessage(malformed: { reason: string; sample: string }[]): string {
   return `[TOOL_CALL_PARSE_ERROR]\n${JSON.stringify(
     {
       reason: 'malformed_tool_call',
