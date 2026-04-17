@@ -83,6 +83,7 @@ const KNOWN_OPTIONS = new Set([
   'force',
   'no-resume',
   'noResume',
+  'delegate',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -169,6 +170,7 @@ Options:
   --allow-exec                  Allow exec tool in headless mode (blocked by default)
   --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
   --json                        JSON output in headless mode / resume
+  --delegate                    Headless: plan the task and run it as a task graph (spike)
   --sandbox                     Enable local Docker sandbox
   --no-sandbox                  Disable local Docker sandbox
   -v, --version                 Show version
@@ -1750,6 +1752,7 @@ export async function main() {
       'exec-mode': { type: 'string' },
       'no-sandbox': { type: 'boolean' },
       'no-resume': { type: 'boolean' },
+      delegate: { type: 'boolean', default: false },
       version: { type: 'boolean', short: 'v' },
     },
   });
@@ -2091,6 +2094,19 @@ export async function main() {
       ? persistedConfig.safeExecPatterns
       : [];
     const headlessExecMode = process.env.PUSH_EXEC_MODE || 'auto';
+    if (values.delegate) {
+      const { runDelegatedHeadless } = await import('./delegation-entry.js');
+      return runDelegatedHeadless(
+        state,
+        providerConfig,
+        apiKey,
+        task,
+        maxRounds,
+        values.json,
+        acceptanceChecks,
+        { allowExec, safeExecPatterns: headlessSafePatterns, execMode: headlessExecMode },
+      );
+    }
     return runHeadless(
       state,
       providerConfig,
