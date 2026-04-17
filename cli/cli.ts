@@ -101,11 +101,11 @@ const KNOWN_SUBCOMMANDS = new Set([
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 const DEFAULT_COMPACT_TURNS = 6;
 
-export function clamp(value, min, max) {
+export function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-export function truncateText(text, maxLength = 100) {
+export function truncateText(text: string | null | undefined, maxLength = 100) {
   if (!text) return '';
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength) + '...';
@@ -116,7 +116,7 @@ export function truncateText(text, maxLength = 100) {
 // arrives as the STRING "false". Plain Boolean(...) would then coerce it to
 // true and do the opposite of what the caller asked for. Accept the common
 // string forms explicitly and reject anything else rather than guessing.
-export function parseBoolFlag(raw, flagName) {
+export function parseBoolFlag(raw: unknown, flagName: string) {
   if (raw === undefined || raw === false) return false;
   if (raw === true) return true;
   if (typeof raw === 'string') {
