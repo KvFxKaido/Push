@@ -1,25 +1,64 @@
 # Push Architecture Rating Snapshot
 
-Date: 2026-04-14
-Status: Reference snapshot, full panel refresh on 2026-04-14
+Date: 2026-04-17
+Status: Reference snapshot, full panel refresh on 2026-04-17
 
 Refresh note:
-- Claude reassessed on 2026-04-14 after the Phase 1–5 role-kernel migration into `lib/`, `pushd` Phase 6 closing with real daemon-side Coder + Explorer tool executors, v1 synthetic downgrade, and protocol schema hardening. Implementation shape moves 7.5 → 8; dense modules have grown rather than shrunk.
-- Codex reassessed on 2026-04-14 after reviewing the refreshed snapshot and merged PR #290 context. Rating holds at **8.5/10** on an honest update: the architecture question that mattered most — whether shared runtime semantics were truly canonical across surfaces — now looks materially stronger.
-- Gemini reassessed on 2026-04-14 and holds at 8.5/10. The split of 9 architecture / 8 implementation still fits the state of the repo; no change to the top-line number.
-- Codex's earlier 2026-04-08 assessment refreshed after the orchestration, typed-memory, shared-runtime convergence, workspace publish, and hashline follow-through work.
-- Claude's earlier 2026-04-08 reassessment was based on codebase review of work since 2026-03-30: shared runtime substrate, memory hardening, task graph completion, CLI convergence, sandbox lifecycle awareness, and hashline reliability.
-- Gemini's earlier 2026-04-08 reassessment noted a full-point implementation bump (7 → 8) due to event-streaming convergence, `pushd` CLI adoption, and mitigation of adapter layer risks.
+- Claude reassessed on 2026-04-17 after remediation plan steps 1/5/6 landed (CorrelationContext contract, coder-agent permanent boundary, runtime role-capability enforcement) and Phases 4–5 test coverage shipped (313 new tests). Implementation shape moves 8 → 8.2; architecture holds at 9.
+- Codex reassessed on 2026-04-17. Rating moves from 8.3 → **8.5/10**: architecture bumps to 9.1 (first time above 9 — `ROLE_CAPABILITY_DENIED` at execution layer makes capability enforcement substrate-grade), implementation 8.1 → 8.3. Conservative read: groundwork earns credit, extraction earns the next real jump.
+- Gemini reassessed on 2026-04-17 and moves from 8.5 → **8.7/10**. Architecture holds at 9; implementation bumps 8.0 → 8.4. The 313 tests are a massive de-risking effort for the upcoming extraction; runtime enforcement at the execution layer shows defensive coding. Score can't jump to 9 until dense modules are actually extracted.
+- Prior panel refresh on 2026-04-14 put the blended score at 8.4/10 after `lib/` role-kernel migration, `pushd` Phase 6 closing, and protocol schema hardening.
+- Earlier 2026-04-08 assessments noted full-point implementation bumps across the panel after shared runtime convergence, memory hardening, task graph completion, and CLI convergence.
 
 ## Panel Summary
 
-| Model | Overall | Status | Notes |
-|---|---|---|---|
-| Codex | **8.5/10** | Reassessed 2026-04-14 | Honest update after the PR #290 refresh: shared runtime semantics now look materially more canonical across surfaces. Remaining ceiling is still dense orchestration modules and softer-than-ideal enforcement at some seams. |
-| Claude | **8.5/10** | Reassessed 2026-04-14 | Implementation shape bumped a half point (7.5 → 8) after `lib/` role-kernel migration and `pushd` Phase 6 closing with real daemon-side Coder + Explorer tool executors. Dense modules still cap the ceiling and have grown, not shrunk. |
-| Gemini | **8.5/10** | Held 2026-04-14 | Rating holds steady — 9 architecture, 8 implementation. Shared runtime reality, unified `emit` streaming, and the pure run-engine reducer carry the score; the "big four" dense modules, distributed tracing, and legacy hook cleanup cap it. |
+| Model | Overall | Arch | Impl | Status | Notes |
+|---|---|---|---|---|---|
+| Codex | **8.5/10** | 9.1 | 8.3 | Reassessed 2026-04-17 | Architecture above 9 for the first time — `ROLE_CAPABILITY_DENIED` at execution layer makes capability enforcement substrate-grade. Groundwork earns credit; extraction earns the next jump. |
+| Claude | **8.6/10** | 9.0 | 8.2 | Reassessed 2026-04-17 | Runtime enforcement and 313 new tests are real implementation gains. Dense modules still the gravity well — `sandbox-tools.ts` weighs less but the shape hasn't changed. |
+| Gemini | **8.7/10** | 9.0 | 8.4 | Reassessed 2026-04-17 | 313 tests are a massive de-risking effort; runtime enforcement at execution layer shows defensive coding. Score can't reach 9 until dense modules are actually extracted. |
 
 ## Codex
+
+### Rating (2026-04-17)
+
+Overall: **8.5/10**
+
+Split view:
+
+- **9.1/10** on architecture taste / system design (was 8.9)
+- **8.3/10** on current implementation shape (was 8.1)
+
+### Why the scores moved
+
+The groundwork moves the implementation score modestly. The changes are
+not just "planning" or "paper architecture" — they landed executable
+boundaries: correlation context contract, passive observability pinning,
+coder-agent dual-binding, and role-capability enforcement at the
+execution layer before hooks/gates. That is real implementation shape
+improvement because the architecture is now harder to accidentally
+violate.
+
+The architectural score moves to 9.1 because Push now has stronger
+invariants around role boundaries, observability, and runtime authority.
+`ROLE_CAPABILITY_DENIED` before hooks/gates makes capability enforcement
+a substrate rule rather than a convention — this is the first time the
+architecture axis crosses 9.
+
+The 313 tests and branch coverage are meaningful, and `sandbox-tools.ts`
+dropping 11% is directionally good. But the big-four modules are still
+nearly 10k lines, and the key remediation steps — characterization tests,
+tracing spine, and actual extraction — are still not done.
+
+### The ceiling
+
+Groundwork earns credit, extraction earns the next real jump. The ceiling
+before extraction is probably around 8.5 overall / 8.4 impl. Once the
+dense modules are carved along the now-formalized boundaries, 8.7–8.9
+overall is realistic if the extraction preserves the tests and reduces
+orchestration coupling rather than just moving code into smaller files.
+
+### Codex (2026-04-14 — prior snapshot)
 
 ### Rating (2026-04-14)
 
@@ -180,6 +219,58 @@ Push has strong architecture taste, strong product boundaries, and a much more m
 
 ## Claude
 
+### Rating (2026-04-17)
+
+Overall: **8.6/10**
+
+Split view:
+
+- **9/10** on product and systems architecture instincts (unchanged)
+- **8.2/10** on current implementation shape (was 8.0 at the 2026-04-14 snapshot)
+
+### Why implementation shape moved a quarter point
+
+Three remediation plan steps landed since the prior snapshot, plus
+significant test coverage:
+
+- **CorrelationContext contract** (`lib/correlation-context.ts`, 319
+  lines, 14 pinning tests). A canonical cross-surface correlation type
+  with a hard rule: correlation fields are passive observability only
+  and must never alter tool args, prompt text, daemon payloads, sandbox
+  behavior, or gate business logic. This is good design hygiene — a
+  real contract, not docs — but it is not a new architectural move.
+- **Runtime role-capability enforcement** at the execution layer.
+  Explorer mutation refused with `ROLE_CAPABILITY_DENIED` structured
+  error *before* hooks, approval gates, and Protect Main run. 8 pinning
+  tests. This converts a policy-shaped rule into a substrate guarantee —
+  the kind of hardening the prior snapshot specifically called for.
+- **Coder-agent boundary decision** resolved: the dual-binding shape is
+  a permanent boundary, not a transition artifact. This removes an open
+  question that was blocking `coder-agent.ts` extraction planning.
+- **313 new tests** across components, hooks, MCP server (92% branch
+  coverage), and CLI pure-logic. This is the safety net the remediation
+  plan's characterization-test step was asking for — not the same thing
+  (characterization tests pin specific behavior of the dense modules),
+  but directionally aligned.
+
+### Why it is still not an 8.5 on implementation
+
+- `sandbox-tools.ts` shed 472 lines (4,112 → 3,640, -11%) but the
+  shape is unchanged — it is still a single dispatcher with tool-family
+  handlers inline. The weight dropped; the gravity well didn't.
+- `useAgentDelegation.ts` grew +44 lines. `useChat.ts` and
+  `coder-agent.ts` are flat. The fossilization pattern holds.
+- The actual extraction (step 4 of the remediation plan) is not done.
+  Neither are the prerequisite characterization tests (step 2) or the
+  tracing spine pass (step 3).
+
+The implementation score moves because the runtime enforcement and test
+coverage are real gains, not because the dense module problem got easier.
+The next jump requires the verification-family extraction to land and
+the fitness rules from the remediation plan to hold.
+
+### Claude (2026-04-14 — prior snapshot)
+
 ### Rating (2026-04-14)
 
 Overall: **8.5/10**
@@ -298,6 +389,42 @@ Once the boundaries around a complex module are good enough, it becomes easy to 
 
 ## Gemini
 
+### Rating (2026-04-17)
+
+Overall: **8.7/10** (up from 8.5)
+
+Split view:
+
+- **9/10** on architecture (holds)
+- **8.4/10** on current implementation shape (up from 8.0)
+
+### Why the score moved
+
+The implementation score moves up. Shipping 313 new tests across UI,
+MCP, and CLI is a massive de-risking effort that proves the safety net
+required for the upcoming refactor is being built. Landing the runtime
+role-capability enforcement deep at the execution layer (with regression
+tests for edge cases like undefined hooks) shows defensive, rigorous
+coding. Formalizing the `coder-agent` dual-binding as a permanent DI
+boundary protects `lib/`'s shell-agnostic purity. Defining
+`CorrelationContext` with a strict "passive observability only" rule is a
+mature, system-level design choice that prevents observability data from
+leaking into business logic.
+
+The architecture score holds at 9 — the design was already strong and
+nothing in the last three days changed the taste level.
+
+### Why it doesn't move higher yet
+
+While `sandbox-tools.ts` shed 472 lines (-11%), it is still 3,640 lines.
+The actual dense module extraction (step 4) and its prerequisite
+characterization tests (step 2) are the true test of this remediation
+plan. The groundwork builds immense confidence, but a 9 for
+implementation requires the verification family to be fully extracted and
+the tracing spine to be threaded.
+
+### Gemini (2026-04-14 — prior snapshot)
+
 ### Rating (2026-04-14 — held)
 
 Overall: **8.5/10** (unchanged)
@@ -367,39 +494,43 @@ Split view:
 
 Gemini’s updated read is that Push has unusually strong architecture instincts for an AI-agent system. The previous concerns around adapter layers and streaming divergence have been significantly mitigated by the unified `emit` callback mechanism in the engine and `pushd` daemon. The architecture is now much closer to the code shape, leaving only tracing maturity and full phase-out of older hooks as the main architectural gaps.
 
-## Synthesis (2026-04-14)
+## Synthesis (2026-04-17)
 
-Panel spread: **Codex 8.3, Claude 8.5, Gemini 8.5**. Very tight — 0.2 of a point across three independent reads. The blended number lands at roughly **8.4/10**.
+Panel spread: **Codex 8.5, Claude 8.6, Gemini 8.7**. Tight — 0.2 of a point across three independent reads. The blended number lands at roughly **8.6/10** (up from 8.4).
 
 Current agreement across Codex, Claude, and Gemini:
 
-- Push has strong architecture instincts and a real systems model. All three put the architecture axis in the 8.5–9.0 range.
-- The shared runtime story in `lib/` is the dominant maturity signal. Moving the role kernels, task-graph, typed memory, delegation briefs, and run-event vocabulary into a canonical substrate is where the system stopped forking itself across web and CLI.
-- `pushd` Phase 6 closing with real daemon-side Coder + Explorer tool executors (2026-04-14) is a genuine milestone — the daemon is no longer a scaffold.
-- The main remaining weakness is concentrated complexity, not weak fundamentals. The "big four" dense modules — `sandbox-tools.ts`, `coder-agent.ts`, `useAgentDelegation.ts`, `useChat.ts` — are still the ceiling. All three models flag them.
-- Enforcement is stronger than it was but still partly policy-shaped rather than runtime-hard at every seam.
-- Distributed tracing across client/daemon/sandbox boundaries is the next observability lever.
+- All three moved the score up modestly (+0.2 blended) and for the same reason: the changes are **executable boundaries**, not paper architecture. `ROLE_CAPABILITY_DENIED` at the execution layer, the CorrelationContext "passive only" hard rule, and 313 new tests are real implementation gains.
+- All three agree on the ceiling: **the next real jump requires the actual extraction work.** Groundwork earns credit; extraction earns the leap.
+- The architecture axis is now consistently at or above 9 across the panel. Codex put it at 9.1 for the first time — the role-capability enforcement at the execution layer makes capability enforcement substrate-grade rather than convention-grade.
+- The "big four" dense modules remain the ceiling. `sandbox-tools.ts` shed 472 lines (-11%) but the shape is unchanged. `useAgentDelegation.ts` grew +44 lines. The fossilization pattern holds for the other three.
+- The dense module total dropped from 10,262 → 9,852 lines (-4%), which is directionally good but not structurally different.
 
 Current difference in emphasis:
 
-- **Claude (8.5)** moved up half a point on implementation shape after directly measuring the `lib/` doubling (28 → 51 files, ~7k → ~16.6k lines) and confirming the dense modules have **grown**, not shrunk, since the prior snapshot. Claude weights the fossilization risk heavily.
-- **Gemini (8.5)** held steady. The previous bump already priced in shared runtime reality and `emit` streaming parity; nothing in the last six days changed the ratio enough to move the top-line number.
-- **Codex (8.3)** nudged slightly down, not because the direction is wrong but because the more conservative read separates "strong architecture intent in docs" from "heaviest modules being routinely boring." Codex wants to see the big four defused before conceding 8.5.
+- **Gemini (8.7)** gives more weight to the test coverage as de-risking (+0.4 on impl). The 313 tests are a "massive de-risking effort" that builds the safety net for extraction.
+- **Codex (8.5)** gives more weight to the architectural invariants and bumps architecture to 9.1, but is stingier on implementation (+0.2 on impl). Conservative read: the ceiling before extraction is ~8.5 overall.
+- **Claude (8.6)** splits the difference. The runtime enforcement and tests are real gains, but the dense module problem didn't get easier — the weight dropped, the gravity well didn't.
 
 Blended takeaway:
 
-- Push looks like a system with very good long-term bones whose shared runtime substrate has materially caught up to the architecture. The next gains are now mostly:
-  - extraction of the four densest modules (`sandbox-tools.ts`, `coder-agent.ts`, `useAgentDelegation.ts`, `useChat.ts`) — this is the single biggest lever all three models agree on
-  - enforcement hardening where policy intent is still softer than runtime guarantees
-  - continued cleanup of migration seams and the old execution hooks that predate `pushd`
-  - distributed tracing maturing from "some instrumentation" to "routine cross-boundary diagnosis"
-- A 9+ rating requires the big four to stop being gravity wells and the invariants to be enforced by the runtime rather than by disciplined behavior. That is a refactor conversation, not an architecture conversation.
+- Push is at the point where the remediation groundwork is in place and the next gains come from executing the extraction plan. The remaining path:
+  - characterization tests (step 2) to pin dense module behavior before refactoring
+  - tracing spine pass (step 3) to thread CorrelationContext through seams
+  - verification-family extraction from `sandbox-tools.ts` (step 4) — the first real proof that the handler-context pattern works
+  - then evaluate the pattern before proceeding to git/release family
+- A 9+ rating requires the big four to stop being gravity wells. The formalized boundaries (CorrelationContext, role-capability enforcement, coder-agent permanent boundary) now give the extraction a clear target shape. The ceiling before extraction is ~8.5–8.7; after successful extraction, 8.7–8.9 is realistic.
+
+## Synthesis (2026-04-14 — prior)
+
+Panel spread at 2026-04-14: Codex 8.3, Claude 8.5, Gemini 8.5. Blended ~8.4/10. All three agreed the ceiling was the four dense modules and enforcement maturity. Codex was the conservative outlier, wanting to see the big four defused before conceding 8.5.
 
 Refresh notes:
 
-- 2026-04-14 Claude reassessment: half-point bump on implementation shape (7.5 → 8). Overall moves from 8 → 8.5 because `lib/` roughly doubled (28 → 51 files, ~7k → ~16.6k lines), the role kernels migrated there as canonical, and `pushd` Phase 6 closed today with real daemon-side Coder + Explorer tool executors. The gap between architecture and implementation is now the narrowest it has been (~0.5 point). The four dense modules have grown rather than shrunk and remain the ceiling.
-- 2026-04-14 Codex reassessment: slight downward nudge (8.5 → 8.3) on a more conservative "settled vs. intended" read. Architecture taste 8.8–9.0, implementation shape 7.7–8.0. The snapshot reasoning is coherent and matches the architecture doc, but docs can overstate how boring the heaviest modules actually are; the big four dense modules and soft-enforcement surfaces keep the ceiling below 9.
-- 2026-04-14 Gemini reassessment: held at 8.5. Split of 9 architecture / 8 implementation still fits the state of the repo. Shared runtime reality, unified `emit` streaming, and the pure run-engine reducer carry the score; the big four dense modules, distributed tracing, and legacy hook cleanup cap it.
-- 2026-04-08 Codex reassessment: full-point bump on implementation shape (7.5 → 8.5). Overall moved from 8 → 8.5 because the remaining gap was concentrated in dense coordination modules and enforcement maturity.
-- 2026-04-08 Claude reassessment: full-point bump on implementation shape (6.5 → 7.5). Overall moved from 7.5 → 8 because shared runtime, memory hardening, task graph, and CLI convergence materially closed the design-vs-code gap. Dense modules remained the ceiling.
-- 2026-04-08 Gemini reassessment: full-point bump on implementation shape (7 → 8). Overall moved from 8 → 8.5. Adapter layer synchronization risks and migration bridge fragilities were largely resolved by the daemon's streaming event convergence and CLI consumption of shared `lib/` contracts.
+- 2026-04-17 Claude reassessment: quarter-point bump on implementation shape (8 → 8.2). Overall moves from 8.5 → 8.6. Three remediation plan steps landed (CorrelationContext contract, coder-agent permanent boundary, runtime role-capability enforcement) plus 313 new tests. Dense modules still the ceiling — `sandbox-tools.ts` shed 472 lines but shape unchanged.
+- 2026-04-17 Codex reassessment: moves from 8.3 → 8.5. Architecture bumps to 9.1 (first time above 9) on `ROLE_CAPABILITY_DENIED` at execution layer. Implementation 8.1 → 8.3. Groundwork earns credit; extraction earns the next real jump. Ceiling before extraction is ~8.5 overall.
+- 2026-04-17 Gemini reassessment: moves from 8.5 → 8.7. Architecture holds at 9; implementation 8.0 → 8.4. The 313 tests are a massive de-risking effort; runtime enforcement shows defensive coding. Can't reach 9 until dense modules are actually extracted.
+- 2026-04-14 Claude: 8 → 8.5. `lib/` doubled, role kernels migrated, `pushd` Phase 6 closed. Dense modules grew rather than shrunk.
+- 2026-04-14 Codex: 8.5 → 8.3 (conservative nudge). Docs can overstate how boring the heaviest modules actually are.
+- 2026-04-14 Gemini: held at 8.5. Shared runtime reality carries the score; big four cap it.
+- 2026-04-08: All three bumped implementation a full point. Shared runtime convergence, memory hardening, task graph, CLI convergence, streaming event parity.
