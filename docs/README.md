@@ -40,7 +40,7 @@ Detailed per-doc status lives in [`decisions/README.md`](decisions/README.md). S
 
 Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Summary by role:
 
-- **Current** — `Chat Surface Evolution Plan.md` (Track C remaining), `Workspace Publish to GitHub Plan.md` (follow-through), `Workspace Route Follow-up Plan.md` (measurement only), `Web-CLI Parity Plan.md` (foundation shipped).
+- **Current** — `Chat Surface Evolution Plan.md` (Track C remaining), `Test Coverage Plan.md` (Phase 1 shipped, Phases 2–6 outlined), `Workspace Publish to GitHub Plan.md` (follow-through), `Workspace Route Follow-up Plan.md` (measurement only), `Web-CLI Parity Plan.md` (foundation shipped).
 - **Draft spikes** — `Tiered Orchestrator Routing Spike.md`, `Canonical SOP Playbooks Spike.md`, `Hashline Effectiveness Metric.md`.
 - **Deferred reference** — `Background Coder Tasks Plan.md`, `UX Nice-to-Haves Plan.md`.
 
