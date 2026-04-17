@@ -294,8 +294,7 @@ describe('handleVerifyWorkspace — step assembly', () => {
 
   it('surfaces the "could not infer install" warning when deps are missing and package manager is unknown', async () => {
     const ctx = makeContext([], envWith({ dependencies: 'missing', test_command: 'custom-test' }));
-    const ctxWithCustomTest = { ...ctx };
-    const result = await handleVerifyWorkspace(ctxWithCustomTest);
+    const result = await handleVerifyWorkspace(ctx);
     // The test step still runs because test_command is present, so the warning
     // appears as a Warning line rather than as the sole hint.
     expect(result.text).toContain(
