@@ -51,6 +51,9 @@ export interface ChatRouteWorkspaceProps {
     stop: () => Promise<void>;
     refresh: () => Promise<boolean>;
     markUnreachable: (reason: string) => void;
+    hibernate: () => Promise<boolean>;
+    forgetSnapshot: () => void;
+    snapshotInfo: { snapshotId: string; createdAt: number } | null;
   };
   handleStartWorkspace: (() => void) | undefined;
   handleStartChat: (() => void) | undefined;

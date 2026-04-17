@@ -629,6 +629,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
               void sandbox.refresh();
             }}
             onNewSandbox={restartCurrentSandbox}
+            onHibernateSandbox={sandbox.hibernate}
+            onForgetSandboxSnapshot={sandbox.forgetSnapshot}
+            snapshotInfo={sandbox.snapshotInfo}
             reviewProviders={catalog.availableProviders}
             reviewActiveProvider={catalog.activeProviderLabel}
             reviewModelOptions={reviewModelOptions}

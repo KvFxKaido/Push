@@ -14,6 +14,8 @@ export interface PersistedSandboxSession {
   snapshotId?: string;
   /** Token required to authorize snapshot restore. Stored alongside snapshotId. */
   restoreToken?: string;
+  /** Epoch ms when the snapshot was taken. Used to surface snapshot age on resume. */
+  snapshotCreatedAt?: number;
 }
 
 function normalizeSandboxSessionBranch(

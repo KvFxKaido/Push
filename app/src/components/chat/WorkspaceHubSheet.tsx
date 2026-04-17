@@ -164,6 +164,12 @@ interface WorkspaceHubSheetProps {
   onStartSandbox: () => void;
   onRetrySandbox: () => void;
   onNewSandbox: () => void;
+  /** Manually snapshot the sandbox and terminate it. See Modal Sandbox Snapshots Design §C. */
+  onHibernateSandbox?: () => Promise<boolean>;
+  /** Drop the stored snapshot (and any dead binding) so the next start is a clean clone. */
+  onForgetSandboxSnapshot?: () => void;
+  /** Latest persisted snapshot for (repo, branch); null when no hibernate state exists. */
+  snapshotInfo?: { snapshotId: string; createdAt: number } | null;
   reviewProviders: readonly (readonly [PreferredProvider, string, boolean])[];
   reviewActiveProvider: ReturnType<typeof getActiveProvider>;
   reviewModelOptions?: Partial<Record<PreferredProvider, string[]>>;
@@ -271,6 +277,17 @@ function escapeSingleQuotes(value: string): string {
   return value.replace(/'/g, `'"'"'`);
 }
 
+function formatSnapshotAge(createdAt: number): string {
+  const deltaMs = Math.max(0, Date.now() - createdAt);
+  const minutes = Math.floor(deltaMs / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 function truncateCommitSubject(subject: string, type: string): string {
   const maxTotalLength = 72;
   const prefix = `${type}: `;
@@ -347,6 +364,9 @@ export function WorkspaceHubSheet({
   onStartSandbox,
   onRetrySandbox,
   onNewSandbox,
+  onHibernateSandbox,
+  onForgetSandboxSnapshot,
+  snapshotInfo,
   reviewProviders,
   reviewActiveProvider,
   reviewModelOptions,
@@ -411,6 +431,25 @@ export function WorkspaceHubSheet({
   const [pendingDeleteBranch, setPendingDeleteBranch] = useState<string | null>(null);
   const [deletingBranch, setDeletingBranch] = useState<string | null>(null);
   const [switchConfirmBranch, setSwitchConfirmBranch] = useState<string | null>(null);
+  const [hibernating, setHibernating] = useState(false);
+
+  const handleHibernateClick = useCallback(async () => {
+    if (!onHibernateSandbox) return;
+    setHibernating(true);
+    try {
+      const ok = await onHibernateSandbox();
+      if (ok) toast.success('Sandbox hibernated — workspace snapshot saved');
+      else toast.error('Hibernate failed — sandbox is still running');
+    } finally {
+      setHibernating(false);
+    }
+  }, [onHibernateSandbox]);
+
+  const handleForgetSnapshotClick = useCallback(() => {
+    if (!onForgetSandboxSnapshot) return;
+    onForgetSandboxSnapshot();
+    toast.success('Forgot sandbox snapshot — next start will be a clean clone');
+  }, [onForgetSandboxSnapshot]);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
   const tabs = useMemo(() => {
@@ -1259,7 +1298,11 @@ export function WorkspaceHubSheet({
                     <span className="text-push-fg-dim">Starting sandbox…</span>
                   )}
                   {sandboxStatus === 'idle' && (
-                    <span className="text-push-fg-dim">Sandbox not running</span>
+                    <span className="text-push-fg-dim">
+                      {snapshotInfo
+                        ? `Sandbox hibernated · snapshot ${formatSnapshotAge(snapshotInfo.createdAt)}`
+                        : 'Sandbox not running'}
+                    </span>
                   )}
                   {sandboxStatus === 'error' && (
                     <span className="text-red-400">
@@ -1270,6 +1313,17 @@ export function WorkspaceHubSheet({
               </div>
               {(sandboxStatus === 'idle' || sandboxStatus === 'error') && (
                 <div className="flex shrink-0 items-center gap-1.5">
+                  {sandboxStatus === 'idle' && snapshotInfo && onForgetSandboxSnapshot && (
+                    <button
+                      onClick={handleForgetSnapshotClick}
+                      className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-push-fg-dim`}
+                      title="Drop the saved snapshot so the next start is a clean clone"
+                    >
+                      <HubControlGlow />
+                      <Trash2 className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
+                      <span className={HUB_CONTROL_TEXT_CLASS}>Forget</span>
+                    </button>
+                  )}
                   {sandboxStatus === 'error' && sandboxId && (
                     <button
                       onClick={onRetrySandbox}
@@ -1291,11 +1345,43 @@ export function WorkspaceHubSheet({
                         <span className={HUB_CONTROL_TEXT_CLASS}>New</span>
                       </>
                     ) : (
-                      <span className={HUB_CONTROL_TEXT_CLASS}>Start</span>
+                      <span className={HUB_CONTROL_TEXT_CLASS}>
+                        {snapshotInfo ? 'Restore' : 'Start'}
+                      </span>
                     )}
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Sandbox lifecycle strip (ready) — hibernate to preserve working tree. */}
+          {sandboxStatus === 'ready' && sandboxId && onHibernateSandbox && (
+            <div className="flex items-center justify-between gap-2 border-b border-push-edge px-3 py-2">
+              <div className="min-w-0 flex items-center gap-2">
+                <SandboxCubeIcon className="h-3 w-3 flex-shrink-0 text-push-fg-dim" />
+                <span className="min-w-0 truncate text-push-xs text-push-fg-dim">
+                  Sandbox live — hibernate to preserve the working tree across sessions
+                </span>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  onClick={handleHibernateClick}
+                  disabled={hibernating}
+                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-push-fg-dim disabled:opacity-50`}
+                  title="Snapshot the workspace and terminate the container"
+                >
+                  <HubControlGlow />
+                  {hibernating ? (
+                    <Loader2 className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3 animate-spin`} />
+                  ) : (
+                    <Save className={`${HUB_CONTROL_TEXT_CLASS} h-3 w-3`} />
+                  )}
+                  <span className={HUB_CONTROL_TEXT_CLASS}>
+                    {hibernating ? 'Hibernating…' : 'Hibernate'}
+                  </span>
+                </button>
+              </div>
             </div>
           )}
 

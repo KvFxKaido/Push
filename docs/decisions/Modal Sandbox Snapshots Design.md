@@ -1,9 +1,19 @@
 # Modal Sandbox Snapshots Design
 
-Date: 2026-04-14
-Status: **Draft** — Phase 0 spike required before commitment
+Date: 2026-04-14 (Phases 1–2 shipped 2026-04-16)
+Status: **Partially shipped** — Phases 0–2 complete; Phase 3 (UX polish) in progress; Phase 4 (eviction cron + KV index) open
 Owner: Push
 Related: `docs/decisions/Resumable Sessions Design.md` (client-side checkpoint companion), `docs/decisions/Vercel Open Agents Review.md` (origin of this work item), `sandbox/app.py`
+
+## Shipping status
+
+| Phase | Status | Commits |
+|---|---|---|
+| Phase 0 — Modal API verification | Shipped | Confirmed inline (see §Phase 0 below) |
+| Phase 1 — Backend snapshot primitives | Shipped 2026-04-16 | `23fcb8e` |
+| Phase 2 — Client wiring + idle policy | Shipped 2026-04-16 | `f913f49`, hardening in `2613527` |
+| Phase 3 — UX polish | In progress | Hub Hibernate/Forget affordances + snapshot-age timestamp tracking landing 2026-04-16; resume-banner age text and Settings "Hibernated sandboxes" list still open |
+| Phase 4 — Eviction + cron | Open | Needs a server-side snapshot index (KV) before the daily cron can walk it |
 
 ## Problem
 

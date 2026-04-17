@@ -120,6 +120,8 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   const [sandboxId, setSandboxId] = useState<string | null>(null);
   const [status, setStatus] = useState<SandboxStatus>('idle');
   const [error, setError] = useState<string | null>(null);
+  // Bumped whenever the persisted snapshot fields change so `snapshotInfo` re-reads localStorage.
+  const [snapshotInfoTick, setSnapshotInfoTick] = useState(0);
   const sandboxIdRef = useRef<string | null>(null);
   const sessionStorageKeyRef = useRef<string | null>(null);
   const statusRef = useRef<SandboxStatus>('idle');
@@ -291,14 +293,16 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           }
           // Persist the snapshotId for restore on next app open.
           if (activeRepoFullName != null && activeBranch) {
+            const now = Date.now();
             saveSandboxSession(activeRepoFullName, activeBranch, {
               sandboxId: id,
               ownerToken,
               repoFullName: activeRepoFullName,
               branch: activeBranch,
-              createdAt: Date.now(),
+              createdAt: now,
               snapshotId: result.snapshotId,
               restoreToken: result.restoreToken,
+              snapshotCreatedAt: now,
             });
           }
           // Transition to idle — the container is terminated. This stops
@@ -307,6 +311,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
           setSandboxId(null);
           sandboxIdRef.current = null;
           setStatus('idle');
+          setSnapshotInfoTick((n) => n + 1);
           console.log(`[useSandbox] Hibernated → snapshot ${result.snapshotId}`);
         })
         .catch((err: unknown) => {
@@ -458,6 +463,81 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRepoFullName, activeBranch, sandboxId]);
 
+  // Snapshot info for UI affordances. Reads the persisted session and re-evaluates
+  // on status/sandbox transitions and explicit tick bumps from hibernate/forget.
+  const snapshotInfo = useMemo<{ snapshotId: string; createdAt: number } | null>(() => {
+    const saved = loadSandboxSession(activeRepoFullName, activeBranch);
+    if (!saved?.snapshotId) return null;
+    return {
+      snapshotId: saved.snapshotId,
+      createdAt: saved.snapshotCreatedAt ?? saved.createdAt,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRepoFullName, activeBranch, sandboxId, status, snapshotInfoTick]);
+
+  // Explicit user-triggered hibernate. Mirrors the idle-timer path but surfaces
+  // success/failure to the caller so the hub can toast on error.
+  const hibernate = useCallback(async (): Promise<boolean> => {
+    const id = sandboxIdRef.current;
+    if (!id) return false;
+    if (statusRef.current !== 'ready') return false;
+    if (activeRepoFullName == null || !activeBranch) return false;
+
+    const ownerToken = getSandboxOwnerToken(id) || '';
+    try {
+      const result = await hibernateSandbox(id);
+      if (!result.ok || !result.snapshotId) {
+        console.debug('[useSandbox] Manual hibernate failed:', result.error);
+        return false;
+      }
+      const now = Date.now();
+      saveSandboxSession(activeRepoFullName, activeBranch, {
+        sandboxId: id,
+        ownerToken,
+        repoFullName: activeRepoFullName,
+        branch: activeBranch,
+        createdAt: now,
+        snapshotId: result.snapshotId,
+        restoreToken: result.restoreToken,
+        snapshotCreatedAt: now,
+      });
+      setSandboxId(null);
+      sandboxIdRef.current = null;
+      setStatus('idle');
+      setSnapshotInfoTick((n) => n + 1);
+      console.log(`[useSandbox] Manual hibernate → snapshot ${result.snapshotId}`);
+      return true;
+    } catch (err) {
+      console.debug('[useSandbox] Manual hibernate error:', err);
+      return false;
+    }
+  }, [activeRepoFullName, activeBranch]);
+
+  // Drop the stored snapshot (and the dead container binding, if any). Used by
+  // the Hub's "Forget sandbox state" affordance so the next start is a clean
+  // clone instead of restoring a workspace the user has declared broken.
+  const forgetSnapshot = useCallback((): void => {
+    if (activeRepoFullName == null || !activeBranch) return;
+    const saved = loadSandboxSession(activeRepoFullName, activeBranch);
+    if (!saved?.snapshotId) return;
+
+    const liveId = sandboxIdRef.current;
+    if (liveId && saved.sandboxId === liveId && saved.ownerToken) {
+      saveSandboxSession(activeRepoFullName, activeBranch, {
+        sandboxId: saved.sandboxId,
+        ownerToken: saved.ownerToken,
+        repoFullName: saved.repoFullName,
+        branch: saved.branch,
+        createdAt: saved.createdAt,
+      });
+    } else {
+      const storageKey = buildSandboxSessionStorageKey(activeRepoFullName, activeBranch);
+      if (storageKey) clearSandboxSessionByStorageKey(storageKey);
+    }
+    setSnapshotInfoTick((n) => n + 1);
+    console.log('[useSandbox] Forgot sandbox snapshot');
+  }, [activeRepoFullName, activeBranch]);
+
   /**
    * Ping the current sandbox to verify it's still alive.
    * If alive → restore 'ready' status (clears transient errors).
@@ -600,5 +680,8 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     markUnreachable,
     rebindSessionRepo,
     createdAt,
+    hibernate,
+    forgetSnapshot,
+    snapshotInfo,
   };
 }
