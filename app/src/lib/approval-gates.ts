@@ -28,8 +28,12 @@ const DESTRUCTIVE_PATTERNS = [
   /\bgit\s+clean\s+-[a-zA-Z]*f/, // git clean -f
   /\bgit\s+reset\s+--hard\b/, // git reset --hard
   /\bgit\s+checkout\s+--\s*\./, // git checkout -- .
-  /\bgit\s+restore\s+\.\b/, // git restore .
-  /\bfind\b.*\b-delete\b/, // find ... -delete
+  // Anchor `.` to whitespace or end-of-string: a trailing `\b` never matches
+  // after a non-word char like `.`, so the prior `\.\b` form was a dead regex.
+  /\bgit\s+restore\s+\.(?:\s|$)/, // git restore .
+  // `\b-delete` fails when `-delete` is preceded by whitespace (both sides
+  // non-word, so no word boundary). Require whitespace before `-delete`.
+  /\bfind\b.*\s-delete\b/, // find ... -delete
   /\btruncate\s/, // truncate
   />\s*\/dev\/null\b/, // > /dev/null (redirect to null)
 ];
