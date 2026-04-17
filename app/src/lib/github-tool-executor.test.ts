@@ -96,6 +96,16 @@ describe('decodeGitHubBase64Utf8', () => {
 // ---------------------------------------------------------------------------
 
 describe('githubFetch — retry/backoff', () => {
+  // githubFetch logs rate-limit/retry diagnostics via console.log; silence
+  // them so the vitest output only surfaces real failures.
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('returns a successful response without retrying', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('ok', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
