@@ -35,9 +35,9 @@
  * comparison.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { promises as fs } from 'node:fs';
+import { promises as fs, constants as fsConstants } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import process from 'node:process';
@@ -81,6 +81,15 @@ Options:
 
 Required env: a provider API key for the chosen provider (see "./push provider list").
 For openrouter: PUSH_OPENROUTER_API_KEY, OPENROUTER_API_KEY, or VITE_OPENROUTER_API_KEY.
+
+Caveats the wrapper will warn about (but not fix automatically):
+  - Both runs share the same checkout. If the baseline task mutates files,
+    the delegated run starts from that changed state. For clean A/B on
+    mutation-heavy tasks, run the modes separately with --skip-baseline /
+    --skip-delegated and reset the worktree in between.
+  - --accept executes acceptance commands on the baseline path only; the
+    delegated path does not currently run or report them, so the wall-time
+    comparison is biased when --accept is used.
 `);
   process.exit(values.help ? 0 : 2);
 }
@@ -194,16 +203,22 @@ function parseJsonOutput(stdout: string): { parsed: unknown; error: string | nul
     // Fall through to the recovery path.
   }
 
-  // Recovery: scan for the last top-level `{` and try parsing from there.
-  const lastBrace = trimmed.lastIndexOf('\n{');
-  if (lastBrace >= 0) {
+  // Recovery: walk backward through every `{` position and try parsing
+  // from there. The earlier `\n{`-only version missed the case where
+  // prose runs into the JSON with no newline between them (e.g.
+  // `summary text{"sessionId":...}`). Scanning every `{` is O(n·k)
+  // worst-case but stdout is tiny here, and the first parse that
+  // succeeds wins — typically the last `{` in the stream.
+  let lastError: string | null = null;
+  for (let i = trimmed.length - 1; i >= 0; i--) {
+    if (trimmed[i] !== '{') continue;
     try {
-      return { parsed: JSON.parse(trimmed.slice(lastBrace + 1)), error: null };
+      return { parsed: JSON.parse(trimmed.slice(i)), error: null };
     } catch (err) {
-      return { parsed: null, error: `recovery parse failed: ${(err as Error).message}` };
+      lastError = (err as Error).message;
     }
   }
-  return { parsed: null, error: 'no JSON object found' };
+  return { parsed: null, error: lastError ? `no parsable object (last: ${lastError})` : 'no JSON object found' };
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +360,7 @@ function fmtRow(m: RunMetrics): string {
   const flags: string[] = [];
   if (m.fallbackTriggered) flags.push('fell-back');
   if (m.rawJsonParseError) flags.push(`json-parse-failed: ${m.rawJsonParseError}`);
+  if (m.acceptancePassed === null && ACCEPT.length > 0) flags.push('acceptance-missing');
   const flagCell = flags.length > 0 ? ` _(${flags.join('; ')})_` : '';
   return `| ${m.mode} | ${m.outcome}${flagCell} | ${roundsCell} | ${fmtMs(m.wallMs)} | ${fmtAcceptance(m.acceptancePassed)} | ${m.malformedToolCalls} | ${m.harnessAdaptations} | ${m.errors} |`;
 }
@@ -412,7 +428,7 @@ function buildMarkdownEntry(today: string, metrics: RunMetrics[]): string {
     }
     if (anyAdapts) {
       lines.push(
-        `- Harness adaptations fired (${metrics.map((m) => `${m.mode}=${m.harnessAdaptations}`).join(', ')}). Round budget shrunk mid-run; cli/harness-adaptation.ts:121 floor was hit.`,
+        `- Harness adaptations fired (${metrics.map((m) => `${m.mode}=${m.harnessAdaptations}`).join(', ')}). Round budget shrank mid-run; inspect \`cli/harness-adaptation.ts\` and the session \`harness.adaptation\` events for the specific trigger and resulting cap.`,
       );
     }
     if (anyErrors) {
@@ -440,15 +456,49 @@ function buildMarkdownEntry(today: string, metrics: RunMetrics[]): string {
 // Main
 // ---------------------------------------------------------------------------
 
+function gitWorktreeDirty(): { dirty: boolean; porcelain: string } | null {
+  // Returns null when not a git repo or git isn't available; dirty=false
+  // on a clean tree; dirty=true with the porcelain output otherwise.
+  const res = spawnSync('git', ['status', '--porcelain'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  });
+  if (res.status !== 0) return null;
+  const porcelain = (res.stdout || '').trim();
+  return { dirty: porcelain.length > 0, porcelain };
+}
+
 async function main(): Promise<number> {
   // Sanity check: push binary present and executable. resolveApiKey lives
   // inside the spawned process; if it throws, we'll see it in stderr +
   // a non-zero exit.
   try {
-    await fs.access(PUSH_BIN, fs.constants.X_OK);
+    await fs.access(PUSH_BIN, fsConstants.X_OK);
   } catch {
     process.stderr.write(`error: ${PUSH_BIN} not found or not executable.\n`);
     return 2;
+  }
+
+  // Pre-run warnings. The script does not auto-reset state between runs
+  // because destructive worktree ops are the operator's call, not the
+  // script's — but the caveats are real and should be surfaced before
+  // either run starts rather than buried in the final markdown.
+  if (ACCEPT.length > 0 && !SKIP_BASELINE && !SKIP_DELEGATED) {
+    process.stderr.write(
+      '\n[measure-delegation] warning: --accept runs acceptance commands on the baseline path but\n' +
+        '  the delegated path does not currently execute or report them (see cli/delegation-entry.ts).\n' +
+        '  Wall-time comparisons will be biased by the baseline\'s acceptance duration. Consider\n' +
+        '  running the two modes separately via --skip-delegated / --skip-baseline if comparing wall.\n',
+    );
+  }
+
+  const preBaselineStatus = gitWorktreeDirty();
+  if (preBaselineStatus && preBaselineStatus.dirty && !SKIP_BASELINE && !SKIP_DELEGATED) {
+    process.stderr.write(
+      '\n[measure-delegation] note: worktree is already dirty before the first run. The two runs\n' +
+        '  share this checkout; if the baseline task mutates files, the delegated run starts from\n' +
+        '  the changed state. For clean A/B on mutation tasks, reset between runs manually.\n',
+    );
   }
 
   const metrics: RunMetrics[] = [];
@@ -456,6 +506,27 @@ async function main(): Promise<number> {
   if (!SKIP_BASELINE) {
     metrics.push(await measureRun('baseline'));
   }
+
+  // Between-run check: if baseline mutated the worktree and delegated is
+  // also going to run, flag it so the operator can Ctrl-C and restart
+  // from a reset state if the A/B validity matters for this task.
+  if (!SKIP_BASELINE && !SKIP_DELEGATED) {
+    const postBaselineStatus = gitWorktreeDirty();
+    const baselineMutated =
+      postBaselineStatus &&
+      preBaselineStatus &&
+      postBaselineStatus.porcelain !== preBaselineStatus.porcelain;
+    if (baselineMutated) {
+      process.stderr.write(
+        '\n[measure-delegation] warning: baseline run mutated the worktree. The delegated run will\n' +
+          '  start from this changed state, which biases outcome/rounds/wall-time against a clean\n' +
+          '  comparison. Ctrl-C now and rerun with --skip-baseline after a manual reset if this\n' +
+          '  matters for your measurement. Continuing in 3s…\n',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+
   if (!SKIP_DELEGATED) {
     metrics.push(await measureRun('delegated'));
   }
