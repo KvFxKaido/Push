@@ -31,28 +31,36 @@ tests).
   `DESTRUCTIVE_PATTERNS` regexes and closed a shell-separator bypass for
   `git restore .;echo done` style commands.
 
-## Phase 2 — Worker endpoints & provider routing (next)
+## Phase 2 — Worker endpoints & provider routing (shipped 2026-04-17)
 
-5 of 6 files in `app/src/worker/` are untested, and `runPreamble` was the
-single bottleneck covered in Phase 1. Providers are a black box today.
+Landed across three slices. The acceptance bar (two streaming adapters
+plus auth/health on `worker-infra`) is met, and the proxy factories
+that power every adapter are covered at the source.
 
-Targets:
+- **2a — PR #312** (54 tests): `worker-tracing.test.ts` (27 tests)
+  covers W3C traceparent parse/serialise, span ID generation,
+  `createSpanContext` / `createChildContext` / `withWorkerSpan`, and
+  `formatSpanForLog`. `worker-github-tools.test.ts` (27 tests) covers
+  the `/api/github/tools` preamble, payload validation, and the
+  **allowed-repo security guard** (case, `.git`, `https://github.com/`
+  prefix, whitespace, empty-allowlist refusal).
+- **2b — PR #313** (35 tests): `worker-infra.test.ts` covers
+  `handleHealthCheck` (healthy/degraded/unhealthy matrix plus
+  `Cache-Control: no-store`), `handleGitHubAppOAuth` error paths and
+  the full 5-call happy path, `handleGitHubAppToken` error paths and
+  happy path, and `generateGitHubAppJWT` (RS256 shape, iat/exp bounds,
+  `\n`-escape normalisation, truncation-error message).
+- **2c — PR #314** (31 tests): factory tests for
+  `createStreamProxyHandler` (12 tests) and `createJsonProxyHandler`
+  (9 tests) in `worker-middleware.test.ts` — these cover every
+  adapter in `worker-providers.ts` transitively. Plus adapter smoke
+  tests for OpenRouter and Ollama (chat + models) in
+  `worker-providers.test.ts` (10 tests).
 
-- `app/src/worker/worker-providers.ts` (~856 LOC) — per-provider request
-  shape, streaming/non-streaming dispatch, upstream error translation. Focus
-  on the adapter boundaries (Anthropic, OpenAI, Vertex, Ollama, OpenRouter,
-  Zen, Blackbox AI, Kilo Code) rather than upstream mocks.
-- `app/src/worker/worker-infra.ts` (~842 LOC) — OAuth endpoints, GitHub App
-  token exchange, installation allowlist, `/api/health`. Use `@cloudflare/vitest-pool-workers`
-  or `unstable_dev` to drive real requests.
-- `app/src/worker/worker-github-tools.ts` (182 LOC) — tool-call proxy into
-  the GitHub MCP server; covers the allowlisted-repo guard.
-- `app/src/worker/worker-tracing.ts` (148 LOC) — span context propagation and
-  traceparent header handling.
-
-Acceptance: integration tests for at least two provider adapters
-(streaming plus error path) plus auth/health endpoints on `worker-infra`.
-Non-goal: full mock coverage of every provider.
+Net delta: +120 tests, every worker source file now has direct or
+factory-level coverage. `@cloudflare/vitest-pool-workers` proved
+unnecessary — `vi.stubGlobal('fetch', ...)` with a sequential-response
+queue was sufficient for the HTTP paths.
 
 ## Phase 3 — Persistence & sandbox execution
 

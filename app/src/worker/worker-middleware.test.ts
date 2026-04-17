@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_BODY_SIZE_BYTES,
   buildVertexPreambleAuth,
+  createJsonProxyHandler,
+  createStreamProxyHandler,
   getAllowedOrigins,
   getClientIp,
   getExperimentalUpstreamUrl,
@@ -484,5 +486,431 @@ describe('runPreamble', () => {
     const request = makeChatRequest('{}', { 'CF-Connecting-IP': '203.0.113.7' });
     await runPreamble(request, env, { buildAuth: standardAuth('OLLAMA_API_KEY') });
     expect(limit).toHaveBeenCalledWith({ key: '203.0.113.7' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createStreamProxyHandler — factory used by most chat adapters
+// ---------------------------------------------------------------------------
+
+function makeChatBody(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    model: 'test-model',
+    messages: [{ role: 'user', content: 'hi' }],
+    ...overrides,
+  });
+}
+
+function makeChatRequestPOST(
+  body: string = makeChatBody(),
+  headers: Record<string, string> = {},
+): Request {
+  return new Request('https://push.example.test/api/chat', {
+    method: 'POST',
+    headers: {
+      Origin: 'https://push.example.test',
+      'Content-Type': 'application/json',
+      ...headers,
+    },
+    body,
+  });
+}
+
+function silenceWlog(): void {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+}
+
+describe('createStreamProxyHandler', () => {
+  const baseConfig = {
+    name: 'Test Provider',
+    logTag: 'api/test/chat',
+    upstreamUrl: 'https://upstream.test/v1/chat/completions',
+    timeoutMs: 30_000,
+    maxOutputTokens: 4096,
+    buildAuth: standardAuth('OLLAMA_API_KEY'),
+    keyMissingError: 'missing key',
+    timeoutError: 'timed out',
+  };
+
+  beforeEach(() => {
+    silenceWlog();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('returns the preamble response short-circuit (403/401/429) without calling upstream', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const handler = createStreamProxyHandler(baseConfig);
+    // No Origin → 403
+    const request = new Request('https://push.example.test/api/chat', {
+      method: 'POST',
+      body: makeChatBody(),
+    });
+    const response = await handler(request, makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(403);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed chat body with the validation error code', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const handler = createStreamProxyHandler(baseConfig);
+    const request = makeChatRequestPOST('{"not":"valid-chat"}');
+    const response = await handler(request, makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBeLessThan(500);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('forwards the normalized body and auth header to the upstream URL', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('data: {}\n\n', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    const handler = createStreamProxyHandler(baseConfig);
+    await handler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk-server' }));
+
+    expect(captured?.url).toBe(baseConfig.upstreamUrl);
+    expect(captured?.init.method).toBe('POST');
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer sk-server');
+    expect(headers['Content-Type']).toBe('application/json');
+    expect(headers.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+    expect(headers['X-Push-Request-Id']).toBeDefined();
+  });
+
+  it('streams the upstream SSE body through with text/event-stream headers', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        return new Response('data: {"hello":"world"}\n\n', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    const handler = createStreamProxyHandler(baseConfig);
+    const response = await handler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toContain('text/event-stream');
+    expect(response.headers.get('Cache-Control')).toMatch(/no-cache/);
+    expect(response.headers.get('X-Push-Trace-Id')).toMatch(/^[0-9a-f]{32}$/);
+    expect(response.headers.get('X-Push-Span-Id')).toMatch(/^[0-9a-f]{16}$/);
+    expect(await response.text()).toContain('data: {"hello":"world"}');
+  });
+
+  it('resolves upstreamUrl from a function when it is not a static string', async () => {
+    let captured: string | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        captured = url;
+        return new Response('', { status: 200 });
+      }),
+    );
+    const handler = createStreamProxyHandler({
+      ...baseConfig,
+      upstreamUrl: (request) => `https://computed.test/${new URL(request.url).pathname.slice(1)}`,
+    });
+    await handler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(captured).toBe('https://computed.test/api/chat');
+  });
+
+  it('adds extraFetchHeaders when provided as an object or a function of request', async () => {
+    let staticHeaders: Record<string, string> = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        staticHeaders = init.headers as Record<string, string>;
+        return new Response('', { status: 200 });
+      }),
+    );
+    const staticHandler = createStreamProxyHandler({
+      ...baseConfig,
+      extraFetchHeaders: { 'X-Static': 'yes' },
+    });
+    await staticHandler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(staticHeaders['X-Static']).toBe('yes');
+
+    let dynamicHeaders: Record<string, string> = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        dynamicHeaders = init.headers as Record<string, string>;
+        return new Response('', { status: 200 });
+      }),
+    );
+    const dynamicHandler = createStreamProxyHandler({
+      ...baseConfig,
+      extraFetchHeaders: (request) => ({ 'X-Origin': new URL(request.url).origin }),
+    });
+    await dynamicHandler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(dynamicHeaders['X-Origin']).toBe('https://push.example.test');
+  });
+
+  it('returns the upstream status code with a clean JSON error on 5xx', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('internal explosion', { status: 503 })),
+    );
+    const handler = createStreamProxyHandler(baseConfig);
+    const response = await handler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body.error).toMatch(/Test Provider API error 503/);
+    expect(body.error).toContain('internal explosion');
+  });
+
+  it('strips HTML error pages and reports an HTTP-status message instead', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<html><body>403</body></html>', { status: 403 })),
+    );
+    const handler = createStreamProxyHandler(baseConfig);
+    const response = await handler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toMatch(/HTTP 403/);
+    expect(body.error).not.toContain('<html>');
+  });
+
+  it('routes upstream errors through formatUpstreamError when provided', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"raw":"x"}', { status: 429 })),
+    );
+    const handler = createStreamProxyHandler({
+      ...baseConfig,
+      formatUpstreamError: (status, body) =>
+        ({
+          error: `custom-${status}`,
+          code: 'RATE_LIMITED',
+          raw: body.slice(0, 5),
+        }) as unknown as { error: string; code?: string },
+    });
+    const response = await handler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(429);
+    const body = await response.json();
+    expect(body.error).toBe('custom-429');
+    expect(body.code).toBe('RATE_LIMITED');
+  });
+
+  it('returns 504 with the timeoutError when fetch aborts', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const err = new Error('aborted');
+        err.name = 'AbortError';
+        throw err;
+      }),
+    );
+    const handler = createStreamProxyHandler(baseConfig);
+    const response = await handler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(504);
+    const body = await response.json();
+    expect(body.error).toBe('timed out');
+  });
+
+  it('returns 502 on a non-timeout network error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('connection refused');
+      }),
+    );
+    const handler = createStreamProxyHandler(baseConfig);
+    const response = await handler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body.error).toBe('connection refused');
+  });
+
+  it('preserves the upstream Content-Type when preserveUpstreamHeaders is set', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        return new Response('{"ok":true}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/custom+json' },
+        });
+      }),
+    );
+    const handler = createStreamProxyHandler({ ...baseConfig, preserveUpstreamHeaders: true });
+    const response = await handler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.headers.get('Content-Type')).toBe('application/custom+json');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createJsonProxyHandler — factory used by model-list/search endpoints
+// ---------------------------------------------------------------------------
+
+describe('createJsonProxyHandler', () => {
+  const baseConfig = {
+    name: 'Test Provider',
+    logTag: 'api/test/models',
+    upstreamUrl: 'https://upstream.test/v1/models',
+    timeoutMs: 10_000,
+    buildAuth: standardAuth('OLLAMA_API_KEY'),
+    keyMissingError: 'missing key',
+    timeoutError: 'timed out',
+  };
+
+  beforeEach(() => {
+    silenceWlog();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function makeGetRequest(): Request {
+    return new Request('https://push.example.test/api/models', {
+      method: 'GET',
+      headers: { Origin: 'https://push.example.test' },
+    });
+  }
+
+  it('supports GET without requiring a body', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('{"data":[]}', { status: 200 });
+      }),
+    );
+    const handler = createJsonProxyHandler({ ...baseConfig, method: 'GET' });
+    const response = await handler(makeGetRequest(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(200);
+    expect(captured?.url).toBe(baseConfig.upstreamUrl);
+    expect(captured?.init.method).toBe('GET');
+    expect(captured?.init.body).toBeUndefined();
+  });
+
+  it('defaults to POST with a body when method is omitted', async () => {
+    let capturedInit: RequestInit | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        capturedInit = init;
+        return new Response('{}', { status: 200 });
+      }),
+    );
+    const handler = createJsonProxyHandler(baseConfig);
+    await handler(makeChatRequestPOST(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(capturedInit?.method).toBe('POST');
+    expect(typeof capturedInit?.body).toBe('string');
+  });
+
+  it('returns a structured upstream-error JSON on non-ok upstream', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('upstream broke', { status: 502 })),
+    );
+    const handler = createJsonProxyHandler({ ...baseConfig, method: 'GET' });
+    const response = await handler(makeGetRequest(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body.error).toMatch(/Test Provider error 502/);
+  });
+
+  it('uses formatUpstreamError when provided', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"raw":"x"}', { status: 429 })),
+    );
+    const handler = createJsonProxyHandler({
+      ...baseConfig,
+      method: 'GET',
+      formatUpstreamError: (status) => ({ error: `custom-${status}` }),
+    });
+    const response = await handler(makeGetRequest(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(429);
+    const body = await response.json();
+    expect(body.error).toBe('custom-429');
+  });
+
+  it('attaches X-Push-Request-Id and X-Push-Trace-Id on a successful response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"models":[]}', { status: 200 })),
+    );
+    const handler = createJsonProxyHandler({ ...baseConfig, method: 'GET' });
+    const response = await handler(makeGetRequest(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-Push-Request-Id')).toBeDefined();
+    expect(response.headers.get('X-Push-Trace-Id')).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('returns 504 with timeoutError when fetch aborts', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const err = new Error('aborted');
+        err.name = 'AbortError';
+        throw err;
+      }),
+    );
+    const handler = createJsonProxyHandler({ ...baseConfig, method: 'GET' });
+    const response = await handler(makeGetRequest(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(504);
+    const body = await response.json();
+    expect(body.error).toBe('timed out');
+  });
+
+  it('returns 500 on a non-timeout error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('dns failure');
+      }),
+    );
+    const handler = createJsonProxyHandler({ ...baseConfig, method: 'GET' });
+    const response = await handler(makeGetRequest(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toBe('dns failure');
+  });
+
+  it('short-circuits with 401 when the auth key is missing', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const handler = createJsonProxyHandler({ ...baseConfig, method: 'GET' });
+    const response = await handler(makeGetRequest(), makeEnv());
+    expect(response.status).toBe(401);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('adds extraFetchHeaders to the upstream request', async () => {
+    let capturedHeaders: Record<string, string> = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        capturedHeaders = init.headers as Record<string, string>;
+        return new Response('{}', { status: 200 });
+      }),
+    );
+    const handler = createJsonProxyHandler({
+      ...baseConfig,
+      method: 'GET',
+      extraFetchHeaders: { 'X-Extra': 'yes' },
+    });
+    await handler(makeGetRequest(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+    expect(capturedHeaders['X-Extra']).toBe('yes');
   });
 });
