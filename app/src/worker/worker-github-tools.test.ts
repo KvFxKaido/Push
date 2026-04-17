@@ -211,6 +211,7 @@ describe('handleGitHubTools execution', () => {
     const [, call] = mockedExecute.mock.calls[0];
     expect(call.tool).toBe('list_prs');
     expect(call.args.repo).toBe('owner/repo');
+    expect(call.args.state).toBe('open');
     expect(call.allowedRepo).toBe('owner/repo');
   });
 

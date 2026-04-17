@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildTraceparent,
   createChildContext,
@@ -248,6 +248,12 @@ describe('withWorkerSpan', () => {
     expect(span?.status).toBe('error');
     expect(typeof span?.errorMessage).toBe('string');
   });
+
+  // Known limitation: the wrapper stashes __workerSpan on the thrown value,
+  // which throws a TypeError in strict mode if the throw is a primitive
+  // (string, number, etc.). Worth a small source fix to coerce to an Error
+  // or skip the attachment — tracked here so a future fix has a hook.
+  it.todo('supports throwing non-Error primitives without crashing');
 });
 
 // ---------------------------------------------------------------------------
@@ -261,6 +267,12 @@ describe('formatSpanForLog', () => {
     parentSpanId: 'c'.repeat(16),
     requestId: 'req_1',
   };
+
+  // Always restore real timers, even if the assertion under test throws,
+  // so the fake clock cannot leak into the next test in the file.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('flattens a span into a structured log record', () => {
     vi.useFakeTimers();
@@ -286,7 +298,6 @@ describe('formatSpanForLog', () => {
       bytes: 512,
     });
     expect(log.error).toBeUndefined();
-    vi.useRealTimers();
   });
 
   it('includes the error message when the span is in an error state', () => {
