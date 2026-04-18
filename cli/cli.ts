@@ -1892,21 +1892,44 @@ export async function main() {
       return 0;
     }
 
+    // Session names are user-controlled (push resume rename, direct state
+    // edits) so strip ANSI CSI sequences + C0/DEL before rendering. Two
+    // passes: drop the ESC-[-…-letter sequence as a unit (so `\x1b[31m`
+    // doesn't leave a visible `[31m` tail) and then scrub any stray control
+    // chars. Multibyte UTF-8 is preserved.
+    const sanitizeName = (raw: string) =>
+      raw
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping injected CSI is the point
+        .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping bare C0/DEL is the point
+        .replace(/[\x00-\x1f\x7f]/g, '');
+
+    const noResume = parseBoolFlag(values['no-resume'] ?? values.noResume, 'no-resume');
+
+    // When exactly one session is resumable the picker's disambiguation
+    // value is zero — the user's answer is already knowable. Skip the prompt
+    // and attach directly, but print a one-liner naming the session first so
+    // the auto-resume is visible (not a surprise) and the operator still has
+    // a Ctrl-C window before runAttach's network handshake. `--no-attach`
+    // and non-TTY paths above already bypass this branch.
+    if (sessions.length === 1) {
+      const only = sessions[0];
+      const safeName = sanitizeName(only.sessionName);
+      const label = safeName ? ` (${fmt.bold(safeName)})` : '';
+      const when = new Date(only.updatedAt).toISOString();
+      process.stdout.write(
+        `\nResuming only session: ${only.sessionId}${label}\n` +
+          `  ${fmt.dim(`${when}  ${only.provider}/${only.model}  ${only.cwd}`)}\n`,
+      );
+      return runAttach(only.sessionId, { noResume });
+    }
+
     const indexWidth = String(sessions.length).length;
     process.stdout.write('\nResumable sessions:\n');
     for (let i = 0; i < sessions.length; i++) {
       const row = sessions[i];
       const num = String(i + 1).padStart(indexWidth, ' ');
-      // Session names are user-controlled (push resume rename, direct state
-      // edits) so strip ANSI CSI sequences + C0/DEL before wrapping in
-      // fmt.bold. Two passes: drop the ESC-[-…-letter sequence as a unit
-      // (so `\x1b[31m` doesn't leave a visible `[31m` tail) and then scrub
-      // any stray control chars. Multibyte UTF-8 is preserved.
-      const safeName = row.sessionName
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping injected CSI is the point
-        .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping bare C0/DEL is the point
-        .replace(/[\x00-\x1f\x7f]/g, '');
+      const safeName = sanitizeName(row.sessionName);
       const name = safeName ? ` ${fmt.bold(safeName)}` : '';
       const when = new Date(row.updatedAt).toISOString();
       process.stdout.write(
@@ -1953,7 +1976,6 @@ export async function main() {
       rl.close();
     }
 
-    const noResume = parseBoolFlag(values['no-resume'] ?? values.noResume, 'no-resume');
     return runAttach(selected!.sessionId, { noResume });
   }
 
