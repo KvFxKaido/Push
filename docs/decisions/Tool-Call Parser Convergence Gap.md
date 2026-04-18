@@ -1,6 +1,6 @@
 # Tool-Call Parser Convergence Gap
 
-Status: **CLI side resolved 2026-04-15.** The CLI now routes tool-call detection through the shared `createToolDispatcher` kernel at `lib/tool-dispatch.ts`, which adds the bare-object fallback that closes the missing-fence drop. Web-side unification still pending — see [*Fix Direction for Layer 2*](#fix-direction-for-layer-2) below for the remaining work.
+Status: **CLI side resolved 2026-04-15** (missing-fence drop) and **further hardened 2026-04-18** (four additional silent-drop modes closed in PR #334). The CLI now routes tool-call detection through the shared `createToolDispatcher` kernel at `lib/tool-dispatch.ts`, which handles single-object and array-wrapped fenced blocks plus the bare-object fallback. Web-side unification still pending — see [*Fix Direction for Layer 2*](#fix-direction-for-layer-2) below for the remaining work.
 Origin: Debugging a TUI "empty response" bug; raw-socket reproduction against `pushd` showed 452 bytes of malformed fenced tool calls being silently dropped by the CLI parser.
 
 ## The Gap (as originally identified)
@@ -60,6 +60,25 @@ Priority order for fixing these is roughly inverse to layer number — **3 first
 `cli/tools.ts` now delegates `detectAllToolCalls` / `detectToolCall` to a single pass-through-source dispatcher. The CLI doesn't distinguish by source at parse time — tool-name validation happens downstream in `executeToolCall` — so the pass-through source from `lib/tool-dispatch.ts` (`PASS_THROUGH_CLI_SOURCE`) is the only registration it needs. Twenty pinning tests in `lib/tool-dispatch.test.ts` cover the missing-fence cases, fenced-block cases, dedup, source registration order, and shape validation.
 
 The Layer 3 safety net (see table above) also landed in the same tranche: `cli/tui.ts handleEngineEvent` now tracks a per-run `runVisibleEmissionCount` and surfaces a diagnostic transcript entry on `run_complete` when a run produced zero visible output. That way a future drop-class bug reaches the user as visible text instead of silence.
+
+### Additional CLI silent-drop modes closed 2026-04-18 (PR #334)
+
+The 2026-04-15 closure handled the original missing-fence shape that surfaced as the empty-TUI bug. Four adjacent silent-drop variants stayed open until the typed-memory measurement on PR #333 surfaced them by writing the dropped JSON as memory record summaries. Each was a distinct "model emits tool calls in shape X, detector returns `{calls: [], malformed: []}`" pattern — the engine then declared the run successful with the dropped JSON as the final assistant text.
+
+The four variants and their fixes:
+
+| # | Failure shape | Empirical trigger | Closed by |
+|---|---|---|---|
+| A | Fenced block containing a JSON **array** of tool calls | Gemini 3 Flash batches planned tool calls into one `[ {...}, {...} ]` block instead of one fence per call | Commit `253bacf`: new `parseToolArrayCandidate` branch in `createToolDispatcher`'s fenced-block phase |
+| A' | Fenced array with normal LLM garbling (trailing commas, double commas, unquoted keys, single quotes, Python literals) | Same model emitting `[{...},]` or similar | Commit `b0a0d39`: shared `applyJsonTextRepairs` helper extracted from `repairToolJson` so both object and array paths get the same shape-agnostic textual repairs |
+| A'' | Fenced array with literal newlines inside string values | Batched `write_file` / `edit_file` with multiline content args | Commit `b0a0d39` (Codex P1 follow-up): exposed `escapeRawNewlinesInJsonStrings` from `lib/tool-call-parsing.ts` (was internal); array path now does the same two-phase recovery as `repairToolJson` (textual repairs → if still failing, escape raw newlines → retry parse) |
+| A''' | Loose pre-check `\btool\s*:` matched `tool:` substring inside string values, so `["tool: read_file"]` entered the array path and emitted spurious `TOOL_CALL_PARSE_ERROR` correction prompts | Conversational responses where the model literally mentioned a tool call as text | Commit `b0a0d39` (Copilot follow-up): array-specific stricter sniff `/\{\s*['"]?tool['"]?\s*:/` requires object-key context. Single-object path keeps the looser pre-check (asymmetric strictness because single-object has a downstream `isRecord` shape gate that arrays lack) |
+
+A separate but adjacent class — **bare objects with prose contamination** breaking `isBareBlockEligible`'s contiguity gate — was identified during the same investigation but deferred. Tracked as the next parser convergence follow-up; would need a similar gate-loosening or a bare-array analogue. Not currently load-bearing because the array fix above is the dominant Gemini 3 Flash shape.
+
+The empirical evidence chain that made these visible was the typed-memory record-quality measurement: pre-tranche, 0% of memory records contained useful natural-language summaries (the rest were dropped tool-call JSON or `[no summary — outcome=success]` placeholders). Post-tranche, 100% useful records on the same task. See `docs/remediation-observations.md` 2026-04-18 entries for the measurement narrative.
+
+**Tests:** `lib/tool-dispatch.test.ts` grew from ~40 to 51 tests across the parser tranche, covering each silent-drop variant with both happy-path (extraction succeeds) and gate-rejection (string-value substrings, non-tool arrays) pins.
 
 ### Web portion — still pending
 

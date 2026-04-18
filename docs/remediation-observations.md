@@ -345,3 +345,49 @@ CLI suite 1166/1166 (was 1160; +6 path-traversal tests). Both typechecks clean.
 - **Is not:** a verification-family or git/release-family three-green-gate entry. Those counters remain at 0/3, still suspended pending CLI daily-driver readiness.
 
 **Status:** Gap 3 Step 2 shipped. Branch ready to push and PR.
+
+---
+
+## 2026-04-18 (very late) — Typed-memory record-quality tranche closes the post-PR-#333 retraction
+
+**Session purpose:** Close the content-quality axis of the typed-memory question that the previous (latest) entry retracted. The retraction said "plumbing works, doesn't measurably move rounds." Recon traced that to "the records themselves were mostly garbage" (array-wrapped tool-call JSON captured as summary) — a content problem upstream of the metric. PR #334 ran a five-fix tranche to enumerate and close every silent-drop / placeholder / error-as-summary path on the typed-memory write side, with two follow-up commits responding to Codex review.
+
+**What shipped (PR #334, 7 commits on `claude/fix-detector-array-wrapped`, merged):**
+
+The failure-mode taxonomy and the commit that addressed each:
+
+| # | Failure mode | Symptom in records | Fixed by |
+|---|---|---|---|
+| A | Detector silent drop on fenced array of tool calls | Array JSON captured as summary | `253bacf` |
+| A' | Array path can't repair garbled JSON (trailing commas etc.) | `json_parse_error` on cases the single-object path recovered from | `ef3c4c1` |
+| A'' | Array path lacks raw-newline-in-string repair | Batched `write_file` / `edit_file` with multiline content fails as array form, recovers as single-object | `b0a0d39` (Codex P1 follow-up) |
+| A''' | Loose pre-check matches `tool:` inside string values | `["tool: read_file"]` enters array path → emits `TOOL_CALL_PARSE_ERROR` correction prompt | `b0a0d39` (Copilot follow-up) |
+| B | Empty success returns from `runAssistantLoop` | `[no summary — outcome=success]` placeholder | `2dd5cb9` |
+| B' | Fix B's pre-finalization `assistant_done` desyncs with the new finalization stream | Newline-flush handlers leave finalization text unterminated | `0178226` (Codex P2) |
+| B'' | Fix B leaves orphaned `[FINAL_SUMMARY_REQUEST]` in `state.messages` on failure paths | Next turn sees a request the model "didn't respond to" | `a7adf71` (Codex P2 follow-up) |
+| C | Error-outcome `finalAssistantText` (timeout messages, policy-halt blobs) captured as summary | "Request timed out after 120s..." landed as memory record | `9cb746e` |
+| C' | Fix C's error throw used unbounded summary text | Spammy `state.error` in node state + JSON output + event log | `a7adf71` |
+
+Plus one adjacent prompt-tuning fix (`a7adf71`, github-actions bot suggestion): added "(no JSON, no fenced blocks)" to the empty-success finalization prompt because small models otherwise sometimes return another tool-call-shaped payload when asked for a summary.
+
+**Composite measurement progression (Gemini 3 Flash via OpenRouter, fresh `PUSH_MEMORY_DIR` per state, same task each run):**
+
+| State | Garbage records | Placeholder records | Error-as-summary | Real records |
+|---|---|---|---|---|
+| Pre-tranche (PR #333 baseline) | 33% (1/3) | 67% (2/3) | 0 | **0%** |
+| Post-tranche final | 0 | 0 | 0 | **100% (5/5)** |
+
+Per-node rounds stayed in the 2-3 range across all measurement states (cold and warm cache), so the **rounds-to-completion delta** that PR #333's retraction left as the open question is **still open**. The tranche closed the content-quality axis (records are now reliably useful natural-language summaries) without resolving the value axis (whether retrieval measurably reduces work for small models). Future measurement work needs either (a) larger N per condition to dampen Gemini 3 Flash's nondeterminism + planner variance, or (b) a task with stronger precursor coupling where prior context provides concrete code-level findings the model would otherwise re-derive.
+
+**What this is and is not:**
+
+- **Is:** closure of the record-content-quality axis. Future debugging of "memory records contain garbage" symptoms can refer to this entry plus the failure-mode taxonomy in `docs/decisions/Tool-Call Parser Convergence Gap.md`'s 2026-04-18 update. Future operators inspecting `~/.push/memory/<repo>/<branch>.jsonl` will see real findings, which is a debugging affordance in its own right.
+- **Is not:** an answer to the value question PR #333's retraction left open. The "does typed memory measurably help small models" question remains research-shaped. Any future N=1 measurement on this surface should include a "did the retrieval block contain N records?" assertion at minimum and a content-quality sniff before believing rounds metrics.
+
+**Reference-pattern takeaways worth keeping:**
+
+1. **The five-failure-modes shape was discovered by surfacing each as the previous one's fix exposed it.** Pre-Fix-1: garbage records visible on disk. Pre-A': trailing-comma case fails Codex's repro. Pre-Fix-2: placeholders visible after Fix 1. Pre-Fix-3: timeout messages visible after Fix 2. Each step had immediate visible feedback. When the next bug isn't visible after a fix, that's the signal to stop and do a different kind of investigation rather than guess.
+2. **"Graceful degradation" claims need to enumerate specifically what state remains valid.** Fix 2 said it "degrades to pre-fix behavior" on failure — true for `finalAssistantText` (stays empty) but false for `state.messages` (orphaned prompt persists). Future degradation claims should list per-state-axis what survives and what gets rolled back.
+3. **Asymmetric strictness based on downstream filtering capability is a useful pattern.** Single-object payloads have downstream `isRecord` shape gates that catch false positives. Arrays don't — they emit per-element malformed reports that trigger correction prompts. So arrays need stricter UPSTREAM gates. Documented in the PR #334 array-fenced-gate commit.
+
+**Status:** Record-content-quality issue closed end-to-end. Typed-memory tranche stands as: plumbing works (PR #333 + chatId fix), records contain useful content (PR #334), value question still open (future work).
