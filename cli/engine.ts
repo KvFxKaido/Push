@@ -918,6 +918,17 @@ export async function runAssistantLoop(
       // pre-fix behavior (empty finalAssistantText). Only fires
       // when finalAssistantText is empty after trim — "Done." or
       // any non-empty short ack flows through unchanged.
+      //
+      // Note on assistant_done sequencing (Codex P2 review): the
+      // pre-finalization assistant_done at line ~800 has already
+      // fired by the time we reach this branch, so consumers think
+      // the assistant message ended. Streaming finalization tokens
+      // after that without a second assistant_done leaves
+      // newline-flush handlers (like the basic CLI's) with the
+      // finalization text unterminated. Emit a fresh messageId +
+      // assistant_done after the finalization stream resolves so
+      // the second message appears as a complete unit. Mirrors the
+      // max_rounds finalization at engine.ts:~1376.
       if (!finalAssistantText) {
         try {
           const finalizationPrompt = buildEmptySuccessFinalizationMessage(toolsUsed);
@@ -958,6 +969,14 @@ export async function runAssistantLoop(
           if (trimmed) {
             finalAssistantText = trimmed;
             (state.messages as Message[]).push({ role: 'assistant', content: finalizationText });
+            const finalizationMessageId: string = `asst_${Date.now().toString(36)}`;
+            await appendSessionEvent(
+              state,
+              'assistant_done',
+              { messageId: finalizationMessageId },
+              runId,
+            );
+            dispatchEvent('assistant_done', { messageId: finalizationMessageId });
           }
         } catch (err: unknown) {
           // Abort propagates; other failures (provider error, timeout)
