@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildEmptySuccessFinalizationMessage,
   buildMaxRoundsFinalizationMessage,
   buildSystemPrompt,
   buildSystemPromptBase,
@@ -68,6 +69,26 @@ describe('buildMaxRoundsFinalizationMessage', () => {
     assert.ok(message.includes('Do not call any more tools'));
     assert.ok(message.includes('web_search, exec'));
     assert.ok(message.includes('what may be incomplete'));
+  });
+});
+
+describe('buildEmptySuccessFinalizationMessage', () => {
+  it('asks for a self-contained summary when the model exited empty', () => {
+    const message = buildEmptySuccessFinalizationMessage(['read_file', 'list_dir']);
+
+    assert.ok(message.includes('[FINAL_SUMMARY_REQUEST]'));
+    assert.ok(message.includes('Do not call any more tools'));
+    assert.ok(message.includes('read_file, list_dir'));
+    // Mentions persistence so the model knows the summary is not
+    // ephemeral — small models tend to write more substantively
+    // when they're told the output will be reused.
+    assert.ok(message.includes('persisted for retrieval'));
+    assert.ok(message.includes('self-contained'));
+  });
+
+  it('handles the no-tools-used case', () => {
+    const message = buildEmptySuccessFinalizationMessage([]);
+    assert.ok(message.includes('Tools used during this run: none'));
   });
 });
 
