@@ -227,3 +227,33 @@ That reads like a drift-detector, but it encodes a *weaker* invariant than post-
 **Reference-pattern takeaway:** when writing characterization tests for a behavior change, be suspicious of any "OR" or "either/or" branch in the invariant. A test that says "X holds OR Y is the documented exception" is often two tests pretending to be one — and the exception branch is usually where the next bug hides. The Codex review on this tranche is the concrete example; future extraction and parity work should read this entry before writing drift-detectors.
 
 **Status:** Gap 2 shipped and Codex-reviewed-and-patched. Branch ready to push and PR.
+
+---
+
+## 2026-04-18 (late) — Gap 3 Step 2 landed; validateTaskGraph zero-coverage discovered and closed
+
+**Session purpose:** Ship the Gap 3 Step 2 characterization tests per the plan's §CLI Runtime Parity Gap 3 Shape-of-the-work. Prerequisite for Step 3 (typed context-memory retrieval through node runners), which will modify the node runners and would otherwise risk a silent regression if the executor's behavior weren't pinned first.
+
+**What shipped (branch `claude/gap-3-step-2-task-graph-characterization`, commit `f366a76`):**
+
+- `app/src/lib/task-graph.test.ts` expanded from 6 → 34 tests (+28 new) across three describe blocks:
+  - `validateTaskGraph` full coverage (15 tests): all five error types (`empty_graph`, `duplicate_id`, `invalid_agent`, `missing_dependency`, `cycle`) with specific-message pins; cycle detection edge cases (self-loop, 2-node, 3-node, cycle buried among valid nodes); short-circuit behavior (cycle detection skipped when non-cycle errors present — `task-graph.ts:83-88`); error composition (duplicate_id + invalid_agent + missing_dependency surface together); valid graph shapes (single, linear, diamond, fully independent).
+  - `executeTaskGraph` behavioral gap-fills (9 tests): coder serialization (max 1 in flight), explorer parallelism at `maxParallelExplorers` default (3), custom override, explorer+coder concurrency when independent, progress event sequencing (`task_ready → task_started → task_completed`, `task_failed` on throw), `graph_complete` detail phrasing for each terminal state, transitive `cascadeFailure` (root → mid → leaf cancellation), pre-dispatch abort with zero executor calls, `formatTaskGraphResult` output shapes.
+  - DelegationOutcome edge cases (2 tests): executor returning undefined `delegationOutcome` → node completes with raw summary; executor returning empty/whitespace summary → no memoryEntry built, downstream tasks see no `[TASK_GRAPH_MEMORY]` section.
+
+**Non-obvious discovery worth recording:** `validateTaskGraph` had zero direct test coverage until this commit. The six existing tests all exercised `executeTaskGraph` — so a regression in validation would only surface if an executor assertion happened to trip on the downstream effect. The Gap 3 Step 3 work will not touch `validateTaskGraph`, but the *reason* the plan's Step 2 prerequisite exists is exactly this pattern: code with no direct coverage can silently drift, and adding characterization before touching the surrounding code is cheaper than debugging the regression later.
+
+**Scope narrowing at recon time:** The plan's Step 2 bullet names "delegation outcomes and task-graph execution." Looking at the daemon RPC layer, `cli/tests/daemon-integration.test.mjs` already has 10+ test calls each on `submit_task_graph` and `delegate_explorer` with happy paths, error paths, and terminal-claim semantics all pinned. Adding more there would be redundant. The real gap was the pure-logic layer in `lib/task-graph.ts`, which this commit closes. Same pattern as the Gap 2 `ask_user` design call that dissolved on inspection — reconnaissance at scope time beats trusting the plan's decision-time framing.
+
+**Validation:**
+
+- App typecheck: `cd app && npx tsc --noEmit` → clean.
+- CLI typecheck: `npm run typecheck` → clean (unchanged, no CLI files touched).
+- App vitest: `npx vitest run src/lib/task-graph.test.ts` → 34/34 pass.
+
+**What this is and is not:**
+
+- **Is:** Gap 3 Step 2 closure and Step 3 unblock. The node-runner modifications Step 3 will make to enable typed context-memory retrieval can now land against a pinned executor, with the three-layer-truth principle from Gap 2's closure applying: the tool surface packed into each node's context must derive from `roleCanUseTool`, not from a hand-maintained list.
+- **Is not:** a verification-family or git/release-family three-green-gate entry. Those counters remain at 0/3, still suspended pending CLI daily-driver readiness.
+
+**Status:** Gap 3 Step 2 shipped. Branch ready to push and PR.
