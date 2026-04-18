@@ -2,8 +2,8 @@
  * Freshness transitions for typed context memory records.
  */
 
-import type { MemoryRecord, MemoryScope } from './runtime-contract';
-import { getDefaultMemoryStore, type ContextMemoryStore } from './context-memory-store';
+import type { MemoryRecord, MemoryScope } from './runtime-contract.js';
+import { getDefaultMemoryStore, type ContextMemoryStore } from './context-memory-store.js';
 
 function normalizePath(path: string): string {
   return path

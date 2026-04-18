@@ -2,7 +2,7 @@
  * Compact formatting for retrieved `MemoryRecord`s.
  */
 
-import type { MemoryRecord, ScoredMemoryRecord } from './runtime-contract';
+import type { MemoryRecord, ScoredMemoryRecord } from './runtime-contract.js';
 
 export const MEMORY_PACK_SECTION_ORDER = ['facts', 'taskMemory', 'verification', 'stale'] as const;
 

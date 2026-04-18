@@ -69,6 +69,10 @@ import {
   isCapabilityMapped,
   ROLE_CAPABILITIES,
 } from '../lib/capabilities.ts';
+import { setDefaultMemoryStore } from '../lib/context-memory-store.ts';
+import { createFileMemoryStore } from './context-memory-file-store.ts';
+import { resolveWorkspaceIdentity } from './workspace-identity.ts';
+import { writeTaskGraphResultMemory } from './task-graph-memory.ts';
 
 const VERSION = '0.3.0';
 const CAPABILITIES = [
@@ -135,6 +139,14 @@ export function getPidPath() {
 export function getLogPath() {
   if (process.env.PUSHD_LOG) return process.env.PUSHD_LOG;
   return path.join(os.homedir(), '.push', 'run', 'pushd.log');
+}
+
+export function getMemoryStoreBaseDir() {
+  // Matches the PUSH_CONFIG_PATH / PUSH_SESSION_DIR override pattern
+  // used elsewhere in cli. Lets tests pin an isolated tmpdir without
+  // polluting ~/.push/memory.
+  if (process.env.PUSH_MEMORY_DIR) return process.env.PUSH_MEMORY_DIR;
+  return path.join(os.homedir(), '.push', 'memory');
 }
 
 async function writePidFile() {
@@ -1881,6 +1893,36 @@ async function handleSubmitTaskGraph(req) {
           wallTimeMs: Date.now() - startedAt,
         };
 
+    // Persist typed memory for each completed node before emitting
+    // graph_completed so later runs (and Gap 3 Step 3's retrieval
+    // pass) can rely on the records being durable. Writes are
+    // error-isolated — a failure for one node logs and continues,
+    // never blocking the completion event.
+    if (result) {
+      try {
+        const identity = await resolveWorkspaceIdentity(entry.state.cwd);
+        await writeTaskGraphResultMemory(result, {
+          repoFullName: identity.repoFullName,
+          branch: identity.branch ?? undefined,
+          chatId: sessionId,
+          taskGraphId: executionId,
+        });
+      } catch (err) {
+        // resolveWorkspaceIdentity is non-throwing by contract, so
+        // this catch is belt-and-braces for an unexpected store
+        // initialization failure or similar.
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `${JSON.stringify({
+            level: 'warn',
+            event: 'task_graph_memory_persist_failed',
+            executionId,
+            error: msg,
+          })}\n`,
+        );
+      }
+    }
+
     await emitTaskGraphEvent('task_graph.graph_completed', completedPayload);
     entry.activeGraphs.delete(executionId);
     await saveSessionState(entry.state).catch(() => {});
@@ -3542,6 +3584,14 @@ export async function main() {
   const socketPath = getSocketPath();
   await ensureSocketDir(socketPath);
   await cleanStaleSocket(socketPath);
+
+  // Wire a file-backed ContextMemoryStore so typed memory records
+  // written by task-graph node completions (see handleSubmitTaskGraph)
+  // persist across pushd restarts. The in-memory default would lose
+  // all history on SIGTERM/restart, which defeats the "memory" in
+  // typed memory. See Gap 3 Step 3 in the Architecture Remediation
+  // Plan for context.
+  setDefaultMemoryStore(createFileMemoryStore({ baseDir: getMemoryStoreBaseDir() }));
 
   const server = net.createServer(handleConnection);
 
