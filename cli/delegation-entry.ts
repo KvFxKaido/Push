@@ -389,7 +389,19 @@ export async function runDelegatedHeadless(
         throw new DOMException('Cancelled by user', 'AbortError');
       }
       if (result.outcome === 'error') {
-        throw new Error(`node ${node.id} failed: ${summary}`);
+        // Cap the summary in the error message — `result.finalAssistantText`
+        // for an error outcome can be a very long stream-error or
+        // policy-halt blob, and this string lands in task-graph
+        // node state's `error` field, the JSON output, and the
+        // event log. Truncate so it stays grep-able. The full
+        // summary is still in nodeSummaries.get(node.id) for the
+        // final synthesis. Copilot review on PR #334.
+        const ERROR_SUMMARY_MAX = 200;
+        const truncated =
+          summary.length > ERROR_SUMMARY_MAX
+            ? `${summary.slice(0, ERROR_SUMMARY_MAX - 1)}…`
+            : summary;
+        throw new Error(`node ${node.id} failed: ${truncated}`);
       }
 
       return { summary, rounds: result.rounds };

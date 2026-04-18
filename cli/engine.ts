@@ -348,7 +348,7 @@ export function buildEmptySuccessFinalizationMessage(toolsUsed: Iterable<string>
   return `[FINAL_SUMMARY_REQUEST]
 You signaled completion (no further tool calls), but your final message was empty. Tools used during this run: ${tools}.
 
-Do not call any more tools. Return a concise plain-text summary using only the information already in this conversation:
+Do not call any more tools. Return a concise plain-text summary (no JSON, no fenced blocks) using only the information already in this conversation:
 - What you investigated or changed.
 - The key finding(s) or outcome(s).
 - Any caveats or remaining work.
@@ -930,9 +930,15 @@ export async function runAssistantLoop(
       // the second message appears as a complete unit. Mirrors the
       // max_rounds finalization at engine.ts:~1376.
       if (!finalAssistantText) {
+        // Track the prompt so we can roll it back on any failure path.
+        // Without rollback, an orphaned [FINAL_SUMMARY_REQUEST] stays
+        // in state.messages, gets persisted via saveSessionState
+        // downstream, and biases the next turn's context (the model
+        // sees a prompt with no response). Codex P2 review on PR #334.
+        const finalizationPrompt = buildEmptySuccessFinalizationMessage(toolsUsed);
+        (state.messages as Message[]).push({ role: 'user', content: finalizationPrompt });
+        let assistantPushed = false;
         try {
-          const finalizationPrompt = buildEmptySuccessFinalizationMessage(toolsUsed);
-          (state.messages as Message[]).push({ role: 'user', content: finalizationPrompt });
           const finalTrimResult = trimContext(
             state.messages as Message[],
             providerConfig.id,
@@ -969,6 +975,7 @@ export async function runAssistantLoop(
           if (trimmed) {
             finalAssistantText = trimmed;
             (state.messages as Message[]).push({ role: 'assistant', content: finalizationText });
+            assistantPushed = true;
             const finalizationMessageId: string = `asst_${Date.now().toString(36)}`;
             await appendSessionEvent(
               state,
@@ -984,7 +991,12 @@ export async function runAssistantLoop(
           // matches pre-Fix-2 behavior.
           const isAbort: boolean =
             (err instanceof Error && err.name === 'AbortError') || (signal?.aborted ?? false);
-          if (isAbort) throw err;
+          if (isAbort) {
+            // Roll back the prompt before propagating so the partial
+            // state isn't persisted with an orphaned request.
+            (state.messages as Message[]).pop();
+            throw err;
+          }
           const message = err instanceof Error ? err.message : String(err);
           await appendSessionEvent(
             state,
@@ -1000,6 +1012,13 @@ export async function runAssistantLoop(
             code: 'EMPTY_SUCCESS_FINALIZATION_FAILED',
             message: `Could not get final summary after empty success: ${message}`,
           });
+        }
+        // Roll back the orphaned prompt if we never pushed an
+        // assistant response (stream returned empty OR stream
+        // threw a non-abort error). Pre-fix this prompt persisted
+        // in state.messages and polluted future turns.
+        if (!assistantPushed) {
+          (state.messages as Message[]).pop();
         }
       }
 
