@@ -442,7 +442,7 @@ describe('handlePromoteToGithub', () => {
     expect(result.text).toContain('Repository created: myuser/my-repo');
     expect(result.text).toContain('Visibility: public');
     expect(result.text).toContain('Push: successful on branch main');
-    // Final exec is the git push — must thread the mutation flag (PR #325 fix).
+    // Final exec is the git push — must thread the mutation flag (commit 8b4cbe7).
     expect(ctx.execCalls.at(-1)).toEqual([
       'sb-1',
       expect.stringMatching(/git push -u origin/),
@@ -542,5 +542,28 @@ describe('handleSaveDraft', () => {
     expect(result.branchSwitch).toBeUndefined();
     // Only 4 execs: branch-detect, stage, commit, push (no checkout).
     expect(ctx.execInSandbox).toHaveBeenCalledTimes(4);
+  });
+
+  it('checks out a different draft branch when an explicit branch_name is requested while already on a draft branch', async () => {
+    // Regression test for PR #325 review: the original logic skipped checkout
+    // whenever the current branch started with `draft/`, silently ignoring an
+    // explicitly-requested target. Now an explicit branch_name is honored
+    // when it differs from the current branch.
+    const ctx = makeContext({
+      diffResults: [{ diff: 'diff --git a/x.ts b/x.ts\n+a\n', truncated: false }],
+      execResults: [
+        ok('draft/existing'), // branch --show-current
+        ok(), // git checkout -b draft/requested
+        ok(), // git add -A
+        ok('[draft/requested abc1234] WIP: draft save'), // git commit
+        ok(), // git push
+      ],
+    });
+    const result = await handleSaveDraft(ctx, { branch_name: 'draft/requested' });
+    expect(result.text).toContain('Draft saved to branch: draft/requested');
+    expect(result.branchSwitch).toBe('draft/requested');
+    expect(ctx.execInSandbox).toHaveBeenCalledTimes(5);
+    // Second exec is the checkout — confirm it targets the requested branch.
+    expect(ctx.execCalls[1][1]).toContain("git checkout -b 'draft/requested'");
   });
 });

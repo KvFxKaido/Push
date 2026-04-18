@@ -21,7 +21,7 @@
  * `sandbox_save_draft`). They return a `ToolExecutionResult` identical
  * in shape to what the inline `case` arms in the dispatcher used to
  * return. Behavior is preserved byte for byte — characterization tests
- * live at two layers: dispatcher-level in `sandbox-tools.ts.test.ts`
+ * live at two layers: dispatcher-level in `sandbox-tools.test.ts`
  * (describes: `sandbox_diff`, `sandbox_prepare_commit characterization`,
  * `sandbox_push`, `promote_to_github`, `sandbox_save_draft`) and
  * handler-level in `sandbox-git-release-handlers.test.ts` (one
@@ -531,8 +531,13 @@ export async function handleSaveDraft(
   }
   const draftBranchName = args.branch_name || `draft/${currentBranch || 'main'}-${timestamp}`;
 
-  // Step 4: Create draft branch if not already on one
-  const needsNewBranch = !currentBranch.startsWith('draft/');
+  // Step 4: Create draft branch if not already on the requested one. If the
+  // caller passed an explicit branch_name and it differs from the current
+  // branch, honor the request even when the current branch is also a draft/
+  // branch — otherwise an explicit target is silently ignored.
+  const needsNewBranch = args.branch_name
+    ? args.branch_name !== currentBranch
+    : !currentBranch.startsWith('draft/');
   if (needsNewBranch) {
     const checkoutResult = await ctx.execInSandbox(
       ctx.sandboxId,
