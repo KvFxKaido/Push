@@ -69,6 +69,14 @@ export interface SessionListEntry {
   model: string;
   cwd: string;
   sessionName: string;
+  /**
+   * Last human-authored user message from the session's message log,
+   * if any. Empty string when the session has no human turns yet or
+   * when the most recent `user` entries are all internal envelopes
+   * (tool results, session markers, etc.). Used as a preview hint in
+   * the resume pickers; not truncated or sanitized — callers render.
+   */
+  lastUserMessage: string;
 }
 
 export interface InterruptedSession {
@@ -380,6 +388,31 @@ export async function scanInterruptedSessions(): Promise<InterruptedSession[]> {
   return results;
 }
 
+/**
+ * Pull the most recent human user message out of a session's message
+ * log. `messages` entries with `role: "user"` can hold tool-result
+ * envelopes (`[TOOL_RESULT]...`), session markers (`[SESSION_RESUMED]`,
+ * `[PROJECT_INSTRUCTIONS]`), or project-context blocks — none of which
+ * are useful previews. Bracketed openers cover every internal envelope
+ * Push emits; human prompts don't typically start with `[`. Returns an
+ * empty string when no suitable message exists.
+ */
+function extractLastHumanUserMessage(messages: unknown): string {
+  if (!Array.isArray(messages)) return '';
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const entry = messages[i];
+    if (!entry || typeof entry !== 'object') continue;
+    const m = entry as { role?: unknown; content?: unknown };
+    if (m.role !== 'user') continue;
+    if (typeof m.content !== 'string') continue;
+    const trimmed = m.content.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('[')) continue;
+    return trimmed;
+  }
+  return '';
+}
+
 export async function listSessions(): Promise<SessionListEntry[]> {
   const roots = getSessionRootsForRead();
   const byId = new Map<string, SessionListEntry>();
@@ -411,6 +444,7 @@ export async function listSessions(): Promise<SessionListEntry[]> {
           cwd: typeof stateObj.cwd === 'string' ? stateObj.cwd : '',
           sessionName:
             typeof stateObj.sessionName === 'string' ? (stateObj.sessionName as string).trim() : '',
+          lastUserMessage: extractLastHumanUserMessage(stateObj.messages),
         };
 
         const existing = byId.get(sessionId);

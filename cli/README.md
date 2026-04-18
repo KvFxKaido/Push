@@ -241,6 +241,8 @@ If no `PUSH_SESSION_DIR` is set, the CLI also reads legacy workspace-local sessi
 
 In a TTY, `./push resume` now prints a numbered list of resumable sessions and prompts for a selection; picking a number (or typing a full session id) attaches via `push attach` without requiring a second command. Empty input or `q`/`quit` cancels cleanly. When stdout is not a TTY, when `--json` is passed, or when `--no-attach` is passed, the picker is skipped and behavior matches the pre-existing list-only output so scripts that parse `resume` output keep working.
 
+Each picker entry shows relative freshness (`2h ago`, `yesterday`, `3d ago`) alongside provider/model/cwd, and — when the session has a human turn on record — a one-line preview of the most recent user prompt in quotes. Tool-result and session-marker envelopes are filtered out so previews always reflect the operator's own words. Long prompts are truncated with an ellipsis. Machine-readable `--json` output still carries precise `updatedAt` milliseconds and the full `lastUserMessage` for scripts that need them.
+
 When exactly one session is resumable, the picker is skipped — `./push resume` prints a one-line banner naming the session (`Resuming only session: sess_… (name) …`) and attaches directly. Use `./push resume --no-attach` if you want to see the list without the auto-attach.
 
 ## Working memory

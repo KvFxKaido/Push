@@ -458,7 +458,7 @@ async function seedSessions(root, rows) {
       cwd: row.cwd || '/tmp',
       rounds: 0,
       sessionName: row.sessionName || '',
-      messages: [],
+      messages: Array.isArray(row.messages) ? row.messages : [],
     };
     await fs.writeFile(path.join(dir, 'state.json'), JSON.stringify(state, null, 2), 'utf8');
     await fs.writeFile(path.join(dir, 'events.jsonl'), '', 'utf8');
@@ -710,6 +710,95 @@ describe('push resume', () => {
     assert.ok(
       /INJECTTAIL/.test(combined),
       `sanitized name should render contiguously, combined=${combined}`,
+    );
+  });
+
+  it('renders relative time and last-user-message preview in the picker', async () => {
+    try {
+      await execFileAsync('script', ['-V']);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return;
+    }
+
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-meta-'));
+    // updatedAt pinned to "a few hours ago" relative to wall clock so the
+    // picker renders a predictable relative-time band. Seed two sessions
+    // so the auto-attach-on-N=1 short-circuit doesn't skip the picker
+    // render this test is pinning. messages[] seeded with a human user
+    // prompt that survives the [bracketed]-envelope filter, so the
+    // picker should render a "quoted" preview line under the metadata.
+    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+    await seedSessions(sessionRoot, [
+      {
+        sessionId: 'sess_alpha1_abcdef',
+        updatedAt: twoHoursAgo,
+        sessionName: 'Alpha',
+        messages: [
+          { role: 'system', content: 'System prompt' },
+          { role: 'user', content: '[PROJECT_INSTRUCTIONS] ignore me' },
+          { role: 'user', content: 'Fix the retry loop in pushd attach reconnect' },
+          { role: 'assistant', content: 'ok' },
+          { role: 'user', content: '[TOOL_RESULT] ignore me too' },
+        ],
+      },
+      { sessionId: 'sess_beta22_bbccdd', updatedAt: twoHoursAgo + 1000 },
+    ]);
+
+    const { stdout, stderr } = await spawnPickerPty(['resume'], 'q\n', {
+      PUSH_SESSION_DIR: sessionRoot,
+    });
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
+      return;
+    }
+    assert.ok(/\d+h ago/.test(combined), `expected relative-time band, combined=${combined}`);
+    assert.ok(
+      /"Fix the retry loop in pushd attach reconnect"/.test(combined),
+      `expected quoted last-user-message preview, combined=${combined}`,
+    );
+    // The ISO timestamp is gone — picker now surfaces relative time only.
+    assert.ok(
+      !/20\d{2}-\d{2}-\d{2}T/.test(combined),
+      `raw ISO should not leak into picker output, combined=${combined}`,
+    );
+    // `[PROJECT_INSTRUCTIONS]` / `[TOOL_RESULT]` envelopes must be
+    // skipped by the extractor so they never surface as previews.
+    assert.ok(
+      !/PROJECT_INSTRUCTIONS|TOOL_RESULT/.test(combined),
+      `internal envelopes must not leak into picker, combined=${combined}`,
+    );
+  });
+
+  it('truncates long last-user-message previews with an ellipsis', async () => {
+    try {
+      await execFileAsync('script', ['-V']);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return;
+    }
+
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-truncate-'));
+    const longPrompt = `${'x'.repeat(200)} should never render in full`;
+    await seedSessions(sessionRoot, [
+      {
+        sessionId: 'sess_alpha1_abcdef',
+        updatedAt: Date.now() - 60_000,
+        messages: [{ role: 'user', content: longPrompt }],
+      },
+      { sessionId: 'sess_beta22_bbccdd', updatedAt: Date.now() },
+    ]);
+
+    const { stdout, stderr } = await spawnPickerPty(['resume'], 'q\n', {
+      PUSH_SESSION_DIR: sessionRoot,
+    });
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
+      return;
+    }
+    // Ellipsis (U+2026) must appear and the tail text must not.
+    assert.ok(/…/.test(combined), `expected truncation ellipsis, combined=${combined}`);
+    assert.ok(
+      !/should never render in full/.test(combined),
+      `truncated tail leaked, combined=${combined}`,
     );
   });
 });
