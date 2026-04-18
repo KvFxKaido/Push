@@ -146,8 +146,50 @@ export function createToolDispatcher<TCall>(
       for (const fence of fences) {
         if (!isToolCallLangTag(fence.lang)) continue;
         const trimmed = fence.content.trim();
-        if (!trimmed || !trimmed.startsWith('{')) continue;
+        if (!trimmed) continue;
+        // Tool-call payloads come in two shapes:
+        //   { "tool": "...", "args": {...} }              — single
+        //   [ { "tool": "...", ... }, { "tool": "...", ... } ] — array
+        // Single-object form is the documented protocol. Array form
+        // is what models like Gemini 3 Flash emit naturally — small
+        // models often batch their planned calls into one fenced
+        // block. Before this branch the detector silently dropped
+        // arrays (the `startsWith('{')` check below rejected them
+        // and there was no array path), which manifested as
+        // "successful" runs that returned the array JSON as the
+        // assistant's final text. See
+        // `docs/decisions/Tool-Call Parser Convergence Gap.md` for
+        // the broader pattern this fits and the 2026-04-18 PR #333
+        // measurement narrative for the typed-memory fallout.
         if (!/"tool"\s*:|'tool'\s*:/.test(trimmed) && !/\btool\s*:/.test(trimmed)) continue;
+        if (trimmed.startsWith('[')) {
+          const arrayResult = parseToolArrayCandidate(trimmed);
+          if (!arrayResult.ok) {
+            malformed.push({ reason: arrayResult.reason, sample: truncateSample(trimmed) });
+            continue;
+          }
+          // Per-element malformed reports surface the same way single
+          // fenced candidates do — operators see the specific
+          // failures, not just "the whole array was bad".
+          for (const report of arrayResult.perElementMalformed) {
+            malformed.push(report);
+          }
+          // All array elements share the fence's content offset so
+          // they sort as a contiguous block in the final ordering.
+          // Within that block, push order matches array order, and
+          // Array.sort is stable, so the model-intended sequence is
+          // preserved.
+          for (const parsed of arrayResult.values) {
+            candidates.push({
+              kind: 'fenced',
+              offset: fence.contentOffset,
+              parsed,
+              sample: trimmed,
+            });
+          }
+          continue;
+        }
+        if (!trimmed.startsWith('{')) continue;
         const parsed = parseToolCandidate(trimmed);
         if (!parsed.ok) {
           malformed.push({ reason: parsed.reason, sample: truncateSample(trimmed) });
@@ -469,6 +511,68 @@ function parseToolCandidate(candidate: string): ParseOutcome {
   }
   if (!isRecord(parsed)) return { ok: false, reason: 'invalid_shape' };
   return shapeParsedObject(parsed);
+}
+
+interface ArrayParseOutcome {
+  ok: true;
+  /** Successfully parsed + shaped tool-call objects, in array order. */
+  values: ParsedToolObject[];
+  /** Per-element shape failures — surfaced alongside the successful values. */
+  perElementMalformed: ToolMalformedReport[];
+}
+
+type ArrayParseResult = ArrayParseOutcome | { ok: false; reason: ToolMalformedReason };
+
+/**
+ * Parse a fenced candidate that begins with `[` as an array of tool-call
+ * objects. Per-element shape failures are reported individually rather
+ * than failing the whole array, so a partly-malformed array still
+ * surfaces the calls that did parse correctly. JSON.parse failures on
+ * the whole array fall through to `repairToolJson`, then to
+ * `json_parse_error`. A non-array shape (e.g., string, number) is
+ * `invalid_shape`.
+ */
+function parseToolArrayCandidate(candidate: string): ArrayParseResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch {
+    const repaired = repairToolJson(candidate);
+    if (!repaired) return { ok: false, reason: 'json_parse_error' };
+    parsed = repaired;
+  }
+  if (!Array.isArray(parsed)) return { ok: false, reason: 'invalid_shape' };
+
+  const values: ParsedToolObject[] = [];
+  const perElementMalformed: ToolMalformedReport[] = [];
+  for (const element of parsed) {
+    if (!isRecord(element)) {
+      perElementMalformed.push({
+        reason: 'invalid_shape',
+        sample: truncateSample(safeStringifySample(element)),
+      });
+      continue;
+    }
+    const shaped = shapeParsedObject(element);
+    if (!shaped.ok) {
+      perElementMalformed.push({
+        reason: shaped.reason,
+        sample: truncateSample(safeStringifySample(element)),
+      });
+      continue;
+    }
+    values.push(shaped.value);
+  }
+
+  return { ok: true, values, perElementMalformed };
+}
+
+function safeStringifySample(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function shapeParsedObject(parsed: Record<string, unknown>): ParseOutcome {

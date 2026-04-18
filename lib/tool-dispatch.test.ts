@@ -426,3 +426,154 @@ describe('createToolDispatcher — shape validation', () => {
     expect(result.malformed).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Array-wrapped tool calls in fenced blocks (Gemini-3-flash convergence
+// gap, surfaced by the Gap 3 Step 3 typed-memory measurement on
+// 2026-04-18). Models like Gemini 3 Flash naturally batch their planned
+// tool calls into a single fenced JSON ARRAY rather than emitting one
+// fenced object per call. Before the array branch landed, the dispatcher
+// silently dropped these — neither extracted as calls nor reported as
+// malformed — so the engine declared the run "successful" with the
+// JSON-array text as the assistant's final response. Surfaced as
+// useless garbage in typed-memory records during PR #333's measurement.
+// ---------------------------------------------------------------------------
+
+describe('createToolDispatcher — fenced array tool calls', () => {
+  const dispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE]);
+
+  it('extracts a single-element fenced array', () => {
+    const text = '```json\n[{"tool":"read_file","args":{"path":"foo.txt"}}]\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toEqual({ tool: 'read_file', args: { path: 'foo.txt' } });
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('extracts a multi-element fenced array preserving model-intended order', () => {
+    // The shape Gemini 3 Flash emits when planning a batch of reads —
+    // a single fenced block containing an array of N tool-call objects.
+    const text = [
+      '```json',
+      '[',
+      '  {"tool":"read_file","args":{"path":"cli/engine.ts","start_line":580,"end_line":620}},',
+      '  {"tool":"read_file","args":{"path":"cli/harness-adaptation.ts"}},',
+      '  {"tool":"read_file","args":{"path":"cli/context-metrics.ts"}}',
+      ']',
+      '```',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls.map((c) => c.tool)).toEqual(['read_file', 'read_file', 'read_file']);
+    expect(result.calls.map((c) => (c as { args: { path: string } }).args.path)).toEqual([
+      'cli/engine.ts',
+      'cli/harness-adaptation.ts',
+      'cli/context-metrics.ts',
+    ]);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('reports per-element shape failures alongside the calls that succeeded', () => {
+    // Real-world arrays can mix valid and invalid elements. The whole
+    // array shouldn't fail just because one element is malformed; the
+    // valid calls go through and the invalid element shows up in the
+    // malformed list so operators see the specific failure.
+    const text = [
+      '```json',
+      '[',
+      '  {"tool":"read_file","args":{"path":"foo.txt"}},',
+      '  {"tool":"missing_args"}',
+      ']',
+      '```',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toEqual({ tool: 'read_file', args: { path: 'foo.txt' } });
+    expect(result.malformed).toHaveLength(1);
+    expect(result.malformed[0].reason).toBe('missing_args_object');
+  });
+
+  it('reports invalid_shape when an array element is not an object', () => {
+    const text =
+      '```json\n[{"tool":"read_file","args":{"path":"foo.txt"}}, "stray-string", 42]\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.malformed.map((m) => m.reason)).toEqual(['invalid_shape', 'invalid_shape']);
+  });
+
+  it('reports json_parse_error when the array body fails to parse', () => {
+    const text = '```json\n[{"tool":"read_file","args":{"path":\n```'; // truncated mid-element
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([]);
+    expect(result.malformed).toHaveLength(1);
+    expect(result.malformed[0].reason).toBe('json_parse_error');
+  });
+
+  it('skips fenced arrays that do not contain a "tool" key (pre-check)', () => {
+    // The fenced-block phase has a `"tool":` substring pre-check that
+    // skips JSON containing config / examples / non-tool data. Arrays
+    // without `"tool":` are skipped at the same gate, not entered as
+    // candidates.
+    const text = '```json\n[1, 2, 3]\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([]);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('preserves single-object behavior unchanged when the fence content starts with {', () => {
+    // Regression pin: the array branch must not have stolen the
+    // single-object path. This is the canonical protocol shape and
+    // must keep working byte-for-byte the same.
+    const text = '```json\n{"tool":"read_file","args":{"path":"foo.txt"}}\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toEqual({ tool: 'read_file', args: { path: 'foo.txt' } });
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('mixes a fenced array and a fenced single-object in the same response', () => {
+    // Models can mix the two shapes within one response. Both should
+    // extract; ordering follows the textual offsets.
+    const text = [
+      '```json',
+      '[',
+      '  {"tool":"read_file","args":{"path":"a.txt"}},',
+      '  {"tool":"read_file","args":{"path":"b.txt"}}',
+      ']',
+      '```',
+      '',
+      'And then I want to commit:',
+      '',
+      '```json',
+      '{"tool":"git_status","args":{}}',
+      '```',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls.map((c) => c.tool)).toEqual(['read_file', 'read_file', 'git_status']);
+  });
+
+  it('does NOT extract bare (unfenced) arrays — risk of mining a prose-embedded array as tools', () => {
+    // The bare-object phase intentionally does not have an array
+    // analogue. A stray array in prose (documentation, example,
+    // chat-of-thought) shouldn't auto-execute. Models that want to
+    // batch tool calls must use a fenced block.
+    const text = `Here are the calls I would make:\n\njson\n[{"tool":"read_file","args":{"path":"foo"}}]`;
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([]);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('dedupes identical tool calls across two fenced arrays in the same response', () => {
+    // The existing dedup pass (canonicalKey on tool+args) should
+    // collapse identical calls regardless of which fence emitted them.
+    const text = [
+      '```json',
+      '[{"tool":"read_file","args":{"path":"foo.txt"}}]',
+      '```',
+      '```json',
+      '[{"tool":"read_file","args":{"path":"foo.txt"}}]',
+      '```',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+  });
+});
