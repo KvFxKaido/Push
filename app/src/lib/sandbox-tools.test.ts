@@ -971,6 +971,15 @@ describe('executeSandboxToolCall -- promote_to_github', () => {
     expect(result.text).toContain('Visibility: public');
     expect(result.text).toContain('Default branch: main');
     expect(result.text).toContain('Push: successful on branch main');
+    // The terminal git push exec must thread markWorkspaceMutated: true,
+    // matching sandbox_push's behavior — both push to origin and both
+    // mutate the workspace from the cache's perspective.
+    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
+      'sb-1',
+      expect.stringMatching(/git push -u origin/),
+      undefined,
+      { markWorkspaceMutated: true },
+    );
     expect(result.promotion).toEqual({
       repo: {
         id: 42,
@@ -984,6 +993,128 @@ describe('executeSandboxToolCall -- promote_to_github', () => {
       warning: undefined,
       htmlUrl: 'https://github.com/myuser/my-repo',
     });
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_save_draft', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('returns no-changes text and skips all execs when the diff is empty', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({});
+
+    const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1');
+
+    expect(result.text).toContain('[Tool Result — sandbox_save_draft]');
+    expect(result.text).toContain('No changes to save');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+    expect(result.card).toBeUndefined();
+  });
+
+  it('returns an error and skips all execs when the initial diff fails', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ error: 'sandbox unreachable' });
+
+    const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1');
+
+    expect(result.text).toContain('[Tool Error — sandbox_save_draft]');
+    expect(result.text).toContain('sandbox unreachable');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('rejects branch_name that does not start with draft/', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      diff: 'diff --git a/x.ts b/x.ts\n+y\n',
+      truncated: false,
+    });
+    // The case arm calls git branch --show-current before validating branch_name,
+    // so we mock that one call to keep the path reaching the validation.
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce({
+      stdout: 'main',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_save_draft', args: { branch_name: 'main' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_save_draft]');
+    expect(result.text).toContain('branch_name must start with "draft/"');
+    // Only the branch-detect exec ran — no checkout/stage/commit/push.
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sandboxClient.execInSandbox).mock.calls[0][1]).toContain(
+      'git branch --show-current',
+    );
+  });
+
+  it('runs checkout/stage/commit/push and returns branchSwitch on the auto-generated-branch path', async () => {
+    const diff = 'diff --git a/x.ts b/x.ts\n+a\n';
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff, truncated: false });
+    vi.mocked(sandboxClient.execInSandbox)
+      // git branch --show-current
+      .mockResolvedValueOnce({ stdout: 'main', stderr: '', exitCode: 0, truncated: false })
+      // git checkout -b draft/...
+      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false })
+      // git add -A
+      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false })
+      // git commit -m
+      .mockResolvedValueOnce({
+        stdout: '[draft/main-x abc1234] WIP: draft save',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      // git push -u origin draft/...
+      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1');
+
+    expect(result.text).toContain('[Tool Result — sandbox_save_draft]');
+    expect(result.text).toContain('Draft saved to branch: draft/main-');
+    expect(result.text).toContain('Commit: abc1234');
+    expect(result.text).toContain('Pushed to remote.');
+    expect(result.card?.type).toBe('diff-preview');
+    // branchSwitch is propagated when a new draft branch was created
+    expect(result.branchSwitch).toMatch(/^draft\/main-/);
+
+    // checkout, stage, commit, push all set markWorkspaceMutated: true
+    const mutationCalls = vi
+      .mocked(sandboxClient.execInSandbox)
+      .mock.calls.filter((c) => c[3]?.markWorkspaceMutated === true);
+    expect(mutationCalls).toHaveLength(4);
+  });
+
+  it('skips checkout and omits branchSwitch when already on a draft/ branch', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      diff: 'diff --git a/x.ts b/x.ts\n+a\n',
+      truncated: false,
+    });
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce({
+        stdout: 'draft/existing',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false })
+      .mockResolvedValueOnce({
+        stdout: '[draft/existing def5678] WIP: draft save',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+
+    const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1');
+
+    expect(result.text).toContain('Draft saved to branch: draft/existing');
+    expect(result.branchSwitch).toBeUndefined();
+    // Only 4 execs (no checkout): branch-detect, stage, commit, push
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(4);
   });
 });
 

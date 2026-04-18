@@ -12,7 +12,6 @@ import type {
   ToolExecutionResult,
   StructuredToolError,
   SandboxCardData,
-  DiffPreviewCardData,
   FileListCardData,
   ToolMutationCheckResult,
   ToolMutationDiagnostic,
@@ -37,7 +36,6 @@ import {
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
 import { fetchAuditorFileContexts } from './auditor-file-context';
-import { parseDiffStats } from './diff-utils';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import {
   fileLedger,
@@ -128,6 +126,7 @@ import {
   handlePrepareCommit,
   handleSandboxPush,
   handlePromoteToGithub,
+  handleSaveDraft,
   type GitReleaseHandlerContext,
 } from './sandbox-git-release-handlers';
 
@@ -428,6 +427,8 @@ function buildGitReleaseContext(sandboxId: string): GitReleaseHandlerContext {
     fetchAuditorFileContexts,
     createGitHubRepo,
     getActiveGitHubToken,
+    clearFileVersionCache,
+    clearPrefetchedEditFileCache,
   };
 }
 
@@ -2266,121 +2267,7 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_save_draft': {
-        // Step 1: Check for uncommitted changes
-        const draftDiffResult = await getSandboxDiff(sandboxId);
-
-        if (draftDiffResult.error) {
-          return { text: `[Tool Error — sandbox_save_draft]\n${draftDiffResult.error}` };
-        }
-
-        if (!draftDiffResult.diff) {
-          return {
-            text: '[Tool Result — sandbox_save_draft]\nNo changes to save. Working tree is clean.',
-          };
-        }
-
-        // Step 2: Get current branch
-        const currentBranchResult = await execInSandbox(
-          sandboxId,
-          'cd /workspace && git branch --show-current',
-        );
-        const currentBranch =
-          currentBranchResult.exitCode === 0 ? currentBranchResult.stdout.trim() : '';
-
-        // Step 3: Determine draft branch name — must start with draft/ (unaudited path)
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        if (call.args.branch_name && !call.args.branch_name.startsWith('draft/')) {
-          return {
-            text: '[Tool Error — sandbox_save_draft]\nbranch_name must start with "draft/". This tool skips Auditor review and is restricted to draft branches. Use sandbox_prepare_commit for non-draft branches.',
-          };
-        }
-        const draftBranchName =
-          call.args.branch_name || `draft/${currentBranch || 'main'}-${timestamp}`;
-
-        // Step 4: Create draft branch if not already on one
-        const needsNewBranch = !currentBranch.startsWith('draft/');
-        if (needsNewBranch) {
-          const checkoutResult = await execInSandbox(
-            sandboxId,
-            `cd /workspace && git checkout -b ${shellEscape(draftBranchName)}`,
-            undefined,
-            { markWorkspaceMutated: true },
-          );
-          if (checkoutResult.exitCode !== 0) {
-            return {
-              text: `[Tool Error — sandbox_save_draft]\nFailed to create draft branch: ${checkoutResult.stderr}`,
-            };
-          }
-        }
-
-        const activeDraftBranch = needsNewBranch ? draftBranchName : currentBranch;
-
-        // Step 5: Stage all changes and commit (no Auditor — drafts are WIP)
-        const draftMessage = call.args.message || 'WIP: draft save';
-        const stageResult = await execInSandbox(
-          sandboxId,
-          'cd /workspace && git add -A',
-          undefined,
-          { markWorkspaceMutated: true },
-        );
-        if (stageResult.exitCode !== 0) {
-          return {
-            text: `[Tool Error — sandbox_save_draft]\nFailed to stage changes: ${stageResult.stderr}`,
-          };
-        }
-
-        const commitResult = await execInSandbox(
-          sandboxId,
-          `cd /workspace && git commit -m ${shellEscape(draftMessage)}`,
-          undefined,
-          { markWorkspaceMutated: true },
-        );
-        if (commitResult.exitCode !== 0) {
-          return {
-            text: `[Tool Error — sandbox_save_draft]\nFailed to commit draft: ${commitResult.stderr}`,
-          };
-        }
-        // git add + commit changes file hashes tracked by git
-        clearFileVersionCache(sandboxId);
-        clearPrefetchedEditFileCache(sandboxId);
-
-        // Step 6: Push to remote
-        const pushResult = await execInSandbox(
-          sandboxId,
-          `cd /workspace && git push -u origin ${shellEscape(activeDraftBranch)}`,
-          undefined,
-          { markWorkspaceMutated: true },
-        );
-
-        const pushOk = pushResult.exitCode === 0;
-        const commitSha = commitResult.stdout.match(/\[.+? ([a-f0-9]+)\]/)?.[1] || 'unknown';
-        const draftStats = parseDiffStats(draftDiffResult.diff);
-
-        const draftLines: string[] = [
-          `[Tool Result — sandbox_save_draft]`,
-          `Draft saved to branch: ${activeDraftBranch}`,
-          `Commit: ${commitSha}`,
-          `Message: ${draftMessage}`,
-          `${draftStats.filesChanged} file${draftStats.filesChanged !== 1 ? 's' : ''} changed, +${draftStats.additions} -${draftStats.deletions}`,
-          pushOk
-            ? 'Pushed to remote.'
-            : `Push failed: ${pushResult.stderr}. Use sandbox_push() to retry.`,
-        ];
-
-        const draftCardData: DiffPreviewCardData = {
-          diff: draftDiffResult.diff,
-          filesChanged: draftStats.filesChanged,
-          additions: draftStats.additions,
-          deletions: draftStats.deletions,
-          truncated: draftDiffResult.truncated,
-        };
-
-        return {
-          text: draftLines.join('\n'),
-          card: { type: 'diff-preview', data: draftCardData },
-          // Propagate branch switch to app state so chat/merge context stays in sync
-          ...(needsNewBranch ? { branchSwitch: activeDraftBranch } : {}),
-        };
+        return handleSaveDraft(buildGitReleaseContext(sandboxId), call.args);
       }
 
       case 'promote_to_github': {
