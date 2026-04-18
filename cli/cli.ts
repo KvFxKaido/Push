@@ -85,6 +85,8 @@ const KNOWN_OPTIONS = new Set([
   'noResume',
   'no-attach',
   'noAttach',
+  'no-resume-prompt',
+  'noResumePrompt',
   'delegate',
 ]);
 
@@ -131,13 +133,31 @@ export function parseBoolFlag(raw: unknown, flagName: string) {
   return Boolean(raw);
 }
 
+// Strip ANSI CSI sequences + C0/DEL from user-controlled text before
+// rendering it inside fmt.bold or any other terminal-styling wrapper.
+// Session names can be set via `push resume rename` or by editing state
+// files directly, so this runs anywhere we render a sessionName in a
+// TTY-visible context. Two passes: drop the ESC-[-…-letter sequence as a
+// unit (so `\x1b[31m` doesn't leave a visible `[31m` tail) and then scrub
+// any stray control chars. Multibyte UTF-8 is preserved.
+export function sanitizeTerminalText(raw: string) {
+  return (
+    raw
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping injected CSI is the point
+      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping bare C0/DEL is the point
+      .replace(/[\x00-\x1f\x7f]/g, '')
+  );
+}
+
 function printHelp() {
   process.stdout.write(
     `Push CLI (bootstrap)
 
 Usage:
-  push                          Start TUI when enabled, otherwise interactive session
+  push                          Start TUI when enabled, otherwise interactive session (REPL prompts to resume if sessions exist for this cwd)
   push --session <id>           Resume session (TUI when enabled, otherwise interactive)
+  push --no-resume-prompt       Start a new session without the resume prompt
   push run --task "..."         Run once in headless mode
   push run "..."                Run once in headless mode
   push resume                   Pick a session and attach (TTY); list only when piped
@@ -175,6 +195,7 @@ Options:
   --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
   --json                        JSON output in headless mode / resume
   --no-attach                   Resume: list sessions without prompting (script-friendly)
+  --no-resume-prompt            Bare push: skip the "resume or new" prompt and start a new session
   --delegate                    Headless: plan the task and run it as a task graph (spike)
   --sandbox                     Enable local Docker sandbox
   --no-sandbox                  Disable local Docker sandbox
@@ -529,6 +550,64 @@ function makeInteractiveApprovalFn(rl, { config, safeExecPatterns }) {
 
     return choice === 'y';
   };
+}
+
+// Bare-`push` picker: render cwd-filtered sessions and let the user pick
+// one (by number or full sessionId) or type `n` to start a new session
+// or `q` to cancel. Returns the sessionId to resume, the string `'new'`
+// to start fresh, or `'cancel'` to bail. The caller is responsible for
+// honoring `cancel` with a non-zero-ish exit; `new` is the fall-through
+// that matches pre-picker bare-`push` behavior.
+async function promptResumeOrNew(
+  sessions: Array<{
+    sessionId: string;
+    sessionName: string;
+    updatedAt: number;
+    provider: string;
+    model: string;
+    cwd: string;
+  }>,
+): Promise<string | 'new' | 'cancel'> {
+  const indexWidth = String(sessions.length).length;
+  process.stdout.write('\nResumable sessions for this workspace:\n');
+  for (let i = 0; i < sessions.length; i++) {
+    const row = sessions[i];
+    const num = String(i + 1).padStart(indexWidth, ' ');
+    const safeName = sanitizeTerminalText(row.sessionName);
+    const name = safeName ? ` ${fmt.bold(safeName)}` : '';
+    const when = new Date(row.updatedAt).toISOString();
+    process.stdout.write(
+      `  ${num}. ${row.sessionId}${name}\n` +
+        `     ${fmt.dim(`${when}  ${row.provider}/${row.model}`)}\n`,
+    );
+  }
+
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
+  });
+  try {
+    while (true) {
+      const raw = (await rl.question(`\nResume [1-${sessions.length}, n=new, q=cancel]: `)).trim();
+      const lower = raw.toLowerCase();
+      if (!raw || lower === 'n' || lower === 'new') return 'new';
+      if (lower === 'q' || lower === 'quit' || lower === 'cancel') return 'cancel';
+      if (/^\d+$/.test(raw)) {
+        const num = Number.parseInt(raw, 10);
+        if (num >= 1 && num <= sessions.length) {
+          return sessions[num - 1].sessionId;
+        }
+      }
+      const byId = sessions.find((s) => s.sessionId === raw);
+      if (byId) return byId.sessionId;
+      process.stdout.write(
+        `Invalid choice. Enter a number 1-${sessions.length}, a session id, n for new, or q to cancel.\n`,
+      );
+    }
+  } finally {
+    rl.close();
+  }
 }
 
 function makeAskUserFn(rl) {
@@ -1758,6 +1837,7 @@ export async function main() {
       'no-sandbox': { type: 'boolean' },
       'no-resume': { type: 'boolean' },
       'no-attach': { type: 'boolean' },
+      'no-resume-prompt': { type: 'boolean' },
       delegate: { type: 'boolean', default: false },
       version: { type: 'boolean', short: 'v' },
     },
@@ -1892,18 +1972,6 @@ export async function main() {
       return 0;
     }
 
-    // Session names are user-controlled (push resume rename, direct state
-    // edits) so strip ANSI CSI sequences + C0/DEL before rendering. Two
-    // passes: drop the ESC-[-…-letter sequence as a unit (so `\x1b[31m`
-    // doesn't leave a visible `[31m` tail) and then scrub any stray control
-    // chars. Multibyte UTF-8 is preserved.
-    const sanitizeName = (raw: string) =>
-      raw
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping injected CSI is the point
-        .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping bare C0/DEL is the point
-        .replace(/[\x00-\x1f\x7f]/g, '');
-
     const noResume = parseBoolFlag(values['no-resume'] ?? values.noResume, 'no-resume');
 
     // When exactly one session is resumable the picker's disambiguation
@@ -1914,7 +1982,7 @@ export async function main() {
     // and non-TTY paths above already bypass this branch.
     if (sessions.length === 1) {
       const only = sessions[0];
-      const safeName = sanitizeName(only.sessionName);
+      const safeName = sanitizeTerminalText(only.sessionName);
       const label = safeName ? ` (${fmt.bold(safeName)})` : '';
       const when = new Date(only.updatedAt).toISOString();
       process.stdout.write(
@@ -1929,7 +1997,7 @@ export async function main() {
     for (let i = 0; i < sessions.length; i++) {
       const row = sessions[i];
       const num = String(i + 1).padStart(indexWidth, ' ');
-      const safeName = sanitizeName(row.sessionName);
+      const safeName = sanitizeTerminalText(row.sessionName);
       const name = safeName ? ` ${fmt.bold(safeName)}` : '';
       const when = new Date(row.updatedAt).toISOString();
       process.stdout.write(
@@ -2173,7 +2241,36 @@ export async function main() {
   }
   const requestedModel = values.model || providerConfig.defaultModel;
 
-  const state = await initSession(values.session, provider, requestedModel, cwd);
+  // Bare `push` in REPL + TTY with resumable sessions for *this* cwd:
+  // offer a picker with a "new" choice rather than always starting fresh.
+  // Cross-cwd resume is still available via `push resume`. TUI mode
+  // manages its own session flow, so skip the picker when tuiEnabled.
+  // `push --session <id>`, `push run`, and `--no-resume-prompt` also
+  // bypass (explicit session / headless / opt-out respectively).
+  let resumedSessionId = values.session;
+  if (
+    !resumedSessionId &&
+    !runHeadlessMode &&
+    subcommand === '' &&
+    !tuiEnabled &&
+    !parseBoolFlag(values['no-resume-prompt'] ?? values.noResumePrompt, 'no-resume-prompt') &&
+    Boolean(process.stdin.isTTY) &&
+    Boolean(process.stdout.isTTY)
+  ) {
+    const here = (await listSessions()).filter((s) => s.cwd === cwd);
+    if (here.length > 0) {
+      const picked = await promptResumeOrNew(here);
+      if (picked === 'cancel') {
+        process.stdout.write('Cancelled.\n');
+        return 0;
+      }
+      if (picked !== 'new') {
+        resumedSessionId = picked;
+      }
+    }
+  }
+
+  const state = await initSession(resumedSessionId, provider, requestedModel, cwd);
   if (values.model && values.model !== state.model) state.model = values.model;
   if (values.provider && values.provider !== state.provider) {
     state.provider = provider;

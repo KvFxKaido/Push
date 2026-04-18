@@ -721,6 +721,168 @@ async function spawnPickerPty(args, input, extraEnv) {
   });
 }
 
+// ─── bare `push` resume prompt ───────────────────────────────────
+
+describe('bare push resume prompt', () => {
+  it('does not trigger picker in non-TTY (TTY guard still fires)', async () => {
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-bare-nontty-'));
+    // Seed a session whose cwd matches where `push` will run so the
+    // cwd-filter would otherwise match. Non-TTY stdin must still win and
+    // hit the existing TTY guard — the picker must NOT announce itself.
+    await seedSessions(sessionRoot, [
+      {
+        sessionId: 'sess_alpha1_abcdef',
+        updatedAt: 1_700_000_000_000,
+        cwd: process.cwd(),
+      },
+    ]);
+    const { code, stderr, stdout } = await runCli([], {
+      env: { PUSH_SESSION_DIR: sessionRoot, PUSH_PROVIDER: 'ollama' },
+    });
+    assert.equal(code, 1);
+    assert.ok(
+      stderr.includes('Interactive mode requires a TTY'),
+      `expected TTY guard, stderr=${stderr}`,
+    );
+    assert.ok(
+      !/Resumable sessions for this workspace:/.test(stdout),
+      `picker must not render on non-TTY, stdout=${stdout}`,
+    );
+  });
+
+  it('--no-resume-prompt parses without unknown-flag warning', async () => {
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-bare-optout-'));
+    const { code, stderr } = await runCli(['--no-resume-prompt'], {
+      env: { PUSH_SESSION_DIR: sessionRoot, PUSH_PROVIDER: 'ollama' },
+    });
+    assert.equal(code, 1); // still hits TTY guard in non-TTY
+    assert.ok(!stderr.includes('unknown flag --no-resume-prompt'));
+    assert.ok(stderr.includes('Interactive mode requires a TTY'));
+  });
+
+  it('cancels cleanly when user types q at the bare-push prompt', async () => {
+    try {
+      await execFileAsync('script', ['-V']);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return;
+    }
+
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-bare-cancel-'));
+    // Seed two sessions with cwd matching the test's working dir so the
+    // cwd filter keeps them. Using two so future N=1 auto-picks (if any)
+    // don't short-circuit the prompt this test is pinning.
+    const cwd = process.cwd();
+    await seedSessions(sessionRoot, [
+      {
+        sessionId: 'sess_alpha1_abcdef',
+        updatedAt: 1_700_000_000_000,
+        sessionName: 'Alpha',
+        cwd,
+      },
+      {
+        sessionId: 'sess_beta22_bbccdd',
+        updatedAt: 1_700_000_500_000,
+        cwd,
+      },
+    ]);
+
+    const { stdout, stderr } = await spawnBarePushPty('q\n', {
+      PUSH_SESSION_DIR: sessionRoot,
+      PUSH_TUI_ENABLED: '0',
+      PUSH_PROVIDER: 'ollama',
+    });
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
+      return;
+    }
+    assert.ok(
+      /Resumable sessions for this workspace:/.test(combined),
+      `expected workspace picker banner, combined=${combined}`,
+    );
+    assert.ok(/Cancelled\./.test(combined), `expected cancel line, combined=${combined}`);
+  });
+
+  it('does not prompt when no sessions match the current workspace cwd', async () => {
+    try {
+      await execFileAsync('script', ['-V']);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return;
+    }
+
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-bare-othercwd-'));
+    // Session exists but for a different cwd — the filter should exclude
+    // it and the picker should never render.
+    await seedSessions(sessionRoot, [
+      {
+        sessionId: 'sess_alpha1_abcdef',
+        updatedAt: 1_700_000_000_000,
+        cwd: '/tmp/some-other-dir-that-is-not-cwd',
+      },
+    ]);
+
+    const { stdout, stderr } = await spawnBarePushPty('', {
+      PUSH_SESSION_DIR: sessionRoot,
+      PUSH_TUI_ENABLED: '0',
+      PUSH_PROVIDER: 'ollama',
+    });
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
+      return;
+    }
+    assert.ok(
+      !/Resumable sessions for this workspace:/.test(combined),
+      `picker must be silent when no sessions match cwd, combined=${combined}`,
+    );
+  });
+});
+
+async function spawnBarePushPty(input, extraEnv) {
+  const env = {
+    ...process.env,
+    PUSH_CONFIG_PATH: `/tmp/push-test-cli-config-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    ...extraEnv,
+  };
+  const cmd = buildCliCommand([]);
+  return await new Promise((resolve) => {
+    const child = spawn('script', ['-q', '-e', '-c', cmd, '/dev/null'], {
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+    }, 5000);
+    let sent = false;
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk);
+      if (!sent && input && /Resume \[/.test(stripAnsi(stdout))) {
+        sent = true;
+        try {
+          child.stdin.write(input);
+        } catch {
+          // ignore
+        }
+      }
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? 0, stdout, stderr });
+    });
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve({ code: 1, stdout, stderr });
+    });
+  });
+}
+
 // ─── deprecated provider migration ─────────────────────────────
 
 describe('deprecated provider migration', () => {

@@ -40,10 +40,11 @@ The launcher currently exports `PUSH_TUI_ENABLED=1`, so bare `./push` and `./pus
 ```bash
 PUSH_TUI_ENABLED=0 ./push
 PUSH_TUI_ENABLED=0 ./push --provider openrouter --model anthropic/claude-sonnet-4.6:nitro
-PUSH_TUI_ENABLED=0 ./push --session sess_abc123   # resume a previous session
+PUSH_TUI_ENABLED=0 ./push --session sess_abc123     # resume a previous session by id
+PUSH_TUI_ENABLED=0 ./push --no-resume-prompt        # skip the resume-or-new prompt
 ```
 
-With TUI disabled, this starts the transcript-first REPL. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (`rm -rf`, `sudo`, force-push, etc.) prompt for approval before running, with one-shot, session-trust, and saved-prefix trust options.
+With TUI disabled, this starts the transcript-first REPL. When resumable sessions exist for the current workspace (matched by cwd), bare `./push` prints a numbered picker of those sessions with an `n=new` choice so you can pick up where you left off without typing a second command. `--session <id>` skips the picker (explicit resume), `--no-resume-prompt` skips the picker and starts a new session, and if no sessions exist for this cwd the picker is silent. Cross-cwd resume is still available via `./push resume`. The agent streams responses, executes tools, and loops until it's done or you type `/exit`. High-risk commands (`rm -rf`, `sudo`, force-push, etc.) prompt for approval before running, with one-shot, session-trust, and saved-prefix trust options.
 
 Use `PUSH_TUI_ENABLED=0` to make the REPL the default in your shell, or run `./push tui` explicitly when you want the TUI.
 
@@ -337,6 +338,7 @@ Options:
   --max-rounds <n>        Tool-loop cap (default: 8, max: 30)
   --json                  JSON output (headless/resume)
   --no-attach             Resume: list sessions without prompting
+  --no-resume-prompt      Bare push: skip the "resume or new" prompt and start a new session
   --sandbox               Enable local Docker sandbox
   --no-sandbox            Disable local Docker sandbox
   -h, --help              Show help
