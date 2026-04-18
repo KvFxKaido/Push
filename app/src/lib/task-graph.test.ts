@@ -291,9 +291,15 @@ describe('validateTaskGraph — error types', () => {
     ];
     const errors = validateTaskGraph(nodes);
     const invalidAgentErrors = errors.filter((e) => e.type === 'invalid_agent');
+    // `validateTaskGraph` does not document an error-ordering
+    // contract, so assert via set-membership rather than indexing —
+    // otherwise the test is brittle to harmless refactors that
+    // change iteration order or group errors by type (Copilot
+    // review on PR #332).
+    const invalidAgentMessages = invalidAgentErrors.map((e) => e.message);
     expect(invalidAgentErrors).toHaveLength(2);
-    expect(invalidAgentErrors[0].message).toContain('"reviewer"');
-    expect(invalidAgentErrors[1].message).toContain('""');
+    expect(invalidAgentMessages.some((message) => message.includes('"reviewer"'))).toBe(true);
+    expect(invalidAgentMessages.some((message) => message.includes('""'))).toBe(true);
   });
 
   it('returns missing_dependency error naming the unknown dependency', () => {
@@ -439,7 +445,12 @@ describe('executeTaskGraph — parallelism and serialization', () => {
     const result = await executeTaskGraph(nodes, async (node) => {
       concurrentCoders++;
       if (concurrentCoders > maxConcurrent) maxConcurrent = concurrentCoders;
-      await new Promise((r) => setTimeout(r, 5));
+      // 20ms window is generous for the dispatch loop to attempt
+      // concurrent dispatches — setTimeout guarantees at least N ms,
+      // so CI load makes the window longer (not shorter), and this
+      // keeps the test robust under heavy event-loop contention
+      // (github-actions review on PR #332).
+      await new Promise((r) => setTimeout(r, 20));
       concurrentCoders--;
       return {
         summary: `${node.id} done`,
@@ -466,7 +477,7 @@ describe('executeTaskGraph — parallelism and serialization', () => {
     const result = await executeTaskGraph(nodes, async (node) => {
       concurrentExplorers++;
       if (concurrentExplorers > maxConcurrent) maxConcurrent = concurrentExplorers;
-      await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 20));
       concurrentExplorers--;
       return {
         summary: `${node.id} done`,
@@ -493,7 +504,7 @@ describe('executeTaskGraph — parallelism and serialization', () => {
       async (node) => {
         concurrentExplorers++;
         if (concurrentExplorers > maxConcurrent) maxConcurrent = concurrentExplorers;
-        await new Promise((r) => setTimeout(r, 10));
+        await new Promise((r) => setTimeout(r, 20));
         concurrentExplorers--;
         return {
           summary: `${node.id} done`,
@@ -521,7 +532,7 @@ describe('executeTaskGraph — parallelism and serialization', () => {
       if (concurrentByAgent.explorer > 0 && concurrentByAgent.coder > 0) {
         sawExplorerAndCoderConcurrent = true;
       }
-      await new Promise((r) => setTimeout(r, 15));
+      await new Promise((r) => setTimeout(r, 20));
       concurrentByAgent[node.agent]--;
       return {
         summary: `${node.id} done`,
