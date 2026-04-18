@@ -445,3 +445,55 @@ Per-node rounds stayed in the 2-3 range across all measurement states (cold and 
 - **Is not:** a new full-screen graph mode or a protocol change. If a future producer wants a true edge-rendered DAG, the event payload should carry dependencies explicitly; the renderer already has a narrow hook for that shape.
 
 **Status:** Gap 3 implementation checklist closed. Remaining work on "does typed memory measurably help small models" is still research-shaped, not implementation-blocking.
+
+---
+
+## 2026-04-18 — Big Four sandbox-tools track completed: three extractions in one session
+
+**Session purpose:** Continue the sandbox-tools extraction tranche from where PR #324 left off. The plan doc's Step 4 "Next candidate families" list pointed at read-only inspection (~484 inline lines across 5 tools) and mutation (~1,300+ lines across 5 tools); the previous session had only landed verification and git/release. Goal was to close the remaining families this session if the pattern held.
+
+**What shipped (three commits on `main`, one per family, tests-and-extraction bundled per commit):**
+
+- **`114bdc3`** refactor(tools): extract read-only inspection handlers. Five handlers (`sandbox_read_file`, `sandbox_search`, `sandbox_list_dir`, `sandbox_read_symbols`, `sandbox_find_references`) moved into [`app/src/lib/sandbox-read-only-inspection-handlers.ts`](../../app/src/lib/sandbox-read-only-inspection-handlers.ts) (576 lines) behind `ReadOnlyInspectionHandlerContext` (13 methods). Dispatcher: 3,267 → 2,807 lines. Coupling recon found the two hazards Codex had flagged in the plan's "read-only looks safe but isn't" note: `sandbox_read_file` secretly syncs file-version snapshots and invalidates workspace revisions on `WORKSPACE_CHANGED`; `sandbox_read_symbols` reads and writes the symbol persistence cache and records partial-coverage on the file-awareness ledger. Both seams now enter the handler only through the named context. Characterization gap surfaced during validation: six stale dispatcher tests asserted behavior that never existed (redaction regex requires 20+ chars after `sk-`, `[Tool Error — sandbox_read_file]` prefix is never emitted, `totalLines` is not a field on the `partial_read` ledger state) — reconciled to current behavior in the same commit plus one mock-completeness fix (missing `readSymbolsFromSandbox` on the sandbox-client mock, which was cascading into 29 spurious "undefined property" failures across tests that had nothing to do with read_symbols).
+
+- **`7ecd4dd`** refactor(tools): extract edit family. Three handlers (`sandbox_edit_file`, `sandbox_edit_range`, `sandbox_search_replace`) moved into [`app/src/lib/sandbox-edit-handlers.ts`](../../app/src/lib/sandbox-edit-handlers.ts) (1,069 lines) behind `EditHandlerContext` (24 methods). Dispatcher: 2,807 → 1,673 lines. Two architectural wins beyond the line-count move: (1) `handleEditRange` and `handleSearchReplace` previously hand-off to `sandbox_edit_file` by recursing through `executeSandboxToolCall`; they now call `handleEditFile` directly, removing a dispatcher round-trip and closing a circular-import risk the extraction would otherwise introduce; (2) the shared mutation-postcondition formatters (`buildHashlineChangedSpans`, `buildPerEditDiagnosticSummary`, `buildPatchsetDiagnosticSummary`, `appendMutationPostconditions`, `buildLineRanges`) moved into a neutral [`sandbox-mutation-postconditions.ts`](../../app/src/lib/sandbox-mutation-postconditions.ts) module so the upcoming write-family extraction could import them without reintroducing a dependency on the dispatcher.
+
+- **`afdfc8c`** refactor(tools): extract write family. Two handlers (`sandbox_write_file`, `sandbox_apply_patchset`) moved into [`app/src/lib/sandbox-write-handlers.ts`](../../app/src/lib/sandbox-write-handlers.ts) (1,313 lines) behind `WriteHandlerContext` (32 methods — the largest and most stateful surface on the dispatcher). The `apply_patchset` rollback path — which was the most subtle state logic in the codebase, doing parallel symbolic guards with auto-expand caching, cross-file workspace-revision validation, batch write with HTTP 404/405 → sequential-write fallback, and ledger-snapshot-based rollback when post-write checks fail — is the first-class citizen of the new context surface: `getLedgerState`, `getLedgerProvenance`, `restoreLedgerState`, `clearLedgerProvenance` are all first-class methods now, instead of implicit calls into module globals. Four patchset-local pure helpers (`isPatchsetRangeEdit`, `getPatchsetEditContent`, `compilePatchsetEditOps`, `buildPatchsetTouchedFiles`) moved with the handler. Dispatcher: 1,673 → 475 lines. 21 now-unused imports pruned across the tranche.
+
+**Validation (after each commit):**
+
+- `cd app && npx tsc --noEmit` → clean.
+- `cd app && npx vitest run src/lib/sandbox-tools.test.ts` → 131/131 pass (behavior-preserving).
+- `cd app && npx vitest run` → 1,833/1,833 pass across 141 test files (up from 1,828 / 140 pre-session as 12 new handler-level tests across the three new `sandbox-*-handlers.test.ts` modules joined the suite).
+- `npm run typecheck` (CLI) → clean.
+- `npm run test:cli` → 1,212/1,212 pass.
+- Pre-commit hooks (Biome + ESLint + commitlint) clean after one auto-format pass per commit.
+
+**Big Four sandbox-tools status (after this session):**
+
+| Phase | Commit | Dispatcher lines | Δ | Handler context methods |
+|---|---|---|---|---|
+| Pre-track (2026-04-14 snapshot) | — | 4,112 | — | — |
+| Verification | `14a63c4` | 3,614 | -498 | 4 |
+| Git/release | `9c22544` | 3,267 | -347 | 8 |
+| Read-only inspection | `114bdc3` | 2,807 | -460 | 13 |
+| Edit | `7ecd4dd` | 1,673 | -1,134 | 24 |
+| Write | `afdfc8c` | **475** | -1,198 | 32 |
+
+Dispatcher -88% from track start, -83% this session alone. All five case-arm families now delegate through named handler contexts. None of the five handler modules imports from `sandbox-tools.ts`.
+
+**What this validates (per plan §Step 4):**
+
+- **The handler-context pattern held across all four remaining families.** Pattern validation was an explicit open question in the plan after verification and git/release shipped ("two cleanly-shipped extractions don't validate the pattern for families with worse failure modes"). Three more extractions landed cleanly with the pattern, including the highest-stakes one (patchset rollback with ledger snapshot/restore). The pattern generalizes.
+- **`sandbox-tools.ts` has the "dispatcher as router" shape the track was aimed at.** 475 lines: detection/validation re-exports (barrel forwarding), five small context-builder helpers, and `executeSandboxToolCall` whose case arms are one-line delegations. Nothing else.
+- **The recursive delegation pattern (`sandbox_edit_range` / `sandbox_search_replace` calling `executeSandboxToolCall(sandbox_edit_file, …)`) is gone.** It was a latent circular-import hazard that the extraction forced into the open; the fix was cleaner than the original shape.
+
+**Deferred (explicitly):**
+
+- **Co-churn / locality-rule assessment.** The plan's prescriptive fitness rule from the "did the refactor actually work" section applies: a future mutation-family bug fix should touch one handler and its tests, not drag siblings along. The signal arrives once the next feature or bug lands in this area. Until then, the extraction is validated by behavior preservation (test suite) plus structural review (one-way import graph), not by co-churn.
+- **Two semantic oddities carried forward from PR #324** (still unchanged by this session's extractions): `promote_to_github` missing `markWorkspaceMutated: true`, and the duplicated 1,200-char truncation in `sandbox_prepare_commit`. Both are one-liner semantic fixes that each want their own characterization update.
+- **Handler-level test coverage depth.** Each new handler module shipped with 5–7 narrow tests exercising context injection and representative error paths. The 131 dispatcher-level characterization tests do the heavy lifting for behavior preservation; the handler-level tests exist to cover the extraction seam itself. If a future bug surfaces inside a handler, expanding that module's test file is the obvious follow-up.
+
+**Three-green-gate status:** this entry does not count toward the verification-family three-green gate — still a different track (the gate covers real-use observations of `sandbox_run_tests` / `sandbox_check_types` / `sandbox_verify_workspace`, and the gate remains suspended pending CLI daily-driver readiness per the top-of-file note). This entry discharges the remaining Step 4 candidate-families list from the plan.
+
+**Status:** Big Four sandbox-tools extraction track complete. Dispatcher is a router. Next Big Four module on the list is `useChat.ts` / `useAgentDelegation.ts` / `coder-agent.ts` per the plan's Steps 4–6, at which point the handler-context pattern gets tested on React hooks rather than on a pure dispatcher — genuinely different risk profile, not a copy-paste of today's approach.
