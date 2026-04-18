@@ -118,6 +118,97 @@ describe('roleCanUseTool', () => {
 });
 
 // ---------------------------------------------------------------------------
+// CLI-native tool capability mappings (Gap 2)
+// ---------------------------------------------------------------------------
+
+describe('CLI-native tool capability mappings', () => {
+  // Pin the exact capability assignments for the CLI-native tool names
+  // added alongside the daemon-side `roleCanUseTool` swap. If any of
+  // these entries drift without an accompanying review of
+  // `makeDaemonExplorerToolExec`, this test breaks before production
+  // behavior does.
+  const expected: Record<string, readonly string[]> = {
+    list_dir: ['repo:read'],
+    read_symbols: ['repo:read'],
+    read_symbol: ['repo:read'],
+    git_status: ['repo:read'],
+    git_diff: ['repo:read'],
+    git_commit: ['git:commit'],
+    lsp_diagnostics: ['repo:read'],
+    save_memory: ['scratchpad'],
+    write_file: ['repo:write'],
+    edit_file: ['repo:write'],
+    undo_edit: ['repo:write'],
+    exec: ['sandbox:exec'],
+    exec_start: ['sandbox:exec'],
+    exec_poll: ['sandbox:exec'],
+    exec_write: ['sandbox:exec'],
+    exec_stop: ['sandbox:exec'],
+    exec_list_sessions: ['sandbox:exec'],
+  };
+
+  for (const [tool, caps] of Object.entries(expected)) {
+    it(`${tool} → ${caps.join(', ')}`, () => {
+      expect(TOOL_CAPABILITIES[tool]).toEqual(caps);
+    });
+  }
+
+  it('Explorer can use CLI-native read tools', () => {
+    expect(roleCanUseTool('explorer', 'list_dir')).toBe(true);
+    expect(roleCanUseTool('explorer', 'read_symbols')).toBe(true);
+    expect(roleCanUseTool('explorer', 'read_symbol')).toBe(true);
+    expect(roleCanUseTool('explorer', 'git_status')).toBe(true);
+    expect(roleCanUseTool('explorer', 'git_diff')).toBe(true);
+    expect(roleCanUseTool('explorer', 'lsp_diagnostics')).toBe(true);
+  });
+
+  it('Explorer cannot use CLI-native mutation tools', () => {
+    expect(roleCanUseTool('explorer', 'write_file')).toBe(false);
+    expect(roleCanUseTool('explorer', 'edit_file')).toBe(false);
+    expect(roleCanUseTool('explorer', 'undo_edit')).toBe(false);
+    expect(roleCanUseTool('explorer', 'git_commit')).toBe(false);
+  });
+
+  it('Explorer cannot use CLI-native exec family (intentional behavior change for exec_poll / exec_list_sessions)', () => {
+    // Behavior change from READ_ONLY_TOOLS: `exec_poll` and
+    // `exec_list_sessions` were Explorer-callable under the previous
+    // allowlist. Under the shared table they require `sandbox:exec`,
+    // which Explorer does not grant. Safe in practice: Explorer cannot
+    // start the sessions it would be polling.
+    expect(roleCanUseTool('explorer', 'exec')).toBe(false);
+    expect(roleCanUseTool('explorer', 'exec_start')).toBe(false);
+    expect(roleCanUseTool('explorer', 'exec_poll')).toBe(false);
+    expect(roleCanUseTool('explorer', 'exec_write')).toBe(false);
+    expect(roleCanUseTool('explorer', 'exec_stop')).toBe(false);
+    expect(roleCanUseTool('explorer', 'exec_list_sessions')).toBe(false);
+  });
+
+  it('Explorer cannot use save_memory (scratchpad is not in Explorer grant)', () => {
+    expect(roleCanUseTool('explorer', 'save_memory')).toBe(false);
+  });
+
+  it('Coder can use CLI-native mutation + exec + commit tools', () => {
+    expect(roleCanUseTool('coder', 'write_file')).toBe(true);
+    expect(roleCanUseTool('coder', 'edit_file')).toBe(true);
+    expect(roleCanUseTool('coder', 'undo_edit')).toBe(true);
+    expect(roleCanUseTool('coder', 'exec')).toBe(true);
+    expect(roleCanUseTool('coder', 'exec_start')).toBe(true);
+    expect(roleCanUseTool('coder', 'exec_poll')).toBe(true);
+    expect(roleCanUseTool('coder', 'git_commit')).toBe(true);
+  });
+
+  it('save_memory is gated on scratchpad — orchestrator + coder allowed, explorer/reviewer/auditor blocked', () => {
+    // Pin the scratchpad grant matrix so a future grant change that
+    // silently opens or closes `save_memory` access breaks this test.
+    expect(roleCanUseTool('orchestrator', 'save_memory')).toBe(true);
+    expect(roleCanUseTool('coder', 'save_memory')).toBe(true);
+    expect(roleCanUseTool('explorer', 'save_memory')).toBe(false);
+    expect(roleCanUseTool('reviewer', 'save_memory')).toBe(false);
+    expect(roleCanUseTool('auditor', 'save_memory')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // CapabilityLedger
 // ---------------------------------------------------------------------------
 

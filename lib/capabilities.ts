@@ -134,6 +134,44 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
 
   // Ask user
   ask_user: ['user:ask'],
+
+  // CLI-native tools (daemon tool surface in `cli/tools.ts`). These names
+  // are distinct from the sandbox family above because the CLI dispatches
+  // against the local workspace via `executeToolCall`, not the sandbox
+  // API. Added 2026-04-18 so `roleCanUseTool` is authoritative on both
+  // surfaces — see `cli/pushd.ts:makeDaemonExplorerToolExec` for the
+  // enforcement swap that motivated these entries.
+  //
+  // Omitted deliberately:
+  // - `coder_update_state`: handled pre-executor on both surfaces, never
+  //   reaches the daemon tool-exec boundary. Adding an entry would be
+  //   noise.
+  // - `read_file` / `search_files` / `web_search` / `ask_user`: already
+  //   mapped above; the CLI dispatch reuses those canonical names.
+  list_dir: ['repo:read'],
+  read_symbols: ['repo:read'],
+  read_symbol: ['repo:read'],
+  git_status: ['repo:read'],
+  git_diff: ['repo:read'],
+  git_commit: ['git:commit'],
+  lsp_diagnostics: ['repo:read'],
+  save_memory: ['scratchpad'],
+  write_file: ['repo:write'],
+  edit_file: ['repo:write'],
+  undo_edit: ['repo:write'],
+  exec: ['sandbox:exec'],
+  exec_start: ['sandbox:exec'],
+  // exec_poll / exec_list_sessions are read-verbs over exec-family objects.
+  // Assigned `sandbox:exec` (not `repo:read`) because Explorer can never
+  // poll a session it could not have started — `exec_start` requires
+  // `sandbox:exec` and `makeDaemonExplorerToolExec` passes `allowExec:
+  // false` as a second line of defense. Coherent with the family;
+  // functionally removes Explorer access to these two tools (intentional
+  // behavior change — see PR description for rationale).
+  exec_poll: ['sandbox:exec'],
+  exec_write: ['sandbox:exec'],
+  exec_stop: ['sandbox:exec'],
+  exec_list_sessions: ['sandbox:exec'],
 };
 
 /**
