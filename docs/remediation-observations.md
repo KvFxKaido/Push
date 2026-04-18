@@ -377,6 +377,8 @@ Plus one adjacent prompt-tuning fix (`a7adf71`, github-actions bot suggestion): 
 | Pre-tranche (PR #333 baseline) | 33% (1/3) | 67% (2/3) | 0 | **0%** |
 | Post-tranche final | 0 | 0 | 0 | **100% (5/5)** |
 
+Note on the absolute count: the PR #334 body's progression table reported 6/6 for the post-merge measurement (no node failures in that run); the 5/5 above is from the post-Codex-review re-measurement where one node hit a provider timeout that Fix 3 correctly skipped from memory. **The percentage is the stable signal — the absolute count varies by how many nodes survive provider issues in any given run.** Both runs are valid post-tranche measurements at the same code state (the difference is run-level provider variance, not tranche behavior).
+
 Per-node rounds stayed in the 2-3 range across all measurement states (cold and warm cache), so the **rounds-to-completion delta** that PR #333's retraction left as the open question is **still open**. The tranche closed the content-quality axis (records are now reliably useful natural-language summaries) without resolving the value axis (whether retrieval measurably reduces work for small models). Future measurement work needs either (a) larger N per condition to dampen Gemini 3 Flash's nondeterminism + planner variance, or (b) a task with stronger precursor coupling where prior context provides concrete code-level findings the model would otherwise re-derive.
 
 **What this is and is not:**
