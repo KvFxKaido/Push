@@ -46,12 +46,16 @@ import {
   type PlannerFeatureList,
   type PlannerStreamFn,
 } from '../lib/planner-core.js';
+import { setDefaultMemoryStore } from '../lib/context-memory-store.js';
 import { streamCompletion, type ProviderConfig } from './provider.js';
 import { buildSystemPromptBase, runAssistantLoop } from './engine.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { appendSessionEvent, makeRunId, saveSessionState } from './session-store.js';
 import { buildHeadlessTaskBrief } from './task-brief.js';
 import { fmt } from './format.js';
+import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.js';
+import { resolveWorkspaceIdentity } from './workspace-identity.js';
+import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.js';
 import { randomBytes } from 'node:crypto';
 
 function mintGraphExecutionId() {
@@ -234,6 +238,41 @@ export async function runDelegatedHeadless(
       runId,
     );
 
+    // Initialize the file-backed ContextMemoryStore once per headless
+    // invocation so typed-memory writes persist across subsequent
+    // `./push run --delegate` calls. Mirrors pushd's main() wiring —
+    // both surfaces share the same on-disk layout under
+    // getMemoryStoreBaseDir(), so records written here are also
+    // visible to pushd task-graph runs and vice versa. Env-var
+    // override PUSH_MEMORY_DIR lets tests and measurement scripts
+    // isolate per-run stores.
+    setDefaultMemoryStore(createFileMemoryStore({ baseDir: getMemoryStoreBaseDir() }));
+
+    // Resolve workspace identity once per graph for memory scoping.
+    // resolveWorkspaceIdentity is non-throwing by contract (errors
+    // become path.basename(cwd) / null fallbacks internally), so no
+    // catch needed here — Copilot review on PR #333 caught that the
+    // earlier catch fell back to state.cwd (an absolute path), which
+    // would slip through the file store's path.join and write outside
+    // baseDir.
+    const workspaceIdentity = await resolveWorkspaceIdentity(state.cwd);
+    // Deliberately omit chatId from the scope. Each `push run`
+    // invocation mints a fresh state.sessionId, so passing it as
+    // chatId means retrieval filters out records written by previous
+    // runs (lib/context-memory-retrieval.ts:122,205). The
+    // headless CLI has no UI primitive for "stay in the same chat
+    // across invocations" — the workspace (repo+branch) is the
+    // natural scope. Codex P1 review on PR #333 caught this — the
+    // initial measurement signal (5→3 rounds) was variance, not
+    // retrieval. taskGraphId still flows through as a same-graph
+    // score boost (line 144), which is what within-graph node
+    // sequencing needs.
+    const graphMemoryScope = {
+      repoFullName: workspaceIdentity.repoFullName,
+      branch: workspaceIdentity.branch ?? undefined,
+      taskGraphId: executionId,
+    };
+
     // Snapshot the system message(s) so each node's scoped state can be
     // seeded from them. Messages and workingMemory are now scoped per-node
     // (see executor below) rather than mutated on `state`, so there is
@@ -268,10 +307,25 @@ export async function runDelegatedHeadless(
       };
 
       const preamble = buildHeadlessTaskBrief(node.task, acceptanceChecks);
-      const contextBlock =
-        enrichedContext.length > 0
-          ? `[Prior task context]\n${enrichedContext.join('\n\n')}\n\n`
-          : '';
+
+      // Retrieve typed memory scoped to this node (cross-session
+      // persistent records) alongside the existing graph-internal
+      // enrichedContext (fresh from completed dependency/sibling
+      // nodes in this graph). Retrieval is error-isolated: a failure
+      // returns null and the node runs without the memory block —
+      // same graceful-degradation pattern as the write path.
+      const retrievedBlock = await buildTypedMemoryBlockForNode({
+        node,
+        scope: graphMemoryScope,
+      });
+      const contextPieces: string[] = [];
+      if (enrichedContext.length > 0) {
+        contextPieces.push(`[Prior task context]\n${enrichedContext.join('\n\n')}`);
+      }
+      if (retrievedBlock) {
+        contextPieces.push(retrievedBlock);
+      }
+      const contextBlock = contextPieces.length > 0 ? `${contextPieces.join('\n\n')}\n\n` : '';
       await appendUserMessageWithFileReferences(
         nodeState,
         `${contextBlock}${preamble}`,
@@ -335,6 +389,23 @@ export async function runDelegatedHeadless(
       signal: ac.signal,
       onProgress,
     });
+
+    // 5. Persist typed memory for each completed node so the next
+    // --delegate run on the same repo/branch can retrieve it.
+    // Error-isolated per-node inside writeTaskGraphResultMemory.
+    try {
+      await writeTaskGraphResultMemory(result, graphMemoryScope);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `${JSON.stringify({
+          level: 'warn',
+          event: 'task_graph_memory_persist_failed',
+          executionId,
+          error: msg,
+        })}\n`,
+      );
+    }
 
     await appendSessionEvent(
       state,

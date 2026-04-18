@@ -69,6 +69,10 @@ import {
   isCapabilityMapped,
   ROLE_CAPABILITIES,
 } from '../lib/capabilities.ts';
+import { setDefaultMemoryStore } from '../lib/context-memory-store.ts';
+import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.ts';
+import { resolveWorkspaceIdentity } from './workspace-identity.ts';
+import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.ts';
 
 const VERSION = '0.3.0';
 const CAPABILITIES = [
@@ -1483,12 +1487,19 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
  * semantics — both call sites share the same `makeDaemonExplorerToolExec`
  * factory.
  */
-async function runExplorerForTaskGraph(sessionId, entry, node, signal) {
+async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleExtras = []) {
   const startedAt = Date.now();
   const { provider, model } = resolveRoleRouting(entry, 'explorer');
   const toolExec = makeDaemonExplorerToolExec({ entry, signal });
   const evaluateAfterModel = async () => null;
   const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
+
+  // Splice graph-internal memory (from executeTaskGraph's
+  // enrichedContext) and typed-memory retrieval blocks into the
+  // task preamble. The model sees them as part of the task
+  // description, separated by blank lines — matches how web's
+  // role-memory-context.appendRetrievedMemoryBlock concatenates.
+  const taskPreamble = [node.task, ...preambleExtras].filter(Boolean).join('\n\n');
 
   const result = await runExplorerAgent(
     {
@@ -1498,7 +1509,7 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal) {
       sandboxId: null,
       allowedRepo: '',
       userProfile: null,
-      taskPreamble: node.task,
+      taskPreamble,
       symbolSummary: null,
       toolExec,
       detectAllToolCalls: wrapCliDetectAllToolCalls,
@@ -1569,7 +1580,14 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal) {
  * Acceptance criteria / harness overrides are omitted so the kernel's
  * defaults apply (no criteria, no context resets, default round cap).
  */
-async function runCoderForTaskGraph(sessionId, entry, node, parentRunId, signal) {
+async function runCoderForTaskGraph(
+  sessionId,
+  entry,
+  node,
+  parentRunId,
+  signal,
+  preambleExtras = [],
+) {
   const startedAt = Date.now();
   const { provider, model } = resolveRoleRouting(entry, 'coder');
   const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
@@ -1592,6 +1610,8 @@ async function runCoderForTaskGraph(sessionId, entry, node, parentRunId, signal)
   });
   const evaluateAfterModel = async () => null;
 
+  const taskPreamble = [node.task, ...preambleExtras].filter(Boolean).join('\n\n');
+
   const result = await runCoderAgent(
     {
       provider,
@@ -1600,7 +1620,7 @@ async function runCoderForTaskGraph(sessionId, entry, node, parentRunId, signal)
       sandboxId: '',
       allowedRepo: '',
       userProfile: null,
-      taskPreamble: node.task,
+      taskPreamble,
       symbolSummary: null,
       toolExec,
       detectAllToolCalls: wrapCliDetectAllToolCalls,
@@ -1837,12 +1857,49 @@ async function handleSubmitTaskGraph(req) {
       }
     };
 
-    const executor = async (node, _enrichedContext, signal) => {
+    // Resolve workspace identity once per graph — branch could move
+    // during a long-running graph if a Coder node commits or
+    // switches branches, but for the scope of this graph the
+    // identity captured here is used as the memory scope for all
+    // retrievals + writes. This matches how web uses a single
+    // branchInfoRef snapshot per delegation (useAgentDelegation.ts).
+    // resolveWorkspaceIdentity is non-throwing by contract (errors
+    // become path.basename(cwd) / null fallbacks internally), so no
+    // outer catch needed.
+    const workspaceIdentity = await resolveWorkspaceIdentity(entry.state.cwd);
+    // chatId deliberately omitted from the scope — see the same
+    // comment in delegation-entry.ts. Pushd's sessionId is also
+    // per-invocation for headless flows, and even attached sessions
+    // wouldn't benefit from chatId-narrowing memory across the
+    // workspace. Codex P1 review on PR #333.
+    const graphMemoryScope = {
+      repoFullName: workspaceIdentity.repoFullName,
+      branch: workspaceIdentity.branch ?? undefined,
+      taskGraphId: executionId,
+    };
+
+    const executor = async (node, enrichedContext, signal) => {
+      // Retrieve typed memory scoped to this node. Splice it
+      // alongside the graph-internal memory (`enrichedContext`
+      // from lib/task-graph.ts, containing `[TASK_GRAPH_MEMORY]`
+      // summaries of completed dependency + sibling nodes) into
+      // the node's taskPreamble. Retrieval failures return null
+      // and the node runs with just the graph-internal memory —
+      // graceful degradation.
+      const retrievedBlock = await buildTypedMemoryBlockForNode({
+        node,
+        scope: graphMemoryScope,
+      });
+      const preambleExtras = [
+        ...(enrichedContext ?? []),
+        ...(retrievedBlock ? [retrievedBlock] : []),
+      ];
+
       if (node.agent === 'explorer') {
-        return runExplorerForTaskGraph(sessionId, entry, node, signal);
+        return runExplorerForTaskGraph(sessionId, entry, node, signal, preambleExtras);
       }
       if (node.agent === 'coder') {
-        return runCoderForTaskGraph(sessionId, entry, node, parentRunId, signal);
+        return runCoderForTaskGraph(sessionId, entry, node, parentRunId, signal, preambleExtras);
       }
       throw new Error(`Unsupported task-graph agent: ${node.agent}`);
     };
@@ -1880,6 +1937,32 @@ async function handleSubmitTaskGraph(req) {
           totalRounds: 0,
           wallTimeMs: Date.now() - startedAt,
         };
+
+    // Persist typed memory for each completed node before emitting
+    // graph_completed so later runs can retrieve prior findings +
+    // outcomes. Writes are error-isolated — a failure for one node
+    // logs and continues, never blocking the completion event.
+    // Reuses `graphMemoryScope` already resolved above so we don't
+    // invoke git twice per graph.
+    if (result) {
+      try {
+        await writeTaskGraphResultMemory(result, graphMemoryScope);
+      } catch (err) {
+        // Belt-and-braces — writeTaskGraphResultMemory is
+        // error-isolated per-node, so a throw at this level means
+        // something went wrong before the loop (e.g., an
+        // unexpected store-initialization failure).
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `${JSON.stringify({
+            level: 'warn',
+            event: 'task_graph_memory_persist_failed',
+            executionId,
+            error: msg,
+          })}\n`,
+        );
+      }
+    }
 
     await emitTaskGraphEvent('task_graph.graph_completed', completedPayload);
     entry.activeGraphs.delete(executionId);
@@ -3542,6 +3625,14 @@ export async function main() {
   const socketPath = getSocketPath();
   await ensureSocketDir(socketPath);
   await cleanStaleSocket(socketPath);
+
+  // Wire a file-backed ContextMemoryStore so typed memory records
+  // written by task-graph node completions (see handleSubmitTaskGraph)
+  // persist across pushd restarts. The in-memory default would lose
+  // all history on SIGTERM/restart, which defeats the "memory" in
+  // typed memory. See Gap 3 Step 3 in the Architecture Remediation
+  // Plan for context.
+  setDefaultMemoryStore(createFileMemoryStore({ baseDir: getMemoryStoreBaseDir() }));
 
   const server = net.createServer(handleConnection);
 

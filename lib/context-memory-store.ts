@@ -6,8 +6,8 @@
  * backends so callers do not need to change when persistence is added.
  */
 
-import type { MemoryRecord } from './runtime-contract';
-import { isExpired } from './memory-persistence-policy';
+import type { MemoryRecord } from './runtime-contract.js';
+import { isExpired } from './memory-persistence-policy.js';
 
 export interface ContextMemoryStore {
   write(record: MemoryRecord): void | Promise<void>;

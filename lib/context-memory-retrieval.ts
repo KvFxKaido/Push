@@ -8,8 +8,8 @@ import type {
   MemoryRetrievalResult,
   MemoryScoreBreakdown,
   ScoredMemoryRecord,
-} from './runtime-contract';
-import type { ContextMemoryStore } from './context-memory-store';
+} from './runtime-contract.js';
+import type { ContextMemoryStore } from './context-memory-store.js';
 
 const W_BRANCH = 3;
 const W_TASK_GRAPH = 3;

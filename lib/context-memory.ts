@@ -11,15 +11,15 @@ import type {
   MemoryScope,
   MemorySource,
   TaskGraphNodeState,
-} from './runtime-contract';
-import { getDefaultMemoryStore, type ContextMemoryStore } from './context-memory-store';
-import { retrieveRecords } from './context-memory-retrieval';
+} from './runtime-contract.js';
+import { getDefaultMemoryStore, type ContextMemoryStore } from './context-memory-store.js';
+import { retrieveRecords } from './context-memory-retrieval.js';
 import {
   packRetrievedMemory,
   type MemoryPackOptions,
   type MemoryPackResult,
-} from './context-memory-packing';
-import { supersedeVerificationMemory } from './context-memory-invalidation';
+} from './context-memory-packing.js';
+import { supersedeVerificationMemory } from './context-memory-invalidation.js';
 
 const MAX_SUMMARY_CHARS = 400;
 const MAX_DETAIL_CHARS = 2000;
@@ -280,19 +280,19 @@ export {
   getDefaultMemoryStore,
   setDefaultMemoryStore,
   createInMemoryStore,
-} from './context-memory-store';
-export { scoreRecord, retrieveRecords } from './context-memory-retrieval';
+} from './context-memory-store.js';
+export { scoreRecord, retrieveRecords } from './context-memory-retrieval.js';
 export {
   packRetrievedMemory,
   DEFAULT_MEMORY_PACK_BUDGET_CHARS,
   DEFAULT_MEMORY_PACK_SECTION_BUDGETS,
   classifyRetrievedMemorySection,
   MEMORY_PACK_SECTION_ORDER,
-} from './context-memory-packing';
+} from './context-memory-packing.js';
 export {
   expireBranchScopedMemory,
   invalidateMemoryForChangedFiles,
   supersedeVerificationMemory,
-} from './context-memory-invalidation';
-export type { ContextMemoryStore } from './context-memory-store';
-export type { MemoryPackOptions, MemoryPackResult } from './context-memory-packing';
+} from './context-memory-invalidation.js';
+export type { ContextMemoryStore } from './context-memory-store.js';
+export type { MemoryPackOptions, MemoryPackResult } from './context-memory-packing.js';
