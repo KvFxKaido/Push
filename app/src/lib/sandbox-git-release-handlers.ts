@@ -407,6 +407,8 @@ export async function handlePromoteToGithub(
   const pushResult = await ctx.execInSandbox(
     ctx.sandboxId,
     `cd /workspace && git push -u origin ${shellEscape(branchName)}`,
+    undefined,
+    { markWorkspaceMutated: true },
   );
 
   const rawPushError = `${pushResult.stderr}\n${pushResult.stdout}`.toLowerCase();

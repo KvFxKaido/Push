@@ -971,6 +971,15 @@ describe('executeSandboxToolCall -- promote_to_github', () => {
     expect(result.text).toContain('Visibility: public');
     expect(result.text).toContain('Default branch: main');
     expect(result.text).toContain('Push: successful on branch main');
+    // The terminal git push exec must thread markWorkspaceMutated: true,
+    // matching sandbox_push's behavior — both push to origin and both
+    // mutate the workspace from the cache's perspective.
+    expect(sandboxClient.execInSandbox).toHaveBeenLastCalledWith(
+      'sb-1',
+      expect.stringMatching(/git push -u origin/),
+      undefined,
+      { markWorkspaceMutated: true },
+    );
     expect(result.promotion).toEqual({
       repo: {
         id: 42,
