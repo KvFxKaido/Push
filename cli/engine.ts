@@ -343,6 +343,20 @@ Do not call any more tools. Return a concise plain-text answer using only the in
 [/MAX_ROUNDS_REACHED]`;
 }
 
+export function buildEmptySuccessFinalizationMessage(toolsUsed: Iterable<string>): string {
+  const tools = [...toolsUsed].join(', ') || 'none';
+  return `[FINAL_SUMMARY_REQUEST]
+You signaled completion (no further tool calls), but your final message was empty. Tools used during this run: ${tools}.
+
+Do not call any more tools. Return a concise plain-text summary (no JSON, no fenced blocks) using only the information already in this conversation:
+- What you investigated or changed.
+- The key finding(s) or outcome(s).
+- Any caveats or remaining work.
+
+This summary will be persisted for retrieval by future related runs, so make it self-contained.
+[/FINAL_SUMMARY_REQUEST]`;
+}
+
 // ─── Main Loop ───────────────────────────────────────────────────
 
 /**
@@ -894,6 +908,120 @@ export async function runAssistantLoop(
         await saveSessionState(state);
         continue;
       }
+
+      // If the model signaled completion with empty/whitespace-only
+      // text (Gemini 3 Flash does this on tasks that finish via
+      // tool-call-only rounds), ask for a one-shot summary so the
+      // session has a real final answer instead of "" propagating
+      // out as the run's outcome. Mirrors the max_rounds
+      // finalization pattern below. Failures degrade to the
+      // pre-fix behavior (empty finalAssistantText). Only fires
+      // when finalAssistantText is empty after trim — "Done." or
+      // any non-empty short ack flows through unchanged.
+      //
+      // Note on assistant_done sequencing (Codex P2 review): the
+      // pre-finalization assistant_done at line ~800 has already
+      // fired by the time we reach this branch, so consumers think
+      // the assistant message ended. Streaming finalization tokens
+      // after that without a second assistant_done leaves
+      // newline-flush handlers (like the basic CLI's) with the
+      // finalization text unterminated. Emit a fresh messageId +
+      // assistant_done after the finalization stream resolves so
+      // the second message appears as a complete unit. Mirrors the
+      // max_rounds finalization at engine.ts:~1376.
+      if (!finalAssistantText) {
+        // Track the prompt so we can roll it back on any failure path.
+        // Without rollback, an orphaned [FINAL_SUMMARY_REQUEST] stays
+        // in state.messages, gets persisted via saveSessionState
+        // downstream, and biases the next turn's context (the model
+        // sees a prompt with no response). Codex P2 review on PR #334.
+        const finalizationPrompt = buildEmptySuccessFinalizationMessage(toolsUsed);
+        (state.messages as Message[]).push({ role: 'user', content: finalizationPrompt });
+        let assistantPushed = false;
+        try {
+          const finalTrimResult = trimContext(
+            state.messages as Message[],
+            providerConfig.id,
+            state.model,
+          );
+          const finalStreamOptions: {
+            onThinkingToken?: (token: string | null) => void;
+            sessionId?: string;
+          } = {
+            onThinkingToken: emit
+              ? (token: string | null): void => {
+                  if (token === null) {
+                    dispatchEvent('assistant_thinking_done', {});
+                    return;
+                  }
+                  dispatchEvent('assistant_thinking_token', { text: token });
+                }
+              : undefined,
+            sessionId: state.sessionId,
+          };
+          const finalizationText = await streamCompletion(
+            providerConfig,
+            apiKey,
+            state.model,
+            finalTrimResult.messages,
+            (token: string): void => {
+              dispatchEvent('assistant_token', { text: token });
+            },
+            undefined,
+            signal,
+            finalStreamOptions,
+          );
+          const trimmed = finalizationText.trim();
+          if (trimmed) {
+            finalAssistantText = trimmed;
+            (state.messages as Message[]).push({ role: 'assistant', content: finalizationText });
+            assistantPushed = true;
+            const finalizationMessageId: string = `asst_${Date.now().toString(36)}`;
+            await appendSessionEvent(
+              state,
+              'assistant_done',
+              { messageId: finalizationMessageId },
+              runId,
+            );
+            dispatchEvent('assistant_done', { messageId: finalizationMessageId });
+          }
+        } catch (err: unknown) {
+          // Abort propagates; other failures (provider error, timeout)
+          // log and continue with the empty finalAssistantText, which
+          // matches pre-Fix-2 behavior.
+          const isAbort: boolean =
+            (err instanceof Error && err.name === 'AbortError') || (signal?.aborted ?? false);
+          if (isAbort) {
+            // Roll back the prompt before propagating so the partial
+            // state isn't persisted with an orphaned request.
+            (state.messages as Message[]).pop();
+            throw err;
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          await appendSessionEvent(
+            state,
+            'warning',
+            {
+              code: 'EMPTY_SUCCESS_FINALIZATION_FAILED',
+              message,
+              retryable: true,
+            },
+            runId,
+          );
+          dispatchEvent('warning', {
+            code: 'EMPTY_SUCCESS_FINALIZATION_FAILED',
+            message: `Could not get final summary after empty success: ${message}`,
+          });
+        }
+        // Roll back the orphaned prompt if we never pushed an
+        // assistant response (stream returned empty OR stream
+        // threw a non-abort error). Pre-fix this prompt persisted
+        // in state.messages and polluted future turns.
+        if (!assistantPushed) {
+          (state.messages as Message[]).pop();
+        }
+      }
+
       await appendSessionEvent(
         state,
         'assistant.turn_end',

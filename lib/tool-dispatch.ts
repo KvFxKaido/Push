@@ -28,7 +28,11 @@
  * grouping state machine on top.
  */
 
-import { repairToolJson } from './tool-call-parsing.js';
+import {
+  applyJsonTextRepairs,
+  escapeRawNewlinesInJsonStrings,
+  repairToolJson,
+} from './tool-call-parsing.js';
 
 /**
  * Result of scanning assistant text for tool calls.
@@ -146,8 +150,59 @@ export function createToolDispatcher<TCall>(
       for (const fence of fences) {
         if (!isToolCallLangTag(fence.lang)) continue;
         const trimmed = fence.content.trim();
-        if (!trimmed || !trimmed.startsWith('{')) continue;
+        if (!trimmed) continue;
+        // Tool-call payloads come in two shapes:
+        //   { "tool": "...", "args": {...} }              — single
+        //   [ { "tool": "...", ... }, { "tool": "...", ... } ] — array
+        // Single-object form is the documented protocol. Array form
+        // is what models like Gemini 3 Flash emit naturally — small
+        // models often batch their planned calls into one fenced
+        // block. Before this branch the detector silently dropped
+        // arrays (the `startsWith('{')` check below rejected them
+        // and there was no array path), which manifested as
+        // "successful" runs that returned the array JSON as the
+        // assistant's final text. See
+        // `docs/decisions/Tool-Call Parser Convergence Gap.md` for
+        // the broader pattern this fits and the 2026-04-18 PR #333
+        // measurement narrative for the typed-memory fallout.
         if (!/"tool"\s*:|'tool'\s*:/.test(trimmed) && !/\btool\s*:/.test(trimmed)) continue;
+        if (trimmed.startsWith('[')) {
+          // Stricter array-specific gate (Copilot review on PR #334):
+          // the loose pre-check above can match `tool:` inside a
+          // string value (e.g., `["tool: read_file"]`), which would
+          // otherwise enter the array path, fail per-element shape,
+          // and emit a TOOL_CALL_PARSE_ERROR correction prompt to
+          // the model. Require an object-key context — `{` then
+          // optional whitespace then optional quote then `tool` —
+          // before treating the fence as an array of tool calls.
+          if (!/\{\s*['"]?tool['"]?\s*:/.test(trimmed)) continue;
+          const arrayResult = parseToolArrayCandidate(trimmed);
+          if (!arrayResult.ok) {
+            malformed.push({ reason: arrayResult.reason, sample: truncateSample(trimmed) });
+            continue;
+          }
+          // Per-element malformed reports surface the same way single
+          // fenced candidates do — operators see the specific
+          // failures, not just "the whole array was bad".
+          for (const report of arrayResult.perElementMalformed) {
+            malformed.push(report);
+          }
+          // All array elements share the fence's content offset so
+          // they sort as a contiguous block in the final ordering.
+          // Within that block, push order matches array order, and
+          // Array.sort is stable, so the model-intended sequence is
+          // preserved.
+          for (const parsed of arrayResult.values) {
+            candidates.push({
+              kind: 'fenced',
+              offset: fence.contentOffset,
+              parsed,
+              sample: trimmed,
+            });
+          }
+          continue;
+        }
+        if (!trimmed.startsWith('{')) continue;
         const parsed = parseToolCandidate(trimmed);
         if (!parsed.ok) {
           malformed.push({ reason: parsed.reason, sample: truncateSample(trimmed) });
@@ -469,6 +524,94 @@ function parseToolCandidate(candidate: string): ParseOutcome {
   }
   if (!isRecord(parsed)) return { ok: false, reason: 'invalid_shape' };
   return shapeParsedObject(parsed);
+}
+
+interface ArrayParseOutcome {
+  ok: true;
+  /** Successfully parsed + shaped tool-call objects, in array order. */
+  values: ParsedToolObject[];
+  /** Per-element shape failures — surfaced alongside the successful values. */
+  perElementMalformed: ToolMalformedReport[];
+}
+
+type ArrayParseResult = ArrayParseOutcome | { ok: false; reason: ToolMalformedReason };
+
+/**
+ * Parse a fenced candidate that begins with `[` as an array of tool-call
+ * objects. Per-element shape failures are reported individually rather
+ * than failing the whole array, so a partly-malformed array still
+ * surfaces the calls that did parse correctly.
+ *
+ * On JSON.parse failure, applies the same textual repairs the
+ * single-object path uses (`applyJsonTextRepairs`: trailing commas,
+ * double commas, single quotes, unquoted keys, Python literals,
+ * control chars). `repairToolJson` itself isn't appropriate here
+ * because it returns null for any non-object shape — so an array
+ * with a normal LLM trailing comma (`[{...},]`) would otherwise fall
+ * to `json_parse_error` even though the textual repair was trivially
+ * available. Codex P2 review on PR follow-up to commit 253bacf.
+ */
+function parseToolArrayCandidate(candidate: string): ArrayParseResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch {
+    // Two-phase recovery, mirroring repairToolJson's interleaving:
+    // first apply shape-agnostic textual repairs (trailing commas,
+    // unquoted keys, Python literals, etc.) and try parse; if still
+    // failing, try escaping raw newlines inside JSON string values
+    // before giving up. Codex P1 review on PR #334 caught the
+    // single-object/array asymmetry: batched `write_file`/`edit_file`
+    // calls with literal newlines in string args were recoverable as
+    // single-object payloads but failed as array form because this
+    // path skipped the newline pass.
+    const repairedText = applyJsonTextRepairs(candidate);
+    try {
+      parsed = JSON.parse(repairedText);
+    } catch {
+      const newlineEscaped = escapeRawNewlinesInJsonStrings(repairedText);
+      if (newlineEscaped === repairedText) {
+        return { ok: false, reason: 'json_parse_error' };
+      }
+      try {
+        parsed = JSON.parse(newlineEscaped);
+      } catch {
+        return { ok: false, reason: 'json_parse_error' };
+      }
+    }
+  }
+  if (!Array.isArray(parsed)) return { ok: false, reason: 'invalid_shape' };
+
+  const values: ParsedToolObject[] = [];
+  const perElementMalformed: ToolMalformedReport[] = [];
+  for (const element of parsed) {
+    if (!isRecord(element)) {
+      perElementMalformed.push({
+        reason: 'invalid_shape',
+        sample: truncateSample(safeStringifySample(element)),
+      });
+      continue;
+    }
+    const shaped = shapeParsedObject(element);
+    if (!shaped.ok) {
+      perElementMalformed.push({
+        reason: shaped.reason,
+        sample: truncateSample(safeStringifySample(element)),
+      });
+      continue;
+    }
+    values.push(shaped.value);
+  }
+
+  return { ok: true, values, perElementMalformed };
+}
+
+function safeStringifySample(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function shapeParsedObject(parsed: Record<string, unknown>): ParseOutcome {

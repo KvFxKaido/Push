@@ -141,47 +141,73 @@ export function diagnoseJsonSyntaxError(text: string): JsonSyntaxDiagnosis | nul
 // ---------------------------------------------------------------------------
 
 /**
+ * Apply the textual JSON repairs the tool-call parsers use, without
+ * any final shape check. Useful for callers that want to recover a
+ * parseable JSON value without committing to the `{tool, args}`
+ * object shape — e.g., the array-wrapped tool-call path in
+ * `lib/tool-dispatch.ts`'s `parseToolArrayCandidate`.
+ *
+ * Handles the high-frequency LLM garbling patterns:
+ * - Trailing commas before `}` or `]`
+ * - Double commas (model stutter under stream pressure)
+ * - Single quotes (only when no double-quoted keys present)
+ * - Unquoted keys (`{tool: "x"}` → `{"tool": "x"}`)
+ * - Python-style literals (`True`/`False`/`None` → `true`/`false`/`null`)
+ * - Raw control characters inside strings (stripped, except tabs)
+ *
+ * Excludes the object-specific repairs that `repairToolJson` layers on
+ * top: the missing-`{` prepend (step 0) and the auto-close pass
+ * (step 7). Callers handle those shape-specifically.
+ *
+ * Excludes the raw-newline-in-string escape (step 6b): that pass
+ * MUST run after the initial parse attempt to avoid double-escaping
+ * well-formed JSON, so it stays in `repairToolJson` and any sibling
+ * function that wants it.
+ */
+export function applyJsonTextRepairs(text: string): string {
+  let repaired = text;
+  // 1. Strip trailing commas before } or ]
+  repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+  // 2. Double commas (model stutter under stream pressure)
+  repaired = repaired.replace(/,(\s*),/g, ',');
+  // 3. Single quotes → double quotes (only if string uses single-quote style throughout)
+  if (repaired.includes("'") && !/"\s*:/.test(repaired)) {
+    repaired = repaired.replace(/'/g, '"');
+  }
+  // 4. Unquoted keys: {tool: "x", args: {...}} → {"tool": "x", "args": {...}}
+  repaired = repaired.replace(/([{,])\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');
+  // 5. Python-style literals (outside of quoted strings)
+  repaired = replacePythonLiterals(repaired);
+  // 6. Raw control characters inside strings (tabs OK, strip others)
+  // eslint-disable-next-line no-control-regex
+  repaired = repaired.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+  return repaired;
+}
+
+/**
  * Attempt to repair common JSON garbling from LLM output.
  * Returns the parsed object if it has a "tool" string key, otherwise null.
  *
  * Handles:
- * - Trailing commas before } or ]
- * - Double commas (model stutter): {,, → {,
- * - Single quotes (only when no double quotes present in value positions)
- * - Unquoted keys: {tool: "x"} → {"tool": "x"}
- * - Python-style literals: True/False/None → true/false/null
- * - Raw control characters inside strings (strip or escape)
+ * - Missing opening brace (`"tool": "x"` → `{"tool": "x"}`)
+ * - All shape-agnostic textual repairs from `applyJsonTextRepairs`
+ * - Raw newlines inside JSON string values (escape after first parse)
  * - Auto-close truncated JSON (missing trailing braces/brackets)
  */
 export function repairToolJson(candidate: string): Record<string, unknown> | null {
   let repaired = candidate.trim();
 
   // 0. Missing opening brace — model emitted `"tool": "x", "args": {...}}`
-  //    or `tool: "x", args: {...}}` without the leading `{`.
+  //    or `tool: "x", args: {...}}` without the leading `{`. This is
+  //    object-specific (the array analogue would be much rarer and would
+  //    require a `[` prepend with no `tool` substring marker), so it
+  //    stays in repairToolJson rather than the shared helper.
   if (!repaired.startsWith('{') && /^["']?tool["']?\s*:/.test(repaired)) {
     repaired = '{' + repaired;
   }
 
-  // 1. Strip trailing commas before } or ]
-  repaired = repaired.replace(/,\s*([}\]])/g, '$1');
-
-  // 2. Double commas (model stutter under stream pressure)
-  repaired = repaired.replace(/,(\s*),/g, ',');
-
-  // 3. Single quotes → double quotes (only if string uses single-quote style throughout)
-  if (repaired.includes("'") && !/"\s*:/.test(repaired)) {
-    repaired = repaired.replace(/'/g, '"');
-  }
-
-  // 4. Unquoted keys: {tool: "x", args: {...}} → {"tool": "x", "args": {...}}
-  repaired = repaired.replace(/([{,])\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');
-
-  // 5. Python-style literals (outside of quoted strings)
-  repaired = replacePythonLiterals(repaired);
-
-  // 6. Raw control characters inside strings (tabs OK, strip others)
-  // eslint-disable-next-line no-control-regex
-  repaired = repaired.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+  // Steps 1-6: shape-agnostic textual repairs.
+  repaired = applyJsonTextRepairs(repaired);
 
   if (tryParseToolJson(repaired)) return tryParseToolJson(repaired);
 
@@ -189,7 +215,7 @@ export function repairToolJson(candidate: string): Record<string, unknown> | nul
   // Models often emit multi-line content with literal newlines inside
   // JSON strings (e.g. search/replace content with template literals).
   // This must run after the initial parse attempt to avoid double-escaping
-  // well-formed JSON.
+  // well-formed JSON, so it stays here rather than in the shared helper.
   const rawNewlineEscaped = escapeRawNewlinesInJsonStrings(repaired);
   if (rawNewlineEscaped !== repaired) {
     if (tryParseToolJson(rawNewlineEscaped)) return tryParseToolJson(rawNewlineEscaped);
@@ -273,8 +299,13 @@ function replacePythonLiterals(text: string): string {
  * literal newlines inside JSON strings, e.g.:
  *   {"tool": "replace", "args": {"search": "line1
  *   line2", "replace": "fixed"}}
+ *
+ * Exported so the array-tool-call path in `lib/tool-dispatch.ts` can apply
+ * the same recovery; otherwise array-wrapped `write_file` / `edit_file`
+ * calls with multiline content fail to recover where their single-object
+ * equivalents succeed (Codex P1 review on PR #334).
  */
-function escapeRawNewlinesInJsonStrings(text: string): string {
+export function escapeRawNewlinesInJsonStrings(text: string): string {
   let result = '';
   let inString = false;
   let escaped = false;

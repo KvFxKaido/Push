@@ -370,6 +370,40 @@ export async function runDelegatedHeadless(
       state.eventSeq = nodeState.eventSeq;
       state.rounds = nodeState.rounds;
 
+      // Failed / cancelled outcomes capture the engine's
+      // finalAssistantText as `summary` — for `outcome: 'error'`
+      // that's the streamCompletion error text (e.g., a 120s
+      // provider timeout), not a useful finding. Returning normally
+      // here would let task-graph mark the node `completed` and
+      // `writeTaskGraphResultMemory` would persist that error
+      // message as a memory record, polluting future retrievals.
+      // Throw instead so task-graph marks the node failed (or
+      // cancelled, on AbortError shape), which makes
+      // writeTaskGraphNodeMemory's `status === 'completed'` guard
+      // skip the write. nodeSummaries already captured the message
+      // above so synthesizeFinalSummary still surfaces what
+      // happened. PR #333 follow-up — surfaced by the post-Fix-1
+      // measurement when timeout messages started landing in the
+      // store as records 1 and 6.
+      if (result.outcome === 'aborted') {
+        throw new DOMException('Cancelled by user', 'AbortError');
+      }
+      if (result.outcome === 'error') {
+        // Cap the summary in the error message — `result.finalAssistantText`
+        // for an error outcome can be a very long stream-error or
+        // policy-halt blob, and this string lands in task-graph
+        // node state's `error` field, the JSON output, and the
+        // event log. Truncate so it stays grep-able. The full
+        // summary is still in nodeSummaries.get(node.id) for the
+        // final synthesis. Copilot review on PR #334.
+        const ERROR_SUMMARY_MAX = 200;
+        const truncated =
+          summary.length > ERROR_SUMMARY_MAX
+            ? `${summary.slice(0, ERROR_SUMMARY_MAX - 1)}…`
+            : summary;
+        throw new Error(`node ${node.id} failed: ${truncated}`);
+      }
+
       return { summary, rounds: result.rounds };
     };
 
