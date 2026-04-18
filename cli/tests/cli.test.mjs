@@ -17,12 +17,24 @@ function buildCliCommand(args) {
   return [process.execPath, '--import', 'tsx', CLI_PATH, ...args].map(shQuote).join(' ');
 }
 
+// Each CLI invocation gets a fresh temp dir for PUSH_SESSION_DIR and
+// PUSH_CONFIG_PATH. Previously the helpers derived these paths from
+// `Date.now()`, which collides under parallel runs (same millisecond)
+// and can leak state between back-to-back calls inside one test. The
+// OS temp dir mkdtemp is atomic + unique so parallelism is safe.
+async function makeUniqueTestEnv() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-env-'));
+  return {
+    PUSH_SESSION_DIR: path.join(root, 'sessions'),
+    PUSH_CONFIG_PATH: path.join(root, 'config.json'),
+  };
+}
+
 async function runCli(args, options = {}) {
   const { env: extraEnv, input: _input, ...execOpts } = options;
   const env = {
     ...process.env,
-    PUSH_SESSION_DIR: '/tmp/push-test-cli-' + Date.now(),
-    PUSH_CONFIG_PATH: '/tmp/push-test-cli-config-' + Date.now(),
+    ...(await makeUniqueTestEnv()),
     ...extraEnv,
   };
   const captureDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-cli-test-'));
@@ -65,8 +77,7 @@ async function runCliPty(args, options = {}) {
   const { env: extraEnv, input = '', timeout = 8000, ...spawnOpts } = options;
   const env = {
     ...process.env,
-    PUSH_SESSION_DIR: '/tmp/push-test-cli-' + Date.now(),
-    PUSH_CONFIG_PATH: '/tmp/push-test-cli-config-' + Date.now(),
+    ...(await makeUniqueTestEnv()),
     ...extraEnv,
   };
   const cmd = buildCliCommand(args);
@@ -689,7 +700,7 @@ describe('push resume', () => {
 async function spawnPickerPty(args, input, extraEnv) {
   const env = {
     ...process.env,
-    PUSH_CONFIG_PATH: '/tmp/push-test-cli-config-' + Date.now(),
+    ...(await makeUniqueTestEnv()),
     ...extraEnv,
   };
   const cmd = buildCliCommand(args);
@@ -851,7 +862,7 @@ describe('bare push resume prompt', () => {
 async function spawnBarePushPty(input, extraEnv) {
   const env = {
     ...process.env,
-    PUSH_CONFIG_PATH: `/tmp/push-test-cli-config-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    ...(await makeUniqueTestEnv()),
     ...extraEnv,
   };
   const cmd = buildCliCommand([]);
