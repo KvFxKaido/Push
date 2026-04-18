@@ -175,3 +175,55 @@ Four commits on the branch:
 - `PUSH_CONFIG_PATH` hardening via `fs.mkdtemp` across `runCli`/`runCliPty`/`spawnPickerPty` (preexisting, deferred to a test-harness-only sweep).
 
 **Status:** one CLI daily-driver friction removed, fully review-passed. Suspension remains active — this is one of several ergonomics passes the prerequisite needs before the three-green gate becomes populatable through its prescribed mechanism. The next ergonomics bite (candidates from PR #326's scope doc: auto-attach single-session case, freshness indicators in picker, `push` bare invocation picker) is the operator's call.
+
+---
+
+## 2026-04-18 — Gap 2 daemon-side role-capability landed; Codex review caught an escape-hatch bug
+
+**Session purpose:** Ship the Gap 2 tranche from §CLI Runtime Parity — unify daemon-side Explorer enforcement behind the shared `TOOL_CAPABILITIES` table so both surfaces use one source of truth. The plan had sat at "2–3 focused evenings with per-tool design calls required before implementation" framing since 2026-04-17; reconnaissance at scope time dissolved one of the three design calls (`ask_user` already converged by inspection — Explorer's grant never included `user:ask`), narrowing the real judgment calls to two. The tranche shipped in one focused session as four commits on branch `claude/gap-2-daemon-role-capability`.
+
+**What shipped (branch `claude/gap-2-daemon-role-capability`, four commits):**
+
+- **`c5e4e12`** feat(tools): add CLI-native tool names to shared capability table. 17 entries added to `lib/capabilities.ts`: `list_dir`, `read_symbols`, `read_symbol`, `git_status`, `git_diff`, `git_commit`, `lsp_diagnostics`, `save_memory`, `write_file`, `edit_file`, `undo_edit`, `exec`, `exec_start`, `exec_poll`, `exec_write`, `exec_stop`, `exec_list_sessions`. 15 pinning tests added to `app/src/lib/capabilities.test.ts` (29 → 44) including the Explorer behavior matrix and the scratchpad grant matrix for `save_memory`.
+
+- **`b71bad4`** feat(tools): swap daemon Explorer gate to roleCanUseTool. `makeDaemonExplorerToolExec` at `cli/pushd.ts:1345` now calls `roleCanUseTool('explorer', toolName)` instead of `READ_ONLY_TOOLS.has(toolName)`. Prose `resultText` preserved verbatim for the Explorer kernel's refusal-feedback loop. Structured `console.warn` line added on denial with `event=role_capability_denied` / `type=ROLE_CAPABILITY_DENIED` for log/dashboard parity with web. `READ_ONLY_TOOLS` kept in `cli/tools.ts` because `lib/deep-reviewer-agent.ts` consumes it for a different purpose (read/mutate bucketing).
+
+- **`938ebd4`** test(tools): characterize daemon role-capability gate (Gap 2). 31 tests in new file `cli/tests/daemon-role-capability.test.mjs`: capability-table entry pins for all 17 CLI-native names, Explorer allow/deny matrix, end-to-end `makeDaemonExplorerToolExec` refusal with filesystem assertions, structured-log emission pinning with set-equality on the granted array, and a drift-detector for `READ_ONLY_TOOLS` ↔ `TOOL_CAPABILITIES` coherence.
+
+- **`1ace017`** fix(tools): drop Explorer-denied tools from read-only protocol. Codex review finding — see next section.
+
+**Codex review finding and the escape-hatch pattern that masked it:**
+
+Codex flagged a P2 immediately after the first three commits: `READ_ONLY_TOOL_PROTOCOL` at `cli/tools.ts:725–726` still advertised `exec_poll` and `exec_list_sessions` to the Explorer model as available tools, but commit `b71bad4`'s new capability gate refused both (Explorer has no `sandbox:exec` grant). Real Explorer runs would have the model follow the prompt, emit the call, and hit the denial — wasting rounds and making session-observation investigations look broken.
+
+**The detail worth capturing as a reference pattern:** the drift-detector test in commit `938ebd4` *explicitly masked this bug*. The test's invariant was:
+
+> For every tool in `READ_ONLY_TOOLS`: either Explorer can call it (shared table says yes) OR it's intentionally denied (exec_poll and exec_list_sessions).
+
+That reads like a drift-detector, but it encodes a *weaker* invariant than post-Gap-2 actually holds. The correct invariant is: *every tool advertised to Explorer must be callable by Explorer*. The "intentionally denied" branch was a carve-out for the very case Codex caught. A characterization test whose expected state includes "the bug is present and intended" isn't doing the job characterization tests are meant to do; it's documenting a known gap as acceptable.
+
+**Fix in `1ace017`:**
+
+- Removed the `exec_poll` and `exec_list_sessions` bullets from `READ_ONLY_TOOL_PROTOCOL`. Added a divergence note above the constant explaining why those names remain in `READ_ONLY_TOOLS` (deep-reviewer-agent bucketing) but not in the prompt (Explorer can't call them).
+- Tightened the existing sync test at `cli/tests/daemon-integration.test.mjs:2784` from "advertised ⊆ `READ_ONLY_TOOLS`" to a three-part invariant: (1) advertised ⊆ `READ_ONLY_TOOLS` (dispatcher must know the name), (2) advertised ⊆ `{ tools Explorer can call per roleCanUseTool }` (capability grant check — the new post-Gap-2 addition), (3) `{ Explorer-callable entries in READ_ONLY_TOOLS } ⊆ advertised` (prompt coverage check, skipping entries Explorer can't call).
+- Replaced the escape-hatch drift-detector with two separate tests: one asserting every `READ_ONLY_TOOLS` entry has a `TOOL_CAPABILITIES` mapping (the real drift signal), and one explicit pin for the `exec_poll`/`exec_list_sessions` intentional-denial behavior. The second test is honest about what it's pinning — a specific known behavior change — rather than encoding it as an exception to a broader invariant.
+
+**Three-layer truth (captured in the plan's §Dependencies section):** The CLI Explorer path now has three independent layers — `READ_ONLY_TOOLS` (dispatcher allowlist), `READ_ONLY_TOOL_PROTOCOL` (prompt block), `roleCanUseTool` (capability grant). The capability grant is the source of truth; the other two layers must track it. This is worth stating explicitly because Gap 3 Step 3's typed-memory retrieval will describe a tool surface to delegated small models, and the same principle applies: the surface derives from `roleCanUseTool`, not from a hand-maintained list.
+
+**Validation:**
+
+- CLI typecheck: `npm run typecheck` → clean across all four commits.
+- App typecheck: `cd app && npx tsc --noEmit` → clean.
+- CLI suite: 1111/1111 pass (was 1079 at branch start, +31 from commit `938ebd4` and +1 from commit `1ace017`'s test split).
+- Web capability tests: 44/44 pass (15 new from commit `c5e4e12`).
+- Web runtime invariant tests: 12/12 pass (unchanged — sanity check that the table additions didn't break the pre-existing web invariant pins).
+- Biome pre-commit caught two multi-line-import collapses and one multi-line `assert.equal` collapse during the tranche; fixed inline each time per the existing `push-commit-tooling` memory note on Biome's formatting strictness.
+
+**What this is and is not:**
+
+- **Is:** closure of the Gap 2 tranche and discharge of the Gap 3 Step 3 dependency chain. The `READ_ONLY_TOOLS`-vs-`roleCanUseTool` drift vector that Gap 2 was written to close is closed for Explorer. Coder, Deep Reviewer, and Auditor remain on their own rollout schedule — each needs a capability-grant audit before the gate extends to them on CLI.
+- **Is not:** a verification-family or git/release-family three-green-gate entry. The gate counters for both extracted families remain at 0/3, still suspended pending CLI daily-driver readiness. This entry is an architecture-remediation anchor, not a real-use observation.
+
+**Reference-pattern takeaway:** when writing characterization tests for a behavior change, be suspicious of any "OR" or "either/or" branch in the invariant. A test that says "X holds OR Y is the documented exception" is often two tests pretending to be one — and the exception branch is usually where the next bug hides. The Codex review on this tranche is the concrete example; future extraction and parity work should read this entry before writing drift-detectors.
+
+**Status:** Gap 2 shipped and Codex-reviewed-and-patched. Branch ready to push and PR.
