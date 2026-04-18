@@ -1,0 +1,673 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { runAssistantLoop } from '../engine.ts';
+import { appendUserMessageWithFileReferences } from '../file-references.ts';
+import { PROVIDER_CONFIGS } from '../provider.ts';
+import {
+  loadSessionEvents,
+  loadSessionState,
+  makeSessionId,
+  saveSessionState,
+} from '../session-store.ts';
+
+function makeWorkingMemory(overrides = {}) {
+  return {
+    plan: '',
+    currentPhase: '',
+    openTasks: [],
+    filesTouched: [],
+    assumptions: [],
+    errorsEncountered: [],
+    ...overrides,
+  };
+}
+
+function makeState(cwd, overrides = {}) {
+  return {
+    sessionId: makeSessionId(),
+    createdAt: 1_712_345_600_000,
+    updatedAt: 1_712_345_600_000,
+    provider: 'ollama',
+    model: 'mock-model',
+    cwd,
+    rounds: 0,
+    eventSeq: 0,
+    sessionName: 'Engine flow test',
+    workingMemory: makeWorkingMemory(),
+    messages: [
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: 'Summarize the current state.' },
+    ],
+    ...overrides,
+  };
+}
+
+async function withTempSessionDir(run) {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-engine-flow-'));
+  const previous = process.env.PUSH_SESSION_DIR;
+  process.env.PUSH_SESSION_DIR = tmpDir;
+  try {
+    return await run(tmpDir);
+  } finally {
+    if (previous === undefined) delete process.env.PUSH_SESSION_DIR;
+    else process.env.PUSH_SESSION_DIR = previous;
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function startSequencedProviderServer(plans) {
+  let requestCount = 0;
+  const requests = [];
+
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk.toString();
+    });
+    req.on('end', async () => {
+      let parsedBody = null;
+      if (body) {
+        parsedBody = JSON.parse(body);
+      }
+      requests.push(parsedBody);
+
+      const plan = plans[Math.min(requestCount, plans.length - 1)] || {};
+      requestCount += 1;
+
+      if (typeof plan.afterRequest === 'function') {
+        await plan.afterRequest({ requestCount, parsedBody });
+      }
+
+      if (plan.hang) {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        });
+        const cleanup = () => {
+          try {
+            res.end();
+          } catch {
+            // socket already closed
+          }
+        };
+        res.on('close', cleanup);
+        return;
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+
+      for (const token of plan.tokens || []) {
+        res.write(
+          `data: ${JSON.stringify({
+            choices: [{ delta: { content: token } }],
+          })}\n\n`,
+        );
+      }
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('failed to bind sequenced provider server');
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}/v1/chat/completions`,
+    requests,
+    async stop() {
+      await new Promise((resolve) => {
+        server.closeAllConnections?.();
+        server.close(() => resolve(undefined));
+      });
+    },
+  };
+}
+
+function makeProviderConfig(url) {
+  return {
+    ...PROVIDER_CONFIGS.ollama,
+    url,
+  };
+}
+
+describe('runAssistantLoop flow characterization — success outcome', () => {
+  it('returns success with the streamed text and emits a success run_complete envelope', async () => {
+    await withTempSessionDir(async (sessionDir) => {
+      const server = await startSequencedProviderServer([
+        { tokens: ['Investigation complete. The auth flow uses JWT.'] },
+      ]);
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(sessionDir);
+        const emitted = [];
+
+        const result = await runAssistantLoop(state, providerConfig, 'mock-key', 5, {
+          emit: (event) => emitted.push(event),
+        });
+
+        assert.deepEqual(result, {
+          outcome: 'success',
+          finalAssistantText: 'Investigation complete. The auth flow uses JWT.',
+          rounds: 1,
+          runId: result.runId,
+        });
+        assert.deepEqual(state.messages, [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: 'Summarize the current state.' },
+          { role: 'assistant', content: 'Investigation complete. The auth flow uses JWT.' },
+        ]);
+        assert.equal(state.rounds, 1);
+        assert.equal(state.eventSeq, 4);
+        assert.deepEqual(
+          emitted.map((event) => event.type),
+          [
+            'assistant.turn_start',
+            'assistant_token',
+            'assistant_done',
+            'assistant.turn_end',
+            'run_complete',
+          ],
+        );
+        assert.deepEqual(emitted.at(-1), {
+          type: 'run_complete',
+          payload: {
+            outcome: 'success',
+            summary: 'Investigation complete. The auth flow uses JWT.',
+          },
+          runId: result.runId,
+          sessionId: state.sessionId,
+        });
+
+        const events = await loadSessionEvents(state.sessionId);
+        assert.deepEqual(
+          events.map((event) => ({
+            seq: event.seq,
+            type: event.type,
+            payload: event.payload,
+          })),
+          [
+            { seq: 1, type: 'assistant.turn_start', payload: { round: 0 } },
+            {
+              seq: 2,
+              type: 'assistant_done',
+              payload: { messageId: events[1].payload.messageId },
+            },
+            { seq: 3, type: 'assistant.turn_end', payload: { round: 0, outcome: 'completed' } },
+            {
+              seq: 4,
+              type: 'run_complete',
+              payload: {
+                runId: result.runId,
+                outcome: 'success',
+                summary: 'Investigation complete. The auth flow uses JWT.',
+              },
+            },
+          ],
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+});
+
+describe('runAssistantLoop flow characterization — max_rounds outcome', () => {
+  it('finalizes after the round cap and returns the synthesized summary', async () => {
+    await withTempSessionDir(async (sessionDir) => {
+      const server = await startSequencedProviderServer([
+        {
+          tokens: [
+            '{"tool":"coder_update_state","args":{"plan":"Check resume state","currentPhase":"investigation"}}',
+          ],
+        },
+        { tokens: ['Final summary after the round cap.'] },
+      ]);
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(sessionDir);
+        const emitted = [];
+
+        const result = await runAssistantLoop(state, providerConfig, 'mock-key', 1, {
+          emit: (event) => emitted.push(event),
+        });
+
+        assert.deepEqual(result, {
+          outcome: 'max_rounds',
+          finalAssistantText: 'Final summary after the round cap.',
+          rounds: 1,
+          runId: result.runId,
+        });
+        assert.equal(state.rounds, 1);
+        assert.equal(state.eventSeq, 7);
+        assert.deepEqual(state.messages, [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: 'Summarize the current state.' },
+          {
+            role: 'assistant',
+            content:
+              '{"tool":"coder_update_state","args":{"plan":"Check resume state","currentPhase":"investigation"}}',
+          },
+          {
+            role: 'user',
+            content: state.messages[3].content,
+          },
+          {
+            role: 'user',
+            content: state.messages[4].content,
+          },
+          { role: 'assistant', content: 'Final summary after the round cap.' },
+        ]);
+        assert.match(state.messages[3].content, /\[TOOL_RESULT\]/);
+        assert.match(state.messages[4].content, /\[MAX_ROUNDS_REACHED\]/);
+        assert.deepEqual(emitted.at(-1), {
+          type: 'run_complete',
+          payload: { outcome: 'max_rounds', summary: 'Final summary after the round cap.' },
+          runId: result.runId,
+          sessionId: state.sessionId,
+        });
+
+        const events = await loadSessionEvents(state.sessionId);
+        assert.deepEqual(
+          events.map((event) => ({
+            seq: event.seq,
+            type: event.type,
+            payload: event.payload,
+          })),
+          [
+            { seq: 1, type: 'assistant.turn_start', payload: { round: 0 } },
+            {
+              seq: 2,
+              type: 'assistant_done',
+              payload: { messageId: events[1].payload.messageId },
+            },
+            {
+              seq: 3,
+              type: 'working_memory_updated',
+              payload: { keys: Object.keys(state.workingMemory) },
+            },
+            { seq: 4, type: 'assistant.turn_end', payload: { round: 0, outcome: 'continued' } },
+            {
+              seq: 5,
+              type: 'warning',
+              payload: {
+                code: 'MAX_ROUNDS_REACHED',
+                message:
+                  'Reached max rounds (1). Tools used: none. Asking the assistant for a final no-tool summary.',
+              },
+            },
+            {
+              seq: 6,
+              type: 'assistant_done',
+              payload: { messageId: events[5].payload.messageId },
+            },
+            {
+              seq: 7,
+              type: 'run_complete',
+              payload: {
+                runId: result.runId,
+                outcome: 'max_rounds',
+                summary: 'Final summary after the round cap.',
+              },
+            },
+          ],
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+});
+
+describe('runAssistantLoop flow characterization — error outcome', () => {
+  it('halts on consecutive drift rounds and records a failed run_complete envelope', async () => {
+    await withTempSessionDir(async (sessionDir) => {
+      const driftText = 'drft'.repeat(60);
+      const server = await startSequencedProviderServer([
+        { tokens: [driftText] },
+        { tokens: [driftText] },
+      ]);
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(sessionDir);
+        const emitted = [];
+
+        const result = await runAssistantLoop(state, providerConfig, 'mock-key', 5, {
+          emit: (event) => emitted.push(event),
+        });
+
+        const haltSummary =
+          '[Stopped — cognitive drift detected for 2 consecutive rounds. ' +
+          'Repeated token pattern: "drft" ×60. Task may be incomplete.]';
+        assert.deepEqual(result, {
+          outcome: 'error',
+          finalAssistantText: haltSummary,
+          rounds: 2,
+          runId: result.runId,
+        });
+        assert.equal(state.rounds, 2);
+        assert.equal(state.eventSeq, 4);
+        assert.deepEqual(state.messages, [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: 'Summarize the current state.' },
+          { role: 'assistant', content: driftText },
+          { role: 'user', content: state.messages[3].content },
+          { role: 'assistant', content: driftText },
+        ]);
+        assert.match(state.messages[3].content, /\[POLICY: DRIFT_DETECTED\]/);
+        assert.deepEqual(emitted.at(-1), {
+          type: 'run_complete',
+          payload: { outcome: 'failed', summary: haltSummary },
+          runId: result.runId,
+          sessionId: state.sessionId,
+        });
+
+        const events = await loadSessionEvents(state.sessionId);
+        assert.deepEqual(
+          events.map((event) => ({
+            seq: event.seq,
+            type: event.type,
+            payload: event.payload,
+          })),
+          [
+            { seq: 1, type: 'assistant.turn_start', payload: { round: 0 } },
+            { seq: 2, type: 'assistant.turn_start', payload: { round: 1 } },
+            { seq: 3, type: 'assistant.turn_end', payload: { round: 1, outcome: 'error' } },
+            {
+              seq: 4,
+              type: 'run_complete',
+              payload: {
+                runId: result.runId,
+                outcome: 'failed',
+                summary: haltSummary,
+              },
+            },
+          ],
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+});
+
+describe('runAssistantLoop flow characterization — aborted outcome', () => {
+  it('returns Aborted. and emits an aborted run_complete envelope when the signal is already aborted', async () => {
+    await withTempSessionDir(async (sessionDir) => {
+      const controller = new AbortController();
+      controller.abort();
+      const providerConfig = makeProviderConfig('http://127.0.0.1:9/v1/chat/completions');
+      const state = makeState(sessionDir);
+      const emitted = [];
+
+      const result = await runAssistantLoop(state, providerConfig, 'mock-key', 5, {
+        signal: controller.signal,
+        emit: (event) => emitted.push(event),
+      });
+
+      assert.deepEqual(result, {
+        outcome: 'aborted',
+        finalAssistantText: 'Aborted.',
+        rounds: 0,
+        runId: result.runId,
+      });
+      assert.equal(state.rounds, 0);
+      assert.equal(state.eventSeq, 2);
+      assert.deepEqual(state.messages, [
+        { role: 'system', content: 'You are a helpful assistant.' },
+        { role: 'user', content: 'Summarize the current state.' },
+      ]);
+      assert.deepEqual(
+        emitted.map((event) => ({ type: event.type, payload: event.payload })),
+        [
+          { type: 'assistant.turn_end', payload: { round: 0, outcome: 'aborted' } },
+          { type: 'run_complete', payload: { outcome: 'aborted', summary: 'Aborted by user.' } },
+        ],
+      );
+
+      const events = await loadSessionEvents(state.sessionId);
+      assert.deepEqual(
+        events.map((event) => ({
+          seq: event.seq,
+          type: event.type,
+          payload: event.payload,
+        })),
+        [
+          { seq: 1, type: 'assistant.turn_end', payload: { round: 0, outcome: 'aborted' } },
+          {
+            seq: 2,
+            type: 'run_complete',
+            payload: {
+              runId: result.runId,
+              outcome: 'aborted',
+              summary: 'Aborted by user.',
+            },
+          },
+        ],
+      );
+    });
+  });
+});
+
+describe('runAssistantLoop flow characterization — save/load/continue round-trip', () => {
+  it('persists messages, rounds, eventSeq, and workingMemory across save-load and resumes from the next round', async () => {
+    await withTempSessionDir(async (sessionDir) => {
+      await fs.writeFile(path.join(sessionDir, 'README.md'), 'alpha\nbeta\n', 'utf8');
+
+      const server = await startSequencedProviderServer([
+        { tokens: ['First resumed answer.'] },
+        { tokens: ['Second resumed answer.'] },
+      ]);
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(sessionDir, {
+          workingMemory: makeWorkingMemory({
+            plan: 'Resume this conversation',
+            currentPhase: 'investigation',
+            openTasks: ['review README'],
+            filesTouched: ['README.md'],
+          }),
+          messages: [{ role: 'system', content: 'You are a helpful assistant.' }],
+        });
+
+        const appendInfo = await appendUserMessageWithFileReferences(
+          state,
+          'Please inspect @README.md:1-2 before answering.',
+          sessionDir,
+        );
+        assert.deepEqual(appendInfo, {
+          message: appendInfo.message,
+          parsedCount: 1,
+          resolvedCount: 1,
+          errorCount: 0,
+          skippedCount: 0,
+        });
+
+        const firstRun = await runAssistantLoop(state, providerConfig, 'mock-key', 5);
+        assert.deepEqual(firstRun, {
+          outcome: 'success',
+          finalAssistantText: 'First resumed answer.',
+          rounds: 1,
+          runId: firstRun.runId,
+        });
+        assert.equal(state.rounds, 1);
+        assert.equal(state.eventSeq, 4);
+        await saveSessionState(state);
+
+        const loaded = await loadSessionState(state.sessionId);
+        assert.deepEqual(loaded.messages, state.messages);
+        assert.equal(loaded.rounds, 1);
+        assert.equal(loaded.eventSeq, 4);
+        assert.deepEqual(loaded.workingMemory, state.workingMemory);
+
+        const secondRun = await runAssistantLoop(loaded, providerConfig, 'mock-key', 5);
+        assert.deepEqual(secondRun, {
+          outcome: 'success',
+          finalAssistantText: 'Second resumed answer.',
+          rounds: 1,
+          runId: secondRun.runId,
+        });
+        assert.equal(loaded.rounds, 2);
+        assert.equal(loaded.eventSeq, 8);
+        assert.deepEqual(loaded.messages, [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: 'Please inspect @README.md:1-2 before answering.' },
+          { role: 'user', content: loaded.messages[2].content },
+          { role: 'assistant', content: 'First resumed answer.' },
+          { role: 'assistant', content: 'Second resumed answer.' },
+        ]);
+        assert.match(loaded.messages[2].content, /\[REFERENCED_FILES\]/);
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+});
+
+describe('runAssistantLoop flow characterization — empty-success finalization', () => {
+  it('runs finalization when the model exits empty and returns the synthesized summary', async () => {
+    await withTempSessionDir(async (sessionDir) => {
+      const server = await startSequencedProviderServer([
+        { tokens: [] },
+        { tokens: ['Self-contained final summary.'] },
+      ]);
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(sessionDir);
+        const emitted = [];
+
+        const result = await runAssistantLoop(state, providerConfig, 'mock-key', 5, {
+          emit: (event) => emitted.push(event),
+        });
+
+        assert.deepEqual(result, {
+          outcome: 'success',
+          finalAssistantText: 'Self-contained final summary.',
+          rounds: 1,
+          runId: result.runId,
+        });
+        assert.equal(server.requests.length, 2);
+        assert.equal(state.rounds, 1);
+        assert.equal(state.eventSeq, 5);
+        assert.deepEqual(state.messages, [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: 'Summarize the current state.' },
+          { role: 'assistant', content: '' },
+          { role: 'user', content: state.messages[3].content },
+          { role: 'assistant', content: 'Self-contained final summary.' },
+        ]);
+        assert.match(state.messages[3].content, /\[FINAL_SUMMARY_REQUEST\]/);
+        assert.deepEqual(emitted.at(-1), {
+          type: 'run_complete',
+          payload: { outcome: 'success', summary: 'Self-contained final summary.' },
+          runId: result.runId,
+          sessionId: state.sessionId,
+        });
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('rolls back the orphaned finalization prompt when finalization throws', async () => {
+    await withTempSessionDir(async (sessionDir) => {
+      const providerConfig = makeProviderConfig('http://127.0.0.1:9/v1/chat/completions');
+      const server = await startSequencedProviderServer([
+        {
+          tokens: [],
+          afterRequest: () => {
+            providerConfig.url = 'http://127.0.0.1:9/v1/chat/completions';
+          },
+        },
+      ]);
+      try {
+        providerConfig.url = server.url;
+        const state = makeState(sessionDir);
+        const emitted = [];
+
+        const result = await runAssistantLoop(state, providerConfig, 'mock-key', 5, {
+          emit: (event) => emitted.push(event),
+        });
+
+        assert.deepEqual(result, {
+          outcome: 'success',
+          finalAssistantText: '',
+          rounds: 1,
+          runId: result.runId,
+        });
+        assert.equal(state.rounds, 1);
+        assert.equal(state.eventSeq, 5);
+        assert.deepEqual(state.messages, [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: 'Summarize the current state.' },
+          { role: 'assistant', content: '' },
+        ]);
+        assert.deepEqual(
+          emitted
+            .filter((event) => event.type === 'warning' || event.type === 'run_complete')
+            .map((event) => ({ type: event.type, payload: event.payload })),
+          [
+            {
+              type: 'warning',
+              payload: {
+                code: 'EMPTY_SUCCESS_FINALIZATION_FAILED',
+                message: 'Could not get final summary after empty success: fetch failed',
+              },
+            },
+            { type: 'run_complete', payload: { outcome: 'success', summary: '' } },
+          ],
+        );
+
+        const events = await loadSessionEvents(state.sessionId);
+        assert.deepEqual(
+          events.map((event) => ({
+            seq: event.seq,
+            type: event.type,
+            payload: event.payload,
+          })),
+          [
+            { seq: 1, type: 'assistant.turn_start', payload: { round: 0 } },
+            {
+              seq: 2,
+              type: 'assistant_done',
+              payload: { messageId: events[1].payload.messageId },
+            },
+            {
+              seq: 3,
+              type: 'warning',
+              payload: {
+                code: 'EMPTY_SUCCESS_FINALIZATION_FAILED',
+                message: 'fetch failed',
+                retryable: true,
+              },
+            },
+            { seq: 4, type: 'assistant.turn_end', payload: { round: 0, outcome: 'completed' } },
+            {
+              seq: 5,
+              type: 'run_complete',
+              payload: {
+                runId: result.runId,
+                outcome: 'success',
+                summary: '',
+              },
+            },
+          ],
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+});
