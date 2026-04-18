@@ -1,0 +1,214 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  handleEditFile,
+  handleEditRange,
+  handleSearchReplace,
+  type EditHandlerContext,
+} from './sandbox-edit-handlers';
+import type { ExecResult, FileReadResult, WriteResult } from './sandbox-client';
+import type { EditGuardVerdict } from './file-awareness-ledger';
+
+const okExec = (stdout = '', stderr = '', exitCode = 0): ExecResult => ({
+  stdout,
+  stderr,
+  exitCode,
+  truncated: false,
+});
+
+const allowVerdict: EditGuardVerdict = { allowed: true };
+
+interface MockedContext extends EditHandlerContext {
+  readFromSandbox: ReturnType<typeof vi.fn>;
+  writeToSandbox: ReturnType<typeof vi.fn>;
+  execInSandbox: ReturnType<typeof vi.fn>;
+  versionCacheSet: ReturnType<typeof vi.fn>;
+  versionCacheDelete: ReturnType<typeof vi.fn>;
+  getWorkspaceRevisionByKey: ReturnType<typeof vi.fn>;
+  setSandboxWorkspaceRevision: ReturnType<typeof vi.fn>;
+  setWorkspaceRevisionByKey: ReturnType<typeof vi.fn>;
+  syncReadSnapshot: ReturnType<typeof vi.fn>;
+  invalidateWorkspaceSnapshots: ReturnType<typeof vi.fn>;
+  takePrefetchedEditFile: ReturnType<typeof vi.fn>;
+  setPrefetchedEditFile: ReturnType<typeof vi.fn>;
+  recordLedgerRead: ReturnType<typeof vi.fn>;
+  recordLedgerAutoExpandAttempt: ReturnType<typeof vi.fn>;
+  recordLedgerAutoExpandSuccess: ReturnType<typeof vi.fn>;
+  recordLedgerSymbolAutoExpand: ReturnType<typeof vi.fn>;
+  recordLedgerSymbolWarningSoftened: ReturnType<typeof vi.fn>;
+  recordLedgerCreation: ReturnType<typeof vi.fn>;
+  recordLedgerMutation: ReturnType<typeof vi.fn>;
+  markLedgerStale: ReturnType<typeof vi.fn>;
+  checkSymbolicEditAllowed: ReturnType<typeof vi.fn>;
+  checkLinesCovered: ReturnType<typeof vi.fn>;
+  invalidateSymbolLedger: ReturnType<typeof vi.fn>;
+}
+
+interface MakeContextOpts {
+  readResults?: FileReadResult[];
+  writeResult?: WriteResult;
+  execResult?: ExecResult;
+  symbolicVerdict?: EditGuardVerdict;
+  coverageVerdict?: EditGuardVerdict;
+}
+
+function makeContext(opts: MakeContextOpts = {}): MockedContext {
+  const reads = opts.readResults ?? [{ content: '', truncated: false }];
+  let readIdx = 0;
+  return {
+    sandboxId: 'sb-1',
+    readFromSandbox: vi.fn(async () => reads[Math.min(readIdx++, reads.length - 1)]),
+    writeToSandbox: vi.fn(
+      async (): Promise<WriteResult> =>
+        opts.writeResult ?? { ok: true, new_version: 'v2', bytes_written: 10 },
+    ),
+    execInSandbox: vi.fn(async () => opts.execResult ?? okExec()),
+    versionCacheSet: vi.fn(),
+    versionCacheDelete: vi.fn(),
+    getWorkspaceRevisionByKey: vi.fn(() => undefined),
+    setSandboxWorkspaceRevision: vi.fn(),
+    setWorkspaceRevisionByKey: vi.fn(),
+    syncReadSnapshot: vi.fn(),
+    invalidateWorkspaceSnapshots: vi.fn(() => 0),
+    takePrefetchedEditFile: vi.fn(() => null),
+    setPrefetchedEditFile: vi.fn(),
+    recordLedgerRead: vi.fn(),
+    recordLedgerAutoExpandAttempt: vi.fn(),
+    recordLedgerAutoExpandSuccess: vi.fn(),
+    recordLedgerSymbolAutoExpand: vi.fn(),
+    recordLedgerSymbolWarningSoftened: vi.fn(),
+    recordLedgerCreation: vi.fn(),
+    recordLedgerMutation: vi.fn(),
+    markLedgerStale: vi.fn(),
+    checkSymbolicEditAllowed: vi.fn(() => opts.symbolicVerdict ?? allowVerdict),
+    checkLinesCovered: vi.fn(() => opts.coverageVerdict ?? allowVerdict),
+    invalidateSymbolLedger: vi.fn(),
+  };
+}
+
+describe('handleEditFile', () => {
+  it('blocks when the symbolic guard denies and auto-read fails', async () => {
+    const ctx = makeContext({
+      symbolicVerdict: { allowed: false, reason: 'Unread file /workspace/src/app.ts' },
+      readResults: [{ content: '', truncated: false, error: 'ENOENT' } as FileReadResult],
+    });
+
+    const result = await handleEditFile(ctx, {
+      path: '/workspace/src/app.ts',
+      edits: [{ op: 'replace_line', ref: '1:abc1234', content: 'new' }],
+    });
+
+    expect(ctx.recordLedgerAutoExpandAttempt).toHaveBeenCalled();
+    expect(ctx.writeToSandbox).not.toHaveBeenCalled();
+    expect(result.structuredError?.type).toBe('EDIT_GUARD_BLOCKED');
+    expect(result.text).toContain('[Tool Error — sandbox_edit_file]');
+  });
+
+  it('writes through the context, records mutation, and invalidates symbol ledger on success', async () => {
+    const ctx = makeContext({
+      readResults: [
+        {
+          content: 'const x = 1;\n',
+          version: 'v1',
+          truncated: false,
+        } as FileReadResult,
+        // Post-write verify read.
+        { content: 'const x = 2;\n', version: 'v2', truncated: false } as FileReadResult,
+      ],
+      writeResult: { ok: true, new_version: 'v2', bytes_written: 14 },
+    });
+
+    // Hash by line-number ref so applyHashlineEdits can resolve it against the
+    // fresh read above (any 7+ hex chars work — the hashline resolver accepts
+    // partial matches when the line number uniquely identifies the target).
+    const result = await handleEditFile(ctx, {
+      path: '/workspace/src/app.ts',
+      edits: [{ op: 'replace_line', ref: '1:abc1234', content: 'const x = 2;' }],
+    });
+
+    expect(ctx.writeToSandbox).toHaveBeenCalled();
+    expect(ctx.recordLedgerCreation).toHaveBeenCalledWith('/workspace/src/app.ts');
+    expect(ctx.recordLedgerMutation).toHaveBeenCalledWith('/workspace/src/app.ts', 'agent');
+    expect(ctx.invalidateSymbolLedger).toHaveBeenCalledWith('/workspace/src/app.ts');
+    expect(result.text).toContain('[Tool Result — sandbox_edit_file]');
+    expect(result.postconditions?.touchedFiles[0]?.mutation).toBe('edit');
+  });
+});
+
+describe('handleEditRange', () => {
+  it('delegates to handleEditFile after priming the prefetch cache', async () => {
+    const ctx = makeContext({
+      readResults: [
+        {
+          content: 'line1\nline2\nline3\n',
+          version: 'v1',
+          truncated: false,
+        } as FileReadResult,
+        {
+          content: 'line1\nREPLACED\nline3\n',
+          version: 'v2',
+          truncated: false,
+        } as FileReadResult,
+        // Post-write verify read.
+        { content: 'line1', version: 'v2', truncated: false } as FileReadResult,
+      ],
+      writeResult: { ok: true, new_version: 'v2', bytes_written: 20 },
+    });
+
+    const result = await handleEditRange(ctx, {
+      path: '/workspace/src/app.ts',
+      start_line: 2,
+      end_line: 2,
+      content: 'REPLACED',
+    });
+
+    expect(ctx.setPrefetchedEditFile).toHaveBeenCalled();
+    // handleEditFile takes over from here; it should consume the prefetch and succeed.
+    expect(ctx.takePrefetchedEditFile).toHaveBeenCalled();
+    expect(ctx.writeToSandbox).toHaveBeenCalled();
+    expect(result.text).toContain('[Tool Result — sandbox_edit_file]');
+  });
+});
+
+describe('handleSearchReplace', () => {
+  it('returns EDIT_CONTENT_NOT_FOUND when the search string is missing', async () => {
+    const ctx = makeContext({
+      readResults: [
+        {
+          content: 'const a = 1;\nconst b = 2;\n',
+          version: 'v1',
+          truncated: false,
+        } as FileReadResult,
+      ],
+    });
+
+    const result = await handleSearchReplace(ctx, {
+      path: '/workspace/src/app.ts',
+      search: 'nonexistent',
+      replace: 'replaced',
+    });
+
+    expect(result.structuredError?.type).toBe('EDIT_CONTENT_NOT_FOUND');
+    expect(result.text).toContain('Search string not found');
+  });
+
+  it('flags ambiguous matches with EDIT_HASH_MISMATCH', async () => {
+    const ctx = makeContext({
+      readResults: [
+        {
+          content: 'foo = 1\nfoo = 2\nfoo = 3\n',
+          version: 'v1',
+          truncated: false,
+        } as FileReadResult,
+      ],
+    });
+
+    const result = await handleSearchReplace(ctx, {
+      path: '/workspace/src/app.ts',
+      search: 'foo',
+      replace: 'bar',
+    });
+
+    expect(result.structuredError?.type).toBe('EDIT_HASH_MISMATCH');
+    expect(result.text).toContain('Ambiguous');
+  });
+});
