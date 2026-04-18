@@ -36,7 +36,7 @@ import { getToolCallMetrics } from './tool-call-metrics.js';
 import { getSocketPath, getPidPath, getLogPath } from './pushd.js';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.js';
 import { createCompleter } from './completer.js';
-import { fmt, Spinner } from './format.js';
+import { fmt, formatRelativeTime, Spinner } from './format.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { compactContext } from './context-manager.js';
 import { buildHeadlessTaskBrief } from './task-brief.js';
@@ -566,6 +566,22 @@ function makeInteractiveApprovalFn(rl, { config, safeExecPatterns }) {
 // should handle `cancel` as a normal user abort consistent with the
 // existing bare-`push` flow (print a one-liner, exit 0); `'new'` is the
 // fall-through that matches pre-picker bare-`push` behavior.
+// Render a session's last human message as a one-line preview for the
+// resume pickers. Flatten whitespace, strip control chars (session
+// state is user-controlled via /edits or direct file edits), and
+// truncate so a single long prompt doesn't blow out the picker
+// formatting. Empty input and empty-after-sanitization both return '',
+// so the caller can skip the preview line entirely.
+const PREVIEW_MAX_LEN = 72;
+
+function formatLastMessagePreview(raw: string): string {
+  if (!raw) return '';
+  const flattened = sanitizeTerminalText(raw).replace(/\s+/g, ' ').trim();
+  if (!flattened) return '';
+  if (flattened.length <= PREVIEW_MAX_LEN) return flattened;
+  return `${flattened.slice(0, PREVIEW_MAX_LEN - 1).trimEnd()}…`;
+}
+
 async function promptResumeOrNew(
   sessions: Array<{
     sessionId: string;
@@ -574,6 +590,7 @@ async function promptResumeOrNew(
     provider: string;
     model: string;
     cwd: string;
+    lastUserMessage: string;
   }>,
 ): Promise<string | 'new' | 'cancel'> {
   const indexWidth = String(sessions.length).length;
@@ -583,10 +600,12 @@ async function promptResumeOrNew(
     const num = String(i + 1).padStart(indexWidth, ' ');
     const safeName = sanitizeTerminalText(row.sessionName);
     const name = safeName ? ` ${fmt.bold(safeName)}` : '';
-    const when = new Date(row.updatedAt).toISOString();
+    const when = formatRelativeTime(row.updatedAt);
+    const preview = formatLastMessagePreview(row.lastUserMessage);
     process.stdout.write(
       `  ${num}. ${row.sessionId}${name}\n` +
-        `     ${fmt.dim(`${when}  ${row.provider}/${row.model}`)}\n`,
+        `     ${fmt.dim(`${when} · ${row.provider}/${row.model}`)}\n` +
+        (preview ? `     ${fmt.dim(`"${preview}"`)}\n` : ''),
     );
   }
 
@@ -1994,10 +2013,12 @@ export async function main() {
       const only = sessions[0];
       const safeName = sanitizeTerminalText(only.sessionName);
       const label = safeName ? ` (${fmt.bold(safeName)})` : '';
-      const when = new Date(only.updatedAt).toISOString();
+      const when = formatRelativeTime(only.updatedAt);
+      const preview = formatLastMessagePreview(only.lastUserMessage);
       process.stdout.write(
         `\nResuming only session: ${only.sessionId}${label}\n` +
-          `  ${fmt.dim(`${when}  ${only.provider}/${only.model}  ${only.cwd}`)}\n`,
+          `  ${fmt.dim(`${when} · ${only.provider}/${only.model} · ${only.cwd}`)}\n` +
+          (preview ? `  ${fmt.dim(`"${preview}"`)}\n` : ''),
       );
       return runAttach(only.sessionId, { noResume });
     }
@@ -2009,10 +2030,12 @@ export async function main() {
       const num = String(i + 1).padStart(indexWidth, ' ');
       const safeName = sanitizeTerminalText(row.sessionName);
       const name = safeName ? ` ${fmt.bold(safeName)}` : '';
-      const when = new Date(row.updatedAt).toISOString();
+      const when = formatRelativeTime(row.updatedAt);
+      const preview = formatLastMessagePreview(row.lastUserMessage);
       process.stdout.write(
         `  ${num}. ${row.sessionId}${name}\n` +
-          `     ${fmt.dim(`${when}  ${row.provider}/${row.model}  ${row.cwd}`)}\n`,
+          `     ${fmt.dim(`${when} · ${row.provider}/${row.model} · ${row.cwd}`)}\n` +
+          (preview ? `     ${fmt.dim(`"${preview}"`)}\n` : ''),
       );
     }
 

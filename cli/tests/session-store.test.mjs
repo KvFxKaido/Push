@@ -18,6 +18,7 @@ const {
   deleteSession,
   getSessionDir,
   validateSessionId,
+  isInternalEnvelope,
   SESSION_ID_RE,
   PROTOCOL_VERSION,
 } = await import('../session-store.ts');
@@ -480,5 +481,41 @@ describe('listSessions security', () => {
 
     // Cleanup
     await fs.rm(badDir, { recursive: true, force: true });
+  });
+});
+
+// ─── isInternalEnvelope ──────────────────────────────────────────
+
+describe('isInternalEnvelope', () => {
+  it('matches paired envelopes from production code', () => {
+    assert.equal(isInternalEnvelope('[TOOL_RESULT]\n{}\n[/TOOL_RESULT]'), true);
+    assert.equal(
+      isInternalEnvelope('[PROJECT_INSTRUCTIONS source="AGENTS.md"]\nfoo\n[/PROJECT_INSTRUCTIONS]'),
+      true,
+    );
+    assert.equal(isInternalEnvelope('[CONTEXT DIGEST]\nsnippets\n[/CONTEXT DIGEST]'), true);
+    assert.equal(isInternalEnvelope('[SESSION_RECOVERED]\nresume\n[/SESSION_RECOVERED]'), true);
+    assert.equal(isInternalEnvelope('[TOOL_DENIED] reason [/TOOL_DENIED]'), true);
+  });
+
+  it('does not match bracket-led human prompts without a closing tag', () => {
+    assert.equal(isInternalEnvelope('[WIP] refactor the auth module'), false);
+    assert.equal(isInternalEnvelope('[bug] repro steps below'), false);
+    assert.equal(isInternalEnvelope('[ ] fix flaky tests'), false); // markdown checklist
+    assert.equal(isInternalEnvelope('[x] completed'), false);
+    assert.equal(isInternalEnvelope('[link text](http://example.com)'), false);
+    assert.equal(isInternalEnvelope('["key": "value"]'), false); // JSON-like
+  });
+
+  it('does not match an envelope whose closing tag is missing', () => {
+    // Looks like an envelope but the closer is absent — still treat as
+    // human content (the inner heuristic requires a paired tag).
+    assert.equal(isInternalEnvelope('[TOOL_RESULT] without closer'), false);
+  });
+
+  it('does not match strings that do not start with a bracket', () => {
+    assert.equal(isInternalEnvelope('Fix the retry loop'), false);
+    assert.equal(isInternalEnvelope(''), false);
+    assert.equal(isInternalEnvelope('  [TOOL_RESULT][/TOOL_RESULT]'), false); // leading whitespace (caller trims)
   });
 });
