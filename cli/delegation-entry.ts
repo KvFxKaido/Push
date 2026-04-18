@@ -97,8 +97,16 @@ function buildPlannerStreamFn(
 
 function planToTaskGraph(plan: PlannerFeatureList): TaskGraphNode[] {
   return plan.features.map((f) => {
-    const parts = [f.description];
-    if (f.files?.length) parts.push(`Relevant files: ${f.files.join(', ')}`);
+    // Read-first instruction. Without explicit priming, models fabricate
+    // from general knowledge when the node brief reads as "produce X"
+    // rather than "investigate then produce X" — even with tools exposed
+    // in the system prompt.
+    const parts: string[] = [
+      'Ground your answer in the actual source code. Use read_file, search_files, or list_dir to read the input files listed below before producing any output. Do not answer from general knowledge.',
+      '',
+      f.description,
+    ];
+    if (f.files?.length) parts.push(`Input files (read these first): ${f.files.join(', ')}`);
     if (f.verifyCommand) parts.push(`Verify with: ${f.verifyCommand}`);
     return {
       id: f.id,
