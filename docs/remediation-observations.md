@@ -4,6 +4,8 @@ Lightweight observation log per [Architecture Remediation Plan §Lightweight obs
 
 Format: `date, session purpose, "<tools> fine" or "hit X"`.
 
+**Status as of 2026-04-18 — gate currently suspended:** the three-green-entries mechanism above assumes Push CLI is the operator's daily tool for real coding work. At Push's current stage of CLI readiness, it is not. Real-use observations therefore cannot accumulate through the prescribed path, and the gate is **effectively suspended**. The discipline the gate enforces (don't extract blind, validate behavior preservation) remains valid; until CLI usability reaches a daily-driver state, it is enforced via characterization tests and targeted smoke exercises rather than via this log. Entries below are kept for provenance and for retrospective use once the gate re-activates. See the remediation plan's `§Lightweight observation log` and `§CLI Runtime Parity` for the full framing and the work that moves the prerequisite toward being met.
+
 ---
 
 ## 2026-04-17 — CLI delegation spike (Gap 3 Step 1): wiring landed, end-to-end deferred

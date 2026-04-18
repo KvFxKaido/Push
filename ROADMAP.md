@@ -1,13 +1,13 @@
 # Push Roadmap (Canonical)
 
-Last updated: 2026-04-05
+Last updated: 2026-04-18
 
 This is the single source of truth for active product and engineering direction.
 
 `docs/` is a draft lab for spikes, explorations, and non-final plans.
 Only decisions promoted into this file should be treated as implementation commitments.
 
-Current cycle emphasis: transcript-first CLI ergonomics, selective CLI adoption of the shared runtime foundation, and chat/workspace product follow-through.
+Current cycle emphasis: transcript-first CLI ergonomics, selective CLI adoption of the shared runtime foundation, and chat/workspace product follow-through. **Push CLI Muscle-Memory UX is also load-bearing for the Architecture Remediation Plan's evaluation gate** — extraction validation depends on real-use observations, which require the CLI to be daily-driver ready (see `docs/decisions/Architecture Remediation Plan — Defusing the Big Four.md §CLI Runtime Parity` for the full framing). Treat CLI usability as equivalent-priority to extraction, not adjacent.
 
 ## How We Use This
 
