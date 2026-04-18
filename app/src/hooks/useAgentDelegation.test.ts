@@ -322,3 +322,149 @@ describe('useAgentDelegation.executeDelegateCall — unknown tool', () => {
     expect(result).toEqual({ text: '' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Delegation-outcomes characterization — the Step 2 remnant from the
+// Architecture Remediation Plan. The explorer-happy-start and coder-short-
+// circuit tests above exercise the pre-outcome emission paths
+// (`DELEGATION_STARTED`, mock dispatch); these tests pin the full outcome
+// surface the agent reports back through `appendRunEvent` and
+// `toolExecResult.delegationOutcome`: `subagent.completed` shape on success,
+// `subagent.failed` on error, and the structured `DelegationOutcome` fields
+// each role produces (rounds, checkpoints, summary, status).
+// ---------------------------------------------------------------------------
+
+describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () => {
+  it('emits subagent.completed with an explorer DelegationOutcome on happy path', async () => {
+    explorerAgent.runExplorerAgent.mockResolvedValue({
+      rounds: 2,
+      summary: 'found the auth module at src/auth.ts',
+      cards: [],
+    });
+    const params = makeParams();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_explorer' as const, args: { task: 'find auth' } },
+    };
+
+    const result = await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        type: 'subagent.completed',
+        agent: 'explorer',
+        delegationOutcome: expect.objectContaining({
+          agent: 'explorer',
+          status: 'complete',
+          summary: 'found the auth module at src/auth.ts',
+          rounds: 2,
+        }),
+      }),
+    );
+    expect(result.delegationOutcome).toMatchObject({
+      agent: 'explorer',
+      status: 'complete',
+      rounds: 2,
+    });
+    expect(result.card).toBeDefined();
+  });
+
+  it('emits subagent.completed with a coder DelegationOutcome on happy path', async () => {
+    coderAgent.runCoderAgent.mockResolvedValue({
+      rounds: 3,
+      checkpoints: 1,
+      cards: [],
+      summary: 'implemented the feature',
+      criteriaResults: [],
+    });
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    // Disable the auditor so the happy path doesn't require mocking the
+    // downstream auditor evaluation; the pre-auditor completion-event flow
+    // is what this test characterizes.
+    params.getVerificationPolicyForChat = vi.fn(() => ({
+      mode: 'off' as const,
+      requireAuditor: false,
+      autoVerifyOnMutation: false,
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'implement it' } },
+    };
+
+    const result = await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    expect(coderAgent.runCoderAgent).toHaveBeenCalledOnce();
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        type: 'subagent.completed',
+        agent: 'coder',
+        delegationOutcome: expect.objectContaining({
+          agent: 'coder',
+          rounds: 3,
+          checkpoints: 1,
+        }),
+      }),
+    );
+    expect(result.delegationOutcome).toMatchObject({
+      agent: 'coder',
+      rounds: 3,
+      checkpoints: 1,
+    });
+    expect(result.card).toBeDefined();
+  });
+
+  it('emits subagent.failed and a Tool Error when runCoderAgent throws', async () => {
+    coderAgent.runCoderAgent.mockRejectedValue(new Error('compile error in sandbox'));
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.getVerificationPolicyForChat = vi.fn(() => ({
+      mode: 'off' as const,
+      requireAuditor: false,
+      autoVerifyOnMutation: false,
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'fix it' } },
+    };
+
+    const result = await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    expect(result.text).toContain('[Tool Error]');
+    expect(result.text).toContain('Coder failed');
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({ type: 'subagent.failed', agent: 'coder' }),
+    );
+    expect(result.delegationOutcome).toBeUndefined();
+  });
+});
