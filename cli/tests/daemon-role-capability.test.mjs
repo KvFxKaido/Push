@@ -123,34 +123,40 @@ describe('roleCanUseTool(explorer, ...) matrix for CLI-native names', () => {
     assert.equal(roleCanUseTool('explorer', 'save_memory'), false);
   });
 
-  it('READ_ONLY_TOOLS and the shared table agree on the read-side (post-Gap-2 drift detector)', () => {
-    // READ_ONLY_TOOLS is retained in cli/tools.ts for a separate
-    // purpose (deep-reviewer-agent bucketing of detected tool calls
-    // into readOnly/mutating slots). If someone adds a tool to
-    // READ_ONLY_TOOLS without a matching shared-table entry, Explorer
-    // could regress to accepting unmapped tools — this test catches
-    // that drift.
+  it('every READ_ONLY_TOOLS entry has a TOOL_CAPABILITIES mapping (drift detector)', () => {
+    // READ_ONLY_TOOLS is retained in cli/tools.ts for a purpose
+    // distinct from Explorer's capability grant — deep-reviewer-agent
+    // uses it to bucket detected tool calls into readOnly/mutating
+    // slots. But every name in the set must still have a shared-table
+    // capability mapping, otherwise `roleCanUseTool` would fail-open
+    // on unknown names and silently regress Explorer's grant for any
+    // new addition.
     for (const tool of READ_ONLY_TOOLS) {
-      // Accept two states: (a) Explorer can use the tool per the shared
-      // table (normal read-only case) OR (b) the tool is intentionally
-      // denied because its capability is not in Explorer's grant
-      // (exec_poll and exec_list_sessions, documented above).
-      const allowed = roleCanUseTool('explorer', tool);
-      const hasEntry = TOOL_CAPABILITIES[tool] !== undefined;
-      assert.equal(
-        hasEntry,
-        true,
+      assert.ok(
+        TOOL_CAPABILITIES[tool] !== undefined,
         `READ_ONLY_TOOLS contains "${tool}" but TOOL_CAPABILITIES has no entry — drift risk`,
       );
-      if (tool === 'exec_poll' || tool === 'exec_list_sessions') {
-        assert.equal(allowed, false, `${tool} should be denied (intentional behavior change)`);
-      } else {
-        assert.equal(
-          allowed,
-          true,
-          `${tool} in READ_ONLY_TOOLS but Explorer cannot use it — unexpected drift`,
-        );
-      }
+    }
+  });
+
+  it('exec_poll and exec_list_sessions are intentionally denied to Explorer despite READ_ONLY_TOOLS membership', () => {
+    // Dedicated pin for the Gap 2 behavior change: these two names
+    // remain in READ_ONLY_TOOLS because deep-reviewer-agent treats
+    // them as read-verbs over exec-family objects, but they are no
+    // longer advertised to the Explorer model and no longer callable
+    // by Explorer at the capability gate. See READ_ONLY_TOOL_PROTOCOL
+    // divergence note in cli/tools.ts and the sync test in
+    // daemon-integration.test.mjs for the prompt-side enforcement.
+    for (const tool of ['exec_poll', 'exec_list_sessions']) {
+      assert.ok(
+        READ_ONLY_TOOLS.has(tool),
+        `${tool} should remain in READ_ONLY_TOOLS for deep-reviewer bucketing`,
+      );
+      assert.equal(
+        roleCanUseTool('explorer', tool),
+        false,
+        `${tool} must be denied to Explorer per the shared capability table`,
+      );
     }
   });
 });
