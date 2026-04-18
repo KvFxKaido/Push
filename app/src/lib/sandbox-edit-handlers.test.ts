@@ -18,29 +18,47 @@ const okExec = (stdout = '', stderr = '', exitCode = 0): ExecResult => ({
 const allowVerdict: EditGuardVerdict = { allowed: true };
 
 interface MockedContext extends EditHandlerContext {
-  readFromSandbox: ReturnType<typeof vi.fn>;
-  writeToSandbox: ReturnType<typeof vi.fn>;
-  execInSandbox: ReturnType<typeof vi.fn>;
-  versionCacheSet: ReturnType<typeof vi.fn>;
-  versionCacheDelete: ReturnType<typeof vi.fn>;
-  getWorkspaceRevisionByKey: ReturnType<typeof vi.fn>;
-  setSandboxWorkspaceRevision: ReturnType<typeof vi.fn>;
-  setWorkspaceRevisionByKey: ReturnType<typeof vi.fn>;
-  syncReadSnapshot: ReturnType<typeof vi.fn>;
-  invalidateWorkspaceSnapshots: ReturnType<typeof vi.fn>;
-  takePrefetchedEditFile: ReturnType<typeof vi.fn>;
-  setPrefetchedEditFile: ReturnType<typeof vi.fn>;
-  recordLedgerRead: ReturnType<typeof vi.fn>;
-  recordLedgerAutoExpandAttempt: ReturnType<typeof vi.fn>;
-  recordLedgerAutoExpandSuccess: ReturnType<typeof vi.fn>;
-  recordLedgerSymbolAutoExpand: ReturnType<typeof vi.fn>;
-  recordLedgerSymbolWarningSoftened: ReturnType<typeof vi.fn>;
-  recordLedgerCreation: ReturnType<typeof vi.fn>;
-  recordLedgerMutation: ReturnType<typeof vi.fn>;
-  markLedgerStale: ReturnType<typeof vi.fn>;
-  checkSymbolicEditAllowed: ReturnType<typeof vi.fn>;
-  checkLinesCovered: ReturnType<typeof vi.fn>;
-  invalidateSymbolLedger: ReturnType<typeof vi.fn>;
+  readFromSandbox: ReturnType<typeof vi.fn<EditHandlerContext['readFromSandbox']>>;
+  writeToSandbox: ReturnType<typeof vi.fn<EditHandlerContext['writeToSandbox']>>;
+  execInSandbox: ReturnType<typeof vi.fn<EditHandlerContext['execInSandbox']>>;
+  versionCacheSet: ReturnType<typeof vi.fn<EditHandlerContext['versionCacheSet']>>;
+  versionCacheDelete: ReturnType<typeof vi.fn<EditHandlerContext['versionCacheDelete']>>;
+  getWorkspaceRevisionByKey: ReturnType<
+    typeof vi.fn<EditHandlerContext['getWorkspaceRevisionByKey']>
+  >;
+  setSandboxWorkspaceRevision: ReturnType<
+    typeof vi.fn<EditHandlerContext['setSandboxWorkspaceRevision']>
+  >;
+  setWorkspaceRevisionByKey: ReturnType<
+    typeof vi.fn<EditHandlerContext['setWorkspaceRevisionByKey']>
+  >;
+  syncReadSnapshot: ReturnType<typeof vi.fn<EditHandlerContext['syncReadSnapshot']>>;
+  invalidateWorkspaceSnapshots: ReturnType<
+    typeof vi.fn<EditHandlerContext['invalidateWorkspaceSnapshots']>
+  >;
+  takePrefetchedEditFile: ReturnType<typeof vi.fn<EditHandlerContext['takePrefetchedEditFile']>>;
+  setPrefetchedEditFile: ReturnType<typeof vi.fn<EditHandlerContext['setPrefetchedEditFile']>>;
+  recordLedgerRead: ReturnType<typeof vi.fn<EditHandlerContext['recordLedgerRead']>>;
+  recordLedgerAutoExpandAttempt: ReturnType<
+    typeof vi.fn<EditHandlerContext['recordLedgerAutoExpandAttempt']>
+  >;
+  recordLedgerAutoExpandSuccess: ReturnType<
+    typeof vi.fn<EditHandlerContext['recordLedgerAutoExpandSuccess']>
+  >;
+  recordLedgerSymbolAutoExpand: ReturnType<
+    typeof vi.fn<EditHandlerContext['recordLedgerSymbolAutoExpand']>
+  >;
+  recordLedgerSymbolWarningSoftened: ReturnType<
+    typeof vi.fn<EditHandlerContext['recordLedgerSymbolWarningSoftened']>
+  >;
+  recordLedgerCreation: ReturnType<typeof vi.fn<EditHandlerContext['recordLedgerCreation']>>;
+  recordLedgerMutation: ReturnType<typeof vi.fn<EditHandlerContext['recordLedgerMutation']>>;
+  markLedgerStale: ReturnType<typeof vi.fn<EditHandlerContext['markLedgerStale']>>;
+  checkSymbolicEditAllowed: ReturnType<
+    typeof vi.fn<EditHandlerContext['checkSymbolicEditAllowed']>
+  >;
+  checkLinesCovered: ReturnType<typeof vi.fn<EditHandlerContext['checkLinesCovered']>>;
+  invalidateSymbolLedger: ReturnType<typeof vi.fn<EditHandlerContext['invalidateSymbolLedger']>>;
 }
 
 interface MakeContextOpts {
@@ -56,32 +74,45 @@ function makeContext(opts: MakeContextOpts = {}): MockedContext {
   let readIdx = 0;
   return {
     sandboxId: 'sb-1',
-    readFromSandbox: vi.fn(async () => reads[Math.min(readIdx++, reads.length - 1)]),
-    writeToSandbox: vi.fn(
+    readFromSandbox: vi.fn<EditHandlerContext['readFromSandbox']>(
+      async () => reads[Math.min(readIdx++, reads.length - 1)],
+    ),
+    writeToSandbox: vi.fn<EditHandlerContext['writeToSandbox']>(
       async (): Promise<WriteResult> =>
         opts.writeResult ?? { ok: true, new_version: 'v2', bytes_written: 10 },
     ),
-    execInSandbox: vi.fn(async () => opts.execResult ?? okExec()),
-    versionCacheSet: vi.fn(),
-    versionCacheDelete: vi.fn(),
-    getWorkspaceRevisionByKey: vi.fn(() => undefined),
-    setSandboxWorkspaceRevision: vi.fn(),
-    setWorkspaceRevisionByKey: vi.fn(),
-    syncReadSnapshot: vi.fn(),
-    invalidateWorkspaceSnapshots: vi.fn(() => 0),
-    takePrefetchedEditFile: vi.fn(() => null),
-    setPrefetchedEditFile: vi.fn(),
-    recordLedgerRead: vi.fn(),
-    recordLedgerAutoExpandAttempt: vi.fn(),
-    recordLedgerAutoExpandSuccess: vi.fn(),
-    recordLedgerSymbolAutoExpand: vi.fn(),
-    recordLedgerSymbolWarningSoftened: vi.fn(),
-    recordLedgerCreation: vi.fn(),
-    recordLedgerMutation: vi.fn(),
-    markLedgerStale: vi.fn(),
-    checkSymbolicEditAllowed: vi.fn(() => opts.symbolicVerdict ?? allowVerdict),
-    checkLinesCovered: vi.fn(() => opts.coverageVerdict ?? allowVerdict),
-    invalidateSymbolLedger: vi.fn(),
+    execInSandbox: vi.fn<EditHandlerContext['execInSandbox']>(
+      async () => opts.execResult ?? okExec(),
+    ),
+    versionCacheSet: vi.fn<EditHandlerContext['versionCacheSet']>(),
+    versionCacheDelete: vi.fn<EditHandlerContext['versionCacheDelete']>(),
+    getWorkspaceRevisionByKey: vi.fn<EditHandlerContext['getWorkspaceRevisionByKey']>(
+      () => undefined,
+    ),
+    setSandboxWorkspaceRevision: vi.fn<EditHandlerContext['setSandboxWorkspaceRevision']>(),
+    setWorkspaceRevisionByKey: vi.fn<EditHandlerContext['setWorkspaceRevisionByKey']>(),
+    syncReadSnapshot: vi.fn<EditHandlerContext['syncReadSnapshot']>(),
+    invalidateWorkspaceSnapshots: vi.fn<EditHandlerContext['invalidateWorkspaceSnapshots']>(
+      () => 0,
+    ),
+    takePrefetchedEditFile: vi.fn<EditHandlerContext['takePrefetchedEditFile']>(() => null),
+    setPrefetchedEditFile: vi.fn<EditHandlerContext['setPrefetchedEditFile']>(),
+    recordLedgerRead: vi.fn<EditHandlerContext['recordLedgerRead']>(),
+    recordLedgerAutoExpandAttempt: vi.fn<EditHandlerContext['recordLedgerAutoExpandAttempt']>(),
+    recordLedgerAutoExpandSuccess: vi.fn<EditHandlerContext['recordLedgerAutoExpandSuccess']>(),
+    recordLedgerSymbolAutoExpand: vi.fn<EditHandlerContext['recordLedgerSymbolAutoExpand']>(),
+    recordLedgerSymbolWarningSoftened:
+      vi.fn<EditHandlerContext['recordLedgerSymbolWarningSoftened']>(),
+    recordLedgerCreation: vi.fn<EditHandlerContext['recordLedgerCreation']>(),
+    recordLedgerMutation: vi.fn<EditHandlerContext['recordLedgerMutation']>(),
+    markLedgerStale: vi.fn<EditHandlerContext['markLedgerStale']>(),
+    checkSymbolicEditAllowed: vi.fn<EditHandlerContext['checkSymbolicEditAllowed']>(
+      () => opts.symbolicVerdict ?? allowVerdict,
+    ),
+    checkLinesCovered: vi.fn<EditHandlerContext['checkLinesCovered']>(
+      () => opts.coverageVerdict ?? allowVerdict,
+    ),
+    invalidateSymbolLedger: vi.fn<EditHandlerContext['invalidateSymbolLedger']>(),
   };
 }
 
