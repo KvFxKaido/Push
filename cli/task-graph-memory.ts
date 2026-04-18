@@ -13,9 +13,16 @@
  * try/catch-wrapped and failures are logged but do not throw.
  */
 
-import { writeTaskGraphNodeMemory } from '../lib/context-memory.ts';
+import {
+  buildRetrievedMemoryKnownContext,
+  writeTaskGraphNodeMemory,
+} from '../lib/context-memory.ts';
 import type { ContextMemoryStore } from '../lib/context-memory-store.ts';
-import type { MemoryScope, TaskGraphResult } from '../lib/runtime-contract.ts';
+import {
+  MAX_ROLE_RETRIEVED_MEMORY_RECORDS,
+  ROLE_MEMORY_SECTION_BUDGETS,
+} from '../lib/role-memory-budgets.ts';
+import type { MemoryScope, TaskGraphNode, TaskGraphResult } from '../lib/runtime-contract.ts';
 
 type GraphMemoryScope = Omit<MemoryScope, 'role' | 'taskId'>;
 
@@ -39,6 +46,70 @@ function defaultOnWriteError(nodeId: string, error: unknown): void {
       error: msg,
     })}\n`,
   );
+}
+
+/**
+ * Retrieve a typed-memory block scoped to a specific task-graph node.
+ * Returns a formatted context-memory block (from
+ * `buildRetrievedMemoryKnownContext`) or null when no relevant
+ * records exist.
+ *
+ * Pulls the shared `ROLE_MEMORY_SECTION_BUDGETS` so CLI retrievals
+ * use the same per-section caps the web surface applies to
+ * Reviewer / Auditor retrievals. Same budget for every role today;
+ * tune per-role later if measurement shows it matters.
+ *
+ * Derives `fileHints` from the node's declared files so scored
+ * retrieval favors records with file overlap. `includeStale` is
+ * left at the `buildRetrievedMemoryKnownContext` default (true),
+ * since the stale section has its own modest budget and the Coder
+ * kernel can still benefit from prior stale findings.
+ */
+export async function buildTypedMemoryBlockForNode(input: {
+  node: TaskGraphNode;
+  scope: GraphMemoryScope;
+  store?: ContextMemoryStore;
+}): Promise<string | null> {
+  const { node, scope, store } = input;
+  if (!scope.repoFullName) return null;
+
+  const fileHints = node.files && node.files.length > 0 ? node.files.slice(0, 8) : undefined;
+
+  try {
+    const { line } = await buildRetrievedMemoryKnownContext(
+      {
+        repoFullName: scope.repoFullName,
+        branch: scope.branch,
+        chatId: scope.chatId,
+        taskGraphId: scope.taskGraphId,
+        taskId: node.id,
+        role: node.agent,
+        taskText: node.task,
+        fileHints,
+        maxRecords: MAX_ROLE_RETRIEVED_MEMORY_RECORDS,
+      },
+      {
+        sectionBudgets: ROLE_MEMORY_SECTION_BUDGETS,
+        store,
+      },
+    );
+    return line;
+  } catch (err) {
+    // Retrieval failure must not block the delegation. Log and
+    // return null so the node runs with no memory block — same
+    // graceful-degradation pattern writeTaskGraphResultMemory uses
+    // on the write path.
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `${JSON.stringify({
+        level: 'warn',
+        event: 'task_graph_memory_retrieve_failed',
+        nodeId: node.id,
+        error: msg,
+      })}\n`,
+    );
+    return null;
+  }
 }
 
 /**

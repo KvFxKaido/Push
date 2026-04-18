@@ -13,8 +13,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { writeTaskGraphResultMemory } from '../task-graph-memory.ts';
+import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from '../task-graph-memory.ts';
 import { createInMemoryStore } from '../../lib/context-memory-store.ts';
+import { createMemoryRecord, writeExplorerMemory } from '../../lib/context-memory.ts';
 
 function makeCompletedNodeState(id, agent, overrides = {}) {
   return {
@@ -139,6 +140,89 @@ describe('writeTaskGraphResultMemory — happy path', () => {
 // ---------------------------------------------------------------------------
 // Error isolation
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// buildTypedMemoryBlockForNode — retrieval helper
+// ---------------------------------------------------------------------------
+
+describe('buildTypedMemoryBlockForNode', () => {
+  it('returns null when no records match the scope', async () => {
+    const store = createInMemoryStore();
+    const block = await buildTypedMemoryBlockForNode({
+      node: { id: 'solo', agent: 'explorer', task: 'Investigate the auth flow' },
+      scope,
+      store,
+    });
+    assert.equal(block, null);
+  });
+
+  it('returns a formatted memory block when relevant records exist', async () => {
+    const store = createInMemoryStore();
+    await writeExplorerMemory({
+      scope: {
+        repoFullName: scope.repoFullName,
+        branch: scope.branch,
+        chatId: scope.chatId,
+      },
+      summary: 'Auth middleware reads token from cookie at middleware.ts:42',
+      relatedFiles: ['middleware.ts'],
+      store,
+    });
+
+    const block = await buildTypedMemoryBlockForNode({
+      node: {
+        id: 'fix-auth',
+        agent: 'coder',
+        task: 'Fix the auth flow',
+        files: ['middleware.ts'],
+      },
+      scope,
+      store,
+    });
+
+    assert.ok(typeof block === 'string' && block.length > 0, 'expected a non-empty block');
+    assert.ok(block.includes('middleware.ts:42'), 'block should include the seeded summary');
+  });
+
+  it('returns null when scope has no repoFullName', async () => {
+    // repoFullName is required to scope any retrieval; without it
+    // there's nothing to query against.
+    const store = createInMemoryStore();
+    const block = await buildTypedMemoryBlockForNode({
+      node: { id: 'x', agent: 'explorer', task: 't' },
+      scope: { repoFullName: '' },
+      store,
+    });
+    assert.equal(block, null);
+  });
+
+  it('degrades gracefully when the store throws on retrieval', async () => {
+    // Simulate a broken store. The helper must log and return null
+    // rather than propagating the error up into the delegation loop.
+    const brokenStore = createInMemoryStore();
+    brokenStore.list = () => {
+      throw new Error('simulated retrieval failure');
+    };
+
+    const originalWarn = process.stderr.write.bind(process.stderr);
+    const warnings = [];
+    process.stderr.write = (chunk, ...rest) => {
+      warnings.push(String(chunk));
+      return true;
+    };
+    try {
+      const block = await buildTypedMemoryBlockForNode({
+        node: { id: 'x', agent: 'explorer', task: 't' },
+        scope,
+        store: brokenStore,
+      });
+      assert.equal(block, null);
+      assert.ok(warnings.some((w) => w.includes('task_graph_memory_retrieve_failed')));
+    } finally {
+      process.stderr.write = originalWarn;
+    }
+  });
+});
 
 describe('writeTaskGraphResultMemory — error isolation', () => {
   it('continues writing subsequent nodes when one write throws', async () => {

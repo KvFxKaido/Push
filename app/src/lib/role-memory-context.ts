@@ -1,4 +1,8 @@
 import { buildRetrievedMemoryKnownContext } from '@/lib/context-memory';
+import {
+  MAX_ROLE_RETRIEVED_MEMORY_RECORDS as MAX_RETRIEVED_MEMORY_RECORDS,
+  ROLE_MEMORY_SECTION_BUDGETS,
+} from '@push/lib/role-memory-budgets';
 import type { MemoryQuery, MemoryScope } from '@/types';
 import { parseDiffStats } from './diff-utils';
 import {
@@ -7,14 +11,6 @@ import {
   type AuditorPromptContext,
   type ReviewerPromptContext,
 } from './role-context';
-
-const MAX_RETRIEVED_MEMORY_RECORDS = 5;
-const ROLE_MEMORY_SECTION_BUDGETS = {
-  facts: 600,
-  taskMemory: 700,
-  verification: 500,
-  stale: 250,
-} as const;
 
 function formatMemoryError(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
