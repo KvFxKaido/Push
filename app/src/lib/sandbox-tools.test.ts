@@ -500,9 +500,12 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', (
 
 // ---------------------------------------------------------------------------
 // Git/release family characterization — pin behavior for the four tools
-// slated for Step 4 extraction (sandbox_diff, sandbox_prepare_commit,
-// sandbox_push, promote_to_github). Tests pass at HEAD with no production
-// code changes; they're the regression gate for the upcoming extraction.
+// extracted into sandbox-git-release-handlers.ts (sandbox_diff,
+// sandbox_prepare_commit, sandbox_push, promote_to_github). These tests
+// exercise the dispatcher end-to-end and serve as the regression gate for
+// the extraction and future refactors. Originally written to pass at HEAD
+// before the extraction (commit e92b2b8); now pin behavior across the
+// extracted handlers as well.
 // ---------------------------------------------------------------------------
 
 describe('executeSandboxToolCall -- sandbox_diff', () => {
