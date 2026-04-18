@@ -99,8 +99,11 @@ const CAPABILITIES = [
   // `multi_agent`: both Explorer and Coder daemon-side tool executors
   // are wired to real production tool surfaces (`executeToolCall` from
   // `cli/tools.ts`). Explorer runs `makeDaemonExplorerToolExec` with
-  // `READ_ONLY_TOOLS` enforcement and no approval gating; Coder runs
-  // `makeDaemonCoderToolExec` with full tool surface + approval gating.
+  // `roleCanUseTool('explorer', ...)` enforcement against the shared
+  // capability table (`lib/capabilities.ts`) and no approval gating;
+  // Coder runs `makeDaemonCoderToolExec` with full tool surface +
+  // approval gating (Coder capability gate is deferred per Gap 2
+  // rollout phasing — needs its own grant audit).
   // Delegation outcomes land as `'complete'` for both agents on clean
   // kernel returns — the daemon can host end-to-end multi-agent flows
   // (direct delegation RPCs + dependency-ordered task graphs).
