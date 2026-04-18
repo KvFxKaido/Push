@@ -735,10 +735,14 @@ describe('push resume', () => {
         sessionName: 'Alpha',
         messages: [
           { role: 'system', content: 'System prompt' },
-          { role: 'user', content: '[PROJECT_INSTRUCTIONS] ignore me' },
+          {
+            role: 'user',
+            content:
+              '[PROJECT_INSTRUCTIONS source="AGENTS.md"]\nignore me\n[/PROJECT_INSTRUCTIONS]',
+          },
           { role: 'user', content: 'Fix the retry loop in pushd attach reconnect' },
           { role: 'assistant', content: 'ok' },
-          { role: 'user', content: '[TOOL_RESULT] ignore me too' },
+          { role: 'user', content: '[TOOL_RESULT]\n{"ok":true}\n[/TOOL_RESULT]' },
         ],
       },
       { sessionId: 'sess_beta22_bbccdd', updatedAt: twoHoursAgo + 1000 },
@@ -766,6 +770,39 @@ describe('push resume', () => {
     assert.ok(
       !/PROJECT_INSTRUCTIONS|TOOL_RESULT/.test(combined),
       `internal envelopes must not leak into picker, combined=${combined}`,
+    );
+  });
+
+  it('renders bracket-led human prompts (e.g. [WIP]) as preview', async () => {
+    try {
+      await execFileAsync('script', ['-V']);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return;
+    }
+
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-bracket-'));
+    // Human prompts that happen to start with `[` (WIP tags, markdown
+    // checklists, JSON-like content) must still surface as previews.
+    // Only paired `[NAME]...[/NAME]` envelopes get filtered.
+    await seedSessions(sessionRoot, [
+      {
+        sessionId: 'sess_alpha1_abcdef',
+        updatedAt: Date.now() - 60_000,
+        messages: [{ role: 'user', content: '[WIP] refactor the auth middleware' }],
+      },
+      { sessionId: 'sess_beta22_bbccdd', updatedAt: Date.now() },
+    ]);
+
+    const { stdout, stderr } = await spawnPickerPty(['resume'], 'q\n', {
+      PUSH_SESSION_DIR: sessionRoot,
+    });
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
+      return;
+    }
+    assert.ok(
+      /"\[WIP\] refactor the auth middleware"/.test(combined),
+      `bracket-led human prompt must render as preview, combined=${combined}`,
     );
   });
 

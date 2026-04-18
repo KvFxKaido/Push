@@ -75,12 +75,14 @@ export function formatRelativeTime(ms: number, now = Date.now()): string {
   const days = Math.floor(hours / 24);
   if (days === 1) return 'yesterday';
   if (days < 7) return `${days}d ago`;
-  const weeks = Math.floor(days / 7);
-  if (weeks < 5) return `${weeks}w ago`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  const years = Math.floor(days / 365);
-  return `${years}y ago`;
+  // Day-count cutoffs so band boundaries are unambiguous. Earlier bands
+  // used weeks<5 / months<12 thresholds, which collapsed days 360-364
+  // into `0y ago` (months=12 skipped the months branch, years=0 from
+  // floor(360/365) hit the years branch). Using the same unit the
+  // boundary is stated in prevents that class of bug.
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
 }
 
 /**

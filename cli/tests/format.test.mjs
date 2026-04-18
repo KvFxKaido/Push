@@ -133,6 +133,16 @@ describe('formatRelativeTime', () => {
     assert.equal(formatRelativeTime(NOW + 5_000, NOW), 'future');
   });
 
+  it('does not collapse days 360-364 into "0y ago"', () => {
+    // Regression: earlier branching used `months < 12` which skipped the
+    // months branch at months=12 and fell into `years=Math.floor(360/365)=0`,
+    // rendering a literal "0y ago". Day-count cutoffs keep this in months.
+    for (const days of [360, 361, 362, 363, 364]) {
+      const out = formatRelativeTime(NOW - days * 86_400_000, NOW);
+      assert.equal(out, '12mo ago', `days=${days} should be "12mo ago", got ${out}`);
+    }
+  });
+
   it('defaults `now` to Date.now() when omitted', () => {
     // Don't freeze time; just assert the return shape is a legal band.
     const out = formatRelativeTime(Date.now() - 10_000);
