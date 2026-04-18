@@ -304,7 +304,7 @@ Moves of files with no Web-module coupling. Both use the re-export-shim pattern 
 - Coalesce-key regression fix hashing streamFn identity via WeakMap (f51ab23).
 - Context-side cleanups from the review (1176cd9).
 
-**Still pending for explorer / coder:** same treatment is not enough anymore — those role agents are tool-loop agents, not one-shot provider calls. They still depend on Web's tool-dispatch / tool-execution subsystem and should move after Phase 5 splits that layer. The `ProviderStreamFn` type itself is now canonical in `lib/provider-contract.ts` (see Phase 3 session 2 below).
+~~**Still pending for explorer / coder:**~~ **Both shipped 2026-04-13 through the Phase 5 tool-runtime seam** — see Phase 5D step 1 and step 2 sections below for the full landing provenance (Explorer in commit `a47393d`, Coder in `819ac68`). The original deferral held: both role agents are tool-loop agents (not one-shot provider calls) and needed Phase 5 to split the tool-execution subsystem first. The `ProviderStreamFn` type itself is now canonical in `lib/provider-contract.ts` (see Phase 3 session 2 below).
 
 ### Phase 3 — Role agent extractions
 
@@ -350,7 +350,7 @@ Auditor moved as the second durable role kernel. The extraction deliberately sto
 
 The Web tool-dispatch path now has the daemon-compatible callback seam. `executeAnyToolCall()` accepts `approvalCallback?: (toolName, reason, recoveryPath) => Promise<boolean>` and passes it into `WebToolExecutionRuntime`; when present, approval gates can block on a Promise instead of telling the model to emit an `ask_user` tool call. When absent, the old chat-loop approval path is preserved for Web-standalone.
 
-**What remains:** Phase 6 must bind this callback to pushd's existing RPC approval flow. The seam is present; daemon wiring is not.
+~~**What remains:** Phase 6 must bind this callback to pushd's existing RPC approval flow. The seam is present; daemon wiring is not.~~ **Daemon wiring landed 2026-04-14 in commit `7552f941`** ("feat(coder): real daemon-side tool executor + approval binding"). `buildApprovalFn` in `cli/pushd.ts:300` is the daemon-side implementation that bridges the callback seam into pushd's RPC approval flow; `approvalFn` is threaded into the coder tool executor at `cli/pushd.ts:693`.
 
 ### Phase 5 — Headless tool-loop runtime extraction CLOSED 2026-04-13
 
@@ -392,7 +392,7 @@ Deep-reviewer landed as the first role kernel through the Phase 5B seam. `app/sr
 
 **Test coverage preserved 1:1.** `deep-reviewer-agent.test.ts` already mocked `./web-tool-execution-runtime` at line 56 — a mock shape that was already aligned with Phase 5B. After the move, all five existing `vi.mock` intercepts (`./web-tool-execution-runtime`, `./tool-dispatch`, `./role-memory-context`, `./explorer-agent`, `./web-search-tools`, plus `@/hooks/useUserProfile` and `./orchestrator`) continue to intercept the Web shim's imports unchanged. Zero test surgery — better than the brief predicted.
 
-**What's still pending before Phase 5D can start:** the pure agent-loop helpers (`truncateAgentContent`, `formatAgentToolResult`, `formatAgentParseError`) were inlined into `lib/deep-reviewer-agent.ts` this sprint to keep the move to two files. Phase 5D (Explorer) will need the same helpers — the expected outcome is a small `lib/agent-loop-utils.ts` extraction as the first Phase 5D PR, collapsing the deep-reviewer inlines into it.
+~~**What's still pending before Phase 5D can start:**~~ **Resolved 2026-04-13 in commit `93edeb6d`** ("refactor(context): extract lib/agent-loop-utils.ts pure helpers") — the pure agent-loop helpers (`truncateAgentContent`, `formatAgentToolResult`, `formatAgentParseError`) were extracted into `lib/agent-loop-utils.ts` as the first Phase 5D PR, collapsing the deep-reviewer inlines into it. Explorer and Coder both consume these helpers from lib; neither re-inlines them. This was the prerequisite extraction for Phase 5D step 1, and it discharged cleanly.
 
 #### Phase 5D step 1 — Explorer move SHIPPED 2026-04-13 (commit `a47393d`)
 
