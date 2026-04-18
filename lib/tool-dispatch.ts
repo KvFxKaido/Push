@@ -28,7 +28,7 @@
  * grouping state machine on top.
  */
 
-import { repairToolJson } from './tool-call-parsing.js';
+import { applyJsonTextRepairs, repairToolJson } from './tool-call-parsing.js';
 
 /**
  * Result of scanning assistant text for tool calls.
@@ -527,19 +527,28 @@ type ArrayParseResult = ArrayParseOutcome | { ok: false; reason: ToolMalformedRe
  * Parse a fenced candidate that begins with `[` as an array of tool-call
  * objects. Per-element shape failures are reported individually rather
  * than failing the whole array, so a partly-malformed array still
- * surfaces the calls that did parse correctly. JSON.parse failures on
- * the whole array fall through to `repairToolJson`, then to
- * `json_parse_error`. A non-array shape (e.g., string, number) is
- * `invalid_shape`.
+ * surfaces the calls that did parse correctly.
+ *
+ * On JSON.parse failure, applies the same textual repairs the
+ * single-object path uses (`applyJsonTextRepairs`: trailing commas,
+ * double commas, single quotes, unquoted keys, Python literals,
+ * control chars). `repairToolJson` itself isn't appropriate here
+ * because it returns null for any non-object shape — so an array
+ * with a normal LLM trailing comma (`[{...},]`) would otherwise fall
+ * to `json_parse_error` even though the textual repair was trivially
+ * available. Codex P2 review on PR follow-up to commit 253bacf.
  */
 function parseToolArrayCandidate(candidate: string): ArrayParseResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(candidate);
   } catch {
-    const repaired = repairToolJson(candidate);
-    if (!repaired) return { ok: false, reason: 'json_parse_error' };
-    parsed = repaired;
+    const repairedText = applyJsonTextRepairs(candidate);
+    try {
+      parsed = JSON.parse(repairedText);
+    } catch {
+      return { ok: false, reason: 'json_parse_error' };
+    }
   }
   if (!Array.isArray(parsed)) return { ok: false, reason: 'invalid_shape' };
 

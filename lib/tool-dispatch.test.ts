@@ -577,3 +577,74 @@ describe('createToolDispatcher — fenced array tool calls', () => {
     expect(result.calls).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Array repair via shared textual-repair helper. The single-object path
+// already had repairToolJson handling these LLM garbling patterns; the
+// array path now mirrors that via applyJsonTextRepairs. Codex P2 review
+// caught the original gap — repairToolJson returns null for non-object
+// shapes, so before the helper extraction, a fenced array with even a
+// trailing comma fell through to json_parse_error.
+// ---------------------------------------------------------------------------
+
+describe('createToolDispatcher — fenced array repair (LLM garbling tolerance)', () => {
+  const dispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE]);
+
+  it('recovers a fenced array with a trailing comma (Codex P2 repro)', () => {
+    // The exact repro from the PR review. A normal LLM artifact —
+    // models stutter trailing commas before a closing bracket. The
+    // single-object path already handled this; now the array path
+    // does too.
+    const text = '```json\n[{"tool":"read_file","args":{"path":"a.txt"}},]\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toEqual({ tool: 'read_file', args: { path: 'a.txt' } });
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('recovers a fenced array with a double comma (model stutter)', () => {
+    const text =
+      '```json\n[{"tool":"read_file","args":{"path":"a.txt"}},,{"tool":"read_file","args":{"path":"b.txt"}}]\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls.map((c) => c.tool)).toEqual(['read_file', 'read_file']);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('recovers a fenced array with unquoted keys', () => {
+    const text = '```json\n[{tool: "read_file", args: {path: "a.txt"}}]\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toEqual({ tool: 'read_file', args: { path: 'a.txt' } });
+  });
+
+  it('recovers a fenced array using single quotes throughout', () => {
+    // Single-quote → double-quote replacement only fires when no
+    // double-quoted keys are present (matches the object-path logic).
+    const text = "```json\n[{'tool': 'read_file', 'args': {'path': 'a.txt'}}]\n```";
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toEqual({ tool: 'read_file', args: { path: 'a.txt' } });
+  });
+
+  it('recovers a fenced array containing Python-style literals', () => {
+    const text =
+      '```json\n[{"tool":"sandbox_run_tests","args":{"verbose":True,"watch":False,"only":None}}]\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toEqual({
+      tool: 'sandbox_run_tests',
+      args: { verbose: true, watch: false, only: null },
+    });
+  });
+
+  it('returns json_parse_error when textual repair cannot recover the array', () => {
+    // No trailing comma, no double comma, no unquoted keys — just
+    // genuinely broken JSON with a stray quote that the textual
+    // repair pipeline doesn't know how to fix.
+    const text = '```json\n[{"tool":"read_file","args":{"pa"th":"a.txt"}}]\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([]);
+    expect(result.malformed).toHaveLength(1);
+    expect(result.malformed[0].reason).toBe('json_parse_error');
+  });
+});
