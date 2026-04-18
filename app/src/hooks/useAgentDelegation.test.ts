@@ -389,9 +389,10 @@ describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () =>
     });
     const params = makeParams();
     params.sandboxIdRef.current = 'sbx-1';
-    // Disable the auditor so the happy path doesn't require mocking the
-    // downstream auditor evaluation; the pre-auditor completion-event flow
-    // is what this test characterizes.
+    // The auditor branch is gated by harnessSettings.evaluateAfterCoder; the
+    // default resolveHarnessSettings mock omits that field, so the auditor
+    // span does not fire here. The dedicated `pins auditor subagent.completed`
+    // test below enables it.
     params.getVerificationPolicyForChat = vi.fn(() => ({
       mode: 'off' as const,
       requireAuditor: false,
@@ -466,5 +467,199 @@ describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () =>
       expect.objectContaining({ type: 'subagent.failed', agent: 'coder' }),
     );
     expect(result.delegationOutcome).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // Side-effect surface — the council review on the initial 3-test landing
+  // (Gemini + Codex, both flagged this independently) called the envelope-only
+  // coverage above material undercoverage of the plan's "Behavior rule"
+  // ("exact command sequence, mutation flags, cache clearing, card shapes,
+  // user-visible text"). The three tests below pin the side-effect surface
+  // those reviewers identified as highest-value: verification-state mutation
+  // recording when the Coder produces a non-empty diff, the auditor-enabled
+  // completion event + verdict line, and the subagent.started → completed +
+  // DELEGATION_STARTED ordering invariants the dispatcher relies on.
+  // -------------------------------------------------------------------------
+
+  it('records verification mutation when Coder produces a non-empty diff', async () => {
+    coderAgent.runCoderAgent.mockResolvedValue({
+      rounds: 1,
+      checkpoints: 0,
+      cards: [],
+      summary: 'edited auth module',
+      criteriaResults: [],
+    });
+    sandboxClient.getSandboxDiff.mockResolvedValueOnce({
+      diff: 'diff --git a/src/auth.ts b/src/auth.ts\n+const x = 1;\n',
+    });
+    verificationRuntime.extractChangedPathsFromDiff.mockReturnValueOnce(['src/auth.ts']);
+
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    // The default updateVerificationStateForChat mock just records the call
+    // without invoking the transformer; override it so downstream record*
+    // mocks fire and we can assert on the structured mutation envelope.
+    const fakeVerificationState = {};
+    params.updateVerificationStateForChat = vi.fn(
+      (_chatId: string, transformer: (state: unknown) => unknown) => {
+        transformer(fakeVerificationState);
+      },
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'fix auth bug' } },
+    };
+
+    await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    expect(params.updateVerificationStateForChat).toHaveBeenCalledWith(
+      'chat-1',
+      expect.any(Function),
+    );
+    expect(verificationRuntime.recordVerificationMutation).toHaveBeenCalledWith(
+      fakeVerificationState,
+      expect.objectContaining({
+        source: 'coder',
+        touchedPaths: ['src/auth.ts'],
+        detail: 'Coder delegation mutated the workspace.',
+      }),
+    );
+  });
+
+  it('pins the auditor subagent.completed event when harnessSettings.evaluateAfterCoder is true', async () => {
+    coderAgent.runCoderAgent.mockResolvedValue({
+      rounds: 2,
+      checkpoints: 0,
+      cards: [],
+      summary: 'implemented the change',
+      criteriaResults: [],
+    });
+    // The auditor branch fires when harnessSettings.evaluateAfterCoder is
+    // truthy AND summaries.length > 0. The default resolveHarnessSettings
+    // mock omits both fields; override to enable the branch.
+    modelCapabilities.resolveHarnessSettings.mockReturnValueOnce({
+      evaluateAfterCoder: true,
+      maxCoderRounds: 30,
+    });
+    auditorAgent.runAuditorEvaluation.mockResolvedValueOnce({
+      verdict: 'complete',
+      summary: 'all acceptance criteria met',
+      gaps: [],
+    });
+
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    // Same callback-invoking override as the verification-mutation test: the
+    // auditor verdict flows through updateVerificationStateForChat, which by
+    // default doesn't run its transformer.
+    const fakeVerificationState = {};
+    params.updateVerificationStateForChat = vi.fn(
+      (_chatId: string, transformer: (state: unknown) => unknown) => {
+        transformer(fakeVerificationState);
+      },
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'implement it' } },
+    };
+
+    await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    expect(auditorAgent.runAuditorEvaluation).toHaveBeenCalledOnce();
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        type: 'subagent.started',
+        agent: 'auditor',
+        detail: 'Evaluating coder output',
+      }),
+    );
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        type: 'subagent.completed',
+        agent: 'auditor',
+        summary: expect.stringContaining('all acceptance criteria met'),
+      }),
+    );
+    expect(verificationRuntime.recordVerificationGateResult).toHaveBeenCalledWith(
+      fakeVerificationState,
+      'auditor',
+      'passed',
+      'all acceptance criteria met',
+    );
+  });
+
+  it('pins event ordering: DELEGATION_STARTED before runCoderAgent, subagent.started before subagent.completed', async () => {
+    coderAgent.runCoderAgent.mockResolvedValue({
+      rounds: 1,
+      checkpoints: 0,
+      cards: [],
+      summary: 'done',
+      criteriaResults: [],
+    });
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.getVerificationPolicyForChat = vi.fn(() => ({
+      mode: 'off' as const,
+      requireAuditor: false,
+      autoVerifyOnMutation: false,
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'fix it' } },
+    };
+
+    await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    // emitRunEngineEvent({ DELEGATION_STARTED }) must fire before runCoderAgent.
+    const delegationStartedOrder = params.emitRunEngineEvent.mock.invocationCallOrder[0];
+    const runCoderOrder = coderAgent.runCoderAgent.mock.invocationCallOrder[0];
+    expect(delegationStartedOrder).toBeLessThan(runCoderOrder);
+
+    // subagent.started must precede subagent.completed in appendRunEvent calls.
+    const startedCallIndex = params.appendRunEvent.mock.calls.findIndex(
+      (call: unknown[]) =>
+        call[1] !== null &&
+        typeof call[1] === 'object' &&
+        (call[1] as { type?: string; agent?: string }).type === 'subagent.started' &&
+        (call[1] as { agent?: string }).agent === 'coder',
+    );
+    const completedCallIndex = params.appendRunEvent.mock.calls.findIndex(
+      (call: unknown[]) =>
+        call[1] !== null &&
+        typeof call[1] === 'object' &&
+        (call[1] as { type?: string; agent?: string }).type === 'subagent.completed' &&
+        (call[1] as { agent?: string }).agent === 'coder',
+    );
+    expect(startedCallIndex).toBeGreaterThanOrEqual(0);
+    expect(completedCallIndex).toBeGreaterThan(startedCallIndex);
   });
 });
