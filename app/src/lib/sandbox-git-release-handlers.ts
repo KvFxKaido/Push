@@ -15,14 +15,17 @@
  * ## Design
  *
  * The handlers accept a {@link GitReleaseHandlerContext} carrying the
- * sandboxId and eight injected infrastructure dependencies (exec,
+ * sandboxId and ten injected infrastructure dependencies (exec,
  * diff/read primitives, the Auditor, file-context fetcher, GitHub repo
- * creation, active-token accessor). They return a `ToolExecutionResult`
- * identical in shape to what the inline `case` arms in the dispatcher
- * used to return. Behavior is preserved byte for byte — the Step 2
- * characterization tests in `sandbox-tools.test.ts` (describes:
- * `sandbox_diff`, `sandbox_prepare_commit characterization`,
- * `sandbox_push`, `promote_to_github`) are the regression gate.
+ * creation, active-token accessor, two cache clearers used by
+ * `sandbox_save_draft`). They return a `ToolExecutionResult` identical
+ * in shape to what the inline `case` arms in the dispatcher used to
+ * return. Behavior is preserved byte for byte — characterization tests
+ * live at two layers: dispatcher-level in `sandbox-tools.ts.test.ts`
+ * (describes: `sandbox_diff`, `sandbox_prepare_commit characterization`,
+ * `sandbox_push`, `promote_to_github`, `sandbox_save_draft`) and
+ * handler-level in `sandbox-git-release-handlers.test.ts` (one
+ * describe per handler). Both layers are the regression gate.
  *
  * ## Fitness rules (from the remediation plan)
  *
@@ -30,7 +33,7 @@
  *     no dispatcher (`sandbox-tools.ts`), and no sibling tool handlers.
  *     All sandbox/platform functions enter through the handler context.
  *   - **API:** the dispatcher's `executeSandboxToolCall` remains the
- *     public entry point. This module exports the four handler
+ *     public entry point. This module exports the five handler
  *     functions plus the `GitReleaseHandlerContext` interface and the
  *     narrow per-handler argument types; nothing else.
  *   - **Dependency:** no import cycles. No barrel masking. No import
