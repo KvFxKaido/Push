@@ -248,8 +248,13 @@ export async function runDelegatedHeadless(
     const executor = async (node, enrichedContext, signal) => {
       const nodeCtx = extendCorrelation(graphCtx, { taskId: node.id });
 
-      // Scoped per-node messages: fresh buffer, prior-node context folded in.
-      state.messages = [];
+      // Scoped per-node messages: keep the system prompt (tool protocol +
+      // workspace context), discard conversation history. Without this the
+      // per-node run has no system prompt at all — `ensureSystemPromptReady`
+      // silently no-ops when messages[0] isn't a system message, so no model
+      // emits tool calls against a protocol the conversation never exposed.
+      const sysMsg = originalMessages.find((m) => m.role === 'system');
+      state.messages = sysMsg ? [sysMsg] : [];
       state.workingMemory = undefined;
 
       const preamble = buildHeadlessTaskBrief(node.task, acceptanceChecks);
