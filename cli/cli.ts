@@ -83,6 +83,8 @@ const KNOWN_OPTIONS = new Set([
   'force',
   'no-resume',
   'noResume',
+  'no-attach',
+  'noAttach',
   'delegate',
 ]);
 
@@ -138,7 +140,9 @@ Usage:
   push --session <id>           Resume session (TUI when enabled, otherwise interactive)
   push run --task "..."         Run once in headless mode
   push run "..."                Run once in headless mode
-  push resume                   List resumable sessions
+  push resume                   Pick a session and attach (TTY); list only when piped
+  push resume --no-attach       List resumable sessions without prompting (script-friendly)
+  push sessions                 List resumable sessions (never prompts; alias for scripts)
   push skills                   List available skills
   push stats                    Show provider compliance stats
   push daemon start             Start background daemon
@@ -1865,13 +1869,75 @@ export async function main() {
       process.stdout.write('No sessions found.\n');
       return 0;
     }
-    for (const row of sessions) {
-      const namePart = row.sessionName ? `  name=${JSON.stringify(row.sessionName)}` : '';
+
+    const noAttach = parseBoolFlag(values['no-attach'] ?? values.noAttach, 'no-attach');
+    // `push sessions` is the script-friendly alias and must never prompt.
+    // `push resume` attaches interactively when stdio is a TTY, unless the
+    // caller opted out with --no-attach or --json (both covered above).
+    const shouldPrompt =
+      subcommand === 'resume' &&
+      !noAttach &&
+      Boolean(process.stdin.isTTY) &&
+      Boolean(process.stdout.isTTY);
+
+    if (!shouldPrompt) {
+      for (const row of sessions) {
+        const namePart = row.sessionName ? `  name=${JSON.stringify(row.sessionName)}` : '';
+        process.stdout.write(
+          `${row.sessionId}  ${new Date(row.updatedAt).toISOString()}  ${row.provider}/${row.model}  ${row.cwd}${namePart}\n`,
+        );
+      }
+      return 0;
+    }
+
+    const indexWidth = String(sessions.length).length;
+    process.stdout.write('\nResumable sessions:\n');
+    for (let i = 0; i < sessions.length; i++) {
+      const row = sessions[i];
+      const num = String(i + 1).padStart(indexWidth, ' ');
+      const name = row.sessionName ? ` ${fmt.bold(row.sessionName)}` : '';
+      const when = new Date(row.updatedAt).toISOString();
       process.stdout.write(
-        `${row.sessionId}  ${new Date(row.updatedAt).toISOString()}  ${row.provider}/${row.model}  ${row.cwd}${namePart}\n`,
+        `  ${num}. ${row.sessionId}${name}\n` +
+          `     ${fmt.dim(`${when}  ${row.provider}/${row.model}  ${row.cwd}`)}\n`,
       );
     }
-    return 0;
+
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+    });
+    let selected: (typeof sessions)[number] | null = null;
+    try {
+      while (true) {
+        const raw = (
+          await rl.question('\nAttach which? [1-' + sessions.length + ', q to cancel]: ')
+        ).trim();
+        if (!raw || raw.toLowerCase() === 'q' || raw.toLowerCase() === 'quit') {
+          process.stdout.write('Cancelled.\n');
+          return 0;
+        }
+        const num = Number.parseInt(raw, 10);
+        if (Number.isInteger(num) && num >= 1 && num <= sessions.length) {
+          selected = sessions[num - 1];
+          break;
+        }
+        const byId = sessions.find((s) => s.sessionId === raw);
+        if (byId) {
+          selected = byId;
+          break;
+        }
+        process.stdout.write(
+          `Invalid choice. Enter a number 1-${sessions.length}, a session id, or q to cancel.\n`,
+        );
+      }
+    } finally {
+      rl.close();
+    }
+
+    const noResume = parseBoolFlag(values['no-resume'] ?? values.noResume, 'no-resume');
+    return runAttach(selected.sessionId, { noResume });
   }
 
   if (subcommand === 'skills') {
