@@ -353,6 +353,80 @@ describe('makeDaemonExplorerToolExec — Gap 2 refusal behavior', () => {
     }
   });
 
+  it('refuses an unmapped tool name (fail-closed on unknown, PR #331 Copilot finding)', async () => {
+    // Regression pin: roleCanUseTool is fail-open on unknown tools by
+    // design (forward-compat), but the daemon Explorer gate composes
+    // `isCapabilityMapped` to fail-closed. If a future dispatchable
+    // tool is added without a TOOL_CAPABILITIES entry, Explorer must
+    // refuse it at the gate rather than slip through.
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-gap2-unmapped-'));
+    try {
+      const entry = stubEntry(workspaceRoot);
+      const abortController = new AbortController();
+      const toolExec = makeDaemonExplorerToolExec({
+        entry,
+        signal: abortController.signal,
+      });
+
+      const result = await toolExec(
+        { source: 'cli', call: { tool: 'totally_unmapped_future_tool', args: {} } },
+        { round: 1 },
+      );
+
+      assert.ok(result.resultText.includes('totally_unmapped_future_tool'));
+      assert.ok(result.resultText.toLowerCase().includes('not available'));
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses prototype-key tool names without crashing (Codex P1 on PR #331)', async () => {
+    // Regression pin: before `getToolCapabilities` used `Object.hasOwn`,
+    // a model emitting `{"tool": "__proto__", ...}` would crash the
+    // delegation loop (`required.every is not a function`), and
+    // `{"tool": "toString", ...}` would silently be granted access
+    // because the prototype function's `.length === 0` triggered
+    // `roleCanUseTool`'s fail-open branch. Both paths are closed now:
+    // `isCapabilityMapped` returns false for every prototype key, so
+    // the daemon Explorer gate refuses with the normal denial
+    // resultText.
+    const prototypeKeys = [
+      '__proto__',
+      'constructor',
+      'toString',
+      'valueOf',
+      'hasOwnProperty',
+      'isPrototypeOf',
+    ];
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-gap2-proto-'));
+    try {
+      const entry = stubEntry(workspaceRoot);
+      const abortController = new AbortController();
+      const toolExec = makeDaemonExplorerToolExec({
+        entry,
+        signal: abortController.signal,
+      });
+
+      for (const key of prototypeKeys) {
+        const result = await toolExec(
+          { source: 'cli', call: { tool: key, args: {} } },
+          { round: 1 },
+        );
+        assert.equal(
+          typeof result.resultText,
+          'string',
+          `prototype-key "${key}" should return a denial resultText, not crash`,
+        );
+        assert.ok(
+          result.resultText.toLowerCase().includes('not available'),
+          `prototype-key "${key}" should be denied; got ${JSON.stringify(result.resultText)}`,
+        );
+      }
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('denial resultText preserves the pre-Gap-2 phrasing (does not name delegate_coder)', async () => {
     // Regression pin for the Copilot PR #284 finding: the denial must
     // NOT name delegate_coder as a tool the Explorer can call

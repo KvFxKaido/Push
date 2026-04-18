@@ -177,9 +177,34 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
 /**
  * Look up the capabilities required by a canonical tool name.
  * Returns an empty array for unknown tools (fail-open for forward compat).
+ *
+ * Uses `Object.hasOwn` so that inherited `Object.prototype` keys like
+ * `__proto__`, `constructor`, `toString`, `valueOf`, `hasOwnProperty`,
+ * and `isPrototypeOf` do NOT resolve to prototype members. Without
+ * this guard, a model-supplied tool name matching a prototype key
+ * would either (a) crash `roleCanUseTool` because the prototype value
+ * isn't an array (`.every` is undefined — hits `__proto__`,
+ * `constructor`, `hasOwnProperty`) or (b) silently return `true` and
+ * grant access because the prototype function's `.length` is 0 so
+ * `roleCanUseTool`'s fail-open branch fires (hits `toString`,
+ * `valueOf`, `isPrototypeOf`). Codex review on PR #331 caught the
+ * crash path; the silent-grant path is adjacent. Both are closed
+ * here.
  */
 export function getToolCapabilities(canonicalName: string): readonly Capability[] {
-  return TOOL_CAPABILITIES[canonicalName] ?? [];
+  if (!Object.hasOwn(TOOL_CAPABILITIES, canonicalName)) return [];
+  return TOOL_CAPABILITIES[canonicalName];
+}
+
+/**
+ * Return true iff the given canonical tool name has an own-property
+ * entry in `TOOL_CAPABILITIES`. Intended for callers that want
+ * fail-closed behavior on unmapped names (daemon Explorer gate) —
+ * `roleCanUseTool` is fail-open by design, so callers that need
+ * strict enforcement must compose this check explicitly.
+ */
+export function isCapabilityMapped(canonicalName: string): boolean {
+  return Object.hasOwn(TOOL_CAPABILITIES, canonicalName);
 }
 
 // ---------------------------------------------------------------------------

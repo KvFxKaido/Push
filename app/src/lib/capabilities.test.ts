@@ -6,6 +6,8 @@ import {
   CAPABILITY_LABELS,
   roleHasCapability,
   roleCanUseTool,
+  getToolCapabilities,
+  isCapabilityMapped,
   formatCapabilities,
   CapabilityLedger,
   type Capability,
@@ -205,6 +207,72 @@ describe('CLI-native tool capability mappings', () => {
     expect(roleCanUseTool('explorer', 'save_memory')).toBe(false);
     expect(roleCanUseTool('reviewer', 'save_memory')).toBe(false);
     expect(roleCanUseTool('auditor', 'save_memory')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prototype-key and unknown-tool safety (PR #331 review)
+// ---------------------------------------------------------------------------
+
+describe('getToolCapabilities — prototype-key safety', () => {
+  // Regression pins for Codex P1 on PR #331: before the Object.hasOwn
+  // guard, a model-supplied tool name matching an Object.prototype
+  // key would resolve to the inherited prototype value. Some of those
+  // keys have non-array prototype values (`__proto__`, `constructor`,
+  // `hasOwnProperty`) so `roleCanUseTool`'s `.every` call would
+  // throw. Others (`toString`, `valueOf`, `isPrototypeOf`) have
+  // `.length === 0` functions that made `roleCanUseTool`'s fail-open
+  // branch fire and silently return `true` — granting access to a
+  // nonexistent tool.
+  const prototypeKeys = [
+    '__proto__',
+    'constructor',
+    'toString',
+    'valueOf',
+    'hasOwnProperty',
+    'isPrototypeOf',
+    'propertyIsEnumerable',
+  ];
+
+  for (const key of prototypeKeys) {
+    it(`getToolCapabilities("${key}") returns [] (not the inherited prototype value)`, () => {
+      expect(getToolCapabilities(key)).toEqual([]);
+    });
+
+    it(`roleCanUseTool('explorer', "${key}") returns true (fail-open, but now at least doesn't crash or silently grant on a prototype-shaped value)`, () => {
+      // Note: roleCanUseTool remains fail-open by documented design
+      // — this pin is about "doesn't throw, treats prototype key
+      // like any unknown tool" rather than about denying. The
+      // daemon Explorer gate uses `isCapabilityMapped` to compose
+      // fail-closed behavior on top; that's pinned separately in
+      // cli/tests/daemon-role-capability.test.mjs.
+      expect(() => roleCanUseTool('explorer', key)).not.toThrow();
+      expect(roleCanUseTool('explorer', key)).toBe(true);
+    });
+  }
+});
+
+describe('isCapabilityMapped', () => {
+  it('returns true for known tool names', () => {
+    expect(isCapabilityMapped('sandbox_read_file')).toBe(true);
+    expect(isCapabilityMapped('write_file')).toBe(true);
+    expect(isCapabilityMapped('exec_poll')).toBe(true);
+    expect(isCapabilityMapped('ask_user')).toBe(true);
+  });
+
+  it('returns false for unknown tool names', () => {
+    expect(isCapabilityMapped('totally_unknown_tool')).toBe(false);
+    expect(isCapabilityMapped('')).toBe(false);
+    expect(isCapabilityMapped('sandbox_future_tool_not_yet_defined')).toBe(false);
+  });
+
+  it('returns false for prototype keys (defends against inherited-property lookup)', () => {
+    expect(isCapabilityMapped('__proto__')).toBe(false);
+    expect(isCapabilityMapped('constructor')).toBe(false);
+    expect(isCapabilityMapped('toString')).toBe(false);
+    expect(isCapabilityMapped('valueOf')).toBe(false);
+    expect(isCapabilityMapped('hasOwnProperty')).toBe(false);
+    expect(isCapabilityMapped('isPrototypeOf')).toBe(false);
   });
 });
 

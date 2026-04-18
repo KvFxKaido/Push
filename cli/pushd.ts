@@ -63,7 +63,12 @@ import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
 import { assertValidEvent, isStrictModeEnabled } from './protocol-schema.js';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
-import { roleCanUseTool, getToolCapabilities, ROLE_CAPABILITIES } from '../lib/capabilities.ts';
+import {
+  roleCanUseTool,
+  getToolCapabilities,
+  isCapabilityMapped,
+  ROLE_CAPABILITIES,
+} from '../lib/capabilities.ts';
 
 const VERSION = '0.3.0';
 const CAPABILITIES = [
@@ -1370,8 +1375,35 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
     // one — but Explorer is inspection-only by design. Return a denial
     // resultText so the kernel feeds the refusal back into the next
     // round as a user message and the model can adapt.
+    //
+    // Three-layer gate (deny if ANY layer says no):
+    //   (1) `toolName` must be a non-empty string (defense against
+    //       malformed detector output).
+    //   (2) `isCapabilityMapped(toolName)` must be true — the name
+    //       must have an own-property entry in `TOOL_CAPABILITIES`.
+    //       This is stricter than `roleCanUseTool`'s documented
+    //       fail-open semantics and diverges intentionally from the
+    //       web runtime's fail-open behavior at
+    //       `app/src/lib/web-tool-execution-runtime.ts:147`. The
+    //       rationale (Copilot PR #331): if a new CLI tool ever
+    //       reaches `executeToolCall` without a matching
+    //       `TOOL_CAPABILITIES` entry, Explorer should refuse it at
+    //       the gate rather than have `roleCanUseTool` fail-open and
+    //       silently admit it. The web runtime has other layers that
+    //       catch unknown names (per-source executor dispatch table);
+    //       the daemon Explorer gate is closer to the model and
+    //       should be fail-closed.
+    //   (3) `roleCanUseTool('explorer', toolName)` must be true for
+    //       the known tool. This is the core Gap 2 check.
+    //
+    // Layer (2) also defends against prototype-key attacks (`__proto__`,
+    // `constructor`, `toString`, `valueOf`, `hasOwnProperty`,
+    // `isPrototypeOf`) — `getToolCapabilities` uses `Object.hasOwn`
+    // to avoid resolving those to inherited prototype values, but
+    // `isCapabilityMapped` belt-and-braces the same concern at the
+    // gate. Codex review on PR #331.
     const toolName = typeof rawCall?.tool === 'string' ? rawCall.tool : null;
-    if (!toolName || !roleCanUseTool('explorer', toolName)) {
+    if (!toolName || !isCapabilityMapped(toolName) || !roleCanUseTool('explorer', toolName)) {
       // Phrasing note: we deliberately do NOT name `delegate_coder`
       // here because Explorer cannot invoke it from inside the kernel
       // (delegation is an RPC initiated by the orchestrator / client,
