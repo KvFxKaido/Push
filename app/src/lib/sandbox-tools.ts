@@ -11,11 +11,8 @@
 import type {
   ToolExecutionResult,
   StructuredToolError,
-  ActiveRepo,
-  AuditVerdictCardData,
   SandboxCardData,
   DiffPreviewCardData,
-  CommitReviewCardData,
   FileListCardData,
   ToolMutationCheckResult,
   ToolMutationDiagnostic,
@@ -39,7 +36,7 @@ import {
   type BatchWriteResultEntry,
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
-import { fetchAuditorFileContexts, type AuditorFileContext } from './auditor-file-context';
+import { fetchAuditorFileContexts } from './auditor-file-context';
 import { parseDiffStats } from './diff-utils';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import {
@@ -94,7 +91,6 @@ import {
   shellEscape,
   isLikelyMutatingSandboxExec,
   detectBlockedGitCommand,
-  sanitizeGitOutput,
   createGitHubRepo,
 } from './sandbox-tool-utils';
 
@@ -127,6 +123,13 @@ import {
   handleVerifyWorkspace,
   type VerificationHandlerContext,
 } from './sandbox-verification-handlers';
+import {
+  handleSandboxDiff,
+  handlePrepareCommit,
+  handleSandboxPush,
+  handlePromoteToGithub,
+  type GitReleaseHandlerContext,
+} from './sandbox-git-release-handlers';
 
 // --- Barrel re-exports (preserve existing consumer import paths) ---
 export { clearFileVersionCache } from './sandbox-file-version-cache';
@@ -406,6 +409,25 @@ function buildVerificationContext(sandboxId: string): VerificationHandlerContext
     getSandboxEnvironment,
     clearFileVersionCache,
     clearPrefetchedEditFileCache,
+  };
+}
+
+/**
+ * Wire up the git/release-handler context with the dispatcher's actual
+ * infrastructure dependencies. Kept as a local helper (not exported) so
+ * the extraction boundary stays one-way: the handler module never imports
+ * from `sandbox-tools.ts`, and this wiring lives inside the dispatcher.
+ */
+function buildGitReleaseContext(sandboxId: string): GitReleaseHandlerContext {
+  return {
+    sandboxId,
+    execInSandbox,
+    getSandboxDiff,
+    readFromSandbox,
+    runAuditor,
+    fetchAuditorFileContexts,
+    createGitHubRepo,
+    getActiveGitHubToken,
   };
 }
 
@@ -2194,206 +2216,18 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_diff': {
-        const result = await getSandboxDiff(sandboxId);
-
-        if (result.error) {
-          const diffErr = classifyError(result.error, 'sandbox_diff');
-          return {
-            text: formatStructuredError(diffErr, `[Tool Error — sandbox_diff]\n${result.error}`),
-            structuredError: diffErr,
-          };
-        }
-
-        if (!result.diff) {
-          const diagnosticLines = [`[Tool Result — sandbox_diff]`, `No changes detected.`];
-          if (result.git_status) {
-            diagnosticLines.push(`\ngit status output:\n${result.git_status}`);
-          } else {
-            diagnosticLines.push(
-              `\nThe working tree is clean. If you expected changes, verify that sandbox_write_file succeeded and the file is inside /workspace.`,
-            );
-          }
-          return { text: diagnosticLines.join('\n') };
-        }
-
-        const stats = parseDiffStats(result.diff);
-        const lines: string[] = [
-          `[Tool Result — sandbox_diff]`,
-          `${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''} changed, +${stats.additions} -${stats.deletions}`,
-          result.truncated ? `(truncated)\n` : '',
-          result.diff,
-        ];
-
-        const cardData: DiffPreviewCardData = {
-          diff: result.diff,
-          filesChanged: stats.filesChanged,
-          additions: stats.additions,
-          deletions: stats.deletions,
-          truncated: result.truncated,
-        };
-
-        return { text: lines.join('\n'), card: { type: 'diff-preview', data: cardData } };
+        return handleSandboxDiff(buildGitReleaseContext(sandboxId));
       }
 
       case 'sandbox_prepare_commit': {
-        // Step 1: Get the diff
-        const diffResult = await getSandboxDiff(sandboxId);
-
-        if (diffResult.error) {
-          const commitDiffErr = classifyError(diffResult.error, 'sandbox_prepare_commit');
-          return {
-            text: formatStructuredError(
-              commitDiffErr,
-              `[Tool Error — sandbox_prepare_commit]\n${diffResult.error}`,
-            ),
-            structuredError: commitDiffErr,
-          };
-        }
-
-        if (!diffResult.diff) {
-          const lines = [`[Tool Result — sandbox_prepare_commit]\nNo changes to commit.`];
-          if (diffResult.git_status) {
-            lines.push(`git status shows: ${diffResult.git_status}`);
-          } else {
-            lines.push(
-              `Working tree is clean. Verify files were written inside /workspace and content differs from the original.`,
-            );
-          }
-          return { text: lines.join('\n') };
-        }
-
-        // Step 2: Run pre-commit hook before auditing so the review reflects
-        // the exact tree the user would commit.
-        const hookResult = await execInSandbox(
-          sandboxId,
-          'if [ -x .git/hooks/pre-commit ]; then .git/hooks/pre-commit 2>&1 || exit $?; fi',
-          '/workspace',
-        );
-        const hookOutput = [hookResult.stdout, hookResult.stderr]
-          .filter((part): part is string => typeof part === 'string' && part.length > 0)
-          .join('\n')
-          .trim();
-
-        if ((hookResult.exitCode ?? 0) !== 0) {
-          const outputPreview = hookOutput
-            ? hookOutput.slice(0, 1200)
-            : 'The hook exited without any output.';
-          const verdictCard: AuditVerdictCardData = {
-            verdict: 'unsafe',
-            summary: 'Pre-commit hook failed. Fix the hook errors before preparing this commit.',
-            risks: [
-              {
-                level: 'medium',
-                description: `pre-commit exited with code ${hookResult.exitCode}. ${outputPreview}`,
-              },
-            ],
-            filesReviewed: parseDiffStats(diffResult.diff).filesChanged,
-          };
-          return {
-            text: `[Tool Result — sandbox_prepare_commit]\nCommit BLOCKED by pre-commit hook (exit ${hookResult.exitCode}).\n${outputPreview}`,
-            card: { type: 'audit-verdict', data: verdictCard },
-          };
-        }
-
-        const postHookDiffResult = await getSandboxDiff(sandboxId);
-        if (postHookDiffResult.error) {
-          const commitDiffErr = classifyError(postHookDiffResult.error, 'sandbox_prepare_commit');
-          return {
-            text: formatStructuredError(
-              commitDiffErr,
-              `[Tool Error — sandbox_prepare_commit]\n${postHookDiffResult.error}`,
-            ),
-            structuredError: commitDiffErr,
-          };
-        }
-
-        if (!postHookDiffResult.diff) {
-          const lines = [
-            `[Tool Result — sandbox_prepare_commit]\nNo changes to commit after running the pre-commit hook.`,
-          ];
-          if (postHookDiffResult.git_status) {
-            lines.push(`git status shows: ${postHookDiffResult.git_status}`);
-          }
-          if (hookOutput) {
-            lines.push(`pre-commit output:\n${hookOutput.slice(0, 1200)}`);
-          }
-          return { text: lines.join('\n') };
-        }
-
-        // Step 3: Fetch file context for richer Auditor review.
-        let fileContexts: AuditorFileContext[] = [];
-        try {
-          const filePaths = parseDiffStats(postHookDiffResult.diff).fileNames;
-          fileContexts = await fetchAuditorFileContexts(filePaths, async (path) => {
-            const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
-            if (result.error) return null;
-            return { content: result.content, truncated: result.truncated };
-          });
-        } catch {
-          // Degrade gracefully — proceed with diff-only
-        }
-
-        // Step 4: Run Auditor on the post-hook diff.
-        const auditResult = await runAuditor(
-          postHookDiffResult.diff,
-          (phase) => console.log(`[Push] Auditor: ${phase}`),
-          {
-            source: 'sandbox-prepare-commit',
-            sourceLabel: 'sandbox_prepare_commit preflight',
-          },
-          {
-            exitCode: hookResult.exitCode ?? 0,
-            output: hookResult.stdout + hookResult.stderr,
-          },
-          {
-            providerOverride: options?.auditorProviderOverride,
-            modelOverride: options?.auditorModelOverride,
-          },
-          fileContexts,
-        );
-
-        if (auditResult.verdict === 'unsafe') {
-          // Blocked — return verdict card only, no review card
-          return {
-            text: `[Tool Result — sandbox_prepare_commit]\nCommit BLOCKED by Auditor: ${auditResult.card.summary}`,
-            card: { type: 'audit-verdict', data: auditResult.card },
-          };
-        }
-
-        // Step 5: SAFE — return a review card for user approval (do NOT commit)
-        const stats = parseDiffStats(postHookDiffResult.diff);
-        const reviewData: CommitReviewCardData = {
-          diff: {
-            diff: postHookDiffResult.diff,
-            filesChanged: stats.filesChanged,
-            additions: stats.additions,
-            deletions: stats.deletions,
-            truncated: postHookDiffResult.truncated,
-          },
-          auditVerdict: auditResult.card,
-          commitMessage: call.args.message,
-          status: 'pending',
-        };
-
-        return {
-          text: `[Tool Result — sandbox_prepare_commit]\nReady for review: "${call.args.message}" (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions}). Waiting for user approval.`,
-          card: { type: 'commit-review', data: reviewData },
-        };
+        return handlePrepareCommit(buildGitReleaseContext(sandboxId), call.args, {
+          providerOverride: options?.auditorProviderOverride,
+          modelOverride: options?.auditorModelOverride,
+        });
       }
 
       case 'sandbox_push': {
-        const pushResult = await execInSandbox(
-          sandboxId,
-          'cd /workspace && git push origin HEAD',
-          undefined,
-          { markWorkspaceMutated: true },
-        );
-
-        if (pushResult.exitCode !== 0) {
-          return { text: `[Tool Result — sandbox_push]\nPush failed: ${pushResult.stderr}` };
-        }
-
-        return { text: `[Tool Result — sandbox_push]\nPushed successfully.` };
+        return handleSandboxPush(buildGitReleaseContext(sandboxId));
       }
 
       case 'sandbox_run_tests': {
@@ -2550,101 +2384,7 @@ export async function executeSandboxToolCall(
       }
 
       case 'promote_to_github': {
-        const requestedName = call.args.repo_name.trim();
-        const repoName = requestedName.includes('/')
-          ? requestedName.split('/').pop()!.trim()
-          : requestedName;
-        if (!repoName) {
-          return { text: '[Tool Error] promote_to_github requires a valid repo_name.' };
-        }
-
-        const createdRepo = await createGitHubRepo(
-          repoName,
-          call.args.description,
-          call.args.private !== undefined ? call.args.private : true,
-        );
-
-        const authToken = getActiveGitHubToken();
-        if (!authToken) {
-          return { text: '[Tool Error] GitHub auth token missing after repo creation.' };
-        }
-        const remoteUrl = `https://x-access-token:${authToken}@github.com/${createdRepo.full_name}.git`;
-
-        const branchResult = await execInSandbox(
-          sandboxId,
-          'cd /workspace && git rev-parse --abbrev-ref HEAD',
-        );
-        const branchName =
-          branchResult.exitCode === 0
-            ? branchResult.stdout.trim() || createdRepo.default_branch || 'main'
-            : createdRepo.default_branch || 'main';
-
-        const remoteResult = await execInSandbox(
-          sandboxId,
-          `cd /workspace && if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin ${shellEscape(remoteUrl)}; else git remote add origin ${shellEscape(remoteUrl)}; fi`,
-        );
-        if (remoteResult.exitCode !== 0) {
-          const remoteError = sanitizeGitOutput(
-            remoteResult.stderr || remoteResult.stdout || 'unknown error',
-            authToken,
-          );
-          return {
-            text: `[Tool Error] Created repo ${createdRepo.full_name}, but failed to configure git remote: ${remoteError}`,
-          };
-        }
-
-        const pushResult = await execInSandbox(
-          sandboxId,
-          `cd /workspace && git push -u origin ${shellEscape(branchName)}`,
-        );
-
-        const rawPushError = `${pushResult.stderr}\n${pushResult.stdout}`.toLowerCase();
-        const noCommitsYet =
-          rawPushError.includes('src refspec') ||
-          rawPushError.includes('does not match any') ||
-          rawPushError.includes('no commits yet');
-
-        const repoObject: ActiveRepo = {
-          id: createdRepo.id,
-          name: createdRepo.name,
-          full_name: createdRepo.full_name,
-          owner: createdRepo.owner?.login || createdRepo.full_name.split('/')[0],
-          default_branch: createdRepo.default_branch || branchName || 'main',
-          private: createdRepo.private,
-        };
-
-        if (pushResult.exitCode !== 0 && !noCommitsYet) {
-          const pushError = sanitizeGitOutput(
-            pushResult.stderr || pushResult.stdout || 'unknown error',
-            authToken,
-          );
-          return {
-            text: `[Tool Error] Repo ${createdRepo.full_name} was created, but push failed: ${pushError}. You can retry after fixing git/auth state.`,
-          };
-        }
-
-        const warning =
-          pushResult.exitCode !== 0 && noCommitsYet
-            ? 'Repo created and remote configured, but there were no local commits to push yet.'
-            : undefined;
-
-        const lines = [
-          '[Tool Result — promote_to_github]',
-          `Repository created: ${createdRepo.full_name}`,
-          `Visibility: ${createdRepo.private ? 'private' : 'public'}`,
-          `Default branch: ${createdRepo.default_branch || branchName || 'main'}`,
-          warning ? `Warning: ${warning}` : `Push: successful on branch ${branchName}`,
-        ];
-
-        return {
-          text: lines.join('\n'),
-          promotion: {
-            repo: repoObject,
-            pushed: !warning,
-            warning,
-            htmlUrl: createdRepo.html_url,
-          },
-        };
+        return handlePromoteToGithub(buildGitReleaseContext(sandboxId), call.args);
       }
 
       case 'sandbox_read_symbols': {
