@@ -143,6 +143,18 @@ export interface PromoteToGithubArgs {
 }
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum length (characters) of pre-commit hook output included in
+ * `sandbox_prepare_commit` result text. Applied in two places: the
+ * hook-fail preview embedded in the audit-verdict card text, and the
+ * post-hook-empty-diff preview appended to the no-changes message.
+ */
+const HOOK_OUTPUT_TRUNCATION_LIMIT = 1200;
+
+// ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
@@ -235,7 +247,7 @@ export async function handlePrepareCommit(
 
   if ((hookResult.exitCode ?? 0) !== 0) {
     const outputPreview = hookOutput
-      ? hookOutput.slice(0, 1200)
+      ? hookOutput.slice(0, HOOK_OUTPUT_TRUNCATION_LIMIT)
       : 'The hook exited without any output.';
     const verdictCard: AuditVerdictCardData = {
       verdict: 'unsafe',
@@ -274,7 +286,7 @@ export async function handlePrepareCommit(
       lines.push(`git status shows: ${postHookDiffResult.git_status}`);
     }
     if (hookOutput) {
-      lines.push(`pre-commit output:\n${hookOutput.slice(0, 1200)}`);
+      lines.push(`pre-commit output:\n${hookOutput.slice(0, HOOK_OUTPUT_TRUNCATION_LIMIT)}`);
     }
     return { text: lines.join('\n') };
   }
