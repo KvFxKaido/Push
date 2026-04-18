@@ -299,8 +299,13 @@ function replacePythonLiterals(text: string): string {
  * literal newlines inside JSON strings, e.g.:
  *   {"tool": "replace", "args": {"search": "line1
  *   line2", "replace": "fixed"}}
+ *
+ * Exported so the array-tool-call path in `lib/tool-dispatch.ts` can apply
+ * the same recovery; otherwise array-wrapped `write_file` / `edit_file`
+ * calls with multiline content fail to recover where their single-object
+ * equivalents succeed (Codex P1 review on PR #334).
  */
-function escapeRawNewlinesInJsonStrings(text: string): string {
+export function escapeRawNewlinesInJsonStrings(text: string): string {
   let result = '';
   let inString = false;
   let escaped = false;

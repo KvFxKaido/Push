@@ -638,13 +638,84 @@ describe('createToolDispatcher — fenced array repair (LLM garbling tolerance)'
   });
 
   it('returns json_parse_error when textual repair cannot recover the array', () => {
-    // No trailing comma, no double comma, no unquoted keys — just
-    // genuinely broken JSON with a stray quote that the textual
-    // repair pipeline doesn't know how to fix.
+    // No trailing comma, no double comma, no unquoted keys, no
+    // newlines in strings — just genuinely broken JSON with a stray
+    // quote that no repair pass knows how to fix.
     const text = '```json\n[{"tool":"read_file","args":{"pa"th":"a.txt"}}]\n```';
     const result = dispatcher.detectAllToolCalls(text);
     expect(result.calls).toEqual([]);
     expect(result.malformed).toHaveLength(1);
     expect(result.malformed[0].reason).toBe('json_parse_error');
+  });
+
+  it('recovers a fenced array with raw newlines inside string args (Codex P1)', () => {
+    // The exact failure mode Codex flagged: batched write_file /
+    // edit_file with multiline content. Pre-fix the array path
+    // skipped escapeRawNewlinesInJsonStrings (only repairToolJson's
+    // single-object path called it), so equivalent payloads
+    // recovered in single-object form but dropped in array form.
+    const text = [
+      '```json',
+      '[',
+      '  {"tool":"write_file","args":{"path":"a.ts","content":"line1',
+      'line2',
+      'line3"}},',
+      '  {"tool":"write_file","args":{"path":"b.ts","content":"only one line"}}',
+      ']',
+      '```',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(2);
+    expect(result.calls[0]).toEqual({
+      tool: 'write_file',
+      args: { path: 'a.ts', content: 'line1\nline2\nline3' },
+    });
+    expect(result.calls[1]).toEqual({
+      tool: 'write_file',
+      args: { path: 'b.ts', content: 'only one line' },
+    });
+    expect(result.malformed).toEqual([]);
+  });
+});
+
+describe('createToolDispatcher — fenced array gate (Copilot review on PR #334)', () => {
+  const dispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE]);
+
+  it('does NOT treat a fenced array of strings as a tool-call payload (string value contains "tool:")', () => {
+    // The loose pre-check `\btool\s*:` matches `tool:` inside a
+    // string value too. Without the array-specific tightening, this
+    // would enter the array path, parse as a single-element string
+    // array, fail per-element shape, and emit malformed reports +
+    // a TOOL_CALL_PARSE_ERROR correction prompt to the model. The
+    // tightened gate requires `{` then optional whitespace then
+    // optional quote then `tool` so a string value can't trigger.
+    const text = '```json\n["tool: read_file"]\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([]);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('does NOT treat a fenced array of objects without a tool key as a tool-call payload', () => {
+    // Same gate — array of `{config: ...}` doesn't have `{tool:`
+    // anywhere, so the gate skips it cleanly without emitting
+    // malformed.
+    const text = '```json\n[{"config": "tool: ignored"}, {"data": 1}]\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([]);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('still admits a fenced array where the tool key is unquoted', () => {
+    // The tightened gate keeps unquoted-key tolerance intact.
+    const text = '```json\n[{tool: "read_file", args: {path: "a.txt"}}]\n```';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toEqual({ tool: 'read_file', args: { path: 'a.txt' } });
+  });
+
+  it('still admits a fenced array where the tool key uses single quotes', () => {
+    const text = "```json\n[{'tool': 'read_file', 'args': {'path': 'a.txt'}}]\n```";
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
   });
 });

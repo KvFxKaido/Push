@@ -28,7 +28,11 @@
  * grouping state machine on top.
  */
 
-import { applyJsonTextRepairs, repairToolJson } from './tool-call-parsing.js';
+import {
+  applyJsonTextRepairs,
+  escapeRawNewlinesInJsonStrings,
+  repairToolJson,
+} from './tool-call-parsing.js';
 
 /**
  * Result of scanning assistant text for tool calls.
@@ -163,6 +167,15 @@ export function createToolDispatcher<TCall>(
         // measurement narrative for the typed-memory fallout.
         if (!/"tool"\s*:|'tool'\s*:/.test(trimmed) && !/\btool\s*:/.test(trimmed)) continue;
         if (trimmed.startsWith('[')) {
+          // Stricter array-specific gate (Copilot review on PR #334):
+          // the loose pre-check above can match `tool:` inside a
+          // string value (e.g., `["tool: read_file"]`), which would
+          // otherwise enter the array path, fail per-element shape,
+          // and emit a TOOL_CALL_PARSE_ERROR correction prompt to
+          // the model. Require an object-key context — `{` then
+          // optional whitespace then optional quote then `tool` —
+          // before treating the fence as an array of tool calls.
+          if (!/\{\s*['"]?tool['"]?\s*:/.test(trimmed)) continue;
           const arrayResult = parseToolArrayCandidate(trimmed);
           if (!arrayResult.ok) {
             malformed.push({ reason: arrayResult.reason, sample: truncateSample(trimmed) });
@@ -543,11 +556,28 @@ function parseToolArrayCandidate(candidate: string): ArrayParseResult {
   try {
     parsed = JSON.parse(candidate);
   } catch {
+    // Two-phase recovery, mirroring repairToolJson's interleaving:
+    // first apply shape-agnostic textual repairs (trailing commas,
+    // unquoted keys, Python literals, etc.) and try parse; if still
+    // failing, try escaping raw newlines inside JSON string values
+    // before giving up. Codex P1 review on PR #334 caught the
+    // single-object/array asymmetry: batched `write_file`/`edit_file`
+    // calls with literal newlines in string args were recoverable as
+    // single-object payloads but failed as array form because this
+    // path skipped the newline pass.
     const repairedText = applyJsonTextRepairs(candidate);
     try {
       parsed = JSON.parse(repairedText);
     } catch {
-      return { ok: false, reason: 'json_parse_error' };
+      const newlineEscaped = escapeRawNewlinesInJsonStrings(repairedText);
+      if (newlineEscaped === repairedText) {
+        return { ok: false, reason: 'json_parse_error' };
+      }
+      try {
+        parsed = JSON.parse(newlineEscaped);
+      } catch {
+        return { ok: false, reason: 'json_parse_error' };
+      }
     }
   }
   if (!Array.isArray(parsed)) return { ok: false, reason: 'invalid_shape' };
