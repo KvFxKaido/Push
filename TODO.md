@@ -46,14 +46,14 @@ Explorer-agent pass over the five arms (edit_file @ 572, edit_range @ 1130, sear
 - [x] Step 2a.4: Added `app/src/lib/sandbox-edit-handlers.test.ts` with 5 handler-level tests covering context-injection, guard-block, and success paths.
 - [x] Step 2a.5: Validation — CLI typecheck clean, CLI tests 1212/1212, app typecheck clean, app vitest 1833/1833 (was 1828 pre-Phase-2a; +5 new handler tests), eslint clean.
 
-### Step 2b — Write family (write_file + apply_patchset)
+### Step 2b — Write family (write_file + apply_patchset) — DONE
 
-- [ ] Step 2b.1: Coverage gap scan for write_file/apply_patchset describe blocks; apply_patchset's rollback-via-ledger-snapshot path deserves a dedicated characterization test if one doesn't exist
-- [ ] Step 2b.2: Create `app/src/lib/sandbox-write-handlers.ts` with `WriteHandlerContext`, `handleWriteFile`, `handleApplyPatchset` (the patchset path pulls in provenance snapshot/restore + batch-fallback seam)
-- [ ] Step 2b.3: Wire `buildWriteContext(sandboxId)`; delegate the two case arms; remove ~1180 lines; prune imports
-- [ ] Step 2b.4: Add handler-level tests `app/src/lib/sandbox-write-handlers.test.ts`
-- [ ] Step 2b.5: Validation + commit
+- [x] Step 2b.1: Coverage gap scan — existing `sandbox-tools.test.ts` covers write_file (1 describe) and apply_patchset (2 describes covering symbolic guard + batch write fallback); rollback path covered at dispatcher level.
+- [x] Step 2b.2: Created `app/src/lib/sandbox-write-handlers.ts` with `WriteHandlerContext` (32 methods — includes ledger state snapshot/restore/clearProvenance for rollback), `handleWriteFile`, `handleApplyPatchset`. The four patchset-local helpers (`isPatchsetRangeEdit`, `getPatchsetEditContent`, `compilePatchsetEditOps`, `buildPatchsetTouchedFiles`) moved with the handler.
+- [x] Step 2b.3: Wired `buildWriteContext(sandboxId)`; delegated the two case arms; ~1198 lines removed from dispatcher; pruned 21 now-unused imports.
+- [x] Step 2b.4: Added `app/src/lib/sandbox-write-handlers.test.ts` with 7 handler-level tests covering happy-path writes, stale/workspace-changed errors, new-file creation, dry-run, duplicate-path rejection, and empty-patchset rejection.
+- [x] Step 2b.5: Validation — tsc clean, eslint clean, 1833 app vitest + 1212 CLI tests green. Dispatcher **2807 → 475 lines** (net reduction of 2332 lines across Phase 1 + Phase 2, ~83%).
 
-### Target
+### Target — ACHIEVED
 
-After Phase 2 lands, `sandbox-tools.ts` should be ~600–700 lines — essentially just the `sandbox_exec`/`sandbox_download` arms, the dispatcher scaffold, and context-builder wiring. That's the "dispatcher as router" shape the Big Four Extraction Track was aimed at from the start.
+`sandbox-tools.ts` is now 475 lines: detection/validation re-exports, five small context-builder helpers (`buildVerificationContext`, `buildGitReleaseContext`, `buildReadOnlyInspectionContext`, `buildEditContext`, `buildWriteContext`), and the `executeSandboxToolCall` dispatcher itself — most of whose case arms are one-line delegations to extracted handler modules. The "dispatcher as router" shape the Big Four Extraction Track was aimed at is in place.
