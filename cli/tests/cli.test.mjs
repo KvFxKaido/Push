@@ -562,8 +562,11 @@ describe('push resume', () => {
     // "pushd is not running" error that proves the selection reached
     // runAttach.
     const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-fake-home-'));
+    // Two sessions so the auto-attach-on-N=1 short-circuit doesn't fire
+    // and the picker prompt is exercised end-to-end.
     await seedSessions(sessionRoot, [
       { sessionId: 'sess_alpha1_abcdef', updatedAt: 1_700_000_000_000, sessionName: 'Alpha' },
+      { sessionId: 'sess_beta22_bbccdd', updatedAt: 1_700_000_500_000 },
     ]);
 
     const { stdout, stderr } = await spawnPickerPty(['resume'], '1\n', {
@@ -581,6 +584,60 @@ describe('push resume', () => {
     );
   });
 
+  it('auto-attaches without prompting when only one session exists', async () => {
+    try {
+      await execFileAsync('script', ['-V']);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return;
+    }
+
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-auto-'));
+    const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-fake-home-auto-'));
+    await seedSessions(sessionRoot, [
+      { sessionId: 'sess_alpha1_abcdef', updatedAt: 1_700_000_000_000, sessionName: 'Alpha' },
+    ]);
+
+    // No input needed — auto-attach bypasses the prompt entirely. The child
+    // still reaches runAttach which fails fast against the empty fake HOME.
+    const { stdout, stderr } = await spawnPickerPty(['resume'], '', {
+      PUSH_SESSION_DIR: sessionRoot,
+      HOME: fakeHome,
+    });
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
+      return;
+    }
+    assert.ok(
+      /Resuming only session: sess_alpha1_abcdef/.test(combined),
+      `expected auto-resume banner, combined=${combined}`,
+    );
+    assert.ok(
+      /pushd is not running/.test(combined),
+      `expected runAttach to run, combined=${combined}`,
+    );
+    assert.ok(
+      !/Attach which\?/.test(combined),
+      `picker prompt should be skipped, combined=${combined}`,
+    );
+    assert.ok(
+      !/Resumable sessions:/.test(combined),
+      `numbered list header should be skipped, combined=${combined}`,
+    );
+  });
+
+  it('auto-attach is skipped when --no-attach is set even for a single session', async () => {
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-auto-noattach-'));
+    await seedSessions(sessionRoot, [
+      { sessionId: 'sess_alpha1_abcdef', updatedAt: 1_700_000_000_000, sessionName: 'Alpha' },
+    ]);
+    const { code, stdout } = await runCli(['resume', '--no-attach'], {
+      env: { PUSH_SESSION_DIR: sessionRoot },
+    });
+    assert.equal(code, 0);
+    assert.ok(stdout.includes('sess_alpha1_abcdef'));
+    assert.ok(!/Resuming only session:/.test(stdout));
+  });
+
   it('strips ANSI/control chars from sessionName in the picker', async () => {
     try {
       await execFileAsync('script', ['-V']);
@@ -591,12 +648,15 @@ describe('push resume', () => {
     const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-sanitize-'));
     // Name mixes ESC (C0) with plain text. The picker must strip the ESC
     // so the injected red-foreground SGR never reaches the terminal.
+    // Two sessions so the auto-attach-on-N=1 short-circuit doesn't skip
+    // the picker rendering this test is specifically pinning.
     await seedSessions(sessionRoot, [
       {
         sessionId: 'sess_alpha1_abcdef',
         updatedAt: 1_700_000_000_000,
         sessionName: 'INJ\x1b[31mECT',
       },
+      { sessionId: 'sess_beta22_bbccdd', updatedAt: 1_700_000_500_000 },
     ]);
 
     const { stdout, stderr } = await spawnPickerPty(['resume'], 'q\n', {

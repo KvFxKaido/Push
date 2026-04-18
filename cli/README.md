@@ -240,6 +240,8 @@ If no `PUSH_SESSION_DIR` is set, the CLI also reads legacy workspace-local sessi
 
 In a TTY, `./push resume` now prints a numbered list of resumable sessions and prompts for a selection; picking a number (or typing a full session id) attaches via `push attach` without requiring a second command. Empty input or `q`/`quit` cancels cleanly. When stdout is not a TTY, when `--json` is passed, or when `--no-attach` is passed, the picker is skipped and behavior matches the pre-existing list-only output so scripts that parse `resume` output keep working.
 
+When exactly one session is resumable, the picker is skipped — `./push resume` prints a one-line banner naming the session (`Resuming only session: sess_… (name) …`) and attaches directly. Use `./push resume --no-attach` if you want to see the list without the auto-attach.
+
 ## Working memory
 
 The agent maintains structured working memory across rounds — plan, open tasks, files touched, assumptions, and errors encountered. Working memory is reinjected through the `[meta]` envelope only when it first appears, when it changes, under elevated context pressure, or on a long-task cadence, and never more than once per round.
