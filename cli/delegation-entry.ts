@@ -47,7 +47,7 @@ import {
   type PlannerStreamFn,
 } from '../lib/planner-core.js';
 import { streamCompletion, type ProviderConfig } from './provider.js';
-import { runAssistantLoop } from './engine.js';
+import { buildSystemPromptBase, runAssistantLoop } from './engine.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { appendSessionEvent, makeRunId, saveSessionState } from './session-store.js';
 import { buildHeadlessTaskBrief } from './task-brief.js';
@@ -102,11 +102,11 @@ function planToTaskGraph(plan: PlannerFeatureList): TaskGraphNode[] {
     // rather than "investigate then produce X" — even with tools exposed
     // in the system prompt.
     const parts: string[] = [
-      'Ground your answer in the actual source code. Use read_file, search_files, or list_dir to read the input files listed below before producing any output. Do not answer from general knowledge.',
+      'Ground your answer in the actual source code. Use list_dir to browse directories, search_files to find relevant code, and read_file to inspect specific files before producing any output. Do not answer from general knowledge.',
       '',
       f.description,
     ];
-    if (f.files?.length) parts.push(`Input files (read these first): ${f.files.join(', ')}`);
+    if (f.files?.length) parts.push(`Input files to read first: ${f.files.join(', ')}`);
     if (f.verifyCommand) parts.push(`Verify with: ${f.verifyCommand}`);
     return {
       id: f.id,
@@ -249,12 +249,16 @@ export async function runDelegatedHeadless(
       const nodeCtx = extendCorrelation(graphCtx, { taskId: node.id });
 
       // Scoped per-node messages: keep the system prompt (tool protocol +
-      // workspace context), discard conversation history. Without this the
-      // per-node run has no system prompt at all — `ensureSystemPromptReady`
-      // silently no-ops when messages[0] isn't a system message, so no model
-      // emits tool calls against a protocol the conversation never exposed.
+      // workspace context), discard conversation history. Without a system
+      // message present, `ensureSystemPromptReady` silently no-ops and the
+      // node runs with no tool protocol at all — the failure mode this fix
+      // closes. Fall back to a freshly synthesized base prompt when the
+      // snapshot has no system message (defensive; normal flow always has
+      // one from buildSystemPromptBase at session creation).
       const sysMsg = originalMessages.find((m) => m.role === 'system');
-      state.messages = sysMsg ? [sysMsg] : [];
+      state.messages = sysMsg
+        ? [sysMsg]
+        : [{ role: 'system' as const, content: buildSystemPromptBase(state.cwd) }];
       state.workingMemory = undefined;
 
       const preamble = buildHeadlessTaskBrief(node.task, acceptanceChecks);
