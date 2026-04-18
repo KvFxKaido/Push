@@ -30,12 +30,30 @@
  */
 
 import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
 import type { ContextMemoryStore } from '../lib/context-memory-store.ts';
 import type { MemoryRecord } from '../lib/runtime-contract.ts';
 import { isExpired } from '../lib/memory-persistence-policy.ts';
+
+/**
+ * Canonical base dir for typed-memory JSONL files on the CLI. Both
+ * the daemon (`cli/pushd.ts:main`) and the headless delegation path
+ * (`cli/delegation-entry.ts:runDelegatedHeadless`) call this so the
+ * two surfaces share a single on-disk store — a `./push run
+ * --delegate` invocation writes memory that a later pushd session
+ * (or another `--delegate` run) can retrieve.
+ *
+ * `PUSH_MEMORY_DIR` overrides the default `~/.push/memory`, matching
+ * the `PUSH_CONFIG_PATH` / `PUSH_SESSION_DIR` env-var pattern used
+ * elsewhere in cli.
+ */
+export function getMemoryStoreBaseDir(): string {
+  if (process.env.PUSH_MEMORY_DIR) return process.env.PUSH_MEMORY_DIR;
+  return path.join(os.homedir(), '.push', 'memory');
+}
 
 // Reserved filename stem for records whose scope has no `branch` set.
 // Branch names cannot contain NUL, but `__no_branch` is a distinctive

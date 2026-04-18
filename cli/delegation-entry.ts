@@ -46,12 +46,16 @@ import {
   type PlannerFeatureList,
   type PlannerStreamFn,
 } from '../lib/planner-core.js';
+import { setDefaultMemoryStore } from '../lib/context-memory-store.js';
 import { streamCompletion, type ProviderConfig } from './provider.js';
 import { buildSystemPromptBase, runAssistantLoop } from './engine.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { appendSessionEvent, makeRunId, saveSessionState } from './session-store.js';
 import { buildHeadlessTaskBrief } from './task-brief.js';
 import { fmt } from './format.js';
+import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.js';
+import { resolveWorkspaceIdentity } from './workspace-identity.js';
+import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.js';
 import { randomBytes } from 'node:crypto';
 
 function mintGraphExecutionId() {
@@ -234,6 +238,31 @@ export async function runDelegatedHeadless(
       runId,
     );
 
+    // Initialize the file-backed ContextMemoryStore once per headless
+    // invocation so typed-memory writes persist across subsequent
+    // `./push run --delegate` calls. Mirrors pushd's main() wiring —
+    // both surfaces share the same on-disk layout under
+    // getMemoryStoreBaseDir(), so records written here are also
+    // visible to pushd task-graph runs and vice versa. Env-var
+    // override PUSH_MEMORY_DIR lets tests and measurement scripts
+    // isolate per-run stores.
+    setDefaultMemoryStore(createFileMemoryStore({ baseDir: getMemoryStoreBaseDir() }));
+
+    // Resolve workspace identity once per graph for memory scoping.
+    // Non-throwing contract — errors become fallbacks inside
+    // resolveWorkspaceIdentity, but the catch here is belt-and-braces
+    // for an unexpected rejection.
+    const workspaceIdentity = await resolveWorkspaceIdentity(state.cwd).catch(() => ({
+      repoFullName: state.cwd,
+      branch: null,
+    }));
+    const graphMemoryScope = {
+      repoFullName: workspaceIdentity.repoFullName,
+      branch: workspaceIdentity.branch ?? undefined,
+      chatId: state.sessionId,
+      taskGraphId: executionId,
+    };
+
     // Snapshot the system message(s) so each node's scoped state can be
     // seeded from them. Messages and workingMemory are now scoped per-node
     // (see executor below) rather than mutated on `state`, so there is
@@ -268,10 +297,25 @@ export async function runDelegatedHeadless(
       };
 
       const preamble = buildHeadlessTaskBrief(node.task, acceptanceChecks);
-      const contextBlock =
-        enrichedContext.length > 0
-          ? `[Prior task context]\n${enrichedContext.join('\n\n')}\n\n`
-          : '';
+
+      // Retrieve typed memory scoped to this node (cross-session
+      // persistent records) alongside the existing graph-internal
+      // enrichedContext (fresh from completed dependency/sibling
+      // nodes in this graph). Retrieval is error-isolated: a failure
+      // returns null and the node runs without the memory block —
+      // same graceful-degradation pattern as the write path.
+      const retrievedBlock = await buildTypedMemoryBlockForNode({
+        node,
+        scope: graphMemoryScope,
+      });
+      const contextPieces: string[] = [];
+      if (enrichedContext.length > 0) {
+        contextPieces.push(`[Prior task context]\n${enrichedContext.join('\n\n')}`);
+      }
+      if (retrievedBlock) {
+        contextPieces.push(retrievedBlock);
+      }
+      const contextBlock = contextPieces.length > 0 ? `${contextPieces.join('\n\n')}\n\n` : '';
       await appendUserMessageWithFileReferences(
         nodeState,
         `${contextBlock}${preamble}`,
@@ -335,6 +379,23 @@ export async function runDelegatedHeadless(
       signal: ac.signal,
       onProgress,
     });
+
+    // 5. Persist typed memory for each completed node so the next
+    // --delegate run on the same repo/branch can retrieve it.
+    // Error-isolated per-node inside writeTaskGraphResultMemory.
+    try {
+      await writeTaskGraphResultMemory(result, graphMemoryScope);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `${JSON.stringify({
+          level: 'warn',
+          event: 'task_graph_memory_persist_failed',
+          executionId,
+          error: msg,
+        })}\n`,
+      );
+    }
 
     await appendSessionEvent(
       state,

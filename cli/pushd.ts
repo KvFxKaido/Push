@@ -70,7 +70,7 @@ import {
   ROLE_CAPABILITIES,
 } from '../lib/capabilities.ts';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.ts';
-import { createFileMemoryStore } from './context-memory-file-store.ts';
+import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.ts';
 import { resolveWorkspaceIdentity } from './workspace-identity.ts';
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.ts';
 
@@ -139,14 +139,6 @@ export function getPidPath() {
 export function getLogPath() {
   if (process.env.PUSHD_LOG) return process.env.PUSHD_LOG;
   return path.join(os.homedir(), '.push', 'run', 'pushd.log');
-}
-
-export function getMemoryStoreBaseDir() {
-  // Matches the PUSH_CONFIG_PATH / PUSH_SESSION_DIR override pattern
-  // used elsewhere in cli. Lets tests pin an isolated tmpdir without
-  // polluting ~/.push/memory.
-  if (process.env.PUSH_MEMORY_DIR) return process.env.PUSH_MEMORY_DIR;
-  return path.join(os.homedir(), '.push', 'memory');
 }
 
 async function writePidFile() {
