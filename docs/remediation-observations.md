@@ -141,3 +141,37 @@ Four commits on the branch:
 **Three-green-gate status:** this entry does **not** count toward either family's three-green gate — it's an extraction-arc anchor, not a real-use observation. The verification-family counter still starts the next time a real session exercises `sandbox_run_tests` / `sandbox_check_types` / `sandbox_verify_workspace`. The git/release-family counter starts the next time a real session exercises `sandbox_diff` / `sandbox_prepare_commit` / `sandbox_push` / `promote_to_github` against actual work. Two extractions are now in place; both gates are at 0/3.
 
 **Status:** git/release family extracted, characterized, and PR #324 fully review-passed. Combined with verification, the dispatcher has shrunk by ~764 lines across two extraction passes (4,112 → 3,348). Next family per the plan is read-only inspection or mutation, with the "stop here and evaluate the pattern" gate between families.
+
+---
+
+## 2026-04-18 — CLI daily-driver prerequisite: first ergonomics unblock (PR #326)
+
+**Session purpose:** Act on the prerequisite framing that landed earlier the same day (`2cdc427`). The remediation plan's evaluation gate is suspended until Push CLI is daily-driver ready; the suspension note names `§CLI Runtime Parity` as the work that moves the prerequisite toward being met. First concrete ergonomics bite: `push resume` listed sessions but did not attach — every resume cost three commands (run `resume`, copy id, run `attach`), making the CLI un-viable as a daily driver for the real coding sessions the log depends on.
+
+**What shipped (PR #326, branch `claude/review-commit-planning-OTIHj`, commits `7a97f3e` + `ef2a94d`):**
+
+- `cli/cli.ts`: `push resume` in a TTY now renders a numbered picker and calls `runAttach` on selection. Behavior matrix preserves script surfaces exactly — `push sessions` and `--no-attach` stay pure-list, `--json` is untouched, `resume rename` unchanged, non-TTY stdin/stdout bypasses the prompt. Picker accepts 1-based index (gated on `/^\d+$/` so `"1-session-id"` doesn't silently pick index 1) or a full session id; empty / `q` / `quit` cancels. `--no-attach` registered in both `KNOWN_OPTIONS` and the `parseArgs` schema (mirrors `no-resume`). Help text updated in usage + options sections.
+- `cli/tests/cli.test.mjs`: nine new cases pinning the behavior matrix end-to-end, including PTY-gated happy path (selects `1`, asserts flow into `runAttach` via the "pushd is not running" error under a synthetic empty `HOME`) and a sanitization test proving injected ANSI SGR codes in user-controlled `sessionName` don't reach the terminal.
+
+**Security follow-through surfaced by review bots (Codex + Copilot, P2):** session names are user-controlled via `push resume rename` and direct state edits, so the picker strips ANSI CSI sequences and C0/DEL before wrapping in `fmt.bold`. Two-pass regex so `\x1b[31m` doesn't leave a visible `[31m` tail while preserving multibyte UTF-8. Closed in `ef2a94d` along with six other review items (parseArgs schema registration, help Options omission, stricter index parsing, non-null assertion at the `runAttach` call site, PTY soft-skip checking stderr too, happy-path test addition). Three noise comments replied to inline (`script -V` consistency already matched `/compact`'s pattern; `PUSH_CONFIG_PATH` portability is preexisting across three harness helpers; non-null assertion accepted and applied).
+
+**Validation:**
+
+- `npm run typecheck` → clean.
+- `npm run format` → clean (one auto-fix after initial write).
+- `npm run test:cli` → 1055/1055 pass (was 1053; +2 tests for happy-path selection and SGR sanitization).
+- PR #326 CI: Cloudflare Workers deploy green on `7a97f3e`; CI re-green after `ef2a94d`. Kilo Code Review: "No Issues Found | Recommendation: Merge."
+
+**What this is and is not:**
+
+- **Is:** a prerequisite-unblock step. The suspension clause explicitly says the gate's mechanism is suspended until CLI usability reaches daily-driver state, with characterization tests and targeted smoke exercises as the substitute discipline in the interim. This PR is one of the ergonomics bites that moves the prerequisite — it is not itself a real-use observation against an extracted family.
+- **Is not:** a three-green-gate entry. The verification-family and git/release-family counters both stay at 0/3. Those counters start advancing the next time a real coding session exercises the extracted families' tools against actual work, which still requires the CLI to be daily-driver viable end-to-end. This one-command resume flow moves one specific friction; it does not by itself make the CLI daily-driver ready.
+
+**Out of scope for this PR, noted for follow-up:**
+
+- Auto-attach when exactly one session exists (explicit confirm was preferred over surprise attach for the first cut).
+- Richer picker metadata (last-event preview, freshness sort by recency, last message snippet).
+- `push` bare invocation with no args surfacing the picker for the top-level REPL entry point (currently `--session <id>` is still required there).
+- `PUSH_CONFIG_PATH` hardening via `fs.mkdtemp` across `runCli`/`runCliPty`/`spawnPickerPty` (preexisting, deferred to a test-harness-only sweep).
+
+**Status:** one CLI daily-driver friction removed, fully review-passed. Suspension remains active — this is one of several ergonomics passes the prerequisite needs before the three-green gate becomes populatable through its prescribed mechanism. The next ergonomics bite (candidates from PR #326's scope doc: auto-attach single-session case, freshness indicators in picker, `push` bare invocation picker) is the operator's call.

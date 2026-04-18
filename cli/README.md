@@ -228,12 +228,17 @@ Sessions persist to `~/.push/sessions/<session-id>/` by default. Each session ha
 If no `PUSH_SESSION_DIR` is set, the CLI also reads legacy workspace-local sessions from `.push/sessions/` in the current directory when listing or resuming by id.
 
 ```bash
-./push resume                                    # list resumable sessions (shows name when set)
+./push resume                                    # interactive picker (TTY) → auto-attach; prints list when piped
+./push resume --no-attach                        # list only, never prompt (script-friendly)
 ./push resume --json                             # list as JSON
+./push sessions                                  # alias of `resume --no-attach`, never prompts
 ./push resume rename sess_abc123 "PR review"     # rename a session
 ./push resume rename sess_abc123 --clear         # clear a session name
-./push --session sess_abc123 # resume
+./push --session sess_abc123                     # resume by id (TUI or REPL)
+./push attach sess_abc123                        # attach to a live daemon session by id
 ```
+
+In a TTY, `./push resume` now prints a numbered list of resumable sessions and prompts for a selection; picking a number (or typing a full session id) attaches via `push attach` without requiring a second command. Empty input or `q`/`quit` cancels cleanly. When stdout is not a TTY, when `--json` is passed, or when `--no-attach` is passed, the picker is skipped and behavior matches the pre-existing list-only output so scripts that parse `resume` output keep working.
 
 ## Working memory
 
@@ -306,7 +311,9 @@ push                                Start TUI when enabled, otherwise interactiv
 push --session <id>                 Resume session (TUI when enabled, otherwise interactive)
 push run --task "..."               Headless mode (single task)
 push run "..."                      Headless mode (positional)
-push resume                         List resumable sessions
+push resume                         Pick a session and attach (TTY); list only when piped
+push resume --no-attach             List resumable sessions without prompting
+push sessions                       List resumable sessions (never prompts; script alias)
 push stats                          Show provider compliance stats
 push daemon status|start|stop       Manage pushd daemon
 push attach <session-id>            Attach to daemon-backed session
@@ -327,6 +334,7 @@ Options:
   --accept <cmd>          Acceptance check (repeatable)
   --max-rounds <n>        Tool-loop cap (default: 8, max: 30)
   --json                  JSON output (headless/resume)
+  --no-attach             Resume: list sessions without prompting
   --sandbox               Enable local Docker sandbox
   --no-sandbox            Disable local Docker sandbox
   -h, --help              Show help

@@ -414,6 +414,253 @@ describe('interactive REPL /compact', () => {
   });
 });
 
+// ─── push resume picker ──────────────────────────────────────────
+
+async function seedSessions(root, rows) {
+  await fs.mkdir(root, { recursive: true, mode: 0o700 });
+  for (const row of rows) {
+    const dir = path.join(root, row.sessionId);
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    const state = {
+      sessionId: row.sessionId,
+      createdAt: row.updatedAt,
+      updatedAt: row.updatedAt,
+      provider: row.provider || 'ollama',
+      model: row.model || 'test-model',
+      cwd: row.cwd || '/tmp',
+      rounds: 0,
+      sessionName: row.sessionName || '',
+      messages: [],
+    };
+    await fs.writeFile(path.join(dir, 'state.json'), JSON.stringify(state, null, 2), 'utf8');
+    await fs.writeFile(path.join(dir, 'events.jsonl'), '', 'utf8');
+  }
+}
+
+describe('push resume', () => {
+  it('reports when no sessions exist', async () => {
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-empty-'));
+    const { code, stdout } = await runCli(['resume'], {
+      env: { PUSH_SESSION_DIR: sessionRoot },
+    });
+    assert.equal(code, 0);
+    assert.match(stdout, /No sessions found\./);
+  });
+
+  it('prints list without prompting when stdin is not a TTY', async () => {
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-pipe-'));
+    await seedSessions(sessionRoot, [
+      { sessionId: 'sess_alpha1_abcdef', updatedAt: 1_700_000_000_000, sessionName: 'Alpha' },
+      { sessionId: 'sess_beta22_bbccdd', updatedAt: 1_700_000_500_000 },
+    ]);
+    const { code, stdout } = await runCli(['resume'], {
+      env: { PUSH_SESSION_DIR: sessionRoot },
+    });
+    assert.equal(code, 0);
+    assert.ok(stdout.includes('sess_alpha1_abcdef'));
+    assert.ok(stdout.includes('sess_beta22_bbccdd'));
+    // No prompt line should leak out on the non-TTY path.
+    assert.ok(!/Attach which\?/.test(stdout));
+  });
+
+  it('emits JSON when --json is set even without --no-attach', async () => {
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-json-'));
+    await seedSessions(sessionRoot, [
+      { sessionId: 'sess_alpha1_abcdef', updatedAt: 1_700_000_000_000 },
+    ]);
+    const { code, stdout } = await runCli(['resume', '--json'], {
+      env: { PUSH_SESSION_DIR: sessionRoot },
+    });
+    assert.equal(code, 0);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0].sessionId, 'sess_alpha1_abcdef');
+  });
+
+  it('--no-attach suppresses the prompt and exits after listing', async () => {
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-noattach-'));
+    await seedSessions(sessionRoot, [
+      { sessionId: 'sess_alpha1_abcdef', updatedAt: 1_700_000_000_000 },
+    ]);
+    const { code, stdout } = await runCli(['resume', '--no-attach'], {
+      env: { PUSH_SESSION_DIR: sessionRoot },
+    });
+    assert.equal(code, 0);
+    assert.ok(stdout.includes('sess_alpha1_abcdef'));
+    assert.ok(!/Attach which\?/.test(stdout));
+  });
+
+  it('push sessions alias never prompts', async () => {
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-sessions-alias-'));
+    await seedSessions(sessionRoot, [
+      { sessionId: 'sess_alpha1_abcdef', updatedAt: 1_700_000_000_000 },
+    ]);
+    const { code, stdout } = await runCli(['sessions'], {
+      env: { PUSH_SESSION_DIR: sessionRoot },
+    });
+    assert.equal(code, 0);
+    assert.ok(stdout.includes('sess_alpha1_abcdef'));
+    assert.ok(!/Attach which\?/.test(stdout));
+  });
+
+  it('rename subcommand still works after picker split', async () => {
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-rename-'));
+    await seedSessions(sessionRoot, [
+      { sessionId: 'sess_alpha1_abcdef', updatedAt: 1_700_000_000_000 },
+    ]);
+    const { code, stdout } = await runCli(
+      ['resume', 'rename', 'sess_alpha1_abcdef', 'My', 'Session'],
+      { env: { PUSH_SESSION_DIR: sessionRoot } },
+    );
+    assert.equal(code, 0);
+    assert.ok(stdout.includes('Renamed sess_alpha1_abcdef'));
+  });
+
+  it('cancels cleanly from the TTY picker when user types q', async () => {
+    // Some script variants exit non-zero for -V; only ENOENT means it's
+    // actually missing. Matches the /compact PTY test's approach.
+    try {
+      await execFileAsync('script', ['-V']);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return; // soft-skip in minimal environments
+    }
+
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-tty-'));
+    await seedSessions(sessionRoot, [
+      { sessionId: 'sess_alpha1_abcdef', updatedAt: 1_700_000_000_000, sessionName: 'Alpha' },
+      { sessionId: 'sess_beta22_bbccdd', updatedAt: 1_700_000_500_000 },
+    ]);
+
+    // runCliPty's countPrompts helper watches for `> ` prompts in the stream;
+    // the picker emits one via readline.question so "q\n" flows through that
+    // same path.
+    const { stdout, stderr } = await spawnPickerPty(['resume'], 'q\n', {
+      PUSH_SESSION_DIR: sessionRoot,
+    });
+    const clean = stripAnsi(stdout);
+    // PTY-allocation failures can land on either stream depending on the
+    // sandbox, so soft-skip against both.
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
+      return; // soft-skip when sandbox denies PTY allocation
+    }
+    assert.ok(/Resumable sessions:/.test(clean), `stdout=${clean}`);
+    assert.ok(/Attach which\?/.test(clean), `stdout=${clean}`);
+    assert.ok(/Cancelled\./.test(clean), `stdout=${clean}`);
+  });
+
+  it('selecting a number attaches via runAttach (pushd-not-running error surfaces)', async () => {
+    try {
+      await execFileAsync('script', ['-V']);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return;
+    }
+
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-select-'));
+    // Point HOME at an empty temp dir so runAttach's readPidFile()
+    // (~/.push/run/pushd.pid) misses deterministically, forcing the
+    // "pushd is not running" error that proves the selection reached
+    // runAttach.
+    const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-fake-home-'));
+    await seedSessions(sessionRoot, [
+      { sessionId: 'sess_alpha1_abcdef', updatedAt: 1_700_000_000_000, sessionName: 'Alpha' },
+    ]);
+
+    const { stdout, stderr } = await spawnPickerPty(['resume'], '1\n', {
+      PUSH_SESSION_DIR: sessionRoot,
+      HOME: fakeHome,
+    });
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
+      return; // soft-skip when sandbox denies PTY allocation
+    }
+    assert.ok(/Attach which\?/.test(combined), `combined=${combined}`);
+    assert.ok(
+      /pushd is not running/.test(combined),
+      `expected runAttach pushd-not-running error, combined=${combined}`,
+    );
+  });
+
+  it('strips ANSI/control chars from sessionName in the picker', async () => {
+    try {
+      await execFileAsync('script', ['-V']);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return;
+    }
+
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-sanitize-'));
+    // Name mixes ESC (C0) with plain text. The picker must strip the ESC
+    // so the injected red-foreground SGR never reaches the terminal.
+    await seedSessions(sessionRoot, [
+      {
+        sessionId: 'sess_alpha1_abcdef',
+        updatedAt: 1_700_000_000_000,
+        sessionName: 'INJ\x1b[31mECT',
+      },
+    ]);
+
+    const { stdout, stderr } = await spawnPickerPty(['resume'], 'q\n', {
+      PUSH_SESSION_DIR: sessionRoot,
+    });
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
+      return;
+    }
+    // Assert the raw stdout never carried the injected SGR. fmt.bold wraps
+    // its own \x1b[1m/\x1b[22m around the name but 31m (red) is only in the
+    // user-controlled segment, so its absence proves sanitization happened.
+    assert.ok(!/\x1b\[31m/.test(stdout), 'injected SGR must not reach the terminal');
+    assert.ok(/INJECT/.test(combined), `sanitized name should still render, combined=${combined}`);
+  });
+});
+
+async function spawnPickerPty(args, input, extraEnv) {
+  const env = {
+    ...process.env,
+    PUSH_CONFIG_PATH: '/tmp/push-test-cli-config-' + Date.now(),
+    ...extraEnv,
+  };
+  const cmd = buildCliCommand(args);
+  return await new Promise((resolve) => {
+    const child = spawn('script', ['-q', '-e', '-c', cmd, '/dev/null'], {
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+    }, 5000);
+    let sent = false;
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk);
+      if (!sent && /Attach which\?/.test(stripAnsi(stdout))) {
+        sent = true;
+        try {
+          child.stdin.write(input);
+        } catch {
+          // ignore
+        }
+      }
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? 0, stdout, stderr });
+    });
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve({ code: 1, stdout, stderr });
+    });
+  });
+}
+
 // ─── deprecated provider migration ─────────────────────────────
 
 describe('deprecated provider migration', () => {
