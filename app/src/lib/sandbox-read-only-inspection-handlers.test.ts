@@ -24,18 +24,32 @@ const okExec = (stdout = '', stderr = '', exitCode = 0): ExecResult => ({
 });
 
 interface MockedContext extends ReadOnlyInspectionHandlerContext {
-  readFromSandbox: ReturnType<typeof vi.fn>;
-  execInSandbox: ReturnType<typeof vi.fn>;
-  listDirectory: ReturnType<typeof vi.fn>;
-  readSymbolsFromSandbox: ReturnType<typeof vi.fn>;
-  findReferencesInSandbox: ReturnType<typeof vi.fn>;
-  syncReadSnapshot: ReturnType<typeof vi.fn>;
-  invalidateWorkspaceSnapshots: ReturnType<typeof vi.fn>;
-  deleteFileVersion: ReturnType<typeof vi.fn>;
-  recordReadFileMetric: ReturnType<typeof vi.fn>;
-  recordLedgerRead: ReturnType<typeof vi.fn>;
-  lookupCachedSymbols: ReturnType<typeof vi.fn>;
-  storeCachedSymbols: ReturnType<typeof vi.fn>;
+  readFromSandbox: ReturnType<typeof vi.fn<ReadOnlyInspectionHandlerContext['readFromSandbox']>>;
+  execInSandbox: ReturnType<typeof vi.fn<ReadOnlyInspectionHandlerContext['execInSandbox']>>;
+  listDirectory: ReturnType<typeof vi.fn<ReadOnlyInspectionHandlerContext['listDirectory']>>;
+  readSymbolsFromSandbox: ReturnType<
+    typeof vi.fn<ReadOnlyInspectionHandlerContext['readSymbolsFromSandbox']>
+  >;
+  findReferencesInSandbox: ReturnType<
+    typeof vi.fn<ReadOnlyInspectionHandlerContext['findReferencesInSandbox']>
+  >;
+  syncReadSnapshot: ReturnType<typeof vi.fn<ReadOnlyInspectionHandlerContext['syncReadSnapshot']>>;
+  invalidateWorkspaceSnapshots: ReturnType<
+    typeof vi.fn<ReadOnlyInspectionHandlerContext['invalidateWorkspaceSnapshots']>
+  >;
+  deleteFileVersion: ReturnType<
+    typeof vi.fn<ReadOnlyInspectionHandlerContext['deleteFileVersion']>
+  >;
+  recordReadFileMetric: ReturnType<
+    typeof vi.fn<ReadOnlyInspectionHandlerContext['recordReadFileMetric']>
+  >;
+  recordLedgerRead: ReturnType<typeof vi.fn<ReadOnlyInspectionHandlerContext['recordLedgerRead']>>;
+  lookupCachedSymbols: ReturnType<
+    typeof vi.fn<ReadOnlyInspectionHandlerContext['lookupCachedSymbols']>
+  >;
+  storeCachedSymbols: ReturnType<
+    typeof vi.fn<ReadOnlyInspectionHandlerContext['storeCachedSymbols']>
+  >;
 }
 
 interface MakeContextOpts {
@@ -50,20 +64,32 @@ interface MakeContextOpts {
 function makeContext(opts: MakeContextOpts = {}): MockedContext {
   return {
     sandboxId: 'sb-1',
-    readFromSandbox: vi.fn(async () => opts.readResult ?? { content: '', truncated: false }),
-    execInSandbox: vi.fn(async () => opts.execResult ?? okExec()),
-    listDirectory: vi.fn(async () => opts.entries ?? []),
-    readSymbolsFromSandbox: vi.fn(async () => opts.symbolResult ?? { symbols: [], totalLines: 0 }),
-    findReferencesInSandbox: vi.fn(
+    readFromSandbox: vi.fn<ReadOnlyInspectionHandlerContext['readFromSandbox']>(
+      async () => opts.readResult ?? { content: '', truncated: false },
+    ),
+    execInSandbox: vi.fn<ReadOnlyInspectionHandlerContext['execInSandbox']>(
+      async () => opts.execResult ?? okExec(),
+    ),
+    listDirectory: vi.fn<ReadOnlyInspectionHandlerContext['listDirectory']>(
+      async () => opts.entries ?? [],
+    ),
+    readSymbolsFromSandbox: vi.fn<ReadOnlyInspectionHandlerContext['readSymbolsFromSandbox']>(
+      async () => opts.symbolResult ?? { symbols: [], totalLines: 0 },
+    ),
+    findReferencesInSandbox: vi.fn<ReadOnlyInspectionHandlerContext['findReferencesInSandbox']>(
       async () => opts.referencesResult ?? { references: [], truncated: false },
     ),
-    syncReadSnapshot: vi.fn(),
-    invalidateWorkspaceSnapshots: vi.fn(() => 0),
-    deleteFileVersion: vi.fn(),
-    recordReadFileMetric: vi.fn(),
-    recordLedgerRead: vi.fn(),
-    lookupCachedSymbols: vi.fn(() => opts.cachedSymbols),
-    storeCachedSymbols: vi.fn(),
+    syncReadSnapshot: vi.fn<ReadOnlyInspectionHandlerContext['syncReadSnapshot']>(),
+    invalidateWorkspaceSnapshots: vi.fn<
+      ReadOnlyInspectionHandlerContext['invalidateWorkspaceSnapshots']
+    >(() => 0),
+    deleteFileVersion: vi.fn<ReadOnlyInspectionHandlerContext['deleteFileVersion']>(),
+    recordReadFileMetric: vi.fn<ReadOnlyInspectionHandlerContext['recordReadFileMetric']>(),
+    recordLedgerRead: vi.fn<ReadOnlyInspectionHandlerContext['recordLedgerRead']>(),
+    lookupCachedSymbols: vi.fn<ReadOnlyInspectionHandlerContext['lookupCachedSymbols']>(
+      () => opts.cachedSymbols,
+    ),
+    storeCachedSymbols: vi.fn<ReadOnlyInspectionHandlerContext['storeCachedSymbols']>(),
   };
 }
 

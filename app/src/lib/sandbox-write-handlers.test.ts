@@ -29,79 +29,112 @@ interface MakeContextOpts {
 }
 
 function makeContext(opts: MakeContextOpts = {}): WriteHandlerContext & {
-  readFromSandbox: ReturnType<typeof vi.fn>;
-  writeToSandbox: ReturnType<typeof vi.fn>;
-  batchWriteToSandbox: ReturnType<typeof vi.fn>;
-  execInSandbox: ReturnType<typeof vi.fn>;
-  versionCacheGet: ReturnType<typeof vi.fn>;
-  versionCacheSet: ReturnType<typeof vi.fn>;
-  versionCacheDelete: ReturnType<typeof vi.fn>;
-  versionCacheDeletePath: ReturnType<typeof vi.fn>;
-  getWorkspaceRevisionByKey: ReturnType<typeof vi.fn>;
-  setSandboxWorkspaceRevision: ReturnType<typeof vi.fn>;
-  setWorkspaceRevisionByKey: ReturnType<typeof vi.fn>;
-  syncReadSnapshot: ReturnType<typeof vi.fn>;
-  invalidateWorkspaceSnapshots: ReturnType<typeof vi.fn>;
-  recordLedgerRead: ReturnType<typeof vi.fn>;
-  recordLedgerAutoExpandAttempt: ReturnType<typeof vi.fn>;
-  recordLedgerAutoExpandSuccess: ReturnType<typeof vi.fn>;
-  recordLedgerSymbolAutoExpand: ReturnType<typeof vi.fn>;
-  recordLedgerSymbolWarningSoftened: ReturnType<typeof vi.fn>;
-  recordLedgerCreation: ReturnType<typeof vi.fn>;
-  recordLedgerMutation: ReturnType<typeof vi.fn>;
-  markLedgerStale: ReturnType<typeof vi.fn>;
-  getLedgerStaleWarning: ReturnType<typeof vi.fn>;
-  getLedgerState: ReturnType<typeof vi.fn>;
-  getLedgerProvenance: ReturnType<typeof vi.fn>;
-  restoreLedgerState: ReturnType<typeof vi.fn>;
-  clearLedgerProvenance: ReturnType<typeof vi.fn>;
-  checkWriteAllowed: ReturnType<typeof vi.fn>;
-  checkSymbolicEditAllowed: ReturnType<typeof vi.fn>;
-  checkLinesCovered: ReturnType<typeof vi.fn>;
-  invalidateSymbolLedger: ReturnType<typeof vi.fn>;
-  recordWriteFileMetric: ReturnType<typeof vi.fn>;
+  readFromSandbox: ReturnType<typeof vi.fn<WriteHandlerContext['readFromSandbox']>>;
+  writeToSandbox: ReturnType<typeof vi.fn<WriteHandlerContext['writeToSandbox']>>;
+  batchWriteToSandbox: ReturnType<typeof vi.fn<WriteHandlerContext['batchWriteToSandbox']>>;
+  execInSandbox: ReturnType<typeof vi.fn<WriteHandlerContext['execInSandbox']>>;
+  versionCacheGet: ReturnType<typeof vi.fn<WriteHandlerContext['versionCacheGet']>>;
+  versionCacheSet: ReturnType<typeof vi.fn<WriteHandlerContext['versionCacheSet']>>;
+  versionCacheDelete: ReturnType<typeof vi.fn<WriteHandlerContext['versionCacheDelete']>>;
+  versionCacheDeletePath: ReturnType<typeof vi.fn<WriteHandlerContext['versionCacheDeletePath']>>;
+  getWorkspaceRevisionByKey: ReturnType<
+    typeof vi.fn<WriteHandlerContext['getWorkspaceRevisionByKey']>
+  >;
+  setSandboxWorkspaceRevision: ReturnType<
+    typeof vi.fn<WriteHandlerContext['setSandboxWorkspaceRevision']>
+  >;
+  setWorkspaceRevisionByKey: ReturnType<
+    typeof vi.fn<WriteHandlerContext['setWorkspaceRevisionByKey']>
+  >;
+  syncReadSnapshot: ReturnType<typeof vi.fn<WriteHandlerContext['syncReadSnapshot']>>;
+  invalidateWorkspaceSnapshots: ReturnType<
+    typeof vi.fn<WriteHandlerContext['invalidateWorkspaceSnapshots']>
+  >;
+  recordLedgerRead: ReturnType<typeof vi.fn<WriteHandlerContext['recordLedgerRead']>>;
+  recordLedgerAutoExpandAttempt: ReturnType<
+    typeof vi.fn<WriteHandlerContext['recordLedgerAutoExpandAttempt']>
+  >;
+  recordLedgerAutoExpandSuccess: ReturnType<
+    typeof vi.fn<WriteHandlerContext['recordLedgerAutoExpandSuccess']>
+  >;
+  recordLedgerSymbolAutoExpand: ReturnType<
+    typeof vi.fn<WriteHandlerContext['recordLedgerSymbolAutoExpand']>
+  >;
+  recordLedgerSymbolWarningSoftened: ReturnType<
+    typeof vi.fn<WriteHandlerContext['recordLedgerSymbolWarningSoftened']>
+  >;
+  recordLedgerCreation: ReturnType<typeof vi.fn<WriteHandlerContext['recordLedgerCreation']>>;
+  recordLedgerMutation: ReturnType<typeof vi.fn<WriteHandlerContext['recordLedgerMutation']>>;
+  markLedgerStale: ReturnType<typeof vi.fn<WriteHandlerContext['markLedgerStale']>>;
+  getLedgerStaleWarning: ReturnType<typeof vi.fn<WriteHandlerContext['getLedgerStaleWarning']>>;
+  getLedgerState: ReturnType<typeof vi.fn<WriteHandlerContext['getLedgerState']>>;
+  getLedgerProvenance: ReturnType<typeof vi.fn<WriteHandlerContext['getLedgerProvenance']>>;
+  restoreLedgerState: ReturnType<typeof vi.fn<WriteHandlerContext['restoreLedgerState']>>;
+  clearLedgerProvenance: ReturnType<typeof vi.fn<WriteHandlerContext['clearLedgerProvenance']>>;
+  checkWriteAllowed: ReturnType<typeof vi.fn<WriteHandlerContext['checkWriteAllowed']>>;
+  checkSymbolicEditAllowed: ReturnType<
+    typeof vi.fn<WriteHandlerContext['checkSymbolicEditAllowed']>
+  >;
+  checkLinesCovered: ReturnType<typeof vi.fn<WriteHandlerContext['checkLinesCovered']>>;
+  invalidateSymbolLedger: ReturnType<typeof vi.fn<WriteHandlerContext['invalidateSymbolLedger']>>;
+  recordWriteFileMetric: ReturnType<typeof vi.fn<WriteHandlerContext['recordWriteFileMetric']>>;
 } {
   const reads = opts.readResults ?? [{ content: '', truncated: false }];
   let readIdx = 0;
   return {
     sandboxId: 'sb-1',
-    readFromSandbox: vi.fn(async () => reads[Math.min(readIdx++, reads.length - 1)]),
-    writeToSandbox: vi.fn(
+    readFromSandbox: vi.fn<WriteHandlerContext['readFromSandbox']>(
+      async () => reads[Math.min(readIdx++, reads.length - 1)],
+    ),
+    writeToSandbox: vi.fn<WriteHandlerContext['writeToSandbox']>(
       async (): Promise<WriteResult> =>
         opts.writeResult ?? { ok: true, new_version: 'v2', bytes_written: 10 },
     ),
-    batchWriteToSandbox: vi.fn(
+    batchWriteToSandbox: vi.fn<WriteHandlerContext['batchWriteToSandbox']>(
       async (): Promise<BatchWriteResult> =>
         opts.batchResult ?? { ok: true, results: [], workspace_revision: 2 },
     ),
-    execInSandbox: vi.fn(async () => opts.execResult ?? okExec()),
-    versionCacheGet: vi.fn(() => undefined),
-    versionCacheSet: vi.fn(),
-    versionCacheDelete: vi.fn(),
-    versionCacheDeletePath: vi.fn(),
-    getWorkspaceRevisionByKey: vi.fn(() => undefined),
-    setSandboxWorkspaceRevision: vi.fn(),
-    setWorkspaceRevisionByKey: vi.fn(),
-    syncReadSnapshot: vi.fn(),
-    invalidateWorkspaceSnapshots: vi.fn(() => 0),
-    recordLedgerRead: vi.fn(),
-    recordLedgerAutoExpandAttempt: vi.fn(),
-    recordLedgerAutoExpandSuccess: vi.fn(),
-    recordLedgerSymbolAutoExpand: vi.fn(),
-    recordLedgerSymbolWarningSoftened: vi.fn(),
-    recordLedgerCreation: vi.fn(),
-    recordLedgerMutation: vi.fn(),
-    markLedgerStale: vi.fn(),
-    getLedgerStaleWarning: vi.fn(() => opts.staleWarning ?? null),
-    getLedgerState: vi.fn(() => opts.ledgerState),
-    getLedgerProvenance: vi.fn(() => opts.provenance),
-    restoreLedgerState: vi.fn(),
-    clearLedgerProvenance: vi.fn(),
-    checkWriteAllowed: vi.fn(() => opts.writeAllowedVerdict ?? allowVerdict),
-    checkSymbolicEditAllowed: vi.fn(() => opts.symbolicVerdict ?? allowVerdict),
-    checkLinesCovered: vi.fn(() => allowVerdict),
-    invalidateSymbolLedger: vi.fn(),
-    recordWriteFileMetric: vi.fn(),
+    execInSandbox: vi.fn<WriteHandlerContext['execInSandbox']>(
+      async () => opts.execResult ?? okExec(),
+    ),
+    versionCacheGet: vi.fn<WriteHandlerContext['versionCacheGet']>(() => undefined),
+    versionCacheSet: vi.fn<WriteHandlerContext['versionCacheSet']>(),
+    versionCacheDelete: vi.fn<WriteHandlerContext['versionCacheDelete']>(),
+    versionCacheDeletePath: vi.fn<WriteHandlerContext['versionCacheDeletePath']>(),
+    getWorkspaceRevisionByKey: vi.fn<WriteHandlerContext['getWorkspaceRevisionByKey']>(
+      () => undefined,
+    ),
+    setSandboxWorkspaceRevision: vi.fn<WriteHandlerContext['setSandboxWorkspaceRevision']>(),
+    setWorkspaceRevisionByKey: vi.fn<WriteHandlerContext['setWorkspaceRevisionByKey']>(),
+    syncReadSnapshot: vi.fn<WriteHandlerContext['syncReadSnapshot']>(),
+    invalidateWorkspaceSnapshots: vi.fn<WriteHandlerContext['invalidateWorkspaceSnapshots']>(
+      () => 0,
+    ),
+    recordLedgerRead: vi.fn<WriteHandlerContext['recordLedgerRead']>(),
+    recordLedgerAutoExpandAttempt: vi.fn<WriteHandlerContext['recordLedgerAutoExpandAttempt']>(),
+    recordLedgerAutoExpandSuccess: vi.fn<WriteHandlerContext['recordLedgerAutoExpandSuccess']>(),
+    recordLedgerSymbolAutoExpand: vi.fn<WriteHandlerContext['recordLedgerSymbolAutoExpand']>(),
+    recordLedgerSymbolWarningSoftened:
+      vi.fn<WriteHandlerContext['recordLedgerSymbolWarningSoftened']>(),
+    recordLedgerCreation: vi.fn<WriteHandlerContext['recordLedgerCreation']>(),
+    recordLedgerMutation: vi.fn<WriteHandlerContext['recordLedgerMutation']>(),
+    markLedgerStale: vi.fn<WriteHandlerContext['markLedgerStale']>(),
+    getLedgerStaleWarning: vi.fn<WriteHandlerContext['getLedgerStaleWarning']>(
+      () => opts.staleWarning ?? null,
+    ),
+    getLedgerState: vi.fn<WriteHandlerContext['getLedgerState']>(() => opts.ledgerState),
+    getLedgerProvenance: vi.fn<WriteHandlerContext['getLedgerProvenance']>(() => opts.provenance),
+    restoreLedgerState: vi.fn<WriteHandlerContext['restoreLedgerState']>(),
+    clearLedgerProvenance: vi.fn<WriteHandlerContext['clearLedgerProvenance']>(),
+    checkWriteAllowed: vi.fn<WriteHandlerContext['checkWriteAllowed']>(
+      () => opts.writeAllowedVerdict ?? allowVerdict,
+    ),
+    checkSymbolicEditAllowed: vi.fn<WriteHandlerContext['checkSymbolicEditAllowed']>(
+      () => opts.symbolicVerdict ?? allowVerdict,
+    ),
+    checkLinesCovered: vi.fn<WriteHandlerContext['checkLinesCovered']>(() => allowVerdict),
+    invalidateSymbolLedger: vi.fn<WriteHandlerContext['invalidateSymbolLedger']>(),
+    recordWriteFileMetric: vi.fn<WriteHandlerContext['recordWriteFileMetric']>(),
   };
 }
 
