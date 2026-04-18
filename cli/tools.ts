@@ -705,6 +705,20 @@ export function isReadOnlyToolCall(call) {
  * detection, the model never gets a tool result, and the delegation
  * spins rounds without investigating anything (codex + Copilot P1 on
  * PR #284).
+ *
+ * **Divergence from READ_ONLY_TOOLS (post-Gap 2, 2026-04-18):** This
+ * protocol advertises a SUBSET of `READ_ONLY_TOOLS`. Specifically,
+ * `exec_poll` and `exec_list_sessions` sit in `READ_ONLY_TOOLS` (for
+ * the deep-reviewer-agent's read/mutate bucketing of detected tool
+ * calls — they're semantically read-verbs over exec sessions) but are
+ * NOT advertised to Explorer, because the shared capability table
+ * (`lib/capabilities.ts`) requires `sandbox:exec` for the exec family
+ * and Explorer's grant does not include it. Advertising tools that
+ * `roleCanUseTool('explorer', ...)` would deny would just waste
+ * rounds — the model would follow the prompt, emit the call, and hit
+ * the denial at `makeDaemonExplorerToolExec`. The
+ * `daemon-integration.test.mjs` sync test enforces that every
+ * advertised tool IS Explorer-callable per the capability grant.
  */
 export const READ_ONLY_TOOL_PROTOCOL = `TOOL PROTOCOL (read-only)
 
@@ -722,8 +736,6 @@ Available tools (all read-only — Explorer has no filesystem or exec mutation s
 - git_status() — workspace git status (branch, dirty files)
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
 - lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
-- exec_poll(session_id, from_seq?, max_chars?) — read incremental output from a previously-started command session
-- exec_list_sessions() — list active/finished command sessions
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
 
 Rules:

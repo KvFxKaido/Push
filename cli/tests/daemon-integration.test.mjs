@@ -39,6 +39,7 @@ import {
   loadSessionEvents,
 } from '../session-store.ts';
 import { READ_ONLY_TOOLS, READ_ONLY_TOOL_PROTOCOL } from '../tools.ts';
+import { roleCanUseTool } from '../../lib/capabilities.ts';
 import { buildExplorerSystemPrompt } from '../../lib/explorer-agent.ts';
 import { startMockProviderServer, patchProviderConfig } from './mock-provider-server.mjs';
 
@@ -2781,17 +2782,25 @@ describe('makeDaemonExplorerToolExec', () => {
 // sync, and (2) the lib kernel's builder actually replaces the default
 // when the override is passed.
 describe('Explorer daemon tool protocol namespace', () => {
-  it('READ_ONLY_TOOL_PROTOCOL advertises exactly the tools in READ_ONLY_TOOLS', () => {
-    // Parse tool names out of the protocol block. Each read-only tool
-    // is documented on a line like `- <name>(<args>) — <desc>`.
+  it('READ_ONLY_TOOL_PROTOCOL advertises only tools Explorer can actually call', () => {
+    // Post-Gap-2 invariant (2026-04-18): the Explorer prompt must
+    // track the shared capability grant, not the local allowlist.
+    // Advertising a tool that `roleCanUseTool('explorer', ...)`
+    // denies wastes rounds — the model follows the prompt, emits
+    // the call, hits the daemon-side denial.
+    //
+    // Parse tool names out of the protocol block. Each read-only
+    // tool is documented on a line like `- <name>(<args>) — <desc>`.
     const toolLinePattern = /^- (\w+)\(/gm;
     const advertised = new Set();
     for (const match of READ_ONLY_TOOL_PROTOCOL.matchAll(toolLinePattern)) {
       advertised.add(match[1]);
     }
 
-    // Every advertised tool must exist in the executor's allowlist,
-    // otherwise the model will emit a call that the executor refuses.
+    // (1) Every advertised tool must exist in the executor's
+    // allowlist, otherwise the model will emit a call that the
+    // executor's tool dispatch doesn't recognize. This is the
+    // pre-Gap-2 "dispatcher knows the name" invariant.
     for (const name of advertised) {
       assert.ok(
         READ_ONLY_TOOLS.has(name),
@@ -2799,14 +2808,29 @@ describe('Explorer daemon tool protocol namespace', () => {
       );
     }
 
-    // Every entry in READ_ONLY_TOOLS must be advertised in the
-    // protocol, otherwise the model won't know it's available. If
-    // this ever fails because a new read-only tool landed in
-    // `cli/tools.ts`, add a bullet to `READ_ONLY_TOOL_PROTOCOL`.
+    // (2) Every advertised tool must be callable by Explorer per
+    // the shared capability table. Without this check, the Gap 2
+    // gate swap can deny a prompt-advertised tool and the model
+    // grinds rounds. This is the post-Gap-2 addition.
+    for (const name of advertised) {
+      assert.ok(
+        roleCanUseTool('explorer', name),
+        `READ_ONLY_TOOL_PROTOCOL advertises "${name}" but roleCanUseTool('explorer', ...) denies it`,
+      );
+    }
+
+    // (3) Every READ_ONLY_TOOLS entry that Explorer CAN call must
+    // be advertised — an Explorer-callable tool sitting undocumented
+    // in the allowlist is a missed prompt line. READ_ONLY_TOOLS
+    // entries that Explorer can't call (e.g. exec_poll /
+    // exec_list_sessions retained for deep-reviewer-agent's
+    // read/mutate bucketing) are intentionally excluded from the
+    // prompt and from this assertion.
     for (const name of READ_ONLY_TOOLS) {
+      if (!roleCanUseTool('explorer', name)) continue;
       assert.ok(
         advertised.has(name),
-        `READ_ONLY_TOOLS contains "${name}" but READ_ONLY_TOOL_PROTOCOL does not document it`,
+        `Explorer-callable READ_ONLY_TOOLS entry "${name}" is missing from READ_ONLY_TOOL_PROTOCOL`,
       );
     }
   });

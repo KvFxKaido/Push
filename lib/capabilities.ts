@@ -134,14 +134,77 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
 
   // Ask user
   ask_user: ['user:ask'],
+
+  // CLI-native tools (daemon tool surface in `cli/tools.ts`). These names
+  // are distinct from the sandbox family above because the CLI dispatches
+  // against the local workspace via `executeToolCall`, not the sandbox
+  // API. Added 2026-04-18 so `roleCanUseTool` is authoritative on both
+  // surfaces — see `cli/pushd.ts:makeDaemonExplorerToolExec` for the
+  // enforcement swap that motivated these entries.
+  //
+  // Omitted deliberately:
+  // - `coder_update_state`: handled pre-executor on both surfaces, never
+  //   reaches the daemon tool-exec boundary. Adding an entry would be
+  //   noise.
+  // - `read_file` / `search_files` / `web_search` / `ask_user`: already
+  //   mapped above; the CLI dispatch reuses those canonical names.
+  list_dir: ['repo:read'],
+  read_symbols: ['repo:read'],
+  read_symbol: ['repo:read'],
+  git_status: ['repo:read'],
+  git_diff: ['repo:read'],
+  git_commit: ['git:commit'],
+  lsp_diagnostics: ['repo:read'],
+  save_memory: ['scratchpad'],
+  write_file: ['repo:write'],
+  edit_file: ['repo:write'],
+  undo_edit: ['repo:write'],
+  exec: ['sandbox:exec'],
+  exec_start: ['sandbox:exec'],
+  // exec_poll / exec_list_sessions are read-verbs over exec-family objects.
+  // Assigned `sandbox:exec` (not `repo:read`) because Explorer can never
+  // poll a session it could not have started — `exec_start` requires
+  // `sandbox:exec` and `makeDaemonExplorerToolExec` passes `allowExec:
+  // false` as a second line of defense. Coherent with the family;
+  // functionally removes Explorer access to these two tools (intentional
+  // behavior change — see PR description for rationale).
+  exec_poll: ['sandbox:exec'],
+  exec_write: ['sandbox:exec'],
+  exec_stop: ['sandbox:exec'],
+  exec_list_sessions: ['sandbox:exec'],
 };
 
 /**
  * Look up the capabilities required by a canonical tool name.
  * Returns an empty array for unknown tools (fail-open for forward compat).
+ *
+ * Uses `Object.hasOwn` so that inherited `Object.prototype` keys like
+ * `__proto__`, `constructor`, `toString`, `valueOf`, `hasOwnProperty`,
+ * and `isPrototypeOf` do NOT resolve to prototype members. Without
+ * this guard, a model-supplied tool name matching a prototype key
+ * would either (a) crash `roleCanUseTool` because the prototype value
+ * isn't an array (`.every` is undefined — hits `__proto__`,
+ * `constructor`, `hasOwnProperty`) or (b) silently return `true` and
+ * grant access because the prototype function's `.length` is 0 so
+ * `roleCanUseTool`'s fail-open branch fires (hits `toString`,
+ * `valueOf`, `isPrototypeOf`). Codex review on PR #331 caught the
+ * crash path; the silent-grant path is adjacent. Both are closed
+ * here.
  */
 export function getToolCapabilities(canonicalName: string): readonly Capability[] {
-  return TOOL_CAPABILITIES[canonicalName] ?? [];
+  if (!Object.hasOwn(TOOL_CAPABILITIES, canonicalName)) return [];
+  return TOOL_CAPABILITIES[canonicalName];
+}
+
+/**
+ * Return true iff the given canonical tool name has an own-property
+ * entry in `TOOL_CAPABILITIES`. Intended for callers that want
+ * fail-closed behavior on unmapped names (daemon Explorer gate) —
+ * `roleCanUseTool` is fail-open by design, so callers that need
+ * strict enforcement must compose this check explicitly.
+ */
+export function isCapabilityMapped(canonicalName: string): boolean {
+  return Object.hasOwn(TOOL_CAPABILITIES, canonicalName);
 }
 
 // ---------------------------------------------------------------------------
