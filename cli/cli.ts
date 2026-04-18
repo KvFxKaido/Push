@@ -133,18 +133,25 @@ export function parseBoolFlag(raw: unknown, flagName: string) {
   return Boolean(raw);
 }
 
-// Strip ANSI CSI sequences + C0/DEL from user-controlled text before
-// rendering it inside fmt.bold or any other terminal-styling wrapper.
-// Session names can be set via `push resume rename` or by editing state
-// files directly, so this runs anywhere we render a sessionName in a
-// TTY-visible context. Two passes: drop the ESC-[-…-letter sequence as a
-// unit (so `\x1b[31m` doesn't leave a visible `[31m` tail) and then scrub
-// any stray control chars. Multibyte UTF-8 is preserved.
+// Strip ANSI CSI + OSC sequences + C0/DEL from user-controlled text
+// before rendering it inside fmt.bold or any other terminal-styling
+// wrapper. Session names can be set via `push resume rename` or by
+// editing state files directly, so this runs anywhere we render a
+// sessionName in a TTY-visible context. Three passes:
+//   1. CSI (ESC `[` ... letter) — styling, cursor movement, SGR.
+//   2. OSC (ESC `]` ... BEL or ST) — window title, hyperlinks, etc.
+//      Terminated by BEL (`\x07`) or ST (`\x1b\`).
+//   3. Any remaining C0/DEL bytes (including bare ESC, BEL, etc.).
+// Order matters: structured sequences are removed as whole units before
+// the C0 scrub so they don't leave visible `[31m` or `]0;…` tails.
+// Multibyte UTF-8 is preserved.
 export function sanitizeTerminalText(raw: string) {
   return (
     raw
       // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping injected CSI is the point
       .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping injected OSC is the point
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
       // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping bare C0/DEL is the point
       .replace(/[\x00-\x1f\x7f]/g, '')
   );
@@ -553,11 +560,12 @@ function makeInteractiveApprovalFn(rl, { config, safeExecPatterns }) {
 }
 
 // Bare-`push` picker: render cwd-filtered sessions and let the user pick
-// one (by number or full sessionId) or type `n` to start a new session
-// or `q` to cancel. Returns the sessionId to resume, the string `'new'`
-// to start fresh, or `'cancel'` to bail. The caller is responsible for
-// honoring `cancel` with a non-zero-ish exit; `new` is the fall-through
-// that matches pre-picker bare-`push` behavior.
+// one (by number or full sessionId), press Enter or type `n` to start a
+// new session, or type `q` to cancel. Returns the sessionId to resume,
+// the string `'new'` to start fresh, or `'cancel'` to bail. Callers
+// should handle `cancel` as a normal user abort consistent with the
+// existing bare-`push` flow (print a one-liner, exit 0); `'new'` is the
+// fall-through that matches pre-picker bare-`push` behavior.
 async function promptResumeOrNew(
   sessions: Array<{
     sessionId: string;
@@ -589,7 +597,9 @@ async function promptResumeOrNew(
   });
   try {
     while (true) {
-      const raw = (await rl.question(`\nResume [1-${sessions.length}, n=new, q=cancel]: `)).trim();
+      const raw = (
+        await rl.question(`\nResume [1-${sessions.length}, Enter=new, q=cancel]: `)
+      ).trim();
       const lower = raw.toLowerCase();
       if (!raw || lower === 'n' || lower === 'new') return 'new';
       if (lower === 'q' || lower === 'quit' || lower === 'cancel') return 'cancel';
@@ -602,7 +612,7 @@ async function promptResumeOrNew(
       const byId = sessions.find((s) => s.sessionId === raw);
       if (byId) return byId.sessionId;
       process.stdout.write(
-        `Invalid choice. Enter a number 1-${sessions.length}, a session id, n for new, or q to cancel.\n`,
+        `Invalid choice. Enter a number 1-${sessions.length}, a session id, Enter (or n) for new, or q to cancel.\n`,
       );
     }
   } finally {
@@ -2341,7 +2351,11 @@ export async function main() {
 
   const apiKey = resolveApiKey(providerConfig);
   return runInteractive(state, providerConfig, apiKey, maxRounds, {
-    alreadyPersisted: !!values.session,
+    // Resumed sessions (either via --session or via the bare-push picker)
+    // already have their state + session_started event on disk; without
+    // this runInteractive would lazily re-emit session_started on the
+    // first user message.
+    alreadyPersisted: !!resumedSessionId,
   });
 }
 

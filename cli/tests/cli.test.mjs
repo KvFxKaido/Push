@@ -654,7 +654,11 @@ describe('push resume', () => {
       {
         sessionId: 'sess_alpha1_abcdef',
         updatedAt: 1_700_000_000_000,
-        sessionName: 'INJ\x1b[31mECT',
+        // CSI `\x1b[31m` + OSC `\x1b]0;TITLE\x07` together exercise both
+        // the CSI and OSC strip passes in sanitizeTerminalText. The
+        // literal text INJ / ECT / OSC / TAIL survives and should render
+        // contiguously once the control sequences are dropped.
+        sessionName: 'INJ\x1b[31mECT\x1b]0;TITLE\x07TAIL',
       },
       { sessionId: 'sess_beta22_bbccdd', updatedAt: 1_700_000_500_000 },
     ]);
@@ -670,7 +674,15 @@ describe('push resume', () => {
     // its own \x1b[1m/\x1b[22m around the name but 31m (red) is only in the
     // user-controlled segment, so its absence proves sanitization happened.
     assert.ok(!/\x1b\[31m/.test(stdout), 'injected SGR must not reach the terminal');
-    assert.ok(/INJECT/.test(combined), `sanitized name should still render, combined=${combined}`);
+    // OSC sequences must be fully stripped too — no `\x1b]` payload and
+    // no literal `]0;TITLE` tail (which would mean only the leading ESC
+    // was scrubbed, leaving the OSC parameters as visible text).
+    assert.ok(!/\x1b\]/.test(stdout), 'injected OSC must not reach the terminal');
+    assert.ok(!/\]0;TITLE/.test(stripAnsi(stdout)), 'OSC parameters must not leak as visible text');
+    assert.ok(
+      /INJECTTAIL/.test(combined),
+      `sanitized name should render contiguously, combined=${combined}`,
+    );
   });
 });
 
