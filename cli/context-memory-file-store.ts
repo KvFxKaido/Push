@@ -65,9 +65,51 @@ export interface CreateFileMemoryStoreOptions {
   baseDir: string;
 }
 
+/**
+ * Reject path components that could escape baseDir. `repoFullName`
+ * comes from `git remote get-url origin` parsed via
+ * `parseGitRemoteUrl` — and an SSH-shorthand remote like
+ * `git@example.com:../evil.git` parses to `../evil`, which would
+ * `path.join(baseDir, '../evil', ...)` to escape baseDir entirely.
+ * `branch` is git-controlled and harder to attack, but the same
+ * sanitization shape applies cheaply. Codex + Copilot P2 reviews on
+ * PR #333.
+ */
+function assertSafePathSegment(value: string, fieldName: string): void {
+  if (!value) {
+    throw new Error(`${fieldName} must not be empty`);
+  }
+  if (path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value)) {
+    throw new Error(`${fieldName} must be a relative path: ${JSON.stringify(value)}`);
+  }
+  // Split on either separator so a Windows-style backslash injected
+  // through a path-shaped string can't sneak past the segment check.
+  for (const segment of value.split(/[\\/]+/)) {
+    if (!segment || segment === '.' || segment === '..') {
+      throw new Error(
+        `${fieldName} must not contain empty, "." or ".." segments: ${JSON.stringify(value)}`,
+      );
+    }
+  }
+}
+
 function fileFor(baseDir: string, repoFullName: string, branch?: string): string {
   const branchKey = branch ?? NO_BRANCH_KEY;
-  return path.join(baseDir, repoFullName, `${branchKey}${JSONL_EXT}`);
+  assertSafePathSegment(repoFullName, 'repoFullName');
+  assertSafePathSegment(branchKey, 'branch');
+
+  // Belt-and-braces: even after segment validation, resolve the full
+  // path and verify it stays under baseDir. Catches edge cases the
+  // segment check could miss (e.g., baseDir itself containing
+  // symlinks that the OS resolves into a parent directory).
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedFile = path.resolve(resolvedBase, repoFullName, `${branchKey}${JSONL_EXT}`);
+  if (resolvedFile !== resolvedBase && !resolvedFile.startsWith(`${resolvedBase}${path.sep}`)) {
+    throw new Error(
+      `Resolved memory file path escapes baseDir: ${JSON.stringify(resolvedFile)} not under ${JSON.stringify(resolvedBase)}`,
+    );
+  }
+  return resolvedFile;
 }
 
 function scopeFile(baseDir: string, record: MemoryRecord): string {
@@ -243,8 +285,19 @@ export function createFileMemoryStore(options: CreateFileMemoryStoreOptions): Co
 
     clearByRepo(repoFullName: string) {
       return serialize(async () => {
+        // Same sanitization as fileFor — `clearByRepo('../evil')`
+        // would otherwise resolve to `${baseDir}/../evil` and rm a
+        // sibling directory entirely.
+        assertSafePathSegment(repoFullName, 'repoFullName');
+        const resolvedBase = path.resolve(baseDir);
+        const resolvedDir = path.resolve(resolvedBase, repoFullName);
+        if (!resolvedDir.startsWith(`${resolvedBase}${path.sep}`)) {
+          throw new Error(
+            `Resolved repo dir escapes baseDir: ${JSON.stringify(resolvedDir)} not under ${JSON.stringify(resolvedBase)}`,
+          );
+        }
         try {
-          await fs.rm(path.join(baseDir, repoFullName), { recursive: true, force: true });
+          await fs.rm(resolvedDir, { recursive: true, force: true });
         } catch (err) {
           if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
         }

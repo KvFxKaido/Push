@@ -393,6 +393,63 @@ describe('createFileMemoryStore — concurrent-write serialization', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Path-traversal hardening (PR #333 review — Codex + Copilot P2)
+// ---------------------------------------------------------------------------
+
+describe('createFileMemoryStore — path-traversal hardening', () => {
+  it('rejects repoFullName containing ".." segments', async () => {
+    const store = createFileMemoryStore({ baseDir });
+    await assert.rejects(
+      store.write(makeRecord({ scope: { repoFullName: '../evil', branch: 'main' } })),
+      /repoFullName must not contain.*"\.\."/,
+    );
+  });
+
+  it('rejects absolute repoFullName', async () => {
+    const store = createFileMemoryStore({ baseDir });
+    await assert.rejects(
+      store.write(makeRecord({ scope: { repoFullName: '/etc/passwd', branch: 'main' } })),
+      /repoFullName must be a relative path/,
+    );
+  });
+
+  it('rejects repoFullName containing a backslash-injected segment', async () => {
+    const store = createFileMemoryStore({ baseDir });
+    await assert.rejects(
+      store.write(makeRecord({ scope: { repoFullName: 'owner\\..\\evil', branch: 'main' } })),
+      /repoFullName must not contain.*"\.\."/,
+    );
+  });
+
+  it('rejects branch with a ".." segment', async () => {
+    const store = createFileMemoryStore({ baseDir });
+    await assert.rejects(
+      store.write(makeRecord({ scope: { repoFullName: 'owner/repo', branch: '../escape' } })),
+      /branch must not contain.*"\.\."/,
+    );
+  });
+
+  it('clearByRepo rejects a traversal-shaped repoFullName before touching the filesystem', async () => {
+    const store = createFileMemoryStore({ baseDir });
+    // Seed an unrelated record so we can verify the reject didn't
+    // accidentally wipe it.
+    await store.write(makeRecord({ scope: { repoFullName: 'safe/repo' } }));
+
+    await assert.rejects(store.clearByRepo('../evil'), /repoFullName must not contain.*"\.\."/);
+
+    assert.equal(await store.size(), 1, 'safe record must still be present after rejected clear');
+  });
+
+  it('reasonable two-segment owner/repo strings still pass', async () => {
+    // Sanity pin so the hardening doesn't break the common case.
+    const store = createFileMemoryStore({ baseDir });
+    const record = makeRecord({ scope: { repoFullName: 'KvFxKaido/Push', branch: 'main' } });
+    await store.write(record);
+    assert.equal((await store.get(record.id))?.id, record.id);
+  });
+});
+
 describe('createFileMemoryStore — malformed-line resilience', () => {
   it('skips malformed JSON lines during read (tolerates crashed writes)', async () => {
     const store = createFileMemoryStore({ baseDir });

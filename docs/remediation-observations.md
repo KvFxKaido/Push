@@ -278,7 +278,43 @@ Same task ("Document Push's CLI harness adaptation layer: trigger rules + thresh
 - **Is:** Gap 3 Step 3 closure with quantitative go/no-go signal. Both CLI delegation surfaces share one typed-memory implementation. The "three-layer truth" lesson from Gap 2 was applied preemptively via shared `lib/role-memory-budgets.ts`. The in-passing fix to the executor's `_enrichedContext` discard means graph-internal memory now flows through too, an improvement separate from typed-memory retrieval.
 - **Is not:** a verification-family or git/release-family three-green-gate entry. Those counters remain at 0/3, suspended pending CLI daily-driver readiness. This is an architecture-remediation anchor with a Gap 3 Step 1-style measurement validation.
 
-**Status:** Gap 3 Step 3 shipped end-to-end with measurement evidence. Branch ready to push and PR. Live work after this is Gap 3 Steps 4 (attach + event stream UX) and 5 (TUI graph widget).
+**Status:** Gap 3 Step 3 shipped end-to-end with measurement evidence. Branch ready to push and PR.
+
+---
+
+## 2026-04-18 (latest) — PR #333 review caught the measurement signal was variance, not retrieval
+
+**Session purpose:** Address PR #333 review findings. The decisive one was Codex's P1: `runDelegatedHeadless` was passing `chatId: state.sessionId` into the memory scope, but `lib/context-memory-retrieval.ts:122,205` filter records out when both query and record have `chatId` set and they differ. Each `push run` mints a fresh sessionId — so Run 1 wrote records with `chatId=sess_X` and Run 2 queried with `chatId=sess_Y`, and **every record from Run 1 was excluded.** The 5 → 3 rounds reduction reported in the previous obs entry was variance, not retrieval. The plumbing was writing correctly but retrieval was 100% broken across runs in the normal `push run --delegate` workflow.
+
+**The honest re-measurement, post-fix (same task, same Gemini 3 Flash, fresh `PUSH_MEMORY_DIR=/tmp/push-mem-fixed-c3PKz2`):**
+
+| Run | Mode | Rounds | Wall | Memory at start |
+|---|---|---|---|---|
+| 1 | baseline | 1 | 1.1s | (baseline doesn't use memory) |
+| 1 | delegated | 5 (2 nodes) | 16.9s | empty store |
+| 2 | baseline | 1 | 1.0s | (baseline doesn't use memory) |
+| 2 | delegated | **5 (3 nodes)** | **14.6s** | 2 records from Run 1 retrievable |
+
+Rounds-to-completion did not change between cold and warm cache on this task at N=1 per condition. **The chatId fix isn't the difference between "retrieval works" and "retrieval doesn't show signal" — it's the difference between "retrieval is broken" (pre-fix) and "retrieval works but doesn't dramatically affect short-task rounds" (post-fix).** Verified retrieval works via direct call into `buildTypedMemoryBlockForNode` against the post-Run-2 store: returned 3 records with proper formatting, including the prior `task_outcome` summaries and file hints.
+
+**What this honestly shows:**
+
+- **Plumbing works end-to-end:** records persist with workspace scope (no chatId), queries find them via repo+branch matching, the formatted memory block flows into the node prompt. Verified by manual retrieval call.
+- **The original signal was variance.** Codex's review was correct in theory and confirmed in practice. Future measurements need either (a) larger N per condition to dampen Gemini 3 Flash's ~30% nondeterminism on short tasks, or (b) a task with stronger precursor coupling where prior context provides concrete code-level findings the model would otherwise have to re-derive.
+- **The retrieved records are summaries, not deep findings.** The retrieval block contains things like "I have created `docs/ADAPTATION.md` which details..." and "[no summary — outcome=success]" — useful signal that prior work happened, less useful as a substitute for the model investigating the code directly. Tuning the writeTaskGraphNodeMemory record shape (more file/symbol detail, more concrete summary truncation) is a follow-up that could meaningfully change the warm-cache effect, but it's outside this tranche.
+- **The lesson worth keeping:** trace the data path before trusting the metric. I had a hypothesis ("typed memory should help small models"), the harness produced data that fit the hypothesis (5→3 rounds), I declared victory. I never verified the causal mechanism — that records actually flowed through. Codex caught what I should have caught. Future measurement work on this surface should always include a "did the retrieval block contain N records?" assertion at minimum, and ideally a manual inspection of the block contents.
+
+**What also shipped in the review-fix commit:**
+
+1. **chatId dropped from CLI scope** (`cli/delegation-entry.ts` and `cli/pushd.ts`). Records become repo+branch+taskGraphId-scoped. taskGraphId is still used as a same-graph score boost (`lib/context-memory-retrieval.ts:144`) for within-graph node ordering, not as a hard filter — so cross-run retrieval works while within-graph retrieval still favors same-graph dependency context.
+2. **Path-traversal hardening in `cli/context-memory-file-store.ts:fileFor` + `clearByRepo`** (Codex + Copilot P2). `assertSafePathSegment` rejects empty / `.` / `..` / absolute / drive-letter components on both `repoFullName` and `branch`; a belt-and-braces `path.resolve` + prefix check verifies the resolved file path stays under `baseDir`. Codex's specific attack vector was `git@example.com:../evil.git` which the SSH parser reduces to `../evil`; that now throws cleanly at the store boundary instead of silently writing outside `baseDir`. 6 new regression tests pin: `..`-segment rejection, absolute-path rejection, backslash-injected `..` rejection, branch with `..` rejection, `clearByRepo` rejecting traversal-shaped names without touching the FS, and a sanity pin that `KvFxKaido/Push`-style names still pass.
+3. **Removed redundant `try/catch` in `delegation-entry.ts`** that fell back to `state.cwd` (an absolute path) which would have slipped through `path.join`. `resolveWorkspaceIdentity` is non-throwing by contract, so the catch was both incorrect and unnecessary (Copilot P2).
+4. **Trivial cleanups:** unused `createMemoryRecord` import dropped from a test file (Copilot); workspace-identity test comment corrected to match what `initGitRepo` actually does (Copilot).
+
+CLI suite 1166/1166 (was 1160; +6 path-traversal tests). Both typechecks clean.
+
+**Status:** Honest measurement signal landed. The "5 → 3 rounds" claim from the previous entry is retracted. The tranche still stands as: typed-memory plumbing works, persists across runs, retrieves correctly post-chatId-fix, and is the foundation Gap 3 Steps 4-5 will build on. Whether typed memory measurably moves small-model rounds-to-completion remains an open question that requires either better measurement methodology (larger N) or richer record content.
+ Live work after this is Gap 3 Steps 4 (attach + event stream UX) and 5 (TUI graph widget).
 
 ---
 

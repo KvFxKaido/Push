@@ -249,17 +249,27 @@ export async function runDelegatedHeadless(
     setDefaultMemoryStore(createFileMemoryStore({ baseDir: getMemoryStoreBaseDir() }));
 
     // Resolve workspace identity once per graph for memory scoping.
-    // Non-throwing contract — errors become fallbacks inside
-    // resolveWorkspaceIdentity, but the catch here is belt-and-braces
-    // for an unexpected rejection.
-    const workspaceIdentity = await resolveWorkspaceIdentity(state.cwd).catch(() => ({
-      repoFullName: state.cwd,
-      branch: null,
-    }));
+    // resolveWorkspaceIdentity is non-throwing by contract (errors
+    // become path.basename(cwd) / null fallbacks internally), so no
+    // catch needed here — Copilot review on PR #333 caught that the
+    // earlier catch fell back to state.cwd (an absolute path), which
+    // would slip through the file store's path.join and write outside
+    // baseDir.
+    const workspaceIdentity = await resolveWorkspaceIdentity(state.cwd);
+    // Deliberately omit chatId from the scope. Each `push run`
+    // invocation mints a fresh state.sessionId, so passing it as
+    // chatId means retrieval filters out records written by previous
+    // runs (lib/context-memory-retrieval.ts:122,205). The
+    // headless CLI has no UI primitive for "stay in the same chat
+    // across invocations" — the workspace (repo+branch) is the
+    // natural scope. Codex P1 review on PR #333 caught this — the
+    // initial measurement signal (5→3 rounds) was variance, not
+    // retrieval. taskGraphId still flows through as a same-graph
+    // score boost (line 144), which is what within-graph node
+    // sequencing needs.
     const graphMemoryScope = {
       repoFullName: workspaceIdentity.repoFullName,
       branch: workspaceIdentity.branch ?? undefined,
-      chatId: state.sessionId,
       taskGraphId: executionId,
     };
 

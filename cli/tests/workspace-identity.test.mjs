@@ -107,9 +107,9 @@ describe('resolveWorkspaceIdentity', () => {
     await initGitRepo(dir);
     const id = await resolveWorkspaceIdentity(dir);
     assert.equal(id.repoFullName, path.basename(dir));
-    // Git inited with default branch; exact value may be "main" or
-    // "master" depending on local config, but it should be non-null.
-    assert.notEqual(id.branch, null);
+    // initGitRepo() initializes with `git init -b main`, so the
+    // branch is deterministic regardless of local config.
+    assert.equal(id.branch, 'main');
   });
 
   it('treats detached HEAD as no branch (avoids a HEAD.jsonl file)', async () => {

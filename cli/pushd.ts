@@ -1863,14 +1863,18 @@ async function handleSubmitTaskGraph(req) {
     // identity captured here is used as the memory scope for all
     // retrievals + writes. This matches how web uses a single
     // branchInfoRef snapshot per delegation (useAgentDelegation.ts).
-    const workspaceIdentity = await resolveWorkspaceIdentity(entry.state.cwd).catch(() => ({
-      repoFullName: path.basename(entry.state.cwd),
-      branch: null,
-    }));
+    // resolveWorkspaceIdentity is non-throwing by contract (errors
+    // become path.basename(cwd) / null fallbacks internally), so no
+    // outer catch needed.
+    const workspaceIdentity = await resolveWorkspaceIdentity(entry.state.cwd);
+    // chatId deliberately omitted from the scope — see the same
+    // comment in delegation-entry.ts. Pushd's sessionId is also
+    // per-invocation for headless flows, and even attached sessions
+    // wouldn't benefit from chatId-narrowing memory across the
+    // workspace. Codex P1 review on PR #333.
     const graphMemoryScope = {
       repoFullName: workspaceIdentity.repoFullName,
       branch: workspaceIdentity.branch ?? undefined,
-      chatId: sessionId,
       taskGraphId: executionId,
     };
 

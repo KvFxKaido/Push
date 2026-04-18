@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from '../task-graph-memory.ts';
 import { createInMemoryStore } from '../../lib/context-memory-store.ts';
-import { createMemoryRecord, writeExplorerMemory } from '../../lib/context-memory.ts';
+import { writeExplorerMemory } from '../../lib/context-memory.ts';
 
 function makeCompletedNodeState(id, agent, overrides = {}) {
   return {
