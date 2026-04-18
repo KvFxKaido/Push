@@ -22,19 +22,30 @@ function buildCliCommand(args) {
 // `Date.now()`, which collides under parallel runs (same millisecond)
 // and can leak state between back-to-back calls inside one test. The
 // OS temp dir mkdtemp is atomic + unique so parallelism is safe.
+//
+// Returns both the env vars and a cleanup callback. Helpers must call
+// `cleanup()` after the child process exits so the test run doesn't
+// leak a `push-test-env-*` directory per invocation (~1000+ across a
+// full CLI suite run). Tests that need persistent session state
+// always override `PUSH_SESSION_DIR` via `extraEnv`, so cleanup of
+// the helper-owned temp root is always safe.
 async function makeUniqueTestEnv() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-env-'));
   return {
-    PUSH_SESSION_DIR: path.join(root, 'sessions'),
-    PUSH_CONFIG_PATH: path.join(root, 'config.json'),
+    env: {
+      PUSH_SESSION_DIR: path.join(root, 'sessions'),
+      PUSH_CONFIG_PATH: path.join(root, 'config.json'),
+    },
+    cleanup: () => fs.rm(root, { recursive: true, force: true }).catch(() => {}),
   };
 }
 
 async function runCli(args, options = {}) {
   const { env: extraEnv, input: _input, ...execOpts } = options;
+  const testEnv = await makeUniqueTestEnv();
   const env = {
     ...process.env,
-    ...(await makeUniqueTestEnv()),
+    ...testEnv.env,
     ...extraEnv,
   };
   const captureDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-cli-test-'));
@@ -64,6 +75,7 @@ async function runCli(args, options = {}) {
     return { code, stdout, stderr };
   } finally {
     await fs.rm(captureDir, { recursive: true, force: true }).catch(() => {});
+    await testEnv.cleanup();
   }
 }
 
@@ -75,9 +87,10 @@ function stripAnsi(text) {
 
 async function runCliPty(args, options = {}) {
   const { env: extraEnv, input = '', timeout = 8000, ...spawnOpts } = options;
+  const testEnv = await makeUniqueTestEnv();
   const env = {
     ...process.env,
-    ...(await makeUniqueTestEnv()),
+    ...testEnv.env,
     ...extraEnv,
   };
   const cmd = buildCliCommand(args);
@@ -91,83 +104,87 @@ async function runCliPty(args, options = {}) {
     return matches ? matches.length : 0;
   }
 
-  return await new Promise((resolve, reject) => {
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    let sentCount = 0;
-    let timedOut = false;
+  try {
+    return await new Promise((resolve, reject) => {
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      let sentCount = 0;
+      let timedOut = false;
 
-    const child = spawn('script', ['-q', '-e', '-c', cmd, '/dev/null'], {
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      ...spawnOpts,
-    });
+      const child = spawn('script', ['-q', '-e', '-c', cmd, '/dev/null'], {
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        ...spawnOpts,
+      });
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // ignore
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // ignore
+        }
+      }, timeout);
+
+      function maybeSendPendingCommands() {
+        if (lines.length === 0) return;
+        if (!child.stdin || child.stdin.destroyed || !child.stdin.writable) return;
+        const promptCount = countPrompts(stdout);
+        while (sentCount < lines.length && promptCount > sentCount) {
+          child.stdin.write(lines[sentCount]);
+          sentCount += 1;
+        }
       }
-    }, timeout);
 
-    function maybeSendPendingCommands() {
-      if (lines.length === 0) return;
-      if (!child.stdin || child.stdin.destroyed || !child.stdin.writable) return;
-      const promptCount = countPrompts(stdout);
-      while (sentCount < lines.length && promptCount > sentCount) {
-        child.stdin.write(lines[sentCount]);
-        sentCount += 1;
+      function finalize(result) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ ...result, env });
       }
-    }
 
-    function finalize(result) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ ...result, env });
-    }
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        if (err && err.code === 'ENOENT') {
+          reject(err);
+          return;
+        }
+        finalize({ code: 1, stdout, stderr: `${stderr}${err?.message ? `\n${err.message}` : ''}` });
+      });
 
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      if (err && err.code === 'ENOENT') {
-        reject(err);
-        return;
-      }
-      finalize({ code: 1, stdout, stderr: `${stderr}${err?.message ? `\n${err.message}` : ''}` });
-    });
+      child.stdout?.on('data', (chunk) => {
+        stdout += String(chunk);
+        maybeSendPendingCommands();
+      });
 
-    child.stdout?.on('data', (chunk) => {
-      stdout += String(chunk);
-      maybeSendPendingCommands();
-    });
+      child.stderr?.on('data', (chunk) => {
+        stderr += String(chunk);
+      });
 
-    child.stderr?.on('data', (chunk) => {
-      stderr += String(chunk);
-    });
-
-    child.on('close', (code, signal) => {
-      if (timedOut) {
+      child.on('close', (code, signal) => {
+        if (timedOut) {
+          finalize({
+            code: 1,
+            stdout,
+            stderr: `${stderr}${stderr && !stderr.endsWith('\n') ? '\n' : ''}Timed out waiting for REPL interaction.`,
+          });
+          return;
+        }
+        if (typeof code === 'number' && code === 0) {
+          finalize({ code: 0, stdout, stderr });
+          return;
+        }
         finalize({
-          code: 1,
+          code: typeof code === 'number' ? code : 1,
           stdout,
-          stderr: `${stderr}${stderr && !stderr.endsWith('\n') ? '\n' : ''}Timed out waiting for REPL interaction.`,
+          stderr: `${stderr}${signal ? `${stderr && !stderr.endsWith('\n') ? '\n' : ''}terminated by ${signal}` : ''}`,
         });
-        return;
-      }
-      if (typeof code === 'number' && code === 0) {
-        finalize({ code: 0, stdout, stderr });
-        return;
-      }
-      finalize({
-        code: typeof code === 'number' ? code : 1,
-        stdout,
-        stderr: `${stderr}${signal ? `${stderr && !stderr.endsWith('\n') ? '\n' : ''}terminated by ${signal}` : ''}`,
       });
     });
-  });
+  } finally {
+    await testEnv.cleanup();
+  }
 }
 
 // ─── --version ───────────────────────────────────────────────────
@@ -698,50 +715,55 @@ describe('push resume', () => {
 });
 
 async function spawnPickerPty(args, input, extraEnv) {
+  const testEnv = await makeUniqueTestEnv();
   const env = {
     ...process.env,
-    ...(await makeUniqueTestEnv()),
+    ...testEnv.env,
     ...extraEnv,
   };
   const cmd = buildCliCommand(args);
-  return await new Promise((resolve) => {
-    const child = spawn('script', ['-q', '-e', '-c', cmd, '/dev/null'], {
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // ignore
-      }
-    }, 5000);
-    let sent = false;
-    child.stdout?.on('data', (chunk) => {
-      stdout += String(chunk);
-      if (!sent && /Attach which\?/.test(stripAnsi(stdout))) {
-        sent = true;
+  try {
+    return await new Promise((resolve) => {
+      const child = spawn('script', ['-q', '-e', '-c', cmd, '/dev/null'], {
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      const timer = setTimeout(() => {
         try {
-          child.stdin.write(input);
+          child.kill('SIGKILL');
         } catch {
           // ignore
         }
-      }
+      }, 5000);
+      let sent = false;
+      child.stdout?.on('data', (chunk) => {
+        stdout += String(chunk);
+        if (!sent && /Attach which\?/.test(stripAnsi(stdout))) {
+          sent = true;
+          try {
+            child.stdin.write(input);
+          } catch {
+            // ignore
+          }
+        }
+      });
+      child.stderr?.on('data', (chunk) => {
+        stderr += String(chunk);
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        resolve({ code: code ?? 0, stdout, stderr });
+      });
+      child.on('error', () => {
+        clearTimeout(timer);
+        resolve({ code: 1, stdout, stderr });
+      });
     });
-    child.stderr?.on('data', (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code: code ?? 0, stdout, stderr });
-    });
-    child.on('error', () => {
-      clearTimeout(timer);
-      resolve({ code: 1, stdout, stderr });
-    });
-  });
+  } finally {
+    await testEnv.cleanup();
+  }
 }
 
 // ─── bare `push` resume prompt ───────────────────────────────────
@@ -860,50 +882,55 @@ describe('bare push resume prompt', () => {
 });
 
 async function spawnBarePushPty(input, extraEnv) {
+  const testEnv = await makeUniqueTestEnv();
   const env = {
     ...process.env,
-    ...(await makeUniqueTestEnv()),
+    ...testEnv.env,
     ...extraEnv,
   };
   const cmd = buildCliCommand([]);
-  return await new Promise((resolve) => {
-    const child = spawn('script', ['-q', '-e', '-c', cmd, '/dev/null'], {
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // ignore
-      }
-    }, 5000);
-    let sent = false;
-    child.stdout?.on('data', (chunk) => {
-      stdout += String(chunk);
-      if (!sent && input && /Resume \[/.test(stripAnsi(stdout))) {
-        sent = true;
+  try {
+    return await new Promise((resolve) => {
+      const child = spawn('script', ['-q', '-e', '-c', cmd, '/dev/null'], {
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      const timer = setTimeout(() => {
         try {
-          child.stdin.write(input);
+          child.kill('SIGKILL');
         } catch {
           // ignore
         }
-      }
+      }, 5000);
+      let sent = false;
+      child.stdout?.on('data', (chunk) => {
+        stdout += String(chunk);
+        if (!sent && input && /Resume \[/.test(stripAnsi(stdout))) {
+          sent = true;
+          try {
+            child.stdin.write(input);
+          } catch {
+            // ignore
+          }
+        }
+      });
+      child.stderr?.on('data', (chunk) => {
+        stderr += String(chunk);
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        resolve({ code: code ?? 0, stdout, stderr });
+      });
+      child.on('error', () => {
+        clearTimeout(timer);
+        resolve({ code: 1, stdout, stderr });
+      });
     });
-    child.stderr?.on('data', (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code: code ?? 0, stdout, stderr });
-    });
-    child.on('error', () => {
-      clearTimeout(timer);
-      resolve({ code: 1, stdout, stderr });
-    });
-  });
+  } finally {
+    await testEnv.cleanup();
+  }
 }
 
 // ─── deprecated provider migration ─────────────────────────────
