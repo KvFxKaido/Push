@@ -45,13 +45,8 @@ import type {
   ExplorerResult,
 } from '@/types';
 import { getUserProfile } from '@/hooks/useUserProfile';
-import {
-  detectAllToolCalls,
-  detectAnyToolCall,
-  PARALLEL_READ_ONLY_GITHUB_TOOLS,
-  PARALLEL_READ_ONLY_SANDBOX_TOOLS,
-  type AnyToolCall,
-} from './tool-dispatch';
+import { detectAllToolCalls, detectAnyToolCall, type AnyToolCall } from './tool-dispatch';
+import { EXPLORER_ALLOWED_TOOLS } from './explorer-constants';
 import { createToolHookRegistry, type ToolHookRegistry } from './tool-hooks';
 import { getModelForRole } from './providers';
 import { resolveProviderSpecificModel } from './provider-selection';
@@ -71,17 +66,21 @@ import { createExplorerPolicy } from './turn-policies/explorer-policy';
 import { CapabilityLedger, ROLE_CAPABILITIES } from './capabilities';
 
 // ---------------------------------------------------------------------------
-// Constants — the Web-side `EXPLORER_ALLOWED_TOOLS` set uses the tool-dispatch
-// canonical lists (distinct from `explorer-constants.ts`, which derives from
-// `getToolCanonicalNames`). Both resolve to the same logical set today but
-// keeping this in the shim preserves 1:1 parity with the pre-move export.
+// Constants — `EXPLORER_ALLOWED_TOOLS` is imported from `explorer-constants.ts`
+// and re-exported here to preserve the pre-move public API. Prior to this
+// consolidation the set was defined twice with different derivations:
+// `explorer-agent.ts` built it from `PARALLEL_READ_ONLY_{GITHUB,SANDBOX}_TOOLS`
+// in `tool-dispatch`, while `explorer-constants.ts` built it from
+// `getToolCanonicalNames({ readOnly: true })` in `tool-registry`. Both resolved
+// to the same set today because `PARALLEL_READ_ONLY_*_TOOLS` themselves wrap
+// `getToolCanonicalNames(...)`, so the duplication was tautological — and a
+// silent drift hazard if either derivation's inputs changed independently.
+// `explorer-constants` is the canonical source because it sits on the
+// zero-dependency leaf module (`tool-registry`) and is what the turn-policy
+// imports already use.
 // ---------------------------------------------------------------------------
 
-export const EXPLORER_ALLOWED_TOOLS = new Set([
-  ...PARALLEL_READ_ONLY_GITHUB_TOOLS,
-  ...PARALLEL_READ_ONLY_SANDBOX_TOOLS,
-  'web_search',
-]);
+export { EXPLORER_ALLOWED_TOOLS };
 
 // ---------------------------------------------------------------------------
 // Prompt builder re-exports — zero-arg wrappers that curry

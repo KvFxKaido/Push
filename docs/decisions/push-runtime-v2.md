@@ -421,7 +421,7 @@ Explorer landed as the second role kernel through the Phase 5B seam, mirroring t
 
 **Test preservation was free.** `explorer-agent.test.ts` has zero `vi.mock()` calls — it's a pure behavioral test that exercises `buildExplorerSystemPrompt()` and `createExplorerToolHooks()` end-to-end. Both exports remain on the Web shim (the former as a zero-arg curried wrapper around the lib version that takes `webSearchToolProtocol: string`, the latter unchanged), so the test passes unmodified. All four callers (`useAgentDelegation`, `deep-reviewer-agent` shim, `explorer-agent.test`, `delegation-handoff.integration.test`) import from `./explorer-agent` or `@/lib/explorer-agent` and continue to resolve to the Web shim 1:1.
 
-**Known follow-up (not blocking).** `EXPLORER_ALLOWED_TOOLS` is still defined in two places — once in `explorer-agent.ts` (derived from `PARALLEL_READ_ONLY_GITHUB_TOOLS` + `PARALLEL_READ_ONLY_SANDBOX_TOOLS` + `'web_search'`) and once in `explorer-constants.ts` (derived directly from `getToolCanonicalNames`). Both resolve to the same set today. The duplication predates this sprint and was not reconciled here — touching `explorer-constants.ts` would have reached into `explorer-policy.ts` via its import, which is out of scope. Worth a one-line reconciliation PR at some point.
+~~**Known follow-up (not blocking).**~~ **Resolved 2026-04-18.** `EXPLORER_ALLOWED_TOOLS` now has a single source of truth in `explorer-constants.ts` (which derives from `getToolCanonicalNames({ readOnly: true })` on the zero-dependency `tool-registry` leaf). `explorer-agent.ts` imports and re-exports it to preserve the pre-move public API. Recon established the two derivations were provably equivalent: `PARALLEL_READ_ONLY_*_TOOLS` in `tool-dispatch.ts:63-69` are themselves thin `new Set(getToolCanonicalNames(...))` wrappers, so both `EXPLORER_ALLOWED_TOOLS` definitions reduced to the same underlying registry query — the duplication was tautological but also a silent drift hazard if either derivation's inputs changed independently. The 12 consumer tests (5 explorer-agent + 7 explorer-policy) pass unchanged.
 
 #### Phase 5D step 2 — Coder move SHIPPED 2026-04-13 (commit `819ac68`)
 
@@ -467,7 +467,7 @@ Coder landed as the third role kernel through the Phase 5B seam, completing the 
 **Known follow-ups from this sprint (not blocking).**
 - The dual mutation-failure tracker (one in the lib kernel's inline `mutationFailures` Map, one in `createCoderPolicy`'s `afterToolExec` hook absorbed into the shim closure) is a legacy artifact worth consolidating in a later PR.
 - The inlined context-trim summarizer in `lib/coder-agent.ts` can be replaced with a direct import once `context-compaction.ts` moves to lib.
-- `EXPLORER_ALLOWED_TOOLS` still has the Phase 5D step 1 duplication between `explorer-agent.ts` and `explorer-constants.ts` — untouched, still worth a one-line reconciliation PR.
+- ~~`EXPLORER_ALLOWED_TOOLS` still has the Phase 5D step 1 duplication~~ **Resolved 2026-04-18** — `explorer-constants.ts` is the single source; `explorer-agent.ts` re-exports to preserve the pre-move public API. See §Phase 5D step 1's follow-up note above for the full landing.
 
 #### Phase 5E — Orchestrator (decided 2026-04-13) — STAY WEB-SIDE
 
@@ -498,7 +498,7 @@ None of the three requires modifying `lib/tool-execution-runtime.ts`, so this is
 **Phase 5 follow-ups (not blocking Phase 6, each a separate ~1-file PR).**
 - SHIPPED. Extract `buildOrchestratorGuidelines` / `buildOrchestratorToolInstructions` / `buildOrchestratorDelegation` / `buildOrchestratorBaseBuilder` / `buildOrchestratorBasePrompt` into `lib/orchestrator-prompt-builder.ts`. Web shim at `app/src/lib/orchestrator-prompt-builder.ts` re-exports. Unblocks pushd's prompt reuse.
 - SHIPPED. Extract `manageContext` / `classifySummarizationCause` / `buildContextDigest` into `lib/message-context-manager.ts` against a generic `Message` interface and dependency-injection bundle. Web shim at `app/src/lib/message-context-manager.ts` binds the generic to `ChatMessage` and wires the web-side token-estimator, semantic compaction, context metrics, and digest factory. Unblocks pushd's context trimming and is also a prerequisite for moving `context-compaction.ts` (which the Phase 5D step 2 follow-ups call out).
-- The three Phase 5D step 2 follow-ups (`EXPLORER_ALLOWED_TOOLS` duplication, dual mutation-failure tracker in `lib/coder-agent.ts`, inlined context-trim summarizer in `lib/coder-agent.ts`) remain open and still sized as one-file PRs each.
+- Two of the three Phase 5D step 2 follow-ups remain open (dual mutation-failure tracker in `lib/coder-agent.ts`, inlined context-trim summarizer in `lib/coder-agent.ts`) and are still sized as one-file PRs each. `EXPLORER_ALLOWED_TOOLS` duplication closed 2026-04-18 — see §Phase 5D step 1 follow-up.
 
 ### Phase 6 — Daemon wiring
 
