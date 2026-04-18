@@ -17,6 +17,7 @@ vi.mock('./sandbox-client', () => ({
   findReferencesInSandbox: vi.fn(),
   getSandboxEnvironment: vi.fn(),
   readFromSandbox: vi.fn(),
+  readSymbolsFromSandbox: vi.fn(),
   writeToSandbox: vi.fn(),
   batchWriteToSandbox: vi.fn(),
   getSandboxDiff: vi.fn(),
@@ -68,6 +69,7 @@ import { runAuditor } from './auditor-agent';
 import { createGitHubRepo } from './sandbox-tool-utils';
 import { getActiveGitHubToken } from './github-auth';
 import { fileLedger } from './file-awareness-ledger';
+import { symbolLedger } from './symbol-persistence-ledger';
 import { calculateLineHash } from './hashline';
 
 // ---------------------------------------------------------------------------
@@ -499,6 +501,496 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', (
 });
 
 // ---------------------------------------------------------------------------
+// Read-only inspection family characterization — pin behavior for the five tools
+// to be extracted into sandbox-read-only-inspection-handlers.ts. These tests
+// exercise the dispatcher end-to-end and serve as the regression gate.
+// ---------------------------------------------------------------------------
+
+describe('executeSandboxToolCall -- sandbox_read_file characterization', () => {
+  beforeEach(() => {
+    mockRecordReadFileMetric.mockReset();
+    vi.mocked(sandboxClient.readFromSandbox).mockReset();
+    fileLedger.reset();
+    symbolLedger.reset();
+  });
+
+  it('returns line-numbered content with hash prefixes for full file read', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export const x = 1;\nconst y = 2;\n',
+      version: 'abc123',
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/src/app.ts' } },
+      'sb-123',
+    );
+
+    expect(result.text).toMatch(/\[Tool Result — sandbox_read_file\]/);
+    expect(result.text).toMatch(/File: \/workspace\/src\/app\.ts/);
+    expect(result.text).toMatch(/Version: abc123/);
+    expect(result.text).toMatch(/1:[^\t]+\texport const x = 1;/);
+    expect(result.text).toMatch(/2:[^\t]+\tconst y = 2;/);
+    expect(result.card?.type).toBe('editor');
+    if (result.card?.type === 'editor') {
+      expect(result.card.data.path).toBe('/workspace/src/app.ts');
+      expect(result.card.data.content).toBe('export const x = 1;\nconst y = 2;\n');
+      expect(result.card.data.language).toBe('typescript');
+      expect(result.card.data.truncated).toBe(false);
+      expect(result.card.data.version).toBe('abc123');
+    }
+    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'success',
+        payloadChars: 'export const x = 1;\nconst y = 2;\n'.length,
+        isRangeRead: false,
+        truncated: false,
+        emptyRange: false,
+      }),
+    );
+  });
+
+  it('handles range read with start_line only (tail of file)', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'const z = 3;\n',
+      version: 'abc123',
+      start_line: 3,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/src/app.ts', start_line: 3 } },
+      'sb-123',
+    );
+
+    expect(result.text).toMatch(/Lines 3-∞ of \/workspace\/src\/app\.ts/);
+    expect(result.text).toMatch(/3:[^\t]+\tconst z = 3;/);
+    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isRangeRead: true,
+        emptyRange: false,
+      }),
+    );
+  });
+
+  it('handles empty range read (out-of-bounds lines)', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: '',
+      version: 'abc123',
+      start_line: 999,
+      end_line: 1000,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_read_file',
+        args: { path: '/workspace/src/app.ts', start_line: 999, end_line: 1000 },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toMatch(/Lines 999-1000 of \/workspace\/src\/app\.ts/);
+    expect(result.text).not.toContain('empty range');
+    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'success',
+        payloadChars: 0,
+        isRangeRead: true,
+        emptyRange: true,
+      }),
+    );
+  });
+
+  it('appends truncation details and signature hints for truncated reads', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export function foo() {}\n',
+      version: 'abc123',
+      truncated: true,
+      truncated_at_line: 42,
+      remaining_bytes: 2048,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/src/app.ts' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('(truncated)');
+    expect(result.text).toContain('truncated_at_line: 42');
+    expect(result.text).toContain('remaining_bytes: 2048');
+    expect(result.text).toContain('[Truncated content contains:');
+    expect(result.text).toContain('foo');
+    if (result.card?.type === 'editor') {
+      expect(result.card.data.truncated).toBe(true);
+    }
+    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({ truncated: true }),
+    );
+  });
+
+  it('redacts sensitive content and notes redactions', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'API_KEY=sk-1234567890abcdef12345\nnormal line\n',
+      version: 'abc123',
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/src/config.ts' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Redactions: secret-like values hidden.');
+    expect(result.text).not.toContain('sk-1234567890abcdef12345');
+    if (result.card?.type === 'editor') {
+      expect(result.card.data.content).toContain('[REDACTED');
+    }
+  });
+
+  it('returns structured error for sensitive path', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/secrets/id_rsa' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error]');
+    expect(result.text).toContain('looks like a secret or credential file');
+    expect(result.structuredError).toBeUndefined();
+  });
+
+  it('returns structured error for read failure', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      error: 'ENOENT: no such file',
+      code: 'READ_ERROR',
+    } as unknown as sandboxClient.FileReadResult);
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/missing.ts' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error]');
+    expect(result.text).toContain('File not found');
+    expect(result.structuredError?.type).toBe('FILE_NOT_FOUND');
+    expect(mockRecordReadFileMetric).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'error', errorCode: 'READ_ERROR' }),
+    );
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_search characterization', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('uses rg when available, falls back to grep, limits to 121 lines', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: `app/src/lib/a.ts:10:const foo = 42;\napp/src/lib/b.ts:20:const foo = 99;\n`,
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search', args: { query: 'foo', path: 'app/src/lib' } },
+      'sb-123',
+    );
+
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      expect.stringContaining('rg -n --hidden --glob'),
+    );
+    expect(result.text).toMatch(/\[Tool Result — sandbox_search\]/);
+    expect(result.text).toContain('Query: foo');
+    expect(result.text).toContain('Path: /workspace/app/src/lib');
+    expect(result.text).toContain('Matches: 2');
+    expect(result.text).toContain('app/src/lib/a.ts:10:const foo = 42;');
+  });
+
+  it('reports no results with suggestions when no matches', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 1,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search', args: { query: 'nonexistent' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('No matches for "nonexistent"');
+    expect(result.text).toContain('Suggestions:');
+    expect(result.text).toContain('Try a shorter or more generic substring');
+    expect(result.text).toContain('Use sandbox_list_dir to browse the project structure');
+  });
+
+  it('hides matches in sensitive paths', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: `/workspace/secrets/id_rsa:1:ssh-rsa AAA...\napp/src/a.ts:10:foo\n`,
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search', args: { query: 'foo' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Hidden matches: 1 secret-file result');
+    expect(result.text).not.toContain('id_rsa');
+    expect(result.text).toContain('app/src/a.ts:10:foo');
+  });
+
+  it('redacts sensitive text within matches', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: `app/src/config.ts:5:API_KEY=sk-1234567890abcdef12345\n`,
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search', args: { query: 'API_KEY' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Redactions: secret-like values hidden.');
+    expect(result.text).toContain('API_KEY=[REDACTED');
+  });
+
+  it('reports path errors with specific hints', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: 'rg: /workspace/nonexistent: No such file or directory',
+      exitCode: 2,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search', args: { query: 'foo', path: '/workspace/nonexistent' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Search path "/workspace/nonexistent" does not exist.');
+    expect(result.text).toContain('sandbox_list_dir("/workspace")');
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_list_dir characterization', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.listDirectory).mockReset();
+  });
+
+  it('lists filtered directory entries with counts and hidden note', async () => {
+    vi.mocked(sandboxClient.listDirectory).mockResolvedValue([
+      { name: 'src', path: '/workspace/src', type: 'directory', size: 0 },
+      { name: 'public', path: '/workspace/public', type: 'directory', size: 0 },
+      { name: 'app.ts', path: '/workspace/app.ts', type: 'file', size: 1234 },
+      { name: '.env', path: '/workspace/.env', type: 'file', size: 16 },
+    ]);
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_list_dir', args: { path: '/workspace' } },
+      'sb-123',
+    );
+
+    expect(result.text).toMatch(/\[Tool Result — sandbox_list_dir\]/);
+    expect(result.text).toContain('Directory: /workspace');
+    expect(result.text).toContain('2 directories, 1 files');
+    expect(result.text).toContain('(1 sensitive entry hidden)');
+    expect(result.text).toContain('  📁 src/');
+    expect(result.text).toContain('  📁 public/');
+    expect(result.text).toContain('  📄 app.ts (1234 bytes)');
+    expect(result.text).not.toContain('.env');
+    expect(result.card?.type).toBe('file-list');
+    if (result.card?.type === 'file-list') {
+      expect(result.card.data.entries).toHaveLength(3);
+      expect(result.card.data.entries[0]).toEqual({ name: 'src', type: 'directory' });
+      expect(result.card.data.entries[2]).toEqual({ name: 'app.ts', type: 'file', size: 1234 });
+    }
+  });
+
+  it('lists empty directory', async () => {
+    vi.mocked(sandboxClient.listDirectory).mockResolvedValue([]);
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_list_dir', args: { path: '/workspace/empty' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('0 directories, 0 files');
+    if (result.card?.type === 'file-list') {
+      expect(result.card.data.entries).toEqual([]);
+    }
+  });
+
+  it('errors on sensitive path', async () => {
+    vi.mocked(sandboxClient.listDirectory).mockImplementation(() => {
+      throw new Error('should not call');
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_list_dir', args: { path: '/workspace/.ssh' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('looks like a secret or credential file');
+    expect(sandboxClient.listDirectory).not.toHaveBeenCalled();
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_read_symbols characterization', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.readSymbolsFromSandbox).mockReset();
+    fileLedger.reset();
+    symbolLedger.reset();
+  });
+
+  it('uses cached symbols from symbolLedger when available', async () => {
+    symbolLedger.store(
+      '/workspace/src/app.ts',
+      [{ name: 'foo', kind: 'function', line: 10, signature: 'export function foo()' }],
+      50,
+    );
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_read_symbols', args: { path: '/workspace/src/app.ts' } },
+      'sb-123',
+    );
+
+    expect(sandboxClient.readSymbolsFromSandbox).not.toHaveBeenCalled();
+    expect(result.text).toContain('File: /workspace/src/app.ts (50 lines, TypeScript/JavaScript)');
+    expect(result.text).toMatch(/function\s+L\s+10\s+export function foo\(\)/);
+  });
+
+  it('caches empty symbol results to avoid repeated sandbox calls', async () => {
+    vi.mocked(sandboxClient.readSymbolsFromSandbox).mockResolvedValue({
+      symbols: [],
+      totalLines: 25,
+    });
+
+    const result1 = await executeSandboxToolCall(
+      { tool: 'sandbox_read_symbols', args: { path: '/workspace/src/empty.ts' } },
+      'sb-123',
+    );
+    const result2 = await executeSandboxToolCall(
+      { tool: 'sandbox_read_symbols', args: { path: '/workspace/src/empty.ts' } },
+      'sb-123',
+    );
+
+    expect(sandboxClient.readSymbolsFromSandbox).toHaveBeenCalledTimes(1);
+    expect(result1.text).toContain('(no symbols found)');
+    expect(result2.text).toContain('(no symbols found)');
+  });
+
+  it('records partial read in fileLedger for symbol reads', async () => {
+    vi.mocked(sandboxClient.readSymbolsFromSandbox).mockResolvedValue({
+      symbols: [{ name: 'Foo', kind: 'class', line: 15, signature: 'export class Foo' }],
+      totalLines: 100,
+    });
+
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_symbols', args: { path: '/workspace/src/app.ts' } },
+      'sb-123',
+    );
+
+    expect(fileLedger.getState('/workspace/src/app.ts')).toMatchObject({
+      kind: 'partial_read',
+      ranges: [{ start: 1, end: 100 }],
+      symbols: [{ name: 'Foo', kind: 'class', lineRange: { start: 15, end: 15 } }],
+    });
+  });
+
+  it('handles symbol read failure', async () => {
+    vi.mocked(sandboxClient.readSymbolsFromSandbox).mockRejectedValue(
+      new Error('symbol extraction failed'),
+    );
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_read_symbols', args: { path: '/workspace/src/app.ts' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_read_symbols]');
+    expect(result.text).toContain('symbol extraction failed');
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_find_references characterization', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.findReferencesInSandbox).mockReset();
+  });
+
+  it('formats references with relative paths and context', async () => {
+    vi.mocked(sandboxClient.findReferencesInSandbox).mockResolvedValue({
+      references: [
+        {
+          file: '/workspace/app/src/lib/utils.ts',
+          line: 42,
+          kind: 'call',
+          context: 'result = computeHash(content)',
+        },
+        {
+          file: '/workspace/app/src/lib/sandbox-tools.ts',
+          line: 123,
+          kind: 'import',
+          context: 'import { computeHash } from "./hash"',
+        },
+      ],
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_find_references', args: { symbol: 'computeHash', scope: 'app/src/lib' } },
+      'sb-123',
+    );
+
+    expect(sandboxClient.findReferencesInSandbox).toHaveBeenCalledWith(
+      'sb-123',
+      'computeHash',
+      '/workspace/app/src/lib',
+      30,
+    );
+    expect(result.text).toContain('Symbol: computeHash');
+    expect(result.text).toContain('Scope: app/src/lib/');
+    expect(result.text).toContain('References: 2 (showing 2)');
+    expect(result.text).toMatch(/call\s+L\s+42\s+app\/src\/lib\/utils\.ts/);
+    expect(result.text).toMatch(/import\s+L\s+123\s+app\/src\/lib\/sandbox-tools\.ts/);
+  });
+
+  it('handles no references', async () => {
+    vi.mocked(sandboxClient.findReferencesInSandbox).mockResolvedValue({
+      references: [],
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_find_references', args: { symbol: 'missingSymbol' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('References: 0 (showing 0)');
+    expect(result.text).toContain('(no references found)');
+  });
+
+  it('handles reference search failure', async () => {
+    vi.mocked(sandboxClient.findReferencesInSandbox).mockRejectedValue(new Error('search failed'));
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_find_references', args: { symbol: 'foo' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_find_references]');
+    expect(result.text).toContain('search failed');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Git/release family characterization — pin behavior for the four tools
 // extracted into sandbox-git-release-handlers.ts (sandbox_diff,
 // sandbox_prepare_commit, sandbox_push, promote_to_github). These tests
@@ -515,6 +1007,8 @@ describe('executeSandboxToolCall -- sandbox_diff', () => {
 
   it('returns a structured error when getSandboxDiff fails', async () => {
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      diff: '',
+      truncated: false,
       error: 'sandbox unreachable',
     });
 
@@ -527,7 +1021,7 @@ describe('executeSandboxToolCall -- sandbox_diff', () => {
   });
 
   it('returns a clean-tree message when there is no diff and no git_status', async () => {
-    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({});
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff: '', truncated: false });
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, 'sb-1');
 
@@ -539,6 +1033,8 @@ describe('executeSandboxToolCall -- sandbox_diff', () => {
 
   it('includes git status output when no diff but git_status is present', async () => {
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      diff: '',
+      truncated: false,
       git_status: ' M src/app.ts',
     });
 
@@ -582,7 +1078,11 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', ()
   });
 
   it('returns a structured error when the initial getSandboxDiff fails', async () => {
-    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ error: 'diff failed' });
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      diff: '',
+      truncated: false,
+      error: 'diff failed',
+    });
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
@@ -598,6 +1098,8 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', ()
 
   it('returns a no-changes message when the initial diff is empty (with git_status)', async () => {
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      diff: '',
+      truncated: false,
       git_status: ' M src/app.ts',
     });
 
@@ -614,7 +1116,7 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', ()
   });
 
   it('returns a no-changes message with the clean-tree hint when there is no git_status', async () => {
-    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({});
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff: '', truncated: false });
 
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
@@ -633,7 +1135,7 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', ()
         diff: 'diff --git a/src/app.ts b/src/app.ts\n+x\n',
         truncated: false,
       })
-      .mockResolvedValueOnce({ error: 'post-hook diff failed' });
+      .mockResolvedValueOnce({ diff: '', truncated: false, error: 'post-hook diff failed' });
     vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
       stdout: '',
       stderr: '',
@@ -658,7 +1160,7 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', ()
         diff: 'diff --git a/src/app.ts b/src/app.ts\n+x\n',
         truncated: false,
       })
-      .mockResolvedValueOnce({ git_status: '' });
+      .mockResolvedValueOnce({ diff: '', truncated: false, git_status: '' });
     vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
       stdout: 'formatter rewrote files',
       stderr: '',
@@ -1003,7 +1505,7 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
   });
 
   it('returns no-changes text and skips all execs when the diff is empty', async () => {
-    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({});
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff: '', truncated: false });
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1');
 
@@ -1014,7 +1516,11 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
   });
 
   it('returns an error and skips all execs when the initial diff fails', async () => {
-    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ error: 'sandbox unreachable' });
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      diff: '',
+      truncated: false,
+      error: 'sandbox unreachable',
+    });
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1');
 

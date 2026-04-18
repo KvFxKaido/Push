@@ -12,7 +12,6 @@ import type {
   ToolExecutionResult,
   StructuredToolError,
   SandboxCardData,
-  FileListCardData,
   ToolMutationCheckResult,
   ToolMutationDiagnostic,
   ToolMutationFilePostcondition,
@@ -37,26 +36,9 @@ import {
 import { runAuditor } from './auditor-agent';
 import { fetchAuditorFileContexts } from './auditor-file-context';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
-import {
-  fileLedger,
-  extractSignatures,
-  extractSignaturesWithLines,
-  type SymbolRead,
-  type SymbolKind,
-} from './file-awareness-ledger';
+import { fileLedger, extractSignaturesWithLines } from './file-awareness-ledger';
 import { symbolLedger } from './symbol-persistence-ledger';
-import {
-  adaptiveHashDisplayLength,
-  applyHashlineEdits,
-  calculateLineHash,
-  type HashlineOp,
-} from './hashline';
-import {
-  filterSensitiveDirectoryEntries,
-  formatSensitivePathToolError,
-  isSensitivePath,
-  redactSensitiveText,
-} from './sensitive-data-guard';
+import { applyHashlineEdits, calculateLineHash, type HashlineOp } from './hashline';
 import { getActiveGitHubToken } from './github-auth';
 import { getApprovalMode } from './approval-mode';
 import {
@@ -75,18 +57,12 @@ import {
 import {
   normalizeSandboxPath,
   normalizeSandboxWorkdir,
-  formatSandboxDisplayPath,
-  formatSandboxDisplayScope,
   normalizeUnicode,
-  extractSandboxSearchResultPath,
   formatSandboxError,
   diagnoseExecFailure,
   classifyError,
   formatStructuredError,
-  buildSearchNoResultsHints,
-  buildSearchPathErrorHints,
   retryOnContainerError,
-  shellEscape,
   isLikelyMutatingSandboxExec,
   detectBlockedGitCommand,
   createGitHubRepo,
@@ -129,6 +105,14 @@ import {
   handleSaveDraft,
   type GitReleaseHandlerContext,
 } from './sandbox-git-release-handlers';
+import {
+  handleFindReferences,
+  handleListDir,
+  handleReadFile,
+  handleReadSymbols,
+  handleSearch,
+  type ReadOnlyInspectionHandlerContext,
+} from './sandbox-read-only-inspection-handlers';
 
 // --- Barrel re-exports (preserve existing consumer import paths) ---
 export { clearFileVersionCache } from './sandbox-file-version-cache';
@@ -432,6 +416,26 @@ function buildGitReleaseContext(sandboxId: string): GitReleaseHandlerContext {
   };
 }
 
+function buildReadOnlyInspectionContext(sandboxId: string): ReadOnlyInspectionHandlerContext {
+  return {
+    sandboxId,
+    readFromSandbox,
+    execInSandbox,
+    listDirectory,
+    readSymbolsFromSandbox,
+    findReferencesInSandbox,
+    syncReadSnapshot,
+    invalidateWorkspaceSnapshots,
+    deleteFileVersion: versionCacheDeletePath,
+    recordReadFileMetric,
+    recordLedgerRead: (path, opts) => fileLedger.recordRead(path, opts),
+    lookupCachedSymbols: (filePath) => symbolLedger.lookup(filePath),
+    storeCachedSymbols: (filePath, symbols, totalLines) => {
+      symbolLedger.store(filePath, symbols, totalLines);
+    },
+  };
+}
+
 export async function executeSandboxToolCall(
   call: SandboxToolCall,
   sandboxId: string,
@@ -554,346 +558,15 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_read_file': {
-        if (isSensitivePath(call.args.path)) {
-          return { text: formatSensitivePathToolError(call.args.path) };
-        }
-        const isRangeRead = call.args.start_line !== undefined || call.args.end_line !== undefined;
-        const result = (await readFromSandbox(
-          sandboxId,
-          call.args.path,
-          call.args.start_line,
-          call.args.end_line,
-        )) as FileReadResult & { error?: string };
-        const cacheKey = fileVersionKey(sandboxId, call.args.path);
-
-        // Handle directory or read errors (e.g. "cat: /path: Is a directory")
-        if (result.error) {
-          if (result.code === 'WORKSPACE_CHANGED') {
-            invalidateWorkspaceSnapshots(sandboxId, result.current_workspace_revision);
-          }
-          versionCacheDelete(cacheKey);
-          recordReadFileMetric({
-            outcome: 'error',
-            payloadChars: 0,
-            isRangeRead,
-            errorCode: 'READ_ERROR',
-          });
-          const err = classifyError(result.error, call.args.path);
-          return {
-            text: formatStructuredError(err, formatSandboxError(result.error, call.args.path)),
-            structuredError: err,
-          };
-        }
-
-        syncReadSnapshot(sandboxId, call.args.path, result);
-
-        const rangeStart =
-          typeof result.start_line === 'number' ? result.start_line : (call.args.start_line ?? 1);
-        const rangeEnd = typeof result.end_line === 'number' ? result.end_line : call.args.end_line;
-
-        // For every read: add hashline anchors and line numbers to the tool result text
-        let toolResultContent = '';
-        const emptyRangeWarning = '';
-        let visibleLineCount = 0;
-        const safeContentResult = redactSensitiveText(result.content);
-        const safeContent = safeContentResult.text;
-        if (safeContent) {
-          const contentLines = safeContent.split('\n');
-          // If content ends with a trailing newline, the last split element is empty — don't number it
-          const hasTrailingNewline = safeContent.endsWith('\n') && contentLines.length > 1;
-          const linesToNumber = hasTrailingNewline ? contentLines.slice(0, -1) : contentLines;
-          visibleLineCount = linesToNumber.length;
-          const maxLineNum = Math.max(rangeStart, rangeStart + linesToNumber.length - 1);
-          const padWidth = String(maxLineNum).length;
-
-          const fullHashPromises = linesToNumber.map((line) => calculateLineHash(line, 12));
-          const fullHashes = await Promise.all(fullHashPromises);
-          const hashDisplayLen = adaptiveHashDisplayLength(fullHashes);
-          const lineHashes = fullHashes.map((h) => h.slice(0, hashDisplayLen));
-
-          toolResultContent = linesToNumber
-            .map(
-              (line, idx) =>
-                `${String(rangeStart + idx).padStart(padWidth)}:${lineHashes[idx]}\t${line}`,
-            )
-            .join('\n');
-        }
-
-        // --- File Awareness Ledger: record what the model has seen ---
-        const contentLineCount = visibleLineCount;
-        // If start_line was provided without end_line and the result wasn't
-        // truncated, the server returned the entire file from that offset —
-        // treat it as a full read so the ledger doesn't false-positive as
-        // partial_read.
-        const effectivelyFullRead = isRangeRead && !rangeEnd && !result.truncated;
-        // Extract symbols for ledger tracking
-        const readStartLine = isRangeRead && !effectivelyFullRead ? rangeStart : 1;
-        const symbols = result.content
-          ? extractSignaturesWithLines(result.content, readStartLine)
-          : [];
-        if (!emptyRangeWarning) {
-          fileLedger.recordRead(call.args.path, {
-            startLine: isRangeRead && !effectivelyFullRead ? rangeStart : undefined,
-            endLine:
-              isRangeRead && !effectivelyFullRead
-                ? (rangeEnd ?? rangeStart + contentLineCount - 1)
-                : undefined,
-            truncated: Boolean(result.truncated),
-            totalLines: contentLineCount,
-            symbols,
-          });
-        }
-
-        // --- Phase 2: Signature extraction for truncated reads ---
-        // When content is truncated, extract structural signatures from the
-        // visible portion so the model knows what functions/classes exist
-        // beyond the truncation point. Appended to the truncation notice.
-        let signatureHint = '';
-        if (result.truncated && result.content) {
-          const sigs = extractSignatures(result.content);
-          if (sigs) {
-            signatureHint = `[Truncated content ${sigs}]`;
-          }
-        }
-
-        const truncationLines = result.truncated
-          ? [
-              typeof result.truncated_at_line === 'number'
-                ? `truncated_at_line: ${result.truncated_at_line}`
-                : null,
-              typeof result.remaining_bytes === 'number'
-                ? `remaining_bytes: ${result.remaining_bytes}`
-                : null,
-            ].filter((line): line is string => Boolean(line))
-          : [];
-
-        const fileLabel = isRangeRead
-          ? `Lines ${rangeStart}-${rangeEnd ?? '∞'} of ${call.args.path}`
-          : `File: ${call.args.path}`;
-
-        const lines: string[] = [
-          `[Tool Result — sandbox_read_file]`,
-          fileLabel,
-          `Version: ${result.version || 'unknown'}`,
-          result.truncated ? `(truncated)` : '',
-          safeContentResult.redacted ? `Redactions: secret-like values hidden.` : '',
-          ...truncationLines,
-          signatureHint,
-          emptyRangeWarning,
-          toolResultContent,
-        ].filter(Boolean);
-
-        const emptyRange = isRangeRead && !result.content;
-        recordReadFileMetric({
-          outcome: 'success',
-          payloadChars: result.content.length,
-          isRangeRead,
-          truncated: Boolean(result.truncated),
-          emptyRange,
-        });
-
-        // Guess language from extension
-        const ext = call.args.path.split('.').pop()?.toLowerCase() || '';
-        const sandboxLangMap: Record<string, string> = {
-          ts: 'typescript',
-          tsx: 'typescript',
-          js: 'javascript',
-          jsx: 'javascript',
-          py: 'python',
-          rs: 'rust',
-          go: 'go',
-          rb: 'ruby',
-          java: 'java',
-          md: 'markdown',
-          json: 'json',
-          yaml: 'yaml',
-          yml: 'yaml',
-          css: 'css',
-          html: 'html',
-          sh: 'shell',
-          bash: 'shell',
-          toml: 'toml',
-          sql: 'sql',
-          c: 'c',
-          cpp: 'cpp',
-          h: 'c',
-        };
-        const language = sandboxLangMap[ext] || ext;
-
-        return {
-          text: lines.join('\n'),
-          card: {
-            type: 'editor',
-            data: {
-              path: call.args.path,
-              content: safeContent, // Card gets clean content — no line numbers
-              language,
-              truncated: result.truncated,
-              version: typeof result.version === 'string' ? result.version : undefined,
-              workspaceRevision:
-                typeof result.workspace_revision === 'number'
-                  ? result.workspace_revision
-                  : undefined,
-              source: 'sandbox' as const,
-              sandboxId,
-            },
-          },
-        };
+        return handleReadFile(buildReadOnlyInspectionContext(sandboxId), call.args);
       }
 
       case 'sandbox_search': {
-        const query = call.args.query.trim();
-        const searchPath = normalizeSandboxPath(
-          (call.args.path || '/workspace').trim() || '/workspace',
-        );
-
-        if (!query) {
-          return { text: '[Tool Error] sandbox_search requires a non-empty query.' };
-        }
-        if (isSensitivePath(searchPath)) {
-          return { text: formatSensitivePathToolError(searchPath) };
-        }
-
-        const escapedQuery = shellEscape(query);
-        const escapedPath = shellEscape(searchPath);
-        const command = [
-          'set -o pipefail;',
-          'if command -v rg >/dev/null 2>&1; then',
-          `  rg -n --hidden --glob '!.git' --color never -- ${escapedQuery} ${escapedPath} | head -n 121;`,
-          'else',
-          `  grep -RIn --exclude-dir=.git -- ${escapedQuery} ${escapedPath} | head -n 121;`,
-          'fi',
-        ].join(' ');
-
-        const result = await execInSandbox(sandboxId, command);
-        if (result.exitCode !== 0 && !result.stdout.trim()) {
-          // rg returns exit code 1 when no matches; treat as a normal "no results" case.
-          if (result.exitCode === 1) {
-            const hints = buildSearchNoResultsHints(query, searchPath);
-            return {
-              text: [
-                `[Tool Result — sandbox_search]`,
-                `No matches for "${query}" in ${searchPath}.`,
-                '',
-                'Suggestions:',
-                ...hints.map((h) => `- ${h}`),
-              ].join('\n'),
-            };
-          }
-          // Exit code 2+ usually means path or argument error — provide specific guidance
-          const pathHint = buildSearchPathErrorHints(result.stderr || '', searchPath);
-          if (pathHint) {
-            return { text: pathHint };
-          }
-          return {
-            text: formatSandboxError(
-              result.stderr || 'Search failed',
-              `sandbox_search (${searchPath})`,
-            ),
-          };
-        }
-
-        const output = result.stdout.trim();
-        if (!output) {
-          const hints = buildSearchNoResultsHints(query, searchPath);
-          return {
-            text: [
-              `[Tool Result — sandbox_search]`,
-              `No matches for "${query}" in ${searchPath}.`,
-              '',
-              'Suggestions:',
-              ...hints.map((h) => `- ${h}`),
-            ].join('\n'),
-          };
-        }
-
-        const visibleLines: string[] = [];
-        let hiddenMatches = 0;
-        let redactedMatches = false;
-        for (const rawLine of output.split('\n').slice(0, 120)) {
-          const matchPath = extractSandboxSearchResultPath(rawLine);
-          if (matchPath && isSensitivePath(matchPath)) {
-            hiddenMatches += 1;
-            continue;
-          }
-          const safeLine = redactSensitiveText(rawLine);
-          redactedMatches ||= safeLine.redacted;
-          visibleLines.push(
-            safeLine.text.length > 320 ? `${safeLine.text.slice(0, 320)}...` : safeLine.text,
-          );
-        }
-
-        if (visibleLines.length === 0 && hiddenMatches > 0) {
-          return {
-            text: [
-              '[Tool Result — sandbox_search]',
-              `Query: ${query}`,
-              `Path: ${searchPath}`,
-              'Matches were found only in protected secret files and were hidden.',
-            ].join('\n'),
-          };
-        }
-
-        const matchCount = visibleLines.length;
-        const truncated = output.split('\n').length > visibleLines.length || result.truncated;
-
-        return {
-          text: [
-            '[Tool Result — sandbox_search]',
-            `Query: ${query}`,
-            `Path: ${searchPath}`,
-            `Matches: ${matchCount}${truncated ? ' (truncated)' : ''}`,
-            hiddenMatches > 0
-              ? `Hidden matches: ${hiddenMatches} secret-file result${hiddenMatches === 1 ? '' : 's'}`
-              : '',
-            redactedMatches ? 'Redactions: secret-like values hidden.' : '',
-            '',
-            ...visibleLines,
-          ].join('\n'),
-        };
+        return handleSearch(buildReadOnlyInspectionContext(sandboxId), call.args);
       }
 
       case 'sandbox_list_dir': {
-        const dirPath = normalizeSandboxPath(call.args.path || '/workspace');
-        if (isSensitivePath(dirPath)) {
-          return { text: formatSensitivePathToolError(dirPath) };
-        }
-        const entries = await listDirectory(sandboxId, dirPath);
-        const filtered = filterSensitiveDirectoryEntries(dirPath, entries);
-
-        const dirs = filtered.entries.filter((e) => e.type === 'directory');
-        const files = filtered.entries.filter((e) => e.type === 'file');
-
-        const lines: string[] = [
-          `[Tool Result — sandbox_list_dir]`,
-          `Directory: ${dirPath}`,
-          `${dirs.length} directories, ${files.length} files\n`,
-          filtered.hiddenCount > 0
-            ? `(${filtered.hiddenCount} sensitive entr${filtered.hiddenCount === 1 ? 'y' : 'ies'} hidden)\n`
-            : '',
-        ];
-
-        for (const d of dirs) {
-          lines.push(`  📁 ${d.name}/`);
-        }
-        for (const f of files) {
-          const size = f.size ? ` (${f.size} bytes)` : '';
-          lines.push(`  📄 ${f.name}${size}`);
-        }
-
-        const cardData: FileListCardData = {
-          path: dirPath,
-          entries: [
-            ...dirs.map((d) => ({ name: d.name, type: 'directory' as const })),
-            ...files.map((f) => ({
-              name: f.name,
-              type: 'file' as const,
-              size: f.size || undefined,
-            })),
-          ],
-        };
-
-        return { text: lines.join('\n'), card: { type: 'file-list', data: cardData } };
+        return handleListDir(buildReadOnlyInspectionContext(sandboxId), call.args);
       }
 
       case 'sandbox_edit_file': {
@@ -2275,144 +1948,11 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_read_symbols': {
-        const filePath = call.args.path;
-        const ext = filePath.split('.').pop()?.toLowerCase() || '';
-
-        try {
-          // Check the symbol persistence ledger first (cache-first read)
-          const cached = symbolLedger.lookup(filePath);
-          let symbols: { name: string; kind: string; line: number; signature: string }[];
-          let totalLines: number;
-
-          if (cached) {
-            symbols = cached.symbols;
-            totalLines = cached.totalLines;
-          } else {
-            const result = await readSymbolsFromSandbox(sandboxId, filePath);
-            symbols = result.symbols;
-            totalLines = result.totalLines;
-
-            // Cache the result in the symbol persistence ledger (including empty
-            // results so files with no symbols don't keep hitting the sandbox)
-            symbolLedger.store(filePath, result.symbols, totalLines);
-          }
-          const lang = ['py'].includes(ext)
-            ? 'Python'
-            : ['ts', 'tsx', 'js', 'jsx'].includes(ext)
-              ? 'TypeScript/JavaScript'
-              : ext;
-
-          // Record symbol reads in the ledger so edit guards can verify coverage
-          if (symbols.length > 0) {
-            const validKinds = new Set<string>([
-              'function',
-              'class',
-              'interface',
-              'export',
-              'type',
-            ]);
-            const ledgerSymbols: SymbolRead[] = symbols
-              .filter((s) => validKinds.has(s.kind))
-              .map((s) => {
-                // Normalize default export kind: the Python extractor emits 'function'
-                // for `export default function Foo`, but the ledger's edit guard keys
-                // default exports as 'export'. Check signature to detect this.
-                let normalizedKind = s.kind as SymbolKind;
-                if (
-                  (normalizedKind === 'function' || normalizedKind === 'class') &&
-                  /^export\s+default\b/.test(s.signature)
-                ) {
-                  normalizedKind = 'export';
-                }
-                return {
-                  name: s.name,
-                  kind: normalizedKind,
-                  lineRange: { start: s.line, end: s.line },
-                };
-              });
-            if (ledgerSymbols.length > 0) {
-              // Record as a partial/truncated read — the model only saw a symbol index,
-              // not the actual file content. Using truncated: true prevents recordRead
-              // from upgrading the state to fully_read.
-              fileLedger.recordRead(filePath, {
-                symbols: ledgerSymbols,
-                totalLines,
-                truncated: true,
-              });
-            }
-          }
-
-          const lines: string[] = [
-            `[Tool Result — sandbox_read_symbols]`,
-            `File: ${filePath} (${totalLines} lines, ${lang})`,
-            `Symbols: ${symbols.length}`,
-            '',
-          ];
-
-          for (const sym of symbols) {
-            lines.push(
-              `  ${sym.kind.padEnd(10)} L${String(sym.line).padStart(4)}  ${sym.signature}`,
-            );
-          }
-
-          if (symbols.length === 0) {
-            lines.push('  (no symbols found)');
-          }
-
-          return { text: lines.join('\n') };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to extract symbols';
-          const err = classifyError(message, filePath);
-          return {
-            text: formatStructuredError(err, `[Tool Error — sandbox_read_symbols]\n${message}`),
-            structuredError: err,
-          };
-        }
+        return handleReadSymbols(buildReadOnlyInspectionContext(sandboxId), call.args);
       }
 
       case 'sandbox_find_references': {
-        const symbol = call.args.symbol;
-        const scope = normalizeSandboxPath(call.args.scope || '/workspace');
-
-        try {
-          const { references, truncated } = await findReferencesInSandbox(
-            sandboxId,
-            symbol,
-            scope,
-            30,
-          );
-          const shownCount = references.length;
-          const fileWidth = Math.max(
-            ...references.map((reference) => formatSandboxDisplayPath(reference.file).length),
-            0,
-          );
-          const lines: string[] = [
-            `[Tool Result — sandbox_find_references]`,
-            `Symbol: ${symbol}`,
-            `Scope: ${formatSandboxDisplayScope(scope)}`,
-            `References: ${shownCount}${truncated ? '+' : ''} (showing ${shownCount})`,
-            '',
-          ];
-
-          if (references.length === 0) {
-            lines.push('  (no references found)');
-          } else {
-            for (const reference of references) {
-              lines.push(
-                `  ${reference.kind.padEnd(6)}  L ${String(reference.line).padStart(3)}  ${formatSandboxDisplayPath(reference.file).padEnd(fileWidth)}  ${reference.context}`,
-              );
-            }
-          }
-
-          return { text: lines.join('\n') };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to find references';
-          const err = classifyError(message, symbol);
-          return {
-            text: formatStructuredError(err, `[Tool Error — sandbox_find_references]\n${message}`),
-            structuredError: err,
-          };
-        }
+        return handleFindReferences(buildReadOnlyInspectionContext(sandboxId), call.args);
       }
 
       case 'sandbox_apply_patchset': {
