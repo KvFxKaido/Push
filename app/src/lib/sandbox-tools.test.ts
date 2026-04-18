@@ -29,6 +29,25 @@ vi.mock('./auditor-agent', () => ({
   runAuditor: vi.fn(),
 }));
 
+// Partial-mock sandbox-tool-utils: only createGitHubRepo is stubbed so the
+// promote_to_github tests don't hit the real fetch. All other exports
+// (shellEscape, sanitizeGitOutput, classifyError, formatStructuredError,
+// normalizeSandboxPath, etc.) remain the real implementations the dispatcher
+// relies on.
+vi.mock('./sandbox-tool-utils', async () => {
+  const actual =
+    await vi.importActual<typeof import('./sandbox-tool-utils')>('./sandbox-tool-utils');
+  return {
+    ...actual,
+    createGitHubRepo: vi.fn(),
+  };
+});
+
+// Mock github-auth so promote_to_github tests can control token presence.
+vi.mock('./github-auth', () => ({
+  getActiveGitHubToken: vi.fn(),
+}));
+
 vi.mock('./edit-metrics', () => ({
   recordWriteFileMetric: (...args: unknown[]) => mockRecordWriteFileMetric(...args),
   recordReadFileMetric: (...args: unknown[]) => mockRecordReadFileMetric(...args),
@@ -46,6 +65,8 @@ vi.mock('./tool-dispatch', async () => {
 import { classifyError, validateSandboxToolCall, executeSandboxToolCall } from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
 import { runAuditor } from './auditor-agent';
+import { createGitHubRepo } from './sandbox-tool-utils';
+import { getActiveGitHubToken } from './github-auth';
 import { fileLedger } from './file-awareness-ledger';
 import { calculateLineHash } from './hashline';
 
@@ -474,6 +495,495 @@ describe('executeSandboxToolCall -- sandbox_prepare_commit auditor overrides', (
       expect(result.card.data.diff.diff).toContain('after hook');
       expect(result.card.data.diff.diff).not.toContain('during hook');
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Git/release family characterization — pin behavior for the four tools
+// extracted into sandbox-git-release-handlers.ts (sandbox_diff,
+// sandbox_prepare_commit, sandbox_push, promote_to_github). These tests
+// exercise the dispatcher end-to-end and serve as the regression gate for
+// the extraction and future refactors. Originally written to pass at HEAD
+// before the extraction (commit e92b2b8); now pin behavior across the
+// extracted handlers as well.
+// ---------------------------------------------------------------------------
+
+describe('executeSandboxToolCall -- sandbox_diff', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockReset();
+  });
+
+  it('returns a structured error when getSandboxDiff fails', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      error: 'sandbox unreachable',
+    });
+
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, 'sb-1');
+
+    expect(sandboxClient.getSandboxDiff).toHaveBeenCalledWith('sb-1');
+    expect(result.text).toContain('[Tool Error — sandbox_diff]');
+    expect(result.text).toContain('sandbox unreachable');
+    expect(result.structuredError).toBeDefined();
+  });
+
+  it('returns a clean-tree message when there is no diff and no git_status', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({});
+
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, 'sb-1');
+
+    expect(result.text).toContain('[Tool Result — sandbox_diff]');
+    expect(result.text).toContain('No changes detected.');
+    expect(result.text).toContain('The working tree is clean.');
+    expect(result.card).toBeUndefined();
+  });
+
+  it('includes git status output when no diff but git_status is present', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      git_status: ' M src/app.ts',
+    });
+
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, 'sb-1');
+
+    expect(result.text).toContain('No changes detected.');
+    expect(result.text).toContain('git status output:');
+    expect(result.text).toContain(' M src/app.ts');
+    expect(result.text).not.toContain('The working tree is clean.');
+    expect(result.card).toBeUndefined();
+  });
+
+  it('returns a diff-preview card with parsed stats for a populated diff', async () => {
+    const diff =
+      'diff --git a/src/app.ts b/src/app.ts\n+console.log("hi");\n-console.log("bye");\n';
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff, truncated: false });
+
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, 'sb-1');
+
+    expect(result.text).toContain('[Tool Result — sandbox_diff]');
+    expect(result.text).toContain('1 file changed, +1 -1');
+    expect(result.text).toContain(diff);
+    expect(result.card?.type).toBe('diff-preview');
+    if (result.card?.type === 'diff-preview') {
+      expect(result.card.data).toEqual({
+        diff,
+        filesChanged: 1,
+        additions: 1,
+        deletions: 1,
+        truncated: false,
+      });
+    }
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_prepare_commit characterization', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(runAuditor).mockReset();
+  });
+
+  it('returns a structured error when the initial getSandboxDiff fails', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ error: 'diff failed' });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_prepare_commit]');
+    expect(result.text).toContain('diff failed');
+    expect(result.structuredError).toBeDefined();
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+    expect(runAuditor).not.toHaveBeenCalled();
+  });
+
+  it('returns a no-changes message when the initial diff is empty (with git_status)', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
+      git_status: ' M src/app.ts',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Result — sandbox_prepare_commit]');
+    expect(result.text).toContain('No changes to commit.');
+    expect(result.text).toContain('git status shows:  M src/app.ts');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+    expect(runAuditor).not.toHaveBeenCalled();
+  });
+
+  it('returns a no-changes message with the clean-tree hint when there is no git_status', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({});
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('No changes to commit.');
+    expect(result.text).toContain('Working tree is clean.');
+    expect(result.text).not.toContain('git status shows:');
+    expect(runAuditor).not.toHaveBeenCalled();
+  });
+
+  it('returns a structured error when the post-hook getSandboxDiff fails', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff)
+      .mockResolvedValueOnce({
+        diff: 'diff --git a/src/app.ts b/src/app.ts\n+x\n',
+        truncated: false,
+      })
+      .mockResolvedValueOnce({ error: 'post-hook diff failed' });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_prepare_commit]');
+    expect(result.text).toContain('post-hook diff failed');
+    expect(result.structuredError).toBeDefined();
+    expect(runAuditor).not.toHaveBeenCalled();
+  });
+
+  it('returns a post-hook no-changes message and surfaces hook output when the hook clears the diff', async () => {
+    vi.mocked(sandboxClient.getSandboxDiff)
+      .mockResolvedValueOnce({
+        diff: 'diff --git a/src/app.ts b/src/app.ts\n+x\n',
+        truncated: false,
+      })
+      .mockResolvedValueOnce({ git_status: '' });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'formatter rewrote files',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('No changes to commit after running the pre-commit hook.');
+    expect(result.text).toContain('pre-commit output:');
+    expect(result.text).toContain('formatter rewrote files');
+    expect(runAuditor).not.toHaveBeenCalled();
+  });
+
+  it('returns an audit-verdict card when the Auditor verdict is unsafe', async () => {
+    const diff = 'diff --git a/src/app.ts b/src/app.ts\n+danger\n';
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff, truncated: false });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    vi.mocked(runAuditor).mockResolvedValue({
+      verdict: 'unsafe',
+      card: {
+        verdict: 'unsafe',
+        summary: 'Looks dangerous.',
+        risks: [{ level: 'high', description: 'arbitrary exec' }],
+        filesReviewed: 1,
+      },
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_prepare_commit', args: { message: 'chore: x' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('Commit BLOCKED by Auditor:');
+    expect(result.text).toContain('Looks dangerous.');
+    expect(result.card?.type).toBe('audit-verdict');
+    if (result.card?.type === 'audit-verdict') {
+      expect(result.card.data.verdict).toBe('unsafe');
+    }
+  });
+
+  it('returns a commit-review card with pending status on the safe path', async () => {
+    const diff = 'diff --git a/src/app.ts b/src/app.ts\n+ok\n';
+    vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff, truncated: false });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    vi.mocked(runAuditor).mockResolvedValue({
+      verdict: 'safe',
+      card: { verdict: 'safe', summary: 'No issues.', risks: [], filesReviewed: 1 },
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_prepare_commit', args: { message: 'chore: add greeting' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('Ready for review: "chore: add greeting"');
+    expect(result.text).toContain('1 file, +1 -0');
+    expect(result.text).toContain('Waiting for user approval.');
+    expect(result.card?.type).toBe('commit-review');
+    if (result.card?.type === 'commit-review') {
+      expect(result.card.data.status).toBe('pending');
+      expect(result.card.data.commitMessage).toBe('chore: add greeting');
+      expect(result.card.data.diff.diff).toBe(diff);
+      expect(result.card.data.diff.filesChanged).toBe(1);
+      expect(result.card.data.auditVerdict.verdict).toBe('safe');
+    }
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_push', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('reports success and threads markWorkspaceMutated on the exec call', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'Everything up-to-date',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall({ tool: 'sandbox_push', args: {} }, 'sb-1');
+
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith(
+      'sb-1',
+      'cd /workspace && git push origin HEAD',
+      undefined,
+      { markWorkspaceMutated: true },
+    );
+    expect(result.text).toBe('[Tool Result — sandbox_push]\nPushed successfully.');
+    expect(result.card).toBeUndefined();
+  });
+
+  it('reports failure with stderr when the push exec fails', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: 'fatal: permission denied',
+      exitCode: 128,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall({ tool: 'sandbox_push', args: {} }, 'sb-1');
+
+    expect(result.text).toContain('[Tool Result — sandbox_push]');
+    expect(result.text).toContain('Push failed: fatal: permission denied');
+    expect(result.card).toBeUndefined();
+  });
+});
+
+describe('executeSandboxToolCall -- promote_to_github', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+    vi.mocked(createGitHubRepo).mockReset();
+    vi.mocked(getActiveGitHubToken).mockReset();
+  });
+
+  const makeCreatedRepo = (overrides: Partial<Record<string, unknown>> = {}) => ({
+    id: 42,
+    name: 'my-repo',
+    full_name: 'myuser/my-repo',
+    private: true,
+    default_branch: 'main',
+    html_url: 'https://github.com/myuser/my-repo',
+    owner: { login: 'myuser' },
+    ...overrides,
+  });
+
+  it('rejects an empty repo_name after stripping an owner/ prefix', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'promote_to_github', args: { repo_name: 'myuser/' } },
+      'sb-1',
+    );
+
+    expect(result.text).toBe('[Tool Error] promote_to_github requires a valid repo_name.');
+    expect(createGitHubRepo).not.toHaveBeenCalled();
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('strips an owner/ prefix and passes the trailing name plus private=true default to createGitHubRepo', async () => {
+    vi.mocked(createGitHubRepo).mockResolvedValue(makeCreatedRepo());
+    vi.mocked(getActiveGitHubToken).mockReturnValue('gho_token');
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'main',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    await executeSandboxToolCall(
+      {
+        tool: 'promote_to_github',
+        args: { repo_name: 'otheruser/my-repo', description: 'test' },
+      },
+      'sb-1',
+    );
+
+    expect(createGitHubRepo).toHaveBeenCalledWith('my-repo', 'test', true);
+  });
+
+  it('returns an auth-missing error when getActiveGitHubToken returns empty after repo creation', async () => {
+    vi.mocked(createGitHubRepo).mockResolvedValue(makeCreatedRepo());
+    vi.mocked(getActiveGitHubToken).mockReturnValue('');
+
+    const result = await executeSandboxToolCall(
+      { tool: 'promote_to_github', args: { repo_name: 'my-repo' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Error]');
+    expect(result.text).toContain('GitHub auth token missing after repo creation.');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('reports a remote-config failure with the auth token sanitized out of the error text', async () => {
+    vi.mocked(createGitHubRepo).mockResolvedValue(makeCreatedRepo());
+    vi.mocked(getActiveGitHubToken).mockReturnValue('gho_secret');
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce({
+        stdout: 'main',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: 'fatal: remote write failed with token gho_secret exposed',
+        exitCode: 1,
+        truncated: false,
+      });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'promote_to_github', args: { repo_name: 'my-repo' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Error]');
+    expect(result.text).toContain('Created repo myuser/my-repo');
+    expect(result.text).toContain('failed to configure git remote');
+    expect(result.text).not.toContain('gho_secret');
+    expect(result.text).toContain('***');
+  });
+
+  it('reports a push failure (non "no commits yet") with sanitized stderr and leaves pushed false', async () => {
+    vi.mocked(createGitHubRepo).mockResolvedValue(makeCreatedRepo());
+    vi.mocked(getActiveGitHubToken).mockReturnValue('gho_secret');
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce({
+        stdout: 'main',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: 'fatal: unable to access token gho_secret (403)',
+        exitCode: 128,
+        truncated: false,
+      });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'promote_to_github', args: { repo_name: 'my-repo' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Error]');
+    expect(result.text).toContain('push failed');
+    expect(result.text).not.toContain('gho_secret');
+    expect(result.promotion).toBeUndefined();
+  });
+
+  it('reports a warning and returns pushed=false when the push fails due to no local commits yet', async () => {
+    vi.mocked(createGitHubRepo).mockResolvedValue(makeCreatedRepo());
+    vi.mocked(getActiveGitHubToken).mockReturnValue('gho_token');
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce({
+        stdout: 'main',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: 'error: src refspec main does not match any',
+        exitCode: 1,
+        truncated: false,
+      });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'promote_to_github', args: { repo_name: 'my-repo' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Result — promote_to_github]');
+    expect(result.text).toContain('Repository created: myuser/my-repo');
+    expect(result.text).toContain('Warning:');
+    expect(result.text).toContain('no local commits to push yet');
+    expect(result.promotion).toBeDefined();
+    expect(result.promotion?.pushed).toBe(false);
+    expect(result.promotion?.warning).toBeDefined();
+    expect(result.promotion?.repo.full_name).toBe('myuser/my-repo');
+  });
+
+  it('returns the full promotion shape on the all-success path', async () => {
+    vi.mocked(createGitHubRepo).mockResolvedValue(
+      makeCreatedRepo({ private: false, html_url: 'https://github.com/myuser/my-repo' }),
+    );
+    vi.mocked(getActiveGitHubToken).mockReturnValue('gho_token');
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: 'main',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'promote_to_github', args: { repo_name: 'my-repo', private: false } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Result — promote_to_github]');
+    expect(result.text).toContain('Repository created: myuser/my-repo');
+    expect(result.text).toContain('Visibility: public');
+    expect(result.text).toContain('Default branch: main');
+    expect(result.text).toContain('Push: successful on branch main');
+    expect(result.promotion).toEqual({
+      repo: {
+        id: 42,
+        name: 'my-repo',
+        full_name: 'myuser/my-repo',
+        owner: 'myuser',
+        default_branch: 'main',
+        private: false,
+      },
+      pushed: true,
+      warning: undefined,
+      htmlUrl: 'https://github.com/myuser/my-repo',
+    });
   });
 });
 
