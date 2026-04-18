@@ -1,4 +1,4 @@
-import type { MemoryRecord, MemoryRecordKind } from './runtime-contract';
+import type { MemoryRecord, MemoryRecordKind } from './runtime-contract.js';
 
 export interface PersistencePolicy {
   persist: boolean;
