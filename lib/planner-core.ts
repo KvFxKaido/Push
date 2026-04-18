@@ -72,21 +72,23 @@ Schema:
   "features": [
     {
       "id": "short-kebab-case-id",
-      "description": "What to implement in this step",
-      "files": ["path/to/file.ts"],
-      "verifyCommand": "optional shell command to verify (e.g. 'npm test -- --filter auth')",
+      "description": "What to investigate and then implement in this step. Start with the reads/searches the coder must perform before producing any output.",
+      "files": ["path/to/existing/source.ts"],
+      "verifyCommand": "optional shell command that verifies real work (e.g. 'npm test -- --filter auth', 'npm run typecheck'). Never 'test -f' for a file the plan will create.",
       "dependsOn": ["other-feature-id"]
     }
   ]
 }
 
 Guidelines:
+- The 'files' array is an INPUT list — existing source files the coder MUST READ to ground the implementation. It is never an output list. For a "document X" or "explain X" task, list the source files X is implemented in, not the documentation file the coder might produce.
+- Do not invent output paths. If a feature produces a new file, describe that in the 'description' prose; do not list the new path in 'files', and do not fabricate a 'verifyCommand' that checks for its existence.
+- Each feature's 'description' should begin with investigation (what to read, what to search) before any generation. Investigation-first is the default posture.
 - Each feature should be completable in 3-8 Coder rounds (not too large, not too trivial).
-- Order features so dependencies come first. Use dependsOn to make ordering explicit.
-- Include verify commands when there's a natural way to check completion (tests, type checks, build).
-- Keep the total number of features reasonable (2-8 for most tasks).
-- If the task is already small/focused enough for a single feature, return exactly one feature.
-- File paths should use the /workspace/ prefix convention.
+- Order features so dependencies come first. Use 'dependsOn' to make ordering explicit.
+- Include 'verifyCommand' only when a natural existing check applies (a test filter, a typecheck, a lint command). Do not fabricate verify commands that depend on files the plan will create.
+- Keep the total number of features reasonable (2-8 for most tasks). If the task is already small/focused enough for a single feature, return exactly one feature.
+- File paths should use the /workspace/ prefix convention when the Coder runs in a sandbox; otherwise use workspace-relative paths that the Coder's tools will accept.
 - Focus on the implementation plan, not on explaining the task back.`;
 
 // ---------------------------------------------------------------------------
