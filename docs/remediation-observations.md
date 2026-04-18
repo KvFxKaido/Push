@@ -94,3 +94,48 @@ Baseline in run 6 hit the same `120s` provider timeout Sonnet hit in run 3. This
 **Three-green-gate status:** this entry intentionally does **not** count toward the verification-family three-green gate — it's a Gap 3 Step 1 validation, not a verification-family extraction observation. The counter for `sandbox_run_tests` / `sandbox_check_types` / `sandbox_verify_workspace` real-use observations still starts the next time such a session actually runs. This entry does discharge the equivalent go/no-go gate for Gap 3 Step 1: small-model delegation works end-to-end.
 
 **Status:** delegation grounded end-to-end on the smallest Gemini model tested. Two fixes committed on main.
+
+---
+
+## 2026-04-18 — Step 2 + Step 4 git/release: tests-first this time, extraction landed (PR #324)
+
+**Session purpose:** Continue the Big Four extraction tranche per the remediation plan's Step 4. Session opened on the premise that "Step 4 verification is the canonical next move" — reconnaissance immediately surfaced that verification had shipped 2026-04-15 (commit `14a63c4`) and the Step 2 verification tests had backfilled 2026-04-17 (commit `c6dec54`, PR #316). Same stale-premise pattern the plan had documented twice already (Gap 1 at lines 184-186, Gap 2 at line 208) — third instance this cycle.
+
+Pivoted the session to (a) reconcile the plan doc and (b) do the next family on the deferred list — git/release — this time respecting the prescribed Step 2 → Step 4 order that verification accidentally violated.
+
+**What shipped (PR #324, branch `claude/assess-gap3-next-steps-CSZxy`):**
+
+Four commits on the branch:
+
+- **`ec5d15e`** docs: reconcile Steps 2 and 4 after reconnaissance showed verification extraction landed. In-place corrections to Status line, Step 2, Step 4, Material Corrections #4, Latent Bug section. Added the honest-ordering note that verification shipped extract-first/tests-later despite the plan's prescription.
+
+- **`e92b2b8`** test(tools): characterize git/release family before extraction. 20 dispatcher-level tests added to `app/src/lib/sandbox-tools.test.ts` (84 → 104). Pin behavior of `sandbox_diff` (4 tests), `sandbox_prepare_commit` (7 new + 3 preexisting override-smoke tests), `sandbox_push` (2), `promote_to_github` (7). Tests pass at HEAD with zero production code changes — Step 2 signal met properly this time.
+
+- **`9c22544`** refactor(tools): extract sandbox git/release family behind handler-context. Four handlers move into new `app/src/lib/sandbox-git-release-handlers.ts` (459 lines) behind `GitReleaseHandlerContext`. Dispatcher: 3,640 → 3,348 lines. Eight injected deps (vs verification's four) — git/release reaches further into the web runtime via the Auditor pipeline and GitHub auth.
+
+- **`b64c2de`** test(tools): clarify git/release characterization comment for PR-as-a-whole context. Single doc-quality fix in response to a Copilot review nit on the test header.
+
+**Validation:**
+
+- `npx tsc --noEmit` in `app/` → clean across all four commits.
+- `npx vitest run src/lib/sandbox-tools.test.ts src/lib/sandbox-verification-handlers.test.ts` → 133/133 passed (104 sandbox-tools + 29 verification).
+- Adjacent surfaces (approval-gates, capabilities, tool-dispatch, web-tool-execution-runtime, workspace-publish, tool-dispatch-smoke, sandbox-tool-detection) → 224/224 passed.
+- biome check + eslint → clean (one auto-formatted line wrap during commit hook on `e92b2b8`, re-verified green after).
+- PR #324 CI: all green (Lint/Test/Build app, Format/Typecheck/Test cli, Typecheck/Build github mcp, Workers Builds, Cloudflare deployment). Kilo Code Review: "No Issues Found | Recommendation: Merge."
+
+**Review pass on PR #324** (5 comments across Copilot ×3 and the Claude review bot ×2):
+
+- 1 fixed in `b64c2de` (test header comment clarification).
+- 2 deferred with explanations on the threads (1200-char constant extraction = preexisting duplication preserved verbatim, defer to next git/release-touching change; `markWorkspaceMutated` consistency fix = real behavior change, defer to a separate semantic-fix PR with its own characterization).
+- 1 incorrect (Copilot claimed `import type X` + `typeof X` won't typecheck — TypeScript supports `typeof` in type positions on type-only imports, verified by the clean typecheck; replied with explanation).
+- 1 stale (Copilot read the original PR body before it was updated; no reply needed).
+
+**Two follow-ups noted, not fixed in this PR** (semantic oddities surfaced during characterization, deferred to keep the extraction behavior-preserving):
+
+- `promote_to_github` does not set `markWorkspaceMutated: true` on its git push exec, though `sandbox_push` does. Both push to origin. One-line semantic fix for a separate PR.
+- `sandbox_prepare_commit` truncates pre-commit hook output to 1200 chars in two slightly different code paths. Candidate for a shared `HOOK_OUTPUT_TRUNCATION_LIMIT` constant on the next git/release-touching change.
+- `sandbox_save_draft` (still inline in the dispatcher at the pre-extraction `:2268`) is git/release-adjacent but not part of the canonical family per the plan. Extract-as-part-of-git-release vs. extract-as-its-own-family is a design call for a later session.
+
+**Three-green-gate status:** this entry does **not** count toward either family's three-green gate — it's an extraction-arc anchor, not a real-use observation. The verification-family counter still starts the next time a real session exercises `sandbox_run_tests` / `sandbox_check_types` / `sandbox_verify_workspace`. The git/release-family counter starts the next time a real session exercises `sandbox_diff` / `sandbox_prepare_commit` / `sandbox_push` / `promote_to_github` against actual work. Two extractions are now in place; both gates are at 0/3.
+
+**Status:** git/release family extracted, characterized, and PR #324 fully review-passed. Combined with verification, the dispatcher has shrunk by ~764 lines across two extraction passes (4,112 → 3,348). Next family per the plan is read-only inspection or mutation, with the "stop here and evaluate the pattern" gate between families.
