@@ -174,6 +174,7 @@ Options:
   --allow-exec                  Allow exec tool in headless mode (blocked by default)
   --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
   --json                        JSON output in headless mode / resume
+  --no-attach                   Resume: list sessions without prompting (script-friendly)
   --delegate                    Headless: plan the task and run it as a task graph (spike)
   --sandbox                     Enable local Docker sandbox
   --no-sandbox                  Disable local Docker sandbox
@@ -1756,6 +1757,7 @@ export async function main() {
       'exec-mode': { type: 'string' },
       'no-sandbox': { type: 'boolean' },
       'no-resume': { type: 'boolean' },
+      'no-attach': { type: 'boolean' },
       delegate: { type: 'boolean', default: false },
       version: { type: 'boolean', short: 'v' },
     },
@@ -1895,7 +1897,17 @@ export async function main() {
     for (let i = 0; i < sessions.length; i++) {
       const row = sessions[i];
       const num = String(i + 1).padStart(indexWidth, ' ');
-      const name = row.sessionName ? ` ${fmt.bold(row.sessionName)}` : '';
+      // Session names are user-controlled (push resume rename, direct state
+      // edits) so strip ANSI CSI sequences + C0/DEL before wrapping in
+      // fmt.bold. Two passes: drop the ESC-[-…-letter sequence as a unit
+      // (so `\x1b[31m` doesn't leave a visible `[31m` tail) and then scrub
+      // any stray control chars. Multibyte UTF-8 is preserved.
+      const safeName = row.sessionName
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping injected CSI is the point
+        .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping bare C0/DEL is the point
+        .replace(/[\x00-\x1f\x7f]/g, '');
+      const name = safeName ? ` ${fmt.bold(safeName)}` : '';
       const when = new Date(row.updatedAt).toISOString();
       process.stdout.write(
         `  ${num}. ${row.sessionId}${name}\n` +
@@ -1918,10 +1930,15 @@ export async function main() {
           process.stdout.write('Cancelled.\n');
           return 0;
         }
-        const num = Number.parseInt(raw, 10);
-        if (Number.isInteger(num) && num >= 1 && num <= sessions.length) {
-          selected = sessions[num - 1];
-          break;
+        // Require digits-only for numeric selection so inputs like
+        // "1-session-id" don't get parsed as index 1 via parseInt's lenient
+        // prefix match.
+        if (/^\d+$/.test(raw)) {
+          const num = Number.parseInt(raw, 10);
+          if (num >= 1 && num <= sessions.length) {
+            selected = sessions[num - 1];
+            break;
+          }
         }
         const byId = sessions.find((s) => s.sessionId === raw);
         if (byId) {
@@ -1937,7 +1954,7 @@ export async function main() {
     }
 
     const noResume = parseBoolFlag(values['no-resume'] ?? values.noResume, 'no-resume');
-    return runAttach(selected.sessionId, { noResume });
+    return runAttach(selected!.sessionId, { noResume });
   }
 
   if (subcommand === 'skills') {

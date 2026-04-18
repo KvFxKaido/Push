@@ -517,6 +517,8 @@ describe('push resume', () => {
   });
 
   it('cancels cleanly from the TTY picker when user types q', async () => {
+    // Some script variants exit non-zero for -V; only ENOENT means it's
+    // actually missing. Matches the /compact PTY test's approach.
     try {
       await execFileAsync('script', ['-V']);
     } catch (err) {
@@ -532,16 +534,83 @@ describe('push resume', () => {
     // runCliPty's countPrompts helper watches for `> ` prompts in the stream;
     // the picker emits one via readline.question so "q\n" flows through that
     // same path.
-    const { stdout } = await spawnPickerPty(['resume'], 'q\n', {
+    const { stdout, stderr } = await spawnPickerPty(['resume'], 'q\n', {
       PUSH_SESSION_DIR: sessionRoot,
     });
     const clean = stripAnsi(stdout);
-    if (/failed to create pseudo-terminal|permission denied/i.test(clean)) {
+    // PTY-allocation failures can land on either stream depending on the
+    // sandbox, so soft-skip against both.
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
       return; // soft-skip when sandbox denies PTY allocation
     }
     assert.ok(/Resumable sessions:/.test(clean), `stdout=${clean}`);
     assert.ok(/Attach which\?/.test(clean), `stdout=${clean}`);
     assert.ok(/Cancelled\./.test(clean), `stdout=${clean}`);
+  });
+
+  it('selecting a number attaches via runAttach (pushd-not-running error surfaces)', async () => {
+    try {
+      await execFileAsync('script', ['-V']);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return;
+    }
+
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-select-'));
+    // Point HOME at an empty temp dir so runAttach's readPidFile()
+    // (~/.push/run/pushd.pid) misses deterministically, forcing the
+    // "pushd is not running" error that proves the selection reached
+    // runAttach.
+    const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-fake-home-'));
+    await seedSessions(sessionRoot, [
+      { sessionId: 'sess_alpha1_abcdef', updatedAt: 1_700_000_000_000, sessionName: 'Alpha' },
+    ]);
+
+    const { stdout, stderr } = await spawnPickerPty(['resume'], '1\n', {
+      PUSH_SESSION_DIR: sessionRoot,
+      HOME: fakeHome,
+    });
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
+      return; // soft-skip when sandbox denies PTY allocation
+    }
+    assert.ok(/Attach which\?/.test(combined), `combined=${combined}`);
+    assert.ok(
+      /pushd is not running/.test(combined),
+      `expected runAttach pushd-not-running error, combined=${combined}`,
+    );
+  });
+
+  it('strips ANSI/control chars from sessionName in the picker', async () => {
+    try {
+      await execFileAsync('script', ['-V']);
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return;
+    }
+
+    const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-sanitize-'));
+    // Name mixes ESC (C0) with plain text. The picker must strip the ESC
+    // so the injected red-foreground SGR never reaches the terminal.
+    await seedSessions(sessionRoot, [
+      {
+        sessionId: 'sess_alpha1_abcdef',
+        updatedAt: 1_700_000_000_000,
+        sessionName: 'INJ\x1b[31mECT',
+      },
+    ]);
+
+    const { stdout, stderr } = await spawnPickerPty(['resume'], 'q\n', {
+      PUSH_SESSION_DIR: sessionRoot,
+    });
+    const combined = stripAnsi(`${stdout}\n${stderr}`);
+    if (/failed to create pseudo-terminal|permission denied/i.test(combined)) {
+      return;
+    }
+    // Assert the raw stdout never carried the injected SGR. fmt.bold wraps
+    // its own \x1b[1m/\x1b[22m around the name but 31m (red) is only in the
+    // user-controlled segment, so its absence proves sanitization happened.
+    assert.ok(!/\x1b\[31m/.test(stdout), 'injected SGR must not reach the terminal');
+    assert.ok(/INJECT/.test(combined), `sanitized name should still render, combined=${combined}`);
   });
 });
 
