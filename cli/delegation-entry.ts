@@ -234,50 +234,59 @@ export async function runDelegatedHeadless(
       runId,
     );
 
-    // Snapshot messages + working memory so per-node runs don't pollute
-    // the primary conversation state. The inner try/finally restores even
-    // on exception — saving mutated scratch state to disk would corrupt
-    // the session's persisted history.
+    // Snapshot the system message(s) so each node's scoped state can be
+    // seeded from them. Messages and workingMemory are now scoped per-node
+    // (see executor below) rather than mutated on `state`, so there is
+    // nothing to restore at graph end — the parent's state.messages is
+    // never touched by any node run.
     const originalMessages = state.messages.slice();
-    const originalWorkingMemory = state.workingMemory
-      ? JSON.parse(JSON.stringify(state.workingMemory))
-      : undefined;
 
     const nodeSummaries = new Map<string, { summary: string; rounds: number }>();
 
     const executor = async (node, enrichedContext, signal) => {
       const nodeCtx = extendCorrelation(graphCtx, { taskId: node.id });
 
-      // Scoped per-node messages: keep the system prompt (tool protocol +
-      // workspace context), discard conversation history. Without a system
-      // message present, `ensureSystemPromptReady` silently no-ops and the
-      // node runs with no tool protocol at all — the failure mode this fix
-      // closes. Fall back to a freshly synthesized base prompt when the
-      // snapshot has no system message (defensive; normal flow always has
-      // one from buildSystemPromptBase at session creation).
-      const sysMsg = originalMessages.find((m) => m.role === 'system');
-      state.messages = sysMsg
-        ? [sysMsg]
-        : [{ role: 'system' as const, content: buildSystemPromptBase(state.cwd) }];
-      state.workingMemory = undefined;
+      // Per-node scoped state. Conversation-local fields (messages,
+      // workingMemory) are owned by this node; session-wide fields
+      // (sessionId, cwd, eventSeq, rounds, model) remain shared with
+      // the parent state and are synced back after the node runs so
+      // cross-node event sequencing and round accounting stay coherent.
+      // Falls back to a freshly synthesized base prompt if the snapshot
+      // had no system message — `ensureSystemPromptReady` silently
+      // no-ops on an empty messages array, and that's the failure mode
+      // this fix closes. This scoping is what lets future parallel
+      // Explorer/Coder nodes coexist without stepping on each other's
+      // messages; full parallel-safety also needs atomic eventSeq, but
+      // that's out of scope until parallel execution actually arrives.
+      const sysMsgs = originalMessages.filter((m) => m.role === 'system');
+      const nodeState = {
+        ...state,
+        messages: sysMsgs.length
+          ? [...sysMsgs]
+          : [{ role: 'system' as const, content: buildSystemPromptBase(state.cwd) }],
+        workingMemory: undefined,
+      };
 
       const preamble = buildHeadlessTaskBrief(node.task, acceptanceChecks);
       const contextBlock =
         enrichedContext.length > 0
           ? `[Prior task context]\n${enrichedContext.join('\n\n')}\n\n`
           : '';
-      await appendUserMessageWithFileReferences(state, `${contextBlock}${preamble}`, state.cwd, {
-        referenceSourceText: node.task,
-      });
+      await appendUserMessageWithFileReferences(
+        nodeState,
+        `${contextBlock}${preamble}`,
+        nodeState.cwd,
+        { referenceSourceText: node.task },
+      );
 
       await appendSessionEvent(
-        state,
+        nodeState,
         'delegation.node_started',
         { ...nodeCtx, task: node.task.slice(0, 280) },
         runId,
       );
 
-      const result = await runAssistantLoop(state, providerConfig, apiKey, maxRounds, {
+      const result = await runAssistantLoop(nodeState, providerConfig, apiKey, maxRounds, {
         signal,
         emit: null,
         allowExec,
@@ -290,7 +299,7 @@ export async function runDelegatedHeadless(
       nodeSummaries.set(node.id, { summary, rounds: result.rounds });
 
       await appendSessionEvent(
-        state,
+        nodeState,
         'delegation.node_completed',
         {
           ...nodeCtx,
@@ -300,6 +309,12 @@ export async function runDelegatedHeadless(
         },
         runId,
       );
+
+      // Sync session-wide bookkeeping back to the shared state so the
+      // next node's spread starts from accurate counters and the parent's
+      // graph-level events fire with correct seq.
+      state.eventSeq = nodeState.eventSeq;
+      state.rounds = nodeState.rounds;
 
       return { summary, rounds: result.rounds };
     };
@@ -311,18 +326,15 @@ export async function runDelegatedHeadless(
       process.stderr.write(`${tag} ${evt.detail || ''}\n`);
     };
 
-    // 4. Execute — always restore in finally so a throw inside
-    // executeTaskGraph doesn't persist per-node scratch state.
-    let result;
-    try {
-      result = await executeTaskGraph(nodes, executor, {
-        signal: ac.signal,
-        onProgress,
-      });
-    } finally {
-      state.messages = originalMessages;
-      state.workingMemory = originalWorkingMemory;
-    }
+    // 4. Execute. No finally-restore needed: per-node state is scoped
+    // into nodeState inside the executor, so the parent state.messages
+    // and state.workingMemory are never mutated by the graph run. A
+    // throw inside executeTaskGraph leaves the parent conversation
+    // state exactly as it was before the graph started.
+    const result = await executeTaskGraph(nodes, executor, {
+      signal: ac.signal,
+      onProgress,
+    });
 
     await appendSessionEvent(
       state,
