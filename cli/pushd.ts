@@ -63,6 +63,7 @@ import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
 import { assertValidEvent, isStrictModeEnabled } from './protocol-schema.js';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
+import { roleCanUseTool, getToolCapabilities, ROLE_CAPABILITIES } from '../lib/capabilities.ts';
 
 const VERSION = '0.3.0';
 const CAPABILITIES = [
@@ -1323,14 +1324,24 @@ export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
  *      therefore skip `buildApprovalFn` entirely and pass
  *      `approvalFn: null` / `allowExec: false` to `executeToolCall`.
  *
- *   2. **Mutation refusal.** Even with a read-only contract, the
+ *   2. **Capability refusal.** Even with a read-only contract, the
  *      Explorer kernel still routes the optional `mutating` slot
  *      (returned by `wrapCliDetectAllToolCalls`) through `toolExec`
  *      when the model emits one — see `lib/explorer-agent.ts:470`.
- *      We check `READ_ONLY_TOOLS` inside the executor and return a
- *      polite denial `resultText` for any tool that isn't in the
- *      allowlist, so the kernel feeds the refusal back into the next
- *      round and the model can course-correct.
+ *      We call `roleCanUseTool('explorer', toolName)` inside the
+ *      executor and return a polite denial `resultText` for any tool
+ *      the Explorer role does not grant, so the kernel feeds the
+ *      refusal back into the next round and the model can
+ *      course-correct. This mirrors the web-side
+ *      `ROLE_CAPABILITY_DENIED` check at
+ *      `app/src/lib/web-tool-execution-runtime.ts:147` so both
+ *      surfaces enforce via one shared capability table
+ *      (`lib/capabilities.ts`). Gate swapped 2026-04-18 as part of
+ *      the Gap 2 daemon-side role-capability tranche; the previous
+ *      `READ_ONLY_TOOLS` allowlist still exists in `cli/tools.ts`
+ *      because `lib/deep-reviewer-agent.ts` consumes it for a
+ *      different purpose (read/mutation bucketing of detected tool
+ *      calls).
  *
  * We skip `card` entirely. The web-side Explorer tool executor attaches
  * rich metadata cards pulled from structured tool output (e.g. a
@@ -1351,19 +1362,46 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
     const rawCall =
       toolCall && typeof toolCall === 'object' && toolCall.call ? toolCall.call : toolCall;
 
-    // Enforce the read-only contract. The Explorer kernel happily
+    // Enforce the role capability grant. The Explorer kernel happily
     // routes a mutating slot through `toolExec` when the model emits
     // one — but Explorer is inspection-only by design. Return a denial
     // resultText so the kernel feeds the refusal back into the next
     // round as a user message and the model can adapt.
     const toolName = typeof rawCall?.tool === 'string' ? rawCall.tool : null;
-    if (!toolName || !READ_ONLY_TOOLS.has(toolName)) {
+    if (!toolName || !roleCanUseTool('explorer', toolName)) {
       // Phrasing note: we deliberately do NOT name `delegate_coder`
       // here because Explorer cannot invoke it from inside the kernel
       // (delegation is an RPC initiated by the orchestrator / client,
       // not a tool the Explorer model can emit). Naming it would send
       // the model down a dead-end loop of trying to call it as a tool
       // (Copilot review on PR #284).
+      //
+      // Structured log so operators can grep for ROLE_CAPABILITY_DENIED
+      // the same way they do on web. Console.warn keeps this out of
+      // the session event protocol (no new event types) while still
+      // giving observability parity with the web runtime's structured
+      // error at `web-tool-execution-runtime.ts:152`.
+      if (toolName) {
+        const required = getToolCapabilities(toolName);
+        const granted = Array.from(ROLE_CAPABILITIES.explorer ?? []);
+        try {
+          console.warn(
+            JSON.stringify({
+              level: 'warn',
+              event: 'role_capability_denied',
+              type: 'ROLE_CAPABILITY_DENIED',
+              role: 'explorer',
+              tool: toolName,
+              required,
+              granted,
+              sessionId: entry?.sessionId ?? null,
+            }),
+          );
+        } catch {
+          // JSON.stringify cycle guard — don't let a malformed log
+          // crash the executor.
+        }
+      }
       return {
         resultText: `[pushd] tool "${toolName ?? '(unknown)'}" is not available to Explorer. Explorer is read-only; if mutation is needed, report it in your summary and the orchestrator will request a Coder delegation after you finish.`,
       };
@@ -1375,8 +1413,9 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
         approvalFn: null,
         signal,
         // `allowExec: false` keeps the tool surface genuinely read-only
-        // even if `READ_ONLY_TOOLS` ever accidentally admits an exec
-        // variant. Defense in depth.
+        // even if the capability table ever accidentally grants an
+        // exec-family tool to Explorer. Defense in depth behind
+        // `roleCanUseTool`.
         allowExec: false,
         execMode: 'auto',
       });
