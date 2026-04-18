@@ -91,7 +91,7 @@ describe('makeCLIEventHandler delegation rendering', () => {
     assert.match(clean, /\n$/);
   });
 
-  it('renders task_graph.task_cancelled as a warning line', () => {
+  it('renders task_graph.task_cancelled as a warning graph snapshot', () => {
     const handler = makeCLIEventHandler();
     const { stdout } = capture(() => {
       handler({
@@ -106,11 +106,12 @@ describe('makeCLIEventHandler delegation rendering', () => {
     });
     const clean = stripAnsi(stdout);
     assert.match(clean, /\[warn\]/);
-    assert.match(clean, /task cancelled: explore-a/);
+    assert.match(clean, /task graph: graph_1/);
+    assert.match(clean, /\[cancelled\] explore-a \(explorer\)/);
     assert.match(clean, /parent aborted/);
   });
 
-  it('renders task_graph.graph_completed success with stats', () => {
+  it('renders task_graph.graph_completed success with final graph stats', () => {
     const handler = makeCLIEventHandler();
     const { stdout } = capture(() => {
       handler({
@@ -128,12 +129,13 @@ describe('makeCLIEventHandler delegation rendering', () => {
     });
     const clean = stripAnsi(stdout);
     assert.match(clean, /\[info\]/);
-    assert.match(clean, /task graph completed/);
+    assert.match(clean, /task graph: graph_1 — completed/);
     assert.match(clean, /3 nodes \/ 7 rounds \/ 1234ms/);
+    assert.match(clean, /result: completed/);
     assert.match(clean, /all three explorer nodes finished/);
   });
 
-  it('renders task_graph.graph_completed failure as an error line', () => {
+  it('renders task_graph.graph_completed failure as an error graph snapshot', () => {
     const handler = makeCLIEventHandler();
     const { stdout } = capture(() => {
       handler({
@@ -151,7 +153,7 @@ describe('makeCLIEventHandler delegation rendering', () => {
     });
     const clean = stripAnsi(stdout);
     assert.match(clean, /\[error\]/);
-    assert.match(clean, /task graph failed/);
+    assert.match(clean, /task graph: graph_1 — failed/);
   });
 
   it('still renders core tool lifecycle events', () => {

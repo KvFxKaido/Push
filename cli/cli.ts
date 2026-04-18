@@ -40,7 +40,7 @@ import { fmt, formatRelativeTime, Spinner } from './format.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { compactContext } from './context-manager.js';
 import { buildHeadlessTaskBrief } from './task-brief.js';
-import { delegationEventToTranscript, isDelegationEvent } from './tui-delegation-events.js';
+import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import {
   readClientAttachState,
   writeClientAttachState,
@@ -252,6 +252,7 @@ export function makeCLIEventHandler() {
   let isAssistantStreaming = false;
   let isReasoningStreaming = false;
   const spinner = new Spinner();
+  const renderDelegationEvent = createDelegationTranscriptRenderer();
 
   function flushInlineStreams() {
     if (isReasoningStreaming || isAssistantStreaming) {
@@ -263,12 +264,11 @@ export function makeCLIEventHandler() {
 
   return (event) => {
     // Route `subagent.*` and `task_graph.*` events through the shared
-    // transcript mapper so a `push attach` client sees the same transcript
-    // semantics the interactive TUI already exposes. The mapper is pure and
-    // returns `null` for non-delegation events, so falling through on null
-    // keeps the rest of the switch-based routing below untouched.
+    // transcript renderer so a `push attach` client sees the same transcript
+    // semantics the interactive TUI already exposes. The renderer is stateful
+    // for task graphs, so it is constructed once per handler instance.
     if (isDelegationEvent(event)) {
-      const entry = delegationEventToTranscript(event);
+      const entry = renderDelegationEvent(event);
       if (entry) {
         flushInlineStreams();
         spinner.stop();

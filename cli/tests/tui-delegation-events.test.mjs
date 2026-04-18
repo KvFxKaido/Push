@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DELEGATION_EVENT_TYPES,
+  createDelegationTranscriptRenderer,
   delegationEventToTranscript,
   isDelegationEvent,
 } from '../tui-delegation-events.ts';
@@ -364,5 +365,199 @@ describe('delegationEventToTranscript — defensive behavior', () => {
       payload: { agent: 'coder' },
     });
     assert.equal(entry?.text, 'task started: ? (coder)');
+  });
+});
+
+// ─── createDelegationTranscriptRenderer ──────────────────────────
+
+describe('createDelegationTranscriptRenderer', () => {
+  it('renders task_graph.task_ready as a graph/node-focus snapshot', () => {
+    const render = createDelegationTranscriptRenderer();
+    const entry = render({
+      type: 'task_graph.task_ready',
+      payload: {
+        executionId: 'ex-1',
+        taskId: 'investigate-auth',
+        agent: 'explorer',
+        detail: 'auth module',
+      },
+    });
+
+    assert.equal(entry?.role, 'status');
+    assert.match(
+      entry?.text ?? '',
+      /task graph: ex-1 — ready 1 \/ running 0 \/ done 0 \/ failed 0 \/ cancelled 0/,
+    );
+    assert.match(entry?.text ?? '', /focus: investigate-auth \(explorer\) ready — auth module/);
+    assert.match(entry?.text ?? '', /\[ready\] investigate-auth \(explorer\) — auth module/);
+  });
+
+  it('updates a node from running to done with elapsed time and summary', () => {
+    const render = createDelegationTranscriptRenderer();
+    render({
+      type: 'task_graph.task_started',
+      payload: {
+        executionId: 'ex-1',
+        taskId: 'build-api',
+        agent: 'coder',
+        detail: 'wire endpoint',
+      },
+    });
+    const entry = render({
+      type: 'task_graph.task_completed',
+      payload: {
+        executionId: 'ex-1',
+        taskId: 'build-api',
+        agent: 'coder',
+        summary: 'patch applied',
+        elapsedMs: 123,
+      },
+    });
+
+    assert.equal(entry?.role, 'status');
+    assert.match(entry?.text ?? '', /done 1 \/ failed 0/);
+    assert.match(entry?.text ?? '', /focus: build-api \(coder, 123ms\) done — patch applied/);
+    assert.match(entry?.text ?? '', /\[done\] build-api \(coder, 123ms\) — patch applied/);
+  });
+
+  it('preserves observed node order and renders explicit dependencies when present', () => {
+    const render = createDelegationTranscriptRenderer();
+    render({
+      type: 'task_graph.task_ready',
+      payload: { executionId: 'ex-1', taskId: 'inspect-auth', agent: 'explorer' },
+    });
+    const entry = render({
+      type: 'task_graph.task_ready',
+      payload: {
+        executionId: 'ex-1',
+        taskId: 'patch-auth',
+        agent: 'coder',
+        detail: 'apply fix',
+        dependsOn: ['inspect-auth'],
+      },
+    });
+
+    const text = entry?.text ?? '';
+    assert.ok(text.indexOf('[ready] inspect-auth') < text.indexOf('[ready] patch-auth'));
+    assert.match(text, /\[ready\] patch-auth \(coder\) <- inspect-auth — apply fix/);
+  });
+
+  it('renders failed task events as error graph snapshots', () => {
+    const render = createDelegationTranscriptRenderer();
+    const entry = render({
+      type: 'task_graph.task_failed',
+      payload: {
+        executionId: 'ex-1',
+        taskId: 'patch-auth',
+        agent: 'coder',
+        error: 'test failed',
+        elapsedMs: 500,
+      },
+    });
+
+    assert.equal(entry?.role, 'error');
+    assert.match(entry?.text ?? '', /failed 1/);
+    assert.match(entry?.text ?? '', /focus: patch-auth \(coder, 500ms\) failed — test failed/);
+    assert.match(entry?.text ?? '', /\[failed\] patch-auth \(coder, 500ms\) — test failed/);
+  });
+
+  it('renders cancelled task events as warning graph snapshots', () => {
+    const render = createDelegationTranscriptRenderer();
+    const entry = render({
+      type: 'task_graph.task_cancelled',
+      payload: {
+        executionId: 'ex-1',
+        taskId: 'patch-auth',
+        agent: 'coder',
+        reason: 'parent failed',
+      },
+    });
+
+    assert.equal(entry?.role, 'warning');
+    assert.match(entry?.text ?? '', /cancelled 1/);
+    assert.match(entry?.text ?? '', /\[cancelled\] patch-auth \(coder\) — parent failed/);
+  });
+
+  it('renders graph completion with final stats and result', () => {
+    const render = createDelegationTranscriptRenderer();
+    render({
+      type: 'task_graph.task_completed',
+      payload: {
+        executionId: 'ex-1',
+        taskId: 'inspect-auth',
+        agent: 'explorer',
+        summary: 'found route',
+      },
+    });
+    const entry = render({
+      type: 'task_graph.graph_completed',
+      payload: {
+        executionId: 'ex-1',
+        success: true,
+        aborted: false,
+        nodeCount: 1,
+        totalRounds: 2,
+        wallTimeMs: 345,
+        summary: 'all tasks succeeded',
+      },
+    });
+
+    assert.equal(entry?.role, 'status');
+    assert.match(entry?.text ?? '', /task graph: ex-1 — completed — 1 nodes \/ 2 rounds \/ 345ms/);
+    assert.match(entry?.text ?? '', /result: completed — all tasks succeeded/);
+    assert.match(entry?.text ?? '', /\[done\] inspect-auth \(explorer\) — found route/);
+  });
+
+  it('maps final failure and abort severities from graph_completed', () => {
+    const failedRender = createDelegationTranscriptRenderer();
+    const failed = failedRender({
+      type: 'task_graph.graph_completed',
+      payload: {
+        executionId: 'ex-failed',
+        success: false,
+        aborted: false,
+        nodeCount: 2,
+        totalRounds: 4,
+        wallTimeMs: 800,
+        summary: 'coder task failed',
+      },
+    });
+    assert.equal(failed?.role, 'error');
+    assert.match(failed?.text ?? '', /task graph: ex-failed — failed/);
+
+    const abortedRender = createDelegationTranscriptRenderer();
+    const aborted = abortedRender({
+      type: 'task_graph.graph_completed',
+      payload: {
+        executionId: 'ex-aborted',
+        success: false,
+        aborted: true,
+        nodeCount: 1,
+        totalRounds: 1,
+        wallTimeMs: 100,
+        summary: 'user aborted',
+      },
+    });
+    assert.equal(aborted?.role, 'warning');
+    assert.match(aborted?.text ?? '', /task graph: ex-aborted — aborted/);
+  });
+
+  it('delegates subagent events to the stateless boundary renderer', () => {
+    const render = createDelegationTranscriptRenderer();
+    const entry = render({
+      type: 'subagent.started',
+      payload: { executionId: 'ex-1', agent: 'explorer', detail: 'auth-flow' },
+    });
+
+    assert.deepEqual(entry, {
+      role: 'status',
+      text: '--- subagent started: explorer --- auth-flow',
+      boundary: 'start',
+    });
+  });
+
+  it('returns null for non-delegation events', () => {
+    const render = createDelegationTranscriptRenderer();
+    assert.equal(render({ type: 'tool.execution_start' }), null);
   });
 });

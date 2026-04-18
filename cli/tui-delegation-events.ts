@@ -41,7 +41,45 @@ export interface DelegationEventEnvelope {
     nodeCount?: number;
     totalRounds?: number;
     wallTimeMs?: number;
+    // Future producers may include graph edges. Current daemon/web events do
+    // not, so the renderer only shows dependencies when they are explicit.
+    dependsOn?: string[];
+    dependencies?: string[];
   };
+}
+
+export type DelegationTranscriptRenderer = (
+  event: DelegationEventEnvelope,
+) => DelegationTranscriptEntry | null;
+
+type TaskGraphNodeStatus = 'ready' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+interface TaskGraphTranscriptNode {
+  taskId: string;
+  agent: string;
+  status: TaskGraphNodeStatus;
+  detail?: string;
+  summary?: string;
+  error?: string;
+  reason?: string;
+  elapsedMs?: number;
+  dependencies?: string[];
+}
+
+interface TaskGraphTerminalState {
+  success?: boolean;
+  aborted?: boolean;
+  summary: string;
+  nodeCount: number;
+  totalRounds: number;
+  wallTimeMs: number;
+}
+
+interface TaskGraphTranscriptState {
+  executionId: string;
+  nodes: Map<string, TaskGraphTranscriptNode>;
+  focusTaskId?: string;
+  terminal?: TaskGraphTerminalState;
 }
 
 /**
@@ -186,4 +224,231 @@ export function delegationEventToTranscript(
     default:
       return null;
   }
+}
+
+/**
+ * Create a transcript-compatible graph renderer for `task_graph.*` events.
+ *
+ * The stateless mapper above intentionally stays as the small, exact
+ * event-to-line fallback. This renderer adds the Step 5 behavior: a compact
+ * node-focus view that remembers prior graph events and re-renders the current
+ * state as plain transcript text. It does not invent DAG edges; current events
+ * do not carry dependencies, so edges appear only if a future producer includes
+ * `dependsOn` / `dependencies` in the payload.
+ */
+export function createDelegationTranscriptRenderer(): DelegationTranscriptRenderer {
+  const graphs = new Map<string, TaskGraphTranscriptState>();
+  const maxTrackedGraphs = 25;
+
+  function getGraph(executionId: string): TaskGraphTranscriptState {
+    let graph = graphs.get(executionId);
+    if (!graph) {
+      graph = { executionId, nodes: new Map() };
+      graphs.set(executionId, graph);
+      if (graphs.size > maxTrackedGraphs) {
+        const oldest = graphs.keys().next().value;
+        if (oldest) graphs.delete(oldest);
+      }
+    }
+    return graph;
+  }
+
+  return (event) => {
+    if (!isDelegationEvent(event)) return null;
+    if (!event.type.startsWith('task_graph.')) {
+      return delegationEventToTranscript(event);
+    }
+    return taskGraphEventToTranscript(event, getGraph);
+  };
+}
+
+function taskGraphEventToTranscript(
+  event: DelegationEventEnvelope,
+  getGraph: (executionId: string) => TaskGraphTranscriptState,
+): DelegationTranscriptEntry | null {
+  const p = event.payload ?? {};
+  const executionId = p.executionId ?? '?';
+  const graph = getGraph(executionId);
+
+  switch (event.type) {
+    case 'task_graph.task_ready': {
+      const node = upsertNode(graph, p, 'ready');
+      node.detail = p.detail ?? node.detail;
+      graph.focusTaskId = node.taskId;
+      return renderTaskGraph(graph, 'status');
+    }
+
+    case 'task_graph.task_started': {
+      const node = upsertNode(graph, p, 'running');
+      node.detail = p.detail ?? node.detail;
+      graph.focusTaskId = node.taskId;
+      return renderTaskGraph(graph, 'status');
+    }
+
+    case 'task_graph.task_completed': {
+      const node = upsertNode(graph, p, 'completed');
+      node.summary = p.summary ?? p.detail ?? '(no summary)';
+      node.elapsedMs = p.elapsedMs;
+      graph.focusTaskId = node.taskId;
+      return renderTaskGraph(graph, 'status');
+    }
+
+    case 'task_graph.task_failed': {
+      const node = upsertNode(graph, p, 'failed');
+      node.error = p.error ?? p.detail ?? '(unknown error)';
+      node.elapsedMs = p.elapsedMs;
+      graph.focusTaskId = node.taskId;
+      return renderTaskGraph(graph, 'error');
+    }
+
+    case 'task_graph.task_cancelled': {
+      const node = upsertNode(graph, p, 'cancelled');
+      node.reason = p.reason ?? p.detail ?? 'Task cancelled';
+      node.elapsedMs = p.elapsedMs;
+      graph.focusTaskId = node.taskId;
+      return renderTaskGraph(graph, 'warning');
+    }
+
+    case 'task_graph.graph_completed': {
+      graph.terminal = {
+        success: p.success,
+        aborted: p.aborted,
+        summary: p.summary ?? '(no summary)',
+        nodeCount: p.nodeCount ?? graph.nodes.size,
+        totalRounds: p.totalRounds ?? 0,
+        wallTimeMs: p.wallTimeMs ?? 0,
+      };
+      if (p.aborted) return renderTaskGraph(graph, 'warning');
+      if (p.success === false) return renderTaskGraph(graph, 'error');
+      return renderTaskGraph(graph, 'status');
+    }
+
+    default:
+      return null;
+  }
+}
+
+function upsertNode(
+  graph: TaskGraphTranscriptState,
+  payload: NonNullable<DelegationEventEnvelope['payload']>,
+  status: TaskGraphNodeStatus,
+): TaskGraphTranscriptNode {
+  const taskId = payload.taskId ?? '?';
+  let node = graph.nodes.get(taskId);
+  if (!node) {
+    node = {
+      taskId,
+      agent: String(payload.agent ?? 'agent'),
+      status,
+    };
+    graph.nodes.set(taskId, node);
+  }
+  node.agent = String(payload.agent ?? node.agent ?? 'agent');
+  node.status = status;
+  const dependencies = getPayloadDependencies(payload);
+  if (dependencies.length > 0) {
+    node.dependencies = dependencies;
+  }
+  return node;
+}
+
+function getPayloadDependencies(
+  payload: NonNullable<DelegationEventEnvelope['payload']>,
+): string[] {
+  const raw = Array.isArray(payload.dependsOn)
+    ? payload.dependsOn
+    : Array.isArray(payload.dependencies)
+      ? payload.dependencies
+      : [];
+  return raw.filter((dep): dep is string => typeof dep === 'string' && dep.length > 0);
+}
+
+function renderTaskGraph(
+  graph: TaskGraphTranscriptState,
+  role: DelegationTranscriptRole,
+): DelegationTranscriptEntry {
+  const lines: string[] = [];
+  lines.push(renderTaskGraphHeader(graph));
+
+  const focusNode = graph.focusTaskId ? graph.nodes.get(graph.focusTaskId) : null;
+  if (focusNode) {
+    lines.push(`focus: ${renderFocusNode(focusNode)}`);
+  }
+
+  if (graph.terminal) {
+    const outcome = graph.terminal.aborted
+      ? 'aborted'
+      : graph.terminal.success === false
+        ? 'failed'
+        : 'completed';
+    lines.push(`result: ${outcome} — ${graph.terminal.summary}`);
+  }
+
+  for (const node of graph.nodes.values()) {
+    lines.push(renderTaskNode(node));
+  }
+
+  return { role, text: lines.join('\n') };
+}
+
+function renderTaskGraphHeader(graph: TaskGraphTranscriptState): string {
+  if (graph.terminal) {
+    const outcome = graph.terminal.aborted
+      ? 'aborted'
+      : graph.terminal.success === false
+        ? 'failed'
+        : 'completed';
+    return `task graph: ${graph.executionId} — ${outcome} — ${formatTerminalStats(graph.terminal)}`;
+  }
+
+  const counts = countNodes(graph.nodes);
+  return (
+    `task graph: ${graph.executionId} — ` +
+    `ready ${counts.ready} / running ${counts.running} / ` +
+    `done ${counts.completed} / failed ${counts.failed} / cancelled ${counts.cancelled}`
+  );
+}
+
+function countNodes(nodes: Map<string, TaskGraphTranscriptNode>) {
+  const counts: Record<TaskGraphNodeStatus, number> = {
+    ready: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+  };
+  for (const node of nodes.values()) {
+    counts[node.status] += 1;
+  }
+  return counts;
+}
+
+function renderFocusNode(node: TaskGraphTranscriptNode): string {
+  const note = node.summary ?? node.error ?? node.reason ?? node.detail;
+  const suffix = note ? ` — ${note}` : '';
+  return `${node.taskId} (${formatNodeAgent(node)}) ${formatNodeStatus(node.status)}${suffix}`;
+}
+
+function renderTaskNode(node: TaskGraphTranscriptNode): string {
+  const dependencies = node.dependencies?.length ? ` <- ${node.dependencies.join(', ')}` : '';
+  const note = node.summary ?? node.error ?? node.reason ?? node.detail;
+  const suffix = note ? ` — ${note}` : '';
+  return `[${formatNodeStatus(node.status)}] ${node.taskId} (${formatNodeAgent(
+    node,
+  )})${dependencies}${suffix}`;
+}
+
+function formatNodeAgent(node: TaskGraphTranscriptNode): string {
+  if (typeof node.elapsedMs === 'number') {
+    return `${node.agent}, ${node.elapsedMs}ms`;
+  }
+  return node.agent;
+}
+
+function formatNodeStatus(status: TaskGraphNodeStatus): string {
+  return status === 'completed' ? 'done' : status;
+}
+
+function formatTerminalStats(terminal: TaskGraphTerminalState): string {
+  return `${terminal.nodeCount} nodes / ${terminal.totalRounds} rounds / ${terminal.wallTimeMs}ms`;
 }

@@ -419,3 +419,29 @@ Per-node rounds stayed in the 2-3 range across all measurement states (cold and 
 - **Is not:** the Step 5 graph widget. The current output remains transcript-first line rendering; DAG/node-focus rendering belongs in `cli/tui-delegation-events.ts` / TUI-lite work next.
 
 **Status:** Gap 3 Step 4 shipped. Live Gap 3 implementation work is now Step 5 (TUI graph widget). The typed-memory value question remains research-shaped and separate from the implementation checklist.
+
+---
+
+## 2026-04-18 (very late++) — Gap 3 Step 5 graph/node-focus transcript renderer landed
+
+**Session purpose:** Finish the Gap 3 implementation checklist by moving task-graph rendering beyond one-line lifecycle logging while preserving Push's transcript-first terminal muscle memory. The goal was a graph-aware view that still lands as ordinary transcript text in both `push attach` and the interactive TUI.
+
+**What shipped:**
+
+- `cli/tui-delegation-events.ts`: added `createDelegationTranscriptRenderer()`, a stateful renderer keyed by `executionId`. It tracks observed task nodes, current status, latest focus node, elapsed times, summaries/errors/reasons, and final graph stats.
+- `cli/tui-delegation-events.ts`: task-graph events now render as compact snapshots: header counts, a `focus:` line, per-node rows (`[ready]`, `[running]`, `[done]`, `[failed]`, `[cancelled]`), and final `result:` lines for graph completion.
+- `cli/tui-delegation-events.ts`: supports explicit `dependsOn` / `dependencies` payload fields when present, but does not invent edges from event order. Current daemon/web `task_graph.*` events do not carry dependency edges, so this is honestly a node-focus graph view rather than an edge-drawn DAG.
+- `cli/cli.ts` and `cli/tui.ts`: both instantiate one renderer per event handler, so attach output and full-screen TUI output share the same transcript-compatible graph semantics.
+- `ROADMAP.md`: moved `pushd Attach + Event Stream UX` from Current Priorities to Recently Completed.
+
+**Validation:**
+
+- `node --import tsx --test cli/tests/tui-delegation-events.test.mjs cli/tests/cli-event-handler.test.mjs` -> pass.
+- `npm run typecheck` -> pass.
+
+**What this is and is not:**
+
+- **Is:** Gap 3 Step 5 closure and completion of the Step 4+5 attach/event-stream UX tranche. Task-graph progress is now readable as a compact state view instead of isolated lifecycle lines.
+- **Is not:** a new full-screen graph mode or a protocol change. If a future producer wants a true edge-rendered DAG, the event payload should carry dependencies explicitly; the renderer already has a narrow hook for that shape.
+
+**Status:** Gap 3 implementation checklist closed. Remaining work on "does typed memory measurably help small models" is still research-shaped, not implementation-blocking.

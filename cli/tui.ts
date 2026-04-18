@@ -13,7 +13,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
 import { createTheme } from './tui-theme.js';
-import { delegationEventToTranscript, isDelegationEvent } from './tui-delegation-events.js';
+import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
 import { filterSessions } from './tui-fuzzy.js';
@@ -2062,6 +2062,7 @@ export async function runTUI(options = {}) {
   // assistant prose or `tool.call_malformed` events can reach the transcript
   // — see docs/decisions/Tool-Call Parser Convergence Gap.md.
   let runVisibleEmissionCount = 0;
+  const renderDelegationEvent = createDelegationTranscriptRenderer();
 
   function flushPendingAssistantStream() {
     if (!tuiState.streamBuf) return;
@@ -2286,14 +2287,11 @@ export async function runTUI(options = {}) {
 
       default:
         // Delegation lifecycle events (`subagent.*`, `task_graph.*`) are
-        // routed through a single helper so the list of handled types lives
-        // in one place (cli/tui-delegation-events.ts). Adding a new event
-        // type to the shared runtime vocabulary only requires updating the
-        // helper's `DELEGATION_EVENT_TYPES` set and its transform switch —
-        // no changes here. Unknown non-delegation events fall through
-        // silently, same as before.
+        // routed through a single renderer so the list of handled types lives
+        // in one place (cli/tui-delegation-events.ts). The renderer is
+        // transcript-compatible but stateful for task graph node-focus views.
         if (isDelegationEvent(event)) {
-          const entry = delegationEventToTranscript(event);
+          const entry = renderDelegationEvent(event);
           if (entry) {
             addTranscriptEntry(tuiState, entry.role, entry.text);
             scheduler.schedule();
