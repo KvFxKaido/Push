@@ -393,3 +393,29 @@ Per-node rounds stayed in the 2-3 range across all measurement states (cold and 
 3. **Asymmetric strictness based on downstream filtering capability is a useful pattern.** Single-object payloads have downstream `isRecord` shape gates that catch false positives. Arrays don't — they emit per-element malformed reports that trigger correction prompts. So arrays need stricter UPSTREAM gates. Documented in the PR #334 array-fenced-gate commit.
 
 **Status:** Record-content-quality issue closed end-to-end. Typed-memory tranche stands as: plumbing works (PR #333 + chatId fix), records contain useful content (PR #334), value question still open (future work).
+
+---
+
+## 2026-04-18 (very late+) — Gap 3 Step 4 attach/event-stream UX landed
+
+**Session purpose:** Ship the transcript-first attach client slice from Gap 3 Step 4, now that Step 3's typed-memory records are mechanically useful. The Step 4 concern was not another task-graph executor change; it was making the daemon's existing event stream observable from a normal terminal attach flow.
+
+**What shipped:**
+
+- `cli/cli.ts`: `push attach` now sends `capabilities: ['event_v2']` on every `attach_session` request, so the stock CLI attach client sees raw `subagent.*` / `task_graph.*` events instead of relying on the v1 synthetic `assistant_token` downgrade. The existing `lastSeenSeq` replay/reconnect behavior is preserved.
+- `cli/cli.ts`: attach now best-effort reads the local session state's persisted `attachToken` and includes it in the RPC payload when present. Legacy sessions with no token still omit it and use the daemon's migration bypass.
+- `cli/tui-delegation-events.ts`: subagent lifecycle entries now carry `boundary: 'start' | 'end'` and render as visible transcript separators (`--- subagent started/completed/failed: role --- ...`). `makeCLIEventHandler` adds blank-line grouping around those boundaries in the transcript-first attach output.
+- `ROADMAP.md`: `pushd Attach + Event Stream UX` promoted from `planned` to `in_progress`, matching the remediation plan's Step 4 instruction while the richer TUI graph widget remains Step 5.
+
+**Validation:**
+
+- `node --import tsx --test cli/tests/tui-delegation-events.test.mjs cli/tests/cli-event-handler.test.mjs` → pass.
+- `npm run typecheck` → pass.
+- `node --import tsx --test cli/tests/daemon-integration.test.mjs` → 135/135 pass outside the sandbox. The first sandboxed run failed on localhost mock-provider `listen EPERM`, not on this patch.
+
+**What this is and is not:**
+
+- **Is:** Gap 3 Step 4's transcript-first attach/event-stream slice. The CLI attach client now participates in the raw v2 event contract and visually separates subagent boundaries.
+- **Is not:** the Step 5 graph widget. The current output remains transcript-first line rendering; DAG/node-focus rendering belongs in `cli/tui-delegation-events.ts` / TUI-lite work next.
+
+**Status:** Gap 3 Step 4 shipped. Live Gap 3 implementation work is now Step 5 (TUI graph widget). The typed-memory value question remains research-shaped and separate from the implementation checklist.

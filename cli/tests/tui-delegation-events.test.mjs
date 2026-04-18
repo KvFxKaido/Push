@@ -51,7 +51,8 @@ describe('delegationEventToTranscript — subagent events', () => {
     });
     assert.deepEqual(entry, {
       role: 'status',
-      text: 'subagent started: explorer — auth-flow',
+      text: '--- subagent started: explorer --- auth-flow',
+      boundary: 'start',
     });
   });
 
@@ -62,7 +63,8 @@ describe('delegationEventToTranscript — subagent events', () => {
     });
     assert.deepEqual(entry, {
       role: 'status',
-      text: 'subagent started: coder',
+      text: '--- subagent started: coder ---',
+      boundary: 'start',
     });
   });
 
@@ -77,7 +79,8 @@ describe('delegationEventToTranscript — subagent events', () => {
     });
     assert.deepEqual(entry, {
       role: 'status',
-      text: 'subagent completed: explorer — found 3 files matching auth logic',
+      text: '--- subagent completed: explorer --- found 3 files matching auth logic',
+      boundary: 'end',
     });
   });
 
@@ -86,7 +89,8 @@ describe('delegationEventToTranscript — subagent events', () => {
       type: 'subagent.completed',
       payload: { executionId: 'ex-1', agent: 'explorer' },
     });
-    assert.equal(entry?.text, 'subagent completed: explorer — (no summary)');
+    assert.equal(entry?.text, '--- subagent completed: explorer --- (no summary)');
+    assert.equal(entry?.boundary, 'end');
   });
 
   it('maps subagent.failed to an error entry', () => {
@@ -96,7 +100,8 @@ describe('delegationEventToTranscript — subagent events', () => {
     });
     assert.deepEqual(entry, {
       role: 'error',
-      text: 'subagent failed: coder — patch conflict',
+      text: '--- subagent failed: coder --- patch conflict',
+      boundary: 'end',
     });
   });
 
@@ -105,7 +110,8 @@ describe('delegationEventToTranscript — subagent events', () => {
       type: 'subagent.failed',
       payload: { executionId: 'ex-1', agent: 'coder' },
     });
-    assert.equal(entry?.text, 'subagent failed: coder — (unknown error)');
+    assert.equal(entry?.text, '--- subagent failed: coder --- (unknown error)');
+    assert.equal(entry?.boundary, 'end');
   });
 });
 
@@ -340,7 +346,8 @@ describe('delegationEventToTranscript — defensive behavior', () => {
       delegationEventToTranscript({ type: 'subagent.started' });
     });
     const entry = delegationEventToTranscript({ type: 'subagent.started' });
-    assert.equal(entry?.text, 'subagent started: subagent');
+    assert.equal(entry?.text, '--- subagent started: subagent ---');
+    assert.equal(entry?.boundary, 'start');
   });
 
   it('tolerates missing agent field', () => {

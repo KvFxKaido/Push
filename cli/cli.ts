@@ -50,6 +50,7 @@ import {
 const execFileAsync = promisify(execFile);
 
 const VERSION = '0.1.0';
+export const ATTACH_CLIENT_CAPABILITIES = Object.freeze(['event_v2']);
 
 const KNOWN_OPTIONS = new Set([
   'provider',
@@ -277,7 +278,13 @@ export function makeCLIEventHandler() {
             : entry.role === 'warning'
               ? fmt.warn('[warn]')
               : fmt.dim('[info]');
+        if (entry.boundary === 'start') {
+          process.stdout.write('\n');
+        }
         process.stdout.write(`${badge} ${entry.text}\n`);
+        if (entry.boundary === 'end') {
+          process.stdout.write('\n');
+        }
         return;
       }
     }
@@ -1661,6 +1668,33 @@ async function sleepInterruptible(ms, shouldCancel) {
   return !shouldCancel();
 }
 
+async function readLocalAttachToken(sessionId) {
+  try {
+    const state = await loadSessionState(sessionId);
+    const token = state?.attachToken;
+    return typeof token === 'string' && token.trim() ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildAttachSessionPayload({ sessionId, lastSeenSeq, attachToken = null }) {
+  const payload = {
+    sessionId,
+    lastSeenSeq,
+    capabilities: [...ATTACH_CLIENT_CAPABILITIES],
+  };
+  if (typeof attachToken === 'string' && attachToken.trim()) {
+    payload.attachToken = attachToken;
+  }
+  return payload;
+}
+
+export async function buildAttachSessionPayloadForSession(sessionId, lastSeenSeq) {
+  const attachToken = await readLocalAttachToken(sessionId);
+  return buildAttachSessionPayload({ sessionId, lastSeenSeq, attachToken });
+}
+
 /**
  * `push attach <session-id>` — stream live events from a pushd session.
  *
@@ -1759,7 +1793,10 @@ async function runAttach(sessionId, options = {}) {
 
       let res;
       try {
-        res = await client.request('attach_session', { sessionId, lastSeenSeq });
+        res = await client.request(
+          'attach_session',
+          await buildAttachSessionPayloadForSession(sessionId, lastSeenSeq),
+        );
       } catch (err) {
         if (firstConnection) {
           process.stderr.write(`${fmt.error('Attach failed:')} ${err.message}\n`);

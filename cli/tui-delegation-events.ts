@@ -16,10 +16,12 @@
 import type { RunEventSubagent } from '../lib/runtime-contract.ts';
 
 export type DelegationTranscriptRole = 'status' | 'warning' | 'error';
+export type DelegationTranscriptBoundary = 'start' | 'end';
 
 export interface DelegationTranscriptEntry {
   role: DelegationTranscriptRole;
   text: string;
+  boundary?: DelegationTranscriptBoundary;
 }
 
 export interface DelegationEventEnvelope {
@@ -88,21 +90,29 @@ export function delegationEventToTranscript(
     case 'subagent.started': {
       const agent = String(p.agent ?? 'subagent');
       const text = p.detail
-        ? `subagent started: ${agent} — ${p.detail}`
-        : `subagent started: ${agent}`;
-      return { role: 'status', text };
+        ? `--- subagent started: ${agent} --- ${p.detail}`
+        : `--- subagent started: ${agent} ---`;
+      return { role: 'status', text, boundary: 'start' };
     }
 
     case 'subagent.completed': {
       const agent = String(p.agent ?? 'subagent');
       const summary = p.summary ?? '(no summary)';
-      return { role: 'status', text: `subagent completed: ${agent} — ${summary}` };
+      return {
+        role: 'status',
+        text: `--- subagent completed: ${agent} --- ${summary}`,
+        boundary: 'end',
+      };
     }
 
     case 'subagent.failed': {
       const agent = String(p.agent ?? 'subagent');
       const error = p.error ?? '(unknown error)';
-      return { role: 'error', text: `subagent failed: ${agent} — ${error}` };
+      return {
+        role: 'error',
+        text: `--- subagent failed: ${agent} --- ${error}`,
+        boundary: 'end',
+      };
     }
 
     case 'task_graph.task_ready': {

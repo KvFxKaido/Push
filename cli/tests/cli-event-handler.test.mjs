@@ -1,7 +1,16 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-import { makeCLIEventHandler } from '../cli.ts';
+import {
+  ATTACH_CLIENT_CAPABILITIES,
+  buildAttachSessionPayload,
+  buildAttachSessionPayloadForSession,
+  makeCLIEventHandler,
+} from '../cli.ts';
+import { saveSessionState } from '../session-store.ts';
 
 // The CLI event handler writes directly to `process.stdout` (and
 // `process.stderr`). These tests patch the underlying `.write` methods
@@ -64,6 +73,7 @@ describe('makeCLIEventHandler delegation rendering', () => {
     assert.match(clean, /\[info\]/);
     assert.match(clean, /subagent started: explorer/);
     assert.match(clean, /find the thing/);
+    assert.match(clean, /^\n\[info\]/);
   });
 
   it('renders subagent.failed as an error line', () => {
@@ -78,6 +88,7 @@ describe('makeCLIEventHandler delegation rendering', () => {
     assert.match(clean, /\[error\]/);
     assert.match(clean, /subagent failed: coder/);
     assert.match(clean, /boom/);
+    assert.match(clean, /\n$/);
   });
 
   it('renders task_graph.task_cancelled as a warning line', () => {
@@ -190,5 +201,79 @@ describe('makeCLIEventHandler delegation rendering', () => {
       handler({ type: 'totally.made.up.event', payload: { hello: 'world' } });
     });
     assert.equal(stdout, '');
+  });
+});
+
+describe('buildAttachSessionPayload', () => {
+  it('opts attach clients into raw v2 delegation events', () => {
+    assert.deepEqual(ATTACH_CLIENT_CAPABILITIES, ['event_v2']);
+    assert.deepEqual(
+      buildAttachSessionPayload({
+        sessionId: 'sess_alpha1_abcdef',
+        lastSeenSeq: 12,
+      }),
+      {
+        sessionId: 'sess_alpha1_abcdef',
+        lastSeenSeq: 12,
+        capabilities: ['event_v2'],
+      },
+    );
+  });
+
+  it('includes a local attach token when one is available', () => {
+    assert.deepEqual(
+      buildAttachSessionPayload({
+        sessionId: 'sess_alpha1_abcdef',
+        lastSeenSeq: 0,
+        attachToken: 'att_secret',
+      }),
+      {
+        sessionId: 'sess_alpha1_abcdef',
+        lastSeenSeq: 0,
+        attachToken: 'att_secret',
+        capabilities: ['event_v2'],
+      },
+    );
+  });
+
+  it('omits empty attach tokens for legacy sessions', () => {
+    const payload = buildAttachSessionPayload({
+      sessionId: 'sess_alpha1_abcdef',
+      lastSeenSeq: 0,
+      attachToken: '   ',
+    });
+    assert.equal(Object.hasOwn(payload, 'attachToken'), false);
+  });
+
+  it('reads a persisted attach token from local session state', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-attach-payload-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      await saveSessionState({
+        sessionId: 'sess_alpha1_abcdef',
+        messages: [],
+        eventSeq: 0,
+        updatedAt: 0,
+        cwd: process.cwd(),
+        provider: 'ollama',
+        model: 'llama3',
+        rounds: 0,
+        sessionName: '',
+        workingMemory: null,
+        attachToken: 'att_local_secret',
+      });
+
+      assert.deepEqual(await buildAttachSessionPayloadForSession('sess_alpha1_abcdef', 4), {
+        sessionId: 'sess_alpha1_abcdef',
+        lastSeenSeq: 4,
+        attachToken: 'att_local_secret',
+        capabilities: ['event_v2'],
+      });
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
   });
 });
