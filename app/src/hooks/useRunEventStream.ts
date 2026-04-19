@@ -81,11 +81,12 @@ export function useRunEventStream({
         timestamp: Date.now(),
         ...event,
       };
+      const shouldPersist = shouldPersistRunEvent(event);
 
       // Track B: append persisted events to the in-progress journal
-      // entry when one exists. `shouldPersistRunEvent` gates the branch
-      // so ephemeral events (status chatter, etc.) never hit the journal.
-      if (shouldPersistRunEvent(event) && runJournalEntryRef.current) {
+      // entry when one exists. The `shouldPersist` gate keeps ephemeral
+      // events (status chatter, etc.) out of the journal.
+      if (shouldPersist && runJournalEntryRef.current) {
         runJournalEntryRef.current = appendJournalEvent(runJournalEntryRef.current, nextEvent);
         if (event.type === 'subagent.completed' && event.delegationOutcome) {
           runJournalEntryRef.current = recordDelegationOutcome(
@@ -96,7 +97,7 @@ export function useRunEventStream({
         void saveJournalEntry(runJournalEntryRef.current);
       }
 
-      if (!shouldPersistRunEvent(event)) {
+      if (!shouldPersist) {
         replaceLiveRunEvents({
           ...liveRunEventsByChatRef.current,
           [chatId]: trimRunEvents([...(liveRunEventsByChatRef.current[chatId] || []), nextEvent]),

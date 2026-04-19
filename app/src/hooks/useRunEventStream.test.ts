@@ -190,17 +190,26 @@ describe('useRunEventStream — appendRunEvent routing', () => {
   it('routes ephemeral events to liveRunEventsByChat without persisting or journaling', () => {
     chatRunEvents.shouldPersistRunEvent.mockReturnValue(false);
     const { hook, state } = useHarness();
-    const event: RunEventInput = { type: 'assistant.status', round: 1 };
+    const event: RunEventInput = { type: 'assistant.status', round: 1 } as RunEventInput;
 
     hook.appendRunEvent('chat-1', event);
 
-    // Live: one event landed under chat-1.
-    const { hook: hookAfter } = useHarness({
-      // Reading the updated state cell by re-invoking with cells intact.
-    });
-    void hookAfter;
-    // Assertion via the returned state (cells persist across hook calls
-    // within a single beforeEach scope).
+    // The live branch routes through trimRunEvents exactly once with a
+    // single-element array containing the stamped event (id + timestamp
+    // layered on top of the input). Asserting on the trim call is the
+    // most direct observation: replaceLiveRunEvents is private and the
+    // fake-React harness does not re-render, so reading liveRunEventsByChat
+    // via a second useHarness call would allocate fresh state cells.
+    expect(chatRunEvents.trimRunEvents).toHaveBeenCalledTimes(1);
+    const trimArg = chatRunEvents.trimRunEvents.mock.calls[0][0] as Array<{
+      id: string;
+      timestamp: number;
+      type: string;
+      round: number;
+    }>;
+    expect(trimArg).toHaveLength(1);
+    expect(trimArg[0]).toMatchObject({ type: 'assistant.status', round: 1 });
+    // And the non-live branches stayed quiet.
     expect(chatRuntimeState.setConversationRunEvents).not.toHaveBeenCalled();
     expect(runJournal.appendJournalEvent).not.toHaveBeenCalled();
     expect(runJournal.saveJournalEntry).not.toHaveBeenCalled();
