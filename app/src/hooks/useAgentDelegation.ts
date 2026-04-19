@@ -2,19 +2,20 @@ import type React from 'react';
 import { useCallback } from 'react';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { getSandboxDiff } from '@/lib/sandbox-client';
-import {
-  runCoderAgent,
-  generateCheckpointAnswer,
-  summarizeCoderStateForHandoff,
-} from '@/lib/coder-agent';
+import { runCoderAgent } from '@/lib/coder-agent';
 import { runExplorerAgent } from '@/lib/explorer-agent';
 import {
   handleExplorerDelegation,
   type ExplorerHandlerContext,
   type ExplorerToolCall,
 } from '@/lib/explorer-delegation-handler';
+import {
+  handleCoderDelegation,
+  mergeAcceptanceCriteria,
+  type CoderHandlerContext,
+  type CoderToolCall,
+} from '@/lib/coder-delegation-handler';
 import { type AnyToolCall } from '@/lib/tool-dispatch';
-import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
 import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
 import { validateTaskGraph, executeTaskGraph, type TaskExecutor } from '@/lib/task-graph';
@@ -26,7 +27,6 @@ import {
   formatCompactDelegationToolResult,
 } from '@/lib/delegation-result';
 import {
-  writeDecisionMemory,
   writeTaskGraphNodeMemory,
   writeCoderMemory,
   invalidateMemoryForChangedFiles,
@@ -46,7 +46,6 @@ import {
   recordVerificationGateResult,
   recordVerificationMutation,
 } from '@/lib/verification-runtime';
-import { formatElapsedTime } from '@/lib/utils';
 import { createId } from '@/hooks/chat-persistence';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
 import {
@@ -61,9 +60,7 @@ import type {
   ChatMessage,
   ChatCard,
   CoderWorkingMemory,
-  CriterionResult,
   Conversation,
-  AcceptanceCriterion,
   AgentStatus,
   AgentStatusSource,
   RunEventInput,
@@ -74,12 +71,6 @@ import type {
   DelegationGateVerdict,
   DelegationStatus,
 } from '@/types';
-
-function getTaskStatusLabel(criteriaResults?: CriterionResult[]): string {
-  if (!criteriaResults || criteriaResults.length === 0) return 'OK';
-  const allPassed = criteriaResults.every((r) => r.passed);
-  return allPassed ? 'OK' : 'CHECKS_FAILED';
-}
 
 function appendInlineDelegationCards(
   setConversations: React.Dispatch<React.SetStateAction<Record<string, Conversation>>>,
@@ -139,26 +130,6 @@ export function useAgentDelegation({
   abortRef,
   lastCoderStateRef,
 }: UseAgentDelegationParams) {
-  const mergeAcceptanceCriteria = useCallback(
-    (
-      explicitCriteria: AcceptanceCriterion[] | undefined,
-      verificationCriteria: AcceptanceCriterion[],
-    ): AcceptanceCriterion[] => {
-      const merged: AcceptanceCriterion[] = [];
-      const seen = new Set<string>();
-
-      for (const criterion of [...(explicitCriteria ?? []), ...verificationCriteria]) {
-        const key = `${criterion.id}::${criterion.check}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        merged.push(criterion);
-      }
-
-      return merged;
-    },
-    [],
-  );
-
   // Wire up the Sequential Explorer handler context with the hook's refs and
   // callbacks. Kept hook-local (not exported) so the extraction boundary stays
   // one-way: the handler module never imports from this hook.
@@ -196,6 +167,50 @@ export function useAgentDelegation({
     ],
   );
 
+  // Wire up the Sequential Coder handler context. Same one-way boundary
+  // rule as buildExplorerContext: the handler never imports from this
+  // hook. `resetCoderState` and `onCoderStateUpdate` bridge the hook's
+  // `lastCoderStateRef` ownership into the handler's execution path
+  // without handing the ref itself across the seam.
+  const buildCoderContext = useCallback(
+    (): CoderHandlerContext => ({
+      sandboxIdRef,
+      repoRef,
+      branchInfoRef,
+      isMainProtectedRef,
+      agentsMdRef,
+      instructionFilenameRef,
+      abortControllerRef,
+      abortRef,
+      emitRunEngineEvent,
+      appendRunEvent,
+      updateAgentStatus,
+      updateVerificationStateForChat,
+      resetCoderState: () => {
+        lastCoderStateRef.current = null;
+      },
+      onCoderStateUpdate: (state) => {
+        lastCoderStateRef.current = state;
+      },
+      readLatestCoderState: () => lastCoderStateRef.current,
+    }),
+    [
+      sandboxIdRef,
+      repoRef,
+      branchInfoRef,
+      isMainProtectedRef,
+      agentsMdRef,
+      instructionFilenameRef,
+      abortControllerRef,
+      abortRef,
+      emitRunEngineEvent,
+      appendRunEvent,
+      updateAgentStatus,
+      updateVerificationStateForChat,
+      lastCoderStateRef,
+    ],
+  );
+
   const executeDelegateCall = useCallback(
     async (
       chatId: string,
@@ -224,662 +239,297 @@ export function useAgentDelegation({
           resolvedModelForChat,
         });
       } else if (toolCall.call.tool === 'delegate_coder') {
-        const executionId = createId();
-        const coderStartMs = Date.now();
-        // Handle Coder delegation (Phase 3b)
-        emitRunEngineEvent({
-          type: 'DELEGATION_STARTED',
-          timestamp: Date.now(),
-          agent: 'coder',
+        const coderHandlerResult = await handleCoderDelegation(buildCoderContext(), {
+          chatId,
+          toolCall: toolCall as CoderToolCall,
+          apiMessages,
+          baseCorrelation,
+          lockedProviderForChat,
+          resolvedModelForChat,
+          verificationPolicy,
         });
-        updateVerificationStateForChat(chatId, (state) =>
-          activateVerificationGate(
-            state,
-            'auditor',
-            'Coder delegation started; auditor evaluation pending.',
-          ),
-        );
-        lastCoderStateRef.current = null; // Will be populated by onWorkingMemoryUpdate callback
-        const currentSandboxId = sandboxIdRef.current;
-        if (!currentSandboxId) {
-          toolExecResult = {
-            text: '[Tool Error] Failed to start sandbox automatically. Try again.',
-          };
+        if (coderHandlerResult.status !== 'ok') {
+          toolExecResult = coderHandlerResult.toolExecResult;
         } else {
-          try {
-            // --- Harness Profile Resolution ---
-            // Resolve scaffolding level based on the model being used for this delegation.
-            const harnessProvider = lockedProviderForChat || getActiveProvider();
-            const harnessModelId = resolvedModelForChat || undefined;
-            const harnessSettings = resolveHarnessSettings(harnessProvider, harnessModelId);
+          const { executionId, coderStartMs, auditorInput } = coderHandlerResult;
+          const {
+            taskList,
+            allCards,
+            summaries,
+            allCriteriaResults,
+            totalRounds,
+            totalCheckpoints,
+            lastTaskDiff,
+            latestDiffPaths,
+            coderMemoryScope,
+            verificationCommandsById,
+            harnessSettings,
+            currentSandboxId,
+          } = auditorInput;
+          let coderEvalResult: EvaluationResult | null = null;
 
-            const delegateArgs = toolCall.call.args;
-            const taskList = Array.isArray(delegateArgs.tasks)
-              ? delegateArgs.tasks.filter((t: unknown) => typeof t === 'string' && t.trim())
-              : [];
-            if (delegateArgs.task?.trim()) {
-              taskList.unshift(delegateArgs.task.trim());
-            }
-
-            if (taskList.length === 0) {
-              toolExecResult = {
-                text: '[Tool Error] delegate_coder requires "task" or non-empty "tasks" array.',
-              };
-            } else {
+          // --- Auditor Evaluation ---
+          // Stays inline in the hook for Phase 3 per the containment
+          // rule from the recon doc: gating is policy, handlers are
+          // reactive. Phase 4 will extract this into a dedicated
+          // auditor-delegation-handler module.
+          if (harnessSettings.evaluateAfterCoder && summaries.length > 0) {
+            const auditorExecutionId = createId();
+            try {
               appendRunEvent(chatId, {
                 type: 'subagent.started',
-                executionId,
-                agent: 'coder',
-                detail: taskList.length === 1 ? taskList[0] : `${taskList.length} tasks`,
+                executionId: auditorExecutionId,
+                agent: 'auditor',
+                detail: 'Evaluating coder output',
               });
-              const coderMemoryScope = buildMemoryScope(
-                chatId,
-                repoRef.current,
-                branchInfoRef.current?.currentBranch,
+              updateAgentStatus(
+                { active: true, phase: 'Evaluating output...' },
+                { chatId, source: 'coder' },
               );
-              const coderMemoryLine = await retrieveMemoryKnownContextLine(
-                coderMemoryScope,
-                'coder',
-                taskList.join('\n\n'),
-                delegateArgs.files,
-              );
-              const allCards: ChatCard[] = [];
-              const summaries: string[] = [];
-              let totalRounds = 0;
-              let totalCheckpoints = 0;
-              // Collect acceptance criteria results across all tasks for evaluation
-              const allCriteriaResults: {
-                id: string;
-                passed: boolean;
-                exitCode: number;
-                output: string;
-              }[] = [];
-              const verificationCriteria = buildVerificationAcceptanceCriteria(
-                verificationPolicy,
-                'always',
-              );
-              const verificationCommandsById = new Map<string, string>();
-              let lastTaskDiff: string | null = null;
-              let latestDiffPaths: string[] | undefined;
-              let coderEvalResult: EvaluationResult | null = null;
-
-              // --- Planner Pre-Pass ---
-              // When the harness profile requires it (or the task is large enough),
-              // run the planner to decompose into a feature checklist.
-              let plannerBrief: string | undefined;
-              if (harnessSettings.plannerRequired && taskList.length === 1) {
-                const plannerExecutionId = createId();
-                appendRunEvent(chatId, {
-                  type: 'subagent.started',
-                  executionId: plannerExecutionId,
-                  agent: 'planner',
-                  detail: taskList[0],
-                });
-                updateAgentStatus(
-                  {
-                    active: true,
-                    phase: 'Planning task...',
-                    detail: `Profile: ${harnessSettings.profile}`,
-                  },
-                  { chatId, source: 'coder' },
-                );
-                const plannerCorrelation = extendCorrelation(baseCorrelation, {
-                  executionId: plannerExecutionId,
-                });
-                const plan = await withActiveSpan(
-                  'subagent.planner',
-                  {
-                    scope: 'push.delegation',
-                    kind: SpanKind.INTERNAL,
-                    attributes: {
-                      ...correlationToSpanAttributes(plannerCorrelation),
-                      'push.agent.role': 'planner',
-                      'push.provider': lockedProviderForChat,
-                      'push.model': resolvedModelForChat,
-                    },
-                  },
-                  async (span) => {
-                    const result = await runPlanner(
-                      taskList[0],
-                      delegateArgs.files || [],
-                      (phase) =>
-                        updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
-                      {
-                        providerOverride: lockedProviderForChat,
-                        modelOverride: resolvedModelForChat || undefined,
-                      },
-                    );
-                    setSpanAttributes(span, {
-                      'push.plan.generated': Boolean(result),
-                    });
-                    span.setStatus({ code: SpanStatusCode.OK });
-                    return result;
-                  },
-                );
-                if (plan) {
-                  plannerBrief = formatPlannerBrief(plan);
-                  appendRunEvent(chatId, {
-                    type: 'subagent.completed',
-                    executionId: plannerExecutionId,
-                    agent: 'planner',
-                    summary: summarizeToolResultPreview(plannerBrief),
-                  });
-                } else {
-                  appendRunEvent(chatId, {
-                    type: 'subagent.failed',
-                    executionId: plannerExecutionId,
-                    agent: 'planner',
-                    error: 'Planner did not return a plan.',
-                  });
-                }
-                // Fail-open: if planner returns null, Coder proceeds without a plan
+              let evalDiff: string | null = null;
+              try {
+                const diffResult = await getSandboxDiff(currentSandboxId);
+                evalDiff = diffResult.diff || null;
+              } catch {
+                /* no diff available — evaluation proceeds without it */
               }
-
-              for (let taskIndex = 0; taskIndex < taskList.length; taskIndex++) {
-                const task = taskList[taskIndex];
-
-                // Interactive Checkpoint callback: when the Coder pauses to ask
-                // the Orchestrator for guidance, this generates an answer using the
-                // Orchestrator's LLM with recent chat history for context.
-                const handleCheckpoint = async (
-                  question: string,
-                  context: string,
-                ): Promise<string> => {
-                  const prefix =
-                    taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
-                  updateAgentStatus(
-                    { active: true, phase: `${prefix}Coder checkpoint`, detail: question },
-                    { chatId, source: 'coder' },
-                  );
-
-                  const stateSummary = summarizeCoderStateForHandoff(lastCoderStateRef.current);
-                  const checkpointContext = [
-                    context.trim(),
-                    stateSummary ? `Latest coder state:\n${stateSummary}` : null,
-                  ]
-                    .filter((value): value is string => Boolean(value && value.trim()))
-                    .join('\n\n');
-
-                  const answer = await generateCheckpointAnswer(
-                    question,
-                    checkpointContext,
-                    apiMessages.slice(-6), // recent chat for user intent context
-                    abortControllerRef.current?.signal,
-                    lockedProviderForChat,
-                    resolvedModelForChat || undefined,
-                  );
-
-                  if (coderMemoryScope) {
-                    await runContextMemoryBestEffort('persisting checkpoint decision memory', () =>
-                      writeDecisionMemory({
-                        scope: coderMemoryScope,
-                        question,
-                        answer,
-                      }),
-                    );
-                  }
-
-                  updateAgentStatus(
-                    { active: true, phase: `${prefix}Coder resuming...` },
-                    { chatId, source: 'coder' },
-                  );
-                  return answer;
-                };
-
-                // Apply acceptance criteria to every task — validates each independently.
-                // For sequential single-sandbox mode this also catches regressions
-                // introduced by earlier tasks before they compound.
-                const seqTaskStart = Date.now();
-                const effectiveAcceptanceCriteria = mergeAcceptanceCriteria(
-                  delegateArgs.acceptanceCriteria,
-                  verificationCriteria,
-                );
-                const criteriaCommandById = new Map(
-                  effectiveAcceptanceCriteria.map((criterion) => [criterion.id, criterion.check]),
-                );
-                for (const [criterionId, command] of criteriaCommandById.entries()) {
-                  verificationCommandsById.set(criterionId, command);
-                }
-                const seqBi = branchInfoRef.current;
-                const coderCorrelation = extendCorrelation(baseCorrelation, { executionId });
-                const coderResult = await withActiveSpan(
-                  'subagent.coder',
-                  {
-                    scope: 'push.delegation',
-                    kind: SpanKind.INTERNAL,
-                    attributes: {
-                      ...correlationToSpanAttributes(coderCorrelation),
-                      'push.agent.role': 'coder',
-                      'push.task_index': taskIndex,
-                      'push.task_count': taskList.length,
-                      'push.provider': lockedProviderForChat,
-                      'push.model': resolvedModelForChat,
-                      'push.has_acceptance_criteria': Boolean(effectiveAcceptanceCriteria.length),
+              const combinedTask = taskList.join('\n\n');
+              const combinedSummary = summaries.join('\n');
+              // For multi-task delegations, only the last task's working
+              // memory is available — pass null to avoid misleading the
+              // evaluator.
+              const evalWorkingMemory = taskList.length <= 1 ? lastCoderStateRef.current : null;
+              // Scale max rounds by task count so multi-task totals don't
+              // falsely trigger the "hit round cap" signal.
+              const evalMaxRounds = harnessSettings.maxCoderRounds * Math.max(taskList.length, 1);
+              const auditorCorrelation = extendCorrelation(baseCorrelation, {
+                executionId: auditorExecutionId,
+              });
+              coderEvalResult = await withActiveSpan(
+                'subagent.auditor',
+                {
+                  scope: 'push.delegation',
+                  kind: SpanKind.INTERNAL,
+                  attributes: {
+                    ...correlationToSpanAttributes(auditorCorrelation),
+                    'push.agent.role': 'auditor',
+                    'push.provider': lockedProviderForChat,
+                    'push.model': resolvedModelForChat,
+                    'push.criteria_count': allCriteriaResults.length,
+                  },
+                },
+                async (span) => {
+                  const result = await runAuditorEvaluation(
+                    combinedTask,
+                    combinedSummary,
+                    evalWorkingMemory,
+                    evalDiff,
+                    (phase) =>
+                      updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
+                    {
+                      providerOverride: lockedProviderForChat,
+                      modelOverride: resolvedModelForChat || undefined,
+                      coderRounds: totalRounds,
+                      coderMaxRounds: evalMaxRounds,
+                      criteriaResults:
+                        allCriteriaResults.length > 0 ? allCriteriaResults : undefined,
+                      verificationPolicy,
+                      memoryScope: buildMemoryScope(
+                        chatId,
+                        repoRef.current,
+                        branchInfoRef.current?.currentBranch,
+                      ),
                     },
-                  },
-                  async (span) => {
-                    const result = await runCoderAgent(
-                      task,
-                      currentSandboxId,
-                      delegateArgs.files || [],
-                      (phase, detail) => {
-                        const prefix =
-                          taskList.length > 1 ? `[${taskIndex + 1}/${taskList.length}] ` : '';
-                        updateAgentStatus(
-                          { active: true, phase: `${prefix}${phase}`, detail },
-                          { chatId, source: 'coder' },
-                        );
-                      },
-                      agentsMdRef.current || undefined,
-                      abortControllerRef.current?.signal,
-                      handleCheckpoint,
-                      effectiveAcceptanceCriteria,
-                      (state) => {
-                        lastCoderStateRef.current = state;
-                      },
-                      lockedProviderForChat,
-                      resolvedModelForChat || undefined,
-                      {
-                        intent: delegateArgs.intent,
-                        deliverable: delegateArgs.deliverable,
-                        knownContext: withMemoryContext(delegateArgs.knownContext, coderMemoryLine),
-                        constraints: delegateArgs.constraints,
-                        branchContext: seqBi?.currentBranch
-                          ? {
-                              activeBranch: seqBi.currentBranch,
-                              defaultBranch: seqBi.defaultBranch || 'main',
-                              protectMain: isMainProtectedRef.current,
-                            }
-                          : undefined,
-                        instructionFilename: instructionFilenameRef.current || undefined,
-                        harnessSettings,
-                        plannerBrief,
-                        verificationPolicy,
-                        declaredCapabilities: delegateArgs.declaredCapabilities,
-                        correlation: coderCorrelation,
-                      },
-                    );
+                  );
+                  if (result) {
                     setSpanAttributes(span, {
-                      'push.round_count': result.rounds,
-                      'push.checkpoint_count': result.checkpoints,
-                      'push.card_count': result.cards.length,
-                      'push.criteria_count': result.criteriaResults?.length,
+                      'push.auditor.verdict': result.verdict,
+                      'push.auditor.gap_count': result.gaps.length,
                     });
-                    span.setStatus({ code: SpanStatusCode.OK });
-                    return result;
-                  },
-                );
-                const seqElapsed = formatElapsedTime(Date.now() - seqTaskStart);
-                const seqStatus = getTaskStatusLabel(coderResult.criteriaResults);
-                totalRounds += coderResult.rounds;
-                totalCheckpoints += coderResult.checkpoints;
-                let taskDiff: string | null = null;
-                try {
-                  const diffResult = await getSandboxDiff(currentSandboxId);
-                  taskDiff = diffResult.diff || null;
-                } catch {
-                  // Verification state can still update from summaries/checks.
-                }
-                lastTaskDiff = taskDiff;
-                if (taskDiff) {
-                  const touchedPaths = extractChangedPathsFromDiff(taskDiff);
-                  latestDiffPaths = touchedPaths;
-                  updateVerificationStateForChat(chatId, (state) =>
-                    recordVerificationMutation(state, {
-                      source: 'coder',
-                      touchedPaths,
-                      detail: 'Coder delegation mutated the workspace.',
-                    }),
-                  );
-                }
-                if (taskList.length > 1) {
-                  summaries.push(
-                    `Task ${taskIndex + 1} [${seqStatus}, ${seqElapsed}]: ${coderResult.summary}`,
-                  );
-                } else {
-                  summaries.push(`${coderResult.summary} (${seqElapsed})`);
-                }
+                  }
+                  span.setStatus({ code: SpanStatusCode.OK });
+                  return result;
+                },
+              );
+              if (coderEvalResult) {
+                const completedEvaluation = coderEvalResult;
                 updateVerificationStateForChat(chatId, (state) =>
-                  recordVerificationArtifact(
+                  recordVerificationGateResult(
                     state,
-                    `Coder produced evidence: ${summarizeToolResultPreview(coderResult.summary)}`,
+                    'auditor',
+                    completedEvaluation.verdict === 'complete' ? 'passed' : 'failed',
+                    completedEvaluation.summary,
                   ),
                 );
-                if (coderResult.criteriaResults) {
-                  for (const result of coderResult.criteriaResults) {
-                    const command = criteriaCommandById.get(result.id);
-                    if (!command) continue;
-                    updateVerificationStateForChat(chatId, (state) =>
-                      recordVerificationCommandResult(state, command, {
-                        exitCode: result.exitCode,
-                        detail: `${result.id} exited with code ${result.exitCode}.`,
-                      }),
-                    );
-                  }
-                  allCriteriaResults.push(...coderResult.criteriaResults);
-                }
-                allCards.push(...coderResult.cards);
-              }
-
-              // --- Auditor Evaluation ---
-              // After all Coder tasks complete, run the Auditor in evaluation
-              // mode to assess whether the work is actually complete.
-              if (harnessSettings.evaluateAfterCoder && summaries.length > 0) {
-                const auditorExecutionId = createId();
-                try {
-                  appendRunEvent(chatId, {
-                    type: 'subagent.started',
-                    executionId: auditorExecutionId,
-                    agent: 'auditor',
-                    detail: 'Evaluating coder output',
-                  });
-                  updateAgentStatus(
-                    { active: true, phase: 'Evaluating output...' },
-                    { chatId, source: 'coder' },
-                  );
-                  // Get sandbox diff for evaluation context
-                  let evalDiff: string | null = null;
-                  try {
-                    const diffResult = await getSandboxDiff(currentSandboxId);
-                    evalDiff = diffResult.diff || null;
-                  } catch {
-                    /* no diff available — evaluation proceeds without it */
-                  }
-
-                  const combinedTask = taskList.join('\n\n');
-                  const combinedSummary = summaries.join('\n');
-                  // For multi-task delegations, only the last task's working memory
-                  // is available — pass null to avoid misleading the evaluator.
-                  const evalWorkingMemory = taskList.length <= 1 ? lastCoderStateRef.current : null;
-                  // Scale max rounds by task count so multi-task totals don't
-                  // falsely trigger the "hit round cap" signal.
-                  const evalMaxRounds =
-                    harnessSettings.maxCoderRounds * Math.max(taskList.length, 1);
-                  const auditorCorrelation = extendCorrelation(baseCorrelation, {
-                    executionId: auditorExecutionId,
-                  });
-                  coderEvalResult = await withActiveSpan(
-                    'subagent.auditor',
-                    {
-                      scope: 'push.delegation',
-                      kind: SpanKind.INTERNAL,
-                      attributes: {
-                        ...correlationToSpanAttributes(auditorCorrelation),
-                        'push.agent.role': 'auditor',
-                        'push.provider': lockedProviderForChat,
-                        'push.model': resolvedModelForChat,
-                        'push.criteria_count': allCriteriaResults.length,
-                      },
-                    },
-                    async (span) => {
-                      const result = await runAuditorEvaluation(
-                        combinedTask,
-                        combinedSummary,
-                        evalWorkingMemory,
-                        evalDiff,
-                        (phase) =>
-                          updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
-                        {
-                          providerOverride: lockedProviderForChat,
-                          modelOverride: resolvedModelForChat || undefined,
-                          coderRounds: totalRounds,
-                          coderMaxRounds: evalMaxRounds,
-                          criteriaResults:
-                            allCriteriaResults.length > 0 ? allCriteriaResults : undefined,
-                          verificationPolicy,
-                          memoryScope: buildMemoryScope(
-                            chatId,
-                            repoRef.current,
-                            branchInfoRef.current?.currentBranch,
-                          ),
-                        },
-                      );
-                      if (result) {
-                        setSpanAttributes(span, {
-                          'push.auditor.verdict': result.verdict,
-                          'push.auditor.gap_count': result.gaps.length,
-                        });
-                      }
-                      span.setStatus({ code: SpanStatusCode.OK });
-                      return result;
-                    },
-                  );
-                  if (coderEvalResult) {
-                    const completedEvaluation = coderEvalResult;
-                    updateVerificationStateForChat(chatId, (state) =>
-                      recordVerificationGateResult(
-                        state,
-                        'auditor',
-                        completedEvaluation.verdict === 'complete' ? 'passed' : 'failed',
-                        completedEvaluation.summary,
-                      ),
-                    );
-                    appendRunEvent(chatId, {
-                      type: 'subagent.completed',
-                      executionId: auditorExecutionId,
-                      agent: 'auditor',
-                      summary: summarizeToolResultPreview(coderEvalResult.summary),
-                    });
-                  } else {
-                    updateVerificationStateForChat(chatId, (state) =>
-                      recordVerificationGateResult(
-                        state,
-                        'auditor',
-                        'inconclusive',
-                        'Auditor evaluation returned no result.',
-                      ),
-                    );
-                    appendRunEvent(chatId, {
-                      type: 'subagent.failed',
-                      executionId: auditorExecutionId,
-                      agent: 'auditor',
-                      error: 'Auditor returned no evaluation.',
-                    });
-                  }
-                } catch {
-                  updateVerificationStateForChat(chatId, (state) =>
-                    recordVerificationGateResult(
-                      state,
-                      'auditor',
-                      'inconclusive',
-                      'Auditor evaluation failed.',
-                    ),
-                  );
-                  appendRunEvent(chatId, {
-                    type: 'subagent.failed',
-                    executionId: auditorExecutionId,
-                    agent: 'auditor',
-                    error: 'Evaluation failed.',
-                  });
-                  // Fail-open: if evaluation fails, Coder result stands as-is
-                }
-
-                // Append evaluation verdict to summaries
-                if (coderEvalResult) {
-                  const evalLine = `\n[Evaluation: ${coderEvalResult.verdict.toUpperCase()}] ${coderEvalResult.summary}`;
-                  const gapLines =
-                    coderEvalResult.gaps.length > 0
-                      ? coderEvalResult.gaps.map((g) => `  - ${g}`).join('\n')
-                      : '';
-                  summaries.push(evalLine + (gapLines ? `\n${gapLines}` : ''));
-                }
-              }
-
-              // --- Build structured DelegationOutcome for coder ---
-              const coderOutcome: DelegationOutcome = (() => {
-                // Derive status
-                let status: DelegationStatus;
-                if (coderEvalResult) {
-                  status = coderEvalResult.verdict === 'complete' ? 'complete' : 'incomplete';
-                } else if (allCriteriaResults.length > 0) {
-                  status = allCriteriaResults.every((r) => r.passed) ? 'complete' : 'incomplete';
-                } else {
-                  status = 'inconclusive';
-                }
-
-                // Build evidence
-                const evidence: DelegationEvidence[] = [];
-                if (lastTaskDiff) {
-                  evidence.push({
-                    kind: 'diff',
-                    label: 'Workspace diff',
-                    detail: summarizeToolResultPreview(lastTaskDiff),
-                  });
-                }
-                for (const cr of allCriteriaResults) {
-                  evidence.push({
-                    kind: 'test',
-                    label: cr.id,
-                    detail: cr.output,
-                  });
-                }
-
-                // Build checks
-                const checks: DelegationCheck[] = allCriteriaResults.map((cr) => ({
-                  id: cr.id,
-                  passed: cr.passed,
-                  exitCode: cr.exitCode,
-                  output: cr.output,
-                }));
-
-                // Build gate verdicts
-                const gateVerdicts: DelegationGateVerdict[] = [];
-                if (coderEvalResult) {
-                  gateVerdicts.push({
-                    gate: 'auditor',
-                    outcome: coderEvalResult.verdict === 'complete' ? 'passed' : 'failed',
-                    summary: coderEvalResult.summary,
-                  });
-                }
-
-                // Missing requirements
-                const missingRequirements: string[] =
-                  coderEvalResult?.gaps ??
-                  allCriteriaResults
-                    .filter((cr) => !cr.passed)
-                    .map((cr) => `Check failed: ${cr.id}`);
-
-                // Next required action
-                let nextRequiredAction: string | null = null;
-                if (status === 'incomplete') {
-                  nextRequiredAction = coderEvalResult?.gaps.length
-                    ? 'Address gaps identified by auditor'
-                    : 'Fix failing checks';
-                }
-
-                return {
-                  agent: 'coder' as const,
-                  status,
-                  summary: summaries.join('\n'),
-                  evidence,
-                  checks,
-                  gateVerdicts,
-                  missingRequirements,
-                  nextRequiredAction,
-                  rounds: totalRounds,
-                  checkpoints: totalCheckpoints,
-                  elapsedMs: Date.now() - coderStartMs,
-                };
-              })();
-
-              appendInlineDelegationCards(setConversations, chatId, allCards);
-
-              if (coderMemoryScope && latestDiffPaths && latestDiffPaths.length > 0) {
-                await runContextMemoryBestEffort(
-                  'invalidating coder memory after file changes',
-                  () =>
-                    invalidateMemoryForChangedFiles({
-                      scope: {
-                        repoFullName: coderMemoryScope.repoFullName,
-                        branch: coderMemoryScope.branch,
-                        chatId: coderMemoryScope.chatId,
-                      },
-                      changedPaths: latestDiffPaths,
-                      reason: 'Coder delegation updated file-backed context.',
-                    }),
+                appendRunEvent(chatId, {
+                  type: 'subagent.completed',
+                  executionId: auditorExecutionId,
+                  agent: 'auditor',
+                  summary: summarizeToolResultPreview(coderEvalResult.summary),
+                });
+              } else {
+                updateVerificationStateForChat(chatId, (state) =>
+                  recordVerificationGateResult(
+                    state,
+                    'auditor',
+                    'inconclusive',
+                    'Auditor evaluation returned no result.',
+                  ),
                 );
+                appendRunEvent(chatId, {
+                  type: 'subagent.failed',
+                  executionId: auditorExecutionId,
+                  agent: 'auditor',
+                  error: 'Auditor returned no evaluation.',
+                });
               }
-
-              if (coderMemoryScope && coderOutcome.status !== 'inconclusive') {
-                await runContextMemoryBestEffort('persisting coder memory', () =>
-                  writeCoderMemory({
-                    scope: coderMemoryScope,
-                    outcome: coderOutcome,
-                    diffPaths: latestDiffPaths,
-                    verificationCommandsById:
-                      verificationCommandsById.size > 0
-                        ? Object.fromEntries(verificationCommandsById)
-                        : undefined,
-                  }),
-                );
-              }
-
-              toolExecResult = {
-                text: formatCompactDelegationToolResult({
-                  agent: 'coder',
-                  outcome: coderOutcome,
-                  fileCount: latestDiffPaths?.length,
-                }),
-                card: buildDelegationResultCard({
-                  agent: 'coder',
-                  outcome: coderOutcome,
-                  fileCount: latestDiffPaths?.length,
-                }),
-                delegationOutcome: coderOutcome,
-              };
-              appendRunEvent(chatId, {
-                type: 'subagent.completed',
-                executionId,
-                agent: 'coder',
-                summary: summarizeToolResultPreview(toolExecResult.text),
-                delegationOutcome: coderOutcome,
-              });
-            }
-          } catch (err) {
-            const isAbort = err instanceof DOMException && err.name === 'AbortError';
-            if (isAbort || abortRef.current) {
-              const abortOutcome: DelegationOutcome = {
-                agent: 'coder',
-                status: 'inconclusive',
-                summary: 'Coder cancelled by user.',
-                evidence: [],
-                checks: [],
-                gateVerdicts: [],
-                missingRequirements: [],
-                nextRequiredAction: null,
-                rounds: 0,
-                checkpoints: 0,
-                elapsedMs: Date.now() - coderStartMs,
-              };
-              toolExecResult = {
-                text: formatCompactDelegationToolResult({
-                  agent: 'coder',
-                  outcome: abortOutcome,
-                }),
-                card: buildDelegationResultCard({
-                  agent: 'coder',
-                  outcome: abortOutcome,
-                }),
-                delegationOutcome: abortOutcome,
-              };
-              appendRunEvent(chatId, {
-                type: 'subagent.completed',
-                executionId,
-                agent: 'coder',
-                summary: 'Cancelled by user.',
-                delegationOutcome: abortOutcome,
-              });
-            } else {
-              const msg = err instanceof Error ? err.message : String(err);
-              toolExecResult = { text: `[Tool Error] Coder failed: ${msg}` };
+            } catch {
+              updateVerificationStateForChat(chatId, (state) =>
+                recordVerificationGateResult(
+                  state,
+                  'auditor',
+                  'inconclusive',
+                  'Auditor evaluation failed.',
+                ),
+              );
               appendRunEvent(chatId, {
                 type: 'subagent.failed',
-                executionId,
-                agent: 'coder',
-                error: summarizeToolResultPreview(msg),
+                executionId: auditorExecutionId,
+                agent: 'auditor',
+                error: 'Evaluation failed.',
               });
+              // Fail-open: if evaluation fails, Coder result stands as-is
+            }
+
+            if (coderEvalResult) {
+              const evalLine = `\n[Evaluation: ${coderEvalResult.verdict.toUpperCase()}] ${coderEvalResult.summary}`;
+              const gapLines =
+                coderEvalResult.gaps.length > 0
+                  ? coderEvalResult.gaps.map((g) => `  - ${g}`).join('\n')
+                  : '';
+              summaries.push(evalLine + (gapLines ? `\n${gapLines}` : ''));
             }
           }
+
+          // --- Build structured DelegationOutcome for coder ---
+          const coderOutcome: DelegationOutcome = (() => {
+            let status: DelegationStatus;
+            if (coderEvalResult) {
+              status = coderEvalResult.verdict === 'complete' ? 'complete' : 'incomplete';
+            } else if (allCriteriaResults.length > 0) {
+              status = allCriteriaResults.every((r) => r.passed) ? 'complete' : 'incomplete';
+            } else {
+              status = 'inconclusive';
+            }
+
+            const evidence: DelegationEvidence[] = [];
+            if (lastTaskDiff) {
+              evidence.push({
+                kind: 'diff',
+                label: 'Workspace diff',
+                detail: summarizeToolResultPreview(lastTaskDiff),
+              });
+            }
+            for (const cr of allCriteriaResults) {
+              evidence.push({
+                kind: 'test',
+                label: cr.id,
+                detail: cr.output,
+              });
+            }
+
+            const checks: DelegationCheck[] = allCriteriaResults.map((cr) => ({
+              id: cr.id,
+              passed: cr.passed,
+              exitCode: cr.exitCode,
+              output: cr.output,
+            }));
+
+            const gateVerdicts: DelegationGateVerdict[] = [];
+            if (coderEvalResult) {
+              gateVerdicts.push({
+                gate: 'auditor',
+                outcome: coderEvalResult.verdict === 'complete' ? 'passed' : 'failed',
+                summary: coderEvalResult.summary,
+              });
+            }
+
+            const missingRequirements: string[] =
+              coderEvalResult?.gaps ??
+              allCriteriaResults.filter((cr) => !cr.passed).map((cr) => `Check failed: ${cr.id}`);
+
+            let nextRequiredAction: string | null = null;
+            if (status === 'incomplete') {
+              nextRequiredAction = coderEvalResult?.gaps.length
+                ? 'Address gaps identified by auditor'
+                : 'Fix failing checks';
+            }
+
+            return {
+              agent: 'coder' as const,
+              status,
+              summary: summaries.join('\n'),
+              evidence,
+              checks,
+              gateVerdicts,
+              missingRequirements,
+              nextRequiredAction,
+              rounds: totalRounds,
+              checkpoints: totalCheckpoints,
+              elapsedMs: Date.now() - coderStartMs,
+            };
+          })();
+
+          appendInlineDelegationCards(setConversations, chatId, allCards);
+
+          if (coderMemoryScope && latestDiffPaths && latestDiffPaths.length > 0) {
+            await runContextMemoryBestEffort('invalidating coder memory after file changes', () =>
+              invalidateMemoryForChangedFiles({
+                scope: {
+                  repoFullName: coderMemoryScope.repoFullName,
+                  branch: coderMemoryScope.branch,
+                  chatId: coderMemoryScope.chatId,
+                },
+                changedPaths: latestDiffPaths,
+                reason: 'Coder delegation updated file-backed context.',
+              }),
+            );
+          }
+
+          if (coderMemoryScope && coderOutcome.status !== 'inconclusive') {
+            await runContextMemoryBestEffort('persisting coder memory', () =>
+              writeCoderMemory({
+                scope: coderMemoryScope,
+                outcome: coderOutcome,
+                diffPaths: latestDiffPaths,
+                verificationCommandsById:
+                  verificationCommandsById.size > 0
+                    ? Object.fromEntries(verificationCommandsById)
+                    : undefined,
+              }),
+            );
+          }
+
+          toolExecResult = {
+            text: formatCompactDelegationToolResult({
+              agent: 'coder',
+              outcome: coderOutcome,
+              fileCount: latestDiffPaths?.length,
+            }),
+            card: buildDelegationResultCard({
+              agent: 'coder',
+              outcome: coderOutcome,
+              fileCount: latestDiffPaths?.length,
+            }),
+            delegationOutcome: coderOutcome,
+          };
+          appendRunEvent(chatId, {
+            type: 'subagent.completed',
+            executionId,
+            agent: 'coder',
+            summary: summarizeToolResultPreview(toolExecResult.text),
+            delegationOutcome: coderOutcome,
+          });
         }
       } else if (toolCall.call.tool === 'plan_tasks') {
         // --- Task Graph Execution ---
@@ -1640,13 +1290,13 @@ export function useAgentDelegation({
       agentsMdRef,
       appendRunEvent,
       branchInfoRef,
+      buildCoderContext,
       buildExplorerContext,
       emitRunEngineEvent,
       getVerificationPolicyForChat,
       instructionFilenameRef,
       isMainProtectedRef,
       lastCoderStateRef,
-      mergeAcceptanceCriteria,
       repoRef,
       sandboxIdRef,
       setConversations,
