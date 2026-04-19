@@ -1,9 +1,11 @@
 # useChat Refactor Plan
 
+> **Regression notice (2026-04-19):** This plan shipped "Complete" at 770 lines on 2026-03-25, but useChat.ts has since regrown to 1,733 lines (+125%) as features (harness runtime evolution, steerable runs, persisted queued followups, and more) accreted coordinator wiring directly in the hook. See `docs/decisions/useChat Regression Audit.md` for the diagnosis and a proposed 4-phase re-extraction track. The proximate cause identified in the audit was this plan's Phase 2 deferral marker — *"helpers exist but not yet applied inline — deferred"* — which left an optional landing spot that the next feature authors bypassed. The audit's discipline rule for the re-extraction: migration lands in the same PR as extraction, no "helpers exist but hook still does it directly" half-states.
+
 ## Status
 - Last updated: 2026-03-25
-- State: **Complete** — all four phases and quick wins done
-- Result: useChat.ts 2207 → 770 lines (65% reduction); zero TypeScript errors; build passes
+- State: ~~**Complete** — all four phases and quick wins done~~ **Regressed 2026-04-19.** See regression notice above.
+- Result: useChat.ts 2207 → 770 lines (65% reduction); zero TypeScript errors; build passes *at time of completion; regrown to 1,733 lines by 2026-04-19.*
 - Goal: Reduce useChat.ts from 2206 lines to a true orchestrator, surface stable seams for future work
 
 ## Baseline

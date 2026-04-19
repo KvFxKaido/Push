@@ -1,9 +1,34 @@
 # useAgentDelegation Coupling Reconnaissance
 
-**Date:** 2026-04-18  
-**Status:** Recon complete, no extractions performed  
-**Target:** `app/src/hooks/useAgentDelegation.ts` (1,883 lines)  
-**Next:** Extraction order planning for Step 5 of Architecture Remediation Plan
+**Date:** 2026-04-18
+**Status:** ✅ Track complete 2026-04-19. All 5 phases shipped, hook reduced 1,883 → 490 lines (−74%).
+**Target:** ~~`app/src/hooks/useAgentDelegation.ts` (1,883 lines)~~ → 490 lines post-extraction
+**Next:** ~~Extraction order planning for Step 5 of Architecture Remediation Plan~~ — see shipping record below.
+
+## Shipping record
+
+| Phase | PR | Module | Merged |
+|---|---|---|---|
+| 1 | (in-session commit) | `lib/memory-context-helpers.ts` | 2026-04-18 baseline |
+| 2 | [#336](https://github.com/KvFxKaido/Push/pull/336) | `lib/explorer-delegation-handler.ts` (309 lines) | 2026-04-18 |
+| 3 | [#337](https://github.com/KvFxKaido/Push/pull/337) | `lib/coder-delegation-handler.ts` (691 lines) | 2026-04-18 |
+| 4 | [#338](https://github.com/KvFxKaido/Push/pull/338) | `lib/auditor-delegation-handler.ts` (300 lines) | 2026-04-19 |
+| 5 | [#339](https://github.com/KvFxKaido/Push/pull/339) | `lib/task-graph-delegation-handler.ts` (760 lines) | 2026-04-19 |
+
+The four recommended extraction phases (2–5) all followed the three-piece commit structure (characterization tests → extraction → docs/cleanup) and the `*HandlerContext` + `build*Context` pattern proven five times on `sandbox-tools.ts`. Phase 5's design spike resolved the recon's §Open Questions #1 (`lastCoderStateRef` accumulation strategy) with Option A — preserve the single/multi-coder-node `evalWorkingMemory` policy byte-for-byte; see `Phase 5 Handoff - Task-Graph Extraction.md` §"Option A/B decision — resolved" for the rationale and the follow-up issue for Option B.
+
+Cross-cutting outcomes:
+
+- Hook dependency array shrank 19 → 7 (executeDelegateCall's useCallback deps track build* helpers, not individual refs/callbacks).
+- All 25 characterization tests in `useAgentDelegation.test.ts` pass at HEAD; none were modified post-extraction.
+- None of the coupling hazards enumerated in §Coupling Hazards 1–5 below escaped the tests — the `lastCoderStateRef` ref-write-then-read pattern, the auditor fail-open path, and the graph-node state aggregation all survived extraction. Hazard #3 (TG Auditor per-node state) remains deliberately lossy-but-correct via Option A and is pinned by Test 4 in the characterization suite.
+
+The original recon content below this divider is preserved unchanged for future readers who need the coupling analysis or want to check whether the recommendations in §"Recommended Extraction Order" matched what shipped (they did, in order, with the Phase 3 Planner sub-seam bundled into the Coder handler as recon predicted).
+
+---
+
+**Original recon content below — preserved for archival reference.**
+
 
 ## Why This Exists
 
