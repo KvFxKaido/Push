@@ -764,6 +764,16 @@ function withOwnerToken(
   return { ...body, owner_token: token };
 }
 
+function withSnapshotIndexContext(
+  body: Record<string, unknown>,
+  context: { repoFullName?: string | null; branch?: string | null },
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...body };
+  if (context.repoFullName) out.repo_full_name = context.repoFullName;
+  if (context.branch) out.branch = context.branch;
+  return out;
+}
+
 // --- Retry configuration ---
 
 const MAX_RETRIES = 4;
@@ -1661,13 +1671,26 @@ export interface HibernateResult {
   error?: string;
 }
 
-export async function hibernateSandbox(sandboxId: string): Promise<HibernateResult> {
+/** Optional context for the server-side snapshot index keyed by `(repo, branch)`. */
+export interface SnapshotIndexContext {
+  repoFullName?: string | null;
+  branch?: string | null;
+}
+
+export async function hibernateSandbox(
+  sandboxId: string,
+  context: SnapshotIndexContext = {},
+): Promise<HibernateResult> {
   const raw = await sandboxFetch<{
     ok: boolean;
     snapshot_id?: string;
     restore_token?: string;
     error?: string;
-  }>('hibernate', withOwnerToken({ sandbox_id: sandboxId }, sandboxId), HIBERNATE_TIMEOUT_MS);
+  }>(
+    'hibernate',
+    withSnapshotIndexContext(withOwnerToken({ sandbox_id: sandboxId }, sandboxId), context),
+    HIBERNATE_TIMEOUT_MS,
+  );
 
   if (raw.ok && raw.snapshot_id) {
     recordSandboxLifecycleEvent(sandboxId, `Workspace hibernated (snapshot: ${raw.snapshot_id})`);
@@ -1689,6 +1712,7 @@ export async function hibernateSandbox(sandboxId: string): Promise<HibernateResu
 export async function restoreFromSnapshot(
   snapshotId: string,
   restoreToken: string,
+  context: SnapshotIndexContext = {},
 ): Promise<SandboxSession> {
   const raw = await sandboxFetch<{
     ok: boolean;
@@ -1699,7 +1723,7 @@ export async function restoreFromSnapshot(
     error?: string;
   }>(
     'restore-snapshot',
-    { snapshot_id: snapshotId, restore_token: restoreToken },
+    withSnapshotIndexContext({ snapshot_id: snapshotId, restore_token: restoreToken }, context),
     RESTORE_SNAPSHOT_TIMEOUT_MS,
   );
 

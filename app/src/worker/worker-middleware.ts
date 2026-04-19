@@ -5,7 +5,7 @@
  * only what they need without pulling in the entire monolith.
  */
 
-import type { Fetcher, RateLimit } from '@cloudflare/workers-types';
+import type { Fetcher, KVNamespace, RateLimit } from '@cloudflare/workers-types';
 import {
   normalizeExperimentalBaseUrl,
   type ExperimentalProviderType,
@@ -36,6 +36,10 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;
   RATE_LIMITER: RateLimit;
+  // Snapshot index — see docs/decisions/Modal Sandbox Snapshots Design.md §6.
+  // Optional because local dev or test envs may not bind the namespace; callers
+  // must degrade gracefully when it's absent.
+  SNAPSHOT_INDEX?: KVNamespace;
   // GitHub App credentials
   GITHUB_APP_ID?: string;
   GITHUB_APP_PRIVATE_KEY?: string;

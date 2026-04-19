@@ -5,8 +5,11 @@ import {
   handleGitHubAppOAuth,
   handleGitHubAppToken,
   handleHealthCheck,
+  handleSandbox,
 } from './worker-infra';
 import type { Env } from './worker-middleware';
+import { getSnapshot } from './snapshot-index';
+import type { ExecutionContext, KVNamespace } from '@cloudflare/workers-types';
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -165,6 +168,124 @@ describe('handleHealthCheck', () => {
   it('sets Cache-Control: no-store to prevent stale health probes', async () => {
     const response = await handleHealthCheck(makeEnv());
     expect(response.headers.get('Cache-Control')).toBe('no-store');
+  });
+});
+
+// ===========================================================================
+// handleSandbox — snapshot index integration
+// ===========================================================================
+
+describe('handleSandbox snapshot index integration', () => {
+  function createFakeKv(): KVNamespace {
+    const store = new Map<string, { value: string; metadata?: unknown }>();
+    return {
+      async get(key: string) {
+        return store.get(key)?.value ?? null;
+      },
+      async getWithMetadata(key: string) {
+        const entry = store.get(key);
+        if (!entry) return { value: null, metadata: null };
+        return { value: entry.value, metadata: entry.metadata ?? null };
+      },
+      async put(key: string, value: string, options?: { metadata?: unknown }) {
+        store.set(key, { value, metadata: options?.metadata });
+      },
+      async delete(key: string) {
+        store.delete(key);
+      },
+      async list() {
+        return {
+          keys: Array.from(store.entries()).map(([name, entry]) => ({
+            name,
+            metadata: entry.metadata,
+          })),
+          list_complete: true,
+          cursor: '',
+        };
+      },
+    } as unknown as KVNamespace;
+  }
+
+  /**
+   * Flushes microtasks so ctx.waitUntil tasks queued during handleSandbox
+   * have a chance to run before assertions. In production the KV write
+   * happens after the response is sent; tests have to await it explicitly.
+   */
+  function createFakeCtx(): {
+    ctx: ExecutionContext;
+    drain: () => Promise<void>;
+  } {
+    const pending: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil(p: Promise<unknown>) {
+        pending.push(p);
+      },
+      passThroughOnException() {},
+    } as unknown as ExecutionContext;
+    return {
+      ctx,
+      drain: async () => {
+        await Promise.all(pending);
+      },
+    };
+  }
+
+  it('writes the snapshot index after a successful hibernate (via ctx.waitUntil)', async () => {
+    const kv = createFakeKv();
+    const env = makeEnv({
+      MODAL_SANDBOX_BASE_URL: 'https://org--push-app.modal.run',
+      SNAPSHOT_INDEX: kv,
+    });
+    vi.stubGlobal(
+      'fetch',
+      sequentialFetch([
+        () =>
+          jsonResponse({
+            ok: true,
+            snapshot_id: 'im-xyz',
+            restore_token: 'tok-xyz',
+          }),
+      ]),
+    );
+
+    const request = makeRequest('https://push.example.test/api/sandbox/hibernate', {
+      body: JSON.stringify({
+        sandbox_id: 'sb-1',
+        owner_token: 'ot',
+        repo_full_name: 'owner/repo',
+        branch: 'main',
+      }),
+    });
+    const { ctx, drain } = createFakeCtx();
+    const response = await handleSandbox(request, env, new URL(request.url), 'hibernate', ctx);
+
+    expect(response.status).toBe(200);
+    await drain();
+    const entry = await getSnapshot(kv, 'owner/repo', 'main');
+    expect(entry?.imageId).toBe('im-xyz');
+    expect(entry?.restoreToken).toBe('tok-xyz');
+  });
+
+  it('still returns 200 when the SNAPSHOT_INDEX binding is absent', async () => {
+    const env = makeEnv({ MODAL_SANDBOX_BASE_URL: 'https://org--push-app.modal.run' });
+    vi.stubGlobal(
+      'fetch',
+      sequentialFetch([
+        () => jsonResponse({ ok: true, snapshot_id: 'im-1', restore_token: 'tok' }),
+      ]),
+    );
+
+    const request = makeRequest('https://push.example.test/api/sandbox/hibernate', {
+      body: JSON.stringify({
+        sandbox_id: 'sb-1',
+        owner_token: 'ot',
+        repo_full_name: 'owner/repo',
+        branch: 'main',
+      }),
+    });
+    const { ctx } = createFakeCtx();
+    const response = await handleSandbox(request, env, new URL(request.url), 'hibernate', ctx);
+    expect(response.status).toBe(200);
   });
 });
 
