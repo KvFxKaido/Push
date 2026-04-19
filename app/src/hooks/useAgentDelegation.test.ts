@@ -880,3 +880,296 @@ describe('useAgentDelegation.executeDelegateCall — Planner sub-seam', () => {
     expect(coderOptions).toMatchObject({ plannerBrief: undefined });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Sequential Auditor characterization — pre-requisite for Phase 4 of the
+// useAgentDelegation extraction track (recon doc: §"Recommended Extraction
+// Order — Phase 4: Sequential Auditor Handler").
+//
+// The Auditor fires after the Coder arc completes, gated by
+// harnessSettings.evaluateAfterCoder && summaries.length > 0. Currently only
+// the happy path (verdict == 'complete') is covered by the earlier "pins the
+// auditor subagent.completed event" test. These four tests pin the three
+// uncovered failure/variant paths plus the evalWorkingMemory policy so the
+// Phase 4 extraction cannot silently drop any of them.
+// ---------------------------------------------------------------------------
+
+describe('useAgentDelegation.executeDelegateCall — Sequential Auditor', () => {
+  it('emits subagent.failed and inconclusive gate when runAuditorEvaluation returns null', async () => {
+    coderAgent.runCoderAgent.mockResolvedValueOnce({
+      rounds: 1,
+      checkpoints: 0,
+      cards: [],
+      summary: 'ran the task',
+      criteriaResults: [{ id: 't1', passed: true, exitCode: 0, output: '' }],
+    });
+    modelCapabilities.resolveHarnessSettings.mockReturnValueOnce({
+      evaluateAfterCoder: true,
+      maxCoderRounds: 30,
+    });
+    auditorAgent.runAuditorEvaluation.mockResolvedValueOnce(null);
+
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    const fakeVerificationState = {};
+    params.updateVerificationStateForChat = vi.fn(
+      (_chatId: string, transformer: (state: unknown) => unknown) => {
+        transformer(fakeVerificationState);
+      },
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'implement it' } },
+    };
+
+    const result = await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        type: 'subagent.failed',
+        agent: 'auditor',
+        error: 'Auditor returned no evaluation.',
+      }),
+    );
+    expect(verificationRuntime.recordVerificationGateResult).toHaveBeenCalledWith(
+      fakeVerificationState,
+      'auditor',
+      'inconclusive',
+      'Auditor evaluation returned no result.',
+    );
+    // Outcome status falls through to criteria-derived (all passed → complete),
+    // NOT the null evaluation.
+    expect(result.delegationOutcome).toMatchObject({
+      agent: 'coder',
+      status: 'complete',
+    });
+    // gateVerdicts must NOT contain an auditor verdict when eval returned null
+    // — extraction could accidentally push one anyway.
+    expect(result.delegationOutcome?.gateVerdicts).toEqual([]);
+  });
+
+  it('fails open when runAuditorEvaluation throws — Coder result stands', async () => {
+    coderAgent.runCoderAgent.mockResolvedValueOnce({
+      rounds: 2,
+      checkpoints: 0,
+      cards: [],
+      summary: 'done',
+      criteriaResults: [],
+    });
+    modelCapabilities.resolveHarnessSettings.mockReturnValueOnce({
+      evaluateAfterCoder: true,
+      maxCoderRounds: 30,
+    });
+    auditorAgent.runAuditorEvaluation.mockRejectedValueOnce(new Error('openai 503'));
+
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    const fakeVerificationState = {};
+    params.updateVerificationStateForChat = vi.fn(
+      (_chatId: string, transformer: (state: unknown) => unknown) => {
+        transformer(fakeVerificationState);
+      },
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'implement it' } },
+    };
+
+    const result = await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        type: 'subagent.failed',
+        agent: 'auditor',
+        error: 'Evaluation failed.',
+      }),
+    );
+    expect(verificationRuntime.recordVerificationGateResult).toHaveBeenCalledWith(
+      fakeVerificationState,
+      'auditor',
+      'inconclusive',
+      'Auditor evaluation failed.',
+    );
+    // Fail-open invariant: the auditor throw must NOT propagate to a Coder
+    // Tool Error. The Coder outcome stands.
+    expect(result.text).not.toContain('[Tool Error]');
+    expect(result.delegationOutcome).toMatchObject({ agent: 'coder' });
+  });
+
+  it('folds incomplete verdict with gaps into the final DelegationOutcome', async () => {
+    coderAgent.runCoderAgent.mockResolvedValueOnce({
+      rounds: 1,
+      checkpoints: 0,
+      cards: [],
+      summary: 'implemented login handler',
+      criteriaResults: [{ id: 't1', passed: true, exitCode: 0, output: '' }],
+    });
+    modelCapabilities.resolveHarnessSettings.mockReturnValueOnce({
+      evaluateAfterCoder: true,
+      maxCoderRounds: 30,
+    });
+    auditorAgent.runAuditorEvaluation.mockResolvedValueOnce({
+      verdict: 'incomplete',
+      summary: 'login endpoint returns 200 but swallows errors',
+      gaps: ['log at error level', 'return 5xx on db failure'],
+    });
+
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    const fakeVerificationState = {};
+    params.updateVerificationStateForChat = vi.fn(
+      (_chatId: string, transformer: (state: unknown) => unknown) => {
+        transformer(fakeVerificationState);
+      },
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'add login handler' } },
+    };
+
+    const result = await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    // Verdict wins over criteria: criteria passed, but auditor said incomplete.
+    expect(result.delegationOutcome).toMatchObject({
+      agent: 'coder',
+      status: 'incomplete',
+      missingRequirements: ['log at error level', 'return 5xx on db failure'],
+      nextRequiredAction: 'Address gaps identified by auditor',
+    });
+    expect(result.delegationOutcome?.gateVerdicts).toEqual([
+      {
+        gate: 'auditor',
+        outcome: 'failed',
+        summary: 'login endpoint returns 200 but swallows errors',
+      },
+    ]);
+    expect(verificationRuntime.recordVerificationGateResult).toHaveBeenCalledWith(
+      fakeVerificationState,
+      'auditor',
+      'failed',
+      'login endpoint returns 200 but swallows errors',
+    );
+  });
+
+  it('passes lastCoderStateRef.current as evalWorkingMemory on single-task, null on multi-task', async () => {
+    // runCoderAgent is positional; index 8 is the onStateUpdate callback.
+    // Invoke it from the mock so lastCoderStateRef.current gets populated
+    // before the auditor reads it — otherwise single-task and multi-task
+    // would both appear null and the policy would be invisible.
+    const populateState = async (args: unknown[]) => {
+      const onStateUpdate = args[8] as (state: unknown) => void;
+      onStateUpdate({ working: 'memory-single' });
+      return {
+        rounds: 1,
+        checkpoints: 0,
+        cards: [],
+        summary: 'done',
+        criteriaResults: [],
+      };
+    };
+
+    // --- Single-task scenario ---
+    coderAgent.runCoderAgent.mockImplementationOnce((...args: unknown[]) => populateState(args));
+    modelCapabilities.resolveHarnessSettings.mockReturnValueOnce({
+      evaluateAfterCoder: true,
+      maxCoderRounds: 30,
+    });
+    auditorAgent.runAuditorEvaluation.mockResolvedValueOnce({
+      verdict: 'complete',
+      summary: 'ok',
+      gaps: [],
+    });
+
+    const paramsSingle = makeParams();
+    paramsSingle.sandboxIdRef.current = 'sbx-1';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const singleHook = useAgentDelegation(paramsSingle as any);
+    const singleToolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'single task' } },
+    };
+    await singleHook.executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      singleToolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    // Single-task: evalWorkingMemory (3rd positional arg, index 2) should
+    // be the last-reported coder state, not null.
+    expect(auditorAgent.runAuditorEvaluation.mock.calls[0][2]).toEqual({
+      working: 'memory-single',
+    });
+
+    // --- Multi-task scenario ---
+    // Reset runCoderAgent to fire the callback for both task invocations;
+    // reset auditor so the next assertion sees a clean mock.calls[0].
+    auditorAgent.runAuditorEvaluation.mockReset();
+    coderAgent.runCoderAgent.mockReset();
+    coderAgent.runCoderAgent.mockImplementation((...args: unknown[]) => populateState(args));
+    modelCapabilities.resolveHarnessSettings.mockReturnValueOnce({
+      evaluateAfterCoder: true,
+      maxCoderRounds: 30,
+    });
+    auditorAgent.runAuditorEvaluation.mockResolvedValueOnce({
+      verdict: 'complete',
+      summary: 'ok',
+      gaps: [],
+    });
+
+    const paramsMulti = makeParams();
+    paramsMulti.sandboxIdRef.current = 'sbx-2';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const multiHook = useAgentDelegation(paramsMulti as any);
+    const multiToolCall = {
+      source: 'delegate' as const,
+      call: {
+        tool: 'delegate_coder' as const,
+        args: { tasks: ['task A', 'task B'] },
+      },
+    };
+    await multiHook.executeDelegateCall(
+      'chat-2',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      multiToolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    // Multi-task: evalWorkingMemory must be null to avoid misleading the
+    // evaluator. This is policy — the extraction must preserve it.
+    expect(auditorAgent.runAuditorEvaluation.mock.calls[0][2]).toBeNull();
+  });
+});
