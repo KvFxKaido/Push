@@ -141,7 +141,7 @@ beforeEach(() => {
   explorerAgent.runExplorerAgent.mockReset();
   coderAgent.runCoderAgent.mockReset();
   plannerAgent.runPlanner.mockReset();
-  plannerAgent.formatPlannerBrief.mockClear();
+  plannerAgent.formatPlannerBrief.mockReset();
   auditorAgent.runAuditorEvaluation.mockReset();
   taskGraph.validateTaskGraph.mockReset().mockReturnValue({ valid: true, errors: [] });
   taskGraph.executeTaskGraph.mockReset();
