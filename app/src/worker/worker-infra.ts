@@ -8,6 +8,7 @@ import {
   RESTORE_MAX_BODY_SIZE_BYTES,
 } from './worker-middleware';
 import { SANDBOX_ROUTES, resolveModalSandboxBase } from '../lib/sandbox-routes';
+import { recordSnapshotEvent } from './snapshot-index';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
 import {
   createSpanContext,
@@ -209,6 +210,26 @@ export async function handleSandbox(
       }
 
       const data: unknown = await upstream.json();
+
+      // Update the snapshot index — best-effort, never fails the request.
+      // See docs/decisions/Modal Sandbox Snapshots Design.md §6.
+      if (route === 'hibernate' || route === 'restore-snapshot') {
+        try {
+          const status = await recordSnapshotEvent(
+            env.SNAPSHOT_INDEX,
+            route,
+            bodyResult.text,
+            data,
+          );
+          wlog('info', 'snapshot_index_event', { requestId, route, status });
+        } catch (kvErr) {
+          wlog('warn', 'snapshot_index_error', {
+            requestId,
+            route,
+            message: kvErr instanceof Error ? kvErr.message : String(kvErr),
+          });
+        }
+      }
 
       // Log completed sandbox span
       const sandboxSpan: WorkerSpan = {

@@ -170,7 +170,10 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       console.log(`[useSandbox] Attempting restore from snapshot ${saved.snapshotId}`);
       setStatus('reconnecting');
       try {
-        const session = await restoreFromSnapshot(saved.snapshotId, saved.restoreToken);
+        const session = await restoreFromSnapshot(saved.snapshotId, saved.restoreToken, {
+          repoFullName: saved.repoFullName,
+          branch: saved.branch,
+        });
         if (cancelled || session.status !== 'ready') return null;
         setSandboxId(session.sandboxId);
         sandboxIdRef.current = session.sandboxId;
@@ -285,7 +288,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       // Capture the owner token BEFORE hibernate clears it.
       const ownerToken = getSandboxOwnerToken(id) || '';
 
-      hibernateSandbox(id)
+      hibernateSandbox(id, { repoFullName: activeRepoFullName, branch: activeBranch })
         .then((result) => {
           if (!result.ok || !result.snapshotId) {
             console.debug('[useSandbox] Idle hibernate failed:', result.error);
@@ -488,7 +491,10 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
 
     const ownerToken = getSandboxOwnerToken(id) || '';
     try {
-      const result = await hibernateSandbox(id);
+      const result = await hibernateSandbox(id, {
+        repoFullName: activeRepoFullName,
+        branch: activeBranch,
+      });
       if (!result.ok || !result.snapshotId) {
         console.debug('[useSandbox] Manual hibernate failed:', result.error);
         return false;

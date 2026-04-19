@@ -30,5 +30,10 @@
       "binding": "SNAPSHOT_INDEX",
       "id": "6c446991cc304964a421db73c189d8a8"
     }
-  ]
+  ],
+  // Daily snapshot index walk — emits aggregate metrics so we can size the
+  // per-user LRU eviction policy once user identity lands in the keys.
+  "triggers": {
+    "crons": ["0 3 * * *"]
+  }
 }

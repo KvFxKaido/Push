@@ -129,6 +129,105 @@ export async function listSnapshots(kv: KVNamespace): Promise<SnapshotIndexEntry
   return entries;
 }
 
+/**
+ * Best-effort recording of a hibernate/restore round-trip into the index.
+ *
+ * Called from the sandbox proxy after Modal returns success. Reads
+ * `repo_full_name`/`branch` from the original request body and the snapshot
+ * fields from the Modal response. Skips silently if the binding is absent or
+ * the required fields are missing — the proxy's contract with the client is
+ * unchanged either way; the index is purely advisory.
+ *
+ * Returns a short status string for log correlation.
+ */
+export async function recordSnapshotEvent(
+  kv: KVNamespace | undefined,
+  route: 'hibernate' | 'restore-snapshot',
+  requestBody: string,
+  modalResponse: unknown,
+): Promise<'skipped_no_binding' | 'skipped_missing_context' | 'wrote' | 'touched' | 'noop'> {
+  if (!kv) return 'skipped_no_binding';
+
+  const ctx = parseRepoContext(requestBody);
+  if (!ctx) return 'skipped_missing_context';
+
+  if (route === 'hibernate') {
+    const fields = parseHibernateResponse(modalResponse);
+    if (!fields) return 'noop';
+    await putSnapshot(kv, {
+      repoFullName: ctx.repoFullName,
+      branch: ctx.branch,
+      imageId: fields.snapshotId,
+      restoreToken: fields.restoreToken,
+    });
+    return 'wrote';
+  }
+
+  // restore-snapshot — refresh the access timestamp + TTL for LRU bookkeeping.
+  const touched = await touchSnapshot(kv, ctx.repoFullName, ctx.branch);
+  return touched ? 'touched' : 'noop';
+}
+
+function parseRepoContext(requestBody: string): { repoFullName: string; branch: string } | null {
+  try {
+    const parsed = JSON.parse(requestBody) as Record<string, unknown>;
+    const repoFullName = parsed.repo_full_name;
+    const branch = parsed.branch;
+    if (typeof repoFullName !== 'string' || !repoFullName) return null;
+    if (typeof branch !== 'string' || !branch) return null;
+    return { repoFullName, branch };
+  } catch {
+    return null;
+  }
+}
+
+function parseHibernateResponse(
+  response: unknown,
+): { snapshotId: string; restoreToken: string } | null {
+  if (!response || typeof response !== 'object') return null;
+  const r = response as Record<string, unknown>;
+  if (r.ok !== true) return null;
+  const snapshotId = r.snapshot_id;
+  const restoreToken = r.restore_token;
+  if (typeof snapshotId !== 'string' || !snapshotId) return null;
+  if (typeof restoreToken !== 'string' || !restoreToken) return null;
+  return { snapshotId, restoreToken };
+}
+
+export interface SnapshotIndexMetrics {
+  total: number;
+  totalSizeBytes: number;
+  oldestAccessedAt: number | null;
+  newestAccessedAt: number | null;
+}
+
+/**
+ * Walk the index and emit aggregate metrics. Intended for the daily cron.
+ *
+ * Real per-user LRU eviction (design §6: "Per-user cap: 10 active snapshots")
+ * is deferred until the index keys carry user identity. KV's `expirationTtl`
+ * already enforces the 7-day TTL for free, so today the cron's job is purely
+ * observability — it gives us a feed of index size + age distribution that
+ * the eviction policy can be tuned against once user identity lands.
+ */
+export async function summarizeSnapshotIndex(kv: KVNamespace): Promise<SnapshotIndexMetrics> {
+  const entries = await listSnapshots(kv);
+  let totalSizeBytes = 0;
+  let oldest: number | null = null;
+  let newest: number | null = null;
+  for (const entry of entries) {
+    totalSizeBytes += entry.sizeBytes ?? 0;
+    if (oldest === null || entry.lastAccessedAt < oldest) oldest = entry.lastAccessedAt;
+    if (newest === null || entry.lastAccessedAt > newest) newest = entry.lastAccessedAt;
+  }
+  return {
+    total: entries.length,
+    totalSizeBytes,
+    oldestAccessedAt: oldest,
+    newestAccessedAt: newest,
+  };
+}
+
 function parseEntry(raw: string): SnapshotIndexEntry | null {
   try {
     const parsed = JSON.parse(raw) as Partial<SnapshotIndexEntry>;

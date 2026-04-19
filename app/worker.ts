@@ -10,6 +10,7 @@
  *   src/worker/worker-infra.ts      — sandbox proxy, health check, GitHub App
  */
 
+import type { ExecutionContext, ScheduledEvent } from '@cloudflare/workers-types';
 import type { Env } from './src/worker/worker-middleware';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from './src/lib/request-id';
 
@@ -49,6 +50,7 @@ import {
 } from './src/worker/worker-infra';
 import { handleGitHubTools } from './src/worker/worker-github-tools';
 import { sanitizeUrlForLogging } from './src/worker/worker-log-utils';
+import { summarizeSnapshotIndex } from './src/worker/snapshot-index';
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -83,6 +85,52 @@ export default {
     } catch (err) {
       return handleUncaughtFetchError(err, request, requestId);
     }
+  },
+
+  /**
+   * Daily cron — walk the snapshot index and emit metrics.
+   *
+   * Triggered by the `triggers.crons` schedule in wrangler.jsonc. KV's TTL
+   * already evicts entries older than 7 days; this handler just observes
+   * what's left so we can tune per-user caps once user identity lands in
+   * the index keys (Modal Sandbox Snapshots Design §6).
+   */
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (!env.SNAPSHOT_INDEX) {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'snapshot_index_cron_skipped',
+          reason: 'no_binding',
+          cron: event.cron,
+        }),
+      );
+      return;
+    }
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const metrics = await summarizeSnapshotIndex(env.SNAPSHOT_INDEX!);
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'snapshot_index_cron',
+              cron: event.cron,
+              ...metrics,
+            }),
+          );
+        } catch (err) {
+          console.error(
+            JSON.stringify({
+              level: 'error',
+              event: 'snapshot_index_cron_error',
+              cron: event.cron,
+              message: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        }
+      })(),
+    );
   },
 };
 

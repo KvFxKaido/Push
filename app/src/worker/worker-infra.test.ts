@@ -5,8 +5,11 @@ import {
   handleGitHubAppOAuth,
   handleGitHubAppToken,
   handleHealthCheck,
+  handleSandbox,
 } from './worker-infra';
 import type { Env } from './worker-middleware';
+import { getSnapshot } from './snapshot-index';
+import type { KVNamespace } from '@cloudflare/workers-types';
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -165,6 +168,89 @@ describe('handleHealthCheck', () => {
   it('sets Cache-Control: no-store to prevent stale health probes', async () => {
     const response = await handleHealthCheck(makeEnv());
     expect(response.headers.get('Cache-Control')).toBe('no-store');
+  });
+});
+
+// ===========================================================================
+// handleSandbox — snapshot index integration
+// ===========================================================================
+
+describe('handleSandbox snapshot index integration', () => {
+  function createFakeKv(): KVNamespace {
+    const store = new Map<string, string>();
+    return {
+      async get(key: string) {
+        return store.get(key) ?? null;
+      },
+      async put(key: string, value: string) {
+        store.set(key, value);
+      },
+      async delete(key: string) {
+        store.delete(key);
+      },
+      async list() {
+        return {
+          keys: Array.from(store.keys()).map((name) => ({ name })),
+          list_complete: true,
+          cursor: '',
+        };
+      },
+    } as unknown as KVNamespace;
+  }
+
+  it('writes the snapshot index after a successful hibernate', async () => {
+    const kv = createFakeKv();
+    const env = makeEnv({
+      MODAL_SANDBOX_BASE_URL: 'https://org--push-app.modal.run',
+      SNAPSHOT_INDEX: kv,
+    });
+    vi.stubGlobal(
+      'fetch',
+      sequentialFetch([
+        () =>
+          jsonResponse({
+            ok: true,
+            snapshot_id: 'im-xyz',
+            restore_token: 'tok-xyz',
+          }),
+      ]),
+    );
+
+    const request = makeRequest('https://push.example.test/api/sandbox/hibernate', {
+      body: JSON.stringify({
+        sandbox_id: 'sb-1',
+        owner_token: 'ot',
+        repo_full_name: 'owner/repo',
+        branch: 'main',
+      }),
+    });
+    const response = await handleSandbox(request, env, new URL(request.url), 'hibernate');
+
+    expect(response.status).toBe(200);
+    const entry = await getSnapshot(kv, 'owner/repo', 'main');
+    expect(entry?.imageId).toBe('im-xyz');
+    expect(entry?.restoreToken).toBe('tok-xyz');
+  });
+
+  it('still returns 200 when the SNAPSHOT_INDEX binding is absent', async () => {
+    const env = makeEnv({ MODAL_SANDBOX_BASE_URL: 'https://org--push-app.modal.run' });
+    vi.stubGlobal(
+      'fetch',
+      sequentialFetch([
+        () => jsonResponse({ ok: true, snapshot_id: 'im-1', restore_token: 'tok' }),
+      ]),
+    );
+
+    const request = makeRequest('https://push.example.test/api/sandbox/hibernate', {
+      body: JSON.stringify({
+        sandbox_id: 'sb-1',
+        owner_token: 'ot',
+        repo_full_name: 'owner/repo',
+        branch: 'main',
+      }),
+    });
+    const response = await handleSandbox(request, env, new URL(request.url), 'hibernate');
+    expect(response.status).toBe(200);
   });
 });
 
