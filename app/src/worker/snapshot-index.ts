@@ -8,6 +8,11 @@
  *
  * Key shape: `snapshot:<repoFullName>:<branch>` (URL-encoded segments).
  *
+ * Storage: the entry lives entirely in the KV `metadata` field (the value is
+ * empty). This keeps `list()` to a single round-trip — no per-key GETs needed
+ * to drive the cron or admin tooling. KV caps metadata at 1024 bytes per key,
+ * which is well above our entry size (~250 bytes).
+ *
  * Per-user keying is deferred until the worker has a stable per-user identity
  * to attach (today's owner token is per-sandbox, not per-user). When that
  * lands, extend the key to `snapshot:<userKey>:<repoFullName>:<branch>` and
@@ -62,7 +67,8 @@ export async function putSnapshot(
     sizeBytes: input.sizeBytes,
   };
   const ttl = input.ttlSeconds ?? DEFAULT_TTL_SECONDS;
-  await kv.put(buildSnapshotKey(input.repoFullName, input.branch), JSON.stringify(entry), {
+  await kv.put(buildSnapshotKey(input.repoFullName, input.branch), '', {
+    metadata: entry,
     expirationTtl: ttl,
   });
   return entry;
@@ -73,9 +79,11 @@ export async function getSnapshot(
   repoFullName: string,
   branch: string,
 ): Promise<SnapshotIndexEntry | null> {
-  const raw = await kv.get(buildSnapshotKey(repoFullName, branch));
-  if (!raw) return null;
-  return parseEntry(raw);
+  const result = await kv.getWithMetadata<SnapshotIndexEntry>(
+    buildSnapshotKey(repoFullName, branch),
+    { type: 'text' },
+  );
+  return validateEntry(result.metadata);
 }
 
 /**
@@ -93,7 +101,8 @@ export async function touchSnapshot(
   const existing = await getSnapshot(kv, repoFullName, branch);
   if (!existing) return null;
   const updated: SnapshotIndexEntry = { ...existing, lastAccessedAt: now };
-  await kv.put(buildSnapshotKey(repoFullName, branch), JSON.stringify(updated), {
+  await kv.put(buildSnapshotKey(repoFullName, branch), '', {
+    metadata: updated,
     expirationTtl: ttlSeconds,
   });
   return updated;
@@ -108,18 +117,20 @@ export async function deleteSnapshot(
 }
 
 /**
- * List all snapshot index entries. Walks the KV `list()` cursor to completion;
- * intended for the daily eviction cron and admin tooling, not hot paths.
+ * List all snapshot index entries. Metadata travels with the list page, so
+ * this walks the cursor to completion without a per-key GET. Intended for the
+ * daily eviction cron and admin tooling; not the hot path.
  */
 export async function listSnapshots(kv: KVNamespace): Promise<SnapshotIndexEntry[]> {
   const entries: SnapshotIndexEntry[] = [];
   let cursor: string | undefined;
   while (true) {
-    const page: KVNamespaceListResult<unknown> = await kv.list({ prefix: KEY_PREFIX, cursor });
+    const page: KVNamespaceListResult<SnapshotIndexEntry> = await kv.list<SnapshotIndexEntry>({
+      prefix: KEY_PREFIX,
+      cursor,
+    });
     for (const key of page.keys) {
-      const raw = await kv.get(key.name);
-      if (!raw) continue;
-      const entry = parseEntry(raw);
+      const entry = validateEntry(key.metadata);
       if (entry) entries.push(entry);
     }
     if (page.list_complete) break;
@@ -163,7 +174,11 @@ export async function recordSnapshotEvent(
     return 'wrote';
   }
 
-  // restore-snapshot — refresh the access timestamp + TTL for LRU bookkeeping.
+  // restore-snapshot — only refresh TTL/lastAccessedAt on a Modal-reported
+  // success. Modal returns HTTP 200 for `{ ok: false, error: ... }` (e.g.
+  // invalid restore token), so gating on HTTP status alone would keep failed
+  // entries alive and skew the eviction metrics.
+  if (!isOkResponse(modalResponse)) return 'noop';
   const touched = await touchSnapshot(kv, ctx.repoFullName, ctx.branch);
   return touched ? 'touched' : 'noop';
 }
@@ -184,14 +199,18 @@ function parseRepoContext(requestBody: string): { repoFullName: string; branch: 
 function parseHibernateResponse(
   response: unknown,
 ): { snapshotId: string; restoreToken: string } | null {
-  if (!response || typeof response !== 'object') return null;
+  if (!isOkResponse(response)) return null;
   const r = response as Record<string, unknown>;
-  if (r.ok !== true) return null;
   const snapshotId = r.snapshot_id;
   const restoreToken = r.restore_token;
   if (typeof snapshotId !== 'string' || !snapshotId) return null;
   if (typeof restoreToken !== 'string' || !restoreToken) return null;
   return { snapshotId, restoreToken };
+}
+
+function isOkResponse(response: unknown): boolean {
+  if (!response || typeof response !== 'object') return false;
+  return (response as Record<string, unknown>).ok === true;
 }
 
 export interface SnapshotIndexMetrics {
@@ -209,41 +228,49 @@ export interface SnapshotIndexMetrics {
  * already enforces the 7-day TTL for free, so today the cron's job is purely
  * observability — it gives us a feed of index size + age distribution that
  * the eviction policy can be tuned against once user identity lands.
+ *
+ * Aggregates inline while walking the KV list cursor — never materializes the
+ * full entry set in memory, so it stays safe against an unbounded index.
  */
 export async function summarizeSnapshotIndex(kv: KVNamespace): Promise<SnapshotIndexMetrics> {
-  const entries = await listSnapshots(kv);
+  let total = 0;
   let totalSizeBytes = 0;
   let oldest: number | null = null;
   let newest: number | null = null;
-  for (const entry of entries) {
-    totalSizeBytes += entry.sizeBytes ?? 0;
-    if (oldest === null || entry.lastAccessedAt < oldest) oldest = entry.lastAccessedAt;
-    if (newest === null || entry.lastAccessedAt > newest) newest = entry.lastAccessedAt;
+  let cursor: string | undefined;
+  while (true) {
+    const page: KVNamespaceListResult<SnapshotIndexEntry> = await kv.list<SnapshotIndexEntry>({
+      prefix: KEY_PREFIX,
+      cursor,
+    });
+    for (const key of page.keys) {
+      const entry = validateEntry(key.metadata);
+      if (!entry) continue;
+      total += 1;
+      totalSizeBytes += entry.sizeBytes ?? 0;
+      if (oldest === null || entry.lastAccessedAt < oldest) oldest = entry.lastAccessedAt;
+      if (newest === null || entry.lastAccessedAt > newest) newest = entry.lastAccessedAt;
+    }
+    if (page.list_complete) break;
+    cursor = page.cursor;
+    if (!cursor) break;
   }
-  return {
-    total: entries.length,
-    totalSizeBytes,
-    oldestAccessedAt: oldest,
-    newestAccessedAt: newest,
-  };
+  return { total, totalSizeBytes, oldestAccessedAt: oldest, newestAccessedAt: newest };
 }
 
-function parseEntry(raw: string): SnapshotIndexEntry | null {
-  try {
-    const parsed = JSON.parse(raw) as Partial<SnapshotIndexEntry>;
-    if (
-      parsed.v !== INDEX_SCHEMA_VERSION ||
-      typeof parsed.imageId !== 'string' ||
-      typeof parsed.restoreToken !== 'string' ||
-      typeof parsed.repoFullName !== 'string' ||
-      typeof parsed.branch !== 'string' ||
-      typeof parsed.createdAt !== 'number' ||
-      typeof parsed.lastAccessedAt !== 'number'
-    ) {
-      return null;
-    }
-    return parsed as SnapshotIndexEntry;
-  } catch {
+function validateEntry(raw: unknown): SnapshotIndexEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const parsed = raw as Partial<SnapshotIndexEntry>;
+  if (
+    parsed.v !== INDEX_SCHEMA_VERSION ||
+    typeof parsed.imageId !== 'string' ||
+    typeof parsed.restoreToken !== 'string' ||
+    typeof parsed.repoFullName !== 'string' ||
+    typeof parsed.branch !== 'string' ||
+    typeof parsed.createdAt !== 'number' ||
+    typeof parsed.lastAccessedAt !== 'number'
+  ) {
     return null;
   }
+  return parsed as SnapshotIndexEntry;
 }

@@ -22,9 +22,11 @@
   ],
   // Snapshot index — pointer-only KV namespace for the Modal Sandbox Snapshots
   // design (docs/decisions/Modal Sandbox Snapshots Design.md §6, Phase 4). Stores
-  // `snapshot:<repo>:<branch>:<user>` → { imageId, createdAt, lastAccessedAt, ... }.
-  // Snapshot bytes themselves live as Modal Images; this index is a thin pointer
-  // layer used for resume lookups and the daily eviction cron.
+  // `snapshot:<repoFullName>:<branch>` → { imageId, createdAt, lastAccessedAt, ... }.
+  // Per-user keying is deferred; see the module header in
+  // app/src/worker/snapshot-index.ts. Snapshot bytes themselves live as Modal
+  // Images — this index is a thin pointer layer used for resume lookups and
+  // the daily eviction cron.
   "kv_namespaces": [
     {
       "binding": "SNAPSHOT_INDEX",

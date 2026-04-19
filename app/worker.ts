@@ -57,7 +57,7 @@ import { summarizeSnapshotIndex } from './src/worker/snapshot-index';
 // ---------------------------------------------------------------------------
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'worker');
     try {
       const requestWithId = withRequestIdOnRequest(request, requestId);
@@ -71,7 +71,7 @@ export default {
       if (url.pathname.startsWith('/api/sandbox/') && request.method === 'POST') {
         const route = url.pathname.replace('/api/sandbox/', '');
         return withRequestIdOnResponse(
-          await handleSandbox(requestWithId, env, url, route),
+          await handleSandbox(requestWithId, env, url, route, ctx),
           requestId,
         );
       }

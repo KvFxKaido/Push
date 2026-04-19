@@ -9,7 +9,7 @@ import {
 } from './worker-infra';
 import type { Env } from './worker-middleware';
 import { getSnapshot } from './snapshot-index';
-import type { KVNamespace } from '@cloudflare/workers-types';
+import type { ExecutionContext, KVNamespace } from '@cloudflare/workers-types';
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -177,20 +177,28 @@ describe('handleHealthCheck', () => {
 
 describe('handleSandbox snapshot index integration', () => {
   function createFakeKv(): KVNamespace {
-    const store = new Map<string, string>();
+    const store = new Map<string, { value: string; metadata?: unknown }>();
     return {
       async get(key: string) {
-        return store.get(key) ?? null;
+        return store.get(key)?.value ?? null;
       },
-      async put(key: string, value: string) {
-        store.set(key, value);
+      async getWithMetadata(key: string) {
+        const entry = store.get(key);
+        if (!entry) return { value: null, metadata: null };
+        return { value: entry.value, metadata: entry.metadata ?? null };
+      },
+      async put(key: string, value: string, options?: { metadata?: unknown }) {
+        store.set(key, { value, metadata: options?.metadata });
       },
       async delete(key: string) {
         store.delete(key);
       },
       async list() {
         return {
-          keys: Array.from(store.keys()).map((name) => ({ name })),
+          keys: Array.from(store.entries()).map(([name, entry]) => ({
+            name,
+            metadata: entry.metadata,
+          })),
           list_complete: true,
           cursor: '',
         };
@@ -198,7 +206,31 @@ describe('handleSandbox snapshot index integration', () => {
     } as unknown as KVNamespace;
   }
 
-  it('writes the snapshot index after a successful hibernate', async () => {
+  /**
+   * Flushes microtasks so ctx.waitUntil tasks queued during handleSandbox
+   * have a chance to run before assertions. In production the KV write
+   * happens after the response is sent; tests have to await it explicitly.
+   */
+  function createFakeCtx(): {
+    ctx: ExecutionContext;
+    drain: () => Promise<void>;
+  } {
+    const pending: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil(p: Promise<unknown>) {
+        pending.push(p);
+      },
+      passThroughOnException() {},
+    } as unknown as ExecutionContext;
+    return {
+      ctx,
+      drain: async () => {
+        await Promise.all(pending);
+      },
+    };
+  }
+
+  it('writes the snapshot index after a successful hibernate (via ctx.waitUntil)', async () => {
     const kv = createFakeKv();
     const env = makeEnv({
       MODAL_SANDBOX_BASE_URL: 'https://org--push-app.modal.run',
@@ -224,9 +256,11 @@ describe('handleSandbox snapshot index integration', () => {
         branch: 'main',
       }),
     });
-    const response = await handleSandbox(request, env, new URL(request.url), 'hibernate');
+    const { ctx, drain } = createFakeCtx();
+    const response = await handleSandbox(request, env, new URL(request.url), 'hibernate', ctx);
 
     expect(response.status).toBe(200);
+    await drain();
     const entry = await getSnapshot(kv, 'owner/repo', 'main');
     expect(entry?.imageId).toBe('im-xyz');
     expect(entry?.restoreToken).toBe('tok-xyz');
@@ -249,7 +283,8 @@ describe('handleSandbox snapshot index integration', () => {
         branch: 'main',
       }),
     });
-    const response = await handleSandbox(request, env, new URL(request.url), 'hibernate');
+    const { ctx } = createFakeCtx();
+    const response = await handleSandbox(request, env, new URL(request.url), 'hibernate', ctx);
     expect(response.status).toBe(200);
   });
 });
