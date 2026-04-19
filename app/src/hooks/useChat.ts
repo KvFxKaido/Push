@@ -66,24 +66,10 @@ import { streamAssistantRound, processAssistantTurn, type SendLoopContext } from
 import { useQueuedFollowUps } from './useQueuedFollowUps';
 import { mergeRunEventStreams } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
-import {
-  IDLE_RUN_STATE,
-  isRunActive,
-  runEngineReducer,
-  type RunEngineEvent,
-  type RunEngineState,
-} from '@/lib/run-engine';
-import {
-  createJournalEntry,
-  finalizeJournalEntry,
-  pruneJournalEntries,
-  saveJournalEntry,
-  updateJournalPhase,
-  updateJournalVerificationState,
-  markJournalCheckpoint,
-  type RunJournalEntry,
-} from '@/lib/run-journal';
+import { isRunActive } from '@/lib/run-engine';
+import { updateJournalVerificationState, markJournalCheckpoint } from '@/lib/run-journal';
 import { useRunEventStream } from './useRunEventStream';
+import { useRunEngine } from './useRunEngine';
 import {
   getDefaultVerificationPolicy,
   resolveVerificationPolicy,
@@ -290,8 +276,6 @@ export function useChat(
   // --- sendMessage forward ref (populated after sendMessage is defined) ---
   // Passed to useChatCheckpoint so resumeInterruptedRun can call it.
   const sendMessageRef = useRef<((text: string) => Promise<void>) | null>(null);
-  const runEngineStateRef = useRef<RunEngineState>(IDLE_RUN_STATE);
-  const runJournalEntryRef = useRef<RunJournalEntry | null>(null);
   const baseWorkspaceContextRef = useRef<WorkspaceContext | null>(null);
 
   useEffect(() => {
@@ -444,37 +428,6 @@ export function useChat(
       isMountedRef.current = false;
     };
   }, []);
-  // --- Checkpoint + resume lifecycle ---
-  const {
-    updateAgentStatus,
-    interruptedCheckpoint,
-    resumeInterruptedRun,
-    dismissResume,
-    saveExpiryCheckpoint,
-    flushCheckpoint,
-    checkpointRefs,
-    lastCoderStateRef,
-    tabLockIntervalRef,
-  } = useChatCheckpoint({
-    runEngineStateRef,
-    sandboxIdRef,
-    branchInfoRef,
-    repoRef,
-    workspaceSessionIdRef,
-    ensureSandboxRef,
-    abortRef,
-    setConversations: updateConversations,
-    dirtyConversationIdsRef,
-    conversations,
-    setAgentStatus,
-    agentEventsByChatRef,
-    replaceAgentEvents,
-    activeChatIdRef,
-    sendMessageRef,
-    isStreaming,
-    activeChatId,
-  });
-
   const getVerificationPolicyForChat = useCallback(
     (chatId: string | null | undefined): VerificationPolicy => {
       if (!chatId) return getDefaultVerificationPolicy();
@@ -514,16 +467,39 @@ export function useChat(
     [getVerificationPolicyForChat],
   );
 
-  const persistRunJournal = useCallback(
-    (entry: RunJournalEntry | null, options?: { prune?: boolean }) => {
-      if (!entry) return;
-      void saveJournalEntry(entry);
-      if (options?.prune) {
-        void pruneJournalEntries();
-      }
-    },
-    [],
-  );
+  const { runEngineStateRef, runJournalEntryRef, emitRunEngineEvent, persistRunJournal } =
+    useRunEngine({ getVerificationStateForChat });
+
+  // --- Checkpoint + resume lifecycle ---
+  const {
+    updateAgentStatus,
+    interruptedCheckpoint,
+    resumeInterruptedRun,
+    dismissResume,
+    saveExpiryCheckpoint,
+    flushCheckpoint,
+    checkpointRefs,
+    lastCoderStateRef,
+    tabLockIntervalRef,
+  } = useChatCheckpoint({
+    runEngineStateRef,
+    sandboxIdRef,
+    branchInfoRef,
+    repoRef,
+    workspaceSessionIdRef,
+    ensureSandboxRef,
+    abortRef,
+    setConversations: updateConversations,
+    dirtyConversationIdsRef,
+    conversations,
+    setAgentStatus,
+    agentEventsByChatRef,
+    replaceAgentEvents,
+    activeChatIdRef,
+    sendMessageRef,
+    isStreaming,
+    activeChatId,
+  });
 
   const persistVerificationState = useCallback(
     (chatId: string, verificationState: VerificationRuntimeState) => {
@@ -547,7 +523,7 @@ export function useChat(
         };
       });
     },
-    [persistRunJournal, updateConversations],
+    [persistRunJournal, runJournalEntryRef, updateConversations],
   );
 
   const updateVerificationStateForChat = useCallback(
@@ -561,102 +537,6 @@ export function useChat(
       return next;
     },
     [getVerificationStateForChat, persistVerificationState],
-  );
-
-  /**
-   * Emit a run engine event — the single mutation path for run state.
-   *
-   * Track A cutover: the engine is now authoritative. All run state reads
-   * (phase, round, accumulated, chatId, tabLockId, etc.) come from
-   * runEngineStateRef.current.
-   *
-   * Track B: also maintains the run journal entry for lifecycle persistence.
-   */
-  const emitRunEngineEvent = useCallback(
-    (event: RunEngineEvent) => {
-      runEngineStateRef.current = runEngineReducer(runEngineStateRef.current, event);
-
-      // --- Track B: journal lifecycle ---
-      const engineState = runEngineStateRef.current;
-      switch (event.type) {
-        case 'RUN_STARTED':
-          runJournalEntryRef.current = createJournalEntry({
-            runId: event.runId,
-            chatId: event.chatId,
-            provider: event.provider,
-            model: event.model,
-            baseMessageCount: event.baseMessageCount,
-            startedAt: event.timestamp,
-          });
-          runJournalEntryRef.current = updateJournalVerificationState(
-            runJournalEntryRef.current,
-            getVerificationStateForChat(event.chatId),
-          );
-          persistRunJournal(runJournalEntryRef.current);
-          break;
-
-        case 'ROUND_STARTED':
-          if (runJournalEntryRef.current) {
-            runJournalEntryRef.current = updateJournalPhase(
-              runJournalEntryRef.current,
-              engineState.phase,
-              event.round,
-            );
-            persistRunJournal(runJournalEntryRef.current);
-          }
-          break;
-
-        case 'LOOP_COMPLETED':
-          if (runJournalEntryRef.current) {
-            runJournalEntryRef.current = finalizeJournalEntry(
-              runJournalEntryRef.current,
-              'completed',
-            );
-            persistRunJournal(runJournalEntryRef.current, { prune: true });
-            runJournalEntryRef.current = null;
-          }
-          break;
-
-        case 'LOOP_ABORTED':
-          if (runJournalEntryRef.current) {
-            runJournalEntryRef.current = finalizeJournalEntry(
-              runJournalEntryRef.current,
-              'aborted',
-            );
-            persistRunJournal(runJournalEntryRef.current, { prune: true });
-            runJournalEntryRef.current = null;
-          }
-          break;
-
-        case 'LOOP_FAILED':
-          if (runJournalEntryRef.current) {
-            runJournalEntryRef.current = finalizeJournalEntry(
-              runJournalEntryRef.current,
-              'failed',
-              event.reason,
-            );
-            persistRunJournal(runJournalEntryRef.current, { prune: true });
-            runJournalEntryRef.current = null;
-          }
-          break;
-
-        case 'ACCUMULATED_UPDATED':
-          break;
-
-        default:
-          // Phase updates for delegation, tools, etc.
-          if (runJournalEntryRef.current) {
-            runJournalEntryRef.current = updateJournalPhase(
-              runJournalEntryRef.current,
-              engineState.phase,
-              engineState.round,
-            );
-            persistRunJournal(runJournalEntryRef.current);
-          }
-          break;
-      }
-    },
-    [getVerificationStateForChat, persistRunJournal],
   );
 
   // --- CI poller ---
@@ -887,7 +767,13 @@ export function useChat(
         cancelStatusTimerRef.current = null;
       }, 1200);
     },
-    [clearQueuedFollowUps, emitRunEngineEvent, queuedFollowUpsRef, updateAgentStatus],
+    [
+      clearQueuedFollowUps,
+      emitRunEngineEvent,
+      queuedFollowUpsRef,
+      runEngineStateRef,
+      updateAgentStatus,
+    ],
   );
 
   useEffect(() => {
@@ -1462,6 +1348,8 @@ export function useChat(
       clearQueuedFollowUps,
       enqueueQueuedFollowUp,
       queuedFollowUpsRef,
+      runEngineStateRef,
+      runJournalEntryRef,
       setPendingSteer,
       lastCoderStateRef,
       tabLockIntervalRef,
