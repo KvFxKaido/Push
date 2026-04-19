@@ -5,17 +5,13 @@ import {
 } from '@push/lib/role-memory-budgets';
 import type { MemoryQuery, MemoryScope } from '@/types';
 import { parseDiffStats } from './diff-utils';
+import { formatMemoryError } from './memory-context-helpers';
 import {
   buildAuditorContextBlock,
   buildReviewerContextBlock,
   type AuditorPromptContext,
   type ReviewerPromptContext,
 } from './role-context';
-
-function formatMemoryError(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message;
-  return String(error);
-}
 
 function logRoleMemoryWarning(role: string, error: unknown): void {
   console.warn(
