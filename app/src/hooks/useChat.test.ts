@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // useChat orchestrates ~25 modules. Its core logic is unit-tested through the
 // helpers it composes (chat-send, chat-management, chat-card-actions,
@@ -112,6 +112,11 @@ const chatCheckpoint = vi.hoisted(() => ({
     resumeInterruptedRun: vi.fn(),
     dismissResume: vi.fn(),
     saveExpiryCheckpoint: vi.fn(),
+    updateAgentStatus: vi.fn(),
+    flushCheckpoint: vi.fn(),
+    checkpointRefs: {},
+    lastCoderStateRef: { current: null },
+    tabLockIntervalRef: { current: null },
   })),
 }));
 const chatSend = vi.hoisted(() => ({
@@ -304,5 +309,112 @@ describe('useChat — public API surface', () => {
         percent: expect.any(Number),
       }),
     );
+  });
+});
+
+// Characterization tests for the queued-follow-ups cluster that
+// useQueuedFollowUps will absorb. These pin the observable behavior from
+// useChat's public surface: initial hydration via buildQueuedFollowUpsByChat,
+// derivation of queuedFollowUpCount from the active chat, and the
+// abortStream -> clear seam. The enqueue/dequeue paths run inside
+// sendMessage and are not drivable through the existing test harness;
+// they will be covered against the new hook directly in Commit B.
+describe('useChat — queued follow-ups (pre-extraction characterization)', () => {
+  // The app runs its web tests in `environment: 'node'` (vitest.config.ts).
+  // abortStream reaches for window.setTimeout / window.clearTimeout, which
+  // are absent from the node env. Alias window to globalThis so the timer
+  // calls resolve to Node's global timers without changing the project-wide
+  // test environment.
+  beforeAll(() => {
+    if (typeof (globalThis as { window?: unknown }).window === 'undefined') {
+      (globalThis as unknown as { window: typeof globalThis }).window = globalThis;
+    }
+  });
+
+  function makeConversation(
+    chatId: string,
+    queuedFollowUps?: Array<{ text: string; queuedAt: number }>,
+  ) {
+    return {
+      id: chatId,
+      title: `Chat ${chatId}`,
+      messages: [],
+      createdAt: 1,
+      lastMessageAt: 1,
+      ...(queuedFollowUps ? { runState: { queuedFollowUps } } : {}),
+    };
+  }
+
+  it('hydrates queuedFollowUpCount from initialConversations via buildQueuedFollowUpsByChat', () => {
+    const followUp1 = { text: 'first', queuedAt: 1 };
+    const followUp2 = { text: 'second', queuedAt: 2 };
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': makeConversation('chat-1', [followUp1, followUp2]),
+    });
+    chatRuntimeState.buildQueuedFollowUpsByChat.mockReturnValueOnce({
+      'chat-1': [followUp1, followUp2],
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+
+    const hook = useChat(null);
+
+    expect(chatRuntimeState.buildQueuedFollowUpsByChat).toHaveBeenCalledWith(
+      expect.objectContaining({ 'chat-1': expect.any(Object) }),
+    );
+    expect(hook.queuedFollowUpCount).toBe(2);
+  });
+
+  it('queuedFollowUpCount is derived from the active chat only', () => {
+    const followUp = { text: 'other-chat', queuedAt: 1 };
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': makeConversation('chat-1'),
+      'chat-2': makeConversation('chat-2', [followUp]),
+    });
+    chatRuntimeState.buildQueuedFollowUpsByChat.mockReturnValueOnce({
+      'chat-2': [followUp],
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+
+    const hook = useChat(null);
+
+    expect(hook.queuedFollowUpCount).toBe(0);
+  });
+
+  it('abortStream({ clearQueuedFollowUps: true }) invokes clearQueuedItems for the active chat', () => {
+    const followUp = { text: 'pending', queuedAt: 1 };
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': makeConversation('chat-1', [followUp]),
+    });
+    chatRuntimeState.buildQueuedFollowUpsByChat.mockReturnValueOnce({
+      'chat-1': [followUp],
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+    chatQueue.clearQueuedItems.mockImplementationOnce(() => ({}));
+
+    const hook = useChat(null);
+    const callsBefore = chatQueue.clearQueuedItems.mock.calls.length;
+    hook.abortStream({ clearQueuedFollowUps: true });
+
+    expect(chatQueue.clearQueuedItems.mock.calls.length).toBe(callsBefore + 1);
+    const [mapArg, chatIdArg] = chatQueue.clearQueuedItems.mock.calls[callsBefore];
+    expect(mapArg).toEqual(expect.objectContaining({ 'chat-1': [followUp] }));
+    expect(chatIdArg).toBe('chat-1');
+  });
+
+  it('abortStream() without the clearQueuedFollowUps flag leaves the queue cluster untouched', () => {
+    const followUp = { text: 'pending', queuedAt: 1 };
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': makeConversation('chat-1', [followUp]),
+    });
+    chatRuntimeState.buildQueuedFollowUpsByChat.mockReturnValueOnce({
+      'chat-1': [followUp],
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+
+    const hook = useChat(null);
+    const callsBefore = chatQueue.clearQueuedItems.mock.calls.length;
+    hook.abortStream();
+
+    expect(chatQueue.clearQueuedItems.mock.calls.length).toBe(callsBefore);
   });
 });
