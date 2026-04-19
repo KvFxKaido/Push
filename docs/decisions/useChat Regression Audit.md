@@ -274,6 +274,63 @@ Commit A's characterization is thin by design — only one of `emitRunEngineEven
 
 **Status:** Phase 3 ready for PR. Phase 4 (`useVerificationState` + steer unification) remains the only outstanding extraction. All three phases landed so far have held their characterization tests across extraction — the pattern of "characterization at the consumer, direct tests at the new hook" continues to work.
 
+## Phase 4 shipping record
+
+**Date:** 2026-04-19
+**Branch:** `refactor/useverification-steer-hooks`
+**Commits:**
+- `3b80b44` — `test(context): pin verification + steer surface contracts`
+- `c0bfdba` — `refactor(context): extract useVerificationState + usePendingSteer`
+
+**Line delta:** `app/src/hooks/useChat.ts` 1,465 → 1,365 (−100). Matches the recon's 100-line estimate. Two hooks landed together because both are low-risk and splitting them would have left the composition wrapper (`persistVerificationState`) in an intermediate half-state.
+
+**Design adjustments from the recon:**
+
+- `useVerificationState` 7-item public surface (getVerificationPolicyForChat, getVerificationStateForChat, writeVerificationStateForChat, setWorkspaceContext, setWorkspaceMode, workspaceContextRef, workspaceModeRef). Internal: `verificationStateByChatRef`, `baseWorkspaceContextRef`, `applyWorkspaceContext`, the workspace-apply useEffect.
+- `usePendingSteer` 5-item public surface (state, ref, setPendingSteer, consumePendingSteer, clearPendingSteer). Internal: `replacePendingSteers`.
+- **Cross-phase dep resolution for the verification↔run-engine circular dep.** `useVerificationState` provides `getVerificationStateForChat` (consumed by Phase 3's `useRunEngine`). `useRunEngine` provides `runJournalEntryRef` + `persistRunJournal` (consumed by the old `persistVerificationState`). Resolution: useVerificationState owns pure verification + workspace logic; the journal-write side of persistVerificationState moves into a small composition wrapper that stays in useChat, where both hooks' outputs are in scope. `writeVerificationStateForChat` is the primitive; useChat composes it with the journal-write into the familiar `persistVerificationState` name. Same principle as Phase 1's `hydratePersistedRunState` wrapper and Phase 2's `runEvents` UI useMemo: **cross-cutting composition stays at the composition layer**, not at either leaf hook.
+
+**Open Question resolutions:**
+
+- **#2: Is Phase 4's steer + queue unification too clever?** Resolved — **keep separate**. The types reveal different cardinalities: `QueuedItemsByChat<T>` is `Record<string, T[]>` (FIFO arrays), `PendingSteersByChat` is `Record<string, PendingSteerRequest>` (single-slot, latest-wins). `consumePendingSteer` deletes the slot rather than shifting. The outer `Record` shape is shallow common ground. Merging would force `useQueuedFollowUps` to either become generic over cardinality or expose two separate APIs — both are "two hooks pretending to be one." ~40 lines of apparent duplication is worth paying for semantic clarity.
+
+**Open questions still unresolved:** #3 (`sendMessage` decomposition, deferred indefinitely — the orchestrator is ~550 lines and this audit explicitly did not revisit that choice).
+
+**Containment guard ratcheted:** `eslint.config.js` lowered `max-lines` from 1,500 to 1,400. Current file is 1,365 lines; ~35 lines of headroom. **Final ratchet of the track.**
+
+---
+
+## Track closeout — cumulative summary
+
+| Phase | Hook | `useChat.ts` line delta | `max-lines` ceiling |
+|---|---|---|---|
+| Phase 1 | `useQueuedFollowUps` | 1,733 → 1,672 (−61) | 1,700 |
+| Phase 2 | `useRunEventStream` | 1,672 → 1,577 (−95) | 1,620 |
+| Phase 3 | `useRunEngine` | 1,577 → 1,465 (−112) | 1,500 |
+| Phase 4 | `useVerificationState` + `usePendingSteer` | 1,465 → 1,365 (−100) | 1,400 |
+| **Total** | — | **1,733 → 1,365 (−368, −21.2%)** | — |
+
+**Five hooks extracted:** `useQueuedFollowUps` (133 lines), `useRunEventStream` (173), `useRunEngine` (169), `useVerificationState` (147), `usePendingSteer` (90). Total hook code: 712 lines, much of it previously embedded in useChat.
+
+**Test coverage added across the track:** Phase 1 8 tests + 4 characterization = 12. Phase 2 8 + 3 = 11. Phase 3 14 + 2 = 16. Phase 4 (9 + 11) + 3 = 23. **Total: ~62 new tests** — about a dozen per phase, scaling linearly with the domain each hook owns.
+
+**Pattern validated:**
+
+1. **Public surfaces shrink on extraction.** Every phase discovered that the "enumerated" surface (from the recon's list of existing symbols) was wider than the actual API surface. Phase 1 went from 5 → 4 callbacks, Phase 2 from 5 → 3, Phase 3 stayed at 4 (minimal-public design), Phase 4 kept 7+5. The enumerate-then-prune discipline is a structural win, not an aesthetic one — private helpers protect persist-on-mutate / route-through-coordinator contracts at the module boundary instead of relying on locality.
+
+2. **Composition wrappers in useChat resolve cross-cutting deps.** Phase 1 (IDB migration effect), Phase 2 (runEvents useMemo + persistedRunEventCount derivation), Phase 3 (useChatCheckpoint call-site reorder), Phase 4 (persistVerificationState wrapper) all preserve glue logic at the consumer layer. Hooks stay single-ownership; useChat stays the composer.
+
+3. **Characterization tests are thin by harness necessity.** The fake-React harness in useChat.test.ts can only reach public surfaces (setters, UI derivations, abortStream). Heavy coverage moves to direct hook tests in Commits B. Every phase documented this limit explicitly.
+
+4. **Review overhead stays bounded.** Each phase needed 0-1 fix commits for Copilot feedback. Most findings were legitimate comment-vs-code drift (which a multi-step edit reliably accrues); false-positive rate correlated with PR size rather than phase complexity.
+
+5. **The `max-lines` guard holds.** Four successive ratchets, one per phase. Each phase's PR fits under its own ceiling with ~30-40 lines of headroom. Future features have a hard CI gate against the next silent-regrowth cycle.
+
+**What this track does not do:**
+
+- Does not decompose `sendMessage` (Open Question #3). The orchestrator remains ~550 lines, which is the bulk of what's left in useChat. Phase 5 for that decomposition remains a separate, unresolved design question.
+- Does not revisit the 2026-03-25 refactor's architectural decisions. This track is a *re-extraction*, not a redesign.
+
 ---
 
 **Generated:** 2026-04-19, recon-only pass. No extractions performed. The three regrowth commits have been analyzed, sibling hospitability has been assessed, and a four-phase extraction track has been proposed.
@@ -283,3 +340,5 @@ Commit A's characterization is thin by design — only one of `emitRunEngineEven
 **Updated:** 2026-04-19, Phase 2 shipping record added following the landing of `5a4983c` + `bd4be63` on `refactor/userunevent-stream-hook`.
 
 **Updated:** 2026-04-19, Phase 3 shipping record added following the landing of `5cbde86` + `477f14f` on `refactor/userunengine-hook`.
+
+**Updated:** 2026-04-19, Phase 4 shipping record + track closeout added following the landing of `3b80b44` + `c0bfdba` on `refactor/useverification-steer-hooks`. **Track complete.**
