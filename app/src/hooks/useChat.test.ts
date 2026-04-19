@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // useChat orchestrates ~25 modules. Its core logic is unit-tested through the
 // helpers it composes (chat-send, chat-management, chat-card-actions,
@@ -322,13 +322,18 @@ describe('useChat — public API surface', () => {
 describe('useChat — queued follow-ups (pre-extraction characterization)', () => {
   // The app runs its web tests in `environment: 'node'` (vitest.config.ts).
   // abortStream reaches for window.setTimeout / window.clearTimeout, which
-  // are absent from the node env. Alias window to globalThis so the timer
-  // calls resolve to Node's global timers without changing the project-wide
-  // test environment.
+  // are absent from the node env. Stub a minimal window via vi.stubGlobal
+  // (auto-reverted by vi.unstubAllGlobals in afterAll) so the stub does
+  // not leak past this describe block into any future suites that expect
+  // window to be undefined under the project-wide node env.
   beforeAll(() => {
-    if (typeof (globalThis as { window?: unknown }).window === 'undefined') {
-      (globalThis as unknown as { window: typeof globalThis }).window = globalThis;
-    }
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    });
+  });
+  afterAll(() => {
+    vi.unstubAllGlobals();
   });
 
   function makeConversation(
