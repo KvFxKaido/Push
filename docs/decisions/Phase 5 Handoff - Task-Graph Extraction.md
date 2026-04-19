@@ -1,9 +1,35 @@
 # Phase 5 Handoff — Task-Graph Extraction
 
 **Date:** 2026-04-19
-**Status:** Not started. Design decision required before extraction.
-**Target:** `app/src/hooks/useAgentDelegation.ts` task-graph branch (lines 437–1173) → `app/src/lib/task-graph-delegation-handler.ts` (or split into multiple modules; see §Open Design Question).
-**Gated on:** Resolution of `lastCoderStateRef` accumulation strategy (open question #1 from `useAgentDelegation Coupling Recon.md`).
+**Status:** ✅ Shipped 2026-04-19. Option A selected in design spike; extracted behavior-preserving.
+**Target:** `app/src/hooks/useAgentDelegation.ts` task-graph branch (lines 437–1173) → `app/src/lib/task-graph-delegation-handler.ts` (single module; see §Open Design Question resolution below).
+**Gated on:** ~~Resolution of `lastCoderStateRef` accumulation strategy~~ → Resolved with **Option A** (preserve ref-based single/multi-node policy). See §"Option A/B decision — resolved" below.
+
+## Shipping record
+
+| Commit | Type | Description |
+|---|---|---|
+| `eb18e55` | test(context) | Characterization — 4 tests pinning graph_completed envelope, per-node memory persistence, TG Auditor aggregated inputs, and the single-vs-multi-node `evalWorkingMemory` policy (Option A contract pin). |
+| `8884a8d` | refactor(context) | Extraction — new `app/src/lib/task-graph-delegation-handler.ts` (760 lines); hook shrinks from 1213 → 490 lines (-60%). |
+
+All 25 characterization tests pass after extraction. Typecheck, eslint, and biome clean on both files.
+
+## Option A/B decision — resolved
+
+The spike chose **Option A** (preserve current single/multi-coder-node `evalWorkingMemory` policy byte-for-byte). Three decisive reasons from the design-spike message:
+
+1. **Phase 4 already set the contract.** The `auditor-delegation-handler` exposes `readLatestCoderState()` plus the `taskList.length <= 1 ? read() : null` policy. Option A means the TG handler satisfies that same contract via a parallel `TaskGraphHandlerContext.readLatestCoderState` getter — zero changes to Phase 4's module. Option B would have forced concurrent redesign of two modules.
+
+2. **Option B requires role-kernel changes.** `runAuditorEvaluation` accepts `evalWorkingMemory: CoderWorkingMemory | null` — a single value, not a Map. Feeding per-node state means changing the kernel signature and propagating it through both Sequential and TG auditor paths. That's a separate PR, not a Phase 5 sub-task.
+
+3. **Characterization discipline breaks under B.** Commit A's tests must pin *current* behavior to be a safety net. A behavior change mid-extraction turns Commit A into design-by-test.
+
+**Follow-up:** When a feature pulls for per-node auditor memory, open a separate issue titled "TG Auditor: per-node working memory accumulation" referencing this doc's §Coupling Hazards analogue in `useAgentDelegation Coupling Recon.md` §Coupling Hazards #3. Until then, the lossy-but-correct policy stands; Test 4 in `useAgentDelegation.test.ts` guards the invariant against incidental regression.
+
+---
+
+**Original handoff content below — preserved for archival reference.**
+
 
 ## What's Done (Phases 2–4)
 

@@ -1,9 +1,6 @@
 import type React from 'react';
 import { useCallback } from 'react';
-import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
-import { getSandboxDiff } from '@/lib/sandbox-client';
-import { runCoderAgent } from '@/lib/coder-agent';
-import { runExplorerAgent } from '@/lib/explorer-agent';
+import { type ActiveProvider } from '@/lib/orchestrator';
 import {
   handleExplorerDelegation,
   type ExplorerHandlerContext,
@@ -11,15 +8,17 @@ import {
 } from '@/lib/explorer-delegation-handler';
 import {
   handleCoderDelegation,
-  mergeAcceptanceCriteria,
   type CoderHandlerContext,
   type CoderToolCall,
 } from '@/lib/coder-delegation-handler';
 import { handleCoderAuditor, type AuditorHandlerContext } from '@/lib/auditor-delegation-handler';
+import {
+  handleTaskGraphDelegation,
+  type TaskGraphHandlerContext,
+  type TaskGraphToolCall,
+} from '@/lib/task-graph-delegation-handler';
 import { type AnyToolCall } from '@/lib/tool-dispatch';
-import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
-import { resolveHarnessSettings } from '@/lib/model-capabilities';
-import { validateTaskGraph, executeTaskGraph, type TaskExecutor } from '@/lib/task-graph';
+import { type EvaluationResult } from '@/lib/auditor-agent';
 import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import {
@@ -27,33 +26,9 @@ import {
   filterDelegationCardsForInlineDisplay,
   formatCompactDelegationToolResult,
 } from '@/lib/delegation-result';
-import {
-  writeTaskGraphNodeMemory,
-  writeCoderMemory,
-  invalidateMemoryForChangedFiles,
-} from '@/lib/context-memory';
-import {
-  buildMemoryScope,
-  retrieveMemoryKnownContextLine,
-  runContextMemoryBestEffort,
-  withMemoryContext,
-} from '@/lib/memory-context-helpers';
-import {
-  activateVerificationGate,
-  buildVerificationAcceptanceCriteria,
-  extractChangedPathsFromDiff,
-  recordVerificationArtifact,
-  recordVerificationCommandResult,
-  recordVerificationGateResult,
-  recordVerificationMutation,
-} from '@/lib/verification-runtime';
-import { createId } from '@/hooks/chat-persistence';
-import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
-import {
-  correlationToSpanAttributes,
-  extendCorrelation,
-  type CorrelationContext,
-} from '@push/lib/correlation-context';
+import { writeCoderMemory, invalidateMemoryForChangedFiles } from '@/lib/context-memory';
+import { runContextMemoryBestEffort } from '@/lib/memory-context-helpers';
+import { type CorrelationContext } from '@push/lib/correlation-context';
 import type { RunEngineEvent } from '@/lib/run-engine';
 import type { VerificationPolicy } from '@/lib/verification-policy';
 import type {
@@ -233,6 +208,55 @@ export function useAgentDelegation({
       appendRunEvent,
       updateAgentStatus,
       updateVerificationStateForChat,
+    ],
+  );
+
+  // Wire up the Task-Graph handler context. Same one-way boundary rule
+  // as the sibling build* helpers: the handler never imports from this
+  // hook. The three coder-state callbacks (reset/update/read) preserve
+  // the Option A contract from the Phase 5 design spike — the ref
+  // stays hook-owned while the handler operates through these narrow
+  // hooks. See docs/decisions/Phase 5 Handoff - Task-Graph Extraction.md
+  // §"Open Design Question" for the full reasoning.
+  const buildTaskGraphContext = useCallback(
+    (): TaskGraphHandlerContext => ({
+      sandboxIdRef,
+      repoRef,
+      branchInfoRef,
+      isMainProtectedRef,
+      agentsMdRef,
+      instructionFilenameRef,
+      abortControllerRef,
+      abortRef,
+      emitRunEngineEvent,
+      appendRunEvent,
+      updateAgentStatus,
+      updateVerificationStateForChat,
+      appendInlineDelegationCards: (chatId, cards) =>
+        appendInlineDelegationCards(setConversations, chatId, cards),
+      resetCoderState: () => {
+        lastCoderStateRef.current = null;
+      },
+      onCoderStateUpdate: (state) => {
+        lastCoderStateRef.current = state;
+      },
+      readLatestCoderState: () => lastCoderStateRef.current,
+    }),
+    [
+      sandboxIdRef,
+      repoRef,
+      branchInfoRef,
+      isMainProtectedRef,
+      agentsMdRef,
+      instructionFilenameRef,
+      abortControllerRef,
+      abortRef,
+      emitRunEngineEvent,
+      appendRunEvent,
+      updateAgentStatus,
+      updateVerificationStateForChat,
+      setConversations,
+      lastCoderStateRef,
     ],
   );
 
@@ -435,777 +459,30 @@ export function useAgentDelegation({
           });
         }
       } else if (toolCall.call.tool === 'plan_tasks') {
-        // --- Task Graph Execution ---
-        const executionId = createId();
-        const graphArgs = toolCall.call.args;
-
-        emitRunEngineEvent({
-          type: 'DELEGATION_STARTED',
-          timestamp: Date.now(),
-          agent: 'task_graph',
+        toolExecResult = await handleTaskGraphDelegation(buildTaskGraphContext(), {
+          chatId,
+          toolCall: toolCall as TaskGraphToolCall,
+          baseCorrelation,
+          lockedProviderForChat,
+          resolvedModelForChat,
+          verificationPolicy,
         });
-
-        try {
-          // Validate the graph
-          const validationErrors = validateTaskGraph(graphArgs.tasks);
-          if (validationErrors.length > 0) {
-            const errorMessages = validationErrors.map((e) => `- ${e.message}`).join('\n');
-            toolExecResult = {
-              text: `[Tool Error] Invalid task graph:\n${errorMessages}`,
-            };
-          } else {
-            const currentSandboxId = sandboxIdRef.current;
-            const hasCoderTasks = graphArgs.tasks.some((task) => task.agent === 'coder');
-            if (hasCoderTasks && !currentSandboxId) {
-              toolExecResult = {
-                text: '[Tool Error] No sandbox available for task graph execution.',
-              };
-            } else {
-              appendRunEvent(chatId, {
-                type: 'subagent.started',
-                executionId,
-                agent: 'task_graph',
-                detail: `Task graph: ${graphArgs.tasks.length} tasks`,
-              });
-
-              if (hasCoderTasks) {
-                updateVerificationStateForChat(chatId, (state) =>
-                  activateVerificationGate(
-                    state,
-                    'auditor',
-                    'Task graph started; auditor evaluation pending.',
-                  ),
-                );
-                lastCoderStateRef.current = null;
-              }
-
-              const harnessProvider = lockedProviderForChat || getActiveProvider();
-              const harnessModelId = resolvedModelForChat || undefined;
-              const harnessSettings = hasCoderTasks
-                ? resolveHarnessSettings(harnessProvider, harnessModelId)
-                : null;
-              const verificationCriteria = hasCoderTasks
-                ? buildVerificationAcceptanceCriteria(verificationPolicy, 'always')
-                : [];
-              const graphNodeById = new Map(
-                graphArgs.tasks.map((task) => [task.id, task] as const),
-              );
-              let latestGraphDiffPaths: string[] | undefined;
-
-              // Track which tasks are active for aggregated status
-              const activeTasks = new Map<string, string>();
-
-              // Shared memory scope for this graph run. Records from earlier
-              // nodes can be retrieved by later nodes via `taskGraphId` match.
-              const graphMemoryScope = buildMemoryScope(
-                chatId,
-                repoRef.current,
-                branchInfoRef.current?.currentBranch,
-                { taskGraphId: executionId },
-              );
-
-              // Build the task executor that bridges to existing agent runners
-              const taskExecutor: TaskExecutor = async (node, enrichedContext, taskSignal) => {
-                const nodeMemoryLine = await retrieveMemoryKnownContextLine(
-                  graphMemoryScope,
-                  node.agent,
-                  node.task,
-                  node.files,
-                  { taskGraphId: executionId, taskId: node.id },
-                );
-                const memoryEnrichedContext =
-                  withMemoryContext(enrichedContext, nodeMemoryLine) ?? enrichedContext;
-                if (node.agent === 'explorer') {
-                  const explorerStartMs = Date.now();
-                  let explorerResult;
-                  try {
-                    const nodeCorrelation = extendCorrelation(baseCorrelation, {
-                      executionId,
-                      taskGraphId: executionId,
-                      taskId: node.id,
-                    });
-                    explorerResult = await withActiveSpan(
-                      'taskgraph.explorer',
-                      {
-                        scope: 'push.delegation',
-                        kind: SpanKind.INTERNAL,
-                        attributes: {
-                          ...correlationToSpanAttributes(nodeCorrelation),
-                          'push.agent.role': 'explorer',
-                          'push.taskgraph.node_id': node.id,
-                          'push.provider': lockedProviderForChat,
-                          'push.model': resolvedModelForChat,
-                        },
-                      },
-                      async (span) => {
-                        const result = await runExplorerAgent(
-                          {
-                            task: node.task,
-                            files: node.files ?? [],
-                            deliverable: node.deliverable,
-                            knownContext: memoryEnrichedContext,
-                            constraints: node.constraints,
-                            branchContext: branchInfoRef.current?.currentBranch
-                              ? {
-                                  activeBranch: branchInfoRef.current.currentBranch,
-                                  defaultBranch: branchInfoRef.current.defaultBranch || 'main',
-                                  protectMain: isMainProtectedRef.current,
-                                }
-                              : undefined,
-                            provider: lockedProviderForChat,
-                            model: resolvedModelForChat || undefined,
-                            projectInstructions: agentsMdRef.current || undefined,
-                            instructionFilename: instructionFilenameRef.current || undefined,
-                          },
-                          currentSandboxId,
-                          repoRef.current || '',
-                          {
-                            onStatus: (phase) => {
-                              activeTasks.set(node.id, phase);
-                              const taskLabels = [...activeTasks.entries()]
-                                .map(([id, p]) => `${id}: ${p}`)
-                                .join(' | ');
-                              updateAgentStatus(
-                                { active: true, phase: 'Task graph', detail: taskLabels },
-                                { chatId, source: 'explorer' },
-                              );
-                            },
-                            signal: taskSignal,
-                          },
-                        );
-                        setSpanAttributes(span, { 'push.round_count': result.rounds });
-                        span.setStatus({ code: SpanStatusCode.OK });
-                        return result;
-                      },
-                    );
-                  } finally {
-                    activeTasks.delete(node.id);
-                  }
-
-                  appendInlineDelegationCards(setConversations, chatId, explorerResult.cards);
-
-                  const explorerOutcome: DelegationOutcome = {
-                    agent: 'explorer',
-                    status:
-                      explorerResult.rounds > 0 && explorerResult.summary.trim()
-                        ? 'complete'
-                        : 'inconclusive',
-                    summary: explorerResult.summary,
-                    evidence: explorerResult.summary.trim()
-                      ? [{ kind: 'observation', label: 'Investigation findings' }]
-                      : [],
-                    checks: [],
-                    gateVerdicts: [],
-                    missingRequirements: [],
-                    nextRequiredAction: null,
-                    rounds: explorerResult.rounds,
-                    checkpoints: 0,
-                    elapsedMs: Date.now() - explorerStartMs,
-                  };
-                  updateVerificationStateForChat(chatId, (state) =>
-                    recordVerificationArtifact(
-                      state,
-                      `Explorer produced evidence: ${summarizeToolResultPreview(explorerResult.summary)}`,
-                    ),
-                  );
-
-                  return {
-                    summary: explorerResult.summary,
-                    delegationOutcome: explorerOutcome,
-                    rounds: explorerResult.rounds,
-                  };
-                } else {
-                  // Coder agent
-                  const nodeStartMs = Date.now();
-                  const effectiveAcceptanceCriteria = mergeAcceptanceCriteria(
-                    node.acceptanceCriteria,
-                    verificationCriteria,
-                  );
-                  const criteriaCommandById = new Map(
-                    effectiveAcceptanceCriteria.map((criterion) => [criterion.id, criterion.check]),
-                  );
-                  let coderResult;
-                  try {
-                    const nodeCorrelation = extendCorrelation(baseCorrelation, {
-                      executionId,
-                      taskGraphId: executionId,
-                      taskId: node.id,
-                    });
-                    coderResult = await withActiveSpan(
-                      'taskgraph.coder',
-                      {
-                        scope: 'push.delegation',
-                        kind: SpanKind.INTERNAL,
-                        attributes: {
-                          ...correlationToSpanAttributes(nodeCorrelation),
-                          'push.agent.role': 'coder',
-                          'push.taskgraph.node_id': node.id,
-                          'push.provider': lockedProviderForChat,
-                          'push.model': resolvedModelForChat,
-                        },
-                      },
-                      async (span) => {
-                        const result = await runCoderAgent(
-                          node.task,
-                          currentSandboxId!,
-                          node.files ?? [],
-                          (phase) => {
-                            activeTasks.set(node.id, phase);
-                            const taskLabels = [...activeTasks.entries()]
-                              .map(([id, p]) => `${id}: ${p}`)
-                              .join(' | ');
-                            updateAgentStatus(
-                              { active: true, phase: 'Task graph', detail: taskLabels },
-                              { chatId, source: 'coder' },
-                            );
-                          },
-                          agentsMdRef.current || undefined,
-                          taskSignal,
-                          undefined,
-                          effectiveAcceptanceCriteria,
-                          (state) => {
-                            lastCoderStateRef.current = state;
-                          },
-                          lockedProviderForChat,
-                          resolvedModelForChat || undefined,
-                          {
-                            deliverable: node.deliverable,
-                            knownContext: memoryEnrichedContext,
-                            constraints: node.constraints,
-                            branchContext: branchInfoRef.current?.currentBranch
-                              ? {
-                                  activeBranch: branchInfoRef.current.currentBranch,
-                                  defaultBranch: branchInfoRef.current.defaultBranch || 'main',
-                                  protectMain: isMainProtectedRef.current,
-                                }
-                              : undefined,
-                            instructionFilename: instructionFilenameRef.current || undefined,
-                            harnessSettings: harnessSettings || undefined,
-                            verificationPolicy,
-                            correlation: nodeCorrelation,
-                          },
-                        );
-                        setSpanAttributes(span, {
-                          'push.round_count': result.rounds,
-                          'push.card_count': result.cards.length,
-                          'push.checkpoint_count': result.checkpoints,
-                          'push.criteria_count': result.criteriaResults?.length,
-                        });
-                        span.setStatus({ code: SpanStatusCode.OK });
-                        return result;
-                      },
-                    );
-                  } finally {
-                    activeTasks.delete(node.id);
-                  }
-
-                  appendInlineDelegationCards(setConversations, chatId, coderResult.cards);
-
-                  let taskDiff: string | null = null;
-                  try {
-                    const diffResult = await getSandboxDiff(currentSandboxId!);
-                    taskDiff = diffResult.diff || null;
-                  } catch {
-                    // Verification state can still update from summaries/checks.
-                  }
-                  if (taskDiff) {
-                    const touchedPaths = extractChangedPathsFromDiff(taskDiff);
-                    latestGraphDiffPaths = touchedPaths;
-                    updateVerificationStateForChat(chatId, (state) =>
-                      recordVerificationMutation(state, {
-                        source: 'coder',
-                        touchedPaths,
-                        detail: `Task graph node "${node.id}" mutated the workspace.`,
-                      }),
-                    );
-                  }
-                  updateVerificationStateForChat(chatId, (state) =>
-                    recordVerificationArtifact(
-                      state,
-                      `Coder produced evidence: ${summarizeToolResultPreview(coderResult.summary)}`,
-                    ),
-                  );
-                  for (const result of coderResult.criteriaResults ?? []) {
-                    const command = criteriaCommandById.get(result.id);
-                    if (!command) continue;
-                    updateVerificationStateForChat(chatId, (state) =>
-                      recordVerificationCommandResult(state, command, {
-                        exitCode: result.exitCode,
-                        detail: `${result.id} exited with code ${result.exitCode}.`,
-                      }),
-                    );
-                  }
-
-                  const status: DelegationStatus = !coderResult.criteriaResults?.length
-                    ? 'inconclusive'
-                    : coderResult.criteriaResults.every((result) => result.passed)
-                      ? 'complete'
-                      : 'incomplete';
-                  const checks: DelegationCheck[] = (coderResult.criteriaResults ?? []).map(
-                    (result) => ({
-                      id: result.id,
-                      passed: result.passed,
-                      exitCode: result.exitCode,
-                      output: result.output,
-                    }),
-                  );
-                  const evidence: DelegationEvidence[] = [];
-                  if (taskDiff) {
-                    evidence.push({
-                      kind: 'diff',
-                      label: 'Workspace diff',
-                      detail: summarizeToolResultPreview(taskDiff),
-                    });
-                  }
-                  for (const check of checks) {
-                    evidence.push({
-                      kind: 'test',
-                      label: check.id,
-                      detail: check.output,
-                    });
-                  }
-                  const missingRequirements = checks
-                    .filter((check) => !check.passed)
-                    .map((check) => `Check failed: ${check.id}`);
-                  const coderOutcome: DelegationOutcome = {
-                    agent: 'coder',
-                    status,
-                    summary: coderResult.summary,
-                    evidence,
-                    checks,
-                    gateVerdicts: [],
-                    missingRequirements,
-                    nextRequiredAction: status === 'incomplete' ? 'Fix failing checks' : null,
-                    rounds: coderResult.rounds,
-                    checkpoints: coderResult.checkpoints,
-                    elapsedMs: Date.now() - nodeStartMs,
-                  };
-
-                  return {
-                    summary: coderResult.summary,
-                    delegationOutcome: coderOutcome,
-                    rounds: coderResult.rounds,
-                  };
-                }
-              };
-
-              // Execute the task graph
-              const graphCorrelation = extendCorrelation(baseCorrelation, {
-                executionId,
-                taskGraphId: executionId,
-              });
-              const graphResult = await withActiveSpan(
-                'taskgraph.execute',
-                {
-                  scope: 'push.delegation',
-                  kind: SpanKind.INTERNAL,
-                  attributes: {
-                    ...correlationToSpanAttributes(graphCorrelation),
-                    'push.taskgraph.node_count': graphArgs.tasks.length,
-                    'push.provider': lockedProviderForChat,
-                    'push.model': resolvedModelForChat,
-                  },
-                },
-                async (span) => {
-                  const result = await executeTaskGraph(graphArgs.tasks, taskExecutor, {
-                    maxParallelExplorers: 3,
-                    signal: abortControllerRef.current?.signal,
-                    onProgress: (event) => {
-                      const node = event.taskId ? graphNodeById.get(event.taskId) : undefined;
-                      switch (event.type) {
-                        case 'task_ready':
-                          if (event.taskId && node) {
-                            appendRunEvent(chatId, {
-                              type: 'task_graph.task_ready',
-                              executionId,
-                              taskId: event.taskId,
-                              agent: node.agent,
-                              detail: event.detail,
-                            });
-                          }
-                          break;
-                        case 'task_started':
-                          updateAgentStatus(
-                            {
-                              active: true,
-                              phase: `Task graph: starting ${event.taskId}`,
-                              detail: event.detail,
-                            },
-                            { chatId, source: 'coder' },
-                          );
-                          if (event.taskId && node) {
-                            appendRunEvent(chatId, {
-                              type: 'task_graph.task_started',
-                              executionId,
-                              taskId: event.taskId,
-                              agent: node.agent,
-                              detail: event.detail,
-                            });
-                          }
-                          break;
-                        case 'task_completed':
-                          if (event.taskId && node) {
-                            appendRunEvent(chatId, {
-                              type: 'task_graph.task_completed',
-                              executionId,
-                              taskId: event.taskId,
-                              agent: node.agent,
-                              summary: summarizeToolResultPreview(event.detail ?? ''),
-                              elapsedMs: event.elapsedMs,
-                            });
-                          }
-                          break;
-                        case 'task_failed':
-                          if (event.taskId && node) {
-                            appendRunEvent(chatId, {
-                              type: 'task_graph.task_failed',
-                              executionId,
-                              taskId: event.taskId,
-                              agent: node.agent,
-                              error: summarizeToolResultPreview(event.detail ?? 'Task failed.'),
-                              elapsedMs: event.elapsedMs,
-                            });
-                          }
-                          break;
-                        case 'task_cancelled':
-                          if (event.taskId && node) {
-                            appendRunEvent(chatId, {
-                              type: 'task_graph.task_cancelled',
-                              executionId,
-                              taskId: event.taskId,
-                              agent: node.agent,
-                              reason: summarizeToolResultPreview(event.detail ?? 'Task cancelled.'),
-                              elapsedMs: event.elapsedMs,
-                            });
-                          }
-                          break;
-                        case 'graph_complete':
-                          break;
-                      }
-                    },
-                  });
-                  setSpanAttributes(span, {
-                    'push.taskgraph.success': result.success,
-                    'push.taskgraph.total_rounds': result.totalRounds,
-                    'push.taskgraph.wall_time_ms': result.wallTimeMs,
-                  });
-                  span.setStatus({ code: SpanStatusCode.OK });
-                  return result;
-                },
-              );
-              appendRunEvent(chatId, {
-                type: 'task_graph.graph_completed',
-                executionId,
-                summary: graphResult.aborted
-                  ? 'Task graph cancelled by user.'
-                  : graphResult.success
-                    ? 'All tasks completed successfully.'
-                    : summarizeToolResultPreview(graphResult.summary),
-                success: graphResult.success,
-                aborted: graphResult.aborted,
-                nodeCount: graphResult.nodeStates.size,
-                totalRounds: graphResult.totalRounds,
-                wallTimeMs: graphResult.wallTimeMs,
-              });
-
-              if (graphMemoryScope && latestGraphDiffPaths && latestGraphDiffPaths.length > 0) {
-                await runContextMemoryBestEffort(
-                  'invalidating task-graph memory after file changes',
-                  () =>
-                    invalidateMemoryForChangedFiles({
-                      scope: {
-                        repoFullName: graphMemoryScope.repoFullName,
-                        branch: graphMemoryScope.branch,
-                        chatId: graphMemoryScope.chatId,
-                      },
-                      changedPaths: latestGraphDiffPaths!,
-                      reason: 'Task graph coder nodes updated file-backed context.',
-                    }),
-                );
-              }
-
-              // Persist typed memory records for every completed node so
-              // later (out-of-graph) delegations can retrieve them.
-              if (graphMemoryScope) {
-                for (const nodeState of graphResult.nodeStates.values()) {
-                  await runContextMemoryBestEffort(
-                    `persisting task-graph memory for ${nodeState.node.id}`,
-                    () =>
-                      writeTaskGraphNodeMemory({
-                        scope: graphMemoryScope,
-                        nodeState,
-                      }),
-                  );
-                }
-              }
-
-              let graphAuditResult: EvaluationResult | null = null;
-              if (hasCoderTasks) {
-                const coderNodeStates = [...graphResult.nodeStates.entries()].filter(
-                  ([, state]) => state.node.agent === 'coder',
-                );
-
-                if (graphResult.aborted || abortRef.current) {
-                  updateVerificationStateForChat(chatId, (state) =>
-                    recordVerificationGateResult(
-                      state,
-                      'auditor',
-                      'inconclusive',
-                      'Task graph cancelled by user.',
-                    ),
-                  );
-                } else if (coderNodeStates.length > 0) {
-                  const auditorExecutionId = createId();
-                  try {
-                    appendRunEvent(chatId, {
-                      type: 'subagent.started',
-                      executionId: auditorExecutionId,
-                      agent: 'auditor',
-                      detail: 'Evaluating task graph output',
-                    });
-                    updateAgentStatus(
-                      { active: true, phase: 'Evaluating task graph output...' },
-                      { chatId, source: 'coder' },
-                    );
-
-                    let evalDiff: string | null = null;
-                    try {
-                      const diffResult = await getSandboxDiff(currentSandboxId!);
-                      evalDiff = diffResult.diff || null;
-                    } catch {
-                      // Evaluation can still proceed without a diff snapshot.
-                    }
-
-                    const combinedTask = coderNodeStates
-                      .map(([id, state]) => `[${id}] ${state.node.task}`)
-                      .join('\n\n');
-                    const combinedSummary = coderNodeStates
-                      .map(([id, state]) => `[${id}] ${state.result ?? state.error ?? ''}`)
-                      .join('\n');
-                    const aggregatedChecks = coderNodeStates.flatMap(([id, state]) =>
-                      (state.delegationOutcome?.checks ?? []).map((check) => ({
-                        id: `${id}:${check.id}`,
-                        passed: check.passed,
-                        output: check.output ?? '',
-                      })),
-                    );
-                    const totalCoderRounds = coderNodeStates.reduce(
-                      (sum, [, state]) => sum + (state.delegationOutcome?.rounds ?? 0),
-                      0,
-                    );
-                    const evalWorkingMemory =
-                      coderNodeStates.length <= 1 ? lastCoderStateRef.current : null;
-                    const graphAuditorCorrelation = extendCorrelation(baseCorrelation, {
-                      executionId: auditorExecutionId,
-                      taskGraphId: executionId,
-                    });
-                    graphAuditResult = await withActiveSpan(
-                      'subagent.auditor',
-                      {
-                        scope: 'push.delegation',
-                        kind: SpanKind.INTERNAL,
-                        attributes: {
-                          ...correlationToSpanAttributes(graphAuditorCorrelation),
-                          'push.agent.role': 'auditor',
-                          'push.provider': lockedProviderForChat,
-                          'push.model': resolvedModelForChat,
-                          'push.criteria_count': aggregatedChecks.length,
-                        },
-                      },
-                      async (span) => {
-                        const result = await runAuditorEvaluation(
-                          combinedTask,
-                          combinedSummary,
-                          evalWorkingMemory,
-                          evalDiff,
-                          (phase) =>
-                            updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
-                          {
-                            providerOverride: lockedProviderForChat,
-                            modelOverride: resolvedModelForChat || undefined,
-                            coderRounds: totalCoderRounds,
-                            coderMaxRounds:
-                              (harnessSettings?.maxCoderRounds ?? 0) *
-                              Math.max(coderNodeStates.length, 1),
-                            criteriaResults:
-                              aggregatedChecks.length > 0 ? aggregatedChecks : undefined,
-                            verificationPolicy,
-                            memoryScope: buildMemoryScope(
-                              chatId,
-                              repoRef.current,
-                              branchInfoRef.current?.currentBranch,
-                              { taskGraphId: graphMemoryScope?.taskGraphId ?? executionId },
-                            ),
-                          },
-                        );
-                        setSpanAttributes(span, {
-                          'push.auditor.verdict': result.verdict,
-                          'push.auditor.gap_count': result.gaps.length,
-                        });
-                        span.setStatus({ code: SpanStatusCode.OK });
-                        return result;
-                      },
-                    );
-
-                    updateVerificationStateForChat(chatId, (state) =>
-                      recordVerificationGateResult(
-                        state,
-                        'auditor',
-                        graphAuditResult?.verdict === 'complete' ? 'passed' : 'failed',
-                        graphAuditResult?.summary ?? 'Auditor evaluation returned no result.',
-                      ),
-                    );
-                    appendRunEvent(chatId, {
-                      type: 'subagent.completed',
-                      executionId: auditorExecutionId,
-                      agent: 'auditor',
-                      summary: summarizeToolResultPreview(graphAuditResult.summary),
-                    });
-                  } catch {
-                    updateVerificationStateForChat(chatId, (state) =>
-                      recordVerificationGateResult(
-                        state,
-                        'auditor',
-                        'inconclusive',
-                        'Auditor evaluation failed.',
-                      ),
-                    );
-                    appendRunEvent(chatId, {
-                      type: 'subagent.failed',
-                      executionId: auditorExecutionId,
-                      agent: 'auditor',
-                      error: 'Evaluation failed.',
-                    });
-                  }
-                }
-              }
-
-              // Aggregate per-node delegation outcomes into a graph-level outcome
-              const graphOutcome: DelegationOutcome = (() => {
-                const nodeOutcomes = [...graphResult.nodeStates.values()]
-                  .filter((s) => s.delegationOutcome)
-                  .map((s) => s.delegationOutcome!);
-                const evidence: DelegationEvidence[] = nodeOutcomes.flatMap((o) => o.evidence);
-                const checks: DelegationCheck[] = nodeOutcomes.flatMap((o) => o.checks);
-                const gateVerdicts: DelegationGateVerdict[] = nodeOutcomes.flatMap(
-                  (o) => o.gateVerdicts,
-                );
-                if (graphAuditResult) {
-                  gateVerdicts.push({
-                    gate: 'auditor',
-                    outcome: graphAuditResult.verdict === 'complete' ? 'passed' : 'failed',
-                    summary: graphAuditResult.summary,
-                  });
-                }
-                const status: DelegationStatus = graphResult.aborted
-                  ? 'inconclusive'
-                  : graphAuditResult
-                    ? graphAuditResult.verdict === 'complete'
-                      ? 'complete'
-                      : 'incomplete'
-                    : graphResult.success
-                      ? 'complete'
-                      : 'incomplete';
-                const missingRequirements = graphResult.aborted
-                  ? []
-                  : graphAuditResult?.gaps?.length
-                    ? graphAuditResult.gaps
-                    : [...graphResult.nodeStates.values()]
-                        .filter((s) => s.status === 'failed' || s.status === 'cancelled')
-                        .map((s) => `[${s.node.id}] ${s.error ?? 'failed'}`);
-                const evaluationSummary = graphAuditResult
-                  ? `\n[Evaluation: ${graphAuditResult.verdict.toUpperCase()}] ${graphAuditResult.summary}`
-                  : '';
-
-                // Tag the outcome agent based on what actually ran, not a static default
-                const ranCoder = [...graphResult.nodeStates.values()].some(
-                  (s) =>
-                    s.node.agent === 'coder' && (s.status === 'completed' || s.status === 'failed'),
-                );
-
-                return {
-                  agent: ranCoder ? ('coder' as const) : ('explorer' as const),
-                  status,
-                  summary: `${graphResult.summary}${evaluationSummary}`,
-                  evidence,
-                  checks,
-                  gateVerdicts,
-                  missingRequirements,
-                  nextRequiredAction: graphResult.aborted
-                    ? null
-                    : status === 'incomplete'
-                      ? graphAuditResult?.gaps?.length
-                        ? 'Address gaps identified by auditor'
-                        : 'Address failed tasks in the graph'
-                      : null,
-                  rounds: graphResult.totalRounds,
-                  checkpoints: 0,
-                  elapsedMs: graphResult.wallTimeMs,
-                };
-              })();
-
-              toolExecResult = {
-                text: formatCompactDelegationToolResult({
-                  agent: 'task_graph',
-                  outcome: graphOutcome,
-                  taskCount: graphResult.nodeStates.size,
-                }),
-                card: buildDelegationResultCard({
-                  agent: 'task_graph',
-                  outcome: graphOutcome,
-                  taskCount: graphResult.nodeStates.size,
-                }),
-                delegationOutcome: graphOutcome,
-              };
-              appendRunEvent(chatId, {
-                type: 'subagent.completed',
-                executionId,
-                agent: 'task_graph',
-                summary: summarizeToolResultPreview(toolExecResult.text),
-                delegationOutcome: graphOutcome,
-              });
-            }
-          }
-        } catch (err) {
-          const isAbort = err instanceof DOMException && err.name === 'AbortError';
-          if (isAbort || abortRef.current) {
-            toolExecResult = {
-              text: '[Tool Result — plan_tasks]\nTask graph execution cancelled by user.',
-            };
-          } else {
-            const msg = err instanceof Error ? err.message : String(err);
-            toolExecResult = { text: `[Tool Error] Task graph execution failed: ${msg}` };
-            appendRunEvent(chatId, {
-              type: 'subagent.failed',
-              executionId,
-              agent: 'task_graph',
-              error: summarizeToolResultPreview(msg),
-            });
-          }
-        }
       }
 
       return toolExecResult;
     },
+    // The build* helpers track ref/callback identity for their handler
+    // contexts, so executeDelegateCall's deps only need the build*
+    // helpers + the direct references (appendRunEvent, setConversations,
+    // getVerificationPolicyForChat) the body uses outside those helpers.
     [
-      abortControllerRef,
-      abortRef,
-      agentsMdRef,
       appendRunEvent,
-      branchInfoRef,
       buildAuditorContext,
       buildCoderContext,
       buildExplorerContext,
-      emitRunEngineEvent,
+      buildTaskGraphContext,
       getVerificationPolicyForChat,
-      instructionFilenameRef,
-      isMainProtectedRef,
-      lastCoderStateRef,
-      repoRef,
-      sandboxIdRef,
       setConversations,
-      updateAgentStatus,
-      updateVerificationStateForChat,
     ],
   );
 
