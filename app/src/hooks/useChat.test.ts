@@ -319,37 +319,39 @@ describe('useChat — public API surface', () => {
 // abortStream -> clear seam. The enqueue/dequeue paths run inside
 // sendMessage and are not drivable through the existing test harness;
 // they will be covered against the new hook directly in Commit B.
+// The app runs its web tests in `environment: 'node'` (vitest.config.ts).
+// abortStream reaches for window.setTimeout / window.clearTimeout, which
+// are absent from the node env. Stub a minimal window via vi.stubGlobal
+// (auto-reverted by vi.unstubAllGlobals in afterAll) so the stub does
+// not leak past this file into any future suites that expect window to
+// be undefined under the project-wide node env. Lifted to file scope so
+// every describe below (queued-follow-ups, run-events, run-engine) gets
+// a usable window without re-declaring the hook.
+beforeAll(() => {
+  vi.stubGlobal('window', {
+    setTimeout: globalThis.setTimeout.bind(globalThis),
+    clearTimeout: globalThis.clearTimeout.bind(globalThis),
+  });
+});
+afterAll(() => {
+  vi.unstubAllGlobals();
+});
+
+function makeConversation(
+  chatId: string,
+  queuedFollowUps?: Array<{ text: string; queuedAt: number }>,
+) {
+  return {
+    id: chatId,
+    title: `Chat ${chatId}`,
+    messages: [],
+    createdAt: 1,
+    lastMessageAt: 1,
+    ...(queuedFollowUps ? { runState: { queuedFollowUps } } : {}),
+  };
+}
+
 describe('useChat — queued follow-ups (pre-extraction characterization)', () => {
-  // The app runs its web tests in `environment: 'node'` (vitest.config.ts).
-  // abortStream reaches for window.setTimeout / window.clearTimeout, which
-  // are absent from the node env. Stub a minimal window via vi.stubGlobal
-  // (auto-reverted by vi.unstubAllGlobals in afterAll) so the stub does
-  // not leak past this describe block into any future suites that expect
-  // window to be undefined under the project-wide node env.
-  beforeAll(() => {
-    vi.stubGlobal('window', {
-      setTimeout: globalThis.setTimeout.bind(globalThis),
-      clearTimeout: globalThis.clearTimeout.bind(globalThis),
-    });
-  });
-  afterAll(() => {
-    vi.unstubAllGlobals();
-  });
-
-  function makeConversation(
-    chatId: string,
-    queuedFollowUps?: Array<{ text: string; queuedAt: number }>,
-  ) {
-    return {
-      id: chatId,
-      title: `Chat ${chatId}`,
-      messages: [],
-      createdAt: 1,
-      lastMessageAt: 1,
-      ...(queuedFollowUps ? { runState: { queuedFollowUps } } : {}),
-    };
-  }
-
   it('hydrates queuedFollowUpCount from initialConversations via buildQueuedFollowUpsByChat', () => {
     const followUp1 = { text: 'first', queuedAt: 1 };
     const followUp2 = { text: 'second', queuedAt: 2 };
@@ -508,5 +510,71 @@ describe('useChat — run events (pre-extraction characterization)', () => {
     const hook = useChat(null);
 
     expect(hook.runEvents).toBe(merged);
+  });
+});
+
+// Characterization tests for the run-engine coordinator that useRunEngine
+// will absorb. emitRunEngineEvent has ~25 call sites in useChat; only one
+// is reachable from the outside through the fake-React harness:
+// abortStream({ clearQueuedFollowUps: true }) fires
+// emitRunEngineEvent({ type: 'FOLLOW_UP_QUEUE_CLEARED', ... }) when the
+// queue had items. Every other emit lives inside sendMessage's loop or
+// useAgentDelegation and is not drivable here. These tests pin the one
+// reachable path. Full event-type coverage (RUN_STARTED / ROUND_STARTED /
+// LOOP_* / ACCUMULATED_UPDATED / default) goes into Commit B against the
+// extracted hook directly.
+describe('useChat — run-engine coordinator (pre-extraction characterization)', () => {
+  it('abortStream with queue-clear invokes runEngineReducer with the FOLLOW_UP_QUEUE_CLEARED event', () => {
+    const followUp = { text: 'pending', queuedAt: 1 };
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': makeConversation('chat-1', [followUp]),
+    });
+    chatRuntimeState.buildQueuedFollowUpsByChat.mockReturnValueOnce({
+      'chat-1': [followUp],
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+    chatQueue.clearQueuedItems.mockImplementationOnce(() => ({}));
+
+    runEngine.runEngineReducer.mockClear();
+    const hook = useChat(null);
+    hook.abortStream({ clearQueuedFollowUps: true });
+
+    // The reducer must run first and receive the event the coordinator
+    // dispatched. The arg order (prevState, event) is the contract the
+    // extraction must preserve.
+    expect(runEngine.runEngineReducer).toHaveBeenCalledTimes(1);
+    const [, eventArg] = runEngine.runEngineReducer.mock.calls[0] as [unknown, unknown];
+    expect(eventArg).toEqual(
+      expect.objectContaining({ type: 'FOLLOW_UP_QUEUE_CLEARED', timestamp: expect.any(Number) }),
+    );
+  });
+
+  it('default-branch emits with a null journal ref do not touch journal primitives', () => {
+    const followUp = { text: 'pending', queuedAt: 1 };
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': makeConversation('chat-1', [followUp]),
+    });
+    chatRuntimeState.buildQueuedFollowUpsByChat.mockReturnValueOnce({
+      'chat-1': [followUp],
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+    chatQueue.clearQueuedItems.mockImplementationOnce(() => ({}));
+
+    runJournal.createJournalEntry.mockClear();
+    runJournal.updateJournalPhase.mockClear();
+    runJournal.finalizeJournalEntry.mockClear();
+    runJournal.saveJournalEntry.mockClear();
+
+    const hook = useChat(null);
+    hook.abortStream({ clearQueuedFollowUps: true });
+
+    // runJournalEntryRef starts as null. FOLLOW_UP_QUEUE_CLEARED lands
+    // in the coordinator's `default` branch, which is guarded by
+    // `if (runJournalEntryRef.current)`. With a null ref every journal
+    // primitive must stay silent.
+    expect(runJournal.createJournalEntry).not.toHaveBeenCalled();
+    expect(runJournal.updateJournalPhase).not.toHaveBeenCalled();
+    expect(runJournal.finalizeJournalEntry).not.toHaveBeenCalled();
+    expect(runJournal.saveJournalEntry).not.toHaveBeenCalled();
   });
 });

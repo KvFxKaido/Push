@@ -244,6 +244,36 @@ The characterization tests in `useChat.test.ts` pin the UI merge-order invariant
 
 **Status:** Phase 2 ready for PR. Phase 3 (`useRunEngine`) is unblocked — `appendRunEvent` stability is verified and its dependency shape is now explicit. Phase 4 remains independent of Phases 2 and 3.
 
+## Phase 3 shipping record
+
+**Date:** 2026-04-19
+**Branch:** `refactor/userunengine-hook`
+**Commits:**
+- `5cbde86` — `test(context): pin run-engine coordinator reducer-call invariant`
+- `477f14f` — `refactor(context): extract useRunEngine hook from useChat`
+
+**Line delta:** `app/src/hooks/useChat.ts` 1,577 → 1,465 (−112). Beat the recon's ~100 estimate; several useCallback deps arrays collapsed cleanly after the ref + callback moves. Structural win: the run-engine coordinator is now unit-testable in isolation for the first time — prior to this, the reducer was tested in `run-engine.test.ts` but the Track B journal lifecycle (85 of the 86 coordinator lines) had zero automated coverage.
+
+**Design adjustments from the recon:**
+
+- Public hook surface is **4 items**, matching the recon. `runEngineStateRef` / `runJournalEntryRef` / `emitRunEngineEvent` / `persistRunJournal`. Exposing both refs was non-negotiable: seven external sites in useChat / useChatCheckpoint / sendMessage / abortStream / useRunEventStream / persistVerificationState read or mutate them. Hiding would force large call-site rewrites for no structural gain.
+- Hook parameters collapse to **one**: `getVerificationStateForChat`. That's the only cross-cutting dep `emitRunEngineEvent` reaches for. Phase 4 will later supply it from `useVerificationState`; today it still flows from useChat's body.
+- **Structural reorder in useChat**: `useChatCheckpoint`'s call site moved from L447 to after the new `useRunEngine` call. Required because `useChatCheckpoint` takes `runEngineStateRef` as a prop, which now comes from the hook's return. All its other params remain declared in the early refs block, so the move is mechanically safe — only the `runEngineStateRef` source changed. **First phase in the track to mandate a structural reorder.** Phase 1 and Phase 2's hooks could be inserted without disturbing sibling calls; Phase 3 could not.
+
+**Test coverage approach:**
+
+Commit A's characterization is thin by design — only one of `emitRunEngineEvent`'s ~25 call sites (`abortStream({ clearQueuedFollowUps: true })` → `FOLLOW_UP_QUEUE_CLEARED`) is reachable through the existing fake-React harness. Every other emit lives inside `sendMessage`'s loop or `useAgentDelegation`, neither drivable. The audit flagged this phase's test gap explicitly; Commit B's direct tests in `useRunEngine.test.ts` (14 tests) are the real safety net. They cover every event-type branch: the reducer-runs-first invariant, `ACCUMULATED_UPDATED`'s silent-journal path, `RUN_STARTED`'s create+seed+persist sequence, `ROUND_STARTED`'s phase update (with and without journal), `LOOP_COMPLETED` / `LOOP_ABORTED` / `LOOP_FAILED`'s finalize+prune+null pattern, the `default` branch's phase update (with and without journal), and `persistRunJournal`'s null-guard + prune option.
+
+**Open Question resolutions:**
+
+- **#1: Should `useRunEngine` and journal coordination be one hook or two?** Resolved — **one**. Phase 2's choice to take `runJournalEntryRef` as a param left useRunEngine no alternative: two separate hooks would force useChat to thread two refs from Phase 3 into Phase 2, and the state is already co-mutated (the reducer updates engine state while the switch updates the journal entry in the same callback). The combined hook keeps both refs next to the code that co-mutates them.
+
+**Open questions still unresolved:** #2 (steer + queue unification, Phase 4 decision), #3 (`sendMessage` decomposition, deferred indefinitely).
+
+**Containment guard ratcheted:** `eslint.config.js` lowered `max-lines` from 1,620 to 1,500. Current file is 1,465 lines; ~35 lines of headroom. Phase 4 will push it further.
+
+**Status:** Phase 3 ready for PR. Phase 4 (`useVerificationState` + steer unification) remains the only outstanding extraction. All three phases landed so far have held their characterization tests across extraction — the pattern of "characterization at the consumer, direct tests at the new hook" continues to work.
+
 ---
 
 **Generated:** 2026-04-19, recon-only pass. No extractions performed. The three regrowth commits have been analyzed, sibling hospitability has been assessed, and a four-phase extraction track has been proposed.
@@ -251,3 +281,5 @@ The characterization tests in `useChat.test.ts` pin the UI merge-order invariant
 **Updated:** 2026-04-19, Phase 1 shipping record added following the landing of `bdeb281` + `b9d4833` on `refactor/usequeued-followups-hook`.
 
 **Updated:** 2026-04-19, Phase 2 shipping record added following the landing of `5a4983c` + `bd4be63` on `refactor/userunevent-stream-hook`.
+
+**Updated:** 2026-04-19, Phase 3 shipping record added following the landing of `5cbde86` + `477f14f` on `refactor/userunengine-hook`.
