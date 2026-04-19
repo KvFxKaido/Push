@@ -146,6 +146,14 @@ beforeEach(() => {
   taskGraph.validateTaskGraph.mockReset().mockReturnValue({ valid: true, errors: [] });
   taskGraph.executeTaskGraph.mockReset();
   contextMemory.buildRetrievedMemoryKnownContext.mockReset().mockResolvedValue({ line: null });
+  // Clear call history for memory-persistence mocks so tests asserting call
+  // counts (e.g. the Phase 5 TG memory-persistence test) see a clean slate.
+  // Use mockClear (not mockReset) to preserve the default no-op
+  // implementation; these mocks don't need per-test behavior overrides.
+  contextMemory.writeTaskGraphNodeMemory.mockClear();
+  contextMemory.invalidateMemoryForChangedFiles.mockClear();
+  contextMemory.writeCoderMemory.mockClear();
+  contextMemory.writeExplorerMemory.mockClear();
 });
 
 describe('useAgentDelegation — public API', () => {
@@ -1170,6 +1178,375 @@ describe('useAgentDelegation.executeDelegateCall — Sequential Auditor', () => 
 
     // Multi-task: evalWorkingMemory must be null to avoid misleading the
     // evaluator. This is policy — the extraction must preserve it.
+    expect(auditorAgent.runAuditorEvaluation.mock.calls[0][2]).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task-Graph characterization — pre-requisite for Phase 5 of the
+// useAgentDelegation extraction track (recon doc: §"Recommended Extraction
+// Order — Phase 5: Task-Graph Handler").
+//
+// The plan_tasks branch coordinates 4 sub-seams (TG Execute, TG Explorer,
+// TG Coder, TG Auditor) spanning ~736 lines. These four tests pin the
+// load-bearing behaviors extraction must preserve:
+//   1. `task_graph.graph_completed` envelope on successful execution.
+//   2. `writeTaskGraphNodeMemory` invoked once per completed node.
+//   3. TG Auditor fires when the graph contains >=1 coder node, with
+//      aggregated combinedTask/combinedSummary inputs.
+//   4. `evalWorkingMemory` policy: single coder node -> last-written ref
+//      state, multi-coder-node graph -> null (Option A contract pin).
+//
+// Test 4 is the Option A contract pin from the Phase 5 design spike
+// (docs/decisions/Phase 5 Handoff - Task-Graph Extraction.md §"Open Design
+// Question"). The TG Auditor currently passes null for evalWorkingMemory on
+// any multi-coder-node graph to avoid misleading the evaluator with only
+// the last-completing node's state. Phase 5 extracts this seam unchanged;
+// a future Option-B follow-up may replace the ref with a Map accumulation,
+// but that change must be deliberate, not incidental. If this test starts
+// failing without a matching code change in the auditor contract, the
+// extraction has silently regressed the policy.
+// ---------------------------------------------------------------------------
+
+describe('useAgentDelegation.executeDelegateCall — plan_tasks (task graph)', () => {
+  // Minimal coder-node shape the hook reads from graphArgs.tasks. Only
+  // `id`, `agent`, `task`, and `files` are actually touched in these paths.
+  const coderNode = (id: string, task: string) => ({
+    id,
+    agent: 'coder' as const,
+    task,
+    files: [] as string[],
+  });
+
+  // Pre-built nodeStates map for tests that don't need the executor closure
+  // to run. Matches the shape `executeTaskGraph` returns: Map<nodeId, {
+  // node, status, result, delegationOutcome }>.
+  const coderNodeState = (
+    id: string,
+    task: string,
+    delegationOutcome: Record<string, unknown> = { agent: 'coder', checks: [], rounds: 1 },
+  ) =>
+    [
+      id,
+      {
+        node: coderNode(id, task),
+        status: 'completed',
+        result: `${id} done`,
+        delegationOutcome,
+      },
+    ] as const;
+
+  it('emits task_graph.graph_completed envelope on successful execution', async () => {
+    taskGraph.validateTaskGraph.mockReturnValueOnce([]);
+    const nodeStates = new Map([coderNodeState('n1', 'implement it')]);
+    taskGraph.executeTaskGraph.mockResolvedValueOnce({
+      success: true,
+      aborted: false,
+      summary: 'graph done',
+      nodeStates,
+      totalRounds: 2,
+      wallTimeMs: 1234,
+    });
+    auditorAgent.runAuditorEvaluation.mockResolvedValueOnce({
+      verdict: 'complete',
+      summary: 'ok',
+      gaps: [],
+    });
+
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    // buildMemoryScope returns null when repoRef.current is null (scratch
+    // mode), which would short-circuit the writeTaskGraphNodeMemory loop
+    // in Test 2. Set it here too for parity across the describe block.
+    params.repoRef = { current: 'owner/repo' };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: {
+        tool: 'plan_tasks' as const,
+        args: { tasks: [coderNode('n1', 'implement it')] },
+      },
+    };
+
+    await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        type: 'task_graph.graph_completed',
+        success: true,
+        aborted: false,
+        nodeCount: 1,
+        totalRounds: 2,
+        wallTimeMs: 1234,
+      }),
+    );
+  });
+
+  it('persists typed memory for every completed node via writeTaskGraphNodeMemory', async () => {
+    taskGraph.validateTaskGraph.mockReturnValueOnce([]);
+    const nodeStates = new Map([
+      coderNodeState('n1', 'implement A'),
+      coderNodeState('n2', 'implement B'),
+    ]);
+    taskGraph.executeTaskGraph.mockResolvedValueOnce({
+      success: true,
+      aborted: false,
+      summary: 'graph done',
+      nodeStates,
+      totalRounds: 2,
+      wallTimeMs: 100,
+    });
+    auditorAgent.runAuditorEvaluation.mockResolvedValueOnce({
+      verdict: 'complete',
+      summary: 'ok',
+      gaps: [],
+    });
+
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.repoRef = { current: 'owner/repo' };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: {
+        tool: 'plan_tasks' as const,
+        args: { tasks: [coderNode('n1', 'implement A'), coderNode('n2', 'implement B')] },
+      },
+    };
+
+    await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    // The loop at lines ~929-940 iterates graphResult.nodeStates.values()
+    // and calls writeTaskGraphNodeMemory once per node. Extraction that
+    // hoists this loop out of the hook must preserve the 1:1 invariant.
+    expect(contextMemory.writeTaskGraphNodeMemory).toHaveBeenCalledTimes(2);
+    const nodeIdsWritten = contextMemory.writeTaskGraphNodeMemory.mock.calls.map(
+      (call: unknown[]) => (call[0] as { nodeState: { node: { id: string } } }).nodeState.node.id,
+    );
+    expect(nodeIdsWritten).toEqual(expect.arrayContaining(['n1', 'n2']));
+  });
+
+  it('fires TG Auditor with aggregated inputs when graph has a coder node', async () => {
+    taskGraph.validateTaskGraph.mockReturnValueOnce([]);
+    const nodeStates = new Map([
+      coderNodeState('n1', 'implement login', {
+        agent: 'coder',
+        checks: [{ id: 'unit', passed: true, exitCode: 0, output: '' }],
+        rounds: 3,
+      }),
+    ]);
+    // Override result/message so combinedSummary has content we can assert.
+    const entry = nodeStates.get('n1')!;
+    (entry as { result: string }).result = 'added handler';
+    taskGraph.executeTaskGraph.mockResolvedValueOnce({
+      success: true,
+      aborted: false,
+      summary: 'done',
+      nodeStates,
+      totalRounds: 3,
+      wallTimeMs: 200,
+    });
+    auditorAgent.runAuditorEvaluation.mockResolvedValueOnce({
+      verdict: 'complete',
+      summary: 'all good',
+      gaps: [],
+    });
+
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.repoRef = { current: 'owner/repo' };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: {
+        tool: 'plan_tasks' as const,
+        args: { tasks: [coderNode('n1', 'implement login')] },
+      },
+    };
+
+    await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    expect(auditorAgent.runAuditorEvaluation).toHaveBeenCalledOnce();
+    // Positional args: combinedTask=[0], combinedSummary=[1].
+    // The aggregation format is `[nodeId] <content>`; pin the prefix.
+    expect(auditorAgent.runAuditorEvaluation.mock.calls[0][0]).toContain('[n1] implement login');
+    expect(auditorAgent.runAuditorEvaluation.mock.calls[0][1]).toContain('[n1] added handler');
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        type: 'subagent.started',
+        agent: 'auditor',
+        detail: 'Evaluating task graph output',
+      }),
+    );
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        type: 'subagent.completed',
+        agent: 'auditor',
+        summary: expect.stringContaining('all good'),
+      }),
+    );
+  });
+
+  it('passes lastCoderStateRef as evalWorkingMemory on single-node graph, null on multi-node (Option A pin)', async () => {
+    // Shared fake runCoderAgent that fires onStateUpdate (positional index 8
+    // on runCoderAgent) from within the executor closure, populating
+    // lastCoderStateRef.current before the auditor reads it. Without this
+    // the single-node case would also read null and the policy pin would
+    // be vacuous (both branches of the ternary would appear equal).
+    const populateState = async (args: unknown[]) => {
+      const onStateUpdate = args[8] as (state: unknown) => void;
+      onStateUpdate({ working: 'tg-memory' });
+      return {
+        rounds: 1,
+        checkpoints: 0,
+        cards: [],
+        summary: 'done',
+        criteriaResults: [],
+      };
+    };
+
+    // Executor-invoking graph mock: actually call the hook's taskExecutor
+    // closure for each node so runCoderAgent's onStateUpdate callback fires
+    // and mutates lastCoderStateRef. The default mock's resolvedValue would
+    // skip the executor entirely.
+    type Executor = (
+      node: unknown,
+      ctx: unknown,
+      signal: unknown,
+    ) => Promise<{ summary: string; delegationOutcome: unknown; rounds: number }>;
+    const runGraph = async (
+      tasks: Array<{ id: string; agent: string; task: string }>,
+      executor: Executor,
+    ) => {
+      const nodeStates = new Map();
+      for (const node of tasks) {
+        const res = await executor(node, [], undefined);
+        nodeStates.set(node.id, {
+          node,
+          status: 'completed',
+          result: res.summary,
+          delegationOutcome: res.delegationOutcome,
+        });
+      }
+      return {
+        success: true,
+        aborted: false,
+        summary: 'done',
+        nodeStates,
+        totalRounds: tasks.length,
+        wallTimeMs: 100,
+      };
+    };
+
+    // --- Single-node scenario ---
+    taskGraph.validateTaskGraph.mockReturnValueOnce([]);
+    coderAgent.runCoderAgent.mockImplementationOnce((...args: unknown[]) => populateState(args));
+    taskGraph.executeTaskGraph.mockImplementationOnce(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      async (tasks: any, executor: any) => runGraph(tasks, executor),
+    );
+    auditorAgent.runAuditorEvaluation.mockResolvedValueOnce({
+      verdict: 'complete',
+      summary: 'ok',
+      gaps: [],
+    });
+
+    const paramsSingle = makeParams();
+    paramsSingle.sandboxIdRef.current = 'sbx-1';
+    paramsSingle.repoRef = { current: 'owner/repo' };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const singleHook = useAgentDelegation(paramsSingle as any);
+    const singleToolCall = {
+      source: 'delegate' as const,
+      call: {
+        tool: 'plan_tasks' as const,
+        args: { tasks: [coderNode('n1', 'single')] },
+      },
+    };
+    await singleHook.executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      singleToolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    // Single-coder-node graph: evalWorkingMemory (index 2) carries the
+    // ref's last-written state through to the auditor.
+    expect(auditorAgent.runAuditorEvaluation.mock.calls[0][2]).toEqual({
+      working: 'tg-memory',
+    });
+
+    // --- Multi-node scenario ---
+    auditorAgent.runAuditorEvaluation.mockReset();
+    coderAgent.runCoderAgent.mockReset();
+    coderAgent.runCoderAgent.mockImplementation((...args: unknown[]) => populateState(args));
+    taskGraph.validateTaskGraph.mockReturnValueOnce([]);
+    taskGraph.executeTaskGraph.mockImplementationOnce(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      async (tasks: any, executor: any) => runGraph(tasks, executor),
+    );
+    auditorAgent.runAuditorEvaluation.mockResolvedValueOnce({
+      verdict: 'complete',
+      summary: 'ok',
+      gaps: [],
+    });
+
+    const paramsMulti = makeParams();
+    paramsMulti.sandboxIdRef.current = 'sbx-2';
+    paramsMulti.repoRef = { current: 'owner/repo' };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const multiHook = useAgentDelegation(paramsMulti as any);
+    const multiToolCall = {
+      source: 'delegate' as const,
+      call: {
+        tool: 'plan_tasks' as const,
+        args: { tasks: [coderNode('n1', 'task A'), coderNode('n2', 'task B')] },
+      },
+    };
+    await multiHook.executeDelegateCall(
+      'chat-2',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      multiToolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    // Multi-coder-node graph: evalWorkingMemory must be null even though
+    // the ref was populated by each node's onStateUpdate. This pins the
+    // "pass null for multi-node" policy (recon §Coupling Hazards #3).
+    // If Phase 5 extraction accidentally feeds the last node's memory or
+    // changes to Map accumulation without a matching contract update,
+    // this assertion breaks.
     expect(auditorAgent.runAuditorEvaluation.mock.calls[0][2]).toBeNull();
   });
 });
