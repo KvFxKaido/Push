@@ -171,7 +171,7 @@ The extraction only holds if the siblings are hospitable *going forward*. A futu
 1. **Should `useRunEngine` and journal coordination be one hook or two?** The audit recommends one because the state is co-mutated (line 575 `persistRunJournal` is called from inside `emitRunEngineEvent` at line 633+). Two hooks would create an awkward "one must accept the other's state as a prop" coupling. Decide before Phase 3.
 2. **Is Phase 4's steer + queue unification too clever?** Merging pending-steers into `useQueuedFollowUps` is structurally attractive but semantically weird — steers and follow-ups are different domain concepts that happen to share a per-chat-queue shape. Might be cleaner as separate hooks even at the cost of a tiny duplication.
 3. **Does `sendMessage` decomposition belong in this track at all?** The old plan's Phase 4 shipped but the orchestrator is now 534 lines. This audit defers that decision but someone has to make it eventually — if Phase 3 lands and `sendMessage` is still 500+ lines, the hook's readability hasn't improved much.
-4. **Should the containment rule be automated?** An ESLint "max lines in useChat.ts" rule, or a pre-commit warning. Cheap to build, might prevent the next Waterbed Effect. Decide in Phase 1's PR.
+4. **Should the containment rule be automated?** ~~An ESLint "max lines in useChat.ts" rule, or a pre-commit warning. Cheap to build, might prevent the next Waterbed Effect. Decide in Phase 1's PR.~~ **Resolved in Phase 1** — see "Phase 1 shipping record" below.
 
 ## What this audit deliberately does not include
 
@@ -180,6 +180,41 @@ The extraction only holds if the siblings are hospitable *going forward*. A futu
 - A Phase 5 for `sendMessage`. See Open Question #3.
 - Any line counts for *ideal* future siblings. Those are design decisions that belong to the phase PR, not the recon.
 
+## Phase 1 shipping record
+
+**Date:** 2026-04-19
+**Branch:** `refactor/usequeued-followups-hook`
+**Commits:**
+- `bdeb281` — `test(context): pin queued follow-ups hydration + abortStream seam`
+- `b9d4833` — `refactor(context): extract useQueuedFollowUps hook from useChat`
+
+**Line delta:** `app/src/hooks/useChat.ts` 1,733 → 1,672 (−61). Under the recon's 130-line estimate. The gap is deliberate, not a miss: the IndexedDB migration effect stayed in useChat because it coordinates `setConversationsLoaded` + active-chat resolution + `updateConversations`, none of which are queue-owned. Moving it into the new hook just to hit a number would have been fake neatness. The structural win — single ownership of queue state semantics and a persist-on-mutate invariant enforced by module boundary rather than locality — is the real payoff, not the shrink.
+
+**Design adjustments from the recon:**
+
+- Public hook surface is **4 callbacks, not 5**. `enqueue` / `dequeue` / `clear` / `hydrate` are exported; `persist` and `replace` stay internal. The recon listed all five because it enumerated current implementations. Exporting `replace` would have created a second mutation path that bypasses the persist-on-mutate contract, turning it from structure into convention. Internalizing both protects the invariant at the module boundary.
+- Hook parameters include `dirtyConversationIdsRef` and `isMountedRef` alongside `updateConversations`. The recon mentioned only `updateConversations`; the other two are required by the existing persist/replace implementations (dirty-tracking for persistence, mount-gating for setState).
+- The render-time `queuedFollowUpsRef.current = queuedFollowUpsByChat` sync line was removed from the extracted hook. Once every mutation routes through `replace` — which updates the ref *before* calling `setState` — the line is dead code. Removing it also avoids a `react-hooks/refs` lint error on the new file that the inline version in useChat never tripped (the rule is sensitive to how the ref is introduced).
+
+**Test coverage approach:**
+
+The fake-React harness in `useChat.test.ts` (no-op `useEffect`, cluster callbacks not on the returned surface) only lets characterization reach two paths from the outside: hydration via the constructor, and `abortStream({ clearQueuedFollowUps: true })`. Commit A pinned both. The `enqueue` / `dequeue` paths live inside `sendMessage`, which is not drivable through that harness. They are covered directly in Commit B's new `useQueuedFollowUps.test.ts` against the hook itself. This split — characterization at the consumer layer, direct invariant tests at the new hook — is the pattern Phase 2 and Phase 3 should follow; neither of those clusters is fully reachable from useChat's public API either.
+
+**Incidental items:**
+
+- `queuedFollowUpsRef` was added to the `abortStream` and `sendMessage` `useCallback` deps arrays. Post-extraction the ref comes from a hook destructure rather than an inline `useRef`, so `react-hooks/exhaustive-deps` can no longer statically infer stability. Adding the ref to deps is correct (it's a stable object) and silences the warning.
+- Commit A added `updateAgentStatus`, `flushCheckpoint`, `checkpointRefs`, `lastCoderStateRef`, `tabLockIntervalRef` to the hoisted `chatCheckpoint` mock in `useChat.test.ts` so destructuring no longer yields `undefined` when an externally-called callback (like `abortStream`) reaches for `updateAgentStatus`. Future tests that drive other `useChatCheckpoint`-destructured callables inherit this fix.
+
+**Open Question resolutions:**
+
+- **#4: Automate the containment rule.** Resolved. `app/eslint.config.js` gains `'max-lines': ['error', { max: 1700 }]` scoped to `src/hooks/useChat.ts`. Current file is 1,672 lines; threshold gives ~30 lines of headroom for maintenance churn and blocks silent regrowth. Ratchet down as Phases 2-4 land (suggested next thresholds: 1,580 after Phase 2, 1,400 after Phase 3, 1,250 after Phase 4 — these are aspirational and each phase's PR should finalize its own target).
+
+**Open questions still unresolved:** #1 (one-vs-two hooks for run-engine+journal, Phase 3 decision), #2 (steer+queue unification, Phase 4 decision), #3 (`sendMessage` decomposition, deferred indefinitely).
+
+**Status:** Phase 1 ready for PR. Phase 2 (`useRunEventStream`) can start in parallel; Phase 3 is blocked on Phase 2 landing; Phase 4 can start anytime after Phase 1.
+
 ---
 
-**Generated:** 2026-04-19, recon-only pass. No extractions performed. The three regrowth commits have been analyzed, sibling hospitability has been assessed, and a four-phase extraction track has been proposed. Ready for Phase 1 planning when the operator picks up the work.
+**Generated:** 2026-04-19, recon-only pass. No extractions performed. The three regrowth commits have been analyzed, sibling hospitability has been assessed, and a four-phase extraction track has been proposed.
+
+**Updated:** 2026-04-19, Phase 1 shipping record added following the landing of `bdeb281` + `b9d4833` on `refactor/usequeued-followups-hook`.
