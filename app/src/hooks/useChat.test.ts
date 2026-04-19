@@ -578,3 +578,67 @@ describe('useChat — run-engine coordinator (pre-extraction characterization)',
     expect(runJournal.saveJournalEntry).not.toHaveBeenCalled();
   });
 });
+
+// Characterization tests for the verification + steer clusters that
+// Phase 4 will absorb. The fake-React harness can only reach the public
+// setter surface (setWorkspaceContext / setWorkspaceMode) and the UI
+// derivation (pendingSteerCount). The state itself (verificationStateByChatRef,
+// pendingSteersByChatRef) is internal. Commit B covers the state behaviors
+// against the new hooks directly. These tests pin what IS reachable so
+// the extraction cannot break the public surface's callable contract.
+describe('useChat — verification + steer surfaces (pre-extraction characterization)', () => {
+  it('setWorkspaceMode accepts null and mode strings without throwing', () => {
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': makeConversation('chat-1'),
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+
+    const hook = useChat(null);
+
+    expect(() => hook.setWorkspaceMode(null)).not.toThrow();
+    expect(() => hook.setWorkspaceMode('repo')).not.toThrow();
+    expect(() => hook.setWorkspaceMode('scratch')).not.toThrow();
+    expect(() => hook.setWorkspaceMode('chat')).not.toThrow();
+  });
+
+  it('setWorkspaceContext accepts null and concrete context objects without throwing', () => {
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': makeConversation('chat-1'),
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+
+    const hook = useChat(null);
+
+    expect(() => hook.setWorkspaceContext(null)).not.toThrow();
+    expect(() =>
+      hook.setWorkspaceContext({
+        mode: 'repo',
+        repoFullName: 'owner/repo',
+        branch: 'main',
+      } as Parameters<typeof hook.setWorkspaceContext>[0]),
+    ).not.toThrow();
+  });
+
+  it('pendingSteerCount is 0 when the active conversation has runState but no pending steer', () => {
+    // pendingSteerCount must NOT derive from anything in runState -- pending
+    // steers live only in the in-memory PendingSteersByChat map, never in
+    // the conversation's persisted runState. This test pins that separation.
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': {
+        id: 'chat-1',
+        title: 'Chat',
+        messages: [],
+        createdAt: 1,
+        lastMessageAt: 1,
+        runState: {
+          queuedFollowUps: [{ text: 'queued', queuedAt: 1 }],
+        },
+      },
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+
+    const hook = useChat(null);
+
+    expect(hook.pendingSteerCount).toBe(0);
+  });
+});
