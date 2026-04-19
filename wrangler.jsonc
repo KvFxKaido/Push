@@ -19,5 +19,16 @@
         "period": 60
       }
     }
+  ],
+  // Snapshot index — pointer-only KV namespace for the Modal Sandbox Snapshots
+  // design (docs/decisions/Modal Sandbox Snapshots Design.md §6, Phase 4). Stores
+  // `snapshot:<repo>:<branch>:<user>` → { imageId, createdAt, lastAccessedAt, ... }.
+  // Snapshot bytes themselves live as Modal Images; this index is a thin pointer
+  // layer used for resume lookups and the daily eviction cron.
+  "kv_namespaces": [
+    {
+      "binding": "SNAPSHOT_INDEX",
+      "id": "6c446991cc304964a421db73c189d8a8"
+    }
   ]
 }
