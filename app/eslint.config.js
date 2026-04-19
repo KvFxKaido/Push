@@ -30,10 +30,12 @@ export default defineConfig([
   //   Phase 1 (useQueuedFollowUps): 1,733 -> 1,672, ceiling set to 1,700.
   //   Phase 2 (useRunEventStream):  1,673 -> 1,577, ceiling lowered to 1,620.
   //   Phase 3 (useRunEngine):       1,577 -> 1,465, ceiling lowered to 1,500.
+  //   Phase 4 (useVerificationState + usePendingSteer):
+  //                                 1,465 -> 1,365, ceiling lowered to 1,400.
   {
     files: ['src/hooks/useChat.ts'],
     rules: {
-      'max-lines': ['error', { max: 1500 }],
+      'max-lines': ['error', { max: 1400 }],
     },
   },
 ]);

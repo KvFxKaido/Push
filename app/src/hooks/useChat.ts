@@ -12,14 +12,8 @@ import type {
   QueuedFollowUpOptions,
   RunEvent,
   VerificationRuntimeState,
-  WorkspaceContext,
-  WorkspaceMode,
 } from '@/types';
-import {
-  buildAgentEventsByChat,
-  buildQueuedFollowUpsByChat,
-  setConversationVerificationState,
-} from '@/lib/chat-runtime-state';
+import { buildAgentEventsByChat, buildQueuedFollowUpsByChat } from '@/lib/chat-runtime-state';
 import {
   getActiveProvider,
   isProviderAvailable,
@@ -70,12 +64,9 @@ import { isRunActive } from '@/lib/run-engine';
 import { updateJournalVerificationState, markJournalCheckpoint } from '@/lib/run-journal';
 import { useRunEventStream } from './useRunEventStream';
 import { useRunEngine } from './useRunEngine';
-import {
-  getDefaultVerificationPolicy,
-  resolveVerificationPolicy,
-  type VerificationPolicy,
-} from '@/lib/verification-policy';
-import { hydrateVerificationRuntimeState } from '@/lib/verification-runtime';
+import { useVerificationState } from './useVerificationState';
+import { usePendingSteer, type PendingSteerRequest } from './usePendingSteer';
+import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
@@ -106,15 +97,6 @@ type SendMessageOptions = Partial<ChatDraftSelection> &
 type AbortStreamOptions = {
   clearQueuedFollowUps?: boolean;
 };
-
-interface PendingSteerRequest {
-  text: string;
-  attachments?: AttachmentData[];
-  options?: QueuedFollowUpOptions;
-  requestedAt: number;
-}
-
-type PendingSteersByChat = Record<string, PendingSteerRequest>;
 
 function getQueuedFollowUpOptions(options?: SendMessageOptions): QueuedFollowUpOptions | undefined {
   const queuedOptions = {
@@ -224,7 +206,6 @@ export function useChat(
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ active: false, phase: '' });
   const [agentEventsByChat, setAgentEventsByChat] =
     useState<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
-  const [pendingSteersByChat, setPendingSteersByChat] = useState<PendingSteersByChat>({});
 
   // --- Persistence refs ---
   const dirtyConversationIdsRef = useRef(new Set<string>());
@@ -240,8 +221,6 @@ export function useChat(
   const processedContentRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
   const cancelStatusTimerRef = useRef<number | null>(null);
-  const pendingSteersByChatRef = useRef<PendingSteersByChat>({});
-  pendingSteersByChatRef.current = pendingSteersByChat;
   const isMountedRef = useRef(true);
 
   // --- Session identity refs ---
@@ -249,8 +228,6 @@ export function useChat(
   const workspaceSessionIdRef = useRef<string | null>(null);
   const isMainProtectedRef = useRef(false);
   const autoCreateRef = useRef(false);
-  const workspaceContextRef = useRef<WorkspaceContext | null>(null);
-  const workspaceModeRef = useRef<WorkspaceMode | null>(null);
   const ensureSandboxRef = useRef<(() => Promise<string | null>) | null>(null);
 
   // --- Prop mirror refs (always up-to-date in callbacks) ---
@@ -276,7 +253,6 @@ export function useChat(
   // --- sendMessage forward ref (populated after sendMessage is defined) ---
   // Passed to useChatCheckpoint so resumeInterruptedRun can call it.
   const sendMessageRef = useRef<((text: string) => Promise<void>) | null>(null);
-  const baseWorkspaceContextRef = useRef<WorkspaceContext | null>(null);
 
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
@@ -343,13 +319,6 @@ export function useChat(
     agentEventsByChatRef.current = next;
     if (isMountedRef.current) {
       setAgentEventsByChat(next);
-    }
-  }, []);
-
-  const replacePendingSteers = useCallback((next: PendingSteersByChat) => {
-    pendingSteersByChatRef.current = next;
-    if (isMountedRef.current) {
-      setPendingSteersByChat(next);
     }
   }, []);
 
@@ -428,47 +397,33 @@ export function useChat(
       isMountedRef.current = false;
     };
   }, []);
-  const getVerificationPolicyForChat = useCallback(
-    (chatId: string | null | undefined): VerificationPolicy => {
-      if (!chatId) return getDefaultVerificationPolicy();
-      return resolveVerificationPolicy(conversationsRef.current[chatId]?.verificationPolicy);
-    },
-    [],
-  );
-
-  const verificationStateByChatRef = useRef<Record<string, VerificationRuntimeState>>({});
-
-  const getVerificationStateForChat = useCallback(
-    (chatId: string | null | undefined): VerificationRuntimeState => {
-      const policy = getVerificationPolicyForChat(chatId);
-      const key = chatId || '';
-      const cached = verificationStateByChatRef.current[key];
-      const persisted = chatId
-        ? conversationsRef.current[chatId]?.runState?.verificationState
-        : undefined;
-      const hydrated = hydrateVerificationRuntimeState(policy, cached ?? persisted);
-      verificationStateByChatRef.current[key] = hydrated;
-      return hydrated;
-    },
-    [getVerificationPolicyForChat],
-  );
-
-  const applyWorkspaceContext = useCallback(
-    (ctx: WorkspaceContext | null, chatId: string | null | undefined) => {
-      if (!ctx) {
-        workspaceContextRef.current = null;
-        return;
-      }
-      workspaceContextRef.current = {
-        ...ctx,
-        verificationPolicy: getVerificationPolicyForChat(chatId),
-      };
-    },
-    [getVerificationPolicyForChat],
-  );
+  const {
+    getVerificationPolicyForChat,
+    getVerificationStateForChat,
+    writeVerificationStateForChat,
+    setWorkspaceContext,
+    setWorkspaceMode,
+    workspaceContextRef,
+    workspaceModeRef,
+  } = useVerificationState({
+    activeChatId,
+    activeConversationVerificationPolicy: conversations[activeChatId]?.verificationPolicy,
+    activeChatIdRef,
+    conversationsRef,
+    updateConversations,
+    dirtyConversationIdsRef,
+  });
 
   const { runEngineStateRef, runJournalEntryRef, emitRunEngineEvent, persistRunJournal } =
     useRunEngine({ getVerificationStateForChat });
+
+  const {
+    pendingSteersByChat,
+    pendingSteersByChatRef,
+    setPendingSteer,
+    consumePendingSteer,
+    clearPendingSteer,
+  } = usePendingSteer({ isMountedRef });
 
   // --- Checkpoint + resume lifecycle ---
   const {
@@ -501,10 +456,14 @@ export function useChat(
     activeChatId,
   });
 
+  // Composition wrapper: useVerificationState owns the ref + conversation
+  // write; useRunEngine owns the journal ref + persistRunJournal. When
+  // verification state updates for the in-flight run's chat, the journal
+  // also updates. Keeping this composition in useChat avoids a circular
+  // dep between the two hooks.
   const persistVerificationState = useCallback(
     (chatId: string, verificationState: VerificationRuntimeState) => {
-      verificationStateByChatRef.current[chatId] = verificationState;
-
+      writeVerificationStateForChat(chatId, verificationState);
       if (runJournalEntryRef.current?.chatId === chatId) {
         runJournalEntryRef.current = updateJournalVerificationState(
           runJournalEntryRef.current,
@@ -512,18 +471,8 @@ export function useChat(
         );
         persistRunJournal(runJournalEntryRef.current);
       }
-
-      updateConversations((prev) => {
-        const conversation = prev[chatId];
-        if (!conversation) return prev;
-        dirtyConversationIdsRef.current.add(chatId);
-        return {
-          ...prev,
-          [chatId]: setConversationVerificationState(conversation, verificationState),
-        };
-      });
     },
-    [persistRunJournal, runJournalEntryRef, updateConversations],
+    [writeVerificationStateForChat, runJournalEntryRef, persistRunJournal],
   );
 
   const updateVerificationStateForChat = useCallback(
@@ -643,25 +592,7 @@ export function useChat(
     }
   }, [sortedChatIds, activeChatId, activeRepoFullName, updateConversations]);
 
-  // --- Workspace context / sandbox setters ---
-  const setWorkspaceContext = useCallback(
-    (ctx: WorkspaceContext | null) => {
-      baseWorkspaceContextRef.current = ctx;
-      workspaceModeRef.current = ctx?.mode ?? null;
-      applyWorkspaceContext(ctx, activeChatIdRef.current);
-    },
-    [applyWorkspaceContext],
-  );
-
-  /** Synchronous mode setter — call during render to avoid stale ref between workspace transitions. */
-  const setWorkspaceMode = useCallback((mode: WorkspaceMode | null) => {
-    workspaceModeRef.current = mode;
-  }, []);
-
-  useEffect(() => {
-    applyWorkspaceContext(baseWorkspaceContextRef.current, activeChatId);
-  }, [activeChatId, activeConversation?.verificationPolicy, applyWorkspaceContext]);
-
+  // --- Sandbox setters ---
   const setSandboxId = useCallback((id: string | null) => {
     sandboxIdRef.current = id;
   }, []);
@@ -685,39 +616,6 @@ export function useChat(
   const setInstructionFilename = useCallback((filename: string | null) => {
     instructionFilenameRef.current = filename;
   }, []);
-
-  const setPendingSteer = useCallback(
-    (chatId: string, steer: PendingSteerRequest) => {
-      replacePendingSteers({
-        ...pendingSteersByChatRef.current,
-        [chatId]: steer,
-      });
-    },
-    [replacePendingSteers],
-  );
-
-  const consumePendingSteer = useCallback(
-    (chatId: string): PendingSteerRequest | null => {
-      const current = pendingSteersByChatRef.current[chatId];
-      if (!current) return null;
-      const next = { ...pendingSteersByChatRef.current };
-      delete next[chatId];
-      replacePendingSteers(next);
-      return current;
-    },
-    [replacePendingSteers],
-  );
-
-  const clearPendingSteer = useCallback(
-    (chatId: string): boolean => {
-      if (!pendingSteersByChatRef.current[chatId]) return false;
-      const next = { ...pendingSteersByChatRef.current };
-      delete next[chatId];
-      replacePendingSteers(next);
-      return true;
-    },
-    [replacePendingSteers],
-  );
 
   const hydratePersistedRunState = useCallback(
     (convs: Record<string, Conversation>) => {
@@ -1350,7 +1248,9 @@ export function useChat(
       queuedFollowUpsRef,
       runEngineStateRef,
       runJournalEntryRef,
+      pendingSteersByChatRef,
       setPendingSteer,
+      workspaceContextRef,
       lastCoderStateRef,
       tabLockIntervalRef,
       dirtyConversationIdsRef,
