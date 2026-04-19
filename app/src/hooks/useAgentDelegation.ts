@@ -8,6 +8,11 @@ import {
   summarizeCoderStateForHandoff,
 } from '@/lib/coder-agent';
 import { runExplorerAgent } from '@/lib/explorer-agent';
+import {
+  handleExplorerDelegation,
+  type ExplorerHandlerContext,
+  type ExplorerToolCall,
+} from '@/lib/explorer-delegation-handler';
 import { type AnyToolCall } from '@/lib/tool-dispatch';
 import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
 import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
@@ -22,7 +27,6 @@ import {
 } from '@/lib/delegation-result';
 import {
   writeDecisionMemory,
-  writeExplorerMemory,
   writeTaskGraphNodeMemory,
   writeCoderMemory,
   invalidateMemoryForChangedFiles,
@@ -155,6 +159,43 @@ export function useAgentDelegation({
     [],
   );
 
+  // Wire up the Sequential Explorer handler context with the hook's refs and
+  // callbacks. Kept hook-local (not exported) so the extraction boundary stays
+  // one-way: the handler module never imports from this hook.
+  const buildExplorerContext = useCallback(
+    (): ExplorerHandlerContext => ({
+      sandboxIdRef,
+      repoRef,
+      branchInfoRef,
+      isMainProtectedRef,
+      agentsMdRef,
+      instructionFilenameRef,
+      abortControllerRef,
+      abortRef,
+      emitRunEngineEvent,
+      appendRunEvent,
+      updateAgentStatus,
+      appendInlineDelegationCards: (chatId, cards) =>
+        appendInlineDelegationCards(setConversations, chatId, cards),
+      updateVerificationStateForChat,
+    }),
+    [
+      sandboxIdRef,
+      repoRef,
+      branchInfoRef,
+      isMainProtectedRef,
+      agentsMdRef,
+      instructionFilenameRef,
+      abortControllerRef,
+      abortRef,
+      emitRunEngineEvent,
+      appendRunEvent,
+      updateAgentStatus,
+      setConversations,
+      updateVerificationStateForChat,
+    ],
+  );
+
   const executeDelegateCall = useCallback(
     async (
       chatId: string,
@@ -175,200 +216,13 @@ export function useAgentDelegation({
       };
 
       if (toolCall.call.tool === 'delegate_explorer') {
-        const executionId = createId();
-        emitRunEngineEvent({
-          type: 'DELEGATION_STARTED',
-          timestamp: Date.now(),
-          agent: 'explorer',
+        toolExecResult = await handleExplorerDelegation(buildExplorerContext(), {
+          chatId,
+          toolCall: toolCall as ExplorerToolCall,
+          baseCorrelation,
+          lockedProviderForChat,
+          resolvedModelForChat,
         });
-        const explorerTask = toolCall.call.args.task?.trim();
-        const explorerArgs = toolCall.call.args;
-        const explorerStartMs = Date.now();
-        if (!explorerTask) {
-          toolExecResult = {
-            text: '[Tool Error] delegate_explorer requires a non-empty "task" string.',
-          };
-        } else {
-          appendRunEvent(chatId, {
-            type: 'subagent.started',
-            executionId,
-            agent: 'explorer',
-            detail: explorerTask,
-          });
-          const explorerMemoryScope = buildMemoryScope(
-            chatId,
-            repoRef.current,
-            branchInfoRef.current?.currentBranch,
-          );
-          const explorerMemoryLine = await retrieveMemoryKnownContextLine(
-            explorerMemoryScope,
-            'explorer',
-            explorerTask,
-            explorerArgs.files,
-          );
-          try {
-            const explorerCorrelation = extendCorrelation(baseCorrelation, { executionId });
-            const explorerResult = await withActiveSpan(
-              'subagent.explorer',
-              {
-                scope: 'push.delegation',
-                kind: SpanKind.INTERNAL,
-                attributes: {
-                  ...correlationToSpanAttributes(explorerCorrelation),
-                  'push.agent.role': 'explorer',
-                  'push.task_count': 1,
-                  'push.provider': lockedProviderForChat,
-                  'push.model': resolvedModelForChat,
-                  'push.has_sandbox': Boolean(sandboxIdRef.current),
-                  'push.has_repo': Boolean(repoRef.current),
-                },
-              },
-              async (span) => {
-                const result = await runExplorerAgent(
-                  {
-                    task: explorerTask,
-                    files: explorerArgs.files || [],
-                    intent: explorerArgs.intent,
-                    deliverable: explorerArgs.deliverable,
-                    knownContext: withMemoryContext(explorerArgs.knownContext, explorerMemoryLine),
-                    constraints: explorerArgs.constraints,
-                    branchContext: branchInfoRef.current?.currentBranch
-                      ? {
-                          activeBranch: branchInfoRef.current.currentBranch,
-                          defaultBranch: branchInfoRef.current.defaultBranch || 'main',
-                          protectMain: isMainProtectedRef.current,
-                        }
-                      : undefined,
-                    provider: lockedProviderForChat,
-                    model: resolvedModelForChat || undefined,
-                    projectInstructions: agentsMdRef.current || undefined,
-                    instructionFilename: instructionFilenameRef.current || undefined,
-                  },
-                  sandboxIdRef.current,
-                  repoRef.current || '',
-                  {
-                    onStatus: (phase, detail) => {
-                      updateAgentStatus(
-                        { active: true, phase, detail },
-                        { chatId, source: 'explorer' },
-                      );
-                    },
-                    signal: abortControllerRef.current?.signal,
-                  },
-                );
-                setSpanAttributes(span, {
-                  'push.round_count': result.rounds,
-                  'push.card_count': result.cards.length,
-                });
-                span.setStatus({ code: SpanStatusCode.OK });
-                return result;
-              },
-            );
-
-            appendInlineDelegationCards(setConversations, chatId, explorerResult.cards);
-
-            // --- Build structured DelegationOutcome for explorer ---
-            const explorerOutcome: DelegationOutcome = {
-              agent: 'explorer',
-              status:
-                explorerResult.rounds > 0 && explorerResult.summary.trim()
-                  ? 'complete'
-                  : 'inconclusive',
-              summary: explorerResult.summary,
-              evidence: explorerResult.summary.trim()
-                ? [{ kind: 'observation', label: 'Investigation findings' }]
-                : [],
-              checks: [],
-              gateVerdicts: [],
-              missingRequirements: [],
-              nextRequiredAction: null,
-              rounds: explorerResult.rounds,
-              checkpoints: 0,
-              elapsedMs: Date.now() - explorerStartMs,
-            };
-
-            toolExecResult = {
-              text: formatCompactDelegationToolResult({
-                agent: 'explorer',
-                outcome: explorerOutcome,
-              }),
-              card: buildDelegationResultCard({
-                agent: 'explorer',
-                outcome: explorerOutcome,
-              }),
-              delegationOutcome: explorerOutcome,
-            };
-
-            if (explorerMemoryScope && explorerOutcome.status === 'complete') {
-              await runContextMemoryBestEffort('persisting explorer memory', () =>
-                writeExplorerMemory({
-                  scope: explorerMemoryScope,
-                  summary: explorerResult.summary,
-                  relatedFiles: explorerArgs.files,
-                  rounds: explorerResult.rounds,
-                }),
-              );
-            }
-
-            updateVerificationStateForChat(chatId, (state) =>
-              recordVerificationArtifact(
-                state,
-                `Explorer produced evidence: ${summarizeToolResultPreview(explorerResult.summary)}`,
-              ),
-            );
-            appendRunEvent(chatId, {
-              type: 'subagent.completed',
-              executionId,
-              agent: 'explorer',
-              summary: summarizeToolResultPreview(explorerResult.summary),
-              delegationOutcome: explorerOutcome,
-            });
-          } catch (err) {
-            const isAbort = err instanceof DOMException && err.name === 'AbortError';
-            if (isAbort || abortRef.current) {
-              const abortOutcome: DelegationOutcome = {
-                agent: 'explorer',
-                status: 'inconclusive',
-                summary: 'Explorer cancelled by user.',
-                evidence: [],
-                checks: [],
-                gateVerdicts: [],
-                missingRequirements: [],
-                nextRequiredAction: null,
-                rounds: 0,
-                checkpoints: 0,
-                elapsedMs: Date.now() - explorerStartMs,
-              };
-              toolExecResult = {
-                text: formatCompactDelegationToolResult({
-                  agent: 'explorer',
-                  outcome: abortOutcome,
-                }),
-                card: buildDelegationResultCard({
-                  agent: 'explorer',
-                  outcome: abortOutcome,
-                }),
-                delegationOutcome: abortOutcome,
-              };
-              appendRunEvent(chatId, {
-                type: 'subagent.completed',
-                executionId,
-                agent: 'explorer',
-                summary: 'Cancelled by user.',
-                delegationOutcome: abortOutcome,
-              });
-            } else {
-              const msg = err instanceof Error ? err.message : String(err);
-              toolExecResult = { text: `[Tool Error] Explorer failed: ${msg}` };
-              appendRunEvent(chatId, {
-                type: 'subagent.failed',
-                executionId,
-                agent: 'explorer',
-                error: summarizeToolResultPreview(msg),
-              });
-            }
-          }
-        }
       } else if (toolCall.call.tool === 'delegate_coder') {
         const executionId = createId();
         const coderStartMs = Date.now();
@@ -1786,6 +1640,7 @@ export function useAgentDelegation({
       agentsMdRef,
       appendRunEvent,
       branchInfoRef,
+      buildExplorerContext,
       emitRunEngineEvent,
       getVerificationPolicyForChat,
       instructionFilenameRef,
