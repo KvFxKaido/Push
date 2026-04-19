@@ -11,7 +11,6 @@ import type {
   QueuedFollowUp,
   QueuedFollowUpOptions,
   RunEvent,
-  RunEventInput,
   VerificationRuntimeState,
   WorkspaceContext,
   WorkspaceMode,
@@ -19,7 +18,6 @@ import type {
 import {
   buildAgentEventsByChat,
   buildQueuedFollowUpsByChat,
-  setConversationRunEvents,
   setConversationVerificationState,
 } from '@/lib/chat-runtime-state';
 import {
@@ -66,7 +64,7 @@ import { useChatReplay } from './chat-replay';
 import { useChatCheckpoint } from './useChatCheckpoint';
 import { streamAssistantRound, processAssistantTurn, type SendLoopContext } from './chat-send';
 import { useQueuedFollowUps } from './useQueuedFollowUps';
-import { mergeRunEventStreams, shouldPersistRunEvent, trimRunEvents } from '@/lib/chat-run-events';
+import { mergeRunEventStreams } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
 import {
   IDLE_RUN_STATE,
@@ -76,18 +74,16 @@ import {
   type RunEngineState,
 } from '@/lib/run-engine';
 import {
-  appendJournalEvent,
   createJournalEntry,
   finalizeJournalEntry,
-  loadJournalEntriesForChat,
   pruneJournalEntries,
-  recordDelegationOutcome,
   saveJournalEntry,
   updateJournalPhase,
   updateJournalVerificationState,
   markJournalCheckpoint,
   type RunJournalEntry,
 } from '@/lib/run-journal';
+import { useRunEventStream } from './useRunEventStream';
 import {
   getDefaultVerificationPolicy,
   resolveVerificationPolicy,
@@ -242,10 +238,6 @@ export function useChat(
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ active: false, phase: '' });
   const [agentEventsByChat, setAgentEventsByChat] =
     useState<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
-  const [liveRunEventsByChat, setLiveRunEventsByChat] = useState<Record<string, RunEvent[]>>({});
-  const [journalRunEventsByChat, setJournalRunEventsByChat] = useState<Record<string, RunEvent[]>>(
-    {},
-  );
   const [pendingSteersByChat, setPendingSteersByChat] = useState<PendingSteersByChat>({});
 
   // --- Persistence refs ---
@@ -257,8 +249,6 @@ export function useChat(
   conversationsRef.current = conversations;
   const agentEventsByChatRef = useRef<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
   agentEventsByChatRef.current = agentEventsByChat;
-  const liveRunEventsByChatRef = useRef<Record<string, RunEvent[]>>({});
-  liveRunEventsByChatRef.current = liveRunEventsByChat;
   const activeChatIdRef = useRef(activeChatId);
   const abortRef = useRef(false);
   const processedContentRef = useRef<Set<string>>(new Set());
@@ -372,13 +362,6 @@ export function useChat(
     }
   }, []);
 
-  const replaceLiveRunEvents = useCallback((next: Record<string, RunEvent[]>) => {
-    liveRunEventsByChatRef.current = next;
-    if (isMountedRef.current) {
-      setLiveRunEventsByChat(next);
-    }
-  }, []);
-
   const replacePendingSteers = useCallback((next: PendingSteersByChat) => {
     pendingSteersByChatRef.current = next;
     if (isMountedRef.current) {
@@ -461,48 +444,6 @@ export function useChat(
       isMountedRef.current = false;
     };
   }, []);
-  const appendRunEvent = useCallback(
-    (chatId: string, event: RunEventInput) => {
-      const nextEvent: RunEvent = {
-        id: createId(),
-        timestamp: Date.now(),
-        ...event,
-      };
-
-      // Track B: append persisted events to the journal entry
-      if (shouldPersistRunEvent(event) && runJournalEntryRef.current) {
-        runJournalEntryRef.current = appendJournalEvent(runJournalEntryRef.current, nextEvent);
-        if (event.type === 'subagent.completed' && event.delegationOutcome) {
-          runJournalEntryRef.current = recordDelegationOutcome(
-            runJournalEntryRef.current,
-            event.delegationOutcome,
-          );
-        }
-        void saveJournalEntry(runJournalEntryRef.current);
-      }
-
-      if (!shouldPersistRunEvent(event)) {
-        replaceLiveRunEvents({
-          ...liveRunEventsByChatRef.current,
-          [chatId]: trimRunEvents([...(liveRunEventsByChatRef.current[chatId] || []), nextEvent]),
-        });
-        return;
-      }
-
-      updateConversations((prev) => {
-        const conversation = prev[chatId];
-        if (!conversation) return prev;
-        const runEvents = conversation.runState?.runEvents || [];
-        dirtyConversationIdsRef.current.add(chatId);
-        return {
-          ...prev,
-          [chatId]: setConversationRunEvents(conversation, [...runEvents, nextEvent]),
-        };
-      });
-    },
-    [replaceLiveRunEvents, updateConversations],
-  );
-
   // --- Checkpoint + resume lifecycle ---
   const {
     updateAgentStatus,
@@ -724,51 +665,14 @@ export function useChat(
   const activeConversation = activeChatId ? conversations[activeChatId] : undefined;
   const activePersistedRunEventCount = activeConversation?.runState?.runEvents?.length ?? 0;
 
-  useEffect(() => {
-    if (!activeChatId) return;
-    if (activePersistedRunEventCount > 0) {
-      setJournalRunEventsByChat((prev) => {
-        if (!prev[activeChatId]) return prev;
-        const next = { ...prev };
-        delete next[activeChatId];
-        return next;
-      });
-      return;
-    }
-
-    let cancelled = false;
-    void loadJournalEntriesForChat(activeChatId)
-      .then((entries) => {
-        if (cancelled) return;
-        const latestEvents = entries[0]?.events ?? [];
-        setJournalRunEventsByChat((prev) => {
-          if (latestEvents.length === 0) {
-            if (!prev[activeChatId]) return prev;
-            const next = { ...prev };
-            delete next[activeChatId];
-            return next;
-          }
-          const existing = prev[activeChatId];
-          if (
-            existing?.length === latestEvents.length &&
-            existing[existing.length - 1]?.id === latestEvents[latestEvents.length - 1]?.id
-          ) {
-            return prev;
-          }
-          return {
-            ...prev,
-            [activeChatId]: latestEvents,
-          };
-        });
-      })
-      .catch(() => {
-        // Journal fallback is best-effort only.
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeChatId, activePersistedRunEventCount]);
+  const { liveRunEventsByChat, journalRunEventsByChat, appendRunEvent } = useRunEventStream({
+    activeChatId,
+    activePersistedRunEventCount,
+    runJournalEntryRef,
+    updateConversations,
+    dirtyConversationIdsRef,
+    isMountedRef,
+  });
 
   // --- Derived state ---
   const messages = useMemo(() => activeConversation?.messages ?? [], [activeConversation]);

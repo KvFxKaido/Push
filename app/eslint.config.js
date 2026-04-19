@@ -25,10 +25,14 @@ export default defineConfig([
   // landing sibling modules *and* hook-level coordinators. This ceiling
   // blocks silent regression; ratchet it down as phases 2-4 of the
   // re-extraction track land. See docs/decisions/useChat Regression Audit.md.
+  //
+  // History:
+  //   Phase 1 (useQueuedFollowUps): 1,733 -> 1,672, ceiling set to 1,700.
+  //   Phase 2 (useRunEventStream):  1,672 -> 1,579, ceiling lowered to 1,620.
   {
     files: ['src/hooks/useChat.ts'],
     rules: {
-      'max-lines': ['error', { max: 1700 }],
+      'max-lines': ['error', { max: 1620 }],
     },
   },
 ]);
