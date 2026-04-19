@@ -20,7 +20,6 @@ import {
   buildAgentEventsByChat,
   buildQueuedFollowUpsByChat,
   setConversationRunEvents,
-  setConversationQueuedFollowUps,
   setConversationVerificationState,
 } from '@/lib/chat-runtime-state';
 import {
@@ -66,12 +65,7 @@ import { useChatManagement } from './chat-management';
 import { useChatReplay } from './chat-replay';
 import { useChatCheckpoint } from './useChatCheckpoint';
 import { streamAssistantRound, processAssistantTurn, type SendLoopContext } from './chat-send';
-import {
-  appendQueuedItem,
-  clearQueuedItems,
-  shiftQueuedItem,
-  type QueuedItemsByChat,
-} from './chat-queue';
+import { useQueuedFollowUps } from './useQueuedFollowUps';
 import { mergeRunEventStreams, shouldPersistRunEvent, trimRunEvents } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
 import {
@@ -248,9 +242,6 @@ export function useChat(
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ active: false, phase: '' });
   const [agentEventsByChat, setAgentEventsByChat] =
     useState<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
-  const [queuedFollowUpsByChat, setQueuedFollowUpsByChat] = useState<
-    QueuedItemsByChat<QueuedFollowUp>
-  >(initialQueuedFollowUpsByChat);
   const [liveRunEventsByChat, setLiveRunEventsByChat] = useState<Record<string, RunEvent[]>>({});
   const [journalRunEventsByChat, setJournalRunEventsByChat] = useState<Record<string, RunEvent[]>>(
     {},
@@ -273,10 +264,6 @@ export function useChat(
   const processedContentRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
   const cancelStatusTimerRef = useRef<number | null>(null);
-  const queuedFollowUpsRef = useRef<QueuedItemsByChat<QueuedFollowUp>>(
-    initialQueuedFollowUpsByChat,
-  );
-  queuedFollowUpsRef.current = queuedFollowUpsByChat;
   const pendingSteersByChatRef = useRef<PendingSteersByChat>({});
   pendingSteersByChatRef.current = pendingSteersByChat;
   const isMountedRef = useRef(true);
@@ -363,6 +350,20 @@ export function useChat(
     },
     [],
   );
+
+  const {
+    queuedFollowUpsByChat,
+    queuedFollowUpsRef,
+    enqueue: enqueueQueuedFollowUp,
+    dequeue: dequeueQueuedFollowUp,
+    clear: clearQueuedFollowUps,
+    hydrate: hydrateQueuedFollowUps,
+  } = useQueuedFollowUps({
+    initial: initialQueuedFollowUpsByChat,
+    updateConversations,
+    dirtyConversationIdsRef,
+    isMountedRef,
+  });
 
   const replaceAgentEvents = useCallback((next: Record<string, AgentStatusEvent[]>) => {
     agentEventsByChatRef.current = next;
@@ -901,68 +902,6 @@ export function useChat(
     instructionFilenameRef.current = filename;
   }, []);
 
-  const persistQueuedFollowUps = useCallback(
-    (chatId: string, queuedFollowUps: QueuedFollowUp[]) => {
-      updateConversations((prev) => {
-        const conversation = prev[chatId];
-        if (!conversation) return prev;
-        dirtyConversationIdsRef.current.add(chatId);
-        return {
-          ...prev,
-          [chatId]: setConversationQueuedFollowUps(conversation, queuedFollowUps),
-        };
-      });
-    },
-    [updateConversations],
-  );
-
-  const replaceQueuedFollowUps = useCallback(
-    (next: QueuedItemsByChat<QueuedFollowUp>, options?: { persist?: boolean }) => {
-      const previous = queuedFollowUpsRef.current;
-      queuedFollowUpsRef.current = next;
-      if (isMountedRef.current) {
-        setQueuedFollowUpsByChat(next);
-      }
-      if (!options?.persist) return;
-
-      const changedChatIds = new Set([...Object.keys(previous), ...Object.keys(next)]);
-
-      changedChatIds.forEach((chatId) => {
-        if (previous[chatId] === next[chatId]) return;
-        persistQueuedFollowUps(chatId, next[chatId] || []);
-      });
-    },
-    [persistQueuedFollowUps],
-  );
-
-  const enqueueQueuedFollowUp = useCallback(
-    (chatId: string, followUp: QueuedFollowUp) => {
-      replaceQueuedFollowUps(appendQueuedItem(queuedFollowUpsRef.current, chatId, followUp), {
-        persist: true,
-      });
-    },
-    [replaceQueuedFollowUps],
-  );
-
-  const dequeueQueuedFollowUp = useCallback(
-    (chatId: string): QueuedFollowUp | null => {
-      const { next, item } = shiftQueuedItem(queuedFollowUpsRef.current, chatId);
-      if (!item) return null;
-      replaceQueuedFollowUps(next, { persist: true });
-      return item;
-    },
-    [replaceQueuedFollowUps],
-  );
-
-  const clearQueuedFollowUps = useCallback(
-    (chatId: string) => {
-      replaceQueuedFollowUps(clearQueuedItems(queuedFollowUpsRef.current, chatId), {
-        persist: true,
-      });
-    },
-    [replaceQueuedFollowUps],
-  );
-
   const setPendingSteer = useCallback(
     (chatId: string, steer: PendingSteerRequest) => {
       replacePendingSteers({
@@ -999,9 +938,9 @@ export function useChat(
   const hydratePersistedRunState = useCallback(
     (convs: Record<string, Conversation>) => {
       replaceAgentEvents(buildAgentEventsByChat(convs));
-      replaceQueuedFollowUps(buildQueuedFollowUpsByChat(convs));
+      hydrateQueuedFollowUps(convs);
     },
-    [replaceAgentEvents, replaceQueuedFollowUps],
+    [replaceAgentEvents, hydrateQueuedFollowUps],
   );
 
   // --- IndexedDB migration ---
@@ -1044,7 +983,7 @@ export function useChat(
         cancelStatusTimerRef.current = null;
       }, 1200);
     },
-    [clearQueuedFollowUps, emitRunEngineEvent, updateAgentStatus],
+    [clearQueuedFollowUps, emitRunEngineEvent, queuedFollowUpsRef, updateAgentStatus],
   );
 
   useEffect(() => {
@@ -1618,6 +1557,7 @@ export function useChat(
       dequeueQueuedFollowUp,
       clearQueuedFollowUps,
       enqueueQueuedFollowUp,
+      queuedFollowUpsRef,
       setPendingSteer,
       lastCoderStateRef,
       tabLockIntervalRef,

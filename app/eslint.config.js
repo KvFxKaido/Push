@@ -20,4 +20,15 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  // Containment guard for useChat.ts. The hook regrew from 770 -> 1,733
+  // lines between 2026-03-25 and 2026-04-19 because new features kept
+  // landing sibling modules *and* hook-level coordinators. This ceiling
+  // blocks silent regression; ratchet it down as phases 2-4 of the
+  // re-extraction track land. See docs/decisions/useChat Regression Audit.md.
+  {
+    files: ['src/hooks/useChat.ts'],
+    rules: {
+      'max-lines': ['error', { max: 1700 }],
+    },
+  },
 ]);
