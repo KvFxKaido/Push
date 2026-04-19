@@ -29,7 +29,7 @@ export default defineConfig([
   // History:
   //   Phase 1 (useQueuedFollowUps): 1,733 -> 1,672, ceiling set to 1,700.
   //   Phase 2 (useRunEventStream):  1,673 -> 1,577, ceiling lowered to 1,620.
-  //   Phase 3 (useRunEngine):       1,577 -> 1,472, ceiling lowered to 1,500.
+  //   Phase 3 (useRunEngine):       1,577 -> 1,465, ceiling lowered to 1,500.
   {
     files: ['src/hooks/useChat.ts'],
     rules: {

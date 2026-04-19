@@ -69,7 +69,7 @@ export function useRunEngine({
   //   ROUND_STARTED   -> update phase from engine state, persist.
   //   LOOP_COMPLETED  -> finalize 'completed', persist w/ prune, null ref.
   //   LOOP_ABORTED    -> finalize 'aborted',  persist w/ prune, null ref.
-  //   LOOP_FAILED     -> finalize 'failed' + reason, persist, null ref.
+  //   LOOP_FAILED     -> finalize 'failed' + reason, persist w/ prune, null ref.
   //   ACCUMULATED_UPDATED -> reducer only; journal untouched (hot-path
   //                          optimization -- this event fires on every
   //                          streamed token).
