@@ -141,6 +141,7 @@ beforeEach(() => {
   explorerAgent.runExplorerAgent.mockReset();
   coderAgent.runCoderAgent.mockReset();
   plannerAgent.runPlanner.mockReset();
+  plannerAgent.formatPlannerBrief.mockClear();
   auditorAgent.runAuditorEvaluation.mockReset();
   taskGraph.validateTaskGraph.mockReset().mockReturnValue({ valid: true, errors: [] });
   taskGraph.executeTaskGraph.mockReset();
@@ -661,5 +662,221 @@ describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () =>
     );
     expect(startedCallIndex).toBeGreaterThanOrEqual(0);
     expect(completedCallIndex).toBeGreaterThan(startedCallIndex);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Planner sub-seam characterization — pre-requisite for Phase 3 of the
+// useAgentDelegation extraction track (recon doc: §"Recommended Extraction
+// Order — Phase 3: Sequential Coder Handler (+ Planner Sub-Seam)").
+//
+// The Planner fires as a pre-pass inside the delegate_coder branch when
+// harnessSettings.plannerRequired is true AND taskList.length === 1. Its
+// output (plannerBrief) threads into runCoderAgent's options bag at the
+// 11th positional argument. The seam has a fail-open contract: if
+// runPlanner returns null, Coder proceeds with plannerBrief=undefined and
+// a subagent.failed event records the null-plan path.
+//
+// These three tests pin the current behavior so the Phase 3 extraction
+// cannot silently drop the gate, the skip path, or the data-flow contract.
+// ---------------------------------------------------------------------------
+
+describe('useAgentDelegation.executeDelegateCall — Planner sub-seam', () => {
+  it('fires Planner when harnessSettings.plannerRequired and taskList is single', async () => {
+    modelCapabilities.resolveHarnessSettings.mockReturnValueOnce({
+      plannerRequired: true,
+      profile: 'small-model',
+    });
+    plannerAgent.runPlanner.mockResolvedValueOnce({ checklist: ['step 1'] });
+    plannerAgent.formatPlannerBrief.mockReturnValueOnce('Plan:\n- step 1');
+    coderAgent.runCoderAgent.mockResolvedValueOnce({
+      rounds: 1,
+      checkpoints: 0,
+      cards: [],
+      summary: 'done',
+      criteriaResults: [],
+    });
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.getVerificationPolicyForChat = vi.fn(() => ({
+      mode: 'off' as const,
+      requireAuditor: false,
+      autoVerifyOnMutation: false,
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'implement it' } },
+    };
+
+    await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    expect(plannerAgent.runPlanner).toHaveBeenCalledOnce();
+    // First positional arg is the single task; second is files (empty array).
+    expect(plannerAgent.runPlanner.mock.calls[0][0]).toBe('implement it');
+    expect(plannerAgent.runPlanner.mock.calls[0][1]).toEqual([]);
+    expect(plannerAgent.formatPlannerBrief).toHaveBeenCalledWith({ checklist: ['step 1'] });
+
+    // Envelope: planner.started + planner.completed are both emitted.
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        type: 'subagent.started',
+        agent: 'planner',
+        detail: 'implement it',
+      }),
+    );
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({ type: 'subagent.completed', agent: 'planner' }),
+    );
+
+    // Ordering invariant load-bearing for extraction: planner.completed falls
+    // between planner.started and the terminal coder.completed. If Phase 3
+    // hoists the planner completion emission out of the sub-seam's span
+    // closure, this order breaks.
+    const plannerStartedIndex = params.appendRunEvent.mock.calls.findIndex(
+      (call: unknown[]) =>
+        call[1] !== null &&
+        typeof call[1] === 'object' &&
+        (call[1] as { type?: string; agent?: string }).type === 'subagent.started' &&
+        (call[1] as { agent?: string }).agent === 'planner',
+    );
+    const plannerCompletedIndex = params.appendRunEvent.mock.calls.findIndex(
+      (call: unknown[]) =>
+        call[1] !== null &&
+        typeof call[1] === 'object' &&
+        (call[1] as { type?: string; agent?: string }).type === 'subagent.completed' &&
+        (call[1] as { agent?: string }).agent === 'planner',
+    );
+    const coderCompletedIndex = params.appendRunEvent.mock.calls.findIndex(
+      (call: unknown[]) =>
+        call[1] !== null &&
+        typeof call[1] === 'object' &&
+        (call[1] as { type?: string; agent?: string }).type === 'subagent.completed' &&
+        (call[1] as { agent?: string }).agent === 'coder',
+    );
+    expect(plannerStartedIndex).toBeGreaterThanOrEqual(0);
+    expect(plannerCompletedIndex).toBeGreaterThan(plannerStartedIndex);
+    expect(coderCompletedIndex).toBeGreaterThan(plannerCompletedIndex);
+
+    // Data flow: formatted plannerBrief reaches runCoderAgent's options bag.
+    // runCoderAgent signature is positional; options bag is the 12th arg (index 11).
+    const coderOptions = coderAgent.runCoderAgent.mock.calls[0][11];
+    expect(coderOptions).toMatchObject({ plannerBrief: 'Plan:\n- step 1' });
+  });
+
+  it('skips Planner when taskList has multiple tasks', async () => {
+    modelCapabilities.resolveHarnessSettings.mockReturnValueOnce({
+      plannerRequired: true,
+      profile: 'small-model',
+    });
+    coderAgent.runCoderAgent.mockResolvedValue({
+      rounds: 1,
+      checkpoints: 0,
+      cards: [],
+      summary: 'done',
+      criteriaResults: [],
+    });
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.getVerificationPolicyForChat = vi.fn(() => ({
+      mode: 'off' as const,
+      requireAuditor: false,
+      autoVerifyOnMutation: false,
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: {
+        tool: 'delegate_coder' as const,
+        args: { tasks: ['task A', 'task B'] },
+      },
+    };
+
+    await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    expect(plannerAgent.runPlanner).not.toHaveBeenCalled();
+
+    // No planner-agent events of any type.
+    const plannerEventCalls = params.appendRunEvent.mock.calls.filter(
+      (call: unknown[]) =>
+        call[1] !== null &&
+        typeof call[1] === 'object' &&
+        (call[1] as { agent?: string }).agent === 'planner',
+    );
+    expect(plannerEventCalls).toHaveLength(0);
+  });
+
+  it('fails open when Planner returns null — Coder proceeds with plannerBrief=undefined', async () => {
+    modelCapabilities.resolveHarnessSettings.mockReturnValueOnce({
+      plannerRequired: true,
+      profile: 'small-model',
+    });
+    plannerAgent.runPlanner.mockResolvedValueOnce(null);
+    coderAgent.runCoderAgent.mockResolvedValueOnce({
+      rounds: 1,
+      checkpoints: 0,
+      cards: [],
+      summary: 'done',
+      criteriaResults: [],
+    });
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.getVerificationPolicyForChat = vi.fn(() => ({
+      mode: 'off' as const,
+      requireAuditor: false,
+      autoVerifyOnMutation: false,
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(params as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'implement it' } },
+    };
+
+    await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openai',
+      'gpt-4',
+    );
+
+    // subagent.failed fires for planner with the null-plan error message.
+    expect(params.appendRunEvent).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        type: 'subagent.failed',
+        agent: 'planner',
+        error: 'Planner did not return a plan.',
+      }),
+    );
+
+    // formatPlannerBrief is never called when plan is null.
+    expect(plannerAgent.formatPlannerBrief).not.toHaveBeenCalled();
+
+    // Fail-open contract: Coder still runs, with plannerBrief=undefined.
+    // This is the load-bearing assertion Phase 3 extraction must preserve.
+    expect(coderAgent.runCoderAgent).toHaveBeenCalledOnce();
+    const coderOptions = coderAgent.runCoderAgent.mock.calls[0][11];
+    expect(coderOptions).toMatchObject({ plannerBrief: undefined });
   });
 });
