@@ -423,3 +423,90 @@ describe('useChat — queued follow-ups (pre-extraction characterization)', () =
     expect(chatQueue.clearQueuedItems.mock.calls.length).toBe(callsBefore);
   });
 });
+
+// Characterization tests for the run-events cluster that useRunEventStream
+// will absorb. The fake-React harness mocks useEffect to a no-op, so the
+// journal-load effect and appendRunEvent's routing are not drivable from
+// the outside. What IS reachable is the UI derivation (runEvents useMemo):
+// it calls mergeRunEventStreams with activeConversation.runState.runEvents
+// (persisted input) and liveRunEventsByChat[activeChatId] (live input).
+// These tests pin the merge-order invariant so the extraction cannot
+// silently rearrange which stream wins when persisted is empty vs. present.
+describe('useChat — run events (pre-extraction characterization)', () => {
+  function makeRunEvent(id: string, type = 'assistant.turn_start') {
+    return { id, timestamp: 1, type, round: 1 };
+  }
+
+  it('mergeRunEventStreams receives the active conversation persisted runEvents as arg1', () => {
+    const persisted = [makeRunEvent('r-1'), makeRunEvent('r-2')];
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': {
+        id: 'chat-1',
+        title: 'Chat',
+        messages: [],
+        createdAt: 1,
+        lastMessageAt: 1,
+        runState: { runEvents: persisted },
+      },
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+
+    chatRunEvents.mergeRunEventStreams.mockClear();
+    const hook = useChat(null);
+
+    const latestCall = chatRunEvents.mergeRunEventStreams.mock.calls.at(-1);
+    expect(latestCall).toBeTruthy();
+    const [persistedArg, liveArg] = latestCall as [unknown, unknown];
+    expect(persistedArg).toEqual(persisted);
+    expect(liveArg).toEqual([]);
+    // The useMemo returns whatever mergeRunEventStreams returns; the default
+    // mock concatenates, so hook.runEvents surfaces the full stream.
+    expect(hook.runEvents).toEqual(persisted);
+  });
+
+  it('mergeRunEventStreams receives [] as the persisted arg when the active chat has no runState', () => {
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': {
+        id: 'chat-1',
+        title: 'Chat',
+        messages: [],
+        createdAt: 1,
+        lastMessageAt: 1,
+      },
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+
+    chatRunEvents.mergeRunEventStreams.mockClear();
+    const hook = useChat(null);
+
+    const latestCall = chatRunEvents.mergeRunEventStreams.mock.calls.at(-1);
+    expect(latestCall).toBeTruthy();
+    const [persistedArg, liveArg] = latestCall as [unknown, unknown];
+    // Falls back to [] (persisted ?? journal ?? [] — journal is empty in
+    // this harness because useEffect is a no-op, so the outer `?? []`
+    // governs).
+    expect(persistedArg).toEqual([]);
+    expect(liveArg).toEqual([]);
+    expect(hook.runEvents).toEqual([]);
+  });
+
+  it('hook.runEvents reflects exactly the mergeRunEventStreams return value', () => {
+    const merged = [makeRunEvent('m-1'), makeRunEvent('m-2')];
+    chatRunEvents.mergeRunEventStreams.mockReturnValueOnce(merged);
+
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': {
+        id: 'chat-1',
+        title: 'Chat',
+        messages: [],
+        createdAt: 1,
+        lastMessageAt: 1,
+      },
+    });
+    chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
+
+    const hook = useChat(null);
+
+    expect(hook.runEvents).toBe(merged);
+  });
+});

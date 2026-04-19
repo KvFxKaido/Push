@@ -213,8 +213,41 @@ The fake-React harness in `useChat.test.ts` (no-op `useEffect`, cluster callback
 
 **Status:** Phase 1 ready for PR. Phase 2 (`useRunEventStream`) can start in parallel; Phase 3 is blocked on Phase 2 landing; Phase 4 can start anytime after Phase 1.
 
+## Phase 2 shipping record
+
+**Date:** 2026-04-19
+**Branch:** `refactor/userunevent-stream-hook`
+**Commits:**
+- `5a4983c` — `test(context): pin run-events UI merge-order invariant`
+- `bd4be63` — `refactor(context): extract useRunEventStream hook from useChat`
+
+**Line delta:** `app/src/hooks/useChat.ts` 1,673 → 1,577 (−96). Matches the recon's 85-90 estimate. The `runEvents` UI useMemo and `activePersistedRunEventCount` derivation stayed in useChat for the same reason Phase 1's IDB migration did: they read `activeConversation` from conversations state, which isn't hook-owned.
+
+**Design adjustments from the recon:**
+
+- Public hook surface is **3 items, not 5**. `liveRunEventsByChat` / `journalRunEventsByChat` / `appendRunEvent` are exported; `replaceLiveRunEvents` and `liveRunEventsByChatRef` stay internal. Same structural reasoning as Phase 1 — every mutation routes through the coordinator (`appendRunEvent`), and exposing `replaceLive` would create a second mutation path that bypasses the trim + persist-routing contract.
+- `runJournalEntryRef` flows in as a hook parameter rather than `persistRunJournal` as the recon suggested. Current `appendRunEvent` calls `saveJournalEntry(runJournalEntryRef.current)` directly; passing the ref matches that one-to-one without requiring a re-plumbing. When Phase 3 lands, `useRunEngine` will own the ref and hand it to this hook — the parameter stays, the owner changes.
+- Journal-load `useEffect` moved into the hook. Its inputs (`activeChatId`, `activePersistedRunEventCount`) flow as params; its sole write-target (`journalRunEventsByChat`) is already hook-owned. Clean fit.
+- The synchronous clearing branch inside the journal-load effect (lines 729-736 in the old useChat) was dead code. useChat's `runEvents` useMemo short-circuits `persisted ?? journal ?? []`, so clearing `journalRunEventsByChat[activeChatId]` when persisted events took over had no user-visible effect. The `react-hooks/set-state-in-effect` rule caught it; the extracted hook drops the branch. The stale slot is inert until the chat's count returns to zero, at which point the load branch refreshes it.
+
+**Test coverage approach:**
+
+The characterization tests in `useChat.test.ts` pin the UI merge-order invariant (`mergeRunEventStreams` arg order, the `?? []` fallback, identity of the useMemo return). The direct unit tests in `useRunEventStream.test.ts` cover the three `appendRunEvent` branches (live-only, persisted-no-journal, persisted+journal), the `subagent.completed` → `recordDelegationOutcome` subpath, id/timestamp stamping, and trim ordering. The journal-load effect is **not** covered at the unit level: the fake-React harness's no-op `useEffect` plus the async `loadJournalEntriesForChat` promise chain cannot be modeled without a full renderer. Integration coverage handles it; this matches the Phase 1 pattern of acknowledging harness limits explicitly.
+
+**Open Question resolutions:**
+
+- **#1 (one-vs-two hooks for run-engine + journal, Phase 3 decision):** Still open, but Phase 2's shape constrains it. `useRunEventStream` now takes `runJournalEntryRef` as a param, which means Phase 3's `useRunEngine` must *expose* that ref in its return interface. That nudges toward a single `useRunEngine` hook that owns both the engine state and the journal entry, since a caller of Phase 3 (useChat) would otherwise have to thread two refs into Phase 2. Not a forced decision, but the Phase 3 design should start from that default.
+
+**Open questions still unresolved:** #1 (one-vs-two, Phase 3 decision), #2 (steer + queue unification, Phase 4 decision), #3 (`sendMessage` decomposition, deferred indefinitely).
+
+**Containment guard ratcheted:** `eslint.config.js` lowered `max-lines` from 1,700 to 1,620. Current file is 1,577 lines; ~40 lines of headroom. History table added to the rule's comment so future ratchets have context.
+
+**Status:** Phase 2 ready for PR. Phase 3 (`useRunEngine`) is unblocked — `appendRunEvent` stability is verified and its dependency shape is now explicit. Phase 4 remains independent of Phases 2 and 3.
+
 ---
 
 **Generated:** 2026-04-19, recon-only pass. No extractions performed. The three regrowth commits have been analyzed, sibling hospitability has been assessed, and a four-phase extraction track has been proposed.
 
 **Updated:** 2026-04-19, Phase 1 shipping record added following the landing of `bdeb281` + `b9d4833` on `refactor/usequeued-followups-hook`.
+
+**Updated:** 2026-04-19, Phase 2 shipping record added following the landing of `5a4983c` + `bd4be63` on `refactor/userunevent-stream-hook`.
