@@ -34,7 +34,9 @@ const modelCapabilities = vi.hoisted(() => ({
   resolveHarnessSettings: vi.fn(() => ({ harness: 'default' })),
 }));
 const taskGraph = vi.hoisted(() => ({
-  validateTaskGraph: vi.fn(() => ({ valid: true, errors: [] })),
+  // Real validateTaskGraph returns `TaskGraphValidationError[]` (empty = valid);
+  // keep the mock shape aligned so `.length`/array methods work as in prod.
+  validateTaskGraph: vi.fn(() => [] as unknown[]),
   executeTaskGraph: vi.fn(),
 }));
 const chatToolMessages = vi.hoisted(() => ({
@@ -143,7 +145,7 @@ beforeEach(() => {
   plannerAgent.runPlanner.mockReset();
   plannerAgent.formatPlannerBrief.mockReset();
   auditorAgent.runAuditorEvaluation.mockReset();
-  taskGraph.validateTaskGraph.mockReset().mockReturnValue({ valid: true, errors: [] });
+  taskGraph.validateTaskGraph.mockReset().mockReturnValue([]);
   taskGraph.executeTaskGraph.mockReset();
   contextMemory.buildRetrievedMemoryKnownContext.mockReset().mockResolvedValue({ line: null });
   // Clear call history for memory-persistence mocks so tests asserting call
