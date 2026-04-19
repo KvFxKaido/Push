@@ -15,6 +15,7 @@ import {
   type CoderHandlerContext,
   type CoderToolCall,
 } from '@/lib/coder-delegation-handler';
+import { handleCoderAuditor, type AuditorHandlerContext } from '@/lib/auditor-delegation-handler';
 import { type AnyToolCall } from '@/lib/tool-dispatch';
 import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
@@ -211,6 +212,30 @@ export function useAgentDelegation({
     ],
   );
 
+  // Wire up the Sequential Auditor handler context. Reads a narrow
+  // slice of the hook's refs — just repoRef + branchInfoRef for the
+  // memory scope, plus a read-only getter for the latest Coder
+  // working memory. Gating stays in the hook; the handler is only
+  // invoked when the hook decides the Auditor should fire.
+  const buildAuditorContext = useCallback(
+    (): AuditorHandlerContext => ({
+      repoRef,
+      branchInfoRef,
+      readLatestCoderState: () => lastCoderStateRef.current,
+      appendRunEvent,
+      updateAgentStatus,
+      updateVerificationStateForChat,
+    }),
+    [
+      repoRef,
+      branchInfoRef,
+      lastCoderStateRef,
+      appendRunEvent,
+      updateAgentStatus,
+      updateVerificationStateForChat,
+    ],
+  );
+
   const executeDelegateCall = useCallback(
     async (
       chatId: string,
@@ -253,7 +278,6 @@ export function useAgentDelegation({
         } else {
           const { executionId, coderStartMs, auditorInput } = coderHandlerResult;
           const {
-            taskList,
             allCards,
             summaries,
             allCriteriaResults,
@@ -263,151 +287,30 @@ export function useAgentDelegation({
             latestDiffPaths,
             coderMemoryScope,
             verificationCommandsById,
-            harnessSettings,
-            currentSandboxId,
           } = auditorInput;
           let coderEvalResult: EvaluationResult | null = null;
 
           // --- Auditor Evaluation ---
-          // Stays inline in the hook for Phase 3 per the containment
-          // rule from the recon doc: gating is policy, handlers are
-          // reactive. Phase 4 will extract this into a dedicated
-          // auditor-delegation-handler module.
-          if (harnessSettings.evaluateAfterCoder && summaries.length > 0) {
-            const auditorExecutionId = createId();
-            try {
-              appendRunEvent(chatId, {
-                type: 'subagent.started',
-                executionId: auditorExecutionId,
-                agent: 'auditor',
-                detail: 'Evaluating coder output',
-              });
-              updateAgentStatus(
-                { active: true, phase: 'Evaluating output...' },
-                { chatId, source: 'coder' },
-              );
-              let evalDiff: string | null = null;
-              try {
-                const diffResult = await getSandboxDiff(currentSandboxId);
-                evalDiff = diffResult.diff || null;
-              } catch {
-                /* no diff available — evaluation proceeds without it */
-              }
-              const combinedTask = taskList.join('\n\n');
-              const combinedSummary = summaries.join('\n');
-              // For multi-task delegations, only the last task's working
-              // memory is available — pass null to avoid misleading the
-              // evaluator.
-              const evalWorkingMemory = taskList.length <= 1 ? lastCoderStateRef.current : null;
-              // Scale max rounds by task count so multi-task totals don't
-              // falsely trigger the "hit round cap" signal.
-              const evalMaxRounds = harnessSettings.maxCoderRounds * Math.max(taskList.length, 1);
-              const auditorCorrelation = extendCorrelation(baseCorrelation, {
-                executionId: auditorExecutionId,
-              });
-              coderEvalResult = await withActiveSpan(
-                'subagent.auditor',
-                {
-                  scope: 'push.delegation',
-                  kind: SpanKind.INTERNAL,
-                  attributes: {
-                    ...correlationToSpanAttributes(auditorCorrelation),
-                    'push.agent.role': 'auditor',
-                    'push.provider': lockedProviderForChat,
-                    'push.model': resolvedModelForChat,
-                    'push.criteria_count': allCriteriaResults.length,
-                  },
-                },
-                async (span) => {
-                  const result = await runAuditorEvaluation(
-                    combinedTask,
-                    combinedSummary,
-                    evalWorkingMemory,
-                    evalDiff,
-                    (phase) =>
-                      updateAgentStatus({ active: true, phase }, { chatId, source: 'coder' }),
-                    {
-                      providerOverride: lockedProviderForChat,
-                      modelOverride: resolvedModelForChat || undefined,
-                      coderRounds: totalRounds,
-                      coderMaxRounds: evalMaxRounds,
-                      criteriaResults:
-                        allCriteriaResults.length > 0 ? allCriteriaResults : undefined,
-                      verificationPolicy,
-                      memoryScope: buildMemoryScope(
-                        chatId,
-                        repoRef.current,
-                        branchInfoRef.current?.currentBranch,
-                      ),
-                    },
-                  );
-                  if (result) {
-                    setSpanAttributes(span, {
-                      'push.auditor.verdict': result.verdict,
-                      'push.auditor.gap_count': result.gaps.length,
-                    });
-                  }
-                  span.setStatus({ code: SpanStatusCode.OK });
-                  return result;
-                },
-              );
-              if (coderEvalResult) {
-                const completedEvaluation = coderEvalResult;
-                updateVerificationStateForChat(chatId, (state) =>
-                  recordVerificationGateResult(
-                    state,
-                    'auditor',
-                    completedEvaluation.verdict === 'complete' ? 'passed' : 'failed',
-                    completedEvaluation.summary,
-                  ),
-                );
-                appendRunEvent(chatId, {
-                  type: 'subagent.completed',
-                  executionId: auditorExecutionId,
-                  agent: 'auditor',
-                  summary: summarizeToolResultPreview(coderEvalResult.summary),
-                });
-              } else {
-                updateVerificationStateForChat(chatId, (state) =>
-                  recordVerificationGateResult(
-                    state,
-                    'auditor',
-                    'inconclusive',
-                    'Auditor evaluation returned no result.',
-                  ),
-                );
-                appendRunEvent(chatId, {
-                  type: 'subagent.failed',
-                  executionId: auditorExecutionId,
-                  agent: 'auditor',
-                  error: 'Auditor returned no evaluation.',
-                });
-              }
-            } catch {
-              updateVerificationStateForChat(chatId, (state) =>
-                recordVerificationGateResult(
-                  state,
-                  'auditor',
-                  'inconclusive',
-                  'Auditor evaluation failed.',
-                ),
-              );
-              appendRunEvent(chatId, {
-                type: 'subagent.failed',
-                executionId: auditorExecutionId,
-                agent: 'auditor',
-                error: 'Evaluation failed.',
-              });
-              // Fail-open: if evaluation fails, Coder result stands as-is
-            }
-
-            if (coderEvalResult) {
-              const evalLine = `\n[Evaluation: ${coderEvalResult.verdict.toUpperCase()}] ${coderEvalResult.summary}`;
-              const gapLines =
-                coderEvalResult.gaps.length > 0
-                  ? coderEvalResult.gaps.map((g) => `  - ${g}`).join('\n')
-                  : '';
-              summaries.push(evalLine + (gapLines ? `\n${gapLines}` : ''));
+          // Gating is policy and stays in the hook. The handler is
+          // reactive — it runs the Auditor span, emits events, and
+          // returns `{ evalResult, auditorSummaryLine }`. The hook
+          // folds `evalResult` into the final DelegationOutcome
+          // (status, gateVerdicts, missingRequirements) below.
+          if (auditorInput.harnessSettings.evaluateAfterCoder && summaries.length > 0) {
+            const { evalResult, auditorSummaryLine } = await handleCoderAuditor(
+              buildAuditorContext(),
+              {
+                chatId,
+                baseCorrelation,
+                lockedProviderForChat,
+                resolvedModelForChat,
+                verificationPolicy,
+                auditorInput,
+              },
+            );
+            coderEvalResult = evalResult;
+            if (auditorSummaryLine) {
+              summaries.push(auditorSummaryLine);
             }
           }
 
@@ -1290,6 +1193,7 @@ export function useAgentDelegation({
       agentsMdRef,
       appendRunEvent,
       branchInfoRef,
+      buildAuditorContext,
       buildCoderContext,
       buildExplorerContext,
       emitRunEngineEvent,
