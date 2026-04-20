@@ -5,7 +5,10 @@
     "command": "cd app && npm run build",
     "watch_dir": "./app/src"
   },
-  "compatibility_date": "2026-02-01",
+  // Bumped from 2026-02-01 on 2026-04-20 when adding Cloudflare Sandbox SDK.
+  // Sandbox SDK ships with the post-GA runtime; recent date unlocks it.
+  "compatibility_date": "2026-04-20",
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./app/dist"
   },
@@ -31,6 +34,32 @@
     {
       "binding": "SNAPSHOT_INDEX",
       "id": "6c446991cc304964a421db73c189d8a8"
+    }
+  ],
+  // Cloudflare Sandbox SDK — sibling provider to Modal. Gated by the
+  // PUSH_SANDBOX_PROVIDER env var at the call site; Modal remains the default
+  // during coexistence. Version must match @cloudflare/sandbox in
+  // app/package.json (Dockerfile.sandbox pins the matching image tag).
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile.sandbox",
+      "instance_type": "basic",
+      "max_instances": 10
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "Sandbox",
+        "class_name": "Sandbox"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Sandbox"]
     }
   ],
   // Daily snapshot index walk — emits aggregate metrics so we can size the

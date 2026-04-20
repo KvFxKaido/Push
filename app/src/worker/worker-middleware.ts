@@ -5,7 +5,12 @@
  * only what they need without pulling in the entire monolith.
  */
 
-import type { Fetcher, KVNamespace, RateLimit } from '@cloudflare/workers-types';
+import type {
+  DurableObjectNamespace,
+  Fetcher,
+  KVNamespace,
+  RateLimit,
+} from '@cloudflare/workers-types';
 import {
   normalizeExperimentalBaseUrl,
   type ExperimentalProviderType,
@@ -49,6 +54,13 @@ export interface Env {
   // GitHub App OAuth (for auto-connect flow)
   GITHUB_APP_CLIENT_ID?: string;
   GITHUB_APP_CLIENT_SECRET?: string;
+  // Cloudflare Sandbox SDK Durable Object binding. Optional because local dev
+  // or test envs may not bind it; the cloudflare-sandbox-provider must 503
+  // gracefully when it's absent so the Modal fallback path stays safe.
+  Sandbox?: DurableObjectNamespace;
+  // Sibling-provider selector. Values: "modal" | "cloudflare". Unset or
+  // anything else defaults to "modal" during coexistence.
+  PUSH_SANDBOX_PROVIDER?: string;
 }
 
 // ---------------------------------------------------------------------------

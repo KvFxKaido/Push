@@ -53,6 +53,12 @@ import { sanitizeUrlForLogging } from './src/worker/worker-log-utils';
 import { summarizeSnapshotIndex } from './src/worker/snapshot-index';
 import { handleAdminSnapshots } from './src/worker/admin-routes';
 
+// Re-export the Sandbox Durable Object class so wrangler can bind to it.
+// The Cloudflare Sandbox SDK ships the DO implementation; we only need to
+// expose the class symbol from the Worker entry. Subclass here later if we
+// need outbound handlers (outboundByHost) or custom lifecycle hooks.
+export { Sandbox } from '@cloudflare/sandbox';
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
