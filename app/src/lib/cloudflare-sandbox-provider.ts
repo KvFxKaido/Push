@@ -2,8 +2,10 @@
  * Cloudflare implementation of the SandboxProvider interface.
  *
  * Calls /api/sandbox-cf/* on the Worker, which proxies to the Sandbox SDK
- * (see app/src/worker/worker-cf-sandbox.ts). Owner tokens are not yet used —
- * the CF path currently relies on origin validation + rate limiting for auth.
+ * (see app/src/worker/worker-cf-sandbox.ts). Owner tokens are cached in a
+ * per-instance Map keyed by sandboxId, populated by create/connect and
+ * injected into every subsequent request body. The server rejects any
+ * non-create route that doesn't present a matching token.
  *
  * Capabilities:
  *   - snapshots: false (follow-up PR adds R2-backed archive snapshots)
