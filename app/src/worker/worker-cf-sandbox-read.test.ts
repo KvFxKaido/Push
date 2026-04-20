@@ -49,8 +49,8 @@ function makeReadRequest(body: Record<string, unknown>): Request {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      sandboxId: 'sb-1',
-      ownerToken: DEFAULT_OWNER_TOKEN,
+      sandbox_id: 'sb-1',
+      owner_token: DEFAULT_OWNER_TOKEN,
       path: '/workspace/src/app.ts',
       ...body,
     }),
@@ -258,8 +258,8 @@ describe('handleCloudflareSandbox read route', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        sandboxId: 'sb-1',
-        ownerToken: DEFAULT_OWNER_TOKEN,
+        sandbox_id: 'sb-1',
+        owner_token: DEFAULT_OWNER_TOKEN,
         path: maliciousPath,
       }),
     });
@@ -288,8 +288,8 @@ describe('handleCloudflareSandbox read route', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        sandboxId: 'sb-1',
-        ownerToken: DEFAULT_OWNER_TOKEN,
+        sandbox_id: 'sb-1',
+        owner_token: DEFAULT_OWNER_TOKEN,
         path: trickyPath,
       }),
     });
