@@ -1522,6 +1522,11 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
  * @param {{ sessionId?, provider?, model?, cwd?, maxRounds? }} options
  */
 export async function runTUI(options = {}) {
+  // Load config + apply env before theme construction so PUSH_THEME (and
+  // any other theme-relevant env vars) are in place when createTheme() reads them.
+  const config = await loadConfig();
+  applyConfigToEnv(config);
+
   const theme = createTheme();
   const tuiState = createTUIState();
   const composer = createComposer();
@@ -1530,9 +1535,6 @@ export async function runTUI(options = {}) {
   const inputHistory = createInputHistory();
 
   // ── Resolve provider/session ─────────────────────────────────────
-
-  const config = await loadConfig();
-  applyConfigToEnv(config);
   if (!Array.isArray(config.safeExecPatterns)) {
     config.safeExecPatterns = [];
   }

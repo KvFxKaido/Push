@@ -8,6 +8,7 @@ const savedEnv = {
   PUSH_EXPLAIN_MODE: process.env.PUSH_EXPLAIN_MODE,
   PUSH_TAVILY_API_KEY: process.env.PUSH_TAVILY_API_KEY,
   PUSH_WEB_SEARCH_BACKEND: process.env.PUSH_WEB_SEARCH_BACKEND,
+  PUSH_THEME: process.env.PUSH_THEME,
 };
 
 function restoreEnv() {
@@ -93,5 +94,21 @@ describe('applyConfigToEnv', () => {
     });
 
     assert.equal(process.env.PUSH_EXPLAIN_MODE, 'true');
+  });
+
+  it('applies theme to PUSH_THEME when missing', () => {
+    delete process.env.PUSH_THEME;
+
+    applyConfigToEnv({ theme: 'neon' });
+
+    assert.equal(process.env.PUSH_THEME, 'neon');
+  });
+
+  it('does not override existing PUSH_THEME', () => {
+    process.env.PUSH_THEME = 'forest';
+
+    applyConfigToEnv({ theme: 'neon' });
+
+    assert.equal(process.env.PUSH_THEME, 'forest');
   });
 });
