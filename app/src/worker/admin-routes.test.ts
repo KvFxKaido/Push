@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { handleAdminSnapshots } from './admin-routes';
-import { putSnapshot } from './snapshot-index';
+import { handleAdminSnapshots, MAX_ADMIN_ENTRIES } from './admin-routes';
+import { buildSnapshotKey, putSnapshot } from './snapshot-index';
 import type { Env } from './worker-middleware';
 import type { KVNamespace } from '@cloudflare/workers-types';
 
@@ -62,10 +62,7 @@ function makeRequest(
 ): Request {
   return new Request(url, {
     method: 'GET',
-    headers: {
-      Origin: 'https://push.example.test',
-      ...headers,
-    },
+    headers,
   });
 }
 
@@ -113,13 +110,37 @@ describe('handleAdminSnapshots', () => {
       expect(response.status).toBe(401);
     });
 
-    it('returns 403 when Origin is not allowed, regardless of token', async () => {
-      const env = makeEnv({ ADMIN_TOKEN: 'secret', ALLOWED_ORIGINS: 'https://push.example.test' });
+    it('succeeds when no Origin/Referer header is sent (curl/CLI use case)', async () => {
+      // Admin routes intentionally skip origin validation — the token is the
+      // auth and browsers never send X-Admin-Token ambiently, so CSRF does
+      // not apply. This guards against re-introducing an origin gate that
+      // would break operator `curl` calls.
+      const { kv } = createFakeKv();
+      const env = makeEnv({ ADMIN_TOKEN: 'secret', SNAPSHOT_INDEX: kv });
+      const response = await handleAdminSnapshots(makeRequest({ 'X-Admin-Token': 'secret' }), env);
+      expect(response.status).toBe(200);
+    });
+  });
+
+  describe('rate limiting', () => {
+    it('returns 429 before any auth check, so brute-force attempts are throttled', async () => {
+      // Rate limit must run before token validation — otherwise a missing/
+      // wrong token returns 401 without ever hitting the limiter, making the
+      // endpoint brute-forceable even though the limiter is bound.
+      const env = makeEnv({
+        ADMIN_TOKEN: 'secret',
+        RATE_LIMITER: {
+          limit: vi.fn(async () => ({ success: false })),
+        } as unknown as Env['RATE_LIMITER'],
+      });
       const response = await handleAdminSnapshots(
-        makeRequest({ 'X-Admin-Token': 'secret', Origin: 'https://attacker.example' }),
+        makeRequest({
+          /* no token at all */
+        }),
         env,
       );
-      expect(response.status).toBe(403);
+      expect(response.status).toBe(429);
+      expect(response.headers.get('Retry-After')).toBe('60');
     });
   });
 
@@ -130,20 +151,6 @@ describe('handleAdminSnapshots', () => {
       expect(response.status).toBe(503);
       const body = (await response.json()) as { code?: string };
       expect(body.code).toBe('KV_NOT_BOUND');
-    });
-
-    it('returns 429 when rate-limited', async () => {
-      const { kv } = createFakeKv();
-      const env = makeEnv({
-        ADMIN_TOKEN: 'secret',
-        SNAPSHOT_INDEX: kv,
-        RATE_LIMITER: {
-          limit: vi.fn(async () => ({ success: false })),
-        } as unknown as Env['RATE_LIMITER'],
-      });
-      const response = await handleAdminSnapshots(makeRequest({ 'X-Admin-Token': 'secret' }), env);
-      expect(response.status).toBe(429);
-      expect(response.headers.get('Retry-After')).toBe('60');
     });
   });
 
@@ -156,6 +163,8 @@ describe('handleAdminSnapshots', () => {
       const body = (await response.json()) as {
         summary: {
           total: number;
+          returned: number;
+          truncated: boolean;
           totalSizeBytes: number;
           oldestAccessedAtIso: string | null;
           newestAccessedAtIso: string | null;
@@ -164,6 +173,8 @@ describe('handleAdminSnapshots', () => {
       };
       expect(body.summary).toEqual({
         total: 0,
+        returned: 0,
+        truncated: false,
         totalSizeBytes: 0,
         oldestAccessedAtIso: null,
         newestAccessedAtIso: null,
@@ -203,10 +214,12 @@ describe('handleAdminSnapshots', () => {
       expect(response.status).toBe(200);
 
       const body = (await response.json()) as {
-        summary: { total: number; totalSizeBytes: number };
+        summary: { total: number; returned: number; truncated: boolean; totalSizeBytes: number };
         entries: Array<{ repoFullName: string; sizeBytes: number | null }>;
       };
       expect(body.summary.total).toBe(2);
+      expect(body.summary.returned).toBe(2);
+      expect(body.summary.truncated).toBe(false);
       expect(body.summary.totalSizeBytes).toBe(3500);
       expect(body.entries).toHaveLength(2);
     });
@@ -250,6 +263,92 @@ describe('handleAdminSnapshots', () => {
       // Accept a small window for test-runtime slippage.
       expect(body.entries[0].ageSeconds).toBeGreaterThanOrEqual(3599);
       expect(body.entries[0].ageSeconds).toBeLessThanOrEqual(3601);
+    });
+
+    it('clamps ageSeconds to 0 when lastAccessedAt is in the future (clock skew)', async () => {
+      const { kv } = createFakeKv();
+      const future = Date.now() + 60_000; // 1 minute ahead of local `now`
+      await putSnapshot(
+        kv,
+        {
+          repoFullName: 'owner/repo',
+          branch: 'main',
+          imageId: 'im-skew',
+          restoreToken: 'tok-skew',
+        },
+        future,
+      );
+
+      const env = makeEnv({ ADMIN_TOKEN: 'secret', SNAPSHOT_INDEX: kv });
+      const response = await handleAdminSnapshots(makeRequest({ 'X-Admin-Token': 'secret' }), env);
+      const body = (await response.json()) as { entries: Array<{ ageSeconds: number }> };
+      expect(body.entries[0].ageSeconds).toBe(0);
+    });
+  });
+
+  describe('robustness', () => {
+    it('returns null for non-finite timestamps rather than throwing', async () => {
+      // Seed a metadata blob with NaN timestamps directly. validateEntry in
+      // snapshot-index only checks typeof === 'number', so NaN slips through,
+      // and `new Date(NaN).toISOString()` throws RangeError. The handler
+      // must degrade to null instead of 500ing.
+      const { kv, store } = createFakeKv();
+      store.set(buildSnapshotKey('owner/repo', 'main'), {
+        value: '',
+        metadata: {
+          v: 1,
+          imageId: 'im-nan',
+          restoreToken: 'tok-nan',
+          repoFullName: 'owner/repo',
+          branch: 'main',
+          createdAt: Number.NaN,
+          lastAccessedAt: Number.NaN,
+        },
+      });
+
+      const env = makeEnv({ ADMIN_TOKEN: 'secret', SNAPSHOT_INDEX: kv });
+      const response = await handleAdminSnapshots(makeRequest({ 'X-Admin-Token': 'secret' }), env);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        summary: { oldestAccessedAtIso: string | null; newestAccessedAtIso: string | null };
+        entries: Array<{
+          createdAtIso: string | null;
+          lastAccessedAtIso: string | null;
+          ageSeconds: number | null;
+        }>;
+      };
+      expect(body.entries[0].createdAtIso).toBeNull();
+      expect(body.entries[0].lastAccessedAtIso).toBeNull();
+      expect(body.entries[0].ageSeconds).toBeNull();
+      // Non-finite timestamps must not poison the min/max aggregation either.
+      expect(body.summary.oldestAccessedAtIso).toBeNull();
+      expect(body.summary.newestAccessedAtIso).toBeNull();
+    });
+
+    it('caps entries at MAX_ADMIN_ENTRIES and flags truncated=true', async () => {
+      const { kv } = createFakeKv();
+      const seedCount = MAX_ADMIN_ENTRIES + 5;
+      for (let i = 0; i < seedCount; i += 1) {
+        await putSnapshot(kv, {
+          repoFullName: `owner/repo-${i}`,
+          branch: 'main',
+          imageId: `im-${i}`,
+          restoreToken: `tok-${i}`,
+          sizeBytes: 10,
+        });
+      }
+
+      const env = makeEnv({ ADMIN_TOKEN: 'secret', SNAPSHOT_INDEX: kv });
+      const response = await handleAdminSnapshots(makeRequest({ 'X-Admin-Token': 'secret' }), env);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        summary: { total: number; returned: number; truncated: boolean };
+        entries: unknown[];
+      };
+      expect(body.summary.total).toBe(seedCount);
+      expect(body.summary.returned).toBe(MAX_ADMIN_ENTRIES);
+      expect(body.summary.truncated).toBe(true);
+      expect(body.entries).toHaveLength(MAX_ADMIN_ENTRIES);
     });
   });
 });
