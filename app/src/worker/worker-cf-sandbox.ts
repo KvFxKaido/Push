@@ -344,29 +344,53 @@ async function routeRead(env: Env, body: Json): Promise<Response> {
   const requestedStartLine = Math.max(1, startLine ?? 1);
   const requestedEndLine =
     endLine !== undefined ? Math.max(requestedStartLine, endLine) : undefined;
-  const quotedPath = JSON.stringify(path);
+  const quotedPath = shellSingleQuote(path);
+
+  // Ask for MAX_READ_BYTES + 1 so we can detect truncation unambiguously:
+  // if we receive more than MAX_READ_BYTES bytes, the file exceeded the cap.
+  // Equal or fewer means we got the whole thing. Previously `>=` marked
+  // exactly-at-cap files as truncated — a false positive.
+  const CAP = MAX_READ_BYTES;
+  const PROBE_BYTES = CAP + 1;
 
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
   const contentCommand = isLineRangeRead
-    ? `sed -n '${requestedStartLine},${requestedEndLine ?? '$'}p' -- ${quotedPath} | head -c ${MAX_READ_BYTES}`
-    : `head -c ${MAX_READ_BYTES} -- ${quotedPath}`;
-  const hashCommand = `hash_output=$(sha256sum -- ${quotedPath}) && printf '%s\n' "$hash_output" | awk '{print $1}'`;
-  const lineCountCommand = `wc -l -- ${quotedPath} | awk '{print $1}'`;
+    ? `sed -n '${requestedStartLine},${requestedEndLine ?? '$'}p' -- ${quotedPath} | head -c ${PROBE_BYTES}`
+    : `head -c ${PROBE_BYTES} -- ${quotedPath}`;
+  // Keep the hash command a single pipeline — no command substitution.
+  // Pipelines' exit status in bash reflects the last stage; here that's awk,
+  // which exits 0 whenever sha256sum produces any output. We handle the
+  // missing-file case via the parallel `stat` probe below, so a silent
+  // success here is fine (it'll just produce an empty digest string that we
+  // treat as null version).
+  const hashCommand = `sha256sum -- ${quotedPath} | awk '{print $1}'`;
+  // awk 'END{print NR}' counts logical records (handles files without a
+  // trailing newline correctly, which `wc -l` undercounts).
+  const lineCountCommand = `awk 'END{print NR}' -- ${quotedPath}`;
+  // stat gives us the authoritative byte size without reading the file —
+  // used for the NOT_FOUND probe and for accurate remaining_bytes on
+  // byte-capped reads.
+  const statCommand = `stat -c %s -- ${quotedPath}`;
 
-  const [contentResult, hashResult, lineCountResult] = (await Promise.all([
+  const [contentResult, hashResult, lineCountResult, statResult] = (await Promise.all([
     sandbox.exec(contentCommand),
     sandbox.exec(hashCommand),
     isLineRangeRead ? sandbox.exec(lineCountCommand) : Promise.resolve(null),
+    sandbox.exec(statCommand),
   ])) as [
     { stdout?: string; stderr?: string; exitCode?: number },
     { stdout?: string; stderr?: string; exitCode?: number },
     { stdout?: string; stderr?: string; exitCode?: number } | null,
+    { stdout?: string; stderr?: string; exitCode?: number },
   ];
 
-  if ((hashResult.exitCode ?? 0) !== 0) {
+  // stat's exit code is the authoritative existence probe — it fails fast
+  // and without reading the file, so it's a stronger NOT_FOUND signal than
+  // sha256sum or sed.
+  if ((statResult.exitCode ?? 0) !== 0) {
     return Response.json({
       error:
-        (hashResult.stderr || hashResult.stdout || `Failed to read file: ${path}`).trim() ||
+        (statResult.stderr || statResult.stdout || `Failed to read file: ${path}`).trim() ||
         `Failed to read file: ${path}`,
       code: 'NOT_FOUND',
       content: '',
@@ -391,38 +415,50 @@ async function routeRead(env: Env, body: Json): Promise<Response> {
 
   const rawContent = contentResult.stdout ?? '';
   const rawBytes = new TextEncoder().encode(rawContent);
-  const content =
-    rawBytes.length > MAX_READ_BYTES
-      ? new TextDecoder().decode(rawBytes.slice(0, MAX_READ_BYTES))
-      : rawContent;
-  const byteTruncated = rawBytes.length >= MAX_READ_BYTES;
+  const byteTruncated = rawBytes.length > CAP;
+  const content = byteTruncated ? new TextDecoder().decode(rawBytes.slice(0, CAP)) : rawContent;
+
   const lineCount =
     lineCountResult && (lineCountResult.exitCode ?? 0) === 0
       ? Number.parseInt((lineCountResult.stdout ?? '').trim(), 10)
       : undefined;
   const normalizedLineCount =
     lineCount !== undefined && Number.isFinite(lineCount) && lineCount >= 0 ? lineCount : undefined;
-  const responseStartLine = isLineRangeRead
-    ? Math.min(requestedStartLine, normalizedLineCount ?? requestedStartLine)
-    : undefined;
-  const responseEndLine =
-    isLineRangeRead && normalizedLineCount !== undefined
-      ? Math.min(requestedEndLine ?? normalizedLineCount, normalizedLineCount)
-      : requestedEndLine;
+
+  // Don't clamp the reported range against the measured line count. The sed
+  // command was built from the *requested* range, so echoing a clamped range
+  // back would desync metadata from the returned content (e.g., request
+  // start_line past EOF → sed returns empty → clamped start_line would say
+  // "you read from line N" for empty content). Echo the request verbatim.
+  const responseStartLine = isLineRangeRead ? requestedStartLine : undefined;
+  const responseEndLine = isLineRangeRead ? requestedEndLine : undefined;
+
   const lineTruncated =
     isLineRangeRead &&
     requestedEndLine !== undefined &&
     normalizedLineCount !== undefined &&
     requestedEndLine < normalizedLineCount;
   const truncated = byteTruncated || lineTruncated;
-  const version = hashResult.stdout?.trim() || null;
+
+  const fileSize = Number.parseInt((statResult.stdout ?? '').trim(), 10);
+  const normalizedFileSize = Number.isFinite(fileSize) && fileSize >= 0 ? fileSize : undefined;
+  // remaining_bytes is only meaningful for byte-capped unbounded reads —
+  // for line-range reads we don't know how many bytes beyond the range
+  // remain without reading them. Compute from the authoritative stat
+  // result, not the content buffer (which is capped).
+  const remainingBytes =
+    !isLineRangeRead && byteTruncated && normalizedFileSize !== undefined
+      ? Math.max(0, normalizedFileSize - CAP)
+      : undefined;
+
+  const rawVersion = hashResult.stdout?.trim();
+  const version = rawVersion && rawVersion.length > 0 ? rawVersion : null;
 
   return Response.json({
     content,
     truncated,
     truncated_at_line: lineTruncated ? requestedEndLine + 1 : undefined,
-    remaining_bytes:
-      rawBytes.length > MAX_READ_BYTES ? rawBytes.length - MAX_READ_BYTES : undefined,
+    remaining_bytes: remainingBytes,
     version,
     start_line: responseStartLine,
     end_line: responseEndLine,
@@ -763,6 +799,17 @@ async function hashSha256(content: string): Promise<string> {
 
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}\n…[truncated]` : s;
+}
+
+// Shell-safe quoting for arguments interpolated into `sandbox.exec` commands.
+//
+// JSON.stringify produces a double-quoted string, but double quotes in POSIX
+// shells still evaluate $VAR, backticks, and $(...) — so a filename like
+// `$(whoami)` would cause command substitution. We wrap in SINGLE quotes
+// (which suppress ALL expansion) and escape any embedded single quotes via
+// the `'\''` trick: close quote, escaped single quote, reopen quote.
+function shellSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 function classifyCfError(err: unknown): string {

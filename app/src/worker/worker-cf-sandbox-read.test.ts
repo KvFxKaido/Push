@@ -8,6 +8,7 @@ vi.mock('@cloudflare/sandbox', () => ({
 }));
 
 const MAX_READ_BYTES = 5_000_000;
+const PROBE_BYTES = MAX_READ_BYTES + 1;
 const DEFAULT_HASH = 'a'.repeat(64);
 
 type ExecResult = { stdout?: string; stderr?: string; exitCode?: number };
@@ -38,11 +39,7 @@ function createFakeSandbox() {
   return {
     exec: vi.fn(async (command: string): Promise<ExecResult> => {
       void command;
-      return {
-        stdout: '',
-        stderr: '',
-        exitCode: 0,
-      };
+      return { stdout: '', stderr: '', exitCode: 0 };
     }),
   };
 }
@@ -61,6 +58,19 @@ function commandList(sandbox: ReturnType<typeof createFakeSandbox>): string[] {
   return sandbox.exec.mock.calls.map(([command]) => command);
 }
 
+// Default stub — answers every command shape the handler fires with a
+// benign success. Individual tests override specific commands.
+function defaultExec(): (cmd: string) => Promise<ExecResult> {
+  return async (command: string): Promise<ExecResult> => {
+    if (command.startsWith('stat -c %s')) return { stdout: '42\n', exitCode: 0 };
+    if (command.startsWith('sed -n')) return { stdout: 'line 2\nline 3\n', exitCode: 0 };
+    if (command.startsWith('head -c')) return { stdout: 'first bytes', exitCode: 0 };
+    if (command.includes('sha256sum')) return { stdout: `${DEFAULT_HASH}\n`, exitCode: 0 };
+    if (command.startsWith('awk')) return { stdout: '10\n', exitCode: 0 };
+    throw new Error(`Unexpected command: ${command}`);
+  };
+}
+
 beforeEach(() => {
   vi.mocked(getSandbox).mockReset();
 });
@@ -70,69 +80,61 @@ afterEach(() => {
 });
 
 describe('handleCloudflareSandbox read route', () => {
-  it('uses sed -n with the requested line range', async () => {
+  it('uses sed -n with the requested line range and probes MAX+1 bytes', async () => {
     const sandbox = createFakeSandbox();
-    sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
-      if (command.startsWith('sed -n')) return { stdout: 'line 2\nline 3\nline 4\n', exitCode: 0 };
-      if (command.includes('sha256sum')) return { stdout: `${DEFAULT_HASH}\n`, exitCode: 0 };
-      if (command.startsWith('wc -l')) return { stdout: '10\n', exitCode: 0 };
-      throw new Error(`Unexpected command: ${command}`);
-    });
+    sandbox.exec.mockImplementation(defaultExec());
 
     const { payload } = await callRead(sandbox, { start_line: 2, end_line: 4 });
 
     expect(commandList(sandbox)).toContain(
-      `sed -n '2,4p' -- "/workspace/src/app.ts" | head -c ${MAX_READ_BYTES}`,
+      `sed -n '2,4p' -- '/workspace/src/app.ts' | head -c ${PROBE_BYTES}`,
     );
-    expect(payload.content).toBe('line 2\nline 3\nline 4\n');
+    expect(payload.start_line).toBe(2);
+    expect(payload.end_line).toBe(4);
   });
 
-  it('uses head -c with the read byte cap for unbounded reads', async () => {
+  it('uses head -c MAX+1 for unbounded reads and skips awk line count', async () => {
     const sandbox = createFakeSandbox();
-    sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
-      if (command.startsWith('head -c')) return { stdout: 'first bytes', exitCode: 0 };
-      if (command.includes('sha256sum')) return { stdout: `${DEFAULT_HASH}\n`, exitCode: 0 };
-      throw new Error(`Unexpected command: ${command}`);
-    });
+    sandbox.exec.mockImplementation(defaultExec());
 
     const { payload } = await callRead(sandbox, {});
     const commands = commandList(sandbox);
 
-    expect(commands).toContain(`head -c ${MAX_READ_BYTES} -- "/workspace/src/app.ts"`);
-    expect(commands.some((command) => command.startsWith('wc -l'))).toBe(false);
-    expect(commands.some((command) => command.startsWith('sed -n'))).toBe(false);
+    expect(commands).toContain(`head -c ${PROBE_BYTES} -- '/workspace/src/app.ts'`);
+    expect(commands.some((c) => c.startsWith('awk'))).toBe(false);
+    expect(commands.some((c) => c.startsWith('sed -n'))).toBe(false);
     expect(payload).toMatchObject({ content: 'first bytes', truncated: false });
   });
 
-  it('returns the version from sha256sum output', async () => {
+  it('returns the version from sha256sum output via simple pipeline', async () => {
     const sandbox = createFakeSandbox();
     const version = '0123456789abcdef'.repeat(4);
     sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
+      if (command.startsWith('stat')) return { stdout: '100\n', exitCode: 0 };
       if (command.startsWith('head -c')) return { stdout: 'content', exitCode: 0 };
       if (command.includes('sha256sum')) return { stdout: `${version}\n`, exitCode: 0 };
       throw new Error(`Unexpected command: ${command}`);
     });
 
     const { payload } = await callRead(sandbox, {});
+    const hashCommand = commandList(sandbox).find((c) => c.includes('sha256sum'));
 
-    const hashCommand = commandList(sandbox).find((command) => command.includes('sha256sum'));
-    expect(hashCommand).toContain('sha256sum -- "/workspace/src/app.ts"');
-    expect(hashCommand).toContain("| awk '{print $1}'");
+    expect(hashCommand).toBe(`sha256sum -- '/workspace/src/app.ts' | awk '{print $1}'`);
     expect(payload.version).toBe(version);
   });
 
-  it('returns a body-level NOT_FOUND error when sha256sum fails', async () => {
+  it('uses stat -c %s as the authoritative existence probe (NOT_FOUND on fail)', async () => {
     const sandbox = createFakeSandbox();
     sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
-      if (command.startsWith('head -c')) return { stdout: '', exitCode: 1, stderr: 'missing' };
-      if (command.includes('sha256sum')) {
+      if (command.startsWith('stat')) {
         return {
           stdout: '',
-          stderr: 'sha256sum: /workspace/src/app.ts: No such file or directory\n',
+          stderr: "stat: cannot statx '/workspace/src/app.ts': No such file or directory\n",
           exitCode: 1,
         };
       }
-      throw new Error(`Unexpected command: ${command}`);
+      // Other commands succeed vacuously — handler should short-circuit on stat.
+      return { stdout: '', exitCode: 0 };
     });
 
     const { response, payload } = await callRead(sandbox, {});
@@ -145,42 +147,128 @@ describe('handleCloudflareSandbox read route', () => {
       version: null,
       workspace_revision: 0,
     });
-    expect(String(payload.error)).toContain('No such file or directory');
+    expect(String(payload.error)).toContain('No such file');
   });
 
-  it('truncates sed output that exceeds the read byte cap', async () => {
+  it('detects truncation when content exceeds the cap (byte path uses >, not >=)', async () => {
     const sandbox = createFakeSandbox();
     sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
-      if (command.startsWith('sed -n'))
-        return { stdout: 'x'.repeat(MAX_READ_BYTES + 1), exitCode: 0 };
+      if (command.startsWith('stat')) return { stdout: `${MAX_READ_BYTES + 200}\n`, exitCode: 0 };
+      if (command.startsWith('head -c')) return { stdout: 'x'.repeat(PROBE_BYTES), exitCode: 0 };
       if (command.includes('sha256sum')) return { stdout: `${DEFAULT_HASH}\n`, exitCode: 0 };
-      if (command.startsWith('wc -l')) return { stdout: '1\n', exitCode: 0 };
       throw new Error(`Unexpected command: ${command}`);
     });
 
-    const { payload } = await callRead(sandbox, { start_line: 1 });
+    const { payload } = await callRead(sandbox, {});
 
     expect((payload.content as string).length).toBe(MAX_READ_BYTES);
     expect(payload.truncated).toBe(true);
-    expect(payload.remaining_bytes).toBe(1);
+    // remaining_bytes comes from stat now, not from the post-decode buffer.
+    expect(payload.remaining_bytes).toBe(200);
   });
 
-  it('echoes normalized start_line and end_line for range reads', async () => {
+  it('does NOT mark a file as truncated when its size equals the cap exactly', async () => {
     const sandbox = createFakeSandbox();
     sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
-      if (command.startsWith('sed -n')) return { stdout: 'line 3\nline 4\n', exitCode: 0 };
+      if (command.startsWith('stat')) return { stdout: `${MAX_READ_BYTES}\n`, exitCode: 0 };
+      // Content stream returns exactly MAX bytes — head -c MAX+1 capped at EOF.
+      if (command.startsWith('head -c')) return { stdout: 'x'.repeat(MAX_READ_BYTES), exitCode: 0 };
       if (command.includes('sha256sum')) return { stdout: `${DEFAULT_HASH}\n`, exitCode: 0 };
-      if (command.startsWith('wc -l')) return { stdout: '8\n', exitCode: 0 };
       throw new Error(`Unexpected command: ${command}`);
     });
 
-    const { payload } = await callRead(sandbox, { start_line: 3, end_line: 4 });
+    const { payload } = await callRead(sandbox, {});
 
-    expect(payload).toMatchObject({
-      start_line: 3,
-      end_line: 4,
-      truncated: true,
-      truncated_at_line: 5,
+    expect((payload.content as string).length).toBe(MAX_READ_BYTES);
+    expect(payload.truncated).toBe(false);
+    expect(payload.remaining_bytes).toBeUndefined();
+  });
+
+  it('echoes requested range verbatim without clamping against line count', async () => {
+    // start_line past EOF used to be clamped, which desynced metadata from the
+    // empty content sed returned. After the fix, echo the request verbatim.
+    const sandbox = createFakeSandbox();
+    sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
+      if (command.startsWith('stat')) return { stdout: '5\n', exitCode: 0 };
+      if (command.startsWith('sed -n')) return { stdout: '', exitCode: 0 };
+      if (command.includes('sha256sum')) return { stdout: `${DEFAULT_HASH}\n`, exitCode: 0 };
+      if (command.startsWith('awk')) return { stdout: '3\n', exitCode: 0 };
+      throw new Error(`Unexpected command: ${command}`);
     });
+
+    const { payload } = await callRead(sandbox, { start_line: 100, end_line: 200 });
+
+    expect(payload.start_line).toBe(100);
+    expect(payload.end_line).toBe(200);
+    expect(payload.content).toBe('');
+  });
+
+  it('counts lines via awk END{print NR} for trailing-newline-less files', async () => {
+    const sandbox = createFakeSandbox();
+    sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
+      if (command.startsWith('stat')) return { stdout: '20\n', exitCode: 0 };
+      if (command.startsWith('sed -n')) return { stdout: 'line 1\nline 2', exitCode: 0 };
+      if (command.includes('sha256sum')) return { stdout: `${DEFAULT_HASH}\n`, exitCode: 0 };
+      if (command.startsWith('awk')) return { stdout: '2\n', exitCode: 0 };
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const { payload } = await callRead(sandbox, { start_line: 1, end_line: 5 });
+    const lineCountCommand = commandList(sandbox).find((c) => c.startsWith('awk'));
+
+    expect(lineCountCommand).toBe(`awk 'END{print NR}' -- '/workspace/src/app.ts'`);
+    expect(payload.content).toBe('line 1\nline 2');
+  });
+
+  it('single-quotes path and does not execute shell expansions ($(), backticks)', async () => {
+    // This is the critical RCE test. If JSON.stringify were still used, the
+    // path `$(whoami)` would be wrapped as `"$(whoami)"` which expands under
+    // the shell. Single-quoted, it stays literal.
+    const sandbox = createFakeSandbox();
+    sandbox.exec.mockImplementation(defaultExec());
+    vi.mocked(getSandbox).mockReturnValue(sandbox as never);
+
+    const maliciousPath = '/tmp/$(whoami)`id`.txt';
+    const request = new Request('https://push.example.test/api/sandbox-cf/read', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://push.example.test',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sandboxId: 'sb-1', path: maliciousPath }),
+    });
+    await handleCloudflareSandbox(request, makeEnv(), new URL(request.url), 'read');
+
+    // Every command gets the path wrapped in SINGLE quotes — no $ or `
+    // interpretation possible inside those.
+    const expectedQuoted = `'/tmp/$(whoami)\`id\`.txt'`;
+    for (const cmd of commandList(sandbox)) {
+      expect(cmd).toContain(expectedQuoted);
+      // Negative assertion — the path must NOT appear double-quoted.
+      expect(cmd).not.toContain(`"${maliciousPath}"`);
+    }
+  });
+
+  it('single-quotes paths containing literal single quotes via the escape trick', async () => {
+    const sandbox = createFakeSandbox();
+    sandbox.exec.mockImplementation(defaultExec());
+    vi.mocked(getSandbox).mockReturnValue(sandbox as never);
+
+    const trickyPath = `/tmp/it's-a-file.txt`;
+    const request = new Request('https://push.example.test/api/sandbox-cf/read', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://push.example.test',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sandboxId: 'sb-1', path: trickyPath }),
+    });
+    await handleCloudflareSandbox(request, makeEnv(), new URL(request.url), 'read');
+
+    // Expected quoting: 'it'\''s-a-file.txt' — close, escape-quote, reopen.
+    const expectedQuoted = `'/tmp/it'\\''s-a-file.txt'`;
+    for (const cmd of commandList(sandbox)) {
+      expect(cmd).toContain(expectedQuoted);
+    }
   });
 });
