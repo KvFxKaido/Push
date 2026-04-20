@@ -1,14 +1,20 @@
 /**
  * Cloudflare implementation of the SandboxProvider interface.
  *
- * Calls /api/sandbox-cf/* on the Worker, which proxies to the Sandbox SDK
- * (see app/src/worker/worker-cf-sandbox.ts). Speaks the same snake_case
- * wire format as the Modal handler (sandbox_id, owner_token,
- * github_identity, workspace_revision, exit_code, …) so the Worker-side
- * provider toggle can switch backends without client-side changes. Owner
- * tokens are cached in a per-instance Map keyed by sandboxId, populated by
- * create/connect and injected into every subsequent request body. The
- * server rejects any non-create route that doesn't present a matching token.
+ * Always hits /api/sandbox-cf/* on the Worker (never /api/sandbox/*), so
+ * selecting this class deliberately pins traffic to the CF backend —
+ * independent of the server-side PUSH_SANDBOX_PROVIDER toggle that only
+ * governs the shared /api/sandbox/* route. The wire format matches
+ * Modal's snake_case convention (sandbox_id, owner_token,
+ * github_identity, workspace_revision, exit_code, …) so a client going
+ * through sandbox-client.ts can target either handler with the same body
+ * when PUSH_SANDBOX_PROVIDER flips. This file only uses that format for
+ * consistency and so test fixtures stay portable between the two paths.
+ *
+ * Owner tokens are cached in a per-instance Map keyed by sandboxId,
+ * populated by create/connect and injected into every subsequent request
+ * body. The server rejects any non-create route that doesn't present a
+ * matching token.
  *
  * Capabilities:
  *   - snapshots: false (follow-up PR adds R2-backed archive snapshots)

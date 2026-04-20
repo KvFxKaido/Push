@@ -232,9 +232,13 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
 
   if (githubIdentity?.name && githubIdentity?.email) {
+    // Single-quote via shellSingleQuote, not JSON.stringify. Double quotes
+    // still evaluate $VAR, backticks, and $(...), so a crafted identity
+    // could trigger command substitution during `git config`. Same
+    // discipline as routeRead's path interpolation.
     await sandbox.exec(
-      `git config --global user.name ${JSON.stringify(githubIdentity.name)} && ` +
-        `git config --global user.email ${JSON.stringify(githubIdentity.email)}`,
+      `git config --global user.name ${shellSingleQuote(githubIdentity.name)} && ` +
+        `git config --global user.email ${shellSingleQuote(githubIdentity.email)}`,
     );
   }
 

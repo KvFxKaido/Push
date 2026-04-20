@@ -234,7 +234,7 @@ describe('handleCloudflareSandbox happy paths', () => {
     expect(getSandboxMock).toHaveBeenCalledWith(env.Sandbox, sandboxId);
     expect(sandbox.exec).toHaveBeenNthCalledWith(
       1,
-      'git config --global user.name "Push Bot" && git config --global user.email "bot@example.test"',
+      "git config --global user.name 'Push Bot' && git config --global user.email 'bot@example.test'",
     );
     expect(sandbox.gitCheckout).toHaveBeenCalledWith(
       'https://x-access-token:ghs_token@github.com/owner/repo.git',
