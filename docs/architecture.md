@@ -16,8 +16,8 @@ Push is built around execution-first reliability. We favor explicit state and hu
 - Tailwind CSS 3 + shadcn/ui (Radix primitives)
 - GitHub REST API for repo operations
 - Multi-backend AI with built-ins plus opt-in private connectors
-- Modal for sandbox code execution
-- Cloudflare Workers for streaming proxy and sandbox proxy
+- Pluggable sandbox backend — Cloudflare Sandbox SDK (default) or Modal, selected server-side via the `PUSH_SANDBOX_PROVIDER` var
+- Cloudflare Workers for streaming proxy and sandbox proxy (both backends route through the same Worker)
 - PWA with service worker and offline support
 
 ## Agent Roles
@@ -43,7 +43,7 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 ## Key Systems
 
 - **Tool protocol** — multi-tool dispatch and structured error reporting
-- **Sandbox execution** — scratch workspaces and web search tools via Modal
+- **Sandbox execution** — scratch workspaces and web search tools via a pluggable `SandboxProvider` interface (`lib/sandbox-provider.ts`); Cloudflare Sandbox SDK and Modal coexist as sibling providers, both reached through the same `/api/sandbox/*` Worker route with server-side dispatch on `PUSH_SANDBOX_PROVIDER`
 - **Delegation and orchestration** — direct Explorer/Coder delegation plus dependency-aware task graphs via `plan_tasks`
 - **Context and memory** — staged compaction, Coder working memory, graph-scoped task memory, typed retrieval/invalidation, and sectioned prompt packing
 - **Shared runtime contract** — canonical task-graph, memory, delegation-brief, role-context, and run-event semantics live in root `lib/` and are consumed by both web and CLI
@@ -94,7 +94,8 @@ The web app and CLI still keep shell-specific coordinators local. The target is 
 |---|---|
 | `app/` | Web app, Cloudflare Worker, UI, hooks, and app logic |
 | `cli/` | Local terminal agent, sessions, daemon, and terminal interface |
-| `sandbox/` | Modal sandbox backend |
+| `sandbox/` | Modal sandbox backend (Python + FastAPI endpoints) |
+| `Dockerfile.sandbox` | Cloudflare Sandbox container image (extends `cloudflare/sandbox:0.8.11-python`) |
 | `lib/` | Shared logic used across app and CLI |
 | `docs/` | Architecture, decisions, runbooks, and archived references |
 | `scripts/` | Build and utility scripts |

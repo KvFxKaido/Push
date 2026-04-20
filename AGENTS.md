@@ -19,6 +19,7 @@ This is the **required entry doc** for Push. The loader currently reads `AGENTS.
 - `app/` — web app, worker, UI, hooks, and app logic
 - `cli/` — local terminal agent
 - `sandbox/` — Modal sandbox backend
+- `Dockerfile.sandbox` + `app/src/worker/worker-cf-sandbox.ts` + `app/src/lib/cloudflare-sandbox-provider.ts` — Cloudflare Sandbox SDK sibling; selected via `PUSH_SANDBOX_PROVIDER`
 - `lib/` — shared logic used by app/cli
 - `docs/` — plans, design notes, and archived references
 
