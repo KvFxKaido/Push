@@ -1673,6 +1673,15 @@ async function runSpinnerSubcommand(positionals) {
       `Unknown spinner: ${value || '(missing)'}. Available: ${SPINNER_NAMES.join(', ')}. Use 'unpin' to clear.`,
     );
   }
+  // Reduced-motion is a hard guard: refuse to persist a non-'off' spinner
+  // when PUSH_REDUCED_MOTION / REDUCED_MOTION is set, matching the TUI
+  // path (`handleSpinnerCommand` in tui.ts). Saving 'off' is still allowed
+  // — that's the intended behaviour under reduced-motion anyway.
+  if (isReducedMotion() && value !== 'off') {
+    throw new Error(
+      "Spinner disabled: reduced-motion is set (PUSH_REDUCED_MOTION / REDUCED_MOTION). Unset it to save a non-'off' spinner.",
+    );
+  }
   const next = { ...config, spinner: value };
   const configPath = await saveConfig(next);
   process.stdout.write(`Saved spinner: ${fmt.bold(value)} → ${fmt.dim(configPath)}\n`);

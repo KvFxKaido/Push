@@ -139,6 +139,29 @@ describe('push spinner set', () => {
     assert.match(r.stderr, /\(missing\)/);
     assert.equal(r.stderr.includes('undefined'), false);
   });
+
+  it('refuses to save non-off spinner under reduced-motion', async () => {
+    // Reduced-motion is a hard accessibility guard — the CLI must match
+    // the TUI handler, which also refuses. Without this, a headless save
+    // on a machine where PUSH_REDUCED_MOTION is set would silently persist
+    // a motion preference the runtime would then ignore.
+    const r = await runSpinner(['set', 'helix'], { env: { PUSH_REDUCED_MOTION: '1' } });
+    assert.notEqual(r.code, 0);
+    assert.match(r.stderr, /reduced-motion/);
+    assert.equal(r.config.spinner, undefined);
+  });
+
+  it('still allows saving "off" under reduced-motion', async () => {
+    const r = await runSpinner(['set', 'off'], { env: { PUSH_REDUCED_MOTION: '1' } });
+    assert.equal(r.code, 0);
+    assert.equal(r.config.spinner, 'off');
+  });
+
+  it('honours REDUCED_MOTION (standard convention) too', async () => {
+    const r = await runSpinner(['set', 'braille'], { env: { REDUCED_MOTION: 'true' } });
+    assert.notEqual(r.code, 0);
+    assert.match(r.stderr, /reduced-motion/);
+  });
 });
 
 describe('push spinner unpin', () => {

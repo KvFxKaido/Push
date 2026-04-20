@@ -1847,12 +1847,24 @@ export async function runTUI(options = {}) {
   const animation = { effect: initialEffect, tick: 0 };
   const spinner = { name: reducedMotion ? 'off' : (detectSpinnerName() ?? 'off') };
   let animationInterval = null;
+  // Is there any on-screen consumer that cares about the next tick? Keeps
+  // us from invalidating the screen 10×/s when the user has pinned a
+  // spinner but isn't currently running (spinner is only painted while
+  // runState === 'running' on Unicode-capable terminals). The interval
+  // itself stays alive while any consumer is *eligible*, so the first
+  // frame of a new run paints immediately.
+  const anyConsumerVisible = () =>
+    animation.effect !== 'off' ||
+    (spinner.name !== 'off' && tuiState.runState === 'running' && theme.unicode);
+  const anyConsumerEligible = () => animation.effect !== 'off' || spinner.name !== 'off';
   const startAnimationTicker = () => {
     if (animationInterval) return;
     animationInterval = setInterval(() => {
       animation.tick = (animation.tick + 1) % TICK_MODULUS;
-      tuiState.dirty.add('all');
-      scheduler.flush();
+      if (anyConsumerVisible()) {
+        tuiState.dirty.add('all');
+        scheduler.flush();
+      }
     }, ANIMATION_TICK_MS);
     // Don't keep the Node event loop alive just for animation — if the rest
     // of the TUI tears down, the ticker shouldn't block exit.
@@ -1864,7 +1876,7 @@ export async function runTUI(options = {}) {
     animationInterval = null;
   };
   const refreshTicker = () => {
-    if (animation.effect !== 'off' || spinner.name !== 'off') startAnimationTicker();
+    if (anyConsumerEligible()) startAnimationTicker();
     else stopAnimationTicker();
   };
   refreshTicker();
@@ -3732,7 +3744,10 @@ export async function runTUI(options = {}) {
       delete config.spinner;
       delete process.env.PUSH_SPINNER;
       await saveConfig(config);
-      const next = isReducedMotion() ? 'off' : 'off'; // unpinned default is 'off'
+      // The unpinned default is always 'off' — unlike animation, which
+      // falls back to `VARIANTS[theme].defaultAnimation`, spinner has no
+      // per-theme bundling yet.
+      const next = 'off';
       spinner.name = next;
       refreshTicker();
       tuiState.dirty.add('all');
