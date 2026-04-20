@@ -42,7 +42,7 @@ const { useCommitPush } = await import('./useCommitPush');
 
 function render(
   sandboxId = 'sbx-1',
-  providerOverride: 'openai' | null = 'openai',
+  providerOverride: 'openrouter' | null = 'openrouter',
   modelOverride?: string | null,
 ): ReturnType<typeof useCommitPush> {
   reactState.index = 0;

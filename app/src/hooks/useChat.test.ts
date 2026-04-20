@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Conversation } from '@/types';
 
 // useChat orchestrates ~25 modules. Its core logic is unit-tested through the
 // helpers it composes (chat-send, chat-management, chat-card-actions,
@@ -57,13 +58,16 @@ const checkpointManager = vi.hoisted(() => ({
 const chatPersistence = vi.hoisted(() => ({
   generateTitle: vi.fn(async () => 'title'),
   loadActiveChatId: vi.fn(() => 'chat-1'),
-  loadConversations: vi.fn(() => ({
+  // Typed as Record<string, Partial<Conversation>> so fixtures can omit
+  // optional fields without restating the full interface, while still
+  // catching typos on Conversation field names.
+  loadConversations: vi.fn<() => Record<string, Partial<Conversation>>>(() => ({
     'chat-1': {
       id: 'chat-1',
       title: 'Chat 1',
       messages: [],
       createdAt: 1,
-      updatedAt: 1,
+      lastMessageAt: 1,
     },
   })),
   normalizeConversationModel: vi.fn((m) => m),
@@ -125,7 +129,7 @@ const chatSend = vi.hoisted(() => ({
 }));
 const chatQueue = vi.hoisted(() => ({
   appendQueuedItem: vi.fn((m, _k, v) => ({ ...m, _last: v })),
-  clearQueuedItems: vi.fn((m) => m),
+  clearQueuedItems: vi.fn<(m: unknown, chatId?: string) => unknown>((m) => m),
   shiftQueuedItem: vi.fn((m) => [null, m] as const),
 }));
 const chatRunEvents = vi.hoisted(() => ({
@@ -139,7 +143,7 @@ const contextMemory = vi.hoisted(() => ({
 const runEngine = vi.hoisted(() => ({
   IDLE_RUN_STATE: { kind: 'idle' },
   isRunActive: vi.fn(() => false),
-  runEngineReducer: vi.fn((s) => s),
+  runEngineReducer: vi.fn<(s: unknown, event?: unknown) => unknown>((s) => s),
 }));
 const runJournal = vi.hoisted(() => ({
   appendJournalEvent: vi.fn(),
@@ -281,13 +285,13 @@ describe('useChat — public API surface', () => {
         title: 'Chat',
         messages: [],
         createdAt: 1,
-        updatedAt: 1,
-        provider: 'openai',
+        lastMessageAt: 1,
+        provider: 'openrouter',
       },
     });
     chatPersistence.normalizeConversationModel.mockReturnValueOnce('gpt-4o');
     const hook = useChat(null);
-    expect(hook.lockedProvider).toBe('openai');
+    expect(hook.lockedProvider).toBe('openrouter');
     expect(hook.isProviderLocked).toBe(true);
     expect(hook.lockedModel).toBe('gpt-4o');
   });
@@ -448,7 +452,7 @@ describe('useChat — run events (pre-extraction characterization)', () => {
         messages: [],
         createdAt: 1,
         lastMessageAt: 1,
-        runState: { runEvents: persisted },
+        runState: { runEvents: persisted } as Conversation['runState'],
       },
     });
     chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
@@ -615,7 +619,7 @@ describe('useChat — verification + steer surfaces (pre-extraction characteriza
         mode: 'repo',
         repoFullName: 'owner/repo',
         branch: 'main',
-      } as Parameters<typeof hook.setWorkspaceContext>[0]),
+      } as unknown as Parameters<typeof hook.setWorkspaceContext>[0]),
     ).not.toThrow();
   });
 

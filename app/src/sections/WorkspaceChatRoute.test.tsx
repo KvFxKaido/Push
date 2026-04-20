@@ -5,7 +5,7 @@ import type { ChatRouteProps } from './workspace-chat-route-types';
 // Mock out the sub-components and controllers so the route can be exercised
 // in isolation: we only want to verify that WorkspaceChatRoute wires its
 // inputs through to ChatScreen and handles the scratch/repo branching.
-const chatScreenSpy = vi.hoisted(() => vi.fn(() => null));
+const chatScreenSpy = vi.hoisted(() => vi.fn<(props?: unknown) => null>(() => null));
 const toasterSpy = vi.hoisted(() => vi.fn(() => null));
 
 vi.mock('./ChatScreen', () => ({
@@ -206,7 +206,7 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
       isProtected: false,
       globalDefault: false,
       setGlobalDefault: vi.fn(),
-      repoOverride: null,
+      repoOverride: 'inherit',
       setRepoOverride: vi.fn(),
     },
     token: null,
@@ -222,9 +222,9 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
     showToolActivity: false,
     approvalMode: 'supervised',
     updateApprovalMode: vi.fn(),
-    contextMode: 'normal',
+    contextMode: 'graceful',
     updateContextMode: vi.fn(),
-    sandboxStartMode: 'manual',
+    sandboxStartMode: 'smart',
     updateSandboxStartMode: vi.fn(),
     updateShowToolActivity: vi.fn(),
     showInstallIdInput: false,

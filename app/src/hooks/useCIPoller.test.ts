@@ -34,10 +34,13 @@ function buildCiCard(overrides: Partial<CIStatus> = {}): { type: 'ci-status'; da
   return {
     type: 'ci-status',
     data: {
-      state: 'success',
+      overall: 'success',
+      repo: 'owner/repo',
+      ref: 'main',
+      fetchedAt: new Date(0).toISOString(),
       checks: [],
       ...overrides,
-    } as CIStatus,
+    },
   };
 }
 
@@ -66,7 +69,7 @@ describe('useCIPoller', () => {
   });
 
   it('polls with the current branch when one is set', async () => {
-    executeToolCall.mockResolvedValue({ card: buildCiCard({ state: 'failure' }) });
+    executeToolCall.mockResolvedValue({ card: buildCiCard({ overall: 'failure' }) });
     hookState.ciStatus = null;
 
     useCIPoller('chat-1', 'owner/repo', {
@@ -101,7 +104,7 @@ describe('useCIPoller', () => {
   });
 
   it('stores the CI status when the returned card is a ci-status card', async () => {
-    const ciCard = buildCiCard({ state: 'pending' });
+    const ciCard = buildCiCard({ overall: 'pending' });
     executeToolCall.mockResolvedValue({ card: ciCard });
 
     useCIPoller('chat-1', 'owner/repo', { currentBranch: 'main' });

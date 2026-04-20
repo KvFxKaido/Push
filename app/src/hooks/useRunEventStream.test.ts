@@ -51,7 +51,7 @@ const runJournal = vi.hoisted(() => ({
     ...(entry as { events: unknown[] }),
     events: [...(entry as { events: unknown[] }).events, event],
   })),
-  recordDelegationOutcome: vi.fn((entry) => entry),
+  recordDelegationOutcome: vi.fn<(entry: unknown, outcome?: unknown) => unknown>((entry) => entry),
   saveJournalEntry: vi.fn(async () => {}),
   loadJournalEntriesForChat: vi.fn(async () => []),
 }));
@@ -190,7 +190,7 @@ describe('useRunEventStream — appendRunEvent routing', () => {
   it('routes ephemeral events to liveRunEventsByChat without persisting or journaling', () => {
     chatRunEvents.shouldPersistRunEvent.mockReturnValue(false);
     const { hook, state } = useHarness();
-    const event: RunEventInput = { type: 'assistant.status', round: 1 } as RunEventInput;
+    const event: RunEventInput = { type: 'assistant.status', round: 1 } as unknown as RunEventInput;
 
     hook.appendRunEvent('chat-1', event);
 
@@ -221,8 +221,14 @@ describe('useRunEventStream — appendRunEvent routing', () => {
     chatRunEvents.shouldPersistRunEvent.mockReturnValue(false);
     const { hook } = useHarness();
 
-    hook.appendRunEvent('chat-1', { type: 'assistant.status', round: 1 } as RunEventInput);
-    hook.appendRunEvent('chat-1', { type: 'assistant.status', round: 2 } as RunEventInput);
+    hook.appendRunEvent('chat-1', {
+      type: 'assistant.status',
+      round: 1,
+    } as unknown as RunEventInput);
+    hook.appendRunEvent('chat-1', {
+      type: 'assistant.status',
+      round: 2,
+    } as unknown as RunEventInput);
 
     expect(chatRunEvents.trimRunEvents).toHaveBeenCalledTimes(2);
     // Second call receives the concat of the first stored event + new one.
@@ -234,7 +240,10 @@ describe('useRunEventStream — appendRunEvent routing', () => {
     chatRunEvents.shouldPersistRunEvent.mockReturnValue(true);
     const { hook, state } = useHarness();
 
-    hook.appendRunEvent('chat-1', { type: 'assistant.turn_start', round: 1 } as RunEventInput);
+    hook.appendRunEvent('chat-1', {
+      type: 'assistant.turn_start',
+      round: 1,
+    } as unknown as RunEventInput);
 
     expect(state.updateCalls).toBe(1);
     expect(state.dirty.has('chat-1')).toBe(true);
@@ -246,7 +255,10 @@ describe('useRunEventStream — appendRunEvent routing', () => {
     chatRunEvents.shouldPersistRunEvent.mockReturnValue(true);
     const { hook } = useHarness({ initialJournalEntry: null });
 
-    hook.appendRunEvent('chat-1', { type: 'assistant.turn_start', round: 1 } as RunEventInput);
+    hook.appendRunEvent('chat-1', {
+      type: 'assistant.turn_start',
+      round: 1,
+    } as unknown as RunEventInput);
 
     expect(runJournal.appendJournalEvent).not.toHaveBeenCalled();
     expect(runJournal.saveJournalEntry).not.toHaveBeenCalled();
@@ -258,7 +270,10 @@ describe('useRunEventStream — appendRunEvent routing', () => {
     const entry = makeJournalEntry();
     const { hook, state } = useHarness({ initialJournalEntry: entry });
 
-    hook.appendRunEvent('chat-1', { type: 'assistant.turn_start', round: 1 } as RunEventInput);
+    hook.appendRunEvent('chat-1', {
+      type: 'assistant.turn_start',
+      round: 1,
+    } as unknown as RunEventInput);
 
     expect(runJournal.appendJournalEvent).toHaveBeenCalledTimes(1);
     expect(runJournal.saveJournalEntry).toHaveBeenCalledTimes(1);
@@ -303,7 +318,10 @@ describe('useRunEventStream — appendRunEvent routing', () => {
     chatPersistence.createId.mockReturnValueOnce('stamped-1');
     const { hook } = useHarness();
 
-    hook.appendRunEvent('chat-1', { type: 'assistant.status', round: 1 } as RunEventInput);
+    hook.appendRunEvent('chat-1', {
+      type: 'assistant.status',
+      round: 1,
+    } as unknown as RunEventInput);
 
     const trimArg = chatRunEvents.trimRunEvents.mock.calls[0][0] as Array<{
       id: string;

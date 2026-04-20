@@ -94,12 +94,18 @@ function render(
     ? {
         sandboxId: opts.sandbox.sandboxId,
         status: opts.sandbox.status,
-        start: opts.sandbox.start ?? vi.fn(async () => 'sbx-new'),
+        start: (opts.sandbox.start ?? vi.fn(async () => 'sbx-new')) as (
+          repo: string,
+          branch: string,
+        ) => Promise<string | null>,
       }
     : {
         sandboxId: 'sbx-1' as string | null,
         status: 'ready' as SandboxStatus,
-        start: vi.fn(async () => 'sbx-new'),
+        start: vi.fn(async () => 'sbx-new') as (
+          repo: string,
+          branch: string,
+        ) => Promise<string | null>,
       };
   // eslint-disable-next-line react-hooks/rules-of-hooks
   return useSnapshotManager(

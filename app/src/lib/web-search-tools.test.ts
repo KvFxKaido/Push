@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Config hooks — stub so we control which backend is chosen.
 // ---------------------------------------------------------------------------
 
-const getOllamaKeyMock = vi.fn<[], string | null>();
-const getTavilyKeyMock = vi.fn<[], string | null>();
+const getOllamaKeyMock = vi.fn<() => string | null>();
+const getTavilyKeyMock = vi.fn<() => string | null>();
 
 vi.mock('@/hooks/useOllamaConfig', () => ({
   getOllamaKey: () => getOllamaKeyMock(),

@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatRouteProps } from './workspace-chat-route-types';
 
-const chatSurfaceScreenSpy = vi.hoisted(() => vi.fn(() => null));
+const chatSurfaceScreenSpy = vi.hoisted(() => vi.fn<(props?: unknown) => null>(() => null));
 const toasterSpy = vi.hoisted(() => vi.fn(() => null));
 
 vi.mock('./ChatSurfaceScreen', () => ({
@@ -175,7 +175,7 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
       isProtected: false,
       globalDefault: false,
       setGlobalDefault: vi.fn(),
-      repoOverride: null,
+      repoOverride: 'inherit',
       setRepoOverride: vi.fn(),
     },
     token: null,
@@ -191,9 +191,9 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
     showToolActivity: false,
     approvalMode: 'supervised',
     updateApprovalMode: vi.fn(),
-    contextMode: 'normal',
+    contextMode: 'graceful',
     updateContextMode: vi.fn(),
-    sandboxStartMode: 'manual',
+    sandboxStartMode: 'smart',
     updateSandboxStartMode: vi.fn(),
     updateShowToolActivity: vi.fn(),
     showInstallIdInput: false,
