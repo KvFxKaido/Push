@@ -7,6 +7,7 @@ import {
   effectColor,
   hslToRgb,
   isAnimationEffect,
+  TICK_MODULUS,
 } from '../tui-animator.ts';
 
 // ─── hslToRgb ───────────────────────────────────────────────────
@@ -99,10 +100,22 @@ describe('animateText', () => {
   it('emits truecolor escapes for every non-whitespace char at tier=truecolor', () => {
     const out = animateText('Push', 'rainbow', 3, 'truecolor');
     assert.ok(out.includes('\x1b[38;2;'));
-    assert.ok(out.includes('\x1b[0m'));
+    // Uses fg-only reset (\x1b[39m), not full SGR reset, so outer
+    // bold/background/underline styling around an animated span survives.
+    assert.ok(out.includes('\x1b[39m'));
+    assert.equal(out.includes('\x1b[0m'), false, 'must not emit full SGR reset');
     // 4 non-whitespace chars → 4 escape sequences
     const escapeCount = (out.match(/\x1b\[38;2;/g) || []).length;
     assert.equal(escapeCount, 4);
+  });
+
+  it('never emits a full SGR reset (\\x1b[0m), to preserve outer styling', () => {
+    for (const effect of ['pulse', 'shimmer', 'rainbow']) {
+      for (const tier of ['truecolor', '256', '16']) {
+        const out = animateText('Push', effect, 7, tier);
+        assert.equal(out.includes('\x1b[0m'), false, `${effect}@${tier} leaked a full SGR reset`);
+      }
+    }
   });
 
   it('emits 256-color escapes at tier=256', () => {
@@ -139,6 +152,28 @@ describe('ANIMATION_EFFECTS registry', () => {
     for (const name of ANIMATION_EFFECTS) {
       const desc = ANIMATION_DESCRIPTIONS[name];
       assert.ok(typeof desc === 'string' && desc.length > 0);
+    }
+  });
+});
+
+// ─── TICK_MODULUS ───────────────────────────────────────────────
+
+describe('TICK_MODULUS', () => {
+  it('is a positive integer', () => {
+    assert.ok(Number.isInteger(TICK_MODULUS) && TICK_MODULUS > 0);
+  });
+
+  it('wraps cleanly for every effect (phase returns to 0 at wraparound)', () => {
+    // The first frame after wrap must match the zero-tick frame for every
+    // effect, otherwise long-running sessions would see a visible jump.
+    for (const effect of ['pulse', 'shimmer', 'rainbow']) {
+      const atZero = effectColor(effect, 0, 3);
+      const atWrap = effectColor(effect, TICK_MODULUS, 3);
+      assert.deepEqual(
+        atZero,
+        atWrap,
+        `${effect} is not continuous across TICK_MODULUS wraparound`,
+      );
     }
   });
 });

@@ -24,6 +24,7 @@ import {
   ANIMATION_DESCRIPTIONS,
   ANIMATION_EFFECTS,
   isAnimationEffect,
+  TICK_MODULUS,
 } from './tui-animator.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
@@ -1818,7 +1819,7 @@ export async function runTUI(options = {}) {
   const startAnimationTicker = () => {
     if (animationInterval) return;
     animationInterval = setInterval(() => {
-      animation.tick = (animation.tick + 1) % 100000;
+      animation.tick = (animation.tick + 1) % TICK_MODULUS;
       tuiState.dirty.add('all');
       scheduler.flush();
     }, ANIMATION_TICK_MS);

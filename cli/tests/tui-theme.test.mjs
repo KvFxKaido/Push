@@ -284,6 +284,11 @@ describe('isThemeName', () => {
     assert.equal(isThemeName(null), false);
     assert.equal(isThemeName(undefined), false);
   });
+  it('rejects Object.prototype keys (does not use `in`)', () => {
+    for (const key of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) {
+      assert.equal(isThemeName(key), false, `must reject prototype key: ${key}`);
+    }
+  });
 });
 
 describe('detectThemeName', () => {

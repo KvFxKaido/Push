@@ -37,6 +37,14 @@ const PERIOD_TICKS: Record<AnimationEffect, number> = {
   rainbow: 60,
 };
 
+// Safe wraparound modulus for the tick counter. Must be a common multiple of
+// every effect's period so each phase returns to 0 when the counter wraps —
+// otherwise long-running sessions would see a one-frame glitch every time
+// the counter hits its cap. LCM(20, 30, 60) = 60, so any multiple of 60 is
+// seamless; picking a larger value keeps the counter monotonically useful
+// for debugging without sacrificing continuity.
+export const TICK_MODULUS = 60 * 60 * 60; // 216 000 — every 6h at 10 FPS
+
 export function isAnimationEffect(value: unknown): value is AnimationEffect {
   return typeof value === 'string' && (ANIMATION_EFFECTS as readonly string[]).includes(value);
 }
@@ -135,7 +143,10 @@ function fg256(r: number, g: number, b: number): string {
 // tier. Intentionally coarse — the prototype's real target is truecolor.
 const ANSI16_CYCLE = ['\x1b[91m', '\x1b[93m', '\x1b[92m', '\x1b[96m', '\x1b[94m', '\x1b[95m'];
 
-const RESET = '\x1b[0m';
+// Default-foreground code (NOT a full SGR reset). Using `\x1b[0m` per char
+// would cancel outer `theme.bold(...)` / background / underline styles that
+// wrap the animated span; `\x1b[39m` only resets the foreground colour.
+const FG_RESET = '\x1b[39m';
 
 /**
  * Return `text` with per-character ANSI color escapes applied based on the
@@ -170,7 +181,7 @@ export function animateText(
       const bucket = Math.floor(((((r * 3 + g * 6 + b) / 10 + tick) % 6) + 6) % 6);
       esc = ANSI16_CYCLE[bucket];
     }
-    out.push(`${esc}${ch}${RESET}`);
+    out.push(`${esc}${ch}${FG_RESET}`);
   }
   return out.join('');
 }

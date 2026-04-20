@@ -343,7 +343,10 @@ export const VARIANTS: Record<ThemeName, ThemeVariant> = {
 export const THEME_NAMES = Object.keys(VARIANTS) as ThemeName[];
 
 export function isThemeName(value: unknown): value is ThemeName {
-  return typeof value === 'string' && value in VARIANTS;
+  // `Object.hasOwn` (not `in`) — the latter matches prototype keys like
+  // `constructor` / `toString`, which would then crash downstream when we
+  // treat `VARIANTS[value]` as a ThemeVariant.
+  return typeof value === 'string' && Object.hasOwn(VARIANTS, value);
 }
 
 export function detectThemeName(): ThemeName {
