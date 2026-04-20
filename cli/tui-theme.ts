@@ -113,7 +113,7 @@ function bgTrue(hex: string): string {
 }
 
 // Approximate truecolor hex to nearest 256-color index
-function rgbTo256(r: number, g: number, b: number): number {
+export function rgbTo256(r: number, g: number, b: number): number {
   if (r === g && g === b) {
     if (r < 8) return 16;
     if (r > 248) return 231;
