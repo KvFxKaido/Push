@@ -119,6 +119,15 @@ export async function handleCloudflareSandbox(
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
+  // Compat: the web client still speaks Modal's snake_case wire format
+  // (sandbox-tools.ts routes through sandbox-client.ts, not yet through
+  // CloudflareSandboxProvider). Accept both camelCase and snake_case for
+  // the fields that differ between providers, so the Worker-side dispatch
+  // toggle alone is sufficient to switch backends without a client change.
+  // Follow-up: wire CloudflareSandboxProvider into the client call path
+  // and drop this shim.
+  body = aliasSnakeToCamel(body);
+
   // Owner-token gate — every route except `create` must present a valid
   // token matching the one issued at sandbox creation time. `create` is
   // the only exemption (that's where tokens are minted). Snapshot stubs
@@ -799,6 +808,27 @@ async function hashSha256(content: string): Promise<string> {
 
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}\n…[truncated]` : s;
+}
+
+// Copy snake_case aliases to their camelCase equivalents when the camelCase
+// key isn't already present. Explicit camelCase takes precedence so callers
+// using the CF adapter's native shape still get their values through.
+function aliasSnakeToCamel(body: Json): Json {
+  const aliases: Record<string, string> = {
+    sandbox_id: 'sandboxId',
+    owner_token: 'ownerToken',
+    github_token: 'githubToken',
+    git_identity: 'gitIdentity',
+    seed_files: 'seedFiles',
+    owner_hint: 'ownerHint',
+  };
+  const out: Json = { ...body };
+  for (const [snake, camel] of Object.entries(aliases)) {
+    if (out[snake] !== undefined && out[camel] === undefined) {
+      out[camel] = out[snake];
+    }
+  }
+  return out;
 }
 
 // Shell-safe quoting for arguments interpolated into `sandbox.exec` commands.
