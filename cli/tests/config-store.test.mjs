@@ -10,6 +10,7 @@ const savedEnv = {
   PUSH_WEB_SEARCH_BACKEND: process.env.PUSH_WEB_SEARCH_BACKEND,
   PUSH_THEME: process.env.PUSH_THEME,
   PUSH_ANIMATION: process.env.PUSH_ANIMATION,
+  PUSH_SPINNER: process.env.PUSH_SPINNER,
 };
 
 function restoreEnv() {
@@ -127,5 +128,21 @@ describe('applyConfigToEnv', () => {
     applyConfigToEnv({ animation: 'rainbow' });
 
     assert.equal(process.env.PUSH_ANIMATION, 'shimmer');
+  });
+
+  it('applies spinner to PUSH_SPINNER when missing', () => {
+    delete process.env.PUSH_SPINNER;
+
+    applyConfigToEnv({ spinner: 'braille' });
+
+    assert.equal(process.env.PUSH_SPINNER, 'braille');
+  });
+
+  it('does not override existing PUSH_SPINNER', () => {
+    process.env.PUSH_SPINNER = 'orbit';
+
+    applyConfigToEnv({ spinner: 'helix' });
+
+    assert.equal(process.env.PUSH_SPINNER, 'orbit');
   });
 });

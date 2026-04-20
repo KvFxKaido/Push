@@ -28,6 +28,13 @@ import {
   isReducedMotion,
   TICK_MODULUS,
 } from './tui-animator.js';
+import {
+  detectSpinnerName,
+  isSpinnerName,
+  SPINNER_NAMES,
+  SPINNERS,
+  spinnerFrame,
+} from './tui-spinner.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
@@ -502,15 +509,21 @@ function renderHeader(
   buf,
   layout,
   theme,
-  { provider, model, session, sessionName, cwd, runState, branch, animation },
+  { provider, model, session, sessionName, cwd, runState, branch, animation, spinner },
 ) {
   const { glyphs } = theme;
   const { top, left, width } = layout.header;
 
-  // Status dot
+  // Status dot. While running, prefer a Braille spinner frame if one is
+  // active and the terminal can render Unicode; otherwise fall back to the
+  // static glyph set's statusDot.
+  const runningGlyph =
+    theme.unicode && spinner?.name && spinner.name !== 'off'
+      ? (spinnerFrame(spinner.name, spinner.tick ?? 0) ?? glyphs.statusDot)
+      : glyphs.statusDot;
   const stateDot =
     runState === 'running'
-      ? theme.style('state.warn', glyphs.statusDot)
+      ? theme.style('state.warn', runningGlyph)
       : runState === 'awaiting_approval'
         ? theme.style('state.error', glyphs.statusDot)
         : theme.style('state.success', glyphs.statusDot);
@@ -1809,17 +1822,22 @@ export async function runTUI(options = {}) {
     void refreshGitStatus();
   }, 5000);
 
-  // ── Animation ticker ─────────────────────────────────────────────
-  // Fixed 10 FPS, single interval that's only alive while an effect is
-  // selected. The ticker just bumps the counter + forces a redraw; all
-  // color math happens in render().
+  // ── Animation + spinner ticker ──────────────────────────────────
+  // One 10 FPS interval drives two consumers:
+  //   - animation (time-varying fg color on the header title)
+  //   - spinner   (Braille frame cycling on the running-state dot)
+  // The interval is alive iff at least one consumer is active; calling
+  // refreshTicker() after any state change starts or stops it as needed.
   //
-  // Initial effect resolution (in priority order):
-  //   1. Reduced-motion env (PUSH_REDUCED_MOTION / REDUCED_MOTION) → 'off'
-  //      (enforced by detectAnimationEffect, nothing below can override).
-  //   2. Explicit `config.animation` / PUSH_ANIMATION.
-  //   3. Current theme's `defaultAnimation`.
-  //   4. 'off'.
+  // Initial animation effect resolution (priority order):
+  //   1. Reduced-motion env → 'off' (hard guard, enforced in detect*)
+  //   2. Explicit `config.animation` / PUSH_ANIMATION
+  //   3. Current theme's `defaultAnimation`
+  //   4. 'off'
+  //
+  // Initial spinner resolution: reduced-motion → 'off', else
+  // PUSH_SPINNER / config.spinner, else 'off'. We don't bundle a
+  // spinner per theme (kept the axes orthogonal).
   const ANIMATION_FPS = 10;
   const ANIMATION_TICK_MS = Math.round(1000 / ANIMATION_FPS);
   const reducedMotion = isReducedMotion();
@@ -1827,13 +1845,26 @@ export async function runTUI(options = {}) {
     ? 'off'
     : (detectAnimationEffect() ?? VARIANTS[theme.name]?.defaultAnimation ?? 'off');
   const animation = { effect: initialEffect, tick: 0 };
+  const spinner = { name: reducedMotion ? 'off' : (detectSpinnerName() ?? 'off') };
   let animationInterval = null;
+  // Is there any on-screen consumer that cares about the next tick? Keeps
+  // us from invalidating the screen 10×/s when the user has pinned a
+  // spinner but isn't currently running (spinner is only painted while
+  // runState === 'running' on Unicode-capable terminals). The interval
+  // itself stays alive while any consumer is *eligible*, so the first
+  // frame of a new run paints immediately.
+  const anyConsumerVisible = () =>
+    animation.effect !== 'off' ||
+    (spinner.name !== 'off' && tuiState.runState === 'running' && theme.unicode);
+  const anyConsumerEligible = () => animation.effect !== 'off' || spinner.name !== 'off';
   const startAnimationTicker = () => {
     if (animationInterval) return;
     animationInterval = setInterval(() => {
       animation.tick = (animation.tick + 1) % TICK_MODULUS;
-      tuiState.dirty.add('all');
-      scheduler.flush();
+      if (anyConsumerVisible()) {
+        tuiState.dirty.add('all');
+        scheduler.flush();
+      }
     }, ANIMATION_TICK_MS);
     // Don't keep the Node event loop alive just for animation — if the rest
     // of the TUI tears down, the ticker shouldn't block exit.
@@ -1844,7 +1875,11 @@ export async function runTUI(options = {}) {
     clearInterval(animationInterval);
     animationInterval = null;
   };
-  if (animation.effect !== 'off') startAnimationTicker();
+  const refreshTicker = () => {
+    if (anyConsumerEligible()) startAnimationTicker();
+    else stopAnimationTicker();
+  };
+  refreshTicker();
 
   // Git status will be refreshed periodically and after certain events
 
@@ -1972,6 +2007,7 @@ export async function runTUI(options = {}) {
         runState: tuiState.runState,
         branch,
         animation: { effect: animation.effect, tick: animation.tick },
+        spinner: { name: spinner.name, tick: animation.tick },
       });
       screenBuf.writeLine(
         layout.header.top + layout.header.height,
@@ -3592,8 +3628,7 @@ export async function runTUI(options = {}) {
       if (next !== animation.effect) {
         animation.effect = next;
         animation.tick = 0;
-        if (next === 'off') stopAnimationTicker();
-        else startAnimationTicker();
+        refreshTicker();
         animationNote = `, animate → ${next}`;
       }
     }
@@ -3635,8 +3670,7 @@ export async function runTUI(options = {}) {
       const next = isReducedMotion() ? 'off' : VARIANTS[theme.name]?.defaultAnimation || 'off';
       animation.effect = next;
       animation.tick = 0;
-      if (next === 'off') stopAnimationTicker();
-      else startAnimationTicker();
+      refreshTicker();
       tuiState.dirty.add('all');
       addTranscriptEntry(tuiState, 'status', `animate: ${next} (following theme)`);
       scheduler.flush();
@@ -3667,8 +3701,7 @@ export async function runTUI(options = {}) {
 
     animation.effect = sub0;
     animation.tick = 0;
-    if (sub0 === 'off') stopAnimationTicker();
-    else startAnimationTicker();
+    refreshTicker();
 
     // Persist as a pinned preference so it survives across theme switches
     // and future sessions.
@@ -3678,6 +3711,82 @@ export async function runTUI(options = {}) {
 
     tuiState.dirty.add('all');
     addTranscriptEntry(tuiState, 'status', `animate: ${sub0} (saved)`);
+    scheduler.flush();
+  }
+
+  async function handleSpinnerCommand(arg) {
+    const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
+    const sub = (parts[0] || '').toLowerCase();
+
+    if (!sub || sub === 'show') {
+      const pinned = isSpinnerName(config.spinner) ? ' (pinned)' : '';
+      const rm = isReducedMotion() ? ' — reduced-motion active' : '';
+      addTranscriptEntry(tuiState, 'status', `spinner: ${spinner.name}${pinned}${rm}`);
+      scheduler.flush();
+      return;
+    }
+
+    if (sub === 'list') {
+      const lines = SPINNER_NAMES.map((name) => {
+        const marker = name === spinner.name ? '*' : ' ';
+        // Preview the first frame alongside the name so the list is
+        // self-explanatory when choosing.
+        const preview = name === 'off' ? ' ' : (SPINNERS[name].frames[0] ?? ' ');
+        return `  ${marker} ${preview}  ${name.padEnd(10)}  ${SPINNERS[name].description}`;
+      });
+      addTranscriptEntry(tuiState, 'status', ['Spinners:', ...lines].join('\n'));
+      scheduler.flush();
+      return;
+    }
+
+    const sub0 = ((sub === 'set' ? parts[1] : sub) || '').toLowerCase().trim();
+    if (sub0 === 'unpin') {
+      delete config.spinner;
+      delete process.env.PUSH_SPINNER;
+      await saveConfig(config);
+      // The unpinned default is always 'off' — unlike animation, which
+      // falls back to `VARIANTS[theme].defaultAnimation`, spinner has no
+      // per-theme bundling yet.
+      const next = 'off';
+      spinner.name = next;
+      refreshTicker();
+      tuiState.dirty.add('all');
+      addTranscriptEntry(tuiState, 'status', `spinner: ${next} (unpinned)`);
+      scheduler.flush();
+      return;
+    }
+
+    if (!isSpinnerName(sub0)) {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Unknown spinner: ${sub0 || '(missing)'}. Available: ${SPINNER_NAMES.join(', ')}. Use 'unpin' to clear.`,
+      );
+      scheduler.flush();
+      return;
+    }
+
+    // Reduced-motion is a hard guard — refuse to turn spinner on. Saving
+    // 'off' is still a valid (and effectively no-op) choice.
+    if (isReducedMotion() && sub0 !== 'off') {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        'Spinner disabled: reduced-motion is set (PUSH_REDUCED_MOTION / REDUCED_MOTION). Unset it to enable.',
+      );
+      scheduler.flush();
+      return;
+    }
+
+    spinner.name = sub0;
+    refreshTicker();
+
+    config.spinner = sub0;
+    process.env.PUSH_SPINNER = sub0;
+    await saveConfig(config);
+
+    tuiState.dirty.add('all');
+    addTranscriptEntry(tuiState, 'status', `spinner: ${sub0} (saved)`);
     scheduler.flush();
   }
 
@@ -3753,6 +3862,10 @@ export async function runTUI(options = {}) {
         await handleAnimateCommand(arg || null);
         return true;
 
+      case 'spinner':
+        await handleSpinnerCommand(arg || null);
+        return true;
+
       case 'debug':
         handleDebugCommand(arg || null);
         return true;
@@ -3782,6 +3895,10 @@ export async function runTUI(options = {}) {
             '  /animate list        List animation effects',
             '  /animate <effect>    Pin header animation (off|pulse|shimmer|rainbow); saved to config',
             '  /animate follow-theme  Unpin: let each theme provide its default animation',
+            '  /spinner             Show current running-dot spinner',
+            '  /spinner list        List Braille spinners (with frame previews)',
+            '  /spinner <name>      Pin a spinner (off|braille|orbit|breathe|pulse|helix)',
+            '  /spinner unpin       Unpin: revert to static status dot',
             '  /debug runtime       Show runtime path/provider/session diagnostics',
             '  /skills              List available skills',
             '  /skills reload       Reload workspace + Claude skills',
