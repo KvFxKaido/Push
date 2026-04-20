@@ -293,31 +293,11 @@ describe('handleCloudflareSandbox happy paths', () => {
     expect(sandbox.exec).toHaveBeenCalledWith('npm test', { cwd: '/workspace/app' });
   });
 
-  it('reads a file and returns the requested line slice metadata', async () => {
-    const sandbox = mockSandbox();
-    sandbox.readFile.mockResolvedValue({ content: 'line1\nline2\nline3' });
-
-    const response = await callRoute('read', {
-      sandboxId: 'sb-1',
-      path: '/workspace/file.txt',
-      start_line: 2,
-      end_line: 2,
-    });
-
-    expect(response.status).toBe(200);
-    const body = await jsonBody(response);
-    expect(body).toMatchObject({
-      content: 'line2',
-      truncated: true,
-      truncated_at_line: 3,
-      remaining_bytes: 5,
-      start_line: 2,
-      end_line: 2,
-      workspace_revision: 0,
-    });
-    expect(body.version).toMatch(/^[0-9a-f]{64}$/);
-    expect(sandbox.readFile).toHaveBeenCalledWith('/workspace/file.txt');
-  });
+  // The `read` route is covered comprehensively in worker-cf-sandbox-read.test.ts
+  // (10 tests), which exercises the in-container sed/stat/sha256sum/awk
+  // pipeline introduced by this PR. The old test in this file mocked
+  // sandbox.readFile — which routeRead no longer calls — so keeping it
+  // would duplicate coverage and test a dead code path.
 
   it('writes a file and returns the new version', async () => {
     const sandbox = mockSandbox();

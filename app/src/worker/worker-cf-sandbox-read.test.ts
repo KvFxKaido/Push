@@ -10,8 +10,24 @@ vi.mock('@cloudflare/sandbox', () => ({
 const MAX_READ_BYTES = 5_000_000;
 const PROBE_BYTES = MAX_READ_BYTES + 1;
 const DEFAULT_HASH = 'a'.repeat(64);
+const DEFAULT_OWNER_TOKEN = 'test-owner-token';
 
 type ExecResult = { stdout?: string; stderr?: string; exitCode?: number };
+
+// SANDBOX_TOKENS mock — auth gate landed in PR #355 and now gates every
+// non-create route. Return a record matching DEFAULT_OWNER_TOKEN for any
+// sandboxId so read tests don't have to care about auth.
+function makeTokensKV() {
+  return {
+    get: vi.fn(async (_key: string, type?: unknown) => {
+      const record = { token: DEFAULT_OWNER_TOKEN, createdAt: Date.now() };
+      if (type === 'json') return record;
+      return JSON.stringify(record);
+    }),
+    put: vi.fn(async () => {}),
+    delete: vi.fn(async () => {}),
+  };
+}
 
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
@@ -20,6 +36,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     } as unknown as Env['RATE_LIMITER'],
     ASSETS: {} as Env['ASSETS'],
     Sandbox: {} as Env['Sandbox'],
+    SANDBOX_TOKENS: makeTokensKV() as unknown as Env['SANDBOX_TOKENS'],
     ...overrides,
   };
 }
@@ -31,7 +48,12 @@ function makeReadRequest(body: Record<string, unknown>): Request {
       Origin: 'https://push.example.test',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ sandboxId: 'sb-1', path: '/workspace/src/app.ts', ...body }),
+    body: JSON.stringify({
+      sandboxId: 'sb-1',
+      ownerToken: DEFAULT_OWNER_TOKEN,
+      path: '/workspace/src/app.ts',
+      ...body,
+    }),
   });
 }
 
@@ -235,7 +257,11 @@ describe('handleCloudflareSandbox read route', () => {
         Origin: 'https://push.example.test',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ sandboxId: 'sb-1', path: maliciousPath }),
+      body: JSON.stringify({
+        sandboxId: 'sb-1',
+        ownerToken: DEFAULT_OWNER_TOKEN,
+        path: maliciousPath,
+      }),
     });
     await handleCloudflareSandbox(request, makeEnv(), new URL(request.url), 'read');
 
@@ -261,7 +287,11 @@ describe('handleCloudflareSandbox read route', () => {
         Origin: 'https://push.example.test',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ sandboxId: 'sb-1', path: trickyPath }),
+      body: JSON.stringify({
+        sandboxId: 'sb-1',
+        ownerToken: DEFAULT_OWNER_TOKEN,
+        path: trickyPath,
+      }),
     });
     await handleCloudflareSandbox(request, makeEnv(), new URL(request.url), 'read');
 
