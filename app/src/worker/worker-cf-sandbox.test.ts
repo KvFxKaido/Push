@@ -93,13 +93,13 @@ async function callRoute(
   env = makeEnv(),
   headers: Record<string, string> = {},
 ): Promise<Response> {
-  // For non-create routes, inject a default ownerToken matching the default
+  // For non-create routes, inject a default owner_token matching the default
   // SANDBOX_TOKENS KV mock — so existing tests keep passing after the auth
   // gate was added. Tests that want to assert auth failures pass their own
-  // ownerToken (including empty string) via the body, which takes precedence.
+  // owner_token (including empty string) via the body, which takes precedence.
   const needsToken = route !== 'create' && typeof body === 'object' && body !== null;
   const bodyWithToken: Record<string, unknown> | string = needsToken
-    ? { ownerToken: DEFAULT_OWNER_TOKEN, ...(body as Record<string, unknown>) }
+    ? { owner_token: DEFAULT_OWNER_TOKEN, ...(body as Record<string, unknown>) }
     : body;
   const request = makeRequest(route, bodyWithToken, headers);
   return await handleCloudflareSandbox(request, env, new URL(request.url), route);
@@ -202,9 +202,9 @@ describe('handleCloudflareSandbox happy paths', () => {
       {
         repo: 'owner/repo',
         branch: 'feature',
-        githubToken: 'ghs_token',
-        gitIdentity: { name: 'Push Bot', email: 'bot@example.test' },
-        seedFiles: [{ path: '/workspace/README.md', content: 'hello' }],
+        github_token: 'ghs_token',
+        github_identity: { name: 'Push Bot', email: 'bot@example.test' },
+        seed_files: [{ path: '/workspace/README.md', content: 'hello' }],
       },
       env,
     );
@@ -212,13 +212,13 @@ describe('handleCloudflareSandbox happy paths', () => {
     expect(response.status).toBe(200);
     const body = await jsonBody(response);
     expect(body).toMatchObject({
-      sandboxId,
+      sandbox_id: sandboxId,
       // mockUuid returns the same value for every crypto.randomUUID() call,
-      // so the minted ownerToken equals the sandboxId in this test setup.
+      // so the minted owner_token equals the sandbox_id in this test setup.
       // issueToken's KV write happens via the mocked SANDBOX_TOKENS binding.
-      ownerToken: sandboxId,
+      owner_token: sandboxId,
       status: 'ready',
-      workspaceRevision: 0,
+      workspace_revision: 0,
       environment: {
         tools: {
           node: 'v20.11.0',
@@ -254,14 +254,14 @@ describe('handleCloudflareSandbox happy paths', () => {
     // than DEFAULT_OWNER_TOKEN — the connect test cares about the token
     // round-tripping through the server's echo, not the auth gate itself.
     const env = makeEnv({ SANDBOX_TOKENS: makeTokensKV('ot') as unknown as Env['SANDBOX_TOKENS'] });
-    const response = await callRoute('connect', { sandboxId: 'sb-1', ownerToken: 'ot' }, env);
+    const response = await callRoute('connect', { sandbox_id: 'sb-1', owner_token: 'ot' }, env);
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      sandboxId: 'sb-1',
-      ownerToken: 'ot',
+      sandbox_id: 'sb-1',
+      owner_token: 'ot',
       status: 'ready',
-      workspaceRevision: 0,
+      workspace_revision: 0,
       environment: {
         project_markers: ['pyproject.toml'],
         writable_root: '/workspace',
@@ -277,7 +277,7 @@ describe('handleCloudflareSandbox happy paths', () => {
     sandbox.exec.mockResolvedValue({ stdout: 'ok', stderr: 'warn', exitCode: 7 });
 
     const response = await callRoute('exec', {
-      sandboxId: 'sb-1',
+      sandbox_id: 'sb-1',
       command: 'npm test',
       workdir: '/workspace/app',
     });
@@ -286,9 +286,9 @@ describe('handleCloudflareSandbox happy paths', () => {
     await expect(response.json()).resolves.toEqual({
       stdout: 'ok',
       stderr: 'warn',
-      exitCode: 7,
+      exit_code: 7,
       truncated: false,
-      workspaceRevision: 0,
+      workspace_revision: 0,
     });
     expect(sandbox.exec).toHaveBeenCalledWith('npm test', { cwd: '/workspace/app' });
   });
@@ -303,7 +303,7 @@ describe('handleCloudflareSandbox happy paths', () => {
     const sandbox = mockSandbox();
 
     const response = await callRoute('write', {
-      sandboxId: 'sb-1',
+      sandbox_id: 'sb-1',
       path: '/workspace/file.txt',
       content: 'new text',
     });
@@ -322,7 +322,7 @@ describe('handleCloudflareSandbox happy paths', () => {
   it('deletes a file', async () => {
     const sandbox = mockSandbox();
 
-    const response = await callRoute('delete', { sandboxId: 'sb-1', path: '/workspace/old.txt' });
+    const response = await callRoute('delete', { sandbox_id: 'sb-1', path: '/workspace/old.txt' });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ workspace_revision: 0 });
@@ -338,7 +338,7 @@ describe('handleCloudflareSandbox happy paths', () => {
       ],
     });
 
-    const response = await callRoute('list', { sandboxId: 'sb-1', path: '/workspace' });
+    const response = await callRoute('list', { sandbox_id: 'sb-1', path: '/workspace' });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -358,7 +358,7 @@ describe('handleCloudflareSandbox happy paths', () => {
       exitCode: 0,
     });
 
-    const response = await callRoute('probe', { sandboxId: 'sb-1' });
+    const response = await callRoute('probe', { sandbox_id: 'sb-1' });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
@@ -391,7 +391,7 @@ describe('handleCloudflareSandbox hardened connect and diff paths', () => {
     const sandbox = mockSandbox();
     await arrange(sandbox);
 
-    const response = await callRoute('connect', { sandboxId: 'sb-dead' });
+    const response = await callRoute('connect', { sandbox_id: 'sb-dead' });
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toEqual({
@@ -421,7 +421,7 @@ describe('handleCloudflareSandbox hardened connect and diff paths', () => {
       const sandbox = mockSandbox();
       sandbox.exec.mockResolvedValueOnce(diffResult).mockResolvedValueOnce(statusResult);
 
-      const response = await callRoute('diff', { sandboxId: 'sb-1' });
+      const response = await callRoute('diff', { sandbox_id: 'sb-1' });
 
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({
@@ -450,7 +450,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       .mockResolvedValueOnce({ exitCode: 0 });
 
     const response = await callRoute('restore', {
-      sandboxId: 'sb-1',
+      sandbox_id: 'sb-1',
       archive: 'YXJjaGl2ZQ==',
       path: '/workspace/project/',
     });
@@ -473,7 +473,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
     mockUuid();
     sandbox.exec.mockResolvedValueOnce({ exitCode: 1, stderr: 'mkdir denied' });
 
-    const response = await callRoute('restore', { sandboxId: 'sb-1', archive: 'x' });
+    const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'x' });
 
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({
@@ -493,7 +493,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       .mockResolvedValueOnce({ exitCode: 1, stderr: 'invalid input' })
       .mockResolvedValueOnce({ exitCode: 0 });
 
-    const response = await callRoute('restore', { sandboxId: 'sb-1', archive: 'not-base64' });
+    const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'not-base64' });
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
@@ -514,7 +514,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       .mockResolvedValueOnce({ exitCode: 2, stderr: 'not gzip' })
       .mockResolvedValueOnce({ exitCode: 0 });
 
-    const response = await callRoute('restore', { sandboxId: 'sb-1', archive: 'bad-tar' });
+    const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'bad-tar' });
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
@@ -537,7 +537,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
         .mockResolvedValueOnce({ stdout: `safe/file.txt\n${unsafeMember}\n`, exitCode: 0 })
         .mockResolvedValueOnce({ exitCode: 0 });
 
-      const response = await callRoute('restore', { sandboxId: 'sb-1', archive: 'unsafe-tar' });
+      const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'unsafe-tar' });
 
       expect(response.status).toBe(400);
       await expect(response.json()).resolves.toEqual({
@@ -560,7 +560,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       .mockResolvedValueOnce({ exitCode: 2, stderr: 'permission denied' })
       .mockResolvedValueOnce({ exitCode: 0 });
 
-    const response = await callRoute('restore', { sandboxId: 'sb-1', archive: 'safe-tar' });
+    const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'safe-tar' });
 
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({
@@ -575,7 +575,7 @@ describe('handleCloudflareSandbox snapshot stubs', () => {
   it.each(['hibernate', 'restore-snapshot'])(
     'returns 501 for %s with SNAPSHOT_NOT_SUPPORTED',
     async (route) => {
-      const response = await callRoute(route, { sandboxId: 'sb-1' });
+      const response = await callRoute(route, { sandbox_id: 'sb-1' });
 
       expect(response.status).toBe(501);
       await expect(response.json()).resolves.toEqual({

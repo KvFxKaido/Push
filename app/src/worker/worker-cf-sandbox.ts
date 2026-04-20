@@ -1,11 +1,10 @@
 /**
  * HTTP handler for /api/sandbox-cf/* — Cloudflare Sandbox SDK backend.
  *
- * Provides the Cloudflare counterpart to /api/sandbox/* (Modal). Route
- * coverage and high-level behaviour are intended to match, but the request /
- * response shapes are not guaranteed byte-identical — each provider's
- * client-side adapter owns its own wire format (camelCase here vs
- * Modal's snake_case in a few places).
+ * Provides the Cloudflare counterpart to /api/sandbox/* (Modal). Request and
+ * response shapes match Modal's snake_case wire format (sandbox_id,
+ * owner_token, github_identity, workspace_revision, exit_code, ...) so the
+ * Worker-side provider toggle can switch backends without any client change.
  *
  * Architecture:
  *   browser/CLI → Worker (this handler) → getSandbox(env.Sandbox, id) → DO → container
@@ -13,10 +12,10 @@
  * Known MVP gaps (tracked as follow-up PRs):
  *   - No filesystem snapshots (hibernate/restore-snapshot return 501).
  *     Follow-up will back these with R2 tar.gz archives.
- *   - workspaceRevision and file version (SHA) are best-effort — the SDK
+ *   - workspace_revision and file version (SHA) are best-effort — the SDK
  *     doesn't expose monotonic revisions the way Modal's app.py does.
  *
- * Auth: every route except `create` requires an ownerToken matching the
+ * Auth: every route except `create` requires an owner_token matching the
  * one issued at sandbox creation time. See `sandbox-token-store.ts`.
  * Fails closed when SANDBOX_TOKENS KV binding is missing.
  */
@@ -119,15 +118,6 @@ export async function handleCloudflareSandbox(
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  // Compat: the web client still speaks Modal's snake_case wire format
-  // (sandbox-tools.ts routes through sandbox-client.ts, not yet through
-  // CloudflareSandboxProvider). Accept both camelCase and snake_case for
-  // the fields that differ between providers, so the Worker-side dispatch
-  // toggle alone is sufficient to switch backends without a client change.
-  // Follow-up: wire CloudflareSandboxProvider into the client call path
-  // and drop this shim.
-  body = aliasSnakeToCamel(body);
-
   // Owner-token gate — every route except `create` must present a valid
   // token matching the one issued at sandbox creation time. `create` is
   // the only exemption (that's where tokens are minted). Snapshot stubs
@@ -135,8 +125,8 @@ export async function handleCloudflareSandbox(
   // Fails closed on every failure mode: missing binding, missing input,
   // missing record, mismatch, or unexpected runtime throw.
   if (route !== 'create') {
-    const sandboxId = typeof body.sandboxId === 'string' ? body.sandboxId : '';
-    const providedToken = typeof body.ownerToken === 'string' ? body.ownerToken : '';
+    const sandboxId = typeof body.sandbox_id === 'string' ? body.sandbox_id : '';
+    const providedToken = typeof body.owner_token === 'string' ? body.owner_token : '';
     let auth;
     try {
       auth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
@@ -233,18 +223,18 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
 
   const repo = str(body.repo) ?? '';
   const branch = str(body.branch) ?? 'main';
-  const githubToken = str(body.githubToken);
-  const gitIdentity = body.gitIdentity as { name?: string; email?: string } | undefined;
-  const seedFiles = (body.seedFiles as Array<{ path: string; content: string }> | undefined) ?? [];
-  const ownerHint = str(body.ownerHint);
+  const githubToken = str(body.github_token);
+  const githubIdentity = body.github_identity as { name?: string; email?: string } | undefined;
+  const seedFiles = (body.seed_files as Array<{ path: string; content: string }> | undefined) ?? [];
+  const ownerHint = str(body.owner_hint);
 
   const sandboxId = crypto.randomUUID();
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
 
-  if (gitIdentity?.name && gitIdentity?.email) {
+  if (githubIdentity?.name && githubIdentity?.email) {
     await sandbox.exec(
-      `git config --global user.name ${JSON.stringify(gitIdentity.name)} && ` +
-        `git config --global user.email ${JSON.stringify(gitIdentity.email)}`,
+      `git config --global user.name ${JSON.stringify(githubIdentity.name)} && ` +
+        `git config --global user.email ${JSON.stringify(githubIdentity.email)}`,
     );
   }
 
@@ -277,16 +267,16 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
   }
 
   return Response.json({
-    sandboxId,
-    ownerToken,
+    sandbox_id: sandboxId,
+    owner_token: ownerToken,
     status: 'ready',
-    workspaceRevision: 0,
+    workspace_revision: 0,
     environment,
   });
 }
 
 async function routeConnect(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
 
   // Liveness check: run a trivial exec and propagate failures. probeEnvironment
@@ -302,16 +292,16 @@ async function routeConnect(env: Env, body: Json): Promise<Response> {
 
   const environment = await probeEnvironment(sandbox);
   return Response.json({
-    sandboxId,
-    ownerToken: str(body.ownerToken) ?? '',
+    sandbox_id: sandboxId,
+    owner_token: str(body.owner_token) ?? '',
     status: 'ready',
-    workspaceRevision: 0,
+    workspace_revision: 0,
     environment,
   });
 }
 
 async function routeCleanup(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
   // Sandbox SDK's `destroy()` tears down the container + DO state. Optional
   // chain keeps this idempotent if the instance is already gone.
@@ -324,7 +314,7 @@ async function routeCleanup(env: Env, body: Json): Promise<Response> {
 }
 
 async function routeExec(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const command = requireStr(body, 'command');
   const workdir = str(body.workdir);
 
@@ -338,14 +328,14 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
   return Response.json({
     stdout: truncate(stdout, 500_000),
     stderr: truncate(stderr, 100_000),
-    exitCode,
+    exit_code: exitCode,
     truncated: stdout.length > 500_000 || stderr.length > 100_000,
-    workspaceRevision: 0,
+    workspace_revision: 0,
   });
 }
 
 async function routeRead(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const path = requireStr(body, 'path');
   const startLine = num(body.start_line);
   const endLine = num(body.end_line);
@@ -476,7 +466,7 @@ async function routeRead(env: Env, body: Json): Promise<Response> {
 }
 
 async function routeWrite(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const path = requireStr(body, 'path');
   const content = requireStr(body, 'content');
   const expectedVersion = str(body.expected_version);
@@ -512,7 +502,7 @@ async function routeWrite(env: Env, body: Json): Promise<Response> {
 }
 
 async function routeBatchWrite(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const files = body.files as Array<{
     path: string;
     content: string;
@@ -560,7 +550,7 @@ async function routeBatchWrite(env: Env, body: Json): Promise<Response> {
 }
 
 async function routeDelete(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const path = requireStr(body, 'path');
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
   await sandbox.deleteFile(path);
@@ -568,7 +558,7 @@ async function routeDelete(env: Env, body: Json): Promise<Response> {
 }
 
 async function routeList(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const path = requireStr(body, 'path');
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
   const result = (await sandbox.listFiles(path)) as {
@@ -587,7 +577,7 @@ async function routeList(env: Env, body: Json): Promise<Response> {
 }
 
 async function routeDiff(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
 
   const diffRes = (await sandbox.exec('git -C /workspace diff HEAD')) as {
@@ -623,7 +613,7 @@ async function routeDiff(env: Env, body: Json): Promise<Response> {
 }
 
 async function routeDownload(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const path = (str(body.path) ?? '/workspace').replace(/\/+$/g, '') || '/workspace';
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
 
@@ -639,7 +629,7 @@ async function routeDownload(env: Env, body: Json): Promise<Response> {
 }
 
 async function routeHydrate(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const archive = requireStr(body, 'archive');
   const path = (str(body.path) ?? '/workspace').replace(/\/+$/g, '') || '/workspace';
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
@@ -723,7 +713,7 @@ async function routeHydrate(env: Env, body: Json): Promise<Response> {
 }
 
 async function routeProbe(env: Env, body: Json): Promise<Response> {
-  const sandboxId = requireStr(body, 'sandboxId');
+  const sandboxId = requireStr(body, 'sandbox_id');
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
   const environment = await probeEnvironment(sandbox);
   return Response.json(environment);
@@ -808,27 +798,6 @@ async function hashSha256(content: string): Promise<string> {
 
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}\n…[truncated]` : s;
-}
-
-// Copy snake_case aliases to their camelCase equivalents when the camelCase
-// key isn't already present. Explicit camelCase takes precedence so callers
-// using the CF adapter's native shape still get their values through.
-function aliasSnakeToCamel(body: Json): Json {
-  const aliases: Record<string, string> = {
-    sandbox_id: 'sandboxId',
-    owner_token: 'ownerToken',
-    github_token: 'githubToken',
-    git_identity: 'gitIdentity',
-    seed_files: 'seedFiles',
-    owner_hint: 'ownerHint',
-  };
-  const out: Json = { ...body };
-  for (const [snake, camel] of Object.entries(aliases)) {
-    if (out[snake] !== undefined && out[camel] === undefined) {
-      out[camel] = out[snake];
-    }
-  }
-  return out;
 }
 
 // Shell-safe quoting for arguments interpolated into `sandbox.exec` commands.

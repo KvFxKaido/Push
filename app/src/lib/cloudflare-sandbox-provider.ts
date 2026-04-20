@@ -2,10 +2,13 @@
  * Cloudflare implementation of the SandboxProvider interface.
  *
  * Calls /api/sandbox-cf/* on the Worker, which proxies to the Sandbox SDK
- * (see app/src/worker/worker-cf-sandbox.ts). Owner tokens are cached in a
- * per-instance Map keyed by sandboxId, populated by create/connect and
- * injected into every subsequent request body. The server rejects any
- * non-create route that doesn't present a matching token.
+ * (see app/src/worker/worker-cf-sandbox.ts). Speaks the same snake_case
+ * wire format as the Modal handler (sandbox_id, owner_token,
+ * github_identity, workspace_revision, exit_code, …) so the Worker-side
+ * provider toggle can switch backends without client-side changes. Owner
+ * tokens are cached in a per-instance Map keyed by sandboxId, populated by
+ * create/connect and injected into every subsequent request body. The
+ * server rejects any non-create route that doesn't present a matching token.
  *
  * Capabilities:
  *   - snapshots: false (follow-up PR adds R2-backed archive snapshots)
@@ -122,34 +125,34 @@ export class CloudflareSandboxProvider implements SandboxProvider {
 
   async create(manifest: SandboxManifest): Promise<SandboxSession> {
     const res = await call<{
-      sandboxId: string;
-      ownerToken?: string;
+      sandbox_id: string;
+      owner_token?: string;
       status: 'ready' | 'error';
       error?: string;
-      workspaceRevision?: number;
+      workspace_revision?: number;
       environment?: SandboxEnvironment;
     }>('create', {
       repo: manifest.repo,
       branch: manifest.branch,
-      githubToken: manifest.githubToken,
-      gitIdentity: manifest.gitIdentity,
-      seedFiles: manifest.seedFiles,
+      github_token: manifest.githubToken,
+      github_identity: manifest.gitIdentity,
+      seed_files: manifest.seedFiles,
     });
 
     if (res.status === 'error') {
       throw new SandboxError(res.error ?? 'Sandbox creation failed', 'CONTAINER_ERROR');
     }
 
-    const ownerToken = res.ownerToken ?? '';
+    const ownerToken = res.owner_token ?? '';
     if (ownerToken) {
-      this.ownerTokens.set(res.sandboxId, ownerToken);
+      this.ownerTokens.set(res.sandbox_id, ownerToken);
     }
 
     return {
-      sandboxId: res.sandboxId,
+      sandboxId: res.sandbox_id,
       ownerToken,
       status: res.status,
-      workspaceRevision: res.workspaceRevision,
+      workspaceRevision: res.workspace_revision,
       environment: res.environment,
     };
   }
@@ -162,17 +165,17 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     }
     try {
       const res = await call<{
-        sandboxId: string;
-        ownerToken?: string;
+        sandbox_id: string;
+        owner_token?: string;
         status: 'ready' | 'error';
-        workspaceRevision?: number;
+        workspace_revision?: number;
         environment?: SandboxEnvironment;
-      }>('connect', { sandboxId, ownerToken });
+      }>('connect', { sandbox_id: sandboxId, owner_token: ownerToken });
       return {
-        sandboxId: res.sandboxId,
-        ownerToken: res.ownerToken ?? ownerToken,
+        sandboxId: res.sandbox_id,
+        ownerToken: res.owner_token ?? ownerToken,
         status: res.status,
-        workspaceRevision: res.workspaceRevision,
+        workspaceRevision: res.workspace_revision,
         environment: res.environment,
       };
     } catch (err) {
@@ -187,8 +190,8 @@ export class CloudflareSandboxProvider implements SandboxProvider {
   async cleanup(sandboxId: string): Promise<void> {
     try {
       await call<{ ok: boolean }>('cleanup', {
-        sandboxId,
-        ownerToken: this.tokenFor(sandboxId),
+        sandbox_id: sandboxId,
+        owner_token: this.tokenFor(sandboxId),
       });
       this.ownerTokens.delete(sandboxId);
     } catch (err) {
@@ -207,17 +210,24 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     const res = await call<{
       stdout: string;
       stderr: string;
-      exitCode: number;
+      exit_code: number;
       truncated: boolean;
       error?: string;
-      workspaceRevision?: number;
+      workspace_revision?: number;
     }>('exec', {
-      sandboxId,
-      ownerToken: this.tokenFor(sandboxId),
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
       command,
       workdir: options?.workdir,
     });
-    return res;
+    return {
+      stdout: res.stdout,
+      stderr: res.stderr,
+      exitCode: res.exit_code,
+      truncated: res.truncated,
+      error: res.error,
+      workspaceRevision: res.workspace_revision,
+    };
   }
 
   // -- File operations ------------------------------------------------------
@@ -228,8 +238,8 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     options?: ReadFileOptions,
   ): Promise<FileReadResult> {
     return await call<FileReadResult>('read', {
-      sandboxId,
-      ownerToken: this.tokenFor(sandboxId),
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
       path,
       start_line: options?.startLine,
       end_line: options?.endLine,
@@ -243,8 +253,8 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     options?: WriteFileOptions,
   ): Promise<WriteResult> {
     return await call<WriteResult>('write', {
-      sandboxId,
-      ownerToken: this.tokenFor(sandboxId),
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
       path,
       content,
       expected_version: options?.expectedVersion,
@@ -258,8 +268,8 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     expectedWorkspaceRevision?: number,
   ): Promise<BatchWriteResult> {
     return await call<BatchWriteResult>('batch-write', {
-      sandboxId,
-      ownerToken: this.tokenFor(sandboxId),
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
       files: files.map((f) => ({
         path: f.path,
         content: f.content,
@@ -274,16 +284,16 @@ export class CloudflareSandboxProvider implements SandboxProvider {
   // optimistic-concurrency parity gap is closed.
   async deleteFile(sandboxId: string, path: string): Promise<{ workspace_revision?: number }> {
     return await call<{ workspace_revision?: number }>('delete', {
-      sandboxId,
-      ownerToken: this.tokenFor(sandboxId),
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
       path,
     });
   }
 
   async listDirectory(sandboxId: string, path: string): Promise<FileEntry[]> {
     const res = await call<{ entries: FileEntry[] }>('list', {
-      sandboxId,
-      ownerToken: this.tokenFor(sandboxId),
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
       path,
     });
     return res.entries;
@@ -293,8 +303,8 @@ export class CloudflareSandboxProvider implements SandboxProvider {
 
   async getDiff(sandboxId: string): Promise<DiffResult> {
     return await call<DiffResult>('diff', {
-      sandboxId,
-      ownerToken: this.tokenFor(sandboxId),
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
     });
   }
 
@@ -302,16 +312,16 @@ export class CloudflareSandboxProvider implements SandboxProvider {
 
   async createArchive(sandboxId: string, path?: string): Promise<ArchiveResult> {
     return await call<ArchiveResult>('download', {
-      sandboxId,
-      ownerToken: this.tokenFor(sandboxId),
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
       path,
     });
   }
 
   async hydrateArchive(sandboxId: string, archive: string, path?: string): Promise<void> {
     await call<{ ok: boolean }>('restore', {
-      sandboxId,
-      ownerToken: this.tokenFor(sandboxId),
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
       archive,
       path,
     });
@@ -321,8 +331,8 @@ export class CloudflareSandboxProvider implements SandboxProvider {
 
   async probeEnvironment(sandboxId: string): Promise<SandboxEnvironment> {
     return await call<SandboxEnvironment>('probe', {
-      sandboxId,
-      ownerToken: this.tokenFor(sandboxId),
+      sandbox_id: sandboxId,
+      owner_token: this.tokenFor(sandboxId),
     });
   }
 

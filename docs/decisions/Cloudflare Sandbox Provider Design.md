@@ -45,7 +45,7 @@ Ship a Cloudflare Sandbox backend behind the existing `SandboxProvider` interfac
 
 `/api/sandbox/*` POST requests dispatch to `handleCloudflareSandbox` (from `worker-cf-sandbox.ts`) when `env.PUSH_SANDBOX_PROVIDER === 'cloudflare'`, else fall through to the existing `handleSandbox` (Modal). A secondary route `/api/sandbox-cf/*` always goes to the CF handler regardless of the var — useful for A/B debugging and forced-CF testing without redeploy.
 
-Both handlers share the same high-level JSON body shapes (camelCase `sandboxId`, `ownerToken`, `path`, `content`, etc.), though field-level names differ in a few places (e.g., CF uses `githubToken`, Modal uses `github_token`). Each provider's client-side adapter owns its own wire format — a single client can't blindly target either.
+Both handlers share an identical snake_case wire format — Modal's convention (`sandbox_id`, `owner_token`, `github_token`, `github_identity`, `seed_files`, `workspace_revision`, `exit_code`, …). A client can target either handler with the same request body; the `PUSH_SANDBOX_PROVIDER` toggle is the only thing that changes backends. Each provider's client-side adapter maps this snake_case wire onto the camelCase TypeScript types declared in `lib/sandbox-provider.ts`.
 
 ### `SandboxProvider` interface
 
