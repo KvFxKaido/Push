@@ -34,10 +34,13 @@ function buildCiCard(overrides: Partial<CIStatus> = {}): { type: 'ci-status'; da
   return {
     type: 'ci-status',
     data: {
-      state: 'success',
+      overall: 'success',
+      repo: 'owner/repo',
+      ref: 'main',
+      fetchedAt: new Date(0).toISOString(),
       checks: [],
       ...overrides,
-    } as CIStatus,
+    },
   };
 }
 

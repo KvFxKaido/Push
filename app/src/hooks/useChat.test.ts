@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Conversation } from '@/types';
 
 // useChat orchestrates ~25 modules. Its core logic is unit-tested through the
 // helpers it composes (chat-send, chat-management, chat-card-actions,
@@ -57,9 +58,10 @@ const checkpointManager = vi.hoisted(() => ({
 const chatPersistence = vi.hoisted(() => ({
   generateTitle: vi.fn(async () => 'title'),
   loadActiveChatId: vi.fn(() => 'chat-1'),
-  // Typed as Record<string, unknown> so the Conversation shape can drift
-  // without forcing every mockReturnValueOnce to restate the full interface.
-  loadConversations: vi.fn<() => Record<string, unknown>>(() => ({
+  // Typed as Record<string, Partial<Conversation>> so fixtures can omit
+  // optional fields without restating the full interface, while still
+  // catching typos on Conversation field names.
+  loadConversations: vi.fn<() => Record<string, Partial<Conversation>>>(() => ({
     'chat-1': {
       id: 'chat-1',
       title: 'Chat 1',
@@ -284,12 +286,12 @@ describe('useChat — public API surface', () => {
         messages: [],
         createdAt: 1,
         lastMessageAt: 1,
-        provider: 'openai',
+        provider: 'openrouter',
       },
     });
     chatPersistence.normalizeConversationModel.mockReturnValueOnce('gpt-4o');
     const hook = useChat(null);
-    expect(hook.lockedProvider).toBe('openai');
+    expect(hook.lockedProvider).toBe('openrouter');
     expect(hook.isProviderLocked).toBe(true);
     expect(hook.lockedModel).toBe('gpt-4o');
   });
@@ -450,7 +452,7 @@ describe('useChat — run events (pre-extraction characterization)', () => {
         messages: [],
         createdAt: 1,
         lastMessageAt: 1,
-        runState: { runEvents: persisted },
+        runState: { runEvents: persisted } as Conversation['runState'],
       },
     });
     chatPersistence.loadActiveChatId.mockReturnValueOnce('chat-1');
