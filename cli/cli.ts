@@ -188,6 +188,7 @@ Usage:
   push config set ...           Save provider config defaults
   push theme                    Show current TUI theme
   push theme list               List available TUI themes
+  push theme preview [<name>]   Preview swatches for a theme (all themes if omitted)
   push theme set <name>         Set TUI theme (default|neon|metallic|mono|solarized|forest)
 
 Options:
@@ -1515,7 +1516,7 @@ async function runConfigSubcommand(values, positionals) {
 }
 
 async function runThemeSubcommand(positionals) {
-  const { THEME_NAMES, VARIANTS, isThemeName } = await import('./tui-theme.js');
+  const { THEME_NAMES, VARIANTS, isThemeName, renderThemePreview } = await import('./tui-theme.js');
   const config = await loadConfig();
   const current = isThemeName(config.theme) ? config.theme : 'default';
   const action = (positionals[1] || 'show').toLowerCase();
@@ -1532,6 +1533,19 @@ async function runThemeSubcommand(positionals) {
       process.stdout.write(
         `${marker} ${fmt.bold(name.padEnd(10))} ${fmt.dim(variant.description)}\n`,
       );
+    }
+    return 0;
+  }
+
+  if (action === 'preview') {
+    const names = positionals[2] ? [positionals[2]] : THEME_NAMES;
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      if (!isThemeName(name)) {
+        throw new Error(`Unknown theme: ${name}. Available: ${THEME_NAMES.join(', ')}`);
+      }
+      if (i > 0) process.stdout.write('\n');
+      process.stdout.write(`${renderThemePreview(name)}\n`);
     }
     return 0;
   }

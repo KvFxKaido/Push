@@ -485,3 +485,51 @@ export function createTheme(
     inverse,
   };
 }
+
+// ── Preview rendering ────────────────────────────────────────────────
+// Rows shown in the swatch preview. Order + labels chosen to group the
+// semantic tokens (bg / fg / accent / state) visually.
+const PREVIEW_ROWS: ReadonlyArray<{ token: TokenName; label: string; kind: 'bg' | 'fg' }> = [
+  { token: 'bg.base', label: 'bg.base', kind: 'bg' },
+  { token: 'bg.panel', label: 'bg.panel', kind: 'bg' },
+  { token: 'fg.primary', label: 'fg.primary', kind: 'fg' },
+  { token: 'fg.secondary', label: 'fg.secondary', kind: 'fg' },
+  { token: 'fg.muted', label: 'fg.muted', kind: 'fg' },
+  { token: 'fg.dim', label: 'fg.dim', kind: 'fg' },
+  { token: 'border.default', label: 'border.default', kind: 'fg' },
+  { token: 'border.hover', label: 'border.hover', kind: 'fg' },
+  { token: 'accent.primary', label: 'accent.primary', kind: 'fg' },
+  { token: 'accent.secondary', label: 'accent.secondary', kind: 'fg' },
+  { token: 'accent.link', label: 'accent.link', kind: 'fg' },
+  { token: 'state.success', label: 'state.success', kind: 'fg' },
+  { token: 'state.warn', label: 'state.warn', kind: 'fg' },
+  { token: 'state.error', label: 'state.error', kind: 'fg' },
+];
+
+/**
+ * Render a multi-line preview of a theme variant: colored swatches +
+ * token names + hex values. Honours `tier` so NO_COLOR / 16-color
+ * terminals still get a readable (if uncoloured) listing.
+ */
+export function renderThemePreview(
+  name: ThemeName | string,
+  opts: { tier?: ColorTier; unicode?: boolean } = {},
+): string {
+  const resolvedName: ThemeName = isThemeName(name) ? name : 'default';
+  const variant = VARIANTS[resolvedName];
+  const theme = createTheme({ ...opts, name: resolvedName });
+  const swatchGlyph = theme.unicode ? '██████' : '######';
+  const widestLabel = PREVIEW_ROWS.reduce((w, r) => Math.max(w, r.label.length), 0);
+
+  const header = `${theme.bold(variant.label)} ${theme.dim(`(${resolvedName})`)} — ${variant.description}`;
+  const rows = PREVIEW_ROWS.map((row) => {
+    const hex = variant.tokens[row.token];
+    const swatch =
+      row.kind === 'bg'
+        ? theme.styleBg(row.token, swatchGlyph)
+        : theme.style(row.token, swatchGlyph);
+    const label = row.label.padEnd(widestLabel);
+    return `  ${swatch}  ${label}  ${theme.dim(hex)}`;
+  });
+  return [header, ...rows].join('\n');
+}

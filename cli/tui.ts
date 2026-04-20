@@ -12,7 +12,13 @@ import path from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
-import { createTheme } from './tui-theme.js';
+import {
+  createTheme,
+  isThemeName,
+  renderThemePreview,
+  THEME_NAMES,
+  VARIANTS,
+} from './tui-theme.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
@@ -1527,7 +1533,10 @@ export async function runTUI(options = {}) {
   const config = await loadConfig();
   applyConfigToEnv(config);
 
-  const theme = createTheme();
+  // `let` (not `const`) so /theme <name> can hot-swap the theme without
+  // restarting the TUI. Renderers receive `theme` as a parameter on every
+  // frame, so reassigning this closure variable propagates to the next draw.
+  let theme = createTheme();
   const tuiState = createTUIState();
   const composer = createComposer();
   const keybinds = createKeybindMap();
@@ -3454,6 +3463,74 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  async function handleThemeCommand(arg) {
+    const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
+    const sub = (parts[0] || 'show').toLowerCase();
+
+    if (sub === 'show') {
+      addTranscriptEntry(tuiState, 'status', `theme: ${theme.name}`);
+      scheduler.flush();
+      return;
+    }
+
+    if (sub === 'list') {
+      const lines = THEME_NAMES.map((name) => {
+        const marker = name === theme.name ? '*' : ' ';
+        return `  ${marker} ${name.padEnd(10)}  ${VARIANTS[name].description}`;
+      });
+      addTranscriptEntry(tuiState, 'status', ['Themes:', ...lines].join('\n'));
+      scheduler.flush();
+      return;
+    }
+
+    if (sub === 'preview') {
+      const target = parts[1];
+      const names = target ? [target] : THEME_NAMES;
+      for (const name of names) {
+        if (!isThemeName(name)) {
+          addTranscriptEntry(
+            tuiState,
+            'warning',
+            `Unknown theme: ${name}. Available: ${THEME_NAMES.join(', ')}`,
+          );
+          scheduler.flush();
+          return;
+        }
+      }
+      const body = names
+        .map((name) => renderThemePreview(name, { tier: theme.tier, unicode: theme.unicode }))
+        .join('\n\n');
+      addTranscriptEntry(tuiState, 'status', body);
+      scheduler.flush();
+      return;
+    }
+
+    // `/theme <name>` and `/theme set <name>` both switch live.
+    const name = sub === 'set' ? parts[1] : sub;
+    if (!name || !isThemeName(name)) {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Unknown theme: ${name || '(missing)'}. Available: ${THEME_NAMES.join(', ')}`,
+      );
+      scheduler.flush();
+      return;
+    }
+
+    // Build the new theme preserving the detected tier/unicode of the
+    // current session — `createTheme()` would re-read env, which is fine,
+    // but we pin tier/unicode so a config change can't mid-flight flip
+    // glyph sets or color tiers unexpectedly.
+    theme = createTheme({ tier: theme.tier, unicode: theme.unicode, name });
+    config.theme = name;
+    process.env.PUSH_THEME = name;
+    await saveConfig(config);
+
+    tuiState.dirty.add('all');
+    addTranscriptEntry(tuiState, 'status', `theme: ${name} (saved)`);
+    scheduler.flush();
+  }
+
   function handleDebugCommand(arg) {
     const sub = (arg || '').trim();
     if (!sub) {
@@ -3518,6 +3595,10 @@ export async function runTUI(options = {}) {
         await handleConfigCommand(arg || null);
         return true;
 
+      case 'theme':
+        await handleThemeCommand(arg || null);
+        return true;
+
       case 'debug':
         handleDebugCommand(arg || null);
         return true;
@@ -3539,6 +3620,10 @@ export async function runTUI(options = {}) {
             '  /config tavily <key> Set Tavily web search API key',
             '  /config sandbox on|off  Toggle local Docker sandbox',
             '  /config explain on|off  Toggle pattern explanations',
+            '  /theme               Show current theme',
+            '  /theme list          List available themes',
+            '  /theme preview [<name>]  Preview theme swatches (all themes if omitted)',
+            '  /theme <name>        Switch theme live and persist (default|neon|metallic|mono|solarized|forest)',
             '  /debug runtime       Show runtime path/provider/session diagnostics',
             '  /skills              List available skills',
             '  /skills reload       Reload workspace + Claude skills',

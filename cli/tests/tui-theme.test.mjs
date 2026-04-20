@@ -6,6 +6,7 @@ import {
   detectThemeName,
   detectUnicode,
   isThemeName,
+  renderThemePreview,
   TOKENS,
   THEME_NAMES,
   VARIANTS,
@@ -327,5 +328,45 @@ describe('detectThemeName', () => {
       if (prev === undefined) delete process.env.PUSH_THEME;
       else process.env.PUSH_THEME = prev;
     }
+  });
+});
+
+// ─── renderThemePreview ─────────────────────────────────────────
+
+describe('renderThemePreview', () => {
+  it('includes the variant label, description, and all token hex values', () => {
+    const preview = renderThemePreview('neon', { tier: 'none', unicode: true });
+    const variant = VARIANTS.neon;
+    assert.ok(preview.includes(variant.label));
+    assert.ok(preview.includes(variant.description));
+    for (const hex of Object.values(variant.tokens)) {
+      assert.ok(preview.includes(hex), `preview missing hex ${hex}`);
+    }
+    for (const token of Object.keys(TOKENS)) {
+      assert.ok(preview.includes(token), `preview missing token label ${token}`);
+    }
+  });
+
+  it('falls back to default for unknown theme names', () => {
+    const preview = renderThemePreview('not-a-real-theme', { tier: 'none' });
+    assert.ok(preview.includes(VARIANTS.default.label));
+  });
+
+  it('emits ANSI escapes when tier=truecolor', () => {
+    const preview = renderThemePreview('forest', { tier: 'truecolor', unicode: true });
+    assert.ok(preview.includes('\x1b[38;2;'));
+    assert.ok(preview.includes('\x1b[48;2;'));
+  });
+
+  it('emits no ANSI escapes when tier=none', () => {
+    const preview = renderThemePreview('mono', { tier: 'none', unicode: true });
+    assert.equal(preview.includes('\x1b['), false);
+  });
+
+  it('uses ASCII glyphs when unicode=false', () => {
+    const preview = renderThemePreview('default', { tier: 'none', unicode: false });
+    // ASCII swatch uses `#` characters, unicode uses block glyphs
+    assert.ok(preview.includes('######'));
+    assert.equal(preview.includes('██████'), false);
   });
 });
