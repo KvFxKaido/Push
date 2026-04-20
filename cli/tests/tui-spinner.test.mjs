@@ -1,0 +1,172 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  detectSpinnerName,
+  isSpinnerName,
+  SPINNER_NAMES,
+  SPINNERS,
+  spinnerFrame,
+} from '../tui-spinner.ts';
+
+function withEnv(vars, fn) {
+  const prev = {};
+  for (const k of Object.keys(vars)) prev[k] = process.env[k];
+  try {
+    for (const [k, v] of Object.entries(vars)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+// ─── SPINNERS registry ──────────────────────────────────────────
+
+describe('SPINNERS registry', () => {
+  it('contains the expected set of spinners', () => {
+    assert.deepEqual([...SPINNER_NAMES].sort(), [
+      'braille',
+      'breathe',
+      'helix',
+      'off',
+      'orbit',
+      'pulse',
+    ]);
+  });
+
+  it('every non-off variant has a non-empty, single-cell Braille frame array', () => {
+    for (const name of SPINNER_NAMES) {
+      if (name === 'off') continue;
+      const variant = SPINNERS[name];
+      assert.ok(variant, `missing variant: ${name}`);
+      assert.ok(
+        Array.isArray(variant.frames) && variant.frames.length > 0,
+        `${name} needs at least one frame`,
+      );
+      for (const frame of variant.frames) {
+        assert.equal(typeof frame, 'string', `${name} frame must be a string`);
+        // All prototype frames are Braille (U+2800–U+28FF) or the Braille
+        // blank (U+2800). Keep the set legible at a 1-cell status dot.
+        for (const ch of frame) {
+          const code = ch.codePointAt(0);
+          assert.ok(
+            code >= 0x2800 && code <= 0x28ff,
+            `${name} contains non-Braille codepoint U+${code.toString(16)}`,
+          );
+        }
+      }
+    }
+  });
+
+  it('every variant has a label + description', () => {
+    for (const name of SPINNER_NAMES) {
+      const v = SPINNERS[name];
+      assert.ok(typeof v.label === 'string' && v.label.length > 0);
+      assert.ok(typeof v.description === 'string' && v.description.length > 0);
+    }
+  });
+});
+
+// ─── isSpinnerName ──────────────────────────────────────────────
+
+describe('isSpinnerName', () => {
+  it('accepts every registered spinner name', () => {
+    for (const name of SPINNER_NAMES) {
+      assert.equal(isSpinnerName(name), true);
+    }
+  });
+  it('rejects unknown strings and non-strings', () => {
+    for (const bad of ['rain', '', null, undefined, 42, {}]) {
+      assert.equal(isSpinnerName(bad), false);
+    }
+  });
+  it('rejects Object.prototype keys (does not use `in`)', () => {
+    for (const key of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) {
+      assert.equal(isSpinnerName(key), false, `must reject prototype key: ${key}`);
+    }
+  });
+});
+
+// ─── spinnerFrame ───────────────────────────────────────────────
+
+describe('spinnerFrame', () => {
+  it('returns null for off', () => {
+    assert.equal(spinnerFrame('off', 0), null);
+    assert.equal(spinnerFrame('off', 999), null);
+  });
+
+  it('wraps tick by frames.length', () => {
+    for (const name of SPINNER_NAMES) {
+      if (name === 'off') continue;
+      const frames = SPINNERS[name].frames;
+      for (let tick = 0; tick < frames.length * 3; tick++) {
+        assert.equal(spinnerFrame(name, tick), frames[tick % frames.length]);
+      }
+    }
+  });
+
+  it('is pure — same inputs produce same output', () => {
+    for (const name of ['braille', 'orbit', 'pulse', 'breathe', 'helix']) {
+      assert.equal(spinnerFrame(name, 7), spinnerFrame(name, 7));
+    }
+  });
+
+  it('handles large ticks without overflow glitches', () => {
+    for (const name of ['braille', 'orbit', 'pulse', 'breathe', 'helix']) {
+      const frames = SPINNERS[name].frames;
+      const huge = 1_000_000 + 3;
+      assert.equal(spinnerFrame(name, huge), frames[huge % frames.length]);
+    }
+  });
+});
+
+// ─── detectSpinnerName ──────────────────────────────────────────
+
+describe('detectSpinnerName', () => {
+  it('returns null when PUSH_SPINNER unset and reduced-motion off', () => {
+    withEnv(
+      { PUSH_SPINNER: undefined, PUSH_REDUCED_MOTION: undefined, REDUCED_MOTION: undefined },
+      () => {
+        assert.equal(detectSpinnerName(), null);
+      },
+    );
+  });
+
+  it('returns the named spinner from PUSH_SPINNER', () => {
+    withEnv(
+      { PUSH_SPINNER: 'braille', PUSH_REDUCED_MOTION: undefined, REDUCED_MOTION: undefined },
+      () => {
+        assert.equal(detectSpinnerName(), 'braille');
+      },
+    );
+  });
+
+  it('is case-insensitive and tolerates whitespace', () => {
+    withEnv(
+      { PUSH_SPINNER: '  ORBIT  ', PUSH_REDUCED_MOTION: undefined, REDUCED_MOTION: undefined },
+      () => {
+        assert.equal(detectSpinnerName(), 'orbit');
+      },
+    );
+  });
+
+  it('returns null for unknown values', () => {
+    withEnv(
+      { PUSH_SPINNER: 'sparkle', PUSH_REDUCED_MOTION: undefined, REDUCED_MOTION: undefined },
+      () => {
+        assert.equal(detectSpinnerName(), null);
+      },
+    );
+  });
+
+  it('reduced-motion forces off regardless of PUSH_SPINNER', () => {
+    withEnv({ PUSH_SPINNER: 'helix', PUSH_REDUCED_MOTION: '1', REDUCED_MOTION: undefined }, () => {
+      assert.equal(detectSpinnerName(), 'off');
+    });
+  });
+});

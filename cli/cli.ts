@@ -104,6 +104,7 @@ const KNOWN_SUBCOMMANDS = new Set([
   'tui',
   'theme',
   'animate',
+  'spinner',
   'init-deep',
 ]);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
@@ -195,6 +196,10 @@ Usage:
   push animate list             List animation effects
   push animate set <name>       Pin TUI animation (off|pulse|shimmer|rainbow)
   push animate follow-theme     Unpin: use each theme's default animation
+  push spinner                  Show pinned Braille spinner
+  push spinner list             List spinners (with frame previews)
+  push spinner set <name>       Pin spinner (off|braille|orbit|breathe|pulse|helix)
+  push spinner unpin            Unpin: revert to static status dot
 
 Options:
   --provider <name>             ollama | openrouter | zen | nvidia (default: ollama)
@@ -1623,6 +1628,57 @@ async function runAnimateSubcommand(positionals) {
   return 0;
 }
 
+async function runSpinnerSubcommand(positionals) {
+  const { SPINNER_NAMES, SPINNERS, isSpinnerName } = await import('./tui-spinner.js');
+  const { isReducedMotion } = await import('./tui-animator.js');
+  const config = await loadConfig();
+  const action = (positionals[1] || 'show').toLowerCase();
+
+  // `isSpinnerName` rather than `typeof === 'string'` so a stale or hand-
+  // edited config with an unknown spinner cleanly reports as unpinned
+  // instead of pretending to be pinned to something the TUI will ignore.
+  const pinned = isSpinnerName(config.spinner) ? config.spinner : null;
+
+  if (action === 'show') {
+    const shown = pinned ?? 'off';
+    const suffix = isReducedMotion() ? ' (reduced-motion active — forced off)' : '';
+    process.stdout.write(`${shown}${suffix}\n`);
+    return 0;
+  }
+
+  if (action === 'list') {
+    for (const name of SPINNER_NAMES) {
+      const marker = name === pinned ? '*' : ' ';
+      const preview = name === 'off' ? ' ' : (SPINNERS[name].frames[0] ?? ' ');
+      process.stdout.write(
+        `${marker} ${preview}  ${fmt.bold(name.padEnd(10))} ${fmt.dim(SPINNERS[name].description)}\n`,
+      );
+    }
+    return 0;
+  }
+
+  // `push spinner <name>` and `push spinner set <name>` both pin.
+  // `push spinner unpin` clears the pin.
+  const rawValue = action === 'set' ? positionals[2] : action;
+  const value = (rawValue || '').toLowerCase().trim();
+  if (value === 'unpin') {
+    const next = { ...config };
+    delete next.spinner;
+    const configPath = await saveConfig(next);
+    process.stdout.write(`Saved: spinner unpinned → ${fmt.dim(configPath)}\n`);
+    return 0;
+  }
+  if (!value || !isSpinnerName(value)) {
+    throw new Error(
+      `Unknown spinner: ${value || '(missing)'}. Available: ${SPINNER_NAMES.join(', ')}. Use 'unpin' to clear.`,
+    );
+  }
+  const next = { ...config, spinner: value };
+  const configPath = await saveConfig(next);
+  process.stdout.write(`Saved spinner: ${fmt.bold(value)} → ${fmt.dim(configPath)}\n`);
+  return 0;
+}
+
 async function readPidFile() {
   try {
     const raw = await fs.readFile(getPidPath(), 'utf8');
@@ -2088,6 +2144,10 @@ export async function main() {
     return runAnimateSubcommand(positionals);
   }
 
+  if (subcommand === 'spinner') {
+    return runSpinnerSubcommand(positionals);
+  }
+
   if (subcommand === 'resume' || subcommand === 'sessions') {
     const sessionsCmd = positionals[1] || '';
     if (sessionsCmd === 'rename') {
@@ -2373,7 +2433,7 @@ export async function main() {
 
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
     throw new Error(
-      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, animate, init-deep. See: push --help`,
+      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, animate, spinner, init-deep. See: push --help`,
     );
   }
 
