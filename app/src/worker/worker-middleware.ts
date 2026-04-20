@@ -61,6 +61,11 @@ export interface Env {
   // Sibling-provider selector. Values: "modal" | "cloudflare". Unset or
   // anything else defaults to "modal" during coexistence.
   PUSH_SANDBOX_PROVIDER?: string;
+  // Owner-token store for the Cloudflare sandbox path. Optional so local
+  // dev without a KV binding stays usable for read-only smoke testing, but
+  // worker-cf-sandbox.ts fails closed (NOT_CONFIGURED 503) on every
+  // non-create route when the binding is missing — no silent auth bypass.
+  SANDBOX_TOKENS?: KVNamespace;
 }
 
 // ---------------------------------------------------------------------------
