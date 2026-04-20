@@ -77,7 +77,8 @@ import {
   summarizeCoderStateForHandoff,
 } from '@/lib/coder-agent';
 import { runPlanner, formatPlannerBrief } from '@/lib/planner-agent';
-import { resolveHarnessSettings, type HarnessSettings } from '@/lib/model-capabilities';
+import { resolveHarnessSettings } from '@/lib/model-capabilities';
+import type { HarnessProfileSettings } from '@/types';
 import {
   buildMemoryScope,
   retrieveMemoryKnownContextLine,
@@ -210,7 +211,7 @@ export interface CoderAuditorInput {
   latestDiffPaths: string[] | undefined;
   coderMemoryScope: MemoryScope | null;
   verificationCommandsById: Map<string, string>;
-  harnessSettings: HarnessSettings;
+  harnessSettings: HarnessProfileSettings;
   currentSandboxId: string;
 }
 

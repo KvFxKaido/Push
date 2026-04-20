@@ -49,6 +49,7 @@ import type {
   ToolExecutionResult,
 } from '@/types';
 import type { runAuditor as runAuditorFn } from './auditor-agent';
+import type { ActiveProvider } from './orchestrator-provider-routing';
 import type {
   AuditorFileContext,
   fetchAuditorFileContexts as fetchAuditorFileContextsFn,
@@ -145,7 +146,7 @@ export interface PrepareCommitArgs {
 
 /** Auditor provider/model overrides threaded through the dispatcher options. */
 export interface PrepareCommitAuditorOverrides {
-  providerOverride?: string;
+  providerOverride?: ActiveProvider;
   modelOverride?: string;
 }
 

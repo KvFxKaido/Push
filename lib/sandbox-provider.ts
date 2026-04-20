@@ -243,13 +243,14 @@ export type SandboxErrorCode =
   | 'UNKNOWN';
 
 export class SandboxError extends Error {
-  constructor(
-    message: string,
-    public readonly code: SandboxErrorCode,
-    public readonly details?: string,
-  ) {
+  readonly code: SandboxErrorCode;
+  readonly details?: string;
+
+  constructor(message: string, code: SandboxErrorCode, details?: string) {
     super(message);
     this.name = 'SandboxError';
+    this.code = code;
+    this.details = details;
   }
 }
 

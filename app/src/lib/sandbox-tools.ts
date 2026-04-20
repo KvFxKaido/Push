@@ -391,7 +391,7 @@ export async function executeSandboxToolCall(
       case 'sandbox_prepare_commit': {
         return handlePrepareCommit(buildGitReleaseContext(sandboxId), call.args, {
           providerOverride: options?.auditorProviderOverride,
-          modelOverride: options?.auditorModelOverride,
+          modelOverride: options?.auditorModelOverride ?? undefined,
         });
       }
 

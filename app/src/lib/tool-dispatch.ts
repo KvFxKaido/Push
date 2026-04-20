@@ -330,16 +330,16 @@ function normalizeJsonValue(value: unknown): unknown {
   return undefined;
 }
 
+// Delegate variants are kept as separate union members (rather than a single
+// variant with a union of `call` shapes) so that `Extract<AnyToolCall, { call:
+// { tool: '...' } }>` distributes correctly in each handler. The runtime
+// payload is unchanged; this is purely for the type projection.
 export type AnyToolCall =
   | { source: 'github'; call: ToolCall }
   | { source: 'sandbox'; call: SandboxToolCall }
-  | {
-      source: 'delegate';
-      call:
-        | { tool: 'delegate_coder'; args: CoderDelegationArgs }
-        | { tool: 'delegate_explorer'; args: ExplorerDelegationArgs }
-        | { tool: 'plan_tasks'; args: TaskGraphArgs };
-    }
+  | { source: 'delegate'; call: { tool: 'delegate_coder'; args: CoderDelegationArgs } }
+  | { source: 'delegate'; call: { tool: 'delegate_explorer'; args: ExplorerDelegationArgs } }
+  | { source: 'delegate'; call: { tool: 'plan_tasks'; args: TaskGraphArgs } }
   | { source: 'scratchpad'; call: ScratchpadToolCall }
   | { source: 'web-search'; call: WebSearchToolCall }
   | { source: 'ask-user'; call: AskUserToolCall };
