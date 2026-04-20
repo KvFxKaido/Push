@@ -402,6 +402,12 @@ export class ModalSandboxProvider implements SandboxProvider {
 /** Create the default sandbox provider for the current environment. */
 export function createSandboxProvider(): SandboxProvider {
   // Today: Modal is the only backend.
-  // Tomorrow: read from config/environment to select the provider.
+  // Tomorrow: read from config/environment to select the provider. When
+  // adding a second backend, note that the SNAPSHOT_INDEX KV schema is
+  // Modal-specific (imageId + restoreToken) — give each provider its own
+  // KV binding + key prefix, and qualify the persisted snapshot handle's
+  // snapshotId (see PersistedSandboxSession) with the provider name (or
+  // persist a separate provider field) so restores route through the
+  // correct adapter.
   return new ModalSandboxProvider();
 }
