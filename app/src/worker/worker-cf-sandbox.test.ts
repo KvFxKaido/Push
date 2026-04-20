@@ -1,0 +1,571 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getSandbox } from '@cloudflare/sandbox';
+import { handleCloudflareSandbox } from './worker-cf-sandbox';
+import type { Env } from './worker-middleware';
+
+vi.mock('@cloudflare/sandbox', () => ({
+  getSandbox: vi.fn(),
+}));
+
+const getSandboxMock = vi.mocked(getSandbox);
+
+interface FakeSandbox {
+  exec: ReturnType<typeof vi.fn>;
+  writeFile: ReturnType<typeof vi.fn>;
+  readFile: ReturnType<typeof vi.fn>;
+  listFiles: ReturnType<typeof vi.fn>;
+  deleteFile: ReturnType<typeof vi.fn>;
+  gitCheckout: ReturnType<typeof vi.fn>;
+  destroy: ReturnType<typeof vi.fn>;
+}
+
+function createFakeSandbox(): FakeSandbox {
+  return {
+    exec: vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 })),
+    writeFile: vi.fn(async () => ({ success: true })),
+    readFile: vi.fn(async () => ({ content: '' })),
+    listFiles: vi.fn(async () => ({ entries: [] })),
+    deleteFile: vi.fn(async () => ({ success: true })),
+    gitCheckout: vi.fn(async () => ({ success: true })),
+    destroy: vi.fn(async () => ({ success: true })),
+  };
+}
+
+function mockSandbox(sandbox = createFakeSandbox()): FakeSandbox {
+  getSandboxMock.mockReturnValue(sandbox as unknown as ReturnType<typeof getSandbox>);
+  return sandbox;
+}
+
+function makeEnv(overrides: Partial<Env> = {}): Env {
+  return {
+    RATE_LIMITER: {
+      limit: vi.fn(async () => ({ success: true })),
+    } as unknown as Env['RATE_LIMITER'],
+    ASSETS: {} as Env['ASSETS'],
+    Sandbox: {} as Env['Sandbox'],
+    ALLOWED_ORIGINS: 'https://push.example.test',
+    ...overrides,
+  };
+}
+
+function makeRequest(
+  route: string,
+  body: Record<string, unknown> | string = {},
+  headers: Record<string, string> = {},
+): Request {
+  return new Request(`https://push.example.test/api/sandbox-cf/${route}`, {
+    method: 'POST',
+    headers: {
+      Origin: 'https://push.example.test',
+      'Content-Type': 'application/json',
+      ...headers,
+    },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+}
+
+async function callRoute(
+  route: string,
+  body: Record<string, unknown> | string = {},
+  env = makeEnv(),
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  const request = makeRequest(route, body, headers);
+  return await handleCloudflareSandbox(request, env, new URL(request.url), route);
+}
+
+function probeStdout(workspaceEntries: string[] = ['package.json']): string {
+  return [
+    '__node__v20.11.0',
+    '__npm__10.2.4',
+    '__python__Python 3.12.1',
+    '__git__git version 2.43.0',
+    '__rg__ripgrep 14.1.0',
+    '__jq__jq-1.7',
+    '__ruff__ruff 0.1.0',
+    '__pytest__pytest 8.1.0',
+    '__df__42G',
+    ...workspaceEntries,
+  ].join('\n');
+}
+
+function mockUuid(value = '00000000-0000-4000-8000-000000000001'): string {
+  vi.spyOn(crypto, 'randomUUID').mockReturnValue(value as ReturnType<typeof crypto.randomUUID>);
+  return value;
+}
+
+async function jsonBody(response: Response): Promise<Record<string, unknown>> {
+  return (await response.json()) as Record<string, unknown>;
+}
+
+beforeEach(() => {
+  getSandboxMock.mockReset();
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('handleCloudflareSandbox route dispatch', () => {
+  it('returns 404 for an unknown route', async () => {
+    const response = await callRoute('bogus');
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: 'Unknown sandbox-cf route: bogus' });
+    expect(getSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 when the Sandbox binding is missing', async () => {
+    const response = await callRoute('create', {}, makeEnv({ Sandbox: undefined }));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Cloudflare Sandbox not configured',
+      code: 'CF_NOT_CONFIGURED',
+    });
+    expect(getSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 403 when origin validation fails', async () => {
+    const response = await callRoute('create', {}, makeEnv(), { Origin: 'https://evil.test' });
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: 'Origin not allowed' });
+    expect(getSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 429 when rate limited', async () => {
+    const limit = vi.fn(async () => ({ success: false }));
+    const response = await callRoute(
+      'create',
+      {},
+      makeEnv({ RATE_LIMITER: { limit } as unknown as Env['RATE_LIMITER'] }),
+    );
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('60');
+    await expect(response.json()).resolves.toEqual({
+      error: 'Rate limit exceeded. Try again later.',
+    });
+    expect(limit).toHaveBeenCalledWith({ key: 'unknown' });
+    expect(getSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 for an invalid JSON body', async () => {
+    const response = await callRoute('create', '{not json');
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'Invalid JSON body' });
+    expect(getSandboxMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleCloudflareSandbox happy paths', () => {
+  it('creates a sandbox, clones the repo, seeds files, and returns environment details', async () => {
+    const sandbox = mockSandbox();
+    const sandboxId = mockUuid();
+    sandbox.exec.mockResolvedValue({ stdout: probeStdout(), stderr: '', exitCode: 0 });
+
+    const env = makeEnv();
+    const response = await callRoute(
+      'create',
+      {
+        repo: 'owner/repo',
+        branch: 'feature',
+        githubToken: 'ghs_token',
+        gitIdentity: { name: 'Push Bot', email: 'bot@example.test' },
+        seedFiles: [{ path: '/workspace/README.md', content: 'hello' }],
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await jsonBody(response);
+    expect(body).toMatchObject({
+      sandboxId,
+      ownerToken: '',
+      status: 'ready',
+      workspaceRevision: 0,
+      environment: {
+        tools: {
+          node: 'v20.11.0',
+          npm: '10.2.4',
+          git: 'git version 2.43.0',
+        },
+        project_markers: ['package.json'],
+        git_available: true,
+        disk_free: '42G',
+        writable_root: '/workspace',
+      },
+    });
+    expect(getSandboxMock).toHaveBeenCalledWith(env.Sandbox, sandboxId);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(
+      1,
+      'git config --global user.name "Push Bot" && git config --global user.email "bot@example.test"',
+    );
+    expect(sandbox.gitCheckout).toHaveBeenCalledWith(
+      'https://x-access-token:ghs_token@github.com/owner/repo.git',
+      { branch: 'feature', targetDir: '/workspace' },
+    );
+    expect(sandbox.writeFile).toHaveBeenCalledWith('/workspace/README.md', 'hello');
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('connects to a reachable sandbox', async () => {
+    const sandbox = mockSandbox();
+    sandbox.exec
+      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: probeStdout(['pyproject.toml']), stderr: '', exitCode: 0 });
+
+    const env = makeEnv();
+    const response = await callRoute('connect', { sandboxId: 'sb-1', ownerToken: 'ot' }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      sandboxId: 'sb-1',
+      ownerToken: 'ot',
+      status: 'ready',
+      workspaceRevision: 0,
+      environment: {
+        project_markers: ['pyproject.toml'],
+        writable_root: '/workspace',
+      },
+    });
+    expect(getSandboxMock).toHaveBeenCalledWith(env.Sandbox, 'sb-1');
+    expect(sandbox.exec).toHaveBeenNthCalledWith(1, 'true');
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('executes a command in the requested workdir', async () => {
+    const sandbox = mockSandbox();
+    sandbox.exec.mockResolvedValue({ stdout: 'ok', stderr: 'warn', exitCode: 7 });
+
+    const response = await callRoute('exec', {
+      sandboxId: 'sb-1',
+      command: 'npm test',
+      workdir: '/workspace/app',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      stdout: 'ok',
+      stderr: 'warn',
+      exitCode: 7,
+      truncated: false,
+      workspaceRevision: 0,
+    });
+    expect(sandbox.exec).toHaveBeenCalledWith('npm test', { cwd: '/workspace/app' });
+  });
+
+  it('reads a file and returns the requested line slice metadata', async () => {
+    const sandbox = mockSandbox();
+    sandbox.readFile.mockResolvedValue({ content: 'line1\nline2\nline3' });
+
+    const response = await callRoute('read', {
+      sandboxId: 'sb-1',
+      path: '/workspace/file.txt',
+      start_line: 2,
+      end_line: 2,
+    });
+
+    expect(response.status).toBe(200);
+    const body = await jsonBody(response);
+    expect(body).toMatchObject({
+      content: 'line2',
+      truncated: true,
+      truncated_at_line: 3,
+      remaining_bytes: 5,
+      start_line: 2,
+      end_line: 2,
+      workspace_revision: 0,
+    });
+    expect(body.version).toMatch(/^[0-9a-f]{64}$/);
+    expect(sandbox.readFile).toHaveBeenCalledWith('/workspace/file.txt');
+  });
+
+  it('writes a file and returns the new version', async () => {
+    const sandbox = mockSandbox();
+
+    const response = await callRoute('write', {
+      sandboxId: 'sb-1',
+      path: '/workspace/file.txt',
+      content: 'new text',
+    });
+
+    expect(response.status).toBe(200);
+    const body = await jsonBody(response);
+    expect(body).toMatchObject({
+      ok: true,
+      bytes_written: 8,
+      workspace_revision: 0,
+    });
+    expect(body.new_version).toMatch(/^[0-9a-f]{64}$/);
+    expect(sandbox.writeFile).toHaveBeenCalledWith('/workspace/file.txt', 'new text');
+  });
+
+  it('deletes a file', async () => {
+    const sandbox = mockSandbox();
+
+    const response = await callRoute('delete', { sandboxId: 'sb-1', path: '/workspace/old.txt' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ workspace_revision: 0 });
+    expect(sandbox.deleteFile).toHaveBeenCalledWith('/workspace/old.txt');
+  });
+
+  it('lists files and normalizes directory entries', async () => {
+    const sandbox = mockSandbox();
+    sandbox.listFiles.mockResolvedValue({
+      entries: [
+        { name: 'src', isDirectory: true, size: 0 },
+        { name: 'README.md', type: 'file', size: 12 },
+      ],
+    });
+
+    const response = await callRoute('list', { sandboxId: 'sb-1', path: '/workspace' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      entries: [
+        { name: 'src', type: 'directory', size: 0 },
+        { name: 'README.md', type: 'file', size: 12 },
+      ],
+    });
+    expect(sandbox.listFiles).toHaveBeenCalledWith('/workspace');
+  });
+
+  it('probes the sandbox environment', async () => {
+    const sandbox = mockSandbox();
+    sandbox.exec.mockResolvedValue({
+      stdout: probeStdout(['Cargo.toml']),
+      stderr: '',
+      exitCode: 0,
+    });
+
+    const response = await callRoute('probe', { sandboxId: 'sb-1' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      tools: {
+        node: 'v20.11.0',
+        python: 'Python 3.12.1',
+        ripgrep: 'ripgrep 14.1.0',
+      },
+      project_markers: ['Cargo.toml'],
+      git_available: true,
+      disk_free: '42G',
+      writable_root: '/workspace',
+    });
+    expect(sandbox.exec).toHaveBeenCalledTimes(1);
+    expect(sandbox.exec.mock.calls[0][0]).toContain('__node__');
+  });
+});
+
+describe('handleCloudflareSandbox hardened connect and diff paths', () => {
+  it.each([
+    [
+      'non-zero exit',
+      async (sandbox: FakeSandbox) => sandbox.exec.mockResolvedValue({ exitCode: 1 }),
+    ],
+    [
+      'exec rejection',
+      async (sandbox: FakeSandbox) => sandbox.exec.mockRejectedValue(new Error('container gone')),
+    ],
+  ])('returns 404 when connect liveness fails: %s', async (_label, arrange) => {
+    const sandbox = mockSandbox();
+    await arrange(sandbox);
+
+    const response = await callRoute('connect', { sandboxId: 'sb-dead' });
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Sandbox is not reachable',
+      code: 'NOT_FOUND',
+    });
+    expect(sandbox.exec).toHaveBeenCalledOnce();
+    expect(sandbox.exec).toHaveBeenCalledWith('true');
+  });
+
+  it.each([
+    [
+      'git diff',
+      { stdout: '', stderr: 'fatal: bad revision', exitCode: 128 },
+      { stdout: ' M file.ts', stderr: '', exitCode: 0 },
+      'fatal: bad revision',
+    ],
+    [
+      'git status',
+      { stdout: 'diff --git a/file.ts b/file.ts', stderr: '', exitCode: 0 },
+      { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 },
+      'fatal: not a git repository',
+    ],
+  ])(
+    'returns an error field when %s exits non-zero',
+    async (_label, diffResult, statusResult, expectedError) => {
+      const sandbox = mockSandbox();
+      sandbox.exec.mockResolvedValueOnce(diffResult).mockResolvedValueOnce(statusResult);
+
+      const response = await callRoute('diff', { sandboxId: 'sb-1' });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        diff: '',
+        truncated: false,
+        git_status: '',
+        error: expectedError,
+      });
+      expect(sandbox.exec).toHaveBeenNthCalledWith(1, 'git -C /workspace diff HEAD');
+      expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'git -C /workspace status --porcelain');
+    },
+  );
+});
+
+describe('handleCloudflareSandbox routeHydrate hardening', () => {
+  it('writes the archive to /tmp and extracts after successful checks', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
+    const tmpTar = `${tmpB64}.tar.gz`;
+    sandbox.exec
+      .mockResolvedValueOnce({ exitCode: 0 })
+      .mockResolvedValueOnce({ exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: 'safe/file.txt\nsafe/dir/\n', exitCode: 0 })
+      .mockResolvedValueOnce({ exitCode: 0 })
+      .mockResolvedValueOnce({ exitCode: 0 });
+
+    const response = await callRoute('restore', {
+      sandboxId: 'sb-1',
+      archive: 'YXJjaGl2ZQ==',
+      path: '/workspace/project/',
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(sandbox.writeFile).toHaveBeenCalledWith(tmpB64, 'YXJjaGl2ZQ==');
+    expect(sandbox.exec).toHaveBeenNthCalledWith(1, 'mkdir -p "/workspace/project"');
+    expect(sandbox.exec).toHaveBeenNthCalledWith(2, `base64 -d ${tmpB64} > ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(3, `tar -tzf ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(
+      4,
+      `tar -xzf ${tmpTar} -C "/workspace/project" --no-same-owner`,
+    );
+    expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f ${tmpB64} ${tmpTar}`);
+  });
+
+  it('returns 500 when creating the target directory fails', async () => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockResolvedValueOnce({ exitCode: 1, stderr: 'mkdir denied' });
+
+    const response = await callRoute('restore', { sandboxId: 'sb-1', archive: 'x' });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Failed to create target directory: mkdir denied',
+      code: 'CF_ERROR',
+    });
+    expect(sandbox.exec).toHaveBeenCalledOnce();
+  });
+
+  it('returns 400 and cleans up when base64 decode fails', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
+    const tmpTar = `${tmpB64}.tar.gz`;
+    sandbox.exec
+      .mockResolvedValueOnce({ exitCode: 0 })
+      .mockResolvedValueOnce({ exitCode: 1, stderr: 'invalid input' })
+      .mockResolvedValueOnce({ exitCode: 0 });
+
+    const response = await callRoute('restore', { sandboxId: 'sb-1', archive: 'not-base64' });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Failed to decode archive: invalid input',
+      code: 'CF_ERROR',
+    });
+    expect(sandbox.exec).toHaveBeenNthCalledWith(3, `rm -f ${tmpB64} ${tmpTar}`);
+  });
+
+  it('returns 400 and cleans up when archive listing fails', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
+    const tmpTar = `${tmpB64}.tar.gz`;
+    sandbox.exec
+      .mockResolvedValueOnce({ exitCode: 0 })
+      .mockResolvedValueOnce({ exitCode: 0 })
+      .mockResolvedValueOnce({ exitCode: 2, stderr: 'not gzip' })
+      .mockResolvedValueOnce({ exitCode: 0 });
+
+    const response = await callRoute('restore', { sandboxId: 'sb-1', archive: 'bad-tar' });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Invalid archive: not gzip',
+      code: 'CF_ERROR',
+    });
+    expect(sandbox.exec).toHaveBeenNthCalledWith(4, `rm -f ${tmpB64} ${tmpTar}`);
+  });
+
+  it.each(['/etc/passwd', 'safe/../evil.txt'])(
+    'returns 400 and cleans up for unsafe archive member %s',
+    async (unsafeMember) => {
+      const sandbox = mockSandbox();
+      const uuid = mockUuid();
+      const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
+      const tmpTar = `${tmpB64}.tar.gz`;
+      sandbox.exec
+        .mockResolvedValueOnce({ exitCode: 0 })
+        .mockResolvedValueOnce({ exitCode: 0 })
+        .mockResolvedValueOnce({ stdout: `safe/file.txt\n${unsafeMember}\n`, exitCode: 0 })
+        .mockResolvedValueOnce({ exitCode: 0 });
+
+      const response = await callRoute('restore', { sandboxId: 'sb-1', archive: 'unsafe-tar' });
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: `Archive member rejected (path traversal): ${unsafeMember}`,
+        code: 'CF_ERROR',
+      });
+      expect(sandbox.exec).toHaveBeenNthCalledWith(4, `rm -f ${tmpB64} ${tmpTar}`);
+    },
+  );
+
+  it('returns 500 and cleans up when archive extraction fails', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
+    const tmpTar = `${tmpB64}.tar.gz`;
+    sandbox.exec
+      .mockResolvedValueOnce({ exitCode: 0 })
+      .mockResolvedValueOnce({ exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: 'safe/file.txt\n', exitCode: 0 })
+      .mockResolvedValueOnce({ exitCode: 2, stderr: 'permission denied' })
+      .mockResolvedValueOnce({ exitCode: 0 });
+
+    const response = await callRoute('restore', { sandboxId: 'sb-1', archive: 'safe-tar' });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Archive extraction failed: permission denied',
+      code: 'CF_ERROR',
+    });
+    expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f ${tmpB64} ${tmpTar}`);
+  });
+});
+
+describe('handleCloudflareSandbox snapshot stubs', () => {
+  it.each(['hibernate', 'restore-snapshot'])(
+    'returns 501 for %s with SNAPSHOT_NOT_SUPPORTED',
+    async (route) => {
+      const response = await callRoute(route, { sandboxId: 'sb-1' });
+
+      expect(response.status).toBe(501);
+      await expect(response.json()).resolves.toEqual({
+        error: 'Snapshots not supported on the Cloudflare provider yet',
+        code: 'SNAPSHOT_NOT_SUPPORTED',
+      });
+      expect(getSandboxMock).not.toHaveBeenCalled();
+    },
+  );
+});
