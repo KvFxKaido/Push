@@ -1,8 +1,11 @@
 /**
  * HTTP handler for /api/sandbox-cf/* — Cloudflare Sandbox SDK backend.
  *
- * Mirrors the wire format of /api/sandbox/* (Modal) so the client-side
- * CloudflareSandboxProvider is a drop-in sibling of ModalSandboxProvider.
+ * Provides the Cloudflare counterpart to /api/sandbox/* (Modal). Route
+ * coverage and high-level behaviour are intended to match, but the request /
+ * response shapes are not guaranteed byte-identical — each provider's
+ * client-side adapter owns its own wire format (camelCase here vs
+ * Modal's snake_case in a few places).
  *
  * Architecture:
  *   browser/CLI → Worker (this handler) → getSandbox(env.Sandbox, id) → DO → container
@@ -214,7 +217,18 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
 async function routeConnect(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandboxId');
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
-  // Probe is the liveness check — if the container is dead, exec throws.
+
+  // Liveness check: run a trivial exec and propagate failures. probeEnvironment
+  // swallows exec errors (returning an empty payload) so we can't rely on it
+  // to signal a dead sandbox — do the probe explicitly here and surface 404
+  // when it fails so callers fall back to create/restore.
+  const liveness = (await sandbox.exec('true').catch((err) => ({ __error: err }))) as
+    | { exitCode?: number }
+    | { __error: unknown };
+  if ('__error' in liveness || (liveness as { exitCode?: number }).exitCode !== 0) {
+    return Response.json({ error: 'Sandbox is not reachable', code: 'NOT_FOUND' }, { status: 404 });
+  }
+
   const environment = await probeEnvironment(sandbox);
   return Response.json({
     sandboxId,
@@ -400,10 +414,26 @@ async function routeDiff(env: Env, body: Json): Promise<Response> {
 
   const diffRes = (await sandbox.exec('git -C /workspace diff HEAD')) as {
     stdout?: string;
+    stderr?: string;
+    exitCode?: number;
   };
   const statusRes = (await sandbox.exec('git -C /workspace status --porcelain')) as {
     stdout?: string;
+    stderr?: string;
+    exitCode?: number;
   };
+
+  // Distinguish "no changes" (git succeeds, empty stdout) from "git failed"
+  // (non-zero exit, likely "/workspace not a git repo"). Callers need this
+  // because they interpret empty stdout as a clean tree.
+  if ((diffRes.exitCode ?? 0) !== 0 || (statusRes.exitCode ?? 0) !== 0) {
+    return Response.json({
+      diff: '',
+      truncated: false,
+      git_status: '',
+      error: (diffRes.stderr || statusRes.stderr || 'git command failed').trim(),
+    });
+  }
 
   const diff = diffRes.stdout ?? '';
   const MAX = 1_000_000;
@@ -436,12 +466,81 @@ async function routeHydrate(env: Env, body: Json): Promise<Response> {
   const path = (str(body.path) ?? '/workspace').replace(/\/+$/g, '') || '/workspace';
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
 
-  await sandbox.exec(`mkdir -p ${JSON.stringify(path)}`);
-  // Pipe base64 → tar via a here-string; safe because we control the base64 alphabet.
-  // Large payloads already handled by RESTORE_MAX_BODY_SIZE_BYTES upstream.
-  const cmd =
-    `printf %s ${JSON.stringify(archive)} | base64 -d | ` + `tar -xzf - -C ${JSON.stringify(path)}`;
-  await sandbox.exec(cmd);
+  // Write the base64 archive to a tmp file via the SDK instead of passing it
+  // through the shell command line. ARG_MAX on Linux is typically ~2 MB, and
+  // RESTORE_MAX_BODY_SIZE_BYTES allows up to 12 MB — inline piping would fail
+  // well before the body limit is exercised.
+  const tmpB64 = `/tmp/push-restore-${crypto.randomUUID()}.b64`;
+  const tmpTar = `${tmpB64}.tar.gz`;
+  await sandbox.writeFile(tmpB64, archive);
+
+  const mkdir = (await sandbox.exec(`mkdir -p ${JSON.stringify(path)}`)) as {
+    exitCode?: number;
+    stderr?: string;
+  };
+  if ((mkdir.exitCode ?? 0) !== 0) {
+    return Response.json(
+      {
+        error: `Failed to create target directory: ${mkdir.stderr ?? ''}`.trim(),
+        code: 'CF_ERROR',
+      },
+      { status: 500 },
+    );
+  }
+
+  const decode = (await sandbox.exec(`base64 -d ${tmpB64} > ${tmpTar}`)) as {
+    exitCode?: number;
+    stderr?: string;
+  };
+  if ((decode.exitCode ?? 0) !== 0) {
+    await sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`).catch(() => {});
+    return Response.json(
+      { error: `Failed to decode archive: ${decode.stderr ?? ''}`.trim(), code: 'CF_ERROR' },
+      { status: 400 },
+    );
+  }
+
+  // Defense in depth against path traversal: list archive members first and
+  // refuse if any entry is absolute or contains "..". Even with internal
+  // traffic we trust, this keeps a bad producer from escaping the target
+  // directory during hydrate.
+  const list = (await sandbox.exec(`tar -tzf ${tmpTar}`)) as {
+    stdout?: string;
+    exitCode?: number;
+    stderr?: string;
+  };
+  if ((list.exitCode ?? 0) !== 0) {
+    await sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`).catch(() => {});
+    return Response.json(
+      { error: `Invalid archive: ${list.stderr ?? ''}`.trim(), code: 'CF_ERROR' },
+      { status: 400 },
+    );
+  }
+  const members = (list.stdout ?? '').split('\n').filter(Boolean);
+  const unsafe = members.find((m) => m.startsWith('/') || m.split('/').some((seg) => seg === '..'));
+  if (unsafe) {
+    await sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`).catch(() => {});
+    return Response.json(
+      { error: `Archive member rejected (path traversal): ${unsafe}`, code: 'CF_ERROR' },
+      { status: 400 },
+    );
+  }
+
+  const extract = (await sandbox.exec(
+    `tar -xzf ${tmpTar} -C ${JSON.stringify(path)} --no-same-owner`,
+  )) as { exitCode?: number; stderr?: string };
+  await sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`).catch(() => {});
+
+  if ((extract.exitCode ?? 0) !== 0) {
+    return Response.json(
+      {
+        error: `Archive extraction failed: ${extract.stderr ?? ''}`.trim(),
+        code: 'CF_ERROR',
+      },
+      { status: 500 },
+    );
+  }
+
   return Response.json({ ok: true });
 }
 
@@ -533,8 +632,13 @@ function sliceByLines(
   endLine: number;
 } {
   const lines = content.split('\n');
-  const start = Math.max(1, startLine ?? 1);
   const end = Math.min(lines.length, endLine ?? lines.length);
+  // Clamp start to <= end so the returned range metadata stays self-consistent
+  // when callers request start_line past the end of the file. Without this,
+  // startLine could exceed endLine and clients would see an empty-but-invalid
+  // range shape.
+  const requestedStart = Math.max(1, startLine ?? 1);
+  const start = Math.min(requestedStart, end);
   const sliced = lines.slice(start - 1, end).join('\n');
   const omitted = lines.slice(end).join('\n');
   return {

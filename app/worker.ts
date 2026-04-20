@@ -75,16 +75,24 @@ export default {
         return withRequestIdOnResponse(await exactRoute.handler(requestWithId, env), requestId);
       }
 
-      // API route: sandbox proxy to Modal
+      // API route: sandbox proxy. PUSH_SANDBOX_PROVIDER (via wrangler vars)
+      // switches the default /api/sandbox/* handler between Modal and the
+      // Cloudflare Sandbox SDK. Browser/Worker callers have no process.env,
+      // so the toggle has to live server-side for the selector to actually
+      // select anything — client-side CloudflareSandboxProvider remains
+      // available for callers that pass an explicit provider to the factory.
       if (url.pathname.startsWith('/api/sandbox/') && request.method === 'POST') {
         const route = url.pathname.replace('/api/sandbox/', '');
+        const useCf = (env.PUSH_SANDBOX_PROVIDER ?? 'modal').toLowerCase() === 'cloudflare';
+        const handler = useCf ? handleCloudflareSandbox : handleSandbox;
         return withRequestIdOnResponse(
-          await handleSandbox(requestWithId, env, url, route, ctx),
+          await handler(requestWithId, env, url, route, ctx),
           requestId,
         );
       }
 
-      // API route: sandbox proxy to Cloudflare Sandbox SDK (sibling of Modal).
+      // Explicit-path alternative — forces Cloudflare regardless of the var.
+      // Useful for side-by-side A/B testing and debugging without a redeploy.
       if (url.pathname.startsWith('/api/sandbox-cf/') && request.method === 'POST') {
         const route = url.pathname.replace('/api/sandbox-cf/', '');
         return withRequestIdOnResponse(
