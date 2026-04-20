@@ -102,6 +102,7 @@ const KNOWN_SUBCOMMANDS = new Set([
   'daemon',
   'attach',
   'tui',
+  'theme',
   'init-deep',
 ]);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
@@ -185,6 +186,10 @@ Usage:
   push config show              Show saved CLI config
   push config init              Interactive setup wizard
   push config set ...           Save provider config defaults
+  push theme                    Show current TUI theme
+  push theme list               List available TUI themes
+  push theme preview [<name>]   Preview swatches for a theme (all themes if omitted)
+  push theme set <name>         Set TUI theme (default|neon|metallic|mono|solarized|forest)
 
 Options:
   --provider <name>             ollama | openrouter | zen | nvidia (default: ollama)
@@ -1510,6 +1515,53 @@ async function runConfigSubcommand(values, positionals) {
   return 0;
 }
 
+async function runThemeSubcommand(positionals) {
+  const { THEME_NAMES, VARIANTS, isThemeName, renderThemePreview } = await import('./tui-theme.js');
+  const config = await loadConfig();
+  const current = isThemeName(config.theme) ? config.theme : 'default';
+  const action = (positionals[1] || 'show').toLowerCase();
+
+  if (action === 'show') {
+    process.stdout.write(`${current}\n`);
+    return 0;
+  }
+
+  if (action === 'list') {
+    for (const name of THEME_NAMES) {
+      const marker = name === current ? '*' : ' ';
+      const variant = VARIANTS[name];
+      process.stdout.write(
+        `${marker} ${fmt.bold(name.padEnd(10))} ${fmt.dim(variant.description)}\n`,
+      );
+    }
+    return 0;
+  }
+
+  if (action === 'preview') {
+    const names = positionals[2] ? [positionals[2]] : THEME_NAMES;
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      if (!isThemeName(name)) {
+        throw new Error(`Unknown theme: ${name}. Available: ${THEME_NAMES.join(', ')}`);
+      }
+      if (i > 0) process.stdout.write('\n');
+      process.stdout.write(`${renderThemePreview(name)}\n`);
+    }
+    return 0;
+  }
+
+  // `push theme <name>` and `push theme set <name>` both set the theme.
+  const name = action === 'set' ? positionals[2] : action;
+  if (!name || !isThemeName(name)) {
+    throw new Error(`Unknown theme: ${name || '(missing)'}. Available: ${THEME_NAMES.join(', ')}`);
+  }
+
+  const next = { ...config, theme: name };
+  const configPath = await saveConfig(next);
+  process.stdout.write(`Saved theme: ${fmt.bold(name)} → ${fmt.dim(configPath)}\n`);
+  return 0;
+}
+
 async function readPidFile() {
   try {
     const raw = await fs.readFile(getPidPath(), 'utf8');
@@ -1967,6 +2019,10 @@ export async function main() {
     return runConfigSubcommand(values, positionals);
   }
 
+  if (subcommand === 'theme') {
+    return runThemeSubcommand(positionals);
+  }
+
   if (subcommand === 'resume' || subcommand === 'sessions') {
     const sessionsCmd = positionals[1] || '';
     if (sessionsCmd === 'rename') {
@@ -2252,7 +2308,7 @@ export async function main() {
 
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
     throw new Error(
-      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, init-deep. See: push --help`,
+      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, init-deep. See: push --help`,
     );
   }
 

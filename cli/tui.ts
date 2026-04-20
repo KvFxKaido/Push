@@ -12,7 +12,20 @@ import path from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
-import { createTheme } from './tui-theme.js';
+import {
+  createTheme,
+  isThemeName,
+  renderThemePreview,
+  THEME_NAMES,
+  VARIANTS,
+} from './tui-theme.js';
+import {
+  animateText,
+  ANIMATION_DESCRIPTIONS,
+  ANIMATION_EFFECTS,
+  isAnimationEffect,
+  TICK_MODULUS,
+} from './tui-animator.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
@@ -487,7 +500,7 @@ function renderHeader(
   buf,
   layout,
   theme,
-  { provider, model, session, sessionName, cwd, runState, branch },
+  { provider, model, session, sessionName, cwd, runState, branch, animation },
 ) {
   const { glyphs } = theme;
   const { top, left, width } = layout.header;
@@ -503,11 +516,16 @@ function renderHeader(
   // ── Top border: ┌─ ⬡ Push ──...──┐ ────────────────────────────
   // Fixed chars: ┌─ (2) + space (1) + ⬡ (1) + space (1) + Push (4) + space (1) + fill + ┐ (1) = 11 + fill = width
   const topFill = glyphs.horizontal.repeat(Math.max(0, width - 11));
+  const titleRaw = 'Push';
+  const title =
+    animation && animation.effect !== 'off'
+      ? theme.bold(animateText(titleRaw, animation.effect, animation.tick, theme.tier))
+      : theme.bold(theme.style('fg.primary', titleRaw));
   const topBorder =
     theme.style('fg.dim', `${glyphs.topLeft}${glyphs.horizontal} `) +
     theme.style('accent.link', '\u2B21') +
     ' ' +
-    theme.bold(theme.style('fg.primary', 'Push')) +
+    title +
     theme.style('fg.dim', ` ${topFill}${glyphs.topRight}`);
   buf.writeLine(top, left, topBorder);
 
@@ -1522,7 +1540,15 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
  * @param {{ sessionId?, provider?, model?, cwd?, maxRounds? }} options
  */
 export async function runTUI(options = {}) {
-  const theme = createTheme();
+  // Load config + apply env before theme construction so PUSH_THEME (and
+  // any other theme-relevant env vars) are in place when createTheme() reads them.
+  const config = await loadConfig();
+  applyConfigToEnv(config);
+
+  // `let` (not `const`) so /theme <name> can hot-swap the theme without
+  // restarting the TUI. Renderers receive `theme` as a parameter on every
+  // frame, so reassigning this closure variable propagates to the next draw.
+  let theme = createTheme();
   const tuiState = createTUIState();
   const composer = createComposer();
   const keybinds = createKeybindMap();
@@ -1530,9 +1556,6 @@ export async function runTUI(options = {}) {
   const inputHistory = createInputHistory();
 
   // ── Resolve provider/session ─────────────────────────────────────
-
-  const config = await loadConfig();
-  applyConfigToEnv(config);
   if (!Array.isArray(config.safeExecPatterns)) {
     config.safeExecPatterns = [];
   }
@@ -1784,6 +1807,32 @@ export async function runTUI(options = {}) {
     void refreshGitStatus();
   }, 5000);
 
+  // ── Animation ticker (prototype) ─────────────────────────────────
+  // Prototype: session-only (no config persistence), off by default,
+  // fixed 10 FPS, single interval that's only alive while an effect is
+  // selected. The ticker just bumps the counter + forces a redraw; all
+  // color math happens in render().
+  const ANIMATION_FPS = 10;
+  const ANIMATION_TICK_MS = Math.round(1000 / ANIMATION_FPS);
+  const animation = { effect: 'off', tick: 0 };
+  let animationInterval = null;
+  const startAnimationTicker = () => {
+    if (animationInterval) return;
+    animationInterval = setInterval(() => {
+      animation.tick = (animation.tick + 1) % TICK_MODULUS;
+      tuiState.dirty.add('all');
+      scheduler.flush();
+    }, ANIMATION_TICK_MS);
+    // Don't keep the Node event loop alive just for animation — if the rest
+    // of the TUI tears down, the ticker shouldn't block exit.
+    if (typeof animationInterval.unref === 'function') animationInterval.unref();
+  };
+  const stopAnimationTicker = () => {
+    if (!animationInterval) return;
+    clearInterval(animationInterval);
+    animationInterval = null;
+  };
+
   // Git status will be refreshed periodically and after certain events
 
   // ── File awareness tracking ─────────────────────────────────────
@@ -1909,6 +1958,7 @@ export async function runTUI(options = {}) {
         cwd: state.cwd,
         runState: tuiState.runState,
         branch,
+        animation: { effect: animation.effect, tick: animation.tick },
       });
       screenBuf.writeLine(
         layout.header.top + layout.header.height,
@@ -3452,6 +3502,120 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  async function handleThemeCommand(arg) {
+    const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
+    const sub = (parts[0] || 'show').toLowerCase();
+
+    if (sub === 'show') {
+      addTranscriptEntry(tuiState, 'status', `theme: ${theme.name}`);
+      scheduler.flush();
+      return;
+    }
+
+    if (sub === 'list') {
+      const lines = THEME_NAMES.map((name) => {
+        const marker = name === theme.name ? '*' : ' ';
+        return `  ${marker} ${name.padEnd(10)}  ${VARIANTS[name].description}`;
+      });
+      addTranscriptEntry(tuiState, 'status', ['Themes:', ...lines].join('\n'));
+      scheduler.flush();
+      return;
+    }
+
+    if (sub === 'preview') {
+      const target = parts[1];
+      const names = target ? [target] : THEME_NAMES;
+      for (const name of names) {
+        if (!isThemeName(name)) {
+          addTranscriptEntry(
+            tuiState,
+            'warning',
+            `Unknown theme: ${name}. Available: ${THEME_NAMES.join(', ')}`,
+          );
+          scheduler.flush();
+          return;
+        }
+      }
+      const body = names
+        .map((name) => renderThemePreview(name, { tier: theme.tier, unicode: theme.unicode }))
+        .join('\n\n');
+      addTranscriptEntry(tuiState, 'status', body);
+      scheduler.flush();
+      return;
+    }
+
+    // `/theme <name>` and `/theme set <name>` both switch live.
+    const name = sub === 'set' ? parts[1] : sub;
+    if (!name || !isThemeName(name)) {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Unknown theme: ${name || '(missing)'}. Available: ${THEME_NAMES.join(', ')}`,
+      );
+      scheduler.flush();
+      return;
+    }
+
+    // Build the new theme preserving the detected tier/unicode of the
+    // current session — `createTheme()` would re-read env, which is fine,
+    // but we pin tier/unicode so a config change can't mid-flight flip
+    // glyph sets or color tiers unexpectedly.
+    theme = createTheme({ tier: theme.tier, unicode: theme.unicode, name });
+    config.theme = name;
+    process.env.PUSH_THEME = name;
+    await saveConfig(config);
+
+    tuiState.dirty.add('all');
+    addTranscriptEntry(tuiState, 'status', `theme: ${name} (saved)`);
+    scheduler.flush();
+  }
+
+  function handleAnimateCommand(arg) {
+    const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
+    const sub = (parts[0] || '').toLowerCase();
+
+    if (!sub || sub === 'show') {
+      addTranscriptEntry(tuiState, 'status', `animate: ${animation.effect}`);
+      scheduler.flush();
+      return;
+    }
+
+    if (sub === 'list') {
+      const lines = ANIMATION_EFFECTS.map((name) => {
+        const marker = name === animation.effect ? '*' : ' ';
+        return `  ${marker} ${name.padEnd(10)}  ${ANIMATION_DESCRIPTIONS[name]}`;
+      });
+      addTranscriptEntry(
+        tuiState,
+        'status',
+        ['Animation effects (prototype):', ...lines].join('\n'),
+      );
+      scheduler.flush();
+      return;
+    }
+
+    if (!isAnimationEffect(sub)) {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Unknown animation effect: ${sub}. Available: ${ANIMATION_EFFECTS.join(', ')}`,
+      );
+      scheduler.flush();
+      return;
+    }
+
+    animation.effect = sub;
+    if (sub === 'off') {
+      stopAnimationTicker();
+      animation.tick = 0;
+    } else {
+      startAnimationTicker();
+    }
+    tuiState.dirty.add('all');
+    addTranscriptEntry(tuiState, 'status', `animate: ${sub} (session only)`);
+    scheduler.flush();
+  }
+
   function handleDebugCommand(arg) {
     const sub = (arg || '').trim();
     if (!sub) {
@@ -3516,6 +3680,14 @@ export async function runTUI(options = {}) {
         await handleConfigCommand(arg || null);
         return true;
 
+      case 'theme':
+        await handleThemeCommand(arg || null);
+        return true;
+
+      case 'animate':
+        handleAnimateCommand(arg || null);
+        return true;
+
       case 'debug':
         handleDebugCommand(arg || null);
         return true;
@@ -3537,6 +3709,13 @@ export async function runTUI(options = {}) {
             '  /config tavily <key> Set Tavily web search API key',
             '  /config sandbox on|off  Toggle local Docker sandbox',
             '  /config explain on|off  Toggle pattern explanations',
+            '  /theme               Show current theme',
+            '  /theme list          List available themes',
+            '  /theme preview [<name>]  Preview theme swatches (all themes if omitted)',
+            '  /theme <name>        Switch theme live and persist (default|neon|metallic|mono|solarized|forest)',
+            '  /animate             Show current animation effect',
+            '  /animate list        List animation effects',
+            '  /animate <effect>    Toggle header animation (off|pulse|shimmer|rainbow) — experimental',
             '  /debug runtime       Show runtime path/provider/session diagnostics',
             '  /skills              List available skills',
             '  /skills reload       Reload workspace + Claude skills',
@@ -4859,6 +5038,7 @@ export async function runTUI(options = {}) {
   } finally {
     // ── Cleanup ──────────────────────────────────────────────────
     clearInterval(gitStatusInterval);
+    stopAnimationTicker();
     scheduler.destroy();
     process.stdin.removeListener('data', onData);
     process.stdout.removeListener('resize', onResize);

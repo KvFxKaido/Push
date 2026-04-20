@@ -3,8 +3,13 @@ import assert from 'node:assert/strict';
 import {
   createTheme,
   detectColorTier,
+  detectThemeName,
   detectUnicode,
+  isThemeName,
+  renderThemePreview,
   TOKENS,
+  THEME_NAMES,
+  VARIANTS,
   GLYPHS_UNICODE,
   GLYPHS_ASCII,
 } from '../tui-theme.ts';
@@ -179,5 +184,194 @@ describe('createTheme', () => {
     assert.ok(result.includes('\x1b[38;2;'));
     assert.ok(result.includes('\x1b[48;2;'));
     assert.ok(result.includes('test'));
+  });
+
+  it('defaults theme name to "default"', () => {
+    const prev = process.env.PUSH_THEME;
+    delete process.env.PUSH_THEME;
+    try {
+      const theme = createTheme();
+      assert.equal(theme.name, 'default');
+    } finally {
+      if (prev !== undefined) process.env.PUSH_THEME = prev;
+    }
+  });
+
+  it('respects name override', () => {
+    const theme = createTheme({ name: 'neon', tier: 'truecolor' });
+    assert.equal(theme.name, 'neon');
+    // neon accent.primary = #ff2bd6 → rgb(255, 43, 214)
+    const esc = theme.fg('accent.primary');
+    assert.ok(esc.includes('255'));
+    assert.ok(esc.includes('43'));
+    assert.ok(esc.includes('214'));
+  });
+
+  it('falls back to default for unknown theme name', () => {
+    const theme = createTheme({ name: 'not-a-real-theme', tier: 'truecolor' });
+    assert.equal(theme.name, 'default');
+    const esc = theme.fg('accent.primary');
+    // default accent.primary = #0070f3 → rgb(0, 112, 243)
+    assert.ok(esc.includes('112'));
+    assert.ok(esc.includes('243'));
+  });
+
+  it('theme variants produce different escapes for accent.primary', () => {
+    const seen = new Set();
+    for (const name of THEME_NAMES) {
+      const theme = createTheme({ name, tier: 'truecolor' });
+      seen.add(theme.fg('accent.primary'));
+    }
+    // All 6 variants should produce distinct accent.primary colors
+    assert.equal(seen.size, THEME_NAMES.length);
+  });
+});
+
+// ─── THEME_NAMES / VARIANTS ─────────────────────────────────────
+
+describe('theme variants', () => {
+  it('THEME_NAMES includes expected set', () => {
+    assert.deepEqual([...THEME_NAMES].sort(), [
+      'default',
+      'forest',
+      'metallic',
+      'mono',
+      'neon',
+      'solarized',
+    ]);
+  });
+
+  it('every variant has a full token palette with valid hex values', () => {
+    const required = Object.keys(TOKENS);
+    for (const name of THEME_NAMES) {
+      const variant = VARIANTS[name];
+      assert.ok(variant, `Missing variant: ${name}`);
+      assert.ok(typeof variant.label === 'string' && variant.label.length > 0);
+      assert.ok(typeof variant.description === 'string' && variant.description.length > 0);
+      for (const token of required) {
+        assert.match(
+          variant.tokens[token],
+          /^#[0-9a-f]{6}$/i,
+          `${name}.${token} must be a hex color`,
+        );
+      }
+    }
+  });
+
+  it('every variant has an ANSI fallback entry for each token', () => {
+    const required = Object.keys(TOKENS);
+    for (const name of THEME_NAMES) {
+      const variant = VARIANTS[name];
+      for (const token of required) {
+        assert.ok(variant.ansiFallback[token], `${name} missing ANSI fallback for ${token}`);
+      }
+    }
+  });
+});
+
+// ─── detectThemeName / isThemeName ──────────────────────────────
+
+describe('isThemeName', () => {
+  it('accepts every registered theme name', () => {
+    for (const name of THEME_NAMES) {
+      assert.equal(isThemeName(name), true);
+    }
+  });
+  it('rejects unknown strings and non-strings', () => {
+    assert.equal(isThemeName('mystery'), false);
+    assert.equal(isThemeName(''), false);
+    assert.equal(isThemeName(42), false);
+    assert.equal(isThemeName(null), false);
+    assert.equal(isThemeName(undefined), false);
+  });
+  it('rejects Object.prototype keys (does not use `in`)', () => {
+    for (const key of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) {
+      assert.equal(isThemeName(key), false, `must reject prototype key: ${key}`);
+    }
+  });
+});
+
+describe('detectThemeName', () => {
+  it('returns "default" when PUSH_THEME unset', () => {
+    const prev = process.env.PUSH_THEME;
+    delete process.env.PUSH_THEME;
+    try {
+      assert.equal(detectThemeName(), 'default');
+    } finally {
+      if (prev !== undefined) process.env.PUSH_THEME = prev;
+    }
+  });
+
+  it('returns the requested theme when PUSH_THEME is set', () => {
+    const prev = process.env.PUSH_THEME;
+    process.env.PUSH_THEME = 'forest';
+    try {
+      assert.equal(detectThemeName(), 'forest');
+    } finally {
+      if (prev === undefined) delete process.env.PUSH_THEME;
+      else process.env.PUSH_THEME = prev;
+    }
+  });
+
+  it('ignores PUSH_THEME when value is unknown', () => {
+    const prev = process.env.PUSH_THEME;
+    process.env.PUSH_THEME = 'not-a-real-theme';
+    try {
+      assert.equal(detectThemeName(), 'default');
+    } finally {
+      if (prev === undefined) delete process.env.PUSH_THEME;
+      else process.env.PUSH_THEME = prev;
+    }
+  });
+
+  it('is case-insensitive and tolerates whitespace', () => {
+    const prev = process.env.PUSH_THEME;
+    process.env.PUSH_THEME = '  NEON  ';
+    try {
+      assert.equal(detectThemeName(), 'neon');
+    } finally {
+      if (prev === undefined) delete process.env.PUSH_THEME;
+      else process.env.PUSH_THEME = prev;
+    }
+  });
+});
+
+// ─── renderThemePreview ─────────────────────────────────────────
+
+describe('renderThemePreview', () => {
+  it('includes the variant label, description, and all token hex values', () => {
+    const preview = renderThemePreview('neon', { tier: 'none', unicode: true });
+    const variant = VARIANTS.neon;
+    assert.ok(preview.includes(variant.label));
+    assert.ok(preview.includes(variant.description));
+    for (const hex of Object.values(variant.tokens)) {
+      assert.ok(preview.includes(hex), `preview missing hex ${hex}`);
+    }
+    for (const token of Object.keys(TOKENS)) {
+      assert.ok(preview.includes(token), `preview missing token label ${token}`);
+    }
+  });
+
+  it('falls back to default for unknown theme names', () => {
+    const preview = renderThemePreview('not-a-real-theme', { tier: 'none' });
+    assert.ok(preview.includes(VARIANTS.default.label));
+  });
+
+  it('emits ANSI escapes when tier=truecolor', () => {
+    const preview = renderThemePreview('forest', { tier: 'truecolor', unicode: true });
+    assert.ok(preview.includes('\x1b[38;2;'));
+    assert.ok(preview.includes('\x1b[48;2;'));
+  });
+
+  it('emits no ANSI escapes when tier=none', () => {
+    const preview = renderThemePreview('mono', { tier: 'none', unicode: true });
+    assert.equal(preview.includes('\x1b['), false);
+  });
+
+  it('uses ASCII glyphs when unicode=false', () => {
+    const preview = renderThemePreview('default', { tier: 'none', unicode: false });
+    // ASCII swatch uses `#` characters, unicode uses block glyphs
+    assert.ok(preview.includes('######'));
+    assert.equal(preview.includes('██████'), false);
   });
 });

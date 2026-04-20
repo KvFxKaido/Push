@@ -16,6 +16,7 @@ export interface PushConfig {
   tavilyApiKey?: string;
   webSearchBackend?: string;
   execMode?: string;
+  theme?: string;
   ollama?: ProviderConfig;
   openrouter?: ProviderConfig;
   zen?: ProviderConfig;
@@ -85,6 +86,7 @@ export function applyConfigToEnv(config: PushConfig): void {
   setEnvIfMissing('PUSH_TAVILY_API_KEY', config.tavilyApiKey);
   setEnvIfMissing('PUSH_WEB_SEARCH_BACKEND', config.webSearchBackend);
   setEnvIfMissing('PUSH_EXEC_MODE', config.execMode);
+  setEnvIfMissing('PUSH_THEME', config.theme);
 
   const ollama = ensureObject(config.ollama) as ProviderConfig;
   setEnvIfMissing('PUSH_OLLAMA_URL', ollama.url);
