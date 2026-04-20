@@ -49,6 +49,35 @@ export function isAnimationEffect(value: unknown): value is AnimationEffect {
   return typeof value === 'string' && (ANIMATION_EFFECTS as readonly string[]).includes(value);
 }
 
+/**
+ * True when the environment asks us to suppress motion — either our own
+ * `PUSH_REDUCED_MOTION` or the widely-used `REDUCED_MOTION` convention.
+ * When this returns true, animation code must behave as if the effect is
+ * `off` regardless of user config; nothing should override this.
+ */
+export function isReducedMotion(): boolean {
+  const keys = ['PUSH_REDUCED_MOTION', 'REDUCED_MOTION'] as const;
+  for (const key of keys) {
+    const value = (process.env[key] || '').toLowerCase().trim();
+    if (value === '' || value === '0' || value === 'false' || value === 'no') continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Resolve the animation effect from the environment. Reduced-motion always
+ * wins and forces `off`. Otherwise returns the effect named by
+ * `PUSH_ANIMATION`, or `null` when the env doesn't express a preference so
+ * callers can fall back to (for example) the current theme's default.
+ */
+export function detectAnimationEffect(): AnimationEffect | null {
+  if (isReducedMotion()) return 'off';
+  const env = (process.env.PUSH_ANIMATION || '').toLowerCase().trim();
+  if (!env) return null;
+  return isAnimationEffect(env) ? env : null;
+}
+
 // ── Color math ──────────────────────────────────────────────────────
 
 function clamp8(n: number): number {

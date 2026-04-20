@@ -4,9 +4,11 @@ import {
   animateText,
   ANIMATION_DESCRIPTIONS,
   ANIMATION_EFFECTS,
+  detectAnimationEffect,
   effectColor,
   hslToRgb,
   isAnimationEffect,
+  isReducedMotion,
   TICK_MODULUS,
 } from '../tui-animator.ts';
 
@@ -175,5 +177,103 @@ describe('TICK_MODULUS', () => {
         `${effect} is not continuous across TICK_MODULUS wraparound`,
       );
     }
+  });
+});
+
+// ─── isReducedMotion / detectAnimationEffect ───────────────────
+
+function withEnv(vars, fn) {
+  const prev = {};
+  for (const k of Object.keys(vars)) prev[k] = process.env[k];
+  try {
+    for (const [k, v] of Object.entries(vars)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+describe('isReducedMotion', () => {
+  it('returns false when neither env var is set', () => {
+    withEnv({ PUSH_REDUCED_MOTION: undefined, REDUCED_MOTION: undefined }, () => {
+      assert.equal(isReducedMotion(), false);
+    });
+  });
+
+  it('returns true when PUSH_REDUCED_MOTION is truthy', () => {
+    withEnv({ PUSH_REDUCED_MOTION: '1', REDUCED_MOTION: undefined }, () => {
+      assert.equal(isReducedMotion(), true);
+    });
+  });
+
+  it('returns true when REDUCED_MOTION is truthy (standard convention)', () => {
+    withEnv({ PUSH_REDUCED_MOTION: undefined, REDUCED_MOTION: 'true' }, () => {
+      assert.equal(isReducedMotion(), true);
+    });
+  });
+
+  it('treats "0", "false", "no", and empty as falsy', () => {
+    for (const falsy of ['0', 'false', 'no', '', '  ']) {
+      withEnv({ PUSH_REDUCED_MOTION: falsy, REDUCED_MOTION: undefined }, () => {
+        assert.equal(isReducedMotion(), false, `expected "${falsy}" to be falsy`);
+      });
+    }
+  });
+});
+
+describe('detectAnimationEffect', () => {
+  it('returns null when PUSH_ANIMATION unset (and not reduced-motion)', () => {
+    withEnv(
+      { PUSH_ANIMATION: undefined, PUSH_REDUCED_MOTION: undefined, REDUCED_MOTION: undefined },
+      () => {
+        assert.equal(detectAnimationEffect(), null);
+      },
+    );
+  });
+
+  it('returns the named effect from PUSH_ANIMATION', () => {
+    withEnv(
+      { PUSH_ANIMATION: 'pulse', PUSH_REDUCED_MOTION: undefined, REDUCED_MOTION: undefined },
+      () => {
+        assert.equal(detectAnimationEffect(), 'pulse');
+      },
+    );
+  });
+
+  it('is case-insensitive and tolerates whitespace', () => {
+    withEnv(
+      {
+        PUSH_ANIMATION: '  RAINBOW  ',
+        PUSH_REDUCED_MOTION: undefined,
+        REDUCED_MOTION: undefined,
+      },
+      () => {
+        assert.equal(detectAnimationEffect(), 'rainbow');
+      },
+    );
+  });
+
+  it('returns null when PUSH_ANIMATION is not a known effect', () => {
+    withEnv(
+      { PUSH_ANIMATION: 'sparkle', PUSH_REDUCED_MOTION: undefined, REDUCED_MOTION: undefined },
+      () => {
+        assert.equal(detectAnimationEffect(), null);
+      },
+    );
+  });
+
+  it('reduced-motion forces "off" regardless of PUSH_ANIMATION', () => {
+    withEnv(
+      { PUSH_ANIMATION: 'rainbow', PUSH_REDUCED_MOTION: '1', REDUCED_MOTION: undefined },
+      () => {
+        assert.equal(detectAnimationEffect(), 'off');
+      },
+    );
   });
 });

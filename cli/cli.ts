@@ -103,6 +103,7 @@ const KNOWN_SUBCOMMANDS = new Set([
   'attach',
   'tui',
   'theme',
+  'animate',
   'init-deep',
 ]);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
@@ -190,6 +191,10 @@ Usage:
   push theme list               List available TUI themes
   push theme preview [<name>]   Preview swatches for a theme (all themes if omitted)
   push theme set <name>         Set TUI theme (default|neon|metallic|mono|solarized|forest)
+  push animate                  Show pinned TUI animation (or "follow-theme")
+  push animate list             List animation effects
+  push animate set <name>       Pin TUI animation (off|pulse|shimmer|rainbow)
+  push animate follow-theme     Unpin: use each theme's default animation
 
 Options:
   --provider <name>             ollama | openrouter | zen | nvidia (default: ollama)
@@ -1562,6 +1567,54 @@ async function runThemeSubcommand(positionals) {
   return 0;
 }
 
+async function runAnimateSubcommand(positionals) {
+  const { ANIMATION_EFFECTS, ANIMATION_DESCRIPTIONS, isAnimationEffect, isReducedMotion } =
+    await import('./tui-animator.js');
+  const config = await loadConfig();
+  const action = (positionals[1] || 'show').toLowerCase();
+
+  if (action === 'show') {
+    const pinned = typeof config.animation === 'string' ? config.animation : 'follow-theme';
+    const suffix = isReducedMotion() ? ' (reduced-motion active — forced off)' : '';
+    process.stdout.write(`${pinned}${suffix}\n`);
+    return 0;
+  }
+
+  if (action === 'list') {
+    const current = typeof config.animation === 'string' ? config.animation : null;
+    for (const name of ANIMATION_EFFECTS) {
+      const marker = name === current ? '*' : ' ';
+      process.stdout.write(
+        `${marker} ${fmt.bold(name.padEnd(10))} ${fmt.dim(ANIMATION_DESCRIPTIONS[name])}\n`,
+      );
+    }
+    process.stdout.write(
+      `  ${fmt.bold('follow-theme')} ${fmt.dim('Unpin: use each theme’s default animation')}\n`,
+    );
+    return 0;
+  }
+
+  // `push animate <name>` and `push animate set <name>` both pin the effect.
+  // `push animate follow-theme` / `push animate unpin` clear the pin.
+  const value = action === 'set' ? positionals[2] : action;
+  if (value === 'follow-theme' || value === 'unpin') {
+    const next = { ...config };
+    delete next.animation;
+    const configPath = await saveConfig(next);
+    process.stdout.write(`Saved: animation follows theme → ${fmt.dim(configPath)}\n`);
+    return 0;
+  }
+  if (!value || !isAnimationEffect(value)) {
+    throw new Error(
+      `Unknown animation effect: ${value || '(missing)'}. Available: ${ANIMATION_EFFECTS.join(', ')}, follow-theme`,
+    );
+  }
+  const next = { ...config, animation: value };
+  const configPath = await saveConfig(next);
+  process.stdout.write(`Saved animation: ${fmt.bold(value)} → ${fmt.dim(configPath)}\n`);
+  return 0;
+}
+
 async function readPidFile() {
   try {
     const raw = await fs.readFile(getPidPath(), 'utf8');
@@ -2023,6 +2076,10 @@ export async function main() {
     return runThemeSubcommand(positionals);
   }
 
+  if (subcommand === 'animate') {
+    return runAnimateSubcommand(positionals);
+  }
+
   if (subcommand === 'resume' || subcommand === 'sessions') {
     const sessionsCmd = positionals[1] || '';
     if (sessionsCmd === 'rename') {
@@ -2308,7 +2365,7 @@ export async function main() {
 
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
     throw new Error(
-      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, init-deep. See: push --help`,
+      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, animate, init-deep. See: push --help`,
     );
   }
 
