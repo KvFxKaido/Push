@@ -51,6 +51,7 @@ import {
 import { handleGitHubTools } from './src/worker/worker-github-tools';
 import { sanitizeUrlForLogging } from './src/worker/worker-log-utils';
 import { summarizeSnapshotIndex } from './src/worker/snapshot-index';
+import { handleAdminSnapshots } from './src/worker/admin-routes';
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -237,6 +238,7 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/ollama/search', method: 'POST', handler: handleOllamaSearch },
   { path: '/api/search/tavily', method: 'POST', handler: handleTavilySearch },
   { path: '/api/search', method: 'POST', handler: handleFreeSearch },
+  { path: '/api/admin/snapshots', method: 'GET', handler: handleAdminSnapshots },
 ];
 
 function matchExactApiRoute(pathname: string, method: string): ExactApiRoute | null {

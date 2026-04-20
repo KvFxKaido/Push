@@ -40,6 +40,8 @@ export interface Env {
   // Optional because local dev or test envs may not bind the namespace; callers
   // must degrade gracefully when it's absent.
   SNAPSHOT_INDEX?: KVNamespace;
+  // Gate for /api/admin/* routes. When unset the admin endpoints 404.
+  ADMIN_TOKEN?: string;
   // GitHub App credentials
   GITHUB_APP_ID?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
