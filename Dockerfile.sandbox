@@ -1,0 +1,26 @@
+# Push sandbox image — Cloudflare Sandbox SDK backend.
+#
+# Mirrors the Modal image defined in sandbox/app.py so behaviour matches between
+# providers during coexistence. Keep the tag pinned to the @cloudflare/sandbox
+# package version in app/package.json — version mismatch produces SDK warnings
+# and can break features.
+#
+# Base image (`-python` variant) already provides: Ubuntu 22.04, Node.js 20,
+# Bun, Python 3.11 (pip + venv), git, curl, wget, jq, zip, unzip, procps,
+# ca-certificates, matplotlib, numpy, pandas, ipython.
+
+FROM docker.io/cloudflare/sandbox:0.8.11-python
+
+# ripgrep is not in the default image — required by Push tool execution.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ripgrep \
+ && rm -rf /var/lib/apt/lists/*
+
+# Python tooling used by agent workloads (lint/test of user Python code).
+# Use `python3 -m pip` — the base image's Python install exposes `pip3`, not
+# the unversioned `pip`, so the module form is the portable invocation.
+RUN python3 -m pip install --no-cache-dir ruff pytest
+
+# Default git identity — overridden per-session when a GitHub token is present.
+RUN git config --global user.email 'sandbox@diff.app' \
+ && git config --global user.name 'Push User'

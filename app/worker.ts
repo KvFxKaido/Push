@@ -48,10 +48,17 @@ import {
   handleGitHubAppOAuth,
   handleGitHubAppToken,
 } from './src/worker/worker-infra';
+import { handleCloudflareSandbox } from './src/worker/worker-cf-sandbox';
 import { handleGitHubTools } from './src/worker/worker-github-tools';
 import { sanitizeUrlForLogging } from './src/worker/worker-log-utils';
 import { summarizeSnapshotIndex } from './src/worker/snapshot-index';
 import { handleAdminSnapshots } from './src/worker/admin-routes';
+
+// Re-export the Sandbox Durable Object class so wrangler can bind to it.
+// The Cloudflare Sandbox SDK ships the DO implementation; we only need to
+// expose the class symbol from the Worker entry. Subclass here later if we
+// need outbound handlers (outboundByHost) or custom lifecycle hooks.
+export { Sandbox } from '@cloudflare/sandbox';
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -68,11 +75,28 @@ export default {
         return withRequestIdOnResponse(await exactRoute.handler(requestWithId, env), requestId);
       }
 
-      // API route: sandbox proxy to Modal
+      // API route: sandbox proxy. PUSH_SANDBOX_PROVIDER (via wrangler vars)
+      // switches the default /api/sandbox/* handler between Modal and the
+      // Cloudflare Sandbox SDK. Browser/Worker callers have no process.env,
+      // so the toggle has to live server-side for the selector to actually
+      // select anything — client-side CloudflareSandboxProvider remains
+      // available for callers that pass an explicit provider to the factory.
       if (url.pathname.startsWith('/api/sandbox/') && request.method === 'POST') {
         const route = url.pathname.replace('/api/sandbox/', '');
+        const useCf = (env.PUSH_SANDBOX_PROVIDER ?? 'modal').toLowerCase() === 'cloudflare';
+        const handler = useCf ? handleCloudflareSandbox : handleSandbox;
         return withRequestIdOnResponse(
-          await handleSandbox(requestWithId, env, url, route, ctx),
+          await handler(requestWithId, env, url, route, ctx),
+          requestId,
+        );
+      }
+
+      // Explicit-path alternative — forces Cloudflare regardless of the var.
+      // Useful for side-by-side A/B testing and debugging without a redeploy.
+      if (url.pathname.startsWith('/api/sandbox-cf/') && request.method === 'POST') {
+        const route = url.pathname.replace('/api/sandbox-cf/', '');
+        return withRequestIdOnResponse(
+          await handleCloudflareSandbox(requestWithId, env, url, route, ctx),
           requestId,
         );
       }
