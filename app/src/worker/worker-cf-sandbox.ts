@@ -11,13 +11,14 @@
  *   browser/CLI → Worker (this handler) → getSandbox(env.Sandbox, id) → DO → container
  *
  * Known MVP gaps (tracked as follow-up PRs):
- *   - No owner-token auth. Any request that passes origin + rate-limit checks
- *     can reach any sandboxId. Add R2- or KV-backed token storage before
- *     exposing CF provider to untrusted multi-tenant traffic.
  *   - No filesystem snapshots (hibernate/restore-snapshot return 501).
  *     Follow-up will back these with R2 tar.gz archives.
  *   - workspaceRevision and file version (SHA) are best-effort — the SDK
  *     doesn't expose monotonic revisions the way Modal's app.py does.
+ *
+ * Auth: every route except `create` requires an ownerToken matching the
+ * one issued at sandbox creation time. See `sandbox-token-store.ts`.
+ * Fails closed when SANDBOX_TOKENS KV binding is missing.
  */
 
 import type { ExecutionContext } from '@cloudflare/workers-types';
@@ -32,6 +33,7 @@ import {
   RESTORE_MAX_BODY_SIZE_BYTES,
 } from './worker-middleware';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
+import { issueToken, revokeToken, verifyToken } from './sandbox-token-store';
 
 const ROUTES = new Set([
   'create',
@@ -115,6 +117,34 @@ export async function handleCloudflareSandbox(
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
+  // Owner-token gate — every route except `create` must present a valid
+  // token matching the one issued at sandbox creation time. `create` is
+  // the only exemption (that's where tokens are minted). Snapshot stubs
+  // stay gated too so real implementations inherit auth for free.
+  // Fails closed on every failure mode: missing binding, missing input,
+  // missing record, mismatch, or unexpected runtime throw.
+  if (route !== 'create') {
+    const sandboxId = typeof body.sandboxId === 'string' ? body.sandboxId : '';
+    const providedToken = typeof body.ownerToken === 'string' ? body.ownerToken : '';
+    let auth;
+    try {
+      auth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
+    } catch (err) {
+      wlog('error', 'cf_sandbox_auth_throw', {
+        requestId,
+        route,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return Response.json({ error: 'Auth check failed', code: 'NOT_CONFIGURED' }, { status: 503 });
+    }
+    if (!auth.ok) {
+      return Response.json(
+        { error: authErrorMessage(auth.code), code: auth.code },
+        { status: auth.status },
+      );
+    }
+  }
+
   try {
     switch (route) {
       case 'create':
@@ -176,11 +206,26 @@ export async function handleCloudflareSandbox(
 // ---------------------------------------------------------------------------
 
 async function routeCreate(env: Env, body: Json): Promise<Response> {
+  // Fail closed at create time too: if SANDBOX_TOKENS isn't bound, we can't
+  // mint a verifiable token, and issuing a sandbox without one would leave
+  // it unauth'd for its entire lifetime. Require the binding instead.
+  if (!env.SANDBOX_TOKENS) {
+    return Response.json(
+      {
+        error: 'SANDBOX_TOKENS KV binding not configured',
+        code: 'NOT_CONFIGURED',
+        details: 'Create a KV namespace via wrangler and bind it as SANDBOX_TOKENS.',
+      },
+      { status: 503 },
+    );
+  }
+
   const repo = str(body.repo) ?? '';
   const branch = str(body.branch) ?? 'main';
   const githubToken = str(body.githubToken);
   const gitIdentity = body.gitIdentity as { name?: string; email?: string } | undefined;
   const seedFiles = (body.seedFiles as Array<{ path: string; content: string }> | undefined) ?? [];
+  const ownerHint = str(body.ownerHint);
 
   const sandboxId = crypto.randomUUID();
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
@@ -205,9 +250,24 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
 
   const environment = await probeEnvironment(sandbox);
 
+  // Mint the owner token AFTER all setup has succeeded. If provisioning
+  // fails before this point the sandbox dies without ever being reachable,
+  // so there's no partial-state to clean up. If token issuance ITSELF
+  // fails (transient KV failure), destroy the sandbox before returning
+  // an error — otherwise we'd orphan a live, un-verifiable, unreachable
+  // container that can't even be cleaned up via API (the cleanup route
+  // now requires a token we never stored).
+  let ownerToken: string;
+  try {
+    ownerToken = await issueToken(env.SANDBOX_TOKENS, sandboxId, ownerHint);
+  } catch (err) {
+    await sandbox.destroy?.().catch(() => {});
+    throw err;
+  }
+
   return Response.json({
     sandboxId,
-    ownerToken: '', // Not used by CF provider yet; auth gap documented in header.
+    ownerToken,
     status: 'ready',
     workspaceRevision: 0,
     environment,
@@ -245,6 +305,10 @@ async function routeCleanup(env: Env, body: Json): Promise<Response> {
   // Sandbox SDK's `destroy()` tears down the container + DO state. Optional
   // chain keeps this idempotent if the instance is already gone.
   await sandbox.destroy?.();
+  // Revoke the owner token after destroy succeeds. Order matters: if
+  // destroy throws, we keep the token so the caller can retry without
+  // losing auth. KV's TTL still cleans up eventually.
+  await revokeToken(env.SANDBOX_TOKENS, sandboxId);
   return Response.json({ ok: true });
 }
 
@@ -670,6 +734,17 @@ function classifyCfError(err: unknown): string {
   if (/not found|no such/i.test(msg)) return 'NOT_FOUND';
   if (/container|crashed|unhealthy/i.test(msg)) return 'CONTAINER_ERROR';
   return 'CF_ERROR';
+}
+
+function authErrorMessage(code: 'NOT_FOUND' | 'AUTH_FAILURE' | 'NOT_CONFIGURED'): string {
+  switch (code) {
+    case 'NOT_FOUND':
+      return 'Sandbox not found or expired';
+    case 'AUTH_FAILURE':
+      return 'Owner token does not match';
+    case 'NOT_CONFIGURED':
+      return 'SANDBOX_TOKENS KV binding not configured';
+  }
 }
 
 function str(v: unknown): string | undefined {

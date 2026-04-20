@@ -2,8 +2,10 @@
  * Cloudflare implementation of the SandboxProvider interface.
  *
  * Calls /api/sandbox-cf/* on the Worker, which proxies to the Sandbox SDK
- * (see app/src/worker/worker-cf-sandbox.ts). Owner tokens are not yet used —
- * the CF path currently relies on origin validation + rate limiting for auth.
+ * (see app/src/worker/worker-cf-sandbox.ts). Owner tokens are cached in a
+ * per-instance Map keyed by sandboxId, populated by create/connect and
+ * injected into every subsequent request body. The server rejects any
+ * non-create route that doesn't present a matching token.
  *
  * Capabilities:
  *   - snapshots: false (follow-up PR adds R2-backed archive snapshots)
@@ -106,6 +108,16 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     externalStorage: false,
   };
 
+  // Per-instance token cache. Keyed by sandboxId, populated on create/connect
+  // and injected into every subsequent body. The web app typically has one
+  // provider instance per session; on page reload the map resets and callers
+  // must invoke connect() with a persisted token to repopulate.
+  private ownerTokens = new Map<string, string>();
+
+  private tokenFor(sandboxId: string): string {
+    return this.ownerTokens.get(sandboxId) ?? '';
+  }
+
   // -- Lifecycle ------------------------------------------------------------
 
   async create(manifest: SandboxManifest): Promise<SandboxSession> {
@@ -128,9 +140,14 @@ export class CloudflareSandboxProvider implements SandboxProvider {
       throw new SandboxError(res.error ?? 'Sandbox creation failed', 'CONTAINER_ERROR');
     }
 
+    const ownerToken = res.ownerToken ?? '';
+    if (ownerToken) {
+      this.ownerTokens.set(res.sandboxId, ownerToken);
+    }
+
     return {
       sandboxId: res.sandboxId,
-      ownerToken: res.ownerToken ?? '',
+      ownerToken,
       status: res.status,
       workspaceRevision: res.workspaceRevision,
       environment: res.environment,
@@ -138,6 +155,11 @@ export class CloudflareSandboxProvider implements SandboxProvider {
   }
 
   async connect(sandboxId: string, ownerToken: string): Promise<SandboxSession | null> {
+    // Populate the token cache up front so this call itself carries the
+    // token for the server's dispatch-level auth gate to verify.
+    if (ownerToken) {
+      this.ownerTokens.set(sandboxId, ownerToken);
+    }
     try {
       const res = await call<{
         sandboxId: string;
@@ -154,17 +176,27 @@ export class CloudflareSandboxProvider implements SandboxProvider {
         environment: res.environment,
       };
     } catch (err) {
-      if (err instanceof SandboxError && err.code === 'NOT_FOUND') return null;
+      if (err instanceof SandboxError && err.code === 'NOT_FOUND') {
+        this.ownerTokens.delete(sandboxId);
+        return null;
+      }
       throw err;
     }
   }
 
   async cleanup(sandboxId: string): Promise<void> {
     try {
-      await call<{ ok: boolean }>('cleanup', { sandboxId });
+      await call<{ ok: boolean }>('cleanup', {
+        sandboxId,
+        ownerToken: this.tokenFor(sandboxId),
+      });
+      this.ownerTokens.delete(sandboxId);
     } catch (err) {
       // Idempotent — treat NOT_FOUND as success (already destroyed).
-      if (err instanceof SandboxError && err.code === 'NOT_FOUND') return;
+      if (err instanceof SandboxError && err.code === 'NOT_FOUND') {
+        this.ownerTokens.delete(sandboxId);
+        return;
+      }
       throw err;
     }
   }
@@ -181,6 +213,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
       workspaceRevision?: number;
     }>('exec', {
       sandboxId,
+      ownerToken: this.tokenFor(sandboxId),
       command,
       workdir: options?.workdir,
     });
@@ -196,6 +229,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
   ): Promise<FileReadResult> {
     return await call<FileReadResult>('read', {
       sandboxId,
+      ownerToken: this.tokenFor(sandboxId),
       path,
       start_line: options?.startLine,
       end_line: options?.endLine,
@@ -210,6 +244,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
   ): Promise<WriteResult> {
     return await call<WriteResult>('write', {
       sandboxId,
+      ownerToken: this.tokenFor(sandboxId),
       path,
       content,
       expected_version: options?.expectedVersion,
@@ -224,6 +259,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
   ): Promise<BatchWriteResult> {
     return await call<BatchWriteResult>('batch-write', {
       sandboxId,
+      ownerToken: this.tokenFor(sandboxId),
       files: files.map((f) => ({
         path: f.path,
         content: f.content,
@@ -237,34 +273,57 @@ export class CloudflareSandboxProvider implements SandboxProvider {
   // server-side stub treats delete as unconditional. Widen here when the
   // optimistic-concurrency parity gap is closed.
   async deleteFile(sandboxId: string, path: string): Promise<{ workspace_revision?: number }> {
-    return await call<{ workspace_revision?: number }>('delete', { sandboxId, path });
+    return await call<{ workspace_revision?: number }>('delete', {
+      sandboxId,
+      ownerToken: this.tokenFor(sandboxId),
+      path,
+    });
   }
 
   async listDirectory(sandboxId: string, path: string): Promise<FileEntry[]> {
-    const res = await call<{ entries: FileEntry[] }>('list', { sandboxId, path });
+    const res = await call<{ entries: FileEntry[] }>('list', {
+      sandboxId,
+      ownerToken: this.tokenFor(sandboxId),
+      path,
+    });
     return res.entries;
   }
 
   // -- Git ------------------------------------------------------------------
 
   async getDiff(sandboxId: string): Promise<DiffResult> {
-    return await call<DiffResult>('diff', { sandboxId });
+    return await call<DiffResult>('diff', {
+      sandboxId,
+      ownerToken: this.tokenFor(sandboxId),
+    });
   }
 
   // -- Archive --------------------------------------------------------------
 
   async createArchive(sandboxId: string, path?: string): Promise<ArchiveResult> {
-    return await call<ArchiveResult>('download', { sandboxId, path });
+    return await call<ArchiveResult>('download', {
+      sandboxId,
+      ownerToken: this.tokenFor(sandboxId),
+      path,
+    });
   }
 
   async hydrateArchive(sandboxId: string, archive: string, path?: string): Promise<void> {
-    await call<{ ok: boolean }>('restore', { sandboxId, archive, path });
+    await call<{ ok: boolean }>('restore', {
+      sandboxId,
+      ownerToken: this.tokenFor(sandboxId),
+      archive,
+      path,
+    });
   }
 
   // -- Environment ----------------------------------------------------------
 
   async probeEnvironment(sandboxId: string): Promise<SandboxEnvironment> {
-    return await call<SandboxEnvironment>('probe', { sandboxId });
+    return await call<SandboxEnvironment>('probe', {
+      sandboxId,
+      ownerToken: this.tokenFor(sandboxId),
+    });
   }
 
   // -- Snapshots (not supported on CF provider yet) -------------------------

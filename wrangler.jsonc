@@ -40,6 +40,18 @@
   // app/src/worker/snapshot-index.ts. Snapshot bytes themselves live as Modal
   // Images — this index is a thin pointer layer used for resume lookups and
   // the daily eviction cron.
+  // Sandbox owner-token store — per-provider KV binding for Cloudflare's
+  // /api/sandbox-cf/* path. Must be added by the operator before the CF
+  // path is usable, to avoid committing a placeholder id that would break
+  // `wrangler deploy`. Add manually after running:
+  //
+  //   npx wrangler kv:namespace create SANDBOX_TOKENS
+  //
+  // Then insert into the kv_namespaces array below:
+  //   { "binding": "SANDBOX_TOKENS", "id": "<returned id>" }
+  //
+  // Until the binding is added, /api/sandbox-cf/* routes fail closed with
+  // NOT_CONFIGURED 503 (including create). Modal path is unaffected.
   "kv_namespaces": [
     {
       "binding": "SNAPSHOT_INDEX",

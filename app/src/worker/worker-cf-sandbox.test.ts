@@ -36,6 +36,28 @@ function mockSandbox(sandbox = createFakeSandbox()): FakeSandbox {
   return sandbox;
 }
 
+// Default KV mock for SANDBOX_TOKENS — returns a record matching
+// DEFAULT_OWNER_TOKEN for any sandboxId. Tests that specifically exercise
+// auth failures override this by passing their own SANDBOX_TOKENS binding
+// via `makeEnv({ SANDBOX_TOKENS: ... })`.
+const DEFAULT_OWNER_TOKEN = 'test-owner-token';
+
+function makeTokensKV(token: string = DEFAULT_OWNER_TOKEN) {
+  return {
+    get: vi.fn(async (_key: string, type?: unknown) => {
+      const record = { token, createdAt: Date.now() };
+      if (type === 'json') return record;
+      return JSON.stringify(record);
+    }),
+    put: vi.fn(async () => {}),
+    delete: vi.fn(async () => {}),
+  };
+}
+
+function makeDefaultTokensKV() {
+  return makeTokensKV(DEFAULT_OWNER_TOKEN);
+}
+
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
     RATE_LIMITER: {
@@ -43,6 +65,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     } as unknown as Env['RATE_LIMITER'],
     ASSETS: {} as Env['ASSETS'],
     Sandbox: {} as Env['Sandbox'],
+    SANDBOX_TOKENS: makeDefaultTokensKV() as unknown as Env['SANDBOX_TOKENS'],
     ALLOWED_ORIGINS: 'https://push.example.test',
     ...overrides,
   };
@@ -70,7 +93,15 @@ async function callRoute(
   env = makeEnv(),
   headers: Record<string, string> = {},
 ): Promise<Response> {
-  const request = makeRequest(route, body, headers);
+  // For non-create routes, inject a default ownerToken matching the default
+  // SANDBOX_TOKENS KV mock — so existing tests keep passing after the auth
+  // gate was added. Tests that want to assert auth failures pass their own
+  // ownerToken (including empty string) via the body, which takes precedence.
+  const needsToken = route !== 'create' && typeof body === 'object' && body !== null;
+  const bodyWithToken: Record<string, unknown> | string = needsToken
+    ? { ownerToken: DEFAULT_OWNER_TOKEN, ...(body as Record<string, unknown>) }
+    : body;
+  const request = makeRequest(route, bodyWithToken, headers);
   return await handleCloudflareSandbox(request, env, new URL(request.url), route);
 }
 
@@ -182,7 +213,10 @@ describe('handleCloudflareSandbox happy paths', () => {
     const body = await jsonBody(response);
     expect(body).toMatchObject({
       sandboxId,
-      ownerToken: '',
+      // mockUuid returns the same value for every crypto.randomUUID() call,
+      // so the minted ownerToken equals the sandboxId in this test setup.
+      // issueToken's KV write happens via the mocked SANDBOX_TOKENS binding.
+      ownerToken: sandboxId,
       status: 'ready',
       workspaceRevision: 0,
       environment: {
@@ -216,7 +250,10 @@ describe('handleCloudflareSandbox happy paths', () => {
       .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
       .mockResolvedValueOnce({ stdout: probeStdout(['pyproject.toml']), stderr: '', exitCode: 0 });
 
-    const env = makeEnv();
+    // Override the default SANDBOX_TOKENS mock so it validates 'ot' rather
+    // than DEFAULT_OWNER_TOKEN — the connect test cares about the token
+    // round-tripping through the server's echo, not the auth gate itself.
+    const env = makeEnv({ SANDBOX_TOKENS: makeTokensKV('ot') as unknown as Env['SANDBOX_TOKENS'] });
     const response = await callRoute('connect', { sandboxId: 'sb-1', ownerToken: 'ot' }, env);
 
     expect(response.status).toBe(200);
