@@ -16,8 +16,10 @@ vi.mock('@/lib/safe-storage', () => ({
   safeStorageRemove: (k: string, s?: 'session' | 'local') => storage.remove(k, s),
 }));
 vi.mock('@/lib/utils', () => ({
-  validateGitHubToken: (...args: unknown[]) => utils.validateGitHubToken(...args),
-  isNetworkFetchError: (...args: unknown[]) => utils.isNetworkFetchError(...args),
+  validateGitHubToken: (...args: Parameters<typeof utils.validateGitHubToken>) =>
+    utils.validateGitHubToken(...args),
+  isNetworkFetchError: (...args: Parameters<typeof utils.isNetworkFetchError>) =>
+    utils.isNetworkFetchError(...args),
 }));
 
 type Cell = { value: unknown };

@@ -161,7 +161,7 @@ describe('executeTool -- correlation span attributes', () => {
       sandboxId: 'sb-1',
       isMainProtected: false,
       defaultBranch: 'main',
-      provider: 'anthropic',
+      provider: 'openrouter',
       model: 'claude-opus-4-6',
       correlation: makeCorrelation({
         taskGraphId: 'tg-test',
@@ -193,7 +193,7 @@ describe('executeTool -- correlation span attributes', () => {
       sandboxId: 'sb-1',
       isMainProtected: false,
       defaultBranch: 'main',
-      provider: 'anthropic',
+      provider: 'openrouter',
       model: 'claude-opus-4-6',
       // correlation intentionally omitted
     };
@@ -216,7 +216,7 @@ describe('executeTool -- correlation span attributes', () => {
       sandboxId: null,
       isMainProtected: false,
       defaultBranch: undefined,
-      provider: 'anthropic',
+      provider: 'openrouter',
       model: undefined,
       correlation: { surface: 'web', chatId: 'c-only' },
     };
@@ -262,7 +262,7 @@ describe('executeReadOnlyTool -- correlation span attributes', () => {
       makeReadToolCall(),
       'owner/repo',
       'sb-explorer',
-      'anthropic',
+      'openrouter',
       'claude-opus-4-6',
       fakeHooks,
       {
@@ -293,7 +293,7 @@ describe('executeReadOnlyTool -- correlation span attributes', () => {
       makeReadToolCall(),
       'owner/repo',
       'sb-explorer',
-      'anthropic',
+      'openrouter',
       'claude-opus-4-6',
       fakeHooks,
       {
@@ -318,7 +318,7 @@ describe('executeReadOnlyTool -- correlation span attributes', () => {
       makeReadToolCall(),
       'owner/repo',
       'sb-explorer',
-      'anthropic',
+      'openrouter',
       'claude-opus-4-6',
       fakeHooks,
       {

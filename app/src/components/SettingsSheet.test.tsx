@@ -71,9 +71,9 @@ function emptyWorkspace(): SettingsWorkspaceProps {
   return {
     approvalMode: 'supervised',
     updateApprovalMode: vi.fn(),
-    contextMode: 'normal',
+    contextMode: 'graceful',
     updateContextMode: vi.fn(),
-    sandboxStartMode: 'manual',
+    sandboxStartMode: 'smart',
     updateSandboxStartMode: vi.fn(),
     sandboxStatus: 'idle',
     sandboxId: null,
@@ -235,8 +235,8 @@ describe('ExperimentalProviderSection', () => {
         configured
         hasKey
         deployments={[
-          { id: 'd1', model: 'gpt-4.1', createdAt: 1 },
-          { id: 'd2', model: 'gpt-4o', createdAt: 2 },
+          { id: 'd1', model: 'gpt-4.1' },
+          { id: 'd2', model: 'gpt-4o' },
         ]}
         activeDeploymentId="d2"
       />,
@@ -257,9 +257,9 @@ describe('ExperimentalProviderSection', () => {
         configured
         hasKey
         deployments={[
-          { id: 'd1', model: 'a', createdAt: 1 },
-          { id: 'd2', model: 'b', createdAt: 2 },
-          { id: 'd3', model: 'c', createdAt: 3 },
+          { id: 'd1', model: 'a' },
+          { id: 'd2', model: 'b' },
+          { id: 'd3', model: 'c' },
         ]}
         activeDeploymentId="d1"
       />,

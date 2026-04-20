@@ -45,16 +45,20 @@ type DiffArgs = Parameters<GitReleaseHandlerContext['getSandboxDiff']>;
 type ReadArgs = Parameters<GitReleaseHandlerContext['readFromSandbox']>;
 type RunAuditorReturn = Awaited<ReturnType<GitReleaseHandlerContext['runAuditor']>>;
 
+// `ReturnType<typeof vi.fn>` resolves to a generic Mock that vitest 4 no
+// longer considers assignable to specific function signatures. Type each
+// mock as the production signature directly — the mock's runtime behavior
+// is unchanged, only the static shape is being satisfied.
 interface MockedContext extends GitReleaseHandlerContext {
   execCalls: ExecArgs[];
   diffCalls: DiffArgs[];
   readCalls: ReadArgs[];
-  runAuditor: ReturnType<typeof vi.fn>;
-  fetchAuditorFileContexts: ReturnType<typeof vi.fn>;
-  createGitHubRepo: ReturnType<typeof vi.fn>;
-  getActiveGitHubToken: ReturnType<typeof vi.fn>;
-  clearFileVersionCache: ReturnType<typeof vi.fn>;
-  clearPrefetchedEditFileCache: ReturnType<typeof vi.fn>;
+  runAuditor: GitReleaseHandlerContext['runAuditor'];
+  fetchAuditorFileContexts: GitReleaseHandlerContext['fetchAuditorFileContexts'];
+  createGitHubRepo: GitReleaseHandlerContext['createGitHubRepo'];
+  getActiveGitHubToken: GitReleaseHandlerContext['getActiveGitHubToken'];
+  clearFileVersionCache: GitReleaseHandlerContext['clearFileVersionCache'];
+  clearPrefetchedEditFileCache: GitReleaseHandlerContext['clearPrefetchedEditFileCache'];
 }
 
 interface MakeContextOpts {

@@ -57,13 +57,15 @@ const checkpointManager = vi.hoisted(() => ({
 const chatPersistence = vi.hoisted(() => ({
   generateTitle: vi.fn(async () => 'title'),
   loadActiveChatId: vi.fn(() => 'chat-1'),
-  loadConversations: vi.fn(() => ({
+  // Typed as Record<string, unknown> so the Conversation shape can drift
+  // without forcing every mockReturnValueOnce to restate the full interface.
+  loadConversations: vi.fn<() => Record<string, unknown>>(() => ({
     'chat-1': {
       id: 'chat-1',
       title: 'Chat 1',
       messages: [],
       createdAt: 1,
-      updatedAt: 1,
+      lastMessageAt: 1,
     },
   })),
   normalizeConversationModel: vi.fn((m) => m),
@@ -125,7 +127,7 @@ const chatSend = vi.hoisted(() => ({
 }));
 const chatQueue = vi.hoisted(() => ({
   appendQueuedItem: vi.fn((m, _k, v) => ({ ...m, _last: v })),
-  clearQueuedItems: vi.fn((m) => m),
+  clearQueuedItems: vi.fn<(m: unknown, chatId?: string) => unknown>((m) => m),
   shiftQueuedItem: vi.fn((m) => [null, m] as const),
 }));
 const chatRunEvents = vi.hoisted(() => ({
@@ -139,7 +141,7 @@ const contextMemory = vi.hoisted(() => ({
 const runEngine = vi.hoisted(() => ({
   IDLE_RUN_STATE: { kind: 'idle' },
   isRunActive: vi.fn(() => false),
-  runEngineReducer: vi.fn((s) => s),
+  runEngineReducer: vi.fn<(s: unknown, event?: unknown) => unknown>((s) => s),
 }));
 const runJournal = vi.hoisted(() => ({
   appendJournalEvent: vi.fn(),
@@ -281,7 +283,7 @@ describe('useChat — public API surface', () => {
         title: 'Chat',
         messages: [],
         createdAt: 1,
-        updatedAt: 1,
+        lastMessageAt: 1,
         provider: 'openai',
       },
     });
@@ -615,7 +617,7 @@ describe('useChat — verification + steer surfaces (pre-extraction characteriza
         mode: 'repo',
         repoFullName: 'owner/repo',
         branch: 'main',
-      } as Parameters<typeof hook.setWorkspaceContext>[0]),
+      } as unknown as Parameters<typeof hook.setWorkspaceContext>[0]),
     ).not.toThrow();
   });
 

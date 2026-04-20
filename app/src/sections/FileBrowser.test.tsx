@@ -155,7 +155,7 @@ describe('FileBrowser', () => {
     hookState.current.files = [];
     const scratchActions: WorkspaceScratchActions = {
       statusText: 'Snapshot saved',
-      tone: 'ok',
+      tone: 'default',
       canSaveSnapshot: true,
       canRestoreSnapshot: true,
       canDownloadWorkspace: true,

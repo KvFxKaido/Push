@@ -378,13 +378,13 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
       // runtime invariant inherits that behavior: an unknown name is
       // not the runtime layer's problem to reject — other layers will
       // catch it (detection, dispatch, per-source executor).
-      const unknownCall: AnyToolCall = {
+      const unknownCall = {
         source: 'sandbox',
         // A made-up name that isn't in TOOL_CAPABILITIES or the sandbox
         // tool registry. Cast is needed because SandboxToolCall is a
         // discriminated union of known names.
-        call: { tool: 'sandbox_unknown_future_tool', args: {} } as unknown as AnyToolCall['call'],
-      };
+        call: { tool: 'sandbox_unknown_future_tool', args: {} },
+      } as unknown as AnyToolCall;
 
       const result = await runtime.execute(unknownCall, {
         allowedRepo: 'owner/repo',

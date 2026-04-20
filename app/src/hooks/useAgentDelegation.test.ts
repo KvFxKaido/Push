@@ -10,10 +10,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // calls fall through to an empty result.
 
 const orchestrator = vi.hoisted(() => ({
-  getActiveProvider: vi.fn(() => 'openai'),
+  getActiveProvider: vi.fn(() => 'openrouter'),
 }));
 const sandboxClient = vi.hoisted(() => ({
-  getSandboxDiff: vi.fn(async () => ''),
+  getSandboxDiff: vi.fn<() => Promise<string | { diff: string }>>(async () => ''),
 }));
 const coderAgent = vi.hoisted(() => ({
   runCoderAgent: vi.fn(),
@@ -31,7 +31,16 @@ const auditorAgent = vi.hoisted(() => ({
   runAuditorEvaluation: vi.fn(),
 }));
 const modelCapabilities = vi.hoisted(() => ({
-  resolveHarnessSettings: vi.fn(() => ({ harness: 'default' })),
+  resolveHarnessSettings: vi.fn<
+    () => {
+      profile?: string;
+      maxCoderRounds?: number;
+      plannerRequired?: boolean;
+      contextResetsEnabled?: boolean;
+      evaluateAfterCoder?: boolean;
+      harness?: string;
+    }
+  >(() => ({ harness: 'default' })),
 }));
 const taskGraph = vi.hoisted(() => ({
   // Real validateTaskGraph returns `TaskGraphValidationError[]` (empty = valid);
@@ -61,7 +70,7 @@ const contextMemory = vi.hoisted(() => ({
 const verificationRuntime = vi.hoisted(() => ({
   activateVerificationGate: vi.fn((s: unknown) => s),
   buildVerificationAcceptanceCriteria: vi.fn(() => []),
-  extractChangedPathsFromDiff: vi.fn(() => []),
+  extractChangedPathsFromDiff: vi.fn<(diff: string) => string[]>(() => []),
   recordVerificationArtifact: vi.fn((s: unknown) => s),
   recordVerificationCommandResult: vi.fn((s: unknown) => s),
   recordVerificationGateResult: vi.fn((s: unknown) => s),
@@ -120,8 +129,10 @@ function makeParams() {
     updateAgentStatus: vi.fn(),
     appendRunEvent: vi.fn(),
     emitRunEngineEvent: vi.fn(),
-    getVerificationPolicyForChat: vi.fn(() => ({
-      mode: 'strict' as const,
+    getVerificationPolicyForChat: vi.fn<
+      () => { mode: string; requireAuditor: boolean; autoVerifyOnMutation: boolean }
+    >(() => ({
+      mode: 'strict',
       requireAuditor: true,
       autoVerifyOnMutation: true,
     })),
@@ -139,7 +150,7 @@ function makeParams() {
 }
 
 beforeEach(() => {
-  orchestrator.getActiveProvider.mockReset().mockReturnValue('openai');
+  orchestrator.getActiveProvider.mockReset().mockReturnValue('openrouter');
   explorerAgent.runExplorerAgent.mockReset();
   coderAgent.runCoderAgent.mockReset();
   plannerAgent.runPlanner.mockReset();
@@ -181,7 +192,7 @@ describe('useAgentDelegation.executeDelegateCall — delegate_explorer', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
     expect(result.text).toContain('[Tool Error]');
@@ -207,7 +218,7 @@ describe('useAgentDelegation.executeDelegateCall — delegate_explorer', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
     expect(params.emitRunEngineEvent).toHaveBeenCalledWith(
@@ -230,7 +241,7 @@ describe('useAgentDelegation.executeDelegateCall — delegate_explorer', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
     expect(result.text).toContain('[Tool Error]');
@@ -257,7 +268,7 @@ describe('useAgentDelegation.executeDelegateCall — delegate_coder', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
     expect(result.text).toContain('[Tool Error]');
@@ -279,7 +290,7 @@ describe('useAgentDelegation.executeDelegateCall — delegate_coder', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
     expect(result.text).toContain('[Tool Error]');
@@ -304,7 +315,7 @@ describe('useAgentDelegation.executeDelegateCall — delegate_coder', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
     expect(params.emitRunEngineEvent).toHaveBeenCalledWith(
@@ -327,7 +338,7 @@ describe('useAgentDelegation.executeDelegateCall — unknown tool', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
     expect(result).toEqual({ text: '' });
@@ -365,7 +376,7 @@ describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -421,7 +432,7 @@ describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -467,7 +478,7 @@ describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -528,7 +539,7 @@ describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -590,7 +601,7 @@ describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -646,7 +657,7 @@ describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -725,7 +736,7 @@ describe('useAgentDelegation.executeDelegateCall — Planner sub-seam', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -818,7 +829,7 @@ describe('useAgentDelegation.executeDelegateCall — Planner sub-seam', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -866,7 +877,7 @@ describe('useAgentDelegation.executeDelegateCall — Planner sub-seam', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -939,7 +950,7 @@ describe('useAgentDelegation.executeDelegateCall — Sequential Auditor', () => 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -1002,7 +1013,7 @@ describe('useAgentDelegation.executeDelegateCall — Sequential Auditor', () => 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -1064,7 +1075,7 @@ describe('useAgentDelegation.executeDelegateCall — Sequential Auditor', () => 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -1132,7 +1143,7 @@ describe('useAgentDelegation.executeDelegateCall — Sequential Auditor', () => 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       singleToolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -1174,7 +1185,7 @@ describe('useAgentDelegation.executeDelegateCall — Sequential Auditor', () => 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       multiToolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -1276,7 +1287,7 @@ describe('useAgentDelegation.executeDelegateCall — plan_tasks (task graph)', (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -1331,7 +1342,7 @@ describe('useAgentDelegation.executeDelegateCall — plan_tasks (task graph)', (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -1389,7 +1400,7 @@ describe('useAgentDelegation.executeDelegateCall — plan_tasks (task graph)', (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -1497,7 +1508,7 @@ describe('useAgentDelegation.executeDelegateCall — plan_tasks (task graph)', (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       singleToolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
@@ -1539,7 +1550,7 @@ describe('useAgentDelegation.executeDelegateCall — plan_tasks (task graph)', (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       multiToolCall as any,
       [],
-      'openai',
+      'openrouter',
       'gpt-4',
     );
 
