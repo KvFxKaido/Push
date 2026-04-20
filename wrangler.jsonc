@@ -41,23 +41,21 @@
   // Images — this index is a thin pointer layer used for resume lookups and
   // the daily eviction cron.
   // Sandbox owner-token store — per-provider KV binding for Cloudflare's
-  // /api/sandbox-cf/* path (kept separate from SNAPSHOT_INDEX per the
-  // per-provider-prefix discipline in sandbox-provider.ts). Stores
-  // `token:<sandboxId>` → { token, createdAt, ownerHint? }. TTL of 86400s
-  // (24h) acts as a safety net in case routeCleanup fails to delete the
-  // entry explicitly.
+  // /api/sandbox-cf/* path. Must be added by the operator before the CF
+  // path is usable, to avoid committing a placeholder id that would break
+  // `wrangler deploy`. Add manually after running:
   //
-  // Setup: run `npx wrangler kv:namespace create SANDBOX_TOKENS` and paste
-  // the returned id below. A second run with `--preview` produces the
-  // preview_id used by `wrangler dev`.
+  //   npx wrangler kv:namespace create SANDBOX_TOKENS
+  //
+  // Then insert into the kv_namespaces array below:
+  //   { "binding": "SANDBOX_TOKENS", "id": "<returned id>" }
+  //
+  // Until the binding is added, /api/sandbox-cf/* routes fail closed with
+  // NOT_CONFIGURED 503 (including create). Modal path is unaffected.
   "kv_namespaces": [
     {
       "binding": "SNAPSHOT_INDEX",
       "id": "6c446991cc304964a421db73c189d8a8"
-    },
-    {
-      "binding": "SANDBOX_TOKENS",
-      "id": "REPLACE_WITH_SANDBOX_TOKENS_NAMESPACE_ID"
     }
   ],
   // Cloudflare Sandbox SDK — sibling provider to Modal. Gated by the

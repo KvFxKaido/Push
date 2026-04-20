@@ -119,19 +119,28 @@ export async function handleCloudflareSandbox(
 
   // Owner-token gate — every route except `create` must present a valid
   // token matching the one issued at sandbox creation time. `create` is
-  // exempt because that's where tokens are minted. Snapshot stubs are
-  // exempt too — they don't touch any sandbox state and currently just
-  // 501. Fails closed if SANDBOX_TOKENS isn't bound.
-  if (route !== 'create' && route !== 'hibernate' && route !== 'restore-snapshot') {
+  // the only exemption (that's where tokens are minted). Snapshot stubs
+  // stay gated too so real implementations inherit auth for free.
+  // Fails closed on every failure mode: missing binding, missing input,
+  // missing record, mismatch, or unexpected runtime throw.
+  if (route !== 'create') {
     const sandboxId = typeof body.sandboxId === 'string' ? body.sandboxId : '';
     const providedToken = typeof body.ownerToken === 'string' ? body.ownerToken : '';
-    const auth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
+    let auth;
+    try {
+      auth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
+    } catch (err) {
+      wlog('error', 'cf_sandbox_auth_throw', {
+        requestId,
+        route,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return Response.json({ error: 'Auth check failed', code: 'NOT_CONFIGURED' }, { status: 503 });
+    }
     if (!auth.ok) {
       return Response.json(
         { error: authErrorMessage(auth.code), code: auth.code },
-        {
-          status: auth.status,
-        },
+        { status: auth.status },
       );
     }
   }
@@ -243,8 +252,18 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
 
   // Mint the owner token AFTER all setup has succeeded. If provisioning
   // fails before this point the sandbox dies without ever being reachable,
-  // so there's no partial-state to clean up.
-  const ownerToken = await issueToken(env.SANDBOX_TOKENS, sandboxId, ownerHint);
+  // so there's no partial-state to clean up. If token issuance ITSELF
+  // fails (transient KV failure), destroy the sandbox before returning
+  // an error — otherwise we'd orphan a live, un-verifiable, unreachable
+  // container that can't even be cleaned up via API (the cleanup route
+  // now requires a token we never stored).
+  let ownerToken: string;
+  try {
+    ownerToken = await issueToken(env.SANDBOX_TOKENS, sandboxId, ownerHint);
+  } catch (err) {
+    await sandbox.destroy?.().catch(() => {});
+    throw err;
+  }
 
   return Response.json({
     sandboxId,

@@ -69,6 +69,12 @@ export async function issueToken(
  * less for 122-bit UUID tokens than for short secrets, but it's free to
  * do right and matches the habit we want everywhere else.
  */
+// Hard cap on provided-token size. UUIDs are 36 chars; any real token stays
+// well under this. The cap prevents an attacker from OOM'ing the Worker by
+// submitting a multi-MB "token" that timingSafeEqual would otherwise encode
+// byte-by-byte into memory.
+const MAX_TOKEN_BYTES = 256;
+
 export async function verifyToken(
   store: KVNamespace | undefined,
   sandboxId: string,
@@ -77,20 +83,29 @@ export async function verifyToken(
   if (!store) {
     return { ok: false, status: 503, code: 'NOT_CONFIGURED' };
   }
-  if (!sandboxId || !providedToken) {
-    // Reject malformed inputs at the shape level rather than passing them
-    // to KV — avoids a wasted roundtrip on obvious bad requests.
+  if (!sandboxId || !providedToken || providedToken.length > MAX_TOKEN_BYTES) {
+    // Reject malformed or oversized inputs before touching KV or the
+    // timing-safe comparator — no wasted roundtrip, no OOM vector.
     return { ok: false, status: 403, code: 'AUTH_FAILURE' };
   }
   const raw = await store.get(`${KEY_PREFIX}${sandboxId}`, 'json');
-  const record = raw as TokenRecord | null;
-  if (!record) {
+  if (!isTokenRecord(raw)) {
+    // Missing entry OR a corrupt/malformed record → both fail closed.
+    // Returning NOT_FOUND for either is safe: a caller can't distinguish
+    // "you guessed a real id but the record is malformed" from "wrong id",
+    // which is what we want for an auth check.
     return { ok: false, status: 404, code: 'NOT_FOUND' };
   }
-  if (!timingSafeEqual(record.token, providedToken)) {
+  if (!timingSafeEqual(raw.token, providedToken)) {
     return { ok: false, status: 403, code: 'AUTH_FAILURE' };
   }
   return { ok: true };
+}
+
+function isTokenRecord(v: unknown): v is TokenRecord {
+  if (!v || typeof v !== 'object') return false;
+  const maybe = v as Record<string, unknown>;
+  return typeof maybe.token === 'string' && maybe.token.length > 0;
 }
 
 /**

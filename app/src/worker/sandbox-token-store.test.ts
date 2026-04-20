@@ -124,6 +124,39 @@ describe('sandbox-token-store', () => {
       const result = await verifyToken(kv, 'abc-123', tampered);
       expect(result).toEqual({ ok: false, status: 403, code: 'AUTH_FAILURE' });
     });
+
+    it('rejects oversized providedToken without touching KV (OOM defense)', async () => {
+      const { kv } = createFakeKV();
+      await issueToken(kv, 'abc-123');
+      const oversized = 'x'.repeat(1_000_000);
+      const result = await verifyToken(kv, 'abc-123', oversized);
+      expect(result).toEqual({ ok: false, status: 403, code: 'AUTH_FAILURE' });
+      // Verify the check short-circuited before the KV read.
+      expect(kv.get).not.toHaveBeenCalled();
+    });
+
+    it('returns NOT_FOUND when the KV record is not an object', async () => {
+      const { kv, store } = createFakeKV();
+      // Simulate a corrupted KV entry — bare string instead of JSON object.
+      store.set('token:abc-123', JSON.stringify('just-a-string'));
+      const result = await verifyToken(kv, 'abc-123', 'any-token');
+      expect(result).toEqual({ ok: false, status: 404, code: 'NOT_FOUND' });
+    });
+
+    it('returns NOT_FOUND when the KV record has a non-string token field', async () => {
+      const { kv, store } = createFakeKV();
+      store.set('token:abc-123', JSON.stringify({ token: 42, createdAt: Date.now() }));
+      const result = await verifyToken(kv, 'abc-123', '42');
+      expect(result).toEqual({ ok: false, status: 404, code: 'NOT_FOUND' });
+    });
+
+    it('returns NOT_FOUND when the KV record is an object with an empty token', async () => {
+      const { kv, store } = createFakeKV();
+      store.set('token:abc-123', JSON.stringify({ token: '', createdAt: Date.now() }));
+      const result = await verifyToken(kv, 'abc-123', '');
+      // Empty providedToken fails at input validation first.
+      expect(result).toEqual({ ok: false, status: 403, code: 'AUTH_FAILURE' });
+    });
   });
 
   describe('revokeToken', () => {
@@ -140,7 +173,7 @@ describe('sandbox-token-store', () => {
       await expect(revokeToken(undefined, 'abc-123')).resolves.toBeUndefined();
     });
 
-    it('is a no-op when the key does not exist', async () => {
+    it('does not throw when the key does not exist (KV delete is idempotent)', async () => {
       const { kv } = createFakeKV();
       await expect(revokeToken(kv, 'never-existed')).resolves.toBeUndefined();
       expect(kv.delete).toHaveBeenCalledWith('token:never-existed');
