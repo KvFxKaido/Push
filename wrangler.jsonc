@@ -12,13 +12,15 @@
   "assets": {
     "directory": "./app/dist"
   },
-  // Sandbox backend selector — read by the Worker-side handleSandbox /
-  // handleCloudflareSandbox branch and by the client-side provider factory.
-  // Values: "modal" | "cloudflare". Default "modal" during coexistence.
-  // Flip with: `npx wrangler deploy --var PUSH_SANDBOX_PROVIDER:cloudflare`
+  // Sandbox backend selector — read by worker.ts to route /api/sandbox/*
+  // POST requests to either handleSandbox (Modal) or handleCloudflareSandbox.
+  // Values: "modal" | "cloudflare". Cloudflare is the current default;
+  // Modal stays available as the fallback while CF-specific gaps (owner
+  // tokens, snapshots, workspace-revision parity) are closed in follow-up
+  // PRs. Flip back with: `npx wrangler deploy --var PUSH_SANDBOX_PROVIDER:modal`
   // or edit this file and redeploy.
   "vars": {
-    "PUSH_SANDBOX_PROVIDER": "modal"
+    "PUSH_SANDBOX_PROVIDER": "cloudflare"
   },
   "ratelimits": [
     {
