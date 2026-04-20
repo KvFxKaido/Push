@@ -1573,30 +1573,38 @@ async function runAnimateSubcommand(positionals) {
   const config = await loadConfig();
   const action = (positionals[1] || 'show').toLowerCase();
 
+  // `isAnimationEffect` rather than `typeof === 'string'` so an invalid
+  // saved value (from hand-edited config) reports as unpinned rather than
+  // masquerading as a pin the runtime would then ignore.
+  const pinnedEffect = isAnimationEffect(config.animation) ? config.animation : null;
+
   if (action === 'show') {
-    const pinned = typeof config.animation === 'string' ? config.animation : 'follow-theme';
+    const shown = pinnedEffect ?? 'follow-theme';
     const suffix = isReducedMotion() ? ' (reduced-motion active — forced off)' : '';
-    process.stdout.write(`${pinned}${suffix}\n`);
+    process.stdout.write(`${shown}${suffix}\n`);
     return 0;
   }
 
   if (action === 'list') {
-    const current = typeof config.animation === 'string' ? config.animation : null;
     for (const name of ANIMATION_EFFECTS) {
-      const marker = name === current ? '*' : ' ';
+      const marker = name === pinnedEffect ? '*' : ' ';
       process.stdout.write(
         `${marker} ${fmt.bold(name.padEnd(10))} ${fmt.dim(ANIMATION_DESCRIPTIONS[name])}\n`,
       );
     }
+    const followMarker = pinnedEffect === null ? '*' : ' ';
     process.stdout.write(
-      `  ${fmt.bold('follow-theme')} ${fmt.dim('Unpin: use each theme’s default animation')}\n`,
+      `${followMarker} ${fmt.bold('follow-theme')} ${fmt.dim('Unpin: use each theme’s default animation')}\n`,
     );
     return 0;
   }
 
   // `push animate <name>` and `push animate set <name>` both pin the effect.
   // `push animate follow-theme` / `push animate unpin` clear the pin.
-  const value = action === 'set' ? positionals[2] : action;
+  // Normalize case/whitespace so `push animate set RAINBOW` matches the
+  // TUI's `/animate RAINBOW` behaviour.
+  const rawValue = action === 'set' ? positionals[2] : action;
+  const value = (rawValue || '').toLowerCase().trim();
   if (value === 'follow-theme' || value === 'unpin') {
     const next = { ...config };
     delete next.animation;
@@ -1606,7 +1614,7 @@ async function runAnimateSubcommand(positionals) {
   }
   if (!value || !isAnimationEffect(value)) {
     throw new Error(
-      `Unknown animation effect: ${value || '(missing)'}. Available: ${ANIMATION_EFFECTS.join(', ')}, follow-theme`,
+      `Unknown animation effect: ${value || '(missing)'}. Available: ${ANIMATION_EFFECTS.join(', ')}. Use 'follow-theme' to unpin.`,
     );
   }
   const next = { ...config, animation: value };

@@ -3578,13 +3578,17 @@ export async function runTUI(options = {}) {
     process.env.PUSH_THEME = name;
     await saveConfig(config);
 
-    // If the user hasn't pinned an animation via `/animate`, adopt the new
-    // theme's default animation so switching themes swaps the full look in
-    // one command. A pinned choice (config.animation present) wins.
-    // Reduced-motion is always 'off'.
+    // If the user hasn't expressed an animation preference (either via
+    // /animate-saved config.animation, a PUSH_ANIMATION env pin, or an
+    // active reduced-motion signal), adopt the new theme's default. Using
+    // detectAnimationEffect() folds all three signals into one: it returns
+    // null only when no preference exists, and the caller should fall back
+    // to the theme default. Prior versions checked config.animation alone,
+    // which both (a) treated an invalid saved value as "pinned" and
+    // (b) silently dropped a valid PUSH_ANIMATION env pin on theme switch.
     let animationNote = '';
-    if (typeof config.animation !== 'string') {
-      const next = isReducedMotion() ? 'off' : VARIANTS[name].defaultAnimation || 'off';
+    if (detectAnimationEffect() === null) {
+      const next = VARIANTS[name].defaultAnimation || 'off';
       if (next !== animation.effect) {
         animation.effect = next;
         animation.tick = 0;
@@ -3604,7 +3608,7 @@ export async function runTUI(options = {}) {
     const sub = (parts[0] || '').toLowerCase();
 
     if (!sub || sub === 'show') {
-      const pinned = typeof config.animation === 'string' ? ' (pinned)' : '';
+      const pinned = isAnimationEffect(config.animation) ? ' (pinned)' : '';
       const rm = isReducedMotion() ? ' — reduced-motion active' : '';
       addTranscriptEntry(tuiState, 'status', `animate: ${animation.effect}${pinned}${rm}`);
       scheduler.flush();
@@ -3623,7 +3627,7 @@ export async function runTUI(options = {}) {
 
     // `/animate follow-theme` or `/animate unpin`: drop the pinned animation
     // and revert to the current theme's default.
-    const sub0 = sub === 'set' ? parts[1] : sub;
+    const sub0 = ((sub === 'set' ? parts[1] : sub) || '').toLowerCase().trim();
     if (sub0 === 'follow-theme' || sub0 === 'unpin') {
       delete config.animation;
       delete process.env.PUSH_ANIMATION;
@@ -3643,7 +3647,7 @@ export async function runTUI(options = {}) {
       addTranscriptEntry(
         tuiState,
         'warning',
-        `Unknown animation effect: ${sub0}. Available: ${ANIMATION_EFFECTS.join(', ')}, follow-theme`,
+        `Unknown animation effect: ${sub0 || '(missing)'}. Available: ${ANIMATION_EFFECTS.join(', ')}. Use 'follow-theme' to unpin.`,
       );
       scheduler.flush();
       return;
