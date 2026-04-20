@@ -12,6 +12,14 @@
   "assets": {
     "directory": "./app/dist"
   },
+  // Sandbox backend selector — read by the Worker-side handleSandbox /
+  // handleCloudflareSandbox branch and by the client-side provider factory.
+  // Values: "modal" | "cloudflare". Default "modal" during coexistence.
+  // Flip with: `npx wrangler deploy --var PUSH_SANDBOX_PROVIDER:cloudflare`
+  // or edit this file and redeploy.
+  "vars": {
+    "PUSH_SANDBOX_PROVIDER": "cloudflare"
+  },
   "ratelimits": [
     {
       "name": "RATE_LIMITER",

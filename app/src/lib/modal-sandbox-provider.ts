@@ -57,6 +57,7 @@ import {
   hibernateSandbox,
   restoreFromSnapshot,
 } from './sandbox-client';
+import { CloudflareSandboxProvider } from './cloudflare-sandbox-provider';
 
 // ---------------------------------------------------------------------------
 // Error mapping
@@ -399,15 +400,44 @@ export class ModalSandboxProvider implements SandboxProvider {
 // Factory
 // ---------------------------------------------------------------------------
 
-/** Create the default sandbox provider for the current environment. */
-export function createSandboxProvider(): SandboxProvider {
-  // Today: Modal is the only backend.
-  // Tomorrow: read from config/environment to select the provider. When
-  // adding a second backend, note that the SNAPSHOT_INDEX KV schema is
-  // Modal-specific (imageId + restoreToken) — give each provider its own
-  // KV binding + key prefix, and qualify the persisted snapshot handle's
-  // snapshotId (see PersistedSandboxSession) with the provider name (or
-  // persist a separate provider field) so restores route through the
-  // correct adapter.
+/** Supported sandbox backends. */
+export type SandboxProviderName = 'modal' | 'cloudflare';
+
+/**
+ * Create a sandbox provider for the current environment.
+ *
+ * Precedence:
+ *   1. Explicit `options.provider` (useful for tests + advanced callers).
+ *   2. PUSH_SANDBOX_PROVIDER env var (CLI / Node).
+ *   3. Default: "modal" (keeps existing behavior during coexistence).
+ *
+ * When adding a third backend, note that the SNAPSHOT_INDEX KV schema is
+ * Modal-specific (imageId + restoreToken) — give each provider its own KV
+ * binding + key prefix, and qualify PersistedSandboxSession.snapshotId with
+ * the provider name so restores route through the correct adapter.
+ */
+export function createSandboxProvider(options?: {
+  provider?: SandboxProviderName;
+}): SandboxProvider {
+  const name = options?.provider ?? resolveDefaultProvider();
+  if (name === 'cloudflare') {
+    return new CloudflareSandboxProvider();
+  }
   return new ModalSandboxProvider();
+}
+
+function resolveDefaultProvider(): SandboxProviderName {
+  // process.env only exists in Node/CLI contexts. In browser/Worker bundles
+  // this guard prevents ReferenceError; those callers should pass an explicit
+  // `options.provider` (or wire their own config source).
+  try {
+    if (typeof process !== 'undefined' && process.env) {
+      const v = (process.env.PUSH_SANDBOX_PROVIDER ?? '').toLowerCase();
+      if (v === 'cloudflare') return 'cloudflare';
+      if (v === 'modal') return 'modal';
+    }
+  } catch {
+    // Ignore — fall through to default.
+  }
+  return 'modal';
 }

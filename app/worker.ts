@@ -48,6 +48,7 @@ import {
   handleGitHubAppOAuth,
   handleGitHubAppToken,
 } from './src/worker/worker-infra';
+import { handleCloudflareSandbox } from './src/worker/worker-cf-sandbox';
 import { handleGitHubTools } from './src/worker/worker-github-tools';
 import { sanitizeUrlForLogging } from './src/worker/worker-log-utils';
 import { summarizeSnapshotIndex } from './src/worker/snapshot-index';
@@ -79,6 +80,15 @@ export default {
         const route = url.pathname.replace('/api/sandbox/', '');
         return withRequestIdOnResponse(
           await handleSandbox(requestWithId, env, url, route, ctx),
+          requestId,
+        );
+      }
+
+      // API route: sandbox proxy to Cloudflare Sandbox SDK (sibling of Modal).
+      if (url.pathname.startsWith('/api/sandbox-cf/') && request.method === 'POST') {
+        const route = url.pathname.replace('/api/sandbox-cf/', '');
+        return withRequestIdOnResponse(
+          await handleCloudflareSandbox(requestWithId, env, url, route, ctx),
           requestId,
         );
       }
