@@ -56,6 +56,10 @@
     {
       "binding": "SNAPSHOT_INDEX",
       "id": "6c446991cc304964a421db73c189d8a8"
+    },
+    {
+      "binding": "SANDBOX_TOKENS",
+      "id": "7065ef8c73b94b5d945971c45aadb3e9"
     }
   ],
   // Cloudflare Sandbox SDK — sibling provider to Modal. Gated by the
