@@ -9,6 +9,7 @@ const savedEnv = {
   PUSH_TAVILY_API_KEY: process.env.PUSH_TAVILY_API_KEY,
   PUSH_WEB_SEARCH_BACKEND: process.env.PUSH_WEB_SEARCH_BACKEND,
   PUSH_THEME: process.env.PUSH_THEME,
+  PUSH_ANIMATION: process.env.PUSH_ANIMATION,
 };
 
 function restoreEnv() {
@@ -110,5 +111,21 @@ describe('applyConfigToEnv', () => {
     applyConfigToEnv({ theme: 'neon' });
 
     assert.equal(process.env.PUSH_THEME, 'forest');
+  });
+
+  it('applies animation to PUSH_ANIMATION when missing', () => {
+    delete process.env.PUSH_ANIMATION;
+
+    applyConfigToEnv({ animation: 'pulse' });
+
+    assert.equal(process.env.PUSH_ANIMATION, 'pulse');
+  });
+
+  it('does not override existing PUSH_ANIMATION', () => {
+    process.env.PUSH_ANIMATION = 'shimmer';
+
+    applyConfigToEnv({ animation: 'rainbow' });
+
+    assert.equal(process.env.PUSH_ANIMATION, 'shimmer');
   });
 });

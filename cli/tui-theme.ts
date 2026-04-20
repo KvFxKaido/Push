@@ -9,6 +9,8 @@
  *   none:   no color             — NO_COLOR set
  */
 
+import type { AnimationEffect } from './tui-animator.js';
+
 export type ColorTier = 'truecolor' | '256' | '16' | 'none';
 
 export type TokenName = keyof typeof TOKENS;
@@ -59,6 +61,10 @@ export interface ThemeVariant {
   description: string;
   tokens: Record<TokenName, string>;
   ansiFallback: Record<TokenName, AnsiFallbackEntry>;
+  // Animation effect this theme pairs with by default. Only applied when
+  // the user hasn't pinned an animation via `/animate` (config.animation).
+  // Defaults to 'off' for themes where motion would fight the aesthetic.
+  defaultAnimation: AnimationEffect;
 }
 
 interface AnsiFallbackEntry {
@@ -307,36 +313,42 @@ export const VARIANTS: Record<ThemeName, ThemeVariant> = {
     description: 'Push web tokens — dark navy with blue accent',
     tokens: { ...TOKENS },
     ansiFallback: ANSI_FALLBACK,
+    defaultAnimation: 'off',
   },
   neon: {
     label: 'Neon',
     description: 'Magenta + cyan on near-black (cyberpunk)',
     tokens: NEON_TOKENS,
     ansiFallback: NEON_ANSI,
+    defaultAnimation: 'pulse',
   },
   metallic: {
     label: 'Metallic',
     description: 'Steely grays with cool blue tint (chrome)',
     tokens: METALLIC_TOKENS,
     ansiFallback: METALLIC_ANSI,
+    defaultAnimation: 'shimmer',
   },
   mono: {
     label: 'Mono',
     description: 'Near-grayscale for minimal visual noise',
     tokens: MONO_TOKENS,
     ansiFallback: MONO_ANSI,
+    defaultAnimation: 'off',
   },
   solarized: {
     label: 'Solarized',
     description: 'Solarized-dark-inspired warm palette',
     tokens: SOLARIZED_TOKENS,
     ansiFallback: SOLARIZED_ANSI,
+    defaultAnimation: 'off',
   },
   forest: {
     label: 'Forest',
     description: 'Earthy greens and tans (nature)',
     tokens: FOREST_TOKENS,
     ansiFallback: FOREST_ANSI,
+    defaultAnimation: 'off',
   },
 };
 

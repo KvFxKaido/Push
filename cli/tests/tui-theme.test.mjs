@@ -267,6 +267,17 @@ describe('theme variants', () => {
       }
     }
   });
+
+  it('every variant has a valid defaultAnimation', () => {
+    const allowed = new Set(['off', 'pulse', 'shimmer', 'rainbow']);
+    for (const name of THEME_NAMES) {
+      const effect = VARIANTS[name].defaultAnimation;
+      assert.ok(
+        allowed.has(effect),
+        `${name}.defaultAnimation must be one of ${[...allowed].join(', ')}, got ${effect}`,
+      );
+    }
+  });
 });
 
 // ─── detectThemeName / isThemeName ──────────────────────────────

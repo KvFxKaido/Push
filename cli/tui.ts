@@ -23,7 +23,9 @@ import {
   animateText,
   ANIMATION_DESCRIPTIONS,
   ANIMATION_EFFECTS,
+  detectAnimationEffect,
   isAnimationEffect,
+  isReducedMotion,
   TICK_MODULUS,
 } from './tui-animator.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
@@ -1807,14 +1809,24 @@ export async function runTUI(options = {}) {
     void refreshGitStatus();
   }, 5000);
 
-  // ── Animation ticker (prototype) ─────────────────────────────────
-  // Prototype: session-only (no config persistence), off by default,
-  // fixed 10 FPS, single interval that's only alive while an effect is
+  // ── Animation ticker ─────────────────────────────────────────────
+  // Fixed 10 FPS, single interval that's only alive while an effect is
   // selected. The ticker just bumps the counter + forces a redraw; all
   // color math happens in render().
+  //
+  // Initial effect resolution (in priority order):
+  //   1. Reduced-motion env (PUSH_REDUCED_MOTION / REDUCED_MOTION) → 'off'
+  //      (enforced by detectAnimationEffect, nothing below can override).
+  //   2. Explicit `config.animation` / PUSH_ANIMATION.
+  //   3. Current theme's `defaultAnimation`.
+  //   4. 'off'.
   const ANIMATION_FPS = 10;
   const ANIMATION_TICK_MS = Math.round(1000 / ANIMATION_FPS);
-  const animation = { effect: 'off', tick: 0 };
+  const reducedMotion = isReducedMotion();
+  const initialEffect = reducedMotion
+    ? 'off'
+    : (detectAnimationEffect() ?? VARIANTS[theme.name]?.defaultAnimation ?? 'off');
+  const animation = { effect: initialEffect, tick: 0 };
   let animationInterval = null;
   const startAnimationTicker = () => {
     if (animationInterval) return;
@@ -1832,6 +1844,7 @@ export async function runTUI(options = {}) {
     clearInterval(animationInterval);
     animationInterval = null;
   };
+  if (animation.effect !== 'off') startAnimationTicker();
 
   // Git status will be refreshed periodically and after certain events
 
@@ -3565,17 +3578,39 @@ export async function runTUI(options = {}) {
     process.env.PUSH_THEME = name;
     await saveConfig(config);
 
+    // If the user hasn't expressed an animation preference (either via
+    // /animate-saved config.animation, a PUSH_ANIMATION env pin, or an
+    // active reduced-motion signal), adopt the new theme's default. Using
+    // detectAnimationEffect() folds all three signals into one: it returns
+    // null only when no preference exists, and the caller should fall back
+    // to the theme default. Prior versions checked config.animation alone,
+    // which both (a) treated an invalid saved value as "pinned" and
+    // (b) silently dropped a valid PUSH_ANIMATION env pin on theme switch.
+    let animationNote = '';
+    if (detectAnimationEffect() === null) {
+      const next = VARIANTS[name].defaultAnimation || 'off';
+      if (next !== animation.effect) {
+        animation.effect = next;
+        animation.tick = 0;
+        if (next === 'off') stopAnimationTicker();
+        else startAnimationTicker();
+        animationNote = `, animate → ${next}`;
+      }
+    }
+
     tuiState.dirty.add('all');
-    addTranscriptEntry(tuiState, 'status', `theme: ${name} (saved)`);
+    addTranscriptEntry(tuiState, 'status', `theme: ${name} (saved)${animationNote}`);
     scheduler.flush();
   }
 
-  function handleAnimateCommand(arg) {
+  async function handleAnimateCommand(arg) {
     const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
     const sub = (parts[0] || '').toLowerCase();
 
     if (!sub || sub === 'show') {
-      addTranscriptEntry(tuiState, 'status', `animate: ${animation.effect}`);
+      const pinned = isAnimationEffect(config.animation) ? ' (pinned)' : '';
+      const rm = isReducedMotion() ? ' — reduced-motion active' : '';
+      addTranscriptEntry(tuiState, 'status', `animate: ${animation.effect}${pinned}${rm}`);
       scheduler.flush();
       return;
     }
@@ -3585,34 +3620,64 @@ export async function runTUI(options = {}) {
         const marker = name === animation.effect ? '*' : ' ';
         return `  ${marker} ${name.padEnd(10)}  ${ANIMATION_DESCRIPTIONS[name]}`;
       });
-      addTranscriptEntry(
-        tuiState,
-        'status',
-        ['Animation effects (prototype):', ...lines].join('\n'),
-      );
+      addTranscriptEntry(tuiState, 'status', ['Animation effects:', ...lines].join('\n'));
       scheduler.flush();
       return;
     }
 
-    if (!isAnimationEffect(sub)) {
+    // `/animate follow-theme` or `/animate unpin`: drop the pinned animation
+    // and revert to the current theme's default.
+    const sub0 = ((sub === 'set' ? parts[1] : sub) || '').toLowerCase().trim();
+    if (sub0 === 'follow-theme' || sub0 === 'unpin') {
+      delete config.animation;
+      delete process.env.PUSH_ANIMATION;
+      await saveConfig(config);
+      const next = isReducedMotion() ? 'off' : VARIANTS[theme.name]?.defaultAnimation || 'off';
+      animation.effect = next;
+      animation.tick = 0;
+      if (next === 'off') stopAnimationTicker();
+      else startAnimationTicker();
+      tuiState.dirty.add('all');
+      addTranscriptEntry(tuiState, 'status', `animate: ${next} (following theme)`);
+      scheduler.flush();
+      return;
+    }
+
+    if (!isAnimationEffect(sub0)) {
       addTranscriptEntry(
         tuiState,
         'warning',
-        `Unknown animation effect: ${sub}. Available: ${ANIMATION_EFFECTS.join(', ')}`,
+        `Unknown animation effect: ${sub0 || '(missing)'}. Available: ${ANIMATION_EFFECTS.join(', ')}. Use 'follow-theme' to unpin.`,
       );
       scheduler.flush();
       return;
     }
 
-    animation.effect = sub;
-    if (sub === 'off') {
-      stopAnimationTicker();
-      animation.tick = 0;
-    } else {
-      startAnimationTicker();
+    // Reduced-motion is a hard guard — refuse to turn animation on regardless
+    // of user intent. Saving 'off' is still allowed (it's a no-op).
+    if (isReducedMotion() && sub0 !== 'off') {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        'Animation disabled: reduced-motion is set (PUSH_REDUCED_MOTION / REDUCED_MOTION). Unset it to enable.',
+      );
+      scheduler.flush();
+      return;
     }
+
+    animation.effect = sub0;
+    animation.tick = 0;
+    if (sub0 === 'off') stopAnimationTicker();
+    else startAnimationTicker();
+
+    // Persist as a pinned preference so it survives across theme switches
+    // and future sessions.
+    config.animation = sub0;
+    process.env.PUSH_ANIMATION = sub0;
+    await saveConfig(config);
+
     tuiState.dirty.add('all');
-    addTranscriptEntry(tuiState, 'status', `animate: ${sub} (session only)`);
+    addTranscriptEntry(tuiState, 'status', `animate: ${sub0} (saved)`);
     scheduler.flush();
   }
 
@@ -3685,7 +3750,7 @@ export async function runTUI(options = {}) {
         return true;
 
       case 'animate':
-        handleAnimateCommand(arg || null);
+        await handleAnimateCommand(arg || null);
         return true;
 
       case 'debug':
@@ -3713,9 +3778,10 @@ export async function runTUI(options = {}) {
             '  /theme list          List available themes',
             '  /theme preview [<name>]  Preview theme swatches (all themes if omitted)',
             '  /theme <name>        Switch theme live and persist (default|neon|metallic|mono|solarized|forest)',
-            '  /animate             Show current animation effect',
+            '  /animate             Show current animation effect (pinned / following theme)',
             '  /animate list        List animation effects',
-            '  /animate <effect>    Toggle header animation (off|pulse|shimmer|rainbow) — experimental',
+            '  /animate <effect>    Pin header animation (off|pulse|shimmer|rainbow); saved to config',
+            '  /animate follow-theme  Unpin: let each theme provide its default animation',
             '  /debug runtime       Show runtime path/provider/session diagnostics',
             '  /skills              List available skills',
             '  /skills reload       Reload workspace + Claude skills',

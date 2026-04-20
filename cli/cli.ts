@@ -103,6 +103,7 @@ const KNOWN_SUBCOMMANDS = new Set([
   'attach',
   'tui',
   'theme',
+  'animate',
   'init-deep',
 ]);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
@@ -190,6 +191,10 @@ Usage:
   push theme list               List available TUI themes
   push theme preview [<name>]   Preview swatches for a theme (all themes if omitted)
   push theme set <name>         Set TUI theme (default|neon|metallic|mono|solarized|forest)
+  push animate                  Show pinned TUI animation (or "follow-theme")
+  push animate list             List animation effects
+  push animate set <name>       Pin TUI animation (off|pulse|shimmer|rainbow)
+  push animate follow-theme     Unpin: use each theme's default animation
 
 Options:
   --provider <name>             ollama | openrouter | zen | nvidia (default: ollama)
@@ -1562,6 +1567,62 @@ async function runThemeSubcommand(positionals) {
   return 0;
 }
 
+async function runAnimateSubcommand(positionals) {
+  const { ANIMATION_EFFECTS, ANIMATION_DESCRIPTIONS, isAnimationEffect, isReducedMotion } =
+    await import('./tui-animator.js');
+  const config = await loadConfig();
+  const action = (positionals[1] || 'show').toLowerCase();
+
+  // `isAnimationEffect` rather than `typeof === 'string'` so an invalid
+  // saved value (from hand-edited config) reports as unpinned rather than
+  // masquerading as a pin the runtime would then ignore.
+  const pinnedEffect = isAnimationEffect(config.animation) ? config.animation : null;
+
+  if (action === 'show') {
+    const shown = pinnedEffect ?? 'follow-theme';
+    const suffix = isReducedMotion() ? ' (reduced-motion active — forced off)' : '';
+    process.stdout.write(`${shown}${suffix}\n`);
+    return 0;
+  }
+
+  if (action === 'list') {
+    for (const name of ANIMATION_EFFECTS) {
+      const marker = name === pinnedEffect ? '*' : ' ';
+      process.stdout.write(
+        `${marker} ${fmt.bold(name.padEnd(10))} ${fmt.dim(ANIMATION_DESCRIPTIONS[name])}\n`,
+      );
+    }
+    const followMarker = pinnedEffect === null ? '*' : ' ';
+    process.stdout.write(
+      `${followMarker} ${fmt.bold('follow-theme')} ${fmt.dim('Unpin: use each theme’s default animation')}\n`,
+    );
+    return 0;
+  }
+
+  // `push animate <name>` and `push animate set <name>` both pin the effect.
+  // `push animate follow-theme` / `push animate unpin` clear the pin.
+  // Normalize case/whitespace so `push animate set RAINBOW` matches the
+  // TUI's `/animate RAINBOW` behaviour.
+  const rawValue = action === 'set' ? positionals[2] : action;
+  const value = (rawValue || '').toLowerCase().trim();
+  if (value === 'follow-theme' || value === 'unpin') {
+    const next = { ...config };
+    delete next.animation;
+    const configPath = await saveConfig(next);
+    process.stdout.write(`Saved: animation follows theme → ${fmt.dim(configPath)}\n`);
+    return 0;
+  }
+  if (!value || !isAnimationEffect(value)) {
+    throw new Error(
+      `Unknown animation effect: ${value || '(missing)'}. Available: ${ANIMATION_EFFECTS.join(', ')}. Use 'follow-theme' to unpin.`,
+    );
+  }
+  const next = { ...config, animation: value };
+  const configPath = await saveConfig(next);
+  process.stdout.write(`Saved animation: ${fmt.bold(value)} → ${fmt.dim(configPath)}\n`);
+  return 0;
+}
+
 async function readPidFile() {
   try {
     const raw = await fs.readFile(getPidPath(), 'utf8');
@@ -2023,6 +2084,10 @@ export async function main() {
     return runThemeSubcommand(positionals);
   }
 
+  if (subcommand === 'animate') {
+    return runAnimateSubcommand(positionals);
+  }
+
   if (subcommand === 'resume' || subcommand === 'sessions') {
     const sessionsCmd = positionals[1] || '';
     if (sessionsCmd === 'rename') {
@@ -2308,7 +2373,7 @@ export async function main() {
 
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
     throw new Error(
-      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, init-deep. See: push --help`,
+      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, animate, init-deep. See: push --help`,
     );
   }
 
