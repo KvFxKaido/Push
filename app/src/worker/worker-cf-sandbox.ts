@@ -53,6 +53,8 @@ const ROUTES = new Set([
   'restore-snapshot',
 ]);
 
+const MAX_READ_BYTES = 5_000_000;
+
 type Json = Record<string, unknown>;
 
 export async function handleCloudflareSandbox(
@@ -338,25 +340,92 @@ async function routeRead(env: Env, body: Json): Promise<Response> {
   const path = requireStr(body, 'path');
   const startLine = num(body.start_line);
   const endLine = num(body.end_line);
+  const isLineRangeRead = startLine !== undefined || endLine !== undefined;
+  const requestedStartLine = Math.max(1, startLine ?? 1);
+  const requestedEndLine =
+    endLine !== undefined ? Math.max(requestedStartLine, endLine) : undefined;
+  const quotedPath = JSON.stringify(path);
 
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
-  const result = (await sandbox.readFile(path)) as {
-    content?: string;
-    text?: string;
-  };
-  const fullContent = result.content ?? result.text ?? '';
+  const contentCommand = isLineRangeRead
+    ? `sed -n '${requestedStartLine},${requestedEndLine ?? '$'}p' -- ${quotedPath} | head -c ${MAX_READ_BYTES}`
+    : `head -c ${MAX_READ_BYTES} -- ${quotedPath}`;
+  const hashCommand = `hash_output=$(sha256sum -- ${quotedPath}) && printf '%s\n' "$hash_output" | awk '{print $1}'`;
+  const lineCountCommand = `wc -l -- ${quotedPath} | awk '{print $1}'`;
 
-  const sliced = sliceByLines(fullContent, startLine, endLine);
-  const version = await hashSha256(fullContent);
+  const [contentResult, hashResult, lineCountResult] = (await Promise.all([
+    sandbox.exec(contentCommand),
+    sandbox.exec(hashCommand),
+    isLineRangeRead ? sandbox.exec(lineCountCommand) : Promise.resolve(null),
+  ])) as [
+    { stdout?: string; stderr?: string; exitCode?: number },
+    { stdout?: string; stderr?: string; exitCode?: number },
+    { stdout?: string; stderr?: string; exitCode?: number } | null,
+  ];
+
+  if ((hashResult.exitCode ?? 0) !== 0) {
+    return Response.json({
+      error:
+        (hashResult.stderr || hashResult.stdout || `Failed to read file: ${path}`).trim() ||
+        `Failed to read file: ${path}`,
+      code: 'NOT_FOUND',
+      content: '',
+      truncated: false,
+      version: null,
+      workspace_revision: 0,
+    });
+  }
+
+  if ((contentResult.exitCode ?? 0) !== 0) {
+    return Response.json({
+      error:
+        (contentResult.stderr || contentResult.stdout || `Failed to read file: ${path}`).trim() ||
+        `Failed to read file: ${path}`,
+      code: 'NOT_FOUND',
+      content: '',
+      truncated: false,
+      version: null,
+      workspace_revision: 0,
+    });
+  }
+
+  const rawContent = contentResult.stdout ?? '';
+  const rawBytes = new TextEncoder().encode(rawContent);
+  const content =
+    rawBytes.length > MAX_READ_BYTES
+      ? new TextDecoder().decode(rawBytes.slice(0, MAX_READ_BYTES))
+      : rawContent;
+  const byteTruncated = rawBytes.length >= MAX_READ_BYTES;
+  const lineCount =
+    lineCountResult && (lineCountResult.exitCode ?? 0) === 0
+      ? Number.parseInt((lineCountResult.stdout ?? '').trim(), 10)
+      : undefined;
+  const normalizedLineCount =
+    lineCount !== undefined && Number.isFinite(lineCount) && lineCount >= 0 ? lineCount : undefined;
+  const responseStartLine = isLineRangeRead
+    ? Math.min(requestedStartLine, normalizedLineCount ?? requestedStartLine)
+    : undefined;
+  const responseEndLine =
+    isLineRangeRead && normalizedLineCount !== undefined
+      ? Math.min(requestedEndLine ?? normalizedLineCount, normalizedLineCount)
+      : requestedEndLine;
+  const lineTruncated =
+    isLineRangeRead &&
+    requestedEndLine !== undefined &&
+    normalizedLineCount !== undefined &&
+    requestedEndLine < normalizedLineCount;
+  const truncated = byteTruncated || lineTruncated;
+  const version = hashResult.stdout?.trim() || null;
 
   return Response.json({
-    content: sliced.content,
-    truncated: sliced.truncated,
-    truncated_at_line: sliced.truncatedAtLine,
-    remaining_bytes: sliced.remainingBytes,
+    content,
+    truncated,
+    truncated_at_line: lineTruncated ? requestedEndLine + 1 : undefined,
+    remaining_bytes:
+      rawBytes.length > MAX_READ_BYTES ? rawBytes.length - MAX_READ_BYTES : undefined,
     version,
-    start_line: sliced.startLine,
-    end_line: sliced.endLine,
+    start_line: responseStartLine,
+    end_line: responseEndLine,
     workspace_revision: 0,
   });
 }
@@ -680,38 +749,6 @@ async function probeEnvironment(sandbox: SandboxStub): Promise<Json> {
     git_available: !!tools.git,
     disk_free: diskFree,
     writable_root: '/workspace',
-  };
-}
-
-function sliceByLines(
-  content: string,
-  startLine?: number,
-  endLine?: number,
-): {
-  content: string;
-  truncated: boolean;
-  truncatedAtLine?: number;
-  remainingBytes?: number;
-  startLine: number;
-  endLine: number;
-} {
-  const lines = content.split('\n');
-  const end = Math.min(lines.length, endLine ?? lines.length);
-  // Clamp start to <= end so the returned range metadata stays self-consistent
-  // when callers request start_line past the end of the file. Without this,
-  // startLine could exceed endLine and clients would see an empty-but-invalid
-  // range shape.
-  const requestedStart = Math.max(1, startLine ?? 1);
-  const start = Math.min(requestedStart, end);
-  const sliced = lines.slice(start - 1, end).join('\n');
-  const omitted = lines.slice(end).join('\n');
-  return {
-    content: sliced,
-    truncated: end < lines.length,
-    truncatedAtLine: end < lines.length ? end + 1 : undefined,
-    remainingBytes: end < lines.length ? new TextEncoder().encode(omitted).length : undefined,
-    startLine: start,
-    endLine: end,
   };
 }
 
