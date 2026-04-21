@@ -79,6 +79,10 @@
       {
         "name": "Sandbox",
         "class_name": "Sandbox"
+      },
+      {
+        "name": "CoderJob",
+        "class_name": "CoderJob"
       }
     ]
   },
@@ -86,6 +90,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["Sandbox"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["CoderJob"]
     }
   ],
   // Daily snapshot index walk — emits aggregate metrics so we can size the
