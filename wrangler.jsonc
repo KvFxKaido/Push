@@ -22,6 +22,50 @@
   "vars": {
     "PUSH_SANDBOX_PROVIDER": "cloudflare"
   },
+  // Worker bundle shim — `import.meta.env` is Vite-only (client build). The
+  // Worker runtime doesn't have it, so transitive imports of client modules
+  // (via `@/lib/*` chains from coder-job-do.ts, etc.) that read
+  // `import.meta.env.VITE_*` at module load would crash deploy validation with
+  // `TypeError: Cannot read properties of undefined (reading 'VITE_*')`.
+  // esbuild's `define` only accepts entity names or JS literals (not object
+  // literals), so we enumerate each VITE_ var individually as an empty
+  // string. Vite's client build handles its own `import.meta.env` replacement
+  // separately and is unaffected.
+  //
+  // Keep this list in sync with any new `VITE_*` accesses introduced in
+  // client code that may land in the Worker bundle via transitive imports.
+  "define": {
+    "import.meta.env.DEV": "false",
+    "import.meta.env.PROD": "true",
+    "import.meta.env.MODE": "\"production\"",
+    "import.meta.env.BASE_URL": "\"/\"",
+    "import.meta.env.SSR": "true",
+    "import.meta.env.VITE_AZURE_OPENAI_API_KEY": "\"\"",
+    "import.meta.env.VITE_AZURE_OPENAI_BASE_URL": "\"\"",
+    "import.meta.env.VITE_AZURE_OPENAI_MODEL": "\"\"",
+    "import.meta.env.VITE_BEDROCK_API_KEY": "\"\"",
+    "import.meta.env.VITE_BEDROCK_BASE_URL": "\"\"",
+    "import.meta.env.VITE_BEDROCK_MODEL": "\"\"",
+    "import.meta.env.VITE_BLACKBOX_API_KEY": "\"\"",
+    "import.meta.env.VITE_GITHUB_APP_REDIRECT_URI": "\"\"",
+    "import.meta.env.VITE_GITHUB_CLIENT_ID": "\"\"",
+    "import.meta.env.VITE_GITHUB_OAUTH_PROXY": "\"\"",
+    "import.meta.env.VITE_GITHUB_REDIRECT_URI": "\"\"",
+    "import.meta.env.VITE_GITHUB_TOKEN": "\"\"",
+    "import.meta.env.VITE_GITHUB_TOOL_BACKEND": "\"\"",
+    "import.meta.env.VITE_KILOCODE_API_KEY": "\"\"",
+    "import.meta.env.VITE_NVIDIA_API_KEY": "\"\"",
+    "import.meta.env.VITE_OLLAMA_API_KEY": "\"\"",
+    "import.meta.env.VITE_OPENADAPTER_API_KEY": "\"\"",
+    "import.meta.env.VITE_OPENROUTER_API_KEY": "\"\"",
+    "import.meta.env.VITE_TAVILY_API_KEY": "\"\"",
+    "import.meta.env.VITE_VERTEX_API_KEY": "\"\"",
+    "import.meta.env.VITE_VERTEX_BASE_URL": "\"\"",
+    "import.meta.env.VITE_VERTEX_MODEL": "\"\"",
+    "import.meta.env.VITE_VERTEX_REGION": "\"\"",
+    "import.meta.env.VITE_VERTEX_SERVICE_ACCOUNT_JSON": "\"\"",
+    "import.meta.env.VITE_ZEN_API_KEY": "\"\""
+  },
   "ratelimits": [
     {
       "name": "RATE_LIMITER",
