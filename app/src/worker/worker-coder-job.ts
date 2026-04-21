@@ -4,9 +4,9 @@
  * `docs/runbooks/Background Coder Tasks Phase 1.md`.
  *
  * Routes:
- *   POST /api/jobs/start         — body carries the full job envelope;
- *                                  generates jobId if absent, forwards
- *                                  to DO /start.
+ *   POST /api/jobs/start         — body carries the job envelope;
+ *                                  server generates jobId and derives
+ *                                  origin from the request URL.
  *   GET  /api/jobs/:id/events    — forwards to DO /events as an SSE
  *                                  response. Last-Event-ID header
  *                                  passes through for replay.
@@ -16,9 +16,11 @@
  * Fails closed with NOT_CONFIGURED (503) when `env.CoderJob` is not
  * bound — mirrors the `/api/sandbox-cf/*` pattern so a partially
  * deployed environment can't silently accept jobs that will never run.
+ * Origin validation + rate limiting mirror the same pattern so
+ * background-jobs endpoints don't bypass CSRF / abuse protections.
  */
 
-import type { Env } from './worker-middleware';
+import { getClientIp, validateOrigin, type Env } from './worker-middleware';
 import type { CoderJobStartInput } from './coder-job-do';
 
 const JOBS_PREFIX = '/api/jobs/';
@@ -67,6 +69,20 @@ export async function handleJobsRoute(
     );
   }
 
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return json({ error: originCheck.error }, 403);
+  }
+
+  const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: getClientIp(request) });
+  if (!rateLimitOk) {
+    return new Response(JSON.stringify({ error: 'Rate limit exceeded. Try again later.' }), {
+      status: 429,
+      headers: { 'content-type': 'application/json', 'Retry-After': '60' },
+    });
+  }
+
   switch (match.action) {
     case 'start':
       return handleStart(request, env);
@@ -80,17 +96,35 @@ export async function handleJobsRoute(
 }
 
 async function handleStart(request: Request, env: Env): Promise<Response> {
-  let payload: Partial<CoderJobStartInput>;
+  let parsed: unknown;
   try {
-    payload = (await request.json()) as Partial<CoderJobStartInput>;
+    parsed = await request.json();
   } catch {
     return json({ error: 'INVALID_BODY', message: 'POST body must be JSON.' }, 400);
   }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return json({ error: 'INVALID_BODY', message: 'POST body must be a JSON object.' }, 400);
+  }
 
-  const jobId = payload.jobId ?? crypto.randomUUID();
-  const origin = payload.origin ?? new URL(request.url).origin;
+  // jobId and origin are NEVER trusted from the client:
+  //  - Client-supplied jobId would undermine the unguessable-ID
+  //    property that /events and /status rely on for access control
+  //    (no auth layer beyond "know the id" in Phase 1).
+  //  - Client-supplied origin would be an SSRF footgun once the DO
+  //    executor starts doing absolute-URL fetches.
+  // Both are stripped before forwarding to the DO.
+  const {
+    jobId: _ignoredJobId,
+    origin: _ignoredOrigin,
+    ...startFields
+  } = parsed as Partial<CoderJobStartInput>;
+  void _ignoredJobId;
+  void _ignoredOrigin;
+
+  const jobId = crypto.randomUUID();
+  const origin = new URL(request.url).origin;
   const input: CoderJobStartInput = {
-    ...(payload as CoderJobStartInput),
+    ...(startFields as Omit<CoderJobStartInput, 'jobId' | 'origin'>),
     jobId,
     origin,
   };

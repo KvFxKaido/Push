@@ -154,7 +154,7 @@ function createMockStorage() {
 
     if (/^SELECT id, status, created_at/i.test(sql)) {
       const row = jobs.get(params[0] as string);
-      return row ? [row] : [];
+      return row ? [row as unknown as Record<string, unknown>] : [];
     }
 
     throw new Error(`Unhandled SQL in mock: ${sql}`);

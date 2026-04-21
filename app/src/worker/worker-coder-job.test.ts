@@ -44,7 +44,25 @@ function makeRequest(
 ): Request {
   return new Request(`https://push.example.test${path}`, {
     method,
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: {
+      'content-type': 'application/json',
+      // Default to a matching Origin so tests hit the happy path;
+      // individual tests that exercise origin validation override this.
+      Origin: 'https://push.example.test',
+      ...headers,
+    },
+    body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+  });
+}
+
+function makeRequestWithoutOrigin(
+  path: string,
+  method: 'GET' | 'POST',
+  body?: Record<string, unknown>,
+): Request {
+  return new Request(`https://push.example.test${path}`, {
+    method,
+    headers: { 'content-type': 'application/json' },
     body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
   });
 }
@@ -114,7 +132,7 @@ describe('handleJobsRoute', () => {
     expect(body.error).toBe('NOT_CONFIGURED');
   });
 
-  it('forwards POST /start to the DO with a generated jobId and request origin', async () => {
+  it('forwards POST /start to the DO with a server-generated jobId + origin', async () => {
     const stub = makeFakeStub(new Response('{"jobId":"stub-ok"}', { status: 202 }));
     const env = makeEnv({ CoderJob: makeCoderJobNamespace(stub) });
     const response = await handleJobsRoute(
@@ -133,6 +151,82 @@ describe('handleJobsRoute', () => {
     };
     expect(forwardedBody.jobId).toMatch(/^[0-9a-f-]{30,}$/);
     expect(forwardedBody.origin).toBe('https://push.example.test');
+  });
+
+  it('ignores client-supplied jobId + origin on /start (SSRF + id-guess hardening)', async () => {
+    const stub = makeFakeStub(new Response('{"ok":true}', { status: 202 }));
+    const env = makeEnv({ CoderJob: makeCoderJobNamespace(stub) });
+    const body = {
+      ...validStartBody(),
+      jobId: 'attacker-guessable-id',
+      origin: 'https://evil.example.com',
+    };
+    await handleJobsRoute(makeRequest('/api/jobs/start', 'POST', body), env, {
+      action: 'start',
+      jobId: null,
+    });
+    const forwarded = stub.fetch.mock.calls[0]![0] as Request;
+    const forwardedBody = JSON.parse(await forwarded.text()) as {
+      jobId: string;
+      origin: string;
+    };
+    expect(forwardedBody.jobId).not.toBe('attacker-guessable-id');
+    expect(forwardedBody.jobId).toMatch(/^[0-9a-f-]{30,}$/);
+    expect(forwardedBody.origin).toBe('https://push.example.test');
+    expect(forwardedBody.origin).not.toBe('https://evil.example.com');
+  });
+
+  it('returns 403 when Origin header is missing', async () => {
+    const stub = makeFakeStub();
+    const env = makeEnv({ CoderJob: makeCoderJobNamespace(stub) });
+    const response = await handleJobsRoute(
+      makeRequestWithoutOrigin('/api/jobs/start', 'POST', validStartBody()),
+      env,
+      { action: 'start', jobId: null },
+    );
+    expect(response.status).toBe(403);
+    expect(stub.fetch).not.toHaveBeenCalled();
+  });
+
+  it('returns 429 when the rate limiter rejects the request', async () => {
+    const stub = makeFakeStub();
+    const env = makeEnv({
+      CoderJob: makeCoderJobNamespace(stub),
+      RATE_LIMITER: {
+        limit: vi.fn(async () => ({ success: false })),
+      } as unknown as Env['RATE_LIMITER'],
+    });
+    const response = await handleJobsRoute(
+      makeRequest('/api/jobs/start', 'POST', validStartBody()),
+      env,
+      { action: 'start', jobId: null },
+    );
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('60');
+    expect(stub.fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects /start with a non-object JSON body (400)', async () => {
+    const stub = makeFakeStub();
+    const env = makeEnv({ CoderJob: makeCoderJobNamespace(stub) });
+    // Bypass makeRequest's object body — directly craft a request with a
+    // JSON primitive. validateOrigin still needs Origin.
+    const response = await handleJobsRoute(
+      new Request('https://push.example.test/api/jobs/start', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Origin: 'https://push.example.test',
+        },
+        body: 'null',
+      }),
+      env,
+      { action: 'start', jobId: null },
+    );
+    expect(response.status).toBe(400);
+    const parsed = (await response.json()) as { error: string };
+    expect(parsed.error).toBe('INVALID_BODY');
+    expect(stub.fetch).not.toHaveBeenCalled();
   });
 
   it('rejects /start with missing required fields (400)', async () => {

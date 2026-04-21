@@ -326,8 +326,7 @@ export class CoderJob {
         taskPreamble,
         symbolSummary: null,
         toolExec: buildCoderToolExec(services),
-        detectAllToolCalls: buildCoderDetectors(services).detectAllToolCalls,
-        detectAnyToolCall: buildCoderDetectors(services).detectAnyToolCall,
+        ...buildCoderDetectors(services),
         webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
         sandboxToolProtocol: getSandboxToolProtocol(),
         verificationPolicyBlock: formatVerificationPolicyBlock(input.verificationPolicy),
@@ -391,6 +390,11 @@ export class CoderJob {
     const liveListeners = this.liveListeners;
     const jobStatusLookup = (id: string) => this.getJobStatus(id);
 
+    // Hoisted to stream-scope so `cancel()` (which fires on client
+    // disconnect) can remove the subscription and we don't leak
+    // listener closures into the DO's in-memory set.
+    let activeListener: ((event: RunEvent) => void) | null = null;
+
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         // Replay any persisted events past the last-seen seq.
@@ -420,12 +424,15 @@ export class CoderJob {
             );
             if (isTerminalEventType(event.type)) {
               liveListeners.delete(listener);
+              activeListener = null;
               controller.close();
             }
           } catch {
             liveListeners.delete(listener);
+            activeListener = null;
           }
         };
+        activeListener = listener;
         liveListeners.add(listener);
 
         // If the job is already terminal and we replayed everything,
@@ -433,13 +440,18 @@ export class CoderJob {
         const status = jobStatusLookup(jobId);
         if (status && isTerminalStatus(status)) {
           liveListeners.delete(listener);
+          activeListener = null;
           controller.close();
         }
       },
       cancel() {
-        // ReadableStream.cancel runs when the client disconnects; drop
-        // any listener we still hold. (The listener's own terminal-check
-        // also removes it but that path may not have fired yet.)
+        // Client disconnected before a terminal event — drop the live
+        // subscription so the DO's in-memory set doesn't leak closures
+        // and keep the instance "hot" longer than necessary.
+        if (activeListener) {
+          liveListeners.delete(activeListener);
+          activeListener = null;
+        }
       },
     });
 
@@ -454,8 +466,11 @@ export class CoderJob {
 
   private resolveLastEventSeq(lastEventId: string): number {
     if (!lastEventId) return 0;
+    // `id` has a UNIQUE constraint in the schema, but LIMIT 1 makes the
+    // intent explicit and avoids a full index scan if the engine picks
+    // a different plan.
     const row = this.ctx.storage.sql
-      .exec('SELECT seq FROM event WHERE id = ?', lastEventId)
+      .exec('SELECT seq FROM event WHERE id = ? LIMIT 1', lastEventId)
       .toArray()[0] as { seq?: number } | undefined;
     return row?.seq ?? 0;
   }
