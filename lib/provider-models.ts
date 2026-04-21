@@ -8,6 +8,7 @@
 export type SharedProviderModelId =
   | 'ollama'
   | 'openrouter'
+  | 'cloudflare'
   | 'zen'
   | 'nvidia'
   | 'kilocode'
@@ -16,6 +17,7 @@ export type SharedProviderModelId =
 
 export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
+export const CLOUDFLARE_DEFAULT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 /** Maximum length for OpenRouter session_id field (per API spec). */
 export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
@@ -79,6 +81,15 @@ export const OPENROUTER_MODELS: string[] = [
   'z-ai/glm-5-turbo',
 ];
 
+export const CLOUDFLARE_MODELS: string[] = [
+  CLOUDFLARE_DEFAULT_MODEL,
+  '@cf/qwen/qwen2.5-coder-32b-instruct',
+  '@cf/openai/gpt-oss-20b',
+  '@cf/meta/llama-4-scout-17b-16e-instruct',
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+  '@cf/google/gemma-3-12b-it',
+];
+
 export const ZEN_MODELS: string[] = [
   'openai/gpt-5.3-codex',
   'openai/gpt-5.2-codex',
@@ -130,6 +141,7 @@ export const OPENADAPTER_MODELS: string[] = [
 export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string[]> = {
   ollama: OLLAMA_MODELS,
   openrouter: OPENROUTER_MODELS,
+  cloudflare: CLOUDFLARE_MODELS,
   zen: ZEN_MODELS,
   nvidia: NVIDIA_MODELS,
   kilocode: KILOCODE_MODELS,
@@ -140,6 +152,7 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
 export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, string> = {
   ollama: OLLAMA_DEFAULT_MODEL,
   openrouter: OPENROUTER_DEFAULT_MODEL,
+  cloudflare: CLOUDFLARE_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
   nvidia: NVIDIA_DEFAULT_MODEL,
   kilocode: KILOCODE_DEFAULT_MODEL,

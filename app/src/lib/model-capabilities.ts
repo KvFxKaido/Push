@@ -81,10 +81,17 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     },
   },
   {
-    providers: ['ollama', 'nvidia'],
-    match: /vision|vl\b|llava|bakllava|minicpm-v|moondream|gemma3|llama3\.2-vision/i,
+    providers: ['ollama', 'nvidia', 'cloudflare'],
+    match: /vision|vl\b|llava|bakllava|minicpm-v|moondream|gemma[- ]?3|llama3\.2-vision/i,
     capabilities: {
       visionInput: 'supported',
+      streaming: 'supported',
+    },
+  },
+  {
+    providers: ['cloudflare'],
+    match: /.*/,
+    capabilities: {
       streaming: 'supported',
     },
   },
@@ -185,6 +192,8 @@ function formatProviderLabel(provider: AIProviderType): string {
       return 'Ollama';
     case 'openrouter':
       return 'OpenRouter';
+    case 'cloudflare':
+      return 'Cloudflare Workers AI';
     case 'zen':
       return 'OpenCode Zen';
     case 'nvidia':

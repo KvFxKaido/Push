@@ -37,6 +37,7 @@ export interface LlmMessage {
 export type AIProviderType =
   | 'ollama'
   | 'openrouter'
+  | 'cloudflare'
   | 'zen'
   | 'nvidia'
   | 'blackbox'

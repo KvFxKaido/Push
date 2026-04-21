@@ -15,6 +15,8 @@ import type { Env } from './src/worker/worker-middleware';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from './src/lib/request-id';
 
 import {
+  handleCloudflareChat,
+  handleCloudflareModels,
   handleOllamaChat,
   handleOllamaModels,
   handleOllamaSearch,
@@ -254,6 +256,8 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/ollama/models', method: 'GET', handler: handleOllamaModels },
   { path: '/api/openrouter/chat', method: 'POST', handler: handleOpenRouterChat },
   { path: '/api/openrouter/models', method: 'GET', handler: handleOpenRouterModels },
+  { path: '/api/cloudflare/chat', method: 'POST', handler: handleCloudflareChat },
+  { path: '/api/cloudflare/models', method: 'GET', handler: handleCloudflareModels },
   { path: '/api/zen/chat', method: 'POST', handler: handleZenChat },
   { path: '/api/zen/models', method: 'GET', handler: handleZenModels },
   { path: '/api/zen/go/chat', method: 'POST', handler: handleZenGoChat },

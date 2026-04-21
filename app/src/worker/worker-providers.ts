@@ -1,4 +1,5 @@
 import type { Env } from './worker-middleware';
+import type { AiModelsSearchObject } from '@cloudflare/workers-types';
 import {
   createStreamProxyHandler,
   createJsonProxyHandler,
@@ -31,6 +32,185 @@ import {
   formatVertexProviderHttpError,
 } from '../lib/provider-error-utils';
 import type { ExperimentalProviderType } from '../lib/experimental-providers';
+
+// --- Cloudflare Workers AI ---
+
+const CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR =
+  'Cloudflare Workers AI is not configured on this Worker. Add an `ai` binding in `wrangler.jsonc` and redeploy.';
+
+function isCloudflareTextGenerationModel(model: AiModelsSearchObject): boolean {
+  const taskId = model.task?.id?.toLowerCase() ?? '';
+  const taskName = model.task?.name?.toLowerCase() ?? '';
+  return taskId.includes('text-generation') || taskName.includes('text generation');
+}
+
+function buildCloudflareAiInput(parsedRequest: Record<string, unknown>): Record<string, unknown> {
+  const input: Record<string, unknown> = {
+    messages: parsedRequest.messages,
+    stream: true,
+  };
+
+  if (Array.isArray(parsedRequest.tools)) input.tools = parsedRequest.tools;
+  if (Array.isArray(parsedRequest.functions)) input.functions = parsedRequest.functions;
+  if (
+    parsedRequest.response_format &&
+    typeof parsedRequest.response_format === 'object' &&
+    !Array.isArray(parsedRequest.response_format)
+  ) {
+    input.response_format = parsedRequest.response_format;
+  }
+
+  for (const key of [
+    'raw',
+    'max_tokens',
+    'temperature',
+    'top_p',
+    'top_k',
+    'seed',
+    'repetition_penalty',
+    'frequency_penalty',
+    'presence_penalty',
+  ] as const) {
+    if (key in parsedRequest) input[key] = parsedRequest[key];
+  }
+
+  return input;
+}
+
+export async function handleCloudflareChat(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: (runtimeEnv) => (runtimeEnv.AI ? 'WorkersAIBinding' : null),
+    keyMissingError: CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR,
+    needsBody: true,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { bodyText, requestId, spanCtx } = preamble;
+
+  const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
+    routeLabel: 'Cloudflare Workers AI',
+    maxOutputTokens: 12_288,
+  });
+  if (!normalizedRequest.ok) {
+    return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
+  }
+  if (normalizedRequest.value.adjustments.length > 0) {
+    wlog('warn', 'chat_request_adjusted', {
+      requestId,
+      route: 'api/cloudflare/chat',
+      adjustments: normalizedRequest.value.adjustments,
+    });
+  }
+
+  const parsedRequest = normalizedRequest.value.parsed as Record<string, unknown>;
+  const model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
+  const messages = parsedRequest.messages;
+  if (!model) {
+    return Response.json({ error: 'Cloudflare Workers AI model is required.' }, { status: 400 });
+  }
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return Response.json(
+      { error: 'Cloudflare Workers AI messages are required.' },
+      { status: 400 },
+    );
+  }
+
+  wlog('info', 'request', {
+    requestId,
+    route: 'api/cloudflare/chat',
+    bytes: normalizedRequest.value.bodyText.length,
+    model,
+  });
+
+  try {
+    // TODO: narrow once @cloudflare/workers-types exposes a generic run overload.
+    // `Ai.run` is typed per literal model id; we route a dynamic string, so we
+    // cast and rely on the binding to surface invalid-model errors at runtime.
+    // biome-ignore lint/suspicious/noExplicitAny: dynamic model id routing
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stream = (await (env.AI as any).run(model, buildCloudflareAiInput(parsedRequest))) as
+      | ReadableStream
+      | unknown;
+
+    wlog('info', 'upstream_ok', {
+      requestId,
+      route: 'api/cloudflare/chat',
+      status: 200,
+      trace_id: spanCtx.traceId,
+    });
+
+    if (stream instanceof ReadableStream) {
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          [REQUEST_ID_HEADER]: requestId,
+          'X-Push-Trace-Id': spanCtx.traceId,
+          'X-Push-Span-Id': spanCtx.spanId,
+        },
+      });
+    }
+
+    return Response.json(stream, {
+      headers: {
+        [REQUEST_ID_HEADER]: requestId,
+        'X-Push-Trace-Id': spanCtx.traceId,
+        'X-Push-Span-Id': spanCtx.spanId,
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    wlog('error', 'unhandled', {
+      requestId,
+      route: 'api/cloudflare/chat',
+      message,
+      timeout: false,
+    });
+    return Response.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function handleCloudflareModels(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: (runtimeEnv) => (runtimeEnv.AI ? 'WorkersAIBinding' : null),
+    keyMissingError: CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR,
+    needsBody: false,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { requestId, spanCtx } = preamble;
+
+  wlog('info', 'request', {
+    requestId,
+    route: 'api/cloudflare/models',
+    trace_id: spanCtx.traceId,
+  });
+
+  try {
+    const models = await env.AI!.models({ hide_experimental: true });
+    const textModels = models
+      .filter(isCloudflareTextGenerationModel)
+      .map(({ id, name }) => ({ id, name }))
+      .sort((left, right) => left.id.localeCompare(right.id));
+
+    return Response.json(textModels, {
+      headers: {
+        [REQUEST_ID_HEADER]: requestId,
+        'X-Push-Trace-Id': spanCtx.traceId,
+        'X-Push-Span-Id': spanCtx.spanId,
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    wlog('error', 'unhandled', {
+      requestId,
+      route: 'api/cloudflare/models',
+      message,
+      timeout: false,
+    });
+    return Response.json({ error: message }, { status: 500 });
+  }
+}
 
 // --- Ollama Cloud ---
 

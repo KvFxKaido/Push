@@ -3,11 +3,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 type MockPreferredProvider = import('./providers').PreferredProvider;
 
 function mockProviderState(options?: {
+  cloudflareConfigured?: boolean;
+  cloudflareModel?: string;
   kilocodeKey?: string;
   preferredProvider?: MockPreferredProvider | null;
   lastUsedProvider?: MockPreferredProvider | null;
 }): void {
-  const { kilocodeKey = '', preferredProvider = null, lastUsedProvider = null } = options ?? {};
+  const {
+    cloudflareConfigured = false,
+    cloudflareModel = '@cf/qwen/qwen3-30b-a3b-fp8',
+    kilocodeKey = '',
+    preferredProvider = null,
+    lastUsedProvider = null,
+  } = options ?? {};
 
   vi.doMock('@/hooks/useOllamaConfig', () => ({ getOllamaKey: () => '' }));
   vi.doMock('@/hooks/useOpenRouterConfig', () => ({ getOpenRouterKey: () => '' }));
@@ -34,6 +42,8 @@ function mockProviderState(options?: {
     const actual = await vi.importActual<typeof import('./providers')>('./providers');
     return {
       ...actual,
+      getCloudflareModelName: () => cloudflareModel,
+      getCloudflareWorkerConfigured: () => cloudflareConfigured,
       getPreferredProvider: () => preferredProvider,
       getLastUsedProvider: () => lastUsedProvider,
     };
@@ -60,5 +70,26 @@ describe('Kilo Code provider routing', () => {
     const { getProviderStreamFn } = await import('./orchestrator');
 
     expect(getProviderStreamFn('kilocode').providerType).toBe('kilocode');
+  });
+});
+
+describe('Cloudflare provider routing', () => {
+  it('maps cloudflare to the cloudflare stream provider', async () => {
+    mockProviderState({ cloudflareConfigured: true });
+
+    const { getProviderStreamFn } = await import('./orchestrator');
+
+    expect(getProviderStreamFn('cloudflare').providerType).toBe('cloudflare');
+  });
+
+  it('uses cloudflare when it is the preferred configured provider', async () => {
+    mockProviderState({
+      cloudflareConfigured: true,
+      preferredProvider: 'cloudflare',
+    });
+
+    const { getActiveProvider } = await import('./orchestrator');
+
+    expect(getActiveProvider()).toBe('cloudflare');
   });
 });
