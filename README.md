@@ -33,14 +33,14 @@ It gives you a chat-first workflow anchored to a real repo, real branch state, r
 
 - **Web app** — mobile-first repo chat, reviews, sandbox runs, and branch workflows
 - **CLI** — local terminal use with interactive and headless task execution
-- **Modal sandbox** — ephemeral Linux workspaces and code execution
+- **Sandbox execution** — ephemeral Linux workspaces backed by Cloudflare Sandbox (default) or Modal, selected per-deploy via `PUSH_SANDBOX_PROVIDER`
 - **GitHub-backed repo mode** plus **scratch workspace mode** when you don't need auth
 
 ## Repo map
 
-- `app/` — web app, Cloudflare Worker, UI, hooks, and app logic
+- `app/` — web app, Cloudflare Worker, UI, hooks, and app logic (Cloudflare Sandbox handler lives in `app/src/worker/worker-cf-sandbox.ts`)
 - `cli/` — local terminal agent, sessions, daemon, and terminal interface
-- `sandbox/` — Modal sandbox backend
+- `sandbox/` — Modal sandbox backend (Python)
 - `lib/` — shared logic used across app and CLI
 - `docs/` — plans, design notes, and archived references
 
@@ -60,7 +60,7 @@ In a second terminal from the repo root:
 npx wrangler dev --port 8787
 ```
 
-See [app/README.md](app/README.md) for environment variables, OAuth setup, Worker secrets, and Modal sandbox deployment.
+See [app/README.md](app/README.md) for environment variables, OAuth setup, Worker secrets, and sandbox deployment.
 
 ### CLI
 

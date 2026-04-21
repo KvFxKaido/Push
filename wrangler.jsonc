@@ -112,10 +112,11 @@
       "id": "7065ef8c73b94b5d945971c45aadb3e9"
     }
   ],
-  // Cloudflare Sandbox SDK — sibling provider to Modal. Gated by the
-  // PUSH_SANDBOX_PROVIDER env var at the call site; Modal remains the default
-  // during coexistence. Version must match @cloudflare/sandbox in
-  // app/package.json (Dockerfile.sandbox pins the matching image tag).
+  // Cloudflare Sandbox SDK — the default sandbox backend when
+  // PUSH_SANDBOX_PROVIDER is "cloudflare" (see `vars` above). Modal stays
+  // available as a fallback by redeploying with PUSH_SANDBOX_PROVIDER=modal.
+  // Version must match @cloudflare/sandbox in app/package.json
+  // (Dockerfile.sandbox pins the matching image tag).
   "containers": [
     {
       "class_name": "Sandbox",
