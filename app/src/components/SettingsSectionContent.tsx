@@ -26,7 +26,7 @@ import {
   type SettingsTabKey,
   type SettingsWorkspaceProps,
 } from '@/components/SettingsSheet';
-import type { PreferredProvider } from '@/lib/providers';
+import { formatModelDisplayName, type PreferredProvider } from '@/lib/providers';
 import type { AIProviderType } from '@/types';
 
 const SECTION_CARD_CLASS =
@@ -1093,6 +1093,97 @@ export function SettingsSectionContent({
                 </div>
               );
             })}
+
+            <div className="space-y-2 rounded-2xl border border-push-edge bg-push-surface/35 p-3">
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2.5">
+                <div className="min-w-0 flex items-center gap-2.5">
+                  <ProviderIcon provider="cloudflare" size={14} />
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-push-fg-secondary">
+                      {PROVIDER_LABELS.cloudflare}
+                    </p>
+                    <p className="truncate text-[11px] text-push-fg-dim">
+                      {ai.cloudflareProvider.configured
+                        ? `Configured on Worker${ai.cloudflareProvider.model ? ` · ${formatModelDisplayName('cloudflare', ai.cloudflareProvider.model)}` : ''}`
+                        : 'Not configured on Worker'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {ai.cloudflareProvider.statusLoading && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-push-fg-dim" />
+                  )}
+                  <div
+                    className={`h-2 w-2 rounded-full ${
+                      ai.cloudflareProvider.configured ? 'bg-emerald-500' : 'bg-push-fg-dim'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-xs font-medium text-push-fg-secondary">
+                    Worker-bound model
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => ai.cloudflareProvider.refreshModels()}
+                    disabled={ai.cloudflareProvider.modelsLoading}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-push-edge-subtle bg-push-surface text-push-fg-dim transition-colors hover:text-push-fg-secondary disabled:opacity-50"
+                    aria-label="Refresh Cloudflare models"
+                    title="Refresh Cloudflare models"
+                  >
+                    {ai.cloudflareProvider.modelsLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
+
+                <select
+                  value={ai.cloudflareProvider.model}
+                  onChange={(e) => ai.cloudflareProvider.setModel(e.target.value)}
+                  className="mt-2 h-9 w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 text-xs text-push-fg outline-none transition-all focus:border-push-sky/50"
+                  disabled={ai.cloudflareProvider.modelOptions.length === 0}
+                >
+                  {ai.cloudflareProvider.modelOptions.map((model) => (
+                    <option key={model} value={model}>
+                      {formatModelDisplayName('cloudflare', model)}
+                    </option>
+                  ))}
+                </select>
+
+                <p className="mt-2 text-push-xs text-push-fg-dim">
+                  Uses the deployed Worker binding via `env.AI`. No local API key needed.
+                </p>
+                <p className="mt-1 text-push-xs text-push-fg-dim">
+                  Usage is billed to the deployed Worker&apos;s Cloudflare account, not your browser
+                  session.
+                </p>
+                {ai.cloudflareProvider.statusError && (
+                  <p className="mt-2 text-push-xs text-amber-400">
+                    {ai.cloudflareProvider.statusError}
+                  </p>
+                )}
+                {ai.cloudflareProvider.modelsError && (
+                  <p className="mt-2 text-push-xs text-amber-400">
+                    {ai.cloudflareProvider.modelsError}
+                  </p>
+                )}
+                {ai.cloudflareProvider.isModelLocked && ai.lockedModel && (
+                  <p className="mt-2 text-push-xs text-amber-400">
+                    This chat keeps using {ai.lockedModel}.
+                  </p>
+                )}
+                {ai.cloudflareProvider.modelsUpdatedAt && (
+                  <p className="mt-2 text-push-xs text-push-fg-dim">
+                    Updated {new Date(ai.cloudflareProvider.modelsUpdatedAt).toLocaleTimeString()}
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
 
           <PrivateConnectorsDisclosure>

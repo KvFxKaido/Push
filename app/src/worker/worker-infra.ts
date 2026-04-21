@@ -319,6 +319,7 @@ interface HealthStatus {
     worker: { status: 'ok' };
     ollama: { status: 'ok' | 'unconfigured'; configured: boolean };
     openrouter: { status: 'ok' | 'unconfigured'; configured: boolean };
+    cloudflare: { status: 'ok' | 'unconfigured'; configured: boolean };
     zen: { status: 'ok' | 'unconfigured'; configured: boolean };
     nvidia: { status: 'ok' | 'unconfigured'; configured: boolean };
     blackbox: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -339,6 +340,7 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
   const healthStartTime = Date.now();
   const ollamaConfigured = Boolean(env.OLLAMA_API_KEY);
   const openRouterConfigured = Boolean(env.OPENROUTER_API_KEY);
+  const cloudflareConfigured = Boolean(env.AI);
   const zenConfigured = Boolean(env.ZEN_API_KEY);
   const nvidiaConfigured = Boolean(env.NVIDIA_API_KEY);
   const blackboxConfigured = Boolean(env.BLACKBOX_API_KEY);
@@ -362,6 +364,7 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
   const hasAnyLlm =
     ollamaConfigured ||
     openRouterConfigured ||
+    cloudflareConfigured ||
     zenConfigured ||
     nvidiaConfigured ||
     blackboxConfigured ||
@@ -383,6 +386,10 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
       openrouter: {
         status: openRouterConfigured ? 'ok' : 'unconfigured',
         configured: openRouterConfigured,
+      },
+      cloudflare: {
+        status: cloudflareConfigured ? 'ok' : 'unconfigured',
+        configured: cloudflareConfigured,
       },
       zen: { status: zenConfigured ? 'ok' : 'unconfigured', configured: zenConfigured },
       nvidia: { status: nvidiaConfigured ? 'ok' : 'unconfigured', configured: nvidiaConfigured },

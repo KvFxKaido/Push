@@ -7,6 +7,7 @@ import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
 import {
+  CLOUDFLARE_MODELS,
   compareProviderModelIds,
   NVIDIA_MODELS,
   OPENROUTER_MODELS,
@@ -1023,6 +1024,52 @@ export async function fetchOpenRouterModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `OpenRouter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+      );
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function fetchCloudflareModels(): Promise<string[]> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(PROVIDER_URLS.cloudflare.models, {
+      method: 'GET',
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(
+        `Cloudflare Workers AI model list failed (${response.status}): ${detail.slice(0, 200)}`,
+      );
+    }
+
+    const payload = (await response.json()) as unknown;
+    // Parse the CF-specific `{ id, name }[]` shape explicitly. The shared
+    // `normalizeModelList` treats bare arrays as "pull both id and name",
+    // which would inject the human-readable name (e.g. `qwen3-30b-a3b-fp8`)
+    // as a selectable model alongside the real `@cf/...` id.
+    const liveModels = (Array.isArray(payload) ? payload : [])
+      .map((entry): string | null => {
+        if (!entry || typeof entry !== 'object') return null;
+        const id = (entry as { id?: unknown }).id;
+        return typeof id === 'string' && id.trim() ? id.trim() : null;
+      })
+      .filter((id): id is string => Boolean(id))
+      .sort((left, right) => compareProviderModelIds('cloudflare', left, right));
+    return liveModels.length > 0 ? liveModels : [...CLOUDFLARE_MODELS];
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        `Cloudflare Workers AI model list timed out after ${Math.floor(
+          MODELS_FETCH_TIMEOUT_MS / 1000,
+        )}s`,
       );
     }
     throw err;

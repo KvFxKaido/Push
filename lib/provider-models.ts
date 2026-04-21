@@ -5,6 +5,13 @@
  * without inheriting each other's runtime-specific catalog logic.
  */
 
+/**
+ * Providers whose curated models + defaults are shared between the web app
+ * and CLI. Intentionally excludes `cloudflare` — that provider relies on the
+ * Worker's native `env.AI` binding, which doesn't exist in the CLI runtime.
+ * The `CLOUDFLARE_*` constants are still exported from this file so the web
+ * side can import them directly without going through the shared catalog.
+ */
 export type SharedProviderModelId =
   | 'ollama'
   | 'openrouter'
@@ -16,6 +23,7 @@ export type SharedProviderModelId =
 
 export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
+export const CLOUDFLARE_DEFAULT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 /** Maximum length for OpenRouter session_id field (per API spec). */
 export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
@@ -77,6 +85,15 @@ export const OPENROUTER_MODELS: string[] = [
   'z-ai/glm-5:nitro',
   'z-ai/glm-5.1:nitro',
   'z-ai/glm-5-turbo',
+];
+
+export const CLOUDFLARE_MODELS: string[] = [
+  CLOUDFLARE_DEFAULT_MODEL,
+  '@cf/qwen/qwen2.5-coder-32b-instruct',
+  '@cf/openai/gpt-oss-20b',
+  '@cf/meta/llama-4-scout-17b-16e-instruct',
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+  '@cf/google/gemma-3-12b-it',
 ];
 
 export const ZEN_MODELS: string[] = [

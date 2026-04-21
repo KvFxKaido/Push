@@ -65,6 +65,7 @@ export function buildSettingsProfile(props: ChatRouteProps): SettingsProfileProp
 export function buildSettingsAI(props: ChatRouteProps): SettingsAIProps {
   const { catalog, isProviderLocked, isModelLocked, lockedProvider, lockedModel } = props;
   const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
+  const isCloudflareModelLocked = isModelLocked && lockedProvider === 'cloudflare';
   const isZenModelLocked = isModelLocked && lockedProvider === 'zen';
   const isNvidiaModelLocked = isModelLocked && lockedProvider === 'nvidia';
   const isBlackboxModelLocked = isModelLocked && lockedProvider === 'blackbox';
@@ -189,6 +190,19 @@ export function buildSettingsAI(props: ChatRouteProps): SettingsAIProps {
         setKey: catalog.openadapter.setKey,
         clearKey: catalog.openadapter.clearKey,
       },
+    },
+    cloudflareProvider: {
+      configured: catalog.cloudflare.configured,
+      statusLoading: catalog.cloudflare.statusLoading,
+      statusError: catalog.cloudflare.statusError,
+      model: catalog.cloudflare.model,
+      setModel: catalog.cloudflare.setModel,
+      modelOptions: catalog.cloudflareModelOptions,
+      modelsLoading: catalog.cloudflareModels.loading,
+      modelsError: catalog.cloudflareModels.error,
+      modelsUpdatedAt: catalog.cloudflareModels.updatedAt,
+      isModelLocked: isCloudflareModelLocked,
+      refreshModels: catalog.refreshCloudflareModels,
     },
     experimentalProviders: {
       azure: {
@@ -347,6 +361,7 @@ export function buildWorkspaceHubReviewModelOptions(
   return {
     ollama: catalog.ollamaModelOptions,
     openrouter: catalog.openRouterModelOptions,
+    cloudflare: catalog.cloudflareModelOptions,
     zen: catalog.zenModelOptions,
     nvidia: catalog.nvidiaModelOptions,
     vertex: catalog.vertex.modelOptions,

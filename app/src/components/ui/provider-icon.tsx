@@ -7,6 +7,7 @@ const MODELS_DEV_LOGOS: Record<AIProviderType, string> = {
   // `models.dev/logos/ollama.svg` currently resolves to a generic fallback.
   ollama: 'https://models.dev/logos/ollama-cloud.svg',
   openrouter: 'https://models.dev/logos/openrouter.svg',
+  cloudflare: 'https://models.dev/logos/cloudflare.svg',
   // `zen` is represented by OpenCode branding.
   zen: 'https://models.dev/logos/opencode.svg',
   nvidia: 'https://models.dev/logos/nvidia.svg',
@@ -22,6 +23,7 @@ const MODELS_DEV_LOGOS: Record<AIProviderType, string> = {
 const PROVIDER_ALT: Record<AIProviderType, string> = {
   ollama: 'Ollama logo',
   openrouter: 'OpenRouter logo',
+  cloudflare: 'Cloudflare logo',
   zen: 'OpenCode Zen logo',
   nvidia: 'NVIDIA NIM logo',
   blackbox: 'Blackbox AI logo',
@@ -36,6 +38,7 @@ const PROVIDER_ALT: Record<AIProviderType, string> = {
 const PROVIDER_FALLBACK_TEXT: Record<AIProviderType, string> = {
   ollama: 'O',
   openrouter: 'OR',
+  cloudflare: 'CF',
   zen: 'Z',
   nvidia: 'N',
   blackbox: 'BB',

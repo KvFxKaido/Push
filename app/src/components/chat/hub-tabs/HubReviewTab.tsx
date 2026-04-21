@@ -24,6 +24,7 @@ import { getProviderStreamFn, type ActiveProvider } from '@/lib/orchestrator';
 import {
   OLLAMA_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
+  CLOUDFLARE_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
   NVIDIA_DEFAULT_MODEL,
   BLACKBOX_DEFAULT_MODEL,
@@ -112,6 +113,7 @@ const MAX_SAVED_REVIEW_DIFF_CHARS = 120_000;
 const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   ollama: 'push:review:model:ollama',
   openrouter: 'push:review:model:openrouter',
+  cloudflare: 'push:review:model:cloudflare',
   zen: 'push:review:model:zen',
   nvidia: 'push:review:model:nvidia',
   blackbox: 'push:review:model:blackbox',
@@ -125,6 +127,7 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
 const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   ollama: OLLAMA_DEFAULT_MODEL,
   openrouter: OPENROUTER_DEFAULT_MODEL,
+  cloudflare: CLOUDFLARE_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
   nvidia: NVIDIA_DEFAULT_MODEL,
   blackbox: BLACKBOX_DEFAULT_MODEL,
@@ -140,6 +143,7 @@ function readStoredReviewProvider(): PreferredProvider | null {
   if (
     stored === 'ollama' ||
     stored === 'openrouter' ||
+    stored === 'cloudflare' ||
     stored === 'zen' ||
     stored === 'nvidia' ||
     stored === 'blackbox' ||
@@ -158,6 +162,7 @@ function isPreferredProvider(value: string): value is PreferredProvider {
   return (
     value === 'ollama' ||
     value === 'openrouter' ||
+    value === 'cloudflare' ||
     value === 'zen' ||
     value === 'nvidia' ||
     value === 'blackbox' ||
@@ -173,6 +178,7 @@ function readStoredReviewModels(): Record<PreferredProvider, string> {
   return {
     ollama: safeStorageGet(REVIEW_MODEL_KEYS.ollama) || REVIEW_DEFAULT_MODELS.ollama,
     openrouter: safeStorageGet(REVIEW_MODEL_KEYS.openrouter) || REVIEW_DEFAULT_MODELS.openrouter,
+    cloudflare: safeStorageGet(REVIEW_MODEL_KEYS.cloudflare) || REVIEW_DEFAULT_MODELS.cloudflare,
     zen: safeStorageGet(REVIEW_MODEL_KEYS.zen) || REVIEW_DEFAULT_MODELS.zen,
     nvidia: safeStorageGet(REVIEW_MODEL_KEYS.nvidia) || REVIEW_DEFAULT_MODELS.nvidia,
     blackbox: safeStorageGet(REVIEW_MODEL_KEYS.blackbox) || REVIEW_DEFAULT_MODELS.blackbox,

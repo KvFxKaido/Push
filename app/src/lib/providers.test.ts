@@ -15,8 +15,8 @@ describe('formatModelDisplayName', () => {
     expect(formatModelDisplayName('openrouter', 'openai/gpt-5.4')).toBe('OpenAI / gpt-5.4');
   });
 
-  it('keeps provider-native ids readable when they are not routed', () => {
-    expect(formatModelDisplayName('blackbox', 'blackbox-pro')).toBe('blackbox-pro');
+  it('groups Blackbox native ids while keeping Ollama native ids readable', () => {
+    expect(formatModelDisplayName('blackbox', 'blackbox-pro')).toBe('Blackbox / blackbox-pro');
     expect(formatModelDisplayName('ollama', 'gemini-3-flash-preview')).toBe(
       'gemini-3-flash-preview',
     );
@@ -24,6 +24,12 @@ describe('formatModelDisplayName', () => {
 
   it('formats Kilo auto routes with a readable provider label', () => {
     expect(formatModelDisplayName('kilocode', 'kilo-auto/balanced')).toBe('Kilo Auto / balanced');
+  });
+
+  it('formats Cloudflare model ids with readable provider grouping', () => {
+    expect(formatModelDisplayName('cloudflare', '@cf/qwen/qwen3-30b-a3b-fp8')).toBe(
+      'Qwen / qwen3-30b-a3b-fp8',
+    );
   });
 });
 
@@ -63,5 +69,14 @@ describe('Blackbox display grouping', () => {
       'blackbox-pro',
       'blackboxai/qwen/qwen3-coder-32b-instruct',
     ]);
+  });
+});
+
+describe('Cloudflare display grouping', () => {
+  it('drops the @cf prefix for grouping while keeping the model leaf readable', () => {
+    expect(getModelDisplayGroupKey('cloudflare', '@cf/qwen/qwen3-30b-a3b-fp8')).toBe('qwen');
+    expect(getModelDisplayLeafName('cloudflare', '@cf/qwen/qwen3-30b-a3b-fp8')).toBe(
+      'qwen3-30b-a3b-fp8',
+    );
   });
 });

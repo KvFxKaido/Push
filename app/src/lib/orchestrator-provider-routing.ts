@@ -25,6 +25,8 @@ import {
   getVertexRegion,
 } from '@/hooks/useVertexConfig';
 import {
+  getCloudflareModelName,
+  getCloudflareWorkerConfigured,
   getOllamaModelName,
   getPreferredProvider,
   getLastUsedProvider,
@@ -222,6 +224,36 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       };
     },
   },
+  cloudflare: {
+    getKey: () => 'cloudflare-worker-binding',
+    buildConfig: (_apiKey, modelOverride) => {
+      if (!getCloudflareWorkerConfigured()) {
+        throw new Error('Cloudflare Workers AI is not configured on this Worker');
+      }
+      return {
+        name: 'Cloudflare Workers AI',
+        apiUrl: PROVIDER_URLS.cloudflare.chat,
+        apiKey: '',
+        authHeader: null,
+        model: modelOverride || getCloudflareModelName(),
+        ...STANDARD_TIMEOUTS,
+        errorMessages: {
+          keyMissing: 'Cloudflare Workers AI is not configured on this Worker',
+          connect: (s) =>
+            `Cloudflare Workers AI didn't respond within ${s}s — the Worker may be cold-starting.`,
+          idle: (s) => `Cloudflare Workers AI stream stalled — no data for ${s}s.`,
+          stall: (s) =>
+            `Cloudflare Workers AI stream stalled — receiving data but no content for ${s}s.`,
+          total: (s) => `Cloudflare Workers AI response exceeded ${s}s total time limit.`,
+          network: 'Cannot reach Cloudflare Workers AI — network error. Check your connection.',
+        },
+        parseError: (p, f) => parseProviderError(p, f, true),
+        checkFinishReason: (c) =>
+          hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
+        providerType: 'cloudflare',
+      };
+    },
+  },
   zen: {
     getKey: getZenKey,
     buildConfig: (apiKey, modelOverride) => ({
@@ -396,6 +428,8 @@ export type StreamChatFn = ProviderStreamFn<ChatMessage, WorkspaceContext>;
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
 export const streamOpenRouterChat: StreamChatFn = (...args) =>
   streamProviderChat('openrouter', ...args);
+export const streamCloudflareChat: StreamChatFn = (...args) =>
+  streamProviderChat('cloudflare', ...args);
 export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
 export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
 export const streamBlackboxChat: StreamChatFn = (...args) =>
@@ -415,6 +449,7 @@ export const streamVertexChat: StreamChatFn = (...args) => streamProviderChat('v
 export type ActiveProvider =
   | 'ollama'
   | 'openrouter'
+  | 'cloudflare'
   | 'zen'
   | 'nvidia'
   | 'blackbox'
@@ -428,6 +463,7 @@ export type ActiveProvider =
 const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   ollama: () => Boolean(getOllamaKey()),
   openrouter: () => Boolean(getOpenRouterKey()),
+  cloudflare: () => getCloudflareWorkerConfigured(),
   zen: () => Boolean(getZenKey()),
   nvidia: () => Boolean(getNvidiaKey()),
   blackbox: () => Boolean(getBlackboxKey()),
@@ -467,6 +503,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
 const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
   'ollama',
   'openrouter',
+  'cloudflare',
   'zen',
   'nvidia',
   'blackbox',
@@ -519,6 +556,8 @@ export function getProviderStreamFn(provider: ActiveProvider) {
       return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
     case 'openrouter':
       return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
+    case 'cloudflare':
+      return { providerType: 'cloudflare' as const, streamFn: streamCloudflareChat };
     case 'zen':
       return { providerType: 'zen' as const, streamFn: streamZenChat };
     case 'nvidia':

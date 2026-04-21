@@ -66,6 +66,12 @@
     "import.meta.env.VITE_VERTEX_SERVICE_ACCOUNT_JSON": "\"\"",
     "import.meta.env.VITE_ZEN_API_KEY": "\"\""
   },
+  // Native Workers AI binding for the Cloudflare provider path. This is a
+  // deployment-level capability, not a browser-side API key.
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
   "ratelimits": [
     {
       "name": "RATE_LIMITER",

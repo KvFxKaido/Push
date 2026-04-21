@@ -114,6 +114,15 @@ describe('handleHealthCheck', () => {
     expect(body.services.ollama).toEqual({ status: 'ok', configured: true });
   });
 
+  it('reports Cloudflare Workers AI as configured when the AI binding is present', async () => {
+    const response = await handleHealthCheck(
+      makeEnv({ AI: { run: vi.fn(), models: vi.fn() } as never }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.services.cloudflare).toEqual({ status: 'ok', configured: true });
+  });
+
   it('reports degraded when only the sandbox base URL is configured', async () => {
     const response = await handleHealthCheck(
       makeEnv({ MODAL_SANDBOX_BASE_URL: 'https://org--push-app.modal.run' }),

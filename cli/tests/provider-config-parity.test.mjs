@@ -68,7 +68,7 @@ describe('provider config parity', () => {
   const allWebProviderIds = extractUnionMembers(webProviderSource, 'PreferredProvider');
   // CLI only implements the four built-in providers; azure/bedrock/vertex are
   // advanced connectors deferred per the Web-CLI Parity Plan.
-  const CLI_DEFERRED_PROVIDERS = new Set(['azure', 'bedrock', 'vertex']);
+  const CLI_DEFERRED_PROVIDERS = new Set(['azure', 'bedrock', 'vertex', 'cloudflare']);
   const providerIds = allWebProviderIds.filter((id) => !CLI_DEFERRED_PROVIDERS.has(id));
   const defaultConstByProvider = {
     ollama: 'OLLAMA_DEFAULT_MODEL',

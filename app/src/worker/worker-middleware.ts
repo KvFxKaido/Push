@@ -6,6 +6,7 @@
  */
 
 import type {
+  Ai,
   DurableObjectNamespace,
   Fetcher,
   KVNamespace,
@@ -37,6 +38,7 @@ export interface Env {
   BLACKBOX_API_KEY?: string;
   KILOCODE_API_KEY?: string;
   OPENADAPTER_API_KEY?: string;
+  AI?: Ai;
   MODAL_SANDBOX_BASE_URL?: string;
   ALLOWED_ORIGINS?: string;
   ASSETS: Fetcher;

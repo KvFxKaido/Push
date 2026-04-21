@@ -10,10 +10,10 @@
  *
  * Scope note (Phase 1):
  *   PR #3a wires the direct Worker handlers currently validated for
- *   background jobs: openrouter, ollama, zen, nvidia, blackbox,
- *   kilocode, and openadapter. Providers that still require extra
- *   runtime setup or are intentionally unsupported here return `null`
- *   from `resolveProviderHandler` so the caller can surface an
+ *   background jobs: openrouter, ollama, cloudflare, zen, nvidia,
+ *   blackbox, kilocode, and openadapter. Providers that still require
+ *   extra runtime setup or are intentionally unsupported here return
+ *   `null` from `resolveProviderHandler` so the caller can surface an
  *   explicit diagnostic and fail fast instead of silently hanging.
  *
  * SSE parsing:
@@ -30,6 +30,7 @@ import type { ChatMessage } from '@/types';
 import type { Env } from './worker-middleware';
 import {
   handleBlackboxChat,
+  handleCloudflareChat,
   handleKiloCodeChat,
   handleNvidiaChat,
   handleOllamaChat,
@@ -58,6 +59,8 @@ function resolveProviderHandler(provider: AIProviderType): ProviderHandler | nul
       return handleOpenRouterChat as unknown as ProviderHandler;
     case 'ollama':
       return handleOllamaChat as unknown as ProviderHandler;
+    case 'cloudflare':
+      return handleCloudflareChat as unknown as ProviderHandler;
     case 'zen':
       return handleZenChat as unknown as ProviderHandler;
     case 'nvidia':
@@ -107,7 +110,7 @@ export function createWebStreamAdapter(
       onError(
         new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
-            `Supported in Phase 1 PR #3a: openrouter, ollama, zen, nvidia, blackbox, kilocode, openadapter.`,
+            `Supported in Phase 1 PR #3a: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, openadapter.`,
         ),
       );
       return;

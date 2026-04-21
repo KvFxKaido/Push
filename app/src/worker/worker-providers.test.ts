@@ -10,6 +10,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  handleCloudflareChat,
+  handleCloudflareModels,
   handleOllamaChat,
   handleOllamaModels,
   handleOpenRouterChat,
@@ -157,6 +159,87 @@ describe('handleOpenRouterModels', () => {
     expect(captured?.url).toBe('https://openrouter.ai/api/v1/models');
     expect(captured?.init.method).toBe('GET');
     expect(captured?.init.body).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cloudflare Workers AI — chat (native binding) + models
+// ---------------------------------------------------------------------------
+
+describe('handleCloudflareChat', () => {
+  it('runs the requested model through the AI binding with scoped messages', async () => {
+    const run = vi.fn(async () => new ReadableStream());
+    const response = await handleCloudflareChat(
+      makeChatRequest(),
+      makeEnv({
+        AI: {
+          run,
+        } as unknown as Env['AI'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(run).toHaveBeenCalledWith('test-model', {
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: true,
+    });
+    expect(response.headers.get('Content-Type')).toBe('text/event-stream');
+  });
+
+  it('returns 401 when the Worker has no AI binding configured', async () => {
+    const response = await handleCloudflareChat(makeChatRequest(), makeEnv());
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toMatch(/Cloudflare Workers AI is not configured/i);
+  });
+});
+
+describe('handleCloudflareModels', () => {
+  it('returns only text-generation model ids from the AI binding', async () => {
+    const models = vi.fn(async () => [
+      {
+        id: '@cf/qwen/qwen3-30b-a3b-fp8',
+        name: 'qwen3-30b-a3b-fp8',
+        description: '',
+        source: 1,
+        task: { id: 'text-generation', name: 'Text Generation', description: '' },
+        tags: [],
+        properties: [],
+      },
+      {
+        id: '@cf/openai/whisper',
+        name: 'whisper',
+        description: '',
+        source: 1,
+        task: {
+          id: 'automatic-speech-recognition',
+          name: 'Automatic Speech Recognition',
+          description: '',
+        },
+        tags: [],
+        properties: [],
+      },
+    ]);
+    const response = await handleCloudflareModels(
+      makeModelsRequest(),
+      makeEnv({
+        AI: {
+          models,
+        } as unknown as Env['AI'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([
+      { id: '@cf/qwen/qwen3-30b-a3b-fp8', name: 'qwen3-30b-a3b-fp8' },
+    ]);
+  });
+
+  it('returns 401 when the Worker has no AI binding configured', async () => {
+    const response = await handleCloudflareModels(makeModelsRequest(), makeEnv());
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toMatch(/Cloudflare Workers AI is not configured/i);
   });
 });
 

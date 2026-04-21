@@ -130,6 +130,7 @@ export interface ChatRouteCatalogProps {
   handleSelectBackend: (provider: PreferredProvider) => void;
   handleSelectOllamaModelFromChat: (model: string) => void;
   handleSelectOpenRouterModelFromChat: (model: string) => void;
+  handleSelectCloudflareModelFromChat: (model: string) => void;
   handleSelectZenModelFromChat: (model: string) => void;
   handleSelectNvidiaModelFromChat: (model: string) => void;
   handleSelectBlackboxModelFromChat: (model: string) => void;

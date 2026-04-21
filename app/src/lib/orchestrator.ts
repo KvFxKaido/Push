@@ -60,6 +60,7 @@ export {
   streamChat,
   streamOllamaChat,
   streamOpenRouterChat,
+  streamCloudflareChat,
   streamZenChat,
   streamNvidiaChat,
   streamBlackboxChat,

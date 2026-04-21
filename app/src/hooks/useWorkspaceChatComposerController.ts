@@ -14,6 +14,7 @@ import type { ChatRouteProps } from '@/sections/workspace-chat-route-types';
 const CHAT_PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
   openrouter: 'OpenRouter',
+  cloudflare: 'Cloudflare Workers AI',
   zen: 'OpenCode Zen',
   nvidia: 'Nvidia NIM',
   blackbox: 'Blackbox AI',
@@ -38,6 +39,7 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectBackend'
   | 'handleSelectOllamaModelFromChat'
   | 'handleSelectOpenRouterModelFromChat'
+  | 'handleSelectCloudflareModelFromChat'
   | 'handleSelectZenModelFromChat'
   | 'handleSelectNvidiaModelFromChat'
   | 'handleSelectBlackboxModelFromChat'
@@ -66,6 +68,7 @@ export function useWorkspaceChatComposerController({
   handleSelectBackend,
   handleSelectOllamaModelFromChat,
   handleSelectOpenRouterModelFromChat,
+  handleSelectCloudflareModelFromChat,
   handleSelectZenModelFromChat,
   handleSelectNvidiaModelFromChat,
   handleSelectBlackboxModelFromChat,
@@ -101,6 +104,7 @@ export function useWorkspaceChatComposerController({
     if (isDisplayedComposerProviderLocked && lockedModel) return lockedModel;
     if (selectedComposerProvider === 'ollama') return selectedChatModels.ollama;
     if (selectedComposerProvider === 'openrouter') return selectedChatModels.openrouter;
+    if (selectedComposerProvider === 'cloudflare') return selectedChatModels.cloudflare;
     if (selectedComposerProvider === 'zen') return selectedChatModels.zen;
     if (selectedComposerProvider === 'nvidia') return selectedChatModels.nvidia;
     if (selectedComposerProvider === 'blackbox') return selectedChatModels.blackbox;
@@ -227,6 +231,7 @@ export function useWorkspaceChatComposerController({
   );
 
   const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
+  const isCloudflareModelLocked = isModelLocked && lockedProvider === 'cloudflare';
   const isZenModelLocked = isModelLocked && lockedProvider === 'zen';
   const isNvidiaModelLocked = isModelLocked && lockedProvider === 'nvidia';
   const isBlackboxModelLocked = isModelLocked && lockedProvider === 'blackbox';
@@ -268,6 +273,14 @@ export function useWorkspaceChatComposerController({
       openRouterModelOptions: catalog.openRouterModelOptions,
       isOpenRouterModelLocked: isProviderLocked && lockedProvider === 'openrouter',
       onSelectOpenRouterModel: handleSelectOpenRouterModelFromChat,
+      cloudflareModel: selectedChatModels.cloudflare,
+      cloudflareModelOptions: catalog.cloudflareModelOptions,
+      cloudflareModelsLoading: catalog.cloudflareModels.loading,
+      cloudflareModelsError: catalog.cloudflareModels.error,
+      cloudflareModelsUpdatedAt: catalog.cloudflareModels.updatedAt,
+      isCloudflareModelLocked,
+      refreshCloudflareModels: catalog.refreshCloudflareModels,
+      onSelectCloudflareModel: handleSelectCloudflareModelFromChat,
       zenModel: selectedChatModels.zen,
       zenModelOptions: catalog.zenModelOptions,
       zenModelsLoading: catalog.zenModels.loading,

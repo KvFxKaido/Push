@@ -8,6 +8,8 @@ import { ZEN_GO_DEFAULT_MODEL, ZEN_GO_MODELS as SHARED_ZEN_GO_MODELS } from './z
 export {
   BLACKBOX_DEFAULT_MODEL,
   BLACKBOX_MODELS,
+  CLOUDFLARE_DEFAULT_MODEL,
+  CLOUDFLARE_MODELS,
   KILOCODE_DEFAULT_MODEL,
   KILOCODE_MODELS,
   NVIDIA_DEFAULT_MODEL,
@@ -22,6 +24,7 @@ export {
 } from '@push/lib/provider-models';
 import {
   BLACKBOX_DEFAULT_MODEL,
+  CLOUDFLARE_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
   NVIDIA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_MODEL,
@@ -47,6 +50,10 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   openrouter: {
     chat: providerUrl('/openrouter/api/v1/chat/completions', '/api/openrouter/chat'),
     models: providerUrl('/openrouter/api/v1/models', '/api/openrouter/models'),
+  },
+  cloudflare: {
+    chat: providerUrl('/api/cloudflare/chat', '/api/cloudflare/chat'),
+    models: providerUrl('/api/cloudflare/models', '/api/cloudflare/models'),
   },
   zen: {
     chat: providerUrl('/opencode/zen/v1/chat/completions', '/api/zen/chat'),
@@ -147,6 +154,10 @@ export function getModelDisplayGroupKey(
   modelId: string,
 ): string {
   const normalized = normalizeProviderModelId(provider, modelId);
+  if (provider === 'cloudflare' && normalized.startsWith('@')) {
+    const parts = normalized.split('/');
+    if (parts.length >= 3) return parts[1] || '';
+  }
   const slash = normalized.indexOf('/');
   if (slash > 0) return normalized.slice(0, slash);
   if (provider === 'blackbox' && normalized) return 'blackbox';
@@ -162,6 +173,10 @@ export function getModelDisplayLeafName(
   modelId: string,
 ): string {
   const normalized = normalizeProviderModelId(provider, modelId);
+  if (provider === 'cloudflare' && normalized.startsWith('@')) {
+    const parts = normalized.split('/');
+    if (parts.length >= 3) return parts.slice(2).join('/');
+  }
   const slash = normalized.indexOf('/');
   return slash > 0 ? normalized.slice(slash + 1) : normalized;
 }
@@ -169,9 +184,8 @@ export function getModelDisplayLeafName(
 export function formatModelDisplayName(provider: AIProviderType | string, modelId: string): string {
   const normalized = normalizeProviderModelId(provider, modelId);
   const groupKey = getModelDisplayGroupKey(provider, modelId);
-  const slash = normalized.indexOf('/');
-  if (slash <= 0) return normalized;
-  return `${getModelDisplayGroupLabel(groupKey)} / ${normalized.slice(slash + 1)}`;
+  if (!groupKey) return normalized;
+  return `${getModelDisplayGroupLabel(groupKey)} / ${getModelDisplayLeafName(provider, modelId)}`;
 }
 
 export function compareProviderModelIds(
@@ -235,6 +249,20 @@ export const PROVIDERS: AIProviderConfig[] = [
     envKey: 'VITE_OPENROUTER_API_KEY',
     envUrl: 'https://openrouter.ai',
     models: makeRoleModels(OPENROUTER_DEFAULT_MODEL, 'OpenRouter', 'openrouter', 200_000),
+  },
+  {
+    type: 'cloudflare',
+    name: 'Cloudflare Workers AI',
+    description:
+      'Cloudflare Workers AI via native Worker binding (`env.AI`) with no browser API key',
+    envKey: 'CLOUDFLARE_WORKERS_AI_BINDING',
+    envUrl: 'Worker binding',
+    models: makeRoleModels(
+      CLOUDFLARE_DEFAULT_MODEL,
+      'Cloudflare Workers AI',
+      'cloudflare',
+      131_072,
+    ),
   },
   {
     type: 'zen',
@@ -355,6 +383,18 @@ const openRouterModel = createModelNameStorage('openrouter_model', OPENROUTER_DE
 export const getOpenRouterModelName = openRouterModel.get;
 export const setOpenRouterModelName = openRouterModel.set;
 
+const cloudflareModel = createModelNameStorage('cloudflare_model', CLOUDFLARE_DEFAULT_MODEL);
+export const getCloudflareModelName = cloudflareModel.get;
+export const setCloudflareModelName = cloudflareModel.set;
+
+const CLOUDFLARE_WORKER_CONFIGURED_KEY = 'cloudflare_worker_configured';
+export function getCloudflareWorkerConfigured(): boolean {
+  return safeStorageGet(CLOUDFLARE_WORKER_CONFIGURED_KEY) === 'true';
+}
+export function setCloudflareWorkerConfigured(configured: boolean): void {
+  safeStorageSet(CLOUDFLARE_WORKER_CONFIGURED_KEY, configured ? 'true' : 'false');
+}
+
 const zenModel = createModelNameStorage('zen_model', ZEN_DEFAULT_MODEL);
 export const getZenModelName = zenModel.get;
 export const setZenModelName = zenModel.set;
@@ -402,6 +442,7 @@ export const setKiloCodeModelName = kiloCodeModel.set;
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
   openrouter: getOpenRouterModelName,
+  cloudflare: getCloudflareModelName,
   zen: getZenModelName,
   nvidia: getNvidiaModelName,
   blackbox: getBlackboxModelName,
@@ -442,6 +483,7 @@ const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 export type PreferredProvider =
   | 'ollama'
   | 'openrouter'
+  | 'cloudflare'
   | 'zen'
   | 'nvidia'
   | 'blackbox'
@@ -456,6 +498,7 @@ export function getPreferredProvider(): PreferredProvider | null {
   if (
     stored === 'ollama' ||
     stored === 'openrouter' ||
+    stored === 'cloudflare' ||
     stored === 'zen' ||
     stored === 'nvidia' ||
     stored === 'blackbox' ||
@@ -489,6 +532,7 @@ export function getLastUsedProvider(): PreferredProvider | null {
   if (
     stored === 'ollama' ||
     stored === 'openrouter' ||
+    stored === 'cloudflare' ||
     stored === 'zen' ||
     stored === 'nvidia' ||
     stored === 'blackbox' ||

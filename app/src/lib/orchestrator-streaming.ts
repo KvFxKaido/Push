@@ -31,6 +31,7 @@ export interface StreamProviderConfig {
   providerType?:
     | 'ollama'
     | 'openrouter'
+    | 'cloudflare'
     | 'zen'
     | 'nvidia'
     | 'blackbox'
