@@ -16,7 +16,7 @@ import path from 'node:path';
 
 import { runAssistantTurn } from '../engine.ts';
 import { PROVIDER_CONFIGS } from '../provider.ts';
-import { makeSessionId } from '../session-store.ts';
+import { loadSessionEvents, makeSessionId } from '../session-store.ts';
 
 function makeWorkingMemory(overrides = {}) {
   return {
@@ -202,6 +202,18 @@ describe('runAssistantTurn — multi-feature delegation event sequence', () => {
           assert.ok(started, `missing task_graph.task_started for ${taskId}`);
           assert.ok(completed, `missing task_graph.task_completed for ${taskId}`);
           assert.equal(ready.payload.agent, 'coder');
+
+          // Copilot review: `detail` on task_ready/started must be compact —
+          // the raw node.task contains a long "Ground your answer…" preamble
+          // that would flood the transcript if passed through verbatim.
+          assert.ok(
+            (ready.payload.detail?.length ?? 0) <= 120,
+            `task_ready.detail too long (${ready.payload.detail?.length}) for ${taskId}`,
+          );
+          assert.ok(
+            !ready.payload.detail?.includes('Ground your answer'),
+            `task_ready.detail leaked preamble for ${taskId}`,
+          );
         }
 
         // Graph-level completion envelope.
@@ -220,6 +232,12 @@ describe('runAssistantTurn — multi-feature delegation event sequence', () => {
         assert.ok(taskGraphStarted, 'missing subagent.started agent=task_graph');
         assert.ok(taskGraphCompleted, 'missing subagent.completed agent=task_graph');
 
+        // Copilot review: runId must be stable across the whole turn, so
+        // event-log consumers can correlate planner subagent events with
+        // the task-graph lifecycle as one user turn.
+        const runIds = new Set(emitted.map((e) => e.runId).filter(Boolean));
+        assert.equal(runIds.size, 1, `events split across runIds: ${[...runIds].join(', ')}`);
+
         // Final assistant turn closure: assistant_done then run_complete so
         // the TUI flushes the synthesized summary and flips runState=idle.
         assert.ok(eventTypes.includes('assistant_done'), 'missing assistant_done');
@@ -228,6 +246,20 @@ describe('runAssistantTurn — multi-feature delegation event sequence', () => {
           'run_complete',
           'run_complete should be the final envelope',
         );
+
+        // Codex P2 review: the session event log must contain exactly one
+        // `run_complete` per delegated turn. Per-node runAssistantLoop runs
+        // pass suppressRunComplete=true so the parent wrapper owns the
+        // authoritative record; aggregateStats would otherwise overcount
+        // runs for delegated sessions.
+        const persisted = await loadSessionEvents(state.sessionId);
+        const runCompletes = persisted.filter((e) => e.type === 'run_complete');
+        assert.equal(
+          runCompletes.length,
+          1,
+          `expected 1 persisted run_complete, got ${runCompletes.length}`,
+        );
+        assert.equal(runCompletes[0].payload.outcome, 'success');
       } finally {
         await server.stop();
       }

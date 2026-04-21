@@ -699,6 +699,24 @@ export async function runUserTurnWithDelegation(
   const nodeSummaries = new Map<string, { summary: string; rounds: number }>();
   const nodeById = new Map<string, TaskGraphNode>(nodes.map((n) => [n.id, n]));
 
+  // Compact per-node detail strings for `task_graph.task_ready` /
+  // `task_graph.task_started` envelopes. `executeTaskGraph` sets
+  // `evt.detail` to the full `state.node.task` (lib/task-graph.ts:170,373),
+  // which in this flow contains the long "Ground your answer…" preamble
+  // from `planToTaskGraph`. Passing that verbatim floods the TUI
+  // delegation renderer with the entire prompt. Source the compact detail
+  // from the planner's original `feature.description` (truncated to one
+  // line) — Copilot review on PR #363.
+  const TASK_DETAIL_MAX = 120;
+  function compactDetail(description: string): string {
+    const firstLine = description.split('\n', 1)[0].trim();
+    if (firstLine.length <= TASK_DETAIL_MAX) return firstLine;
+    return `${firstLine.slice(0, TASK_DETAIL_MAX - 1).trimEnd()}…`;
+  }
+  const compactDetailById = new Map<string, string>(
+    plan.features.map((f) => [f.id, compactDetail(f.description)]),
+  );
+
   const executor = async (node, enrichedContext, nodeSignal) => {
     const nodeCtx = extendCorrelation(graphCtx, { taskId: node.id });
 
@@ -741,6 +759,14 @@ export async function runUserTurnWithDelegation(
     // emit: null — spike's scope-shrinking hypothesis says per-node tool
     // events do not leak into the parent transcript. Delegation-level events
     // (subagent.*, task_graph.*) are what the TUI renders for progress.
+    //
+    // suppressRunComplete: true — each per-node runAssistantLoop would
+    // otherwise persist its own `run_complete` session event. With N nodes
+    // per delegated turn that makes `aggregateStats` (cli/stats.ts:105)
+    // count N runs for one logical user turn and misreport outcomes when
+    // nodes diverge. The delegation wrapper persists a single parent-level
+    // `run_complete` below — it is the authoritative record for this turn.
+    // Codex P2 review on PR #363.
     const result = await runAssistantLoop(nodeState, providerConfig, apiKey, maxRounds, {
       signal: nodeSignal,
       emit: null,
@@ -750,6 +776,7 @@ export async function runUserTurnWithDelegation(
       runId,
       approvalFn,
       askUserFn,
+      suppressRunComplete: true,
     });
 
     const summary = result.finalAssistantText || `[no summary — outcome=${result.outcome}]`;
@@ -799,7 +826,7 @@ export async function runUserTurnWithDelegation(
             executionId,
             taskId: evt.taskId,
             agent: node.agent,
-            detail: evt.detail,
+            detail: compactDetailById.get(evt.taskId) ?? evt.taskId,
           });
         }
         break;
@@ -809,7 +836,7 @@ export async function runUserTurnWithDelegation(
             executionId,
             taskId: evt.taskId,
             agent: node.agent,
-            detail: evt.detail,
+            detail: compactDetailById.get(evt.taskId) ?? evt.taskId,
           });
         }
         break;
@@ -919,6 +946,21 @@ export async function runUserTurnWithDelegation(
   await saveSessionState(state);
 
   const runOutcome = result.aborted ? 'aborted' : result.success ? 'success' : 'error';
+  // Persist the parent-level `run_complete`. Per-node runAssistantLoop calls
+  // above pass `suppressRunComplete: true`, so this is the single
+  // authoritative `run_complete` record for the delegated turn — matches
+  // the single-agent path's accounting and keeps aggregateStats honest.
+  await appendSessionEvent(
+    state,
+    'run_complete',
+    {
+      runId,
+      outcome: runOutcome === 'error' ? 'failed' : runOutcome,
+      summary: finalText.slice(0, 500),
+      rounds: result.totalRounds,
+    },
+    runId,
+  );
   dispatch('run_complete', {
     outcome: runOutcome === 'error' ? 'failed' : runOutcome,
     summary: finalText.slice(0, 500),

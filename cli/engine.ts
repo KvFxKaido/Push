@@ -69,6 +69,12 @@ export interface RunOptions {
   allowExec?: boolean;
   safeExecPatterns?: string[];
   execMode?: string;
+  // Skip the terminal `run_complete` append + dispatch. Callers that run
+  // `runAssistantLoop` as a sub-step of a larger turn (delegation per-node)
+  // set this so the parent scope is the only writer of `run_complete` —
+  // otherwise each node writes its own record and `aggregateStats` in
+  // `cli/stats.ts` overcounts runs per delegated turn.
+  suppressRunComplete?: boolean;
 }
 
 export interface RunResult {
@@ -382,8 +388,14 @@ export async function runAssistantLoop(
     allowExec,
     safeExecPatterns,
     execMode,
+    suppressRunComplete = false,
   } = options;
   const runId: string = providedRunId || makeRunId();
+
+  async function appendRunCompleteEvent(payload: Record<string, unknown>): Promise<void> {
+    if (suppressRunComplete) return;
+    await appendSessionEvent(state, 'run_complete', payload, runId);
+  }
   let finalAssistantText: string = '';
   const repeatedCalls: Map<string, number> = new Map();
   const toolsUsed: Set<string> = new Set();
@@ -422,6 +434,7 @@ export async function runAssistantLoop(
   };
 
   function dispatchEvent(type: string, payload: unknown): void {
+    if (suppressRunComplete && type === 'run_complete') return;
     if (typeof emit === 'function') {
       emit({
         type,
@@ -579,12 +592,7 @@ export async function runAssistantLoop(
         { round: turnIndex, outcome: 'aborted' },
         runId,
       );
-      await appendSessionEvent(
-        state,
-        'run_complete',
-        { runId, outcome: 'aborted', summary: 'Aborted by user.' },
-        runId,
-      );
+      await appendRunCompleteEvent({ runId, outcome: 'aborted', summary: 'Aborted by user.' });
       dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'aborted' });
       dispatchEvent('run_complete', { outcome: 'aborted', summary: 'Aborted by user.' });
       return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: round - 1, runId };
@@ -703,12 +711,7 @@ export async function runAssistantLoop(
           { round: turnIndex, outcome: 'aborted' },
           runId,
         );
-        await appendSessionEvent(
-          state,
-          'run_complete',
-          { runId, outcome: 'aborted', summary: 'Aborted by user.' },
-          runId,
-        );
+        await appendRunCompleteEvent({ runId, outcome: 'aborted', summary: 'Aborted by user.' });
         dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'aborted' });
         dispatchEvent('run_complete', { outcome: 'aborted', summary: 'Aborted by user.' });
         return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: round - 1, runId };
@@ -733,16 +736,11 @@ export async function runAssistantLoop(
         { round: turnIndex, outcome: 'error' },
         runId,
       );
-      await appendSessionEvent(
-        state,
-        'run_complete',
-        {
-          runId,
-          outcome: 'failed',
-          summary: message.slice(0, 500),
-        },
+      await appendRunCompleteEvent({
         runId,
-      );
+        outcome: 'failed',
+        summary: message.slice(0, 500),
+      });
       dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'error' });
       dispatchEvent('run_complete', { outcome: 'failed', summary: message.slice(0, 500) });
       return { outcome: 'error', finalAssistantText: message, rounds: round - 1, runId };
@@ -762,16 +760,11 @@ export async function runAssistantLoop(
         { round: turnIndex, outcome: 'error' },
         runId,
       );
-      await appendSessionEvent(
-        state,
-        'run_complete',
-        {
-          runId,
-          outcome: 'failed',
-          summary: policyResult.summary,
-        },
+      await appendRunCompleteEvent({
         runId,
-      );
+        outcome: 'failed',
+        summary: policyResult.summary,
+      });
       await saveSessionState(state);
       dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'error' });
       dispatchEvent('run_complete', { outcome: 'failed', summary: policyResult.summary });
@@ -1028,16 +1021,11 @@ export async function runAssistantLoop(
         { round: turnIndex, outcome: 'completed' },
         runId,
       );
-      await appendSessionEvent(
-        state,
-        'run_complete',
-        {
-          runId,
-          outcome: 'success',
-          summary: finalAssistantText.slice(0, 500),
-        },
+      await appendRunCompleteEvent({
         runId,
-      );
+        outcome: 'success',
+        summary: finalAssistantText.slice(0, 500),
+      });
       dispatchEvent('assistant.turn_end', { round: turnIndex, outcome: 'completed' });
       dispatchEvent('run_complete', { outcome: 'success', summary: finalAssistantText });
       return { outcome: 'success', finalAssistantText, rounds: round, runId };
@@ -1418,12 +1406,7 @@ export async function runAssistantLoop(
       (err instanceof Error && err.name === 'AbortError') || (signal?.aborted ?? false);
     if (isAbort) {
       await saveSessionState(state);
-      await appendSessionEvent(
-        state,
-        'run_complete',
-        { runId, outcome: 'aborted', summary: 'Aborted by user.' },
-        runId,
-      );
+      await appendRunCompleteEvent({ runId, outcome: 'aborted', summary: 'Aborted by user.' });
       dispatchEvent('run_complete', { outcome: 'aborted', summary: 'Aborted by user.' });
       return { outcome: 'aborted', finalAssistantText: 'Aborted.', rounds: maxRounds, runId };
     }
@@ -1445,16 +1428,11 @@ export async function runAssistantLoop(
   }
 
   await saveSessionState(state);
-  await appendSessionEvent(
-    state,
-    'run_complete',
-    {
-      runId,
-      outcome: 'max_rounds',
-      summary: finalSummaryText.slice(0, 500),
-    },
+  await appendRunCompleteEvent({
     runId,
-  );
+    outcome: 'max_rounds',
+    summary: finalSummaryText.slice(0, 500),
+  });
   dispatchEvent('run_complete', { outcome: 'max_rounds', summary: finalSummaryText });
   return { outcome: 'max_rounds', finalAssistantText: finalSummaryText, rounds: maxRounds, runId };
 }
@@ -1486,18 +1464,26 @@ export async function runAssistantTurn(
 ): Promise<RunResult> {
   const { runUserTurnWithDelegation } = await import('./delegation-entry.js');
 
+  // Mint a stable runId once for the whole turn. Both the planner `subagent.*`
+  // envelopes and the fallback `runAssistantLoop` run share it, so consumers
+  // keying on runId (event logs, daemon attach clients) see one correlated
+  // stream per user turn instead of two disjoint ones split at the planner
+  // → fallback boundary.
+  const turnRunId = options.runId ?? makeRunId();
+  const turnOptions: RunOptions = { ...options, runId: turnRunId };
+
   const delegationResult = await runUserTurnWithDelegation(
     state,
     providerConfig,
     apiKey,
     userText,
     maxRounds,
-    options,
+    turnOptions,
   );
 
   if (delegationResult?.delegated && delegationResult.runResult) {
     return delegationResult.runResult as RunResult;
   }
 
-  return runAssistantLoop(state, providerConfig, apiKey, maxRounds, options);
+  return runAssistantLoop(state, providerConfig, apiKey, maxRounds, turnOptions);
 }
