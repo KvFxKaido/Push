@@ -10,7 +10,7 @@ Push CLI is the local terminal agent for Push. It operates directly on the local
 - **Headless runs** — single-task execution with no interaction
 - **Full-screen TUI** — terminal UI for session-driven coding work
 
-The CLI shares the same role-based agent model and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination, rendering, and session handling local to `cli/`.
+The CLI shares the same role-based agent model and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination, rendering, and session handling local to `cli/`. The current product direction is transcript-first CLI ergonomics plus smaller TUI-lite improvements, not a shift toward a full-screen terminal product as the primary shell.
 
 ## Surfaces
 
@@ -42,7 +42,7 @@ Primary entry points and helpers:
 
 ### Full-screen TUI
 
-The TUI is the full-screen terminal surface for session-based coding work. It keeps transcript readability central while adding pane layout, focused navigation, status visibility, and richer in-session affordances than the plain REPL.
+The TUI is the experimental full-screen terminal surface for session-based coding work. It keeps transcript readability central while adding pane layout, focused navigation, status visibility, and richer in-session affordances than the plain REPL, but it is not the current product north star.
 
 Primary entry points and helpers:
 
@@ -79,7 +79,7 @@ They differ mainly in interaction model:
 
 - **REPL** emphasizes linear transcript interaction
 - **Headless** emphasizes one-shot completion and machine-readable outcomes
-- **TUI** emphasizes persistent terminal layout, focus management, and richer session visibility
+- **TUI** emphasizes persistent terminal layout, focus management, and richer session visibility when the full-screen shell is explicitly chosen
 
 The design target is a shared runtime contract across surfaces, not identical interaction or rendering.
 

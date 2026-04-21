@@ -1,6 +1,6 @@
 # Push Roadmap (Canonical)
 
-Last updated: 2026-04-18
+Last updated: 2026-04-21
 
 This is the single source of truth for active product and engineering direction.
 
@@ -32,15 +32,15 @@ Current cycle emphasis: transcript-first CLI ergonomics, selective CLI adoption 
 | CLI/TUI-lite Ergonomics | planned | Add terminal UX improvements that stop short of a full-screen TUI (session picker, transcript navigation, command shortcuts, compact status surfaces) | Interactive users can navigate session history and active runs faster without leaving the transcript-first model |
 | Chat Surface Evolution | planned | Make chat a first-class surface with cleaner chat-first launcher framing, explicit context escalation, and mode-specific restore behavior | Chat can be described as its own surface instead of a workspace flag, while runtime/storage/auth remain shared |
 | Workspace Publish Follow-through | planned | Polish the post-publish repo-backed handoff and decide the optional empty-repo path after the first publish flow shipped | Publishing a workspace to GitHub feels explicit and understandable end-to-end, and the next empty-repo path is either shipped or clearly scoped |
-| Sandbox Awareness Matrix | in_progress | Expose sandbox lifecycle (TTL, downloads, creation) directly to the agent via context blocks instead of an external dashboard | System prompt includes rich lifetime and event history so models can proactively suggest saves/downloads before expiry |
 | Workspace Hub v2 | planned | Improve Diff ergonomics and decide long-term drawer vs hub division for history/settings | Decision captured; richer per-file diff navigation shipped; no duplicate navigation paths |
 | UX: Preserving Context on Branch Creation | planned | Add "Fork Workspace" flow so when a user switches branches from the UI, the active chat session (and uncommitted sandbox state) carries over instead of being wiped | A new branch can be created from an active chat without dropping the conversation context or destroying uncommitted work |
-| GitHub Tools: Fetch inline PR Review Comments | in_progress | Update `pr` tool to fetch `pull_request_review_comments` and issue comments alongside the diff so the agent can see review feedback | Agent can directly read reviewer feedback on a PR without the user copy-pasting it |
 
 ## Recently Completed
 
 | Item | Status | Scope | Acceptance Criteria |
 |---|---|---|---|
+| GitHub Tools: Fetch inline PR Review Comments | done | `pr` now fetches inline `pull_request_review_comments` plus top-level issue comments, and the shared/web renderers expose both alongside the diff | Agent can read reviewer feedback on a PR without the user copy-pasting it; shared PR tool tests and PR card rendering cover both comment classes |
+| Sandbox Awareness Matrix | done | Session capability blocks now include container TTL, remaining TTL, persisted lifecycle events, readiness hints, and workspace lifecycle history directly in the prompt context | Models receive rich lifetime and event history in prompt context and can proactively reason about save/download timing without an external dashboard |
 | `pushd` Attach + Event Stream UX | done | Shipped explicit CLI attach/resume event streaming over the existing NDJSON socket protocol, including raw v2 delegation events, local attach-token payloads, visible subagent transcript boundaries, and transcript-compatible task-graph node-focus snapshots | User can attach to a live session, watch delegation progress in a readable transcript, and recover after disconnect without manual state inspection; focused formatter/handler tests, CLI typecheck, and daemon integration coverage are green |
 | CLI Protocol/Schema Hardening | done | Hardened the pushd wire envelopes with a runtime schema validator (`cli/protocol-schema.ts`) covering the `SessionEvent` contract plus per-type payload schemas for the nine delegation events (`subagent.*` × 3, `task_graph.*` × 6). Explicit rejection of `runId: null` and `payload: undefined`. Strict-mode validation wired into `broadcastEvent()` under `PUSH_PROTOCOL_STRICT=1`, enabled in the daemon-integration test harness so every handler test validates its outgoing events | Schema validation mode exists and is on for core events in `test:cli`; drift guard-rail tests re-extract delegation event literals, `RunEventSubagent`, and `TaskGraphNode.agent` from `lib/runtime-contract.ts` at test time so a new variant without a matching validator fails the suite; 56 new unit + integration tests shipped |
 | UX: Multi-image Upload | done | Verified web chat UI already supports batch selection/upload and that orchestrator + provider adapters (OpenAI, Anthropic, OpenRouter) pass every staged image through as a distinct vision block | User can upload multiple screenshots per turn and the agent processes them in a single vision-block payload; no single-image bottleneck in the serialization path |
@@ -63,6 +63,7 @@ Current cycle emphasis: transcript-first CLI ergonomics, selective CLI adoption 
 
 | Date | Decision | Source |
 |---|---|---|
+| 2026-04-21 | Verified and promoted two already-shipped items: the Sandbox Awareness Matrix is live through `[SESSION_CAPABILITIES]` / `[SANDBOX_ENVIRONMENT]` prompt blocks with TTL and lifecycle history, and the `pr` tool now returns inline review comments plus issue-thread conversation comments. | Documentation verification pass against current code/tests |
 | 2026-04-14 | CLI Protocol/Schema Hardening shipped. `cli/protocol-schema.ts` is the canonical runtime validator for the pushd wire envelope and the nine delegation event payloads. Strict mode opt-in via `PUSH_PROTOCOL_STRICT=1`; daemon-integration test harness enables it so every handler test runs through the validator. Drift guard-rails re-extract delegation types and role literals from `lib/runtime-contract.ts` source at test time. Request/response envelopes and daemon-only event payloads (`session_started`, `approval_required`, etc.) are deliberately out of scope for this tranche. | `docs/decisions/push-runtime-v2.md` Runtime schema validation section + `docs/decisions/Web and CLI Runtime Contract.md` cli/protocol-schema.ts note |
 | 2026-04-09 | Pivoted Sandbox Telemetry from external analytics to an internal Sandbox Awareness Matrix. Models will get TTL and lifecycle events directly in prompts instead of building operator dashboards. | Chat decision |
 | 2026-04-05 | Shared runtime convergence tranche shipped: task-graph runtime, typed memory, delegation briefs, run-event vocabulary, and role-context semantics now live in shared `lib/`; further CLI work should be selective product adoption, not blanket parity extraction | Implementation session + `docs/archive/runbooks/Shared Runtime Convergence Plan.md` |

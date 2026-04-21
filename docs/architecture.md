@@ -104,7 +104,7 @@ The web app and CLI still keep shell-specific coordinators local. The target is 
 
 ## CLI
 
-Local coding agent for the terminal. It shares the same role-based architecture and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination local. Current terminal work is centered on the full-screen TUI, with classic REPL and headless runs still supported. The target is a stronger shared runtime contract across web and CLI, not identical UX across surfaces.
+Local coding agent for the terminal. It shares the same role-based architecture and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination local. Current terminal work is focused on transcript-first CLI ergonomics and TUI-lite improvements; the full-screen TUI remains available as an experimental shell rather than the product north star. The target is a stronger shared runtime contract across web and CLI, not identical UX across surfaces.
 
 ## Design System
 
