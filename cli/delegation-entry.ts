@@ -767,6 +767,16 @@ export async function runUserTurnWithDelegation(
     // nodes diverge. The delegation wrapper persists a single parent-level
     // `run_complete` below — it is the authoritative record for this turn.
     // Codex P2 review on PR #363.
+    //
+    // suppressEventPersist: true — `emit: null` hides per-node tool/token
+    // events from live fan-out, but without this flag those same events
+    // are still appended to the on-disk session log via
+    // `appendSessionEvent`, so an `attach_session` reconnect that replays
+    // from `lastSeenSeq` would surface node-internal events that attached
+    // clients never saw live. Keep the log symmetric with the live stream:
+    // only the delegation wrapper's `delegation.*` lifecycle envelopes and
+    // the single parent `run_complete` are persisted for this turn.
+    // Codex P2 review on PR #364.
     const result = await runAssistantLoop(nodeState, providerConfig, apiKey, maxRounds, {
       signal: nodeSignal,
       emit: null,
@@ -777,6 +787,7 @@ export async function runUserTurnWithDelegation(
       approvalFn,
       askUserFn,
       suppressRunComplete: true,
+      suppressEventPersist: true,
     });
 
     const summary = result.finalAssistantText || `[no summary — outcome=${result.outcome}]`;

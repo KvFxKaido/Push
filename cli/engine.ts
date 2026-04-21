@@ -7,7 +7,11 @@ import {
   truncateText,
   TOOL_PROTOCOL,
 } from './tools.js';
-import { appendSessionEvent, saveSessionState, makeRunId } from './session-store.js';
+import {
+  appendSessionEvent as appendSessionEventRaw,
+  saveSessionState,
+  makeRunId,
+} from './session-store.js';
 import { streamCompletion } from './provider.js';
 import {
   createFileLedger,
@@ -75,6 +79,16 @@ export interface RunOptions {
   // otherwise each node writes its own record and `aggregateStats` in
   // `cli/stats.ts` overcounts runs per delegated turn.
   suppressRunComplete?: boolean;
+  // Skip persisting per-event `appendSessionEvent` writes for this run.
+  // Delegation passes this alongside `emit: null` on per-node runs so that
+  // internal node tool/assistant events are kept out of the session event
+  // log on disk — otherwise a client reconnecting via `attach_session`
+  // would see node-level events on replay that were intentionally hidden
+  // from live fan-out, producing a transcript diverging from what attached
+  // clients originally saw. The delegation wrapper is the authoritative
+  // writer of the parent-visible `delegation.*` lifecycle + `run_complete`
+  // envelopes for this turn.
+  suppressEventPersist?: boolean;
 }
 
 export interface RunResult {
@@ -389,8 +403,19 @@ export async function runAssistantLoop(
     safeExecPatterns,
     execMode,
     suppressRunComplete = false,
+    suppressEventPersist = false,
   } = options;
   const runId: string = providedRunId || makeRunId();
+
+  async function appendSessionEvent(
+    stateArg: SessionState,
+    type: string,
+    payload: unknown,
+    rid: string | null = null,
+  ): Promise<void> {
+    if (suppressEventPersist) return;
+    await appendSessionEventRaw(stateArg, type, payload, rid);
+  }
 
   async function appendRunCompleteEvent(payload: Record<string, unknown>): Promise<void> {
     if (suppressRunComplete) return;

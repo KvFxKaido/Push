@@ -93,6 +93,15 @@ function createDeferred() {
   return { promise, resolve };
 }
 
+async function waitUntil(predicate, { timeoutMs = 5000, intervalMs = 25 } = {}) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error('timeout waiting for condition');
+}
+
 async function canListenOnUnixSocket(socketPath) {
   const server = net.createServer();
   try {
@@ -624,6 +633,106 @@ describe('daemon version', () => {
     ];
     for (const h of handlers) {
       assert.ok(content.includes(`${h}: handle`), `Missing handler: ${h}`);
+    }
+  });
+});
+
+describe('send_user_message delegation parity', () => {
+  it('emits canonical delegation envelopes through daemon attach pipeline', async () => {
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-daemon-delegation-'));
+    const prevSessionDir = process.env.PUSH_SESSION_DIR;
+    const prevMemoryDir = process.env.PUSH_MEMORY_DIR;
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    process.env.PUSH_MEMORY_DIR = path.join(tmpRoot, 'memory');
+
+    const plannerPayload = JSON.stringify({
+      approach: 'Split work into independent investigations',
+      features: [
+        {
+          id: 'task-a',
+          description: 'Inspect lib/task-graph.ts exports.',
+          files: ['lib/task-graph.ts'],
+        },
+        {
+          id: 'task-b',
+          description: 'Inspect lib/planner-core.ts exports.',
+          files: ['lib/planner-core.ts'],
+          dependsOn: ['task-a'],
+        },
+      ],
+    });
+
+    const server = await startMockProviderServer({ tokens: [plannerPayload] });
+    const restoreProvider = patchProviderConfig('ollama', { url: server.url, apiKey: 'mock-key' });
+
+    try {
+      const broadcasted = [];
+      const emitEvent = (event) => broadcasted.push(event);
+
+      const startResponse = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          model: 'mock-model',
+          repo: { rootPath: tmpRoot },
+        }),
+        emitEvent,
+      );
+      assert.equal(startResponse.ok, true);
+
+      const sessionId = startResponse.payload.sessionId;
+      const attachToken = startResponse.payload.attachToken;
+
+      const attachResponse = await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, capabilities: ['event_v2'] },
+          sessionId,
+        ),
+        emitEvent,
+      );
+      assert.equal(attachResponse.ok, true);
+
+      const sendResponse = await handleRequest(
+        makeRequest(
+          'send_user_message',
+          {
+            sessionId,
+            attachToken,
+            text: 'Produce two independent investigation reports as separate subtasks.',
+          },
+          sessionId,
+        ),
+        emitEvent,
+      );
+      assert.equal(sendResponse.ok, true);
+      const runId = sendResponse.payload.runId;
+
+      await waitUntil(() =>
+        broadcasted.some((event) => event.type === 'run_complete' && event.runId === runId),
+      );
+
+      const runEvents = broadcasted.filter((event) => event.runId === runId);
+      const runEventTypes = runEvents.map((event) => event.type);
+      assert.ok(runEventTypes.includes('subagent.started'));
+      assert.ok(runEventTypes.includes('subagent.completed'));
+      assert.ok(runEventTypes.includes('task_graph.task_ready'));
+      assert.ok(runEventTypes.includes('task_graph.task_started'));
+      assert.ok(runEventTypes.includes('task_graph.task_completed'));
+      assert.ok(runEventTypes.includes('task_graph.graph_completed'));
+
+      const persisted = await loadSessionEvents(sessionId);
+      const runCompletes = persisted.filter(
+        (event) => event.type === 'run_complete' && event.runId === runId,
+      );
+      assert.equal(runCompletes.length, 1);
+    } finally {
+      restoreProvider();
+      await server.stop();
+      if (prevSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = prevSessionDir;
+      if (prevMemoryDir === undefined) delete process.env.PUSH_MEMORY_DIR;
+      else process.env.PUSH_MEMORY_DIR = prevMemoryDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
     }
   });
 });
