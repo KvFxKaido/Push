@@ -34,6 +34,9 @@ export const RESERVED_COMMANDS: Set<string> = new Set([
   'config',
   'compact',
   'copy',
+  'theme',
+  'animate',
+  'spinner',
 ]);
 
 type SkillSource = 'builtin' | 'workspace' | 'claude';

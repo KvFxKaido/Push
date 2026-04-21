@@ -133,6 +133,48 @@ describe('createTabCompleter', () => {
     assert.equal(result.text, '/debug runtime');
   });
 
+  it('completes /theme command name', () => {
+    const result = tc.tab('/th', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/theme ');
+  });
+
+  it('completes theme name arguments directly (e.g. /theme ne → neon)', () => {
+    const result = tc.tab('/theme ne', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/theme neon');
+  });
+
+  it('completes theme name after /theme set ', () => {
+    const result = tc.tab('/theme set for', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/theme set forest');
+  });
+
+  it('completes /animate command name', () => {
+    const result = tc.tab('/ani', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/animate ');
+  });
+
+  it('completes animation name after /animate set ', () => {
+    const result = tc.tab('/animate set shi', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/animate set shimmer');
+  });
+
+  it('completes /spinner command name', () => {
+    const result = tc.tab('/spi', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/spinner ');
+  });
+
+  it('completes spinner name after /spinner set ', () => {
+    const result = tc.tab('/spinner set bra', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/spinner set braille');
+  });
+
   it('cycles forward through candidates', () => {
     const r1 = tc.tab('/provider ', false);
     assert.notEqual(r1, null);
