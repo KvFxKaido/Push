@@ -14,6 +14,10 @@ const orchestrator = vi.hoisted(() => ({
 }));
 const sandboxClient = vi.hoisted(() => ({
   getSandboxDiff: vi.fn<() => Promise<string | { diff: string }>>(async () => ''),
+  getSandboxOwnerToken: vi.fn<(sandboxId?: string) => string | null>(() => 'tok-1'),
+}));
+const userProfile = vi.hoisted(() => ({
+  getUserProfile: vi.fn(() => null),
 }));
 const coderAgent = vi.hoisted(() => ({
   runCoderAgent: vi.fn(),
@@ -100,6 +104,7 @@ const correlation = vi.hoisted(() => ({
 
 vi.mock('@/lib/orchestrator', () => orchestrator);
 vi.mock('@/lib/sandbox-client', () => sandboxClient);
+vi.mock('@/hooks/useUserProfile', () => userProfile);
 vi.mock('@/lib/coder-agent', () => coderAgent);
 vi.mock('@/lib/explorer-agent', () => explorerAgent);
 vi.mock('@/lib/planner-agent', () => plannerAgent);
@@ -1561,5 +1566,181 @@ describe('useAgentDelegation.executeDelegateCall — plan_tasks (task graph)', (
     // changes to Map accumulation without a matching contract update,
     // this assertion breaks.
     expect(auditorAgent.runAuditorEvaluation.mock.calls[0][2]).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Background-mode branch — PR #3b.
+//
+// When `backgroundCoderJob` is provided AND
+// `isBackgroundModeEnabledForChat(chatId)` returns true, the hook must
+// route `delegate_coder` through the job runner and short-circuit the
+// inline arc. The placeholder ToolExecutionResult is the contract
+// promised to the orchestrator turn loop — it must never claim
+// completion.
+// ---------------------------------------------------------------------------
+
+describe('useAgentDelegation.executeDelegateCall — delegate_coder (background mode)', () => {
+  it('routes through backgroundCoderJob.startJob and returns the placeholder text when the flag is on', async () => {
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.repoRef.current = 'acme/web';
+    const startJob = vi.fn(async () => ({ ok: true as const, jobId: 'job-42' }));
+    const formatPlaceholderText = vi.fn(
+      (id: string) => `Coder delegation accepted and queued as background job ${id}.`,
+    );
+    const cancelJob = vi.fn(async () => {});
+    const paramsWithBg = {
+      ...params,
+      backgroundCoderJob: { startJob, cancelJob, formatPlaceholderText },
+      isBackgroundModeEnabledForChat: () => true,
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(paramsWithBg as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'fix bug' } },
+    };
+    const result = await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openrouter',
+      'gpt-4',
+    );
+
+    expect(startJob).toHaveBeenCalledOnce();
+    const startJobArg = (startJob.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
+    expect(startJobArg).toMatchObject({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+    });
+    // The inline Coder arc must NOT run in background mode.
+    expect(coderAgent.runCoderAgent).not.toHaveBeenCalled();
+    expect(result.text).toContain('accepted and queued');
+    expect(result.text).toContain('job-42');
+    expect(result.text).not.toMatch(/completed|succe(ss|eded)/i);
+  });
+
+  it('falls through to the inline path when the flag is off', async () => {
+    coderAgent.runCoderAgent.mockResolvedValue({
+      rounds: 1,
+      checkpoints: 0,
+      cards: [],
+      summary: 'done',
+      criteriaResults: [],
+    });
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.repoRef.current = 'acme/web';
+    const startJob = vi.fn(async () => ({ ok: true as const, jobId: 'job-42' }));
+    const paramsWithBg = {
+      ...params,
+      backgroundCoderJob: {
+        startJob,
+        cancelJob: vi.fn(),
+        formatPlaceholderText: vi.fn(() => ''),
+      },
+      // Flag off — inline path must win.
+      isBackgroundModeEnabledForChat: () => false,
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(paramsWithBg as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'fix bug' } },
+    };
+    await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openrouter',
+      'gpt-4',
+    );
+
+    expect(startJob).not.toHaveBeenCalled();
+    expect(coderAgent.runCoderAgent).toHaveBeenCalledOnce();
+  });
+
+  it('returns a Tool Error when startJob fails (inline Coder arc remains untouched)', async () => {
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.repoRef.current = 'acme/web';
+    const startJob = vi.fn(async () => ({
+      ok: false as const,
+      error: 'MISSING_FIELDS: envelope',
+    }));
+    const paramsWithBg = {
+      ...params,
+      backgroundCoderJob: {
+        startJob,
+        cancelJob: vi.fn(),
+        formatPlaceholderText: vi.fn(() => ''),
+      },
+      isBackgroundModeEnabledForChat: () => true,
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(paramsWithBg as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'fix bug' } },
+    };
+    const result = await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openrouter',
+      'gpt-4',
+    );
+
+    expect(startJob).toHaveBeenCalledOnce();
+    expect(coderAgent.runCoderAgent).not.toHaveBeenCalled();
+    expect(result.text).toContain('[Tool Error]');
+    expect(result.text).toContain('MISSING_FIELDS');
+  });
+
+  it('returns a Tool Error when sandbox owner token is missing', async () => {
+    sandboxClient.getSandboxOwnerToken.mockReturnValueOnce(null);
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.repoRef.current = 'acme/web';
+    const startJob = vi.fn(async () => ({ ok: true as const, jobId: 'job-42' }));
+    const paramsWithBg = {
+      ...params,
+      backgroundCoderJob: {
+        startJob,
+        cancelJob: vi.fn(),
+        formatPlaceholderText: vi.fn(() => ''),
+      },
+      isBackgroundModeEnabledForChat: () => true,
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(paramsWithBg as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'fix bug' } },
+    };
+    const result = await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openrouter',
+      'gpt-4',
+    );
+
+    expect(startJob).not.toHaveBeenCalled();
+    expect(result.text).toContain('[Tool Error]');
+    expect(result.text).toContain('owner token');
   });
 });

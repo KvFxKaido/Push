@@ -280,7 +280,43 @@ export type ChatCard =
   | { type: 'web-search'; data: WebSearchCardData }
   | { type: 'delegation-result'; data: DelegationResultCardData }
   | { type: 'ask-user'; data: AskUserCardData }
-  | { type: 'coder-progress'; data: CoderWorkingMemory };
+  | { type: 'coder-progress'; data: CoderWorkingMemory }
+  | { type: 'coder-job'; data: CoderJobCardData };
+
+// --- Background Coder Job ---
+// Mirrors CoderJobStatus in app/src/worker/coder-job-do.ts. Kept in the
+// client types so the hook + card can reference it without importing
+// Worker-side modules.
+export type BackgroundJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface CoderJobCardData {
+  jobId: string;
+  chatId: string;
+  status: BackgroundJobStatus;
+  /** Client-side wall clock of the POST /api/jobs/start response. */
+  startedAt: number;
+  /** Last `subagent.started` detail or `subagent.completed` summary. */
+  latestStatusLine?: string;
+  /** Populated on terminal completed/cancelled events. */
+  summary?: string;
+  /** Populated on subagent.failed events. */
+  error?: string;
+  /** Short preview of the originating task; surfaced in the card header. */
+  taskPreview?: string;
+}
+
+/** Per-chat persistence slot: `chatId → { jobId → JobPersistenceEntry }`.
+ * Written through the normal setConversations path so `saveConversation`
+ * picks it up on the next flush. `lastEventId` is the RunEvent.id most
+ * recently observed over SSE and is sent as Last-Event-ID on reconnect. */
+export interface BackgroundJobPersistenceEntry {
+  jobId: string;
+  status: BackgroundJobStatus;
+  lastEventId: string | null;
+  startedAt: number;
+  updatedAt: number;
+  taskPreview?: string;
+}
 
 // --- Coder working memory ---
 
@@ -715,6 +751,13 @@ export interface Conversation {
   verificationPolicy?: VerificationPolicy;
   /** Workspace mode the conversation was created in. Undefined = legacy repo/scratch chat. */
   mode?: WorkspaceMode;
+  /**
+   * Background Coder jobs the chat has kicked off. Keyed by jobId.
+   * Non-terminal entries are replayed on foreground via the
+   * `visibilitychange` listener in `useBackgroundCoderJob`. Terminal
+   * entries are kept so the JobCard stays rendered in the transcript.
+   */
+  pendingJobIds?: Record<string, BackgroundJobPersistenceEntry>;
 }
 
 // Onboarding + Active Repo types

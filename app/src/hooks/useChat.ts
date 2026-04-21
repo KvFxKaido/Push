@@ -51,6 +51,8 @@ import {
   createId,
 } from '@/hooks/chat-persistence';
 import { useAgentDelegation } from './useAgentDelegation';
+import { useBackgroundCoderJob } from './useBackgroundCoderJob';
+import { isBackgroundModeEnabled } from '@/lib/background-mode-settings';
 import { useCIPoller } from './useCIPoller';
 import { useChatCardActions } from './chat-card-actions';
 import { useChatManagement } from './chat-management';
@@ -700,6 +702,18 @@ export function useChat(
     workspaceModeRef,
   });
 
+  // --- Background Coder jobs (PR #3b) ---
+  // Owns its own module per AGENTS.md §"new feature checklist #2" —
+  // this hook instantiates it here solely to thread the handle into
+  // `useAgentDelegation`. No logic lives in this file.
+  const backgroundCoderJob = useBackgroundCoderJob({
+    setConversations: updateConversations,
+    conversationsRef,
+    appendRunEvent,
+    emitRunEngineEvent,
+    updateAgentStatus,
+  });
+
   // --- Agent delegation ---
   const { executeDelegateCall } = useAgentDelegation({
     setConversations: updateConversations,
@@ -717,6 +731,10 @@ export function useChat(
     abortControllerRef,
     abortRef,
     lastCoderStateRef,
+    backgroundCoderJob,
+    // Phase 1: single global toggle. Per-chat override is a later
+    // layer — see docs/runbooks/Background Coder Tasks Phase 1.md §4.
+    isBackgroundModeEnabledForChat: () => isBackgroundModeEnabled(),
   });
 
   // ---------------------------------------------------------------------------

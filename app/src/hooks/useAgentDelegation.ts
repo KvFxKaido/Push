@@ -19,6 +19,9 @@ import {
 } from '@/lib/task-graph-delegation-handler';
 import { type AnyToolCall } from '@/lib/tool-dispatch';
 import { type EvaluationResult } from '@/lib/auditor-agent';
+import { getSandboxOwnerToken } from '@/lib/sandbox-client';
+import { getUserProfile } from '@/hooks/useUserProfile';
+import type { UseBackgroundCoderJobResult } from '@/hooks/useBackgroundCoderJob';
 import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import {
@@ -39,6 +42,7 @@ import type {
   Conversation,
   AgentStatus,
   AgentStatusSource,
+  DelegationEnvelope,
   RunEventInput,
   VerificationRuntimeState,
   DelegationOutcome,
@@ -61,6 +65,118 @@ function appendInlineDelegationCards(
     const msgs = appendCardsToLatestToolCall(conv.messages, inlineCards);
     return { ...prev, [chatId]: { ...conv, messages: msgs } };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Background-mode helper — builds a DelegationEnvelope from the same
+// refs the inline handler reads, resolves the sandbox owner token, and
+// asks the job hook to POST `/api/jobs/start`. Returns the placeholder
+// ToolExecutionResult the orchestrator sees.
+// ---------------------------------------------------------------------------
+
+interface StartBackgroundCoderJobInput {
+  chatId: string;
+  toolCall: CoderToolCall;
+  baseCorrelation: CorrelationContext;
+  lockedProviderForChat: ActiveProvider;
+  resolvedModelForChat: string | undefined;
+  verificationPolicy: VerificationPolicy;
+  backgroundCoderJob: UseBackgroundCoderJobResult;
+  refs: {
+    sandboxIdRef: React.MutableRefObject<string | null>;
+    repoRef: React.MutableRefObject<string | null>;
+    branchInfoRef: React.RefObject<
+      { currentBranch?: string; defaultBranch?: string } | undefined | null
+    >;
+    isMainProtectedRef: React.MutableRefObject<boolean>;
+    agentsMdRef: React.MutableRefObject<string | null>;
+    instructionFilenameRef: React.MutableRefObject<string | null>;
+  };
+}
+
+async function startBackgroundCoderJob(
+  input: StartBackgroundCoderJobInput,
+): Promise<ToolExecutionResult> {
+  const { chatId, toolCall, backgroundCoderJob, refs } = input;
+  const args = toolCall.call.args;
+
+  const taskList: string[] = Array.isArray(args.tasks)
+    ? args.tasks.filter((t: unknown): t is string => typeof t === 'string' && !!t.trim())
+    : [];
+  if (args.task?.trim()) taskList.unshift(args.task.trim());
+
+  if (taskList.length === 0) {
+    return {
+      text: '[Tool Error] delegate_coder requires "task" or non-empty "tasks" array.',
+    };
+  }
+
+  const sandboxId = refs.sandboxIdRef.current;
+  const repoFullName = refs.repoRef.current;
+  if (!sandboxId) {
+    return { text: '[Tool Error] Background job requires an active sandbox.' };
+  }
+  if (!repoFullName) {
+    return { text: '[Tool Error] Background job requires a workspace repo.' };
+  }
+
+  const ownerToken = getSandboxOwnerToken(sandboxId) ?? '';
+  if (!ownerToken) {
+    return {
+      text: '[Tool Error] Missing sandbox owner token; cannot start background job.',
+    };
+  }
+
+  const branch = refs.branchInfoRef.current?.currentBranch ?? '';
+  const envelope: DelegationEnvelope = {
+    task: taskList.join('\n\n'),
+    files: Array.isArray(args.files) ? args.files : [],
+    acceptanceCriteria: args.acceptanceCriteria,
+    intent: args.intent,
+    deliverable: args.deliverable,
+    knownContext: args.knownContext,
+    constraints: args.constraints,
+    branchContext: refs.branchInfoRef.current
+      ? {
+          activeBranch: refs.branchInfoRef.current.currentBranch ?? '',
+          defaultBranch: refs.branchInfoRef.current.defaultBranch ?? '',
+          protectMain: refs.isMainProtectedRef.current,
+        }
+      : undefined,
+    provider: input.lockedProviderForChat,
+    model: input.resolvedModelForChat,
+    projectInstructions: refs.agentsMdRef.current ?? undefined,
+    instructionFilename: refs.instructionFilenameRef.current ?? undefined,
+    verificationPolicy: input.verificationPolicy,
+    declaredCapabilities: args.declaredCapabilities,
+    correlation: input.baseCorrelation,
+  };
+
+  const startResult = await backgroundCoderJob.startJob({
+    chatId,
+    repoFullName,
+    branch,
+    sandboxId,
+    ownerToken,
+    envelope,
+    provider: input.lockedProviderForChat,
+    model: input.resolvedModelForChat,
+    userProfile: getUserProfile(),
+    verificationPolicy: input.verificationPolicy,
+    declaredCapabilities: args.declaredCapabilities,
+    correlation: input.baseCorrelation,
+    taskPreview: taskList[0].slice(0, 140),
+  });
+
+  if (!startResult.ok) {
+    return {
+      text: `[Tool Error] Failed to start background Coder job: ${startResult.error}`,
+    };
+  }
+
+  return {
+    text: backgroundCoderJob.formatPlaceholderText(startResult.jobId),
+  };
 }
 
 export interface UseAgentDelegationParams {
@@ -87,6 +203,17 @@ export interface UseAgentDelegationParams {
   abortControllerRef: React.MutableRefObject<AbortController | null>;
   abortRef: React.MutableRefObject<boolean>;
   lastCoderStateRef: React.MutableRefObject<CoderWorkingMemory | null>;
+  /**
+   * Optional background-job hook. When present AND
+   * `isBackgroundModeEnabledForChat(chatId)` returns true, a
+   * `delegate_coder` tool call is routed to the background DO instead
+   * of the inline Coder arc. The turn returns a placeholder
+   * ToolExecutionResult ("accepted and queued …") — the real summary
+   * never enters apiMessages; it surfaces via JobCard + run timeline.
+   */
+  backgroundCoderJob?: UseBackgroundCoderJobResult;
+  /** Per-chat gate for the background handoff. Default: inline. */
+  isBackgroundModeEnabledForChat?: (chatId: string) => boolean;
 }
 
 export function useAgentDelegation({
@@ -105,6 +232,8 @@ export function useAgentDelegation({
   abortControllerRef,
   abortRef,
   lastCoderStateRef,
+  backgroundCoderJob,
+  isBackgroundModeEnabledForChat,
 }: UseAgentDelegationParams) {
   // Wire up the Sequential Explorer handler context with the hook's refs and
   // callbacks. Kept hook-local (not exported) so the extraction boundary stays
@@ -288,6 +417,37 @@ export function useAgentDelegation({
           resolvedModelForChat,
         });
       } else if (toolCall.call.tool === 'delegate_coder') {
+        // --- Background-mode branch ---
+        // When the per-session preference is on AND the background-job
+        // hook is available, route the Coder delegation to the DO-backed
+        // job runner. The orchestrator turn ends immediately with an
+        // "accepted and queued" placeholder; progress surfaces through
+        // the JobCard + run timeline, NOT apiMessages. This is
+        // deliberately explicit — see docs/runbooks/Background Coder
+        // Tasks Phase 1.md §"Client integration" for the locked-in
+        // semantics.
+        if (backgroundCoderJob && isBackgroundModeEnabledForChat?.(chatId)) {
+          const placeholder = await startBackgroundCoderJob({
+            chatId,
+            toolCall: toolCall as CoderToolCall,
+            baseCorrelation,
+            lockedProviderForChat,
+            resolvedModelForChat,
+            verificationPolicy,
+            backgroundCoderJob,
+            refs: {
+              sandboxIdRef,
+              repoRef,
+              branchInfoRef,
+              isMainProtectedRef,
+              agentsMdRef,
+              instructionFilenameRef,
+            },
+          });
+          toolExecResult = placeholder;
+          return toolExecResult;
+        }
+
         const coderHandlerResult = await handleCoderDelegation(buildCoderContext(), {
           chatId,
           toolCall: toolCall as CoderToolCall,
@@ -474,7 +634,8 @@ export function useAgentDelegation({
     // The build* helpers track ref/callback identity for their handler
     // contexts, so executeDelegateCall's deps only need the build*
     // helpers + the direct references (appendRunEvent, setConversations,
-    // getVerificationPolicyForChat) the body uses outside those helpers.
+    // getVerificationPolicyForChat) the body uses outside those helpers,
+    // plus the background-mode seam.
     [
       appendRunEvent,
       buildAuditorContext,
@@ -483,6 +644,14 @@ export function useAgentDelegation({
       buildTaskGraphContext,
       getVerificationPolicyForChat,
       setConversations,
+      backgroundCoderJob,
+      isBackgroundModeEnabledForChat,
+      sandboxIdRef,
+      repoRef,
+      branchInfoRef,
+      isMainProtectedRef,
+      agentsMdRef,
+      instructionFilenameRef,
     ],
   );
 
