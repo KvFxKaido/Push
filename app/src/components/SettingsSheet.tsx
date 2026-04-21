@@ -91,6 +91,7 @@ export interface SettingsAIProps {
   setPreferredProvider: (v: PreferredProvider) => void;
   clearPreferredProvider: () => void;
   builtInProviders: Record<BuiltInSettingsProviderId, SettingsBuiltInProvider>;
+  cloudflareProvider: SettingsCloudflareProvider;
   experimentalProviders: Record<ExperimentalSettingsProviderId, SettingsExperimentalProvider>;
   vertexProvider: SettingsVertexProvider;
   tavilyProvider: SettingsTavilyProvider;
@@ -112,6 +113,20 @@ export interface SettingsBuiltInProvider {
   clearKey: () => void;
   goMode?: boolean;
   setGoMode?: (enabled: boolean) => void;
+}
+
+export interface SettingsCloudflareProvider {
+  configured: boolean;
+  statusLoading: boolean;
+  statusError: string | null;
+  model: string;
+  setModel: (value: string) => void;
+  modelOptions: string[];
+  modelsLoading: boolean;
+  modelsError: string | null;
+  modelsUpdatedAt: number | null;
+  isModelLocked: boolean;
+  refreshModels: () => void;
 }
 
 export interface SettingsExperimentalProvider {

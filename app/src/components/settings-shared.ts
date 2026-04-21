@@ -7,6 +7,7 @@ import type { AIProviderType } from '@/types';
 export const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
   openrouter: 'OpenRouter',
+  cloudflare: 'Cloudflare Workers AI',
   zen: 'OpenCode Zen',
   nvidia: 'Nvidia NIM',
   blackbox: 'Blackbox AI',

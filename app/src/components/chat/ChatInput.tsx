@@ -111,6 +111,14 @@ interface ChatInputProps {
     openRouterModelOptions: string[];
     isOpenRouterModelLocked: boolean;
     onSelectOpenRouterModel: (model: string) => void;
+    cloudflareModel: string;
+    cloudflareModelOptions: string[];
+    cloudflareModelsLoading: boolean;
+    cloudflareModelsError: string | null;
+    cloudflareModelsUpdatedAt: number | null;
+    isCloudflareModelLocked: boolean;
+    refreshCloudflareModels: () => void;
+    onSelectCloudflareModel: (model: string) => void;
     zenModel: string;
     zenModelOptions: string[];
     zenModelsLoading: boolean;
@@ -182,6 +190,7 @@ const COMPOSER_DRAFT_KEY_PREFIX = 'push:chat-composer-draft:';
 const PROVIDER_LABELS: Record<AIProviderType, string> = {
   ollama: 'Ollama',
   openrouter: 'OpenRouter',
+  cloudflare: 'Cloudflare Workers AI',
   zen: 'OpenCode Zen',
   nvidia: 'Nvidia NIM',
   blackbox: 'Blackbox AI',
@@ -429,6 +438,7 @@ export function ChatInput({
       return providerControls.lockedModel;
     if (selectedProvider === 'ollama') return providerControls.ollamaModel;
     if (selectedProvider === 'openrouter') return providerControls.openRouterModel;
+    if (selectedProvider === 'cloudflare') return providerControls.cloudflareModel;
     if (selectedProvider === 'zen') return providerControls.zenModel;
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModel;
     if (selectedProvider === 'blackbox') return providerControls.blackboxModel;
@@ -450,6 +460,7 @@ export function ChatInput({
   const selectedModelLoading = (() => {
     if (!providerControls) return false;
     if (selectedProvider === 'ollama') return providerControls.ollamaModelsLoading;
+    if (selectedProvider === 'cloudflare') return providerControls.cloudflareModelsLoading;
     if (selectedProvider === 'zen') return providerControls.zenModelsLoading;
     if (selectedProvider === 'nvidia') return providerControls.nvidiaModelsLoading;
     if (selectedProvider === 'blackbox') return providerControls.blackboxModelsLoading;
@@ -461,6 +472,8 @@ export function ChatInput({
   const selectedModelUpdatedAgo = (() => {
     if (!providerControls) return null;
     if (selectedProvider === 'ollama') return formatTimeAgo(providerControls.ollamaModelsUpdatedAt);
+    if (selectedProvider === 'cloudflare')
+      return formatTimeAgo(providerControls.cloudflareModelsUpdatedAt);
     if (selectedProvider === 'zen') return formatTimeAgo(providerControls.zenModelsUpdatedAt);
     if (selectedProvider === 'nvidia') return formatTimeAgo(providerControls.nvidiaModelsUpdatedAt);
     if (selectedProvider === 'blackbox')
@@ -474,6 +487,7 @@ export function ChatInput({
 
   const canRefreshSelectedModelList =
     selectedProvider === 'ollama' ||
+    selectedProvider === 'cloudflare' ||
     selectedProvider === 'zen' ||
     selectedProvider === 'nvidia' ||
     selectedProvider === 'blackbox' ||
@@ -482,6 +496,7 @@ export function ChatInput({
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
+    if (selectedProvider === 'cloudflare') providerControls.refreshCloudflareModels();
     if (selectedProvider === 'zen') providerControls.refreshZenModels();
     if (selectedProvider === 'nvidia') providerControls.refreshNvidiaModels();
     if (selectedProvider === 'blackbox') providerControls.refreshBlackboxModels();
@@ -489,6 +504,7 @@ export function ChatInput({
     if (selectedProvider === 'openadapter') providerControls.refreshOpenAdapterModels();
   };
   const openRouterModelList = providerControls?.openRouterModelOptions ?? EMPTY_MODEL_OPTIONS;
+  const cloudflareModelList = providerControls?.cloudflareModelOptions ?? EMPTY_MODEL_OPTIONS;
   const blackboxModelList = providerControls?.blackboxModelOptions ?? EMPTY_MODEL_OPTIONS;
   const blackboxFallbackModel = providerControls?.blackboxModel ?? '';
   const kilocodeModelList = providerControls?.kilocodeModelOptions ?? EMPTY_MODEL_OPTIONS;
@@ -499,6 +515,11 @@ export function ChatInput({
   const openRouterModelOptions = useMemo(
     () => renderGroupedModelOptions(openRouterModelList, 'openrouter'),
     [openRouterModelList],
+  );
+
+  const cloudflareModelOptions = useMemo(
+    () => renderGroupedModelOptions(cloudflareModelList, 'cloudflare'),
+    [cloudflareModelList],
   );
 
   const blackboxModelOptions = useMemo(() => {
@@ -936,6 +957,55 @@ export function ChatInput({
                             {openRouterModelOptions}
                           </select>
                           {providerControls.isOpenRouterModelLocked && (
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'cloudflare' && (
+                        <>
+                          <select
+                            value={providerControls.cloudflareModel}
+                            disabled={
+                              !canChangeModel ||
+                              providerControls.cloudflareModelsLoading ||
+                              providerControls.cloudflareModelOptions.length === 0
+                            }
+                            onChange={(e) =>
+                              providerControls.onSelectCloudflareModel(e.target.value)
+                            }
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {cloudflareModelOptions}
+                          </select>
+                          {providerControls.cloudflareModelsLoading && (
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Loading Cloudflare Workers AI models...
+                            </p>
+                          )}
+                          {!providerControls.cloudflareModelsLoading &&
+                            providerControls.cloudflareModelOptions.length === 0 &&
+                            !providerControls.cloudflareModelsError && (
+                              <p className="px-1 text-push-2xs text-[#7c879b]">
+                                No models returned. Try refresh.
+                              </p>
+                            )}
+                          {providerControls.cloudflareModelsError && (
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              {providerControls.cloudflareModelsError}
+                            </p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-push-2xs text-[#7c879b]">
+                              Updated {selectedModelUpdatedAgo}
+                            </p>
+                          )}
+                          <p className="px-1 text-push-2xs text-[#7c879b]">
+                            Uses the deployed Worker binding. No browser API key needed.
+                          </p>
+                          {providerControls.isCloudflareModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">
                               Current chat locked; choosing a model starts a new chat.
                             </p>
