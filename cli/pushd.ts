@@ -54,7 +54,12 @@ import {
   scanInterruptedSessions,
   PROTOCOL_VERSION,
 } from './session-store.js';
-import { buildSystemPrompt, runAssistantLoop, DEFAULT_MAX_ROUNDS } from './engine.js';
+import {
+  buildSystemPrompt,
+  runAssistantLoop,
+  runAssistantTurn,
+  DEFAULT_MAX_ROUNDS,
+} from './engine.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runCoderAgent } from '../lib/coder-agent.ts';
@@ -710,7 +715,7 @@ async function handleSendUserMessage(req, emitEvent) {
     let sawError = false;
     let sawRunComplete = false;
     try {
-      await runAssistantLoop(state, providerConfig, apiKey, DEFAULT_MAX_ROUNDS, {
+      await runAssistantTurn(state, providerConfig, apiKey, text, DEFAULT_MAX_ROUNDS, {
         runId,
         signal: abortController.signal,
         approvalFn,
