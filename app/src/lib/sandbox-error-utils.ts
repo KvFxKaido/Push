@@ -13,6 +13,22 @@ export function categorizeSandboxError(raw: string): { title: string; detail: st
   ) {
     return { title: 'Sandbox unreachable', detail: 'Could not connect to the container.' };
   }
+  // Sandbox session auth failures — check BEFORE the generic GitHub auth
+  // match. The CF owner-token scheme surfaces errors like "Owner token does
+  // not match (AUTH_FAILURE)" and "Sandbox not found or expired" which
+  // contain 'token' and would otherwise misroute users to GitHub Settings
+  // when the real problem is an expired sandbox session.
+  if (
+    lower.includes('auth_failure') ||
+    lower.includes('owner token') ||
+    lower.includes('sandbox not found') ||
+    lower.includes('sandbox_tokens')
+  ) {
+    return {
+      title: 'Sandbox session expired',
+      detail: 'Start a new sandbox to continue.',
+    };
+  }
   if (
     lower.includes('token') ||
     lower.includes('auth') ||
