@@ -549,6 +549,435 @@ async function runNonDelegatedFallback(
 }
 
 // ---------------------------------------------------------------------------
+// TUI-facing delegation entry
+//
+// Companion to `runDelegatedHeadless`: same planner-and-graph pipeline, but
+// drives its UX through an `emit(event)` callback that produces canonical
+// `subagent.*` / `task_graph.*` envelopes matching `lib/runtime-contract.ts`.
+// This is what `engine.ts:runAssistantTurn` calls on every TUI user turn.
+//
+// Contract:
+//   - On null/1-feature plan, returns `{ delegated: false }` so the caller
+//     falls back to `runAssistantLoop` unchanged (preserves single-agent UX).
+//   - On 2+ features, emits the full delegation event sequence, appends the
+//     synthesized final summary to `state.messages` as an assistant reply,
+//     and returns `{ delegated: true, runResult }` with a `run_complete`
+//     envelope already emitted.
+//   - Per-node engine runs pass `emit: null` to preserve the spike's
+//     scope-shrinking contract (tool/token events from nodes do not leak
+//     into the parent transcript).
+// ---------------------------------------------------------------------------
+
+export async function runUserTurnWithDelegation(
+  state,
+  providerConfig,
+  apiKey,
+  userText,
+  maxRounds,
+  options = {},
+) {
+  const {
+    emit = null,
+    signal,
+    approvalFn,
+    askUserFn,
+    allowExec = false,
+    safeExecPatterns = [],
+    execMode = 'auto',
+    runId: providedRunId,
+  } = options;
+
+  const runId = providedRunId || makeRunId();
+  const taskGraphId = mintGraphExecutionId();
+  const executionId = taskGraphId;
+  const graphCtx: CorrelationContext = {
+    surface: 'cli',
+    sessionId: state.sessionId,
+    runId,
+    taskGraphId,
+    executionId,
+  };
+
+  const dispatch = (type, payload) => {
+    if (typeof emit === 'function') {
+      emit({ type, payload, runId, sessionId: state.sessionId });
+    }
+  };
+
+  // Planner subagent lifecycle. The dispatched `subagent.started` / `.completed`
+  // pair gives the TUI visible proof that a planner call happened even when the
+  // plan ends up fallback-only (null or 1 feature).
+  const plannerExecutionId = `${executionId}_planner`;
+  dispatch('subagent.started', {
+    executionId: plannerExecutionId,
+    agent: 'planner',
+    detail: userText.slice(0, 200),
+  });
+
+  const plannerAc = signal ? undefined : new AbortController();
+  const plannerSignal = signal ?? plannerAc!.signal;
+
+  let plan: PlannerFeatureList | null = null;
+  try {
+    const plannerStreamFn = buildPlannerStreamFn(providerConfig, apiKey, plannerSignal);
+    plan = await runPlannerCore({
+      task: userText,
+      files: [],
+      streamFn: plannerStreamFn,
+      modelId: state.model || providerConfig.defaultModel,
+      onStatus: () => {},
+    });
+  } catch (err) {
+    dispatch('subagent.failed', {
+      executionId: plannerExecutionId,
+      agent: 'planner',
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { delegated: false };
+  }
+
+  dispatch('subagent.completed', {
+    executionId: plannerExecutionId,
+    agent: 'planner',
+    summary: plan
+      ? `Plan: ${plan.features.length} feature${plan.features.length === 1 ? '' : 's'}. ${plan.approach}`
+      : 'No plan returned; falling back to single-agent.',
+  });
+
+  // Single-agent fallback: null plan, empty plan, or 1-feature plan. A
+  // 1-feature plan offers no dependency structure worth rendering as a graph,
+  // and forcing it through executeTaskGraph would replace the normal streaming
+  // UX with a graph snapshot for no benefit. Brief requires "one-node graph
+  // should feel identical to today's tool loop."
+  if (!plan || plan.features.length <= 1) {
+    return { delegated: false };
+  }
+
+  const nodes = planToTaskGraph(plan);
+  const validationErrors = validateTaskGraph(nodes);
+  if (validationErrors.length > 0) {
+    dispatch('warning', {
+      code: 'PLAN_INVALID',
+      message: `Planner produced an invalid graph (${validationErrors
+        .map((e) => e.type)
+        .join(', ')}); falling back to single-agent.`,
+    });
+    await appendSessionEvent(
+      state,
+      'delegation.graph_invalid',
+      { ...graphCtx, errors: validationErrors },
+      runId,
+    );
+    return { delegated: false };
+  }
+
+  await appendSessionEvent(
+    state,
+    'delegation.graph_started',
+    { ...graphCtx, nodeCount: nodes.length },
+    runId,
+  );
+
+  dispatch('subagent.started', {
+    executionId,
+    agent: 'task_graph',
+    detail: `Task graph: ${nodes.length} tasks`,
+  });
+
+  // Shared memory store + workspace scope — same rationale as headless path:
+  // typed-memory writes from this graph persist and are retrievable by later
+  // runs on the same repo/branch.
+  setDefaultMemoryStore(createFileMemoryStore({ baseDir: getMemoryStoreBaseDir() }));
+  const workspaceIdentity = await resolveWorkspaceIdentity(state.cwd);
+  const graphMemoryScope = {
+    repoFullName: workspaceIdentity.repoFullName,
+    branch: workspaceIdentity.branch ?? undefined,
+    taskGraphId: executionId,
+  };
+
+  const originalMessages = state.messages.slice();
+  const nodeSummaries = new Map<string, { summary: string; rounds: number }>();
+  const nodeById = new Map<string, TaskGraphNode>(nodes.map((n) => [n.id, n]));
+
+  // Compact per-node detail strings for `task_graph.task_ready` /
+  // `task_graph.task_started` envelopes. `executeTaskGraph` sets
+  // `evt.detail` to the full `state.node.task` (lib/task-graph.ts:170,373),
+  // which in this flow contains the long "Ground your answer…" preamble
+  // from `planToTaskGraph`. Passing that verbatim floods the TUI
+  // delegation renderer with the entire prompt. Source the compact detail
+  // from the planner's original `feature.description` (truncated to one
+  // line) — Copilot review on PR #363.
+  const TASK_DETAIL_MAX = 120;
+  function compactDetail(description: string): string {
+    const firstLine = description.split('\n', 1)[0].trim();
+    if (firstLine.length <= TASK_DETAIL_MAX) return firstLine;
+    return `${firstLine.slice(0, TASK_DETAIL_MAX - 1).trimEnd()}…`;
+  }
+  const compactDetailById = new Map<string, string>(
+    plan.features.map((f) => [f.id, compactDetail(f.description)]),
+  );
+
+  const executor = async (node, enrichedContext, nodeSignal) => {
+    const nodeCtx = extendCorrelation(graphCtx, { taskId: node.id });
+
+    const sysMsgs = originalMessages.filter((m) => m.role === 'system');
+    const nodeState = {
+      ...state,
+      messages: sysMsgs.length
+        ? [...sysMsgs]
+        : [{ role: 'system' as const, content: buildSystemPromptBase(state.cwd) }],
+      workingMemory: undefined,
+    };
+
+    const preamble = buildHeadlessTaskBrief(node.task, undefined);
+    const retrievedBlock = await buildTypedMemoryBlockForNode({
+      node,
+      scope: graphMemoryScope,
+    });
+    const contextPieces: string[] = [];
+    if (enrichedContext.length > 0) {
+      contextPieces.push(`[Prior task context]\n${enrichedContext.join('\n\n')}`);
+    }
+    if (retrievedBlock) {
+      contextPieces.push(retrievedBlock);
+    }
+    const contextBlock = contextPieces.length > 0 ? `${contextPieces.join('\n\n')}\n\n` : '';
+    await appendUserMessageWithFileReferences(
+      nodeState,
+      `${contextBlock}${preamble}`,
+      nodeState.cwd,
+      { referenceSourceText: node.task },
+    );
+
+    await appendSessionEvent(
+      nodeState,
+      'delegation.node_started',
+      { ...nodeCtx, task: node.task.slice(0, 280) },
+      runId,
+    );
+
+    // emit: null — spike's scope-shrinking hypothesis says per-node tool
+    // events do not leak into the parent transcript. Delegation-level events
+    // (subagent.*, task_graph.*) are what the TUI renders for progress.
+    //
+    // suppressRunComplete: true — each per-node runAssistantLoop would
+    // otherwise persist its own `run_complete` session event. With N nodes
+    // per delegated turn that makes `aggregateStats` (cli/stats.ts:105)
+    // count N runs for one logical user turn and misreport outcomes when
+    // nodes diverge. The delegation wrapper persists a single parent-level
+    // `run_complete` below — it is the authoritative record for this turn.
+    // Codex P2 review on PR #363.
+    const result = await runAssistantLoop(nodeState, providerConfig, apiKey, maxRounds, {
+      signal: nodeSignal,
+      emit: null,
+      allowExec,
+      safeExecPatterns,
+      execMode,
+      runId,
+      approvalFn,
+      askUserFn,
+      suppressRunComplete: true,
+    });
+
+    const summary = result.finalAssistantText || `[no summary — outcome=${result.outcome}]`;
+    nodeSummaries.set(node.id, { summary, rounds: result.rounds });
+
+    await appendSessionEvent(
+      nodeState,
+      'delegation.node_completed',
+      {
+        ...nodeCtx,
+        outcome: result.outcome,
+        rounds: result.rounds,
+        summaryLength: summary.length,
+      },
+      runId,
+    );
+
+    state.eventSeq = nodeState.eventSeq;
+    state.rounds = nodeState.rounds;
+
+    if (result.outcome === 'aborted') {
+      throw new DOMException('Cancelled by user', 'AbortError');
+    }
+    if (result.outcome === 'error') {
+      const ERROR_SUMMARY_MAX = 200;
+      const truncated =
+        summary.length > ERROR_SUMMARY_MAX
+          ? `${summary.slice(0, ERROR_SUMMARY_MAX - 1)}…`
+          : summary;
+      throw new Error(`node ${node.id} failed: ${truncated}`);
+    }
+
+    return { summary, rounds: result.rounds };
+  };
+
+  // Translate internal TaskGraphProgressEvent shapes into canonical
+  // task_graph.* envelopes. `graph_complete` is internal-only; we emit the
+  // canonical graph_completed after executeTaskGraph returns so nodeCount /
+  // totalRounds / wallTimeMs come from TaskGraphResult rather than a partial
+  // progress event. Matches web handler pattern.
+  const onProgress = (evt) => {
+    const node = evt.taskId ? nodeById.get(evt.taskId) : null;
+    switch (evt.type) {
+      case 'task_ready':
+        if (evt.taskId && node) {
+          dispatch('task_graph.task_ready', {
+            executionId,
+            taskId: evt.taskId,
+            agent: node.agent,
+            detail: compactDetailById.get(evt.taskId) ?? evt.taskId,
+          });
+        }
+        break;
+      case 'task_started':
+        if (evt.taskId && node) {
+          dispatch('task_graph.task_started', {
+            executionId,
+            taskId: evt.taskId,
+            agent: node.agent,
+            detail: compactDetailById.get(evt.taskId) ?? evt.taskId,
+          });
+        }
+        break;
+      case 'task_completed':
+        if (evt.taskId && node) {
+          dispatch('task_graph.task_completed', {
+            executionId,
+            taskId: evt.taskId,
+            agent: node.agent,
+            summary: evt.detail ?? '',
+            elapsedMs: evt.elapsedMs,
+          });
+        }
+        break;
+      case 'task_failed':
+        if (evt.taskId && node) {
+          dispatch('task_graph.task_failed', {
+            executionId,
+            taskId: evt.taskId,
+            agent: node.agent,
+            error: evt.detail ?? 'Task failed.',
+            elapsedMs: evt.elapsedMs,
+          });
+        }
+        break;
+      case 'task_cancelled':
+        if (evt.taskId && node) {
+          dispatch('task_graph.task_cancelled', {
+            executionId,
+            taskId: evt.taskId,
+            agent: node.agent,
+            reason: evt.detail ?? 'Task cancelled.',
+            elapsedMs: evt.elapsedMs,
+          });
+        }
+        break;
+      case 'graph_complete':
+        break;
+    }
+  };
+
+  let result;
+  try {
+    result = await executeTaskGraph(nodes, executor, { signal, onProgress });
+  } catch (err) {
+    dispatch('subagent.failed', {
+      executionId,
+      agent: 'task_graph',
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+
+  try {
+    await writeTaskGraphResultMemory(result, graphMemoryScope);
+  } catch {
+    // Error-isolated per headless path; memory persistence failure must not
+    // sink the delegation surface.
+  }
+
+  await appendSessionEvent(
+    state,
+    'delegation.graph_completed',
+    {
+      ...graphCtx,
+      success: result.success,
+      aborted: result.aborted,
+      totalRounds: result.totalRounds,
+      wallTimeMs: result.wallTimeMs,
+    },
+    runId,
+  );
+
+  const graphCompletionSummary = result.aborted
+    ? 'Task graph cancelled by user.'
+    : result.success
+      ? 'All tasks completed.'
+      : 'Some tasks failed.';
+
+  dispatch('task_graph.graph_completed', {
+    executionId,
+    summary: graphCompletionSummary,
+    success: result.success,
+    aborted: result.aborted,
+    nodeCount: result.nodeStates.size,
+    totalRounds: result.totalRounds,
+    wallTimeMs: result.wallTimeMs,
+  });
+
+  dispatch('subagent.completed', {
+    executionId,
+    agent: 'task_graph',
+    summary: `${result.nodeStates.size} tasks, ${result.totalRounds} rounds, ${result.wallTimeMs}ms`,
+  });
+
+  // Append the synthesized summary as an assistant message so the transcript
+  // has a natural final reply. Stream it in a single assistant_token so the
+  // TUI's streamBuf → assistant_done flush path renders it identically to a
+  // real assistant response.
+  const finalText = synthesizeFinalSummary(plan, result, nodeSummaries);
+  state.messages.push({ role: 'assistant' as const, content: finalText });
+
+  dispatch('assistant_token', { text: finalText });
+  const messageId = `asst_${Date.now().toString(36)}`;
+  dispatch('assistant_done', { messageId });
+
+  await saveSessionState(state);
+
+  const runOutcome = result.aborted ? 'aborted' : result.success ? 'success' : 'error';
+  // Persist the parent-level `run_complete`. Per-node runAssistantLoop calls
+  // above pass `suppressRunComplete: true`, so this is the single
+  // authoritative `run_complete` record for the delegated turn — matches
+  // the single-agent path's accounting and keeps aggregateStats honest.
+  await appendSessionEvent(
+    state,
+    'run_complete',
+    {
+      runId,
+      outcome: runOutcome === 'error' ? 'failed' : runOutcome,
+      summary: finalText.slice(0, 500),
+      rounds: result.totalRounds,
+    },
+    runId,
+  );
+  dispatch('run_complete', {
+    outcome: runOutcome === 'error' ? 'failed' : runOutcome,
+    summary: finalText.slice(0, 500),
+  });
+
+  return {
+    delegated: true,
+    runResult: {
+      outcome: runOutcome,
+      finalAssistantText: finalText,
+      rounds: result.totalRounds,
+      runId,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Summary synthesis
 // ---------------------------------------------------------------------------
 
