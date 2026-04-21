@@ -108,12 +108,16 @@ CREATE TABLE event (
 
 Guardrail: per `AGENTS.md` §New feature checklist #2, name the coordinator's home before the first line of code. It is **not** `useChat.ts`.
 
-1. **New sibling hook `app/src/hooks/useBackgroundCoderJob.ts`.** Owns: POST to `/api/jobs/start`, SSE connection, reconnect on `visibilitychange`, dispatch into the existing `appendRunEvent(chatId, event)` sink already passed around by `useAgentDelegation.ts:72`.
-2. **Entry point.** `useAgentDelegation.ts:290` — branch before calling `handleCoderDelegation`. If a per-chat background-mode flag (new field on Conversation, or a single global setting) is on, route through `useBackgroundCoderJob.start(envelope)` instead of the inline handler. Existing `RunEvent` plumbing (`emitRunEngineEvent`, `appendRunEvent`) is generic — no new UI primitives needed for the timeline.
-3. **Job card.** Chat already renders inline tool cards via `appendInlineDelegationCards` (`useAgentDelegation.ts:51`). Add a minimal `<JobCard />` inline card (new `ChatCard` kind) showing `status | elapsed | latest status line`. Status comes from `subagent.started` / `subagent.completed` plus a new `job.status` event the DO emits on transitions.
-4. **Reconnect on foreground.** Two `visibilitychange` listeners already exist (`useChat.ts:385-393`, `useChatCheckpoint.ts:302-310`). Add a third inside `useBackgroundCoderJob.ts` that, when visible and any chat has `pendingJobIds`, re-opens SSE with `Last-Event-ID` = latest seen event.
+**Status: landed in PR #3b.**
 
-Persist `{ chatId → Map<jobId, { lastEventId, status }> }` via the existing `saveConversationToDB` path (`conversation-store.ts` already handles blob persistence).
+1. **New sibling hook `app/src/hooks/useBackgroundCoderJob.ts`.** Owns: POST to `/api/jobs/start`, fetch-based SSE reader over `/api/jobs/:id/events` (tiny protocol adapter, not a general SSE client), reconnect on `visibilitychange`, dispatch into the existing `appendRunEvent(chatId, event)` sink. The server stamps each event's id + timestamp; `appendRunEvent` re-stamps for the client journal because its contract takes `RunEventInput`, and the server id is preserved separately in `pendingJobIds[jobId].lastEventId` so reconnect can send it as the `Last-Event-ID` header.
+2. **Entry point.** `useAgentDelegation.ts:290` branches before calling `handleCoderDelegation`. When the global `push:background-mode-preference` flag is on AND a `backgroundCoderJob` handle was passed in, the helper `startBackgroundCoderJob` builds a `DelegationEnvelope` from the same refs the inline handler reads, POSTs it, and returns a placeholder `ToolExecutionResult`. **Locked semantic:** the placeholder says *accepted and queued*, never *started* or *completed*. The final summary never enters `apiMessages` — it surfaces through the JobCard + run timeline only, deliberately separating the chat transcript (this turn) from the run timeline (async work).
+3. **JobCard.** `app/src/components/cards/JobCard.tsx` — new `coder-job` ChatCard type registered in `CardRenderer`. Shows one of `Queued | Running | Completed | Failed | Cancelled`, the elapsed timer, and the latest status line / summary / error. The `queued` placeholder text points at the card/timeline surface directly so readers don't expect the assistant thread to continue on its own.
+4. **Reconnect on foreground.** Third `visibilitychange` listener lives inside `useBackgroundCoderJob.ts`; the first two (persistence flush in `useChat.ts:385-393`, run-checkpoint flush in `useChatCheckpoint.ts:302-310`) are unchanged. On foreground the hook iterates every chat's non-terminal `pendingJobIds` entries and re-opens SSE with `Last-Event-ID: <latest seen>`.
+
+Persistence: a new `Conversation.pendingJobIds?: Record<jobId, { jobId, status, lastEventId, startedAt, updatedAt, taskPreview? }>` field flows through the existing `saveConversation` path (`conversation-store.ts` writes individual conversations to IndexedDB, so this just becomes a free addition to the next flush).
+
+**Feature flag.** Global only in Phase 1 — `push:background-mode-preference` in localStorage, via `app/src/lib/background-mode-settings.ts`. Named as a *preference* rather than a capability flag so a later per-chat override can be layered without semantic awkwardness.
 
 ## 5. Explicitly out of Phase 1
 
@@ -157,7 +161,7 @@ Persist `{ chatId → Map<jobId, { lastEventId, status }> }` via the existing `s
 
 ## Suggested PR sequence
 
-1. Extract DI wiring to `lib/coder-agent-bindings.ts`; Web shim rebuilds on top of it. No behavior change. Tests: existing coder-agent tests stay green.
-2. Add `CoderJob` DO + wrangler migration + `POST /api/jobs/start` + `GET /api/jobs/:id/events` (SSE) + `POST /api/jobs/:id/cancel`. Server-side only; no UI wiring yet. Tests: DO integration test runs a canned envelope end-to-end.
-3. Add `useBackgroundCoderJob` hook + JobCard + delegation-handler branch point + visibilitychange reconnect. Feature-flagged per-chat toggle.
+1. ✅ **Landed as #358.** Extract DI wiring to `lib/coder-agent-bindings.ts`; Web shim rebuilds on top of it. No behavior change. Tests: existing coder-agent tests stay green.
+2. ✅ **Landed as #359 + #360.** Add `CoderJob` DO + wrangler migration + `POST /api/jobs/start` + `GET /api/jobs/:id/events` (SSE) + `POST /api/jobs/:id/cancel`. Server-side only; no UI wiring yet. Tests: DO integration test runs a canned envelope end-to-end.
+3. ✅ **Landed as #3b.** Add `useBackgroundCoderJob` hook + JobCard + delegation-handler branch point + visibilitychange reconnect. Feature-flagged behind a global toggle (per-chat deferred).
 4. Drift test + schema pin + docs update.
