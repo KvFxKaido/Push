@@ -53,12 +53,16 @@ import { handleGitHubTools } from './src/worker/worker-github-tools';
 import { sanitizeUrlForLogging } from './src/worker/worker-log-utils';
 import { summarizeSnapshotIndex } from './src/worker/snapshot-index';
 import { handleAdminSnapshots } from './src/worker/admin-routes';
+import { handleJobsRoute, matchJobsRoute } from './src/worker/worker-coder-job';
 
 // Re-export the Sandbox Durable Object class so wrangler can bind to it.
 // The Cloudflare Sandbox SDK ships the DO implementation; we only need to
 // expose the class symbol from the Worker entry. Subclass here later if we
 // need outbound handlers (outboundByHost) or custom lifecycle hooks.
 export { Sandbox } from '@cloudflare/sandbox';
+
+// Background-jobs DO — Phase 1 of Background Coder Tasks.
+export { CoderJob } from './src/worker/coder-job-do';
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -87,6 +91,15 @@ export default {
         const handler = useCf ? handleCloudflareSandbox : handleSandbox;
         return withRequestIdOnResponse(
           await handler(requestWithId, env, url, route, ctx),
+          requestId,
+        );
+      }
+
+      // Background-jobs DO routes — Phase 1 of Background Coder Tasks.
+      const jobsMatch = matchJobsRoute(url.pathname, request.method);
+      if (jobsMatch) {
+        return withRequestIdOnResponse(
+          await handleJobsRoute(requestWithId, env, jobsMatch),
           requestId,
         );
       }

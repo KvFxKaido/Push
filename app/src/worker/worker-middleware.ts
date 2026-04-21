@@ -58,6 +58,11 @@ export interface Env {
   // or test envs may not bind it; the cloudflare-sandbox-provider must 503
   // gracefully when it's absent so the Modal fallback path stays safe.
   Sandbox?: DurableObjectNamespace;
+  // CoderJob Durable Object binding — background Coder delegations (Phase 1
+  // background-tasks). Optional so local/test envs without the v2 migration
+  // can still boot; /api/jobs/* fails closed with NOT_CONFIGURED when
+  // missing so we don't half-accept background jobs that can't run.
+  CoderJob?: DurableObjectNamespace;
   // Sibling-provider selector. Values: "modal" | "cloudflare". Unset or
   // anything else defaults to "modal" during coexistence.
   PUSH_SANDBOX_PROVIDER?: string;
