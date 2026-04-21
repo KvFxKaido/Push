@@ -673,7 +673,7 @@ describe('send_user_message delegation parity', () => {
         makeRequest('start_session', {
           provider: 'ollama',
           model: 'mock-model',
-          cwd: tmpRoot,
+          repo: { rootPath: tmpRoot },
         }),
         emitEvent,
       );
