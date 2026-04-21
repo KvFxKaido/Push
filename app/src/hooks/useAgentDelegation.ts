@@ -127,7 +127,19 @@ async function startBackgroundCoderJob(
     };
   }
 
-  const branch = refs.branchInfoRef.current?.currentBranch ?? '';
+  // `branch` is a required field in the `/api/jobs/start` contract
+  // (see app/src/worker/worker-coder-job.ts :143). Fall back to
+  // `defaultBranch` when `currentBranch` is unset; bail out with a
+  // Tool Error if both are missing so the failure is legible to the
+  // model rather than surfacing as a generic MISSING_FIELDS from the
+  // server.
+  const branch =
+    refs.branchInfoRef.current?.currentBranch ?? refs.branchInfoRef.current?.defaultBranch ?? '';
+  if (!branch) {
+    return {
+      text: '[Tool Error] Background job requires a branch; neither current nor default branch is set on this conversation.',
+    };
+  }
   const envelope: DelegationEnvelope = {
     task: taskList.join('\n\n'),
     files: Array.isArray(args.files) ? args.files : [],
@@ -138,7 +150,7 @@ async function startBackgroundCoderJob(
     constraints: args.constraints,
     branchContext: refs.branchInfoRef.current
       ? {
-          activeBranch: refs.branchInfoRef.current.currentBranch ?? '',
+          activeBranch: refs.branchInfoRef.current.currentBranch ?? branch,
           defaultBranch: refs.branchInfoRef.current.defaultBranch ?? '',
           protectMain: refs.isMainProtectedRef.current,
         }

@@ -1708,6 +1708,82 @@ describe('useAgentDelegation.executeDelegateCall — delegate_coder (background 
     expect(result.text).toContain('MISSING_FIELDS');
   });
 
+  it('falls back to defaultBranch when currentBranch is unset', async () => {
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.repoRef.current = 'acme/web';
+    // currentBranch missing, defaultBranch present — envelope should
+    // carry defaultBranch and startJob must still be called.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (params.branchInfoRef as any).current = { defaultBranch: 'main' };
+    const startJob = vi.fn(async () => ({ ok: true as const, jobId: 'job-42' }));
+    const paramsWithBg = {
+      ...params,
+      backgroundCoderJob: {
+        startJob,
+        cancelJob: vi.fn(),
+        formatPlaceholderText: vi.fn(
+          (id: string) => `accepted and queued as background job ${id}.`,
+        ),
+      },
+      isBackgroundModeEnabledForChat: () => true,
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(paramsWithBg as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'fix bug' } },
+    };
+    await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openrouter',
+      'gpt-4',
+    );
+    expect(startJob).toHaveBeenCalledOnce();
+    const arg = (startJob.mock.calls[0] as unknown[])[0] as { branch: string };
+    expect(arg.branch).toBe('main');
+  });
+
+  it('returns a Tool Error when neither currentBranch nor defaultBranch is set', async () => {
+    const params = makeParams();
+    params.sandboxIdRef.current = 'sbx-1';
+    params.repoRef.current = 'acme/web';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (params.branchInfoRef as any).current = {};
+    const startJob = vi.fn(async () => ({ ok: true as const, jobId: 'job-42' }));
+    const paramsWithBg = {
+      ...params,
+      backgroundCoderJob: {
+        startJob,
+        cancelJob: vi.fn(),
+        formatPlaceholderText: vi.fn(() => ''),
+      },
+      isBackgroundModeEnabledForChat: () => true,
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { executeDelegateCall } = useAgentDelegation(paramsWithBg as any);
+    const toolCall = {
+      source: 'delegate' as const,
+      call: { tool: 'delegate_coder' as const, args: { task: 'fix bug' } },
+    };
+    const result = await executeDelegateCall(
+      'chat-1',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      toolCall as any,
+      [],
+      'openrouter',
+      'gpt-4',
+    );
+    expect(startJob).not.toHaveBeenCalled();
+    expect(result.text).toContain('[Tool Error]');
+    expect(result.text).toContain('branch');
+  });
+
   it('returns a Tool Error when sandbox owner token is missing', async () => {
     sandboxClient.getSandboxOwnerToken.mockReturnValueOnce(null);
     const params = makeParams();

@@ -295,6 +295,10 @@ export interface CoderJobCardData {
   status: BackgroundJobStatus;
   /** Client-side wall clock of the POST /api/jobs/start response. */
   startedAt: number;
+  /** Set when status transitions to a terminal value. Used by
+   * JobCard to freeze the elapsed timer at the real end time
+   * instead of resetting it to 0. */
+  finishedAt?: number;
   /** Last `subagent.started` detail or `subagent.completed` summary. */
   latestStatusLine?: string;
   /** Populated on terminal completed/cancelled events. */

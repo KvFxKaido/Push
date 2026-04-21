@@ -351,6 +351,15 @@ describe('useBackgroundCoderJob — SSE dispatch', () => {
     expect(entry?.status).toBe('completed');
     expect(entry?.lastEventId).toBe('ev-2');
 
+    // JobCard data must have finishedAt set so the elapsed timer
+    // freezes at the real end time rather than collapsing to 0.
+    const msgs = getConvs()['chat-1'].messages;
+    const card = msgs.flatMap((m) => m.cards ?? []).find((c) => c.type === 'coder-job') as
+      | { data: { finishedAt?: number } }
+      | undefined;
+    expect(card).toBeDefined();
+    expect(typeof card?.data.finishedAt).toBe('number');
+
     vi.unstubAllGlobals();
   });
 

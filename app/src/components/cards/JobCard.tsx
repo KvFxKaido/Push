@@ -62,7 +62,9 @@ export function JobCard({ data }: { data: CoderJobCardData }) {
   const isActive = data.status === 'queued' || data.status === 'running';
 
   // Re-render every second while the job is in-flight so the elapsed
-  // counter advances without the parent having to re-render.
+  // counter advances without the parent having to re-render. On
+  // terminal statuses we render from `finishedAt` so the final
+  // duration is frozen at the real end time (not reset to 0).
   const [now, setNow] = useState<number>(() => Date.now());
   useEffect(() => {
     if (!isActive) return;
@@ -70,7 +72,8 @@ export function JobCard({ data }: { data: CoderJobCardData }) {
     return () => clearInterval(id);
   }, [isActive]);
 
-  const elapsed = Math.max(0, (isActive ? now : data.startedAt) - data.startedAt);
+  const endTime = isActive ? now : (data.finishedAt ?? now);
+  const elapsed = Math.max(0, endTime - data.startedAt);
   const elapsedLabel = formatElapsedTime(elapsed);
   const statusLine = data.latestStatusLine ?? getStatusLabel(data.status);
 

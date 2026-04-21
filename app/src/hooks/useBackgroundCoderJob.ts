@@ -286,6 +286,7 @@ export function useBackgroundCoderJob({
           break;
         }
         case 'subagent.completed': {
+          const finishedAt = Date.now();
           upsertJobEntry(chatId, jobId, {
             status: 'completed',
             lastEventId: runEvent.id,
@@ -294,6 +295,7 @@ export function useBackgroundCoderJob({
             status: 'completed',
             latestStatusLine: 'Completed',
             summary: runEvent.summary,
+            finishedAt,
           });
           emitRunEngineEvent({
             type: 'DELEGATION_COMPLETED',
@@ -311,6 +313,7 @@ export function useBackgroundCoderJob({
           // error text only as a hint; canonical status comes from the
           // /status snapshot path when we add it.
           const cancelled = /abort|cancel/i.test(runEvent.error);
+          const finishedAt = Date.now();
           upsertJobEntry(chatId, jobId, {
             status: cancelled ? 'cancelled' : 'failed',
             lastEventId: runEvent.id,
@@ -319,6 +322,7 @@ export function useBackgroundCoderJob({
             status: cancelled ? 'cancelled' : 'failed',
             latestStatusLine: cancelled ? 'Cancelled' : 'Failed',
             error: runEvent.error,
+            finishedAt,
           });
           emitRunEngineEvent({
             type: 'DELEGATION_COMPLETED',
@@ -523,6 +527,14 @@ export function useBackgroundCoderJob({
   }, [conversationsRef, openSseStream]);
 
   useEffect(() => {
+    // On mount, resume any non-terminal jobs immediately if the tab
+    // is already foregrounded. The `visibilitychange` event only
+    // fires on *changes*, so without this initial sweep a page load
+    // with restored `pendingJobIds` would wait for the next
+    // background/foreground cycle before reconnecting.
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      resumeAllNonTerminalJobs();
+    }
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
         resumeAllNonTerminalJobs();
