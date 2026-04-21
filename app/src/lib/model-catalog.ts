@@ -1051,17 +1051,13 @@ export async function fetchCloudflareModels(): Promise<string[]> {
     }
 
     const payload = (await response.json()) as unknown;
-    // Parse the CF-specific `{ id, name }[]` shape explicitly. The shared
-    // `normalizeModelList` treats bare arrays as "pull both id and name",
-    // which would inject the human-readable name (e.g. `qwen3-30b-a3b-fp8`)
-    // as a selectable model alongside the real `@cf/...` id.
+    // `/api/cloudflare/models` returns a bare `string[]` of `@cf/...` ids.
+    // We avoid `normalizeModelList` because the CF binding's own catalog
+    // pairs a UUID `id` with the `@cf/...` `name`, and the shared normalizer
+    // would wrongly treat both as selectable ids.
     const liveModels = (Array.isArray(payload) ? payload : [])
-      .map((entry): string | null => {
-        if (!entry || typeof entry !== 'object') return null;
-        const id = (entry as { id?: unknown }).id;
-        return typeof id === 'string' && id.trim() ? id.trim() : null;
-      })
-      .filter((id): id is string => Boolean(id))
+      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      .map((entry) => entry.trim())
       .sort((left, right) => compareProviderModelIds('cloudflare', left, right));
     return liveModels.length > 0 ? liveModels : [...CLOUDFLARE_MODELS];
   } catch (err) {

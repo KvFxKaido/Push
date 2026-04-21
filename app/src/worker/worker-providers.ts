@@ -188,10 +188,15 @@ export async function handleCloudflareModels(request: Request, env: Env): Promis
 
   try {
     const models = await env.AI!.models({ hide_experimental: true });
+    // The AI binding's catalog uses `id` as an internal UUID and `name` as
+    // the `@cf/...` string that env.AI.run() expects as the model argument.
+    // We surface the run-compatible name — not the UUID — as the selectable
+    // model id for the client.
     const textModels = models
       .filter(isCloudflareTextGenerationModel)
-      .map(({ id, name }) => ({ id, name }))
-      .sort((left, right) => left.id.localeCompare(right.id));
+      .map((model) => model.name)
+      .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+      .sort((left, right) => left.localeCompare(right));
 
     return Response.json(textModels, {
       headers: {

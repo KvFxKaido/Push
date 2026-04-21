@@ -195,11 +195,14 @@ describe('handleCloudflareChat', () => {
 });
 
 describe('handleCloudflareModels', () => {
-  it('returns only text-generation model ids from the AI binding', async () => {
+  it('returns only text-generation model names (the env.AI.run-compatible id) from the AI binding', async () => {
+    // The CF catalog uses `id` as an internal UUID and `name` as the
+    // `@cf/...` string env.AI.run() expects. We must surface `name`, not
+    // `id`, otherwise clients end up with UUIDs in the model picker.
     const models = vi.fn(async () => [
       {
-        id: '@cf/qwen/qwen3-30b-a3b-fp8',
-        name: 'qwen3-30b-a3b-fp8',
+        id: 'cc80437b-9a8d-4f1a-9c77-9aaf0d226922',
+        name: '@cf/qwen/qwen3-30b-a3b-fp8',
         description: '',
         source: 1,
         task: { id: 'text-generation', name: 'Text Generation', description: '' },
@@ -207,8 +210,8 @@ describe('handleCloudflareModels', () => {
         properties: [],
       },
       {
-        id: '@cf/openai/whisper',
-        name: 'whisper',
+        id: 'ad01ab83-baf8-4e7b-8fed-a0a219d4eb45',
+        name: '@cf/openai/whisper',
         description: '',
         source: 1,
         task: {
@@ -230,9 +233,7 @@ describe('handleCloudflareModels', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual([
-      { id: '@cf/qwen/qwen3-30b-a3b-fp8', name: 'qwen3-30b-a3b-fp8' },
-    ]);
+    expect(await response.json()).toEqual(['@cf/qwen/qwen3-30b-a3b-fp8']);
   });
 
   it('returns 401 when the Worker has no AI binding configured', async () => {
