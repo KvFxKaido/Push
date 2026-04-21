@@ -274,6 +274,7 @@ export class CoderJob {
           sandboxId: input.sandboxId,
           ownerToken: input.ownerToken,
           provider: input.provider,
+          jobId: input.jobId,
         });
       const streamFn =
         overrides.streamFn ??
@@ -282,6 +283,7 @@ export class CoderJob {
           origin: input.origin,
           provider: input.provider,
           modelId: input.model,
+          jobId: input.jobId,
         });
 
       const declaredCaps = input.declaredCapabilities ?? Array.from(ROLE_CAPABILITIES.coder);

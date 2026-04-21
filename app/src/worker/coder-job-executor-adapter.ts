@@ -27,6 +27,7 @@ import { handleCloudflareSandbox } from './worker-cf-sandbox';
 import type { SandboxStatusResult, SandboxToolExecResult } from '@push/lib/coder-agent-bindings';
 import type { ChatCard } from '@/types';
 import type { AIProviderType } from '@push/lib/provider-contract';
+import { detectBlockedGitCommand } from '@/lib/sandbox-tool-utils';
 import type { SandboxToolCall } from './coder-job-detector-adapter';
 
 export interface CoderJobExecutorAdapter {
@@ -45,6 +46,11 @@ export interface WebExecutorAdapterArgs {
   sandboxId: string;
   ownerToken: string;
   provider: AIProviderType;
+  /** Unique per-job id — used to produce a stable rate-limit bucket
+   * (`X-Forwarded-For: job:<jobId>`) so background-job traffic doesn't
+   * collapse into the global `'unknown'` IP bucket and spuriously 429
+   * other jobs. */
+  jobId: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -53,12 +59,25 @@ export interface WebExecutorAdapterArgs {
 
 type RouteMapping =
   | { kind: 'ok'; route: string; body: Record<string, unknown> }
+  | { kind: 'git_blocked'; op: string }
   | { kind: 'not_implemented_yet' }
   | { kind: 'unsupported' };
 
 function mapCallToRoute(call: SandboxToolCall): RouteMapping {
   switch (call.tool) {
-    case 'sandbox_exec':
+    case 'sandbox_exec': {
+      // Mirror the Web executor's git guard — direct
+      // `git commit/push/merge/rebase` in `sandbox_exec` is blocked
+      // unless the model opts in via `allowDirectGit: true`. The
+      // audited flow is `sandbox_prepare_commit` + `sandbox_push`.
+      // Background jobs run under `approvalMode='full-auto'`, but we
+      // keep the guard on regardless so background jobs can't silently
+      // mutate repo history bypassing the audit trail the foreground
+      // loop enforces.
+      const blockedGitOp = detectBlockedGitCommand(call.args.command);
+      if (blockedGitOp && !call.args.allowDirectGit) {
+        return { kind: 'git_blocked', op: blockedGitOp };
+      }
       return {
         kind: 'ok',
         route: 'exec',
@@ -68,6 +87,7 @@ function mapCallToRoute(call: SandboxToolCall): RouteMapping {
           allow_direct_git: call.args.allowDirectGit,
         },
       };
+    }
     case 'sandbox_read_file':
       return {
         kind: 'ok',
@@ -131,6 +151,7 @@ interface HandlerRequestArgs {
   origin: string;
   sandboxId: string;
   ownerToken: string;
+  jobId: string;
   route: string;
   body: Record<string, unknown>;
 }
@@ -140,6 +161,7 @@ async function callSandboxHandler({
   origin,
   sandboxId,
   ownerToken,
+  jobId,
   route,
   body,
 }: HandlerRequestArgs): Promise<{ status: number; text: string; data: unknown }> {
@@ -150,6 +172,12 @@ async function callSandboxHandler({
       'content-type': 'application/json',
       // Required by validateOrigin inside handleCloudflareSandbox.
       Origin: origin,
+      // Give the rate limiter a stable per-job bucket so background
+      // tool calls don't all collapse into the fallback 'unknown' IP
+      // bucket and 429 each other. Without this header
+      // `getClientIp(req)` returns 'unknown' for every synthetic
+      // internal Request.
+      'X-Forwarded-For': `job:${jobId}`,
     },
     body: JSON.stringify({ sandbox_id: sandboxId, owner_token: ownerToken, ...body }),
   });
@@ -239,7 +267,13 @@ function formatResult(call: SandboxToolCall, data: unknown, status: number): str
       return `[Tool Result — sandbox_list_dir]\n${entries.join('\n')}`;
     }
     case 'sandbox_diff': {
-      const r = data as DiffResponse;
+      // routeDiff can return HTTP 200 with an `error` field when the
+      // underlying git commands fail (e.g. /workspace isn't a git
+      // repo). Caller treats the returned structuredError to decide.
+      const r = data as DiffResponse & ErrorResponse;
+      if (r.error) {
+        return `[Tool Error — sandbox_diff] ${r.error}`;
+      }
       return r.diff
         ? `[Tool Result — sandbox_diff]\n${r.diff}`
         : `[Tool Result — sandbox_diff] no uncommitted changes`;
@@ -255,8 +289,12 @@ function formatResult(call: SandboxToolCall, data: unknown, status: number): str
 // ---------------------------------------------------------------------------
 
 export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJobExecutorAdapter {
+  // Strip trailing slash so URL construction can't produce
+  // `https://host//api/...` when the caller passes a normalized origin
+  // with a trailing slash.
+  const origin = args.origin.replace(/\/$/, '');
   return {
-    executeSandboxToolCall: async (call) => {
+    executeSandboxToolCall: async (call, sandboxId) => {
       const mapping = mapCallToRoute(call);
       if (mapping.kind === 'not_implemented_yet') {
         return {
@@ -284,13 +322,28 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
           },
         };
       }
+      if (mapping.kind === 'git_blocked') {
+        return {
+          text:
+            `[Tool Blocked — sandbox_exec] Direct "${mapping.op}" is blocked in background ` +
+            `Coder jobs. Use sandbox_prepare_commit + sandbox_push for the audited flow, or ` +
+            `retry this call with "allowDirectGit": true if you've already decided direct git ` +
+            `is necessary.`,
+          structuredError: {
+            type: 'APPROVAL_GATE_BLOCKED',
+            retryable: false,
+            message: `direct ${mapping.op} is blocked without allowDirectGit`,
+          },
+        };
+      }
 
       try {
         const { status, data } = await callSandboxHandler({
           env: args.env,
-          origin: args.origin,
-          sandboxId: args.sandboxId,
+          origin,
+          sandboxId,
           ownerToken: args.ownerToken,
+          jobId: args.jobId,
           route: mapping.route,
           body: mapping.body,
         });
@@ -304,6 +357,22 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
               message: err.error ?? `HTTP ${status}`,
             },
           };
+        }
+        // sandbox_diff is the one handler that returns HTTP 200 with an
+        // `error` field when git fails. Surface that as a structured
+        // error so the model doesn't treat broken git as a clean tree.
+        if (call.tool === 'sandbox_diff') {
+          const diffErr = (data as ErrorResponse).error;
+          if (diffErr) {
+            return {
+              text: formatResult(call, data, status),
+              structuredError: {
+                type: 'SANDBOX_GIT_ERROR',
+                retryable: false,
+                message: diffErr,
+              },
+            };
+          }
         }
         return { text: formatResult(call, data, status) };
       } catch (err) {
@@ -331,9 +400,10 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
       try {
         const { status, data } = await callSandboxHandler({
           env: args.env,
-          origin: args.origin,
+          origin,
           sandboxId,
           ownerToken: args.ownerToken,
+          jobId: args.jobId,
           route: 'diff',
           body: {},
         });

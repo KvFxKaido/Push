@@ -9,17 +9,20 @@
  * path already gets.
  *
  * Scope note (Phase 1):
- *   Only OpenRouter is wired in PR #3a. Other providers return an
- *   explicit diagnostic via `onError` so a misconfigured background
- *   job fails fast instead of silently hanging. PR #3b / #4 can
- *   broaden the provider set as the UI exercises them — each
- *   additional provider is a ~3-line addition to the switch.
+ *   PR #3a wires the direct Worker handlers currently validated for
+ *   background jobs: openrouter, ollama, zen, nvidia, blackbox,
+ *   kilocode, and openadapter. Providers that still require extra
+ *   runtime setup or are intentionally unsupported here return `null`
+ *   from `resolveProviderHandler` so the caller can surface an
+ *   explicit diagnostic and fail fast instead of silently hanging.
  *
  * SSE parsing:
- *   Providers proxy OpenAI-compatible SSE. We read chunks, split on
- *   blank-line delimiters, and dispatch `data: {...}` events through
- *   `onToken` / `onDone` / `onError`. Malformed chunks are logged
- *   once and skipped; [DONE] sentinels close the stream cleanly.
+ *   Providers proxy OpenAI-compatible SSE. We normalize CRLF to LF so
+ *   providers that frame events with `\r\n\r\n` still split on the
+ *   blank-line delimiter, parse `data: {...}` events, and dispatch
+ *   `choices[0].delta.content` through `onToken`. Malformed chunks
+ *   are skipped silently (providers interleave heartbeats that aren't
+ *   always valid JSON); `[DONE]` sentinels close the stream cleanly.
  */
 
 import type { AIProviderType, ProviderStreamFn } from '@push/lib/provider-contract';
@@ -27,12 +30,12 @@ import type { ChatMessage } from '@/types';
 import type { Env } from './worker-middleware';
 import {
   handleBlackboxChat,
+  handleKiloCodeChat,
   handleNvidiaChat,
   handleOllamaChat,
   handleOpenAdapterChat,
   handleOpenRouterChat,
   handleZenChat,
-  handleKiloCodeChat,
 } from './worker-providers';
 
 export interface CoderJobStreamAdapterArgs {
@@ -40,6 +43,11 @@ export interface CoderJobStreamAdapterArgs {
   origin: string;
   provider: AIProviderType;
   modelId: string | undefined;
+  /** Unique per-job id — used to produce a stable rate-limit bucket
+   * (`X-Forwarded-For: job:<jobId>`) so background-job traffic doesn't
+   * collapse into the global `'unknown'` IP bucket and spuriously 429
+   * other jobs. */
+  jobId: string;
 }
 
 type ProviderHandler = (request: Request, env: Env) => Promise<Response>;
@@ -60,9 +68,6 @@ function resolveProviderHandler(provider: AIProviderType): ProviderHandler | nul
       return handleKiloCodeChat as unknown as ProviderHandler;
     case 'openadapter':
       return handleOpenAdapterChat as unknown as ProviderHandler;
-    // Zen-Go isn't a distinct AIProviderType at the kernel level — it's a
-    // flavor of 'zen' toggled client-side. Treated here as a sibling
-    // handler in case a future provider picks up the label.
     case 'demo':
       return null;
     // The remaining providers (azure, bedrock, vertex) exist on the
@@ -74,15 +79,15 @@ function resolveProviderHandler(provider: AIProviderType): ProviderHandler | nul
     case 'vertex':
       return null;
   }
-  // Exhaustive switch above; this satisfies TS when ZenGo etc. are added.
-  const _void: ProviderHandler | null = null;
-  void _void;
   return null;
 }
 
 export function createWebStreamAdapter(
   args: CoderJobStreamAdapterArgs,
 ): ProviderStreamFn<ChatMessage> {
+  // Strip trailing slash so URL construction can't produce double
+  // slashes (`https://host//api/...`).
+  const origin = args.origin.replace(/\/$/, '');
   const handler = resolveProviderHandler(args.provider);
 
   return async (
@@ -95,6 +100,8 @@ export function createWebStreamAdapter(
     _hasSandbox,
     modelOverride,
     systemPromptOverride,
+    _scratchpadContent,
+    signal,
   ) => {
     if (!handler) {
       onError(
@@ -103,6 +110,11 @@ export function createWebStreamAdapter(
             `Supported in Phase 1 PR #3a: openrouter, ollama, zen, nvidia, blackbox, kilocode, openadapter.`,
         ),
       );
+      return;
+    }
+
+    if (signal?.aborted) {
+      onError(new Error('Stream aborted before provider dispatch'));
       return;
     }
 
@@ -125,13 +137,19 @@ export function createWebStreamAdapter(
       stream: true,
     });
 
-    const request = new Request(`${args.origin}/api/${providerSlug(args.provider)}/chat`, {
+    const request = new Request(`${origin}/api/${providerSlug(args.provider)}/chat`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        Origin: args.origin,
+        Origin: origin,
+        // Stable per-job rate-limit key. Without this, the preamble's
+        // `getClientIp(req)` falls back to 'unknown' for every
+        // synthetic internal Request and all background jobs share one
+        // bucket — a single burst can 429 every other running job.
+        'X-Forwarded-For': `job:${args.jobId}`,
       },
       body,
+      signal,
     });
 
     let response: Response;
@@ -160,6 +178,7 @@ export function createWebStreamAdapter(
       onToken,
       onDone,
       onError,
+      signal,
     );
   };
 }
@@ -180,17 +199,35 @@ async function pumpSseBody(
   onToken: (token: string) => void,
   onDone: () => void,
   onError: (err: Error) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let closed = false;
 
+  const onAbort = () => {
+    // Best-effort: cancel the reader so the pending `read()` rejects
+    // and the loop exits. The outer kernel treats the aborted run as
+    // a terminal failure and emits `subagent.failed`.
+    reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener('abort', onAbort);
+
   try {
     while (true) {
+      if (signal?.aborted) {
+        closed = true;
+        onError(new Error('Stream aborted'));
+        return;
+      }
       const { done, value } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      // Normalize CRLF to LF so providers that frame SSE events with
+      // `\r\n\r\n` still match the `\n\n` delimiter below. Without this,
+      // valid streams from CRLF-framing providers would buffer
+      // indefinitely and produce zero output.
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
 
       // SSE events are separated by blank lines. Split off complete
       // events; keep any partial trailing event in `buffer`.
@@ -215,6 +252,7 @@ async function pumpSseBody(
   } catch (err) {
     if (!closed) onError(err instanceof Error ? err : new Error(String(err)));
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     try {
       reader.releaseLock();
     } catch {

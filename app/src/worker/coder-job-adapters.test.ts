@@ -67,6 +67,7 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok-1',
       provider: 'openrouter',
+      jobId: 'job-test-1',
     });
     const result = await adapter.executeSandboxToolCall(
       { tool: 'sandbox_exec', args: { command: 'ls -1' } } as SandboxToolCall,
@@ -102,6 +103,7 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok-1',
       provider: 'openrouter',
+      jobId: 'job-test-1',
     });
     const result = await adapter.executeSandboxToolCall(
       { tool: 'sandbox_exec', args: { command: 'ls' } } as SandboxToolCall,
@@ -125,6 +127,7 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok-1',
       provider: 'openrouter',
+      jobId: 'job-test-1',
     });
     const result = await adapter.executeSandboxToolCall(
       { tool: 'sandbox_diff', args: {} } as SandboxToolCall,
@@ -143,6 +146,7 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok-1',
       provider: 'openrouter',
+      jobId: 'job-test-1',
     });
     const result = await adapter.executeSandboxToolCall(
       { tool: 'sandbox_edit_file', args: { path: 'a', edits: [] } } as SandboxToolCall,
@@ -161,6 +165,7 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok-1',
       provider: 'openrouter',
+      jobId: 'job-test-1',
     });
     const result = await adapter.executeSandboxToolCall(
       { tool: 'promote_to_github', args: { repo_name: 'x' } } as SandboxToolCall,
@@ -169,6 +174,140 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
     );
     expect(result.structuredError?.type).toBe('APPROVAL_GATE_BLOCKED');
     expect(result.text).toContain('Orchestrator-only');
+  });
+
+  it('blocks direct `git push` in sandbox_exec without allowDirectGit', async () => {
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git push origin main' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    expect(result.structuredError?.type).toBe('APPROVAL_GATE_BLOCKED');
+    expect(result.structuredError?.message).toContain('is blocked without allowDirectGit');
+    expect(result.text).toContain('sandbox_prepare_commit + sandbox_push');
+    expect(handleCloudflareSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it('allows direct git commands when the model opts in via allowDirectGit', async () => {
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ stdout: 'pushed', stderr: '', exit_code: 0 }), { status: 200 }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    const result = await adapter.executeSandboxToolCall(
+      {
+        tool: 'sandbox_exec',
+        args: { command: 'git push origin main', allowDirectGit: true },
+      } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    expect(handleCloudflareSandboxMock).toHaveBeenCalledTimes(1);
+    expect(result.structuredError).toBeUndefined();
+    expect(result.text).toContain('exit=0');
+  });
+
+  it('surfaces sandbox_diff HTTP-200 error payload as a structured error', async () => {
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ diff: '', error: 'fatal: not a git repository' }), {
+        status: 200,
+      }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_diff', args: {} } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    expect(result.structuredError?.type).toBe('SANDBOX_GIT_ERROR');
+    expect(result.structuredError?.message).toContain('not a git repository');
+    expect(result.text).toContain('not a git repository');
+  });
+
+  it('uses the method sandboxId parameter, not args.sandboxId, when forwarding', async () => {
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ stdout: 'ok', exit_code: 0 }), { status: 200 }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-factory-default',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'ls' } } as SandboxToolCall,
+      'sb-from-method',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    const forwardedReq = handleCloudflareSandboxMock.mock.calls[0]![0] as Request;
+    const body = JSON.parse(await forwardedReq.text()) as { sandbox_id: string };
+    expect(body.sandbox_id).toBe('sb-from-method');
+    expect(body.sandbox_id).not.toBe('sb-factory-default');
+  });
+
+  it('stamps X-Forwarded-For with job:<jobId> on outbound requests', async () => {
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ stdout: 'ok', exit_code: 0 }), { status: 200 }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-rate-bucket-abc',
+    });
+    await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'ls' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    const forwardedReq = handleCloudflareSandboxMock.mock.calls[0]![0] as Request;
+    expect(forwardedReq.headers.get('X-Forwarded-For')).toBe('job:job-rate-bucket-abc');
+  });
+
+  it('normalizes a trailing-slash origin so URLs do not become double-slashed', async () => {
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ stdout: 'ok', exit_code: 0 }), { status: 200 }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test/',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+    await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'ls' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+    const forwardedReq = handleCloudflareSandboxMock.mock.calls[0]![0] as Request;
+    expect(forwardedReq.url).toBe('https://push.example.test/api/sandbox-cf/exec');
   });
 });
 
@@ -213,6 +352,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       origin: 'https://push.example.test',
       provider: 'openrouter',
       modelId: 'sonnet-4.6',
+      jobId: 'job-test-1',
     });
 
     const tokens: string[] = [];
@@ -248,6 +388,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       origin: 'https://push.example.test',
       provider: 'openrouter',
       modelId: 'sonnet-4.6',
+      jobId: 'job-test-1',
     });
     const errors: Error[] = [];
     await streamFn(
@@ -266,6 +407,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       origin: 'https://push.example.test',
       provider: 'azure',
       modelId: 'gpt-4o',
+      jobId: 'job-test-1',
     });
     const errors: Error[] = [];
     await streamFn(
@@ -292,6 +434,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       origin: 'https://push.example.test',
       provider: 'openrouter',
       modelId: 'sonnet-4.6',
+      jobId: 'job-test-1',
     });
     const tokens: string[] = [];
     const errors: Error[] = [];
@@ -307,5 +450,101 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(tokens.join('')).toBe('ok');
     expect(doneCalled).toBe(true);
     expect(errors).toEqual([]);
+  });
+
+  it('splits CRLF-delimited SSE (providers that frame with \\r\\n\\r\\n)', async () => {
+    providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
+      sseResponse([
+        'data: {"choices":[{"delta":{"content":"hel"}}]}\r\n\r\n',
+        'data: {"choices":[{"delta":{"content":"lo"}}]}\r\n\r\n',
+        'data: [DONE]\r\n\r\n',
+      ]),
+    );
+    const streamFn = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'openrouter',
+      modelId: 'sonnet-4.6',
+      jobId: 'job-test-1',
+    });
+    const tokens: string[] = [];
+    let doneCalled = false;
+    await streamFn(
+      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
+      (t) => tokens.push(t),
+      () => {
+        doneCalled = true;
+      },
+      () => {},
+    );
+    expect(tokens.join('')).toBe('hello');
+    expect(doneCalled).toBe(true);
+  });
+
+  it('stamps X-Forwarded-For with job:<jobId> so jobs get distinct rate-limit buckets', async () => {
+    providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(sseResponse(['data: [DONE]\n\n']));
+    const streamFn = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'openrouter',
+      modelId: 'sonnet-4.6',
+      jobId: 'job-rate-limit-1',
+    });
+    await streamFn(
+      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
+      () => {},
+      () => {},
+      () => {},
+    );
+    const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
+    expect(req.headers.get('X-Forwarded-For')).toBe('job:job-rate-limit-1');
+  });
+
+  it('honors an aborted AbortSignal by invoking onError before dispatch', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const streamFn = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'openrouter',
+      modelId: 'sonnet-4.6',
+      jobId: 'job-test-1',
+    });
+    const errors: Error[] = [];
+    await streamFn(
+      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
+      () => {},
+      () => {},
+      (e) => errors.push(e),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      controller.signal,
+    );
+    expect(errors.length).toBe(1);
+    expect(errors[0]!.message).toMatch(/abort/i);
+    expect(providerHandlerMocks.handleOpenRouterChat).not.toHaveBeenCalled();
+  });
+
+  it('normalizes a trailing-slash origin so URLs do not become double-slashed', async () => {
+    providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(sseResponse(['data: [DONE]\n\n']));
+    const streamFn = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test/',
+      provider: 'openrouter',
+      modelId: 'sonnet-4.6',
+      jobId: 'job-test-1',
+    });
+    await streamFn(
+      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
+      () => {},
+      () => {},
+      () => {},
+    );
+    const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
+    expect(req.url).toBe('https://push.example.test/api/openrouter/chat');
   });
 });
