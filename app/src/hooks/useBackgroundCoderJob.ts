@@ -36,8 +36,6 @@
 
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import type { RunEngineEvent } from '@/lib/run-engine';
-import { filterDelegationCardsForInlineDisplay } from '@/lib/delegation-result';
 import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
 import type {
   AgentStatus,
@@ -84,7 +82,6 @@ export interface UseBackgroundCoderJobParams {
   setConversations: React.Dispatch<React.SetStateAction<Record<string, Conversation>>>;
   conversationsRef: React.MutableRefObject<Record<string, Conversation>>;
   appendRunEvent: (chatId: string, event: RunEventInput) => void;
-  emitRunEngineEvent: (event: RunEngineEvent) => void;
   updateAgentStatus: (
     status: AgentStatus,
     meta?: { chatId?: string; source?: AgentStatusSource; log?: boolean },
@@ -164,7 +161,6 @@ export function useBackgroundCoderJob({
   setConversations,
   conversationsRef,
   appendRunEvent,
-  emitRunEngineEvent,
   updateAgentStatus,
 }: UseBackgroundCoderJobParams): UseBackgroundCoderJobResult {
   // Open SSE streams, keyed by jobId. Abort controllers drop the
@@ -236,12 +232,16 @@ export function useBackgroundCoderJob({
 
   const appendJobCard = useCallback(
     (chatId: string, card: ChatCard) => {
-      const inlineCards = filterDelegationCardsForInlineDisplay([card]);
-      if (inlineCards.length === 0) return;
+      // Do NOT route through `filterDelegationCardsForInlineDisplay`.
+      // That helper is a whitelist for aggregated card arrays coming
+      // out of delegation handlers, and it excludes `coder-job` — so
+      // running it here would drop the JobCard silently and the user
+      // would never see queued/running/completed state. The hook
+      // builds exactly one card it wants inline; skip the filter.
       setConversations((prev) => {
         const conv = prev[chatId];
         if (!conv) return prev;
-        const msgs = appendCardsToLatestToolCall(conv.messages, inlineCards);
+        const msgs = appendCardsToLatestToolCall(conv.messages, [card]);
         return { ...prev, [chatId]: { ...conv, messages: msgs } };
       });
     },
@@ -297,11 +297,17 @@ export function useBackgroundCoderJob({
             summary: runEvent.summary,
             finishedAt,
           });
-          emitRunEngineEvent({
-            type: 'DELEGATION_COMPLETED',
-            timestamp: Date.now(),
-            agent: 'coder',
-          });
+          // Do NOT emit DELEGATION_COMPLETED here. The foreground
+          // orchestrator already emitted it synchronously at
+          // placeholder-return time (chat-send.ts after the
+          // `executeDelegateCall` return for `source === 'delegate'`).
+          // Re-emitting it from this async SSE terminal handler would
+          // flip the run engine phase from 'completed' back to
+          // 'executing_tools' after LOOP_COMPLETED, making
+          // `isRunActive` true again and causing the user's next
+          // `sendMessage` to be queued as a follow-up instead of
+          // starting a fresh run. Background jobs are out-of-band —
+          // the run engine tracks the foreground turn only.
           updateAgentStatus(
             { active: false, phase: 'Background Coder completed' },
             { chatId, log: false },
@@ -324,11 +330,8 @@ export function useBackgroundCoderJob({
             error: runEvent.error,
             finishedAt,
           });
-          emitRunEngineEvent({
-            type: 'DELEGATION_COMPLETED',
-            timestamp: Date.now(),
-            agent: 'coder',
-          });
+          // See subagent.completed above — same reason for omitting
+          // `emitRunEngineEvent(DELEGATION_COMPLETED)`.
           updateAgentStatus(
             {
               active: false,
@@ -346,7 +349,7 @@ export function useBackgroundCoderJob({
           break;
       }
     },
-    [appendRunEvent, emitRunEngineEvent, updateAgentStatus, upsertJobCardData, upsertJobEntry],
+    [appendRunEvent, updateAgentStatus, upsertJobCardData, upsertJobEntry],
   );
 
   // -------------------------------------------------------------------------

@@ -51,11 +51,11 @@ vi.mock('react', () => ({
   },
 }));
 
-// Mock the inline-card helpers so we don't have to construct a full
-// ChatMessage tree — assertions work off the setConversations calls.
-vi.mock('@/lib/delegation-result', () => ({
-  filterDelegationCardsForInlineDisplay: (cards: readonly ChatCard[]) => [...cards],
-}));
+// Do NOT mock `@/lib/delegation-result` — the hook must not route
+// JobCards through `filterDelegationCardsForInlineDisplay` (its
+// whitelist excludes `coder-job`, which would silently drop the
+// card). Leaving it unmocked lets an accidental regression that
+// re-introduces the filter fail the "card is inserted" test below.
 vi.mock('@/lib/chat-tool-messages', () => ({
   appendCardsToLatestToolCall: (msgs: unknown[], cards: readonly ChatCard[]) => {
     const lastIdx = msgs.length - 1;
@@ -125,7 +125,6 @@ function useHarness(initialConvs: Record<string, Conversation> = {}) {
     conversationsRef.current = next;
   });
   const appendRunEvent = vi.fn();
-  const emitRunEngineEvent = vi.fn();
   const updateAgentStatus = vi.fn();
 
   const hook = useBackgroundCoderJob({
@@ -134,7 +133,6 @@ function useHarness(initialConvs: Record<string, Conversation> = {}) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     conversationsRef: conversationsRef as any,
     appendRunEvent,
-    emitRunEngineEvent,
     updateAgentStatus,
   });
 
@@ -142,7 +140,6 @@ function useHarness(initialConvs: Record<string, Conversation> = {}) {
     hook,
     setConversations,
     appendRunEvent,
-    emitRunEngineEvent,
     updateAgentStatus,
     getConvs: () => convsBox.value,
   };
@@ -306,7 +303,7 @@ describe('useBackgroundCoderJob — SSE dispatch', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const convs = { 'chat-1': makeConversation('chat-1') };
-    const { hook, appendRunEvent, emitRunEngineEvent, getConvs } = useHarness(convs);
+    const { hook, appendRunEvent, getConvs } = useHarness(convs);
     await hook.startJob({
       chatId: 'chat-1',
       repoFullName: 'acme/web',
@@ -340,11 +337,6 @@ describe('useBackgroundCoderJob — SSE dispatch', () => {
       (c) => (c[1] as { type: string }).type === 'subagent.completed',
     );
     expect(completedCall).toBeDefined();
-
-    // Terminal event should route DELEGATION_COMPLETED into run engine.
-    expect(emitRunEngineEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'DELEGATION_COMPLETED', agent: 'coder' }),
-    );
 
     // Persistence should reflect terminal status + the latest seen id.
     const entry = getConvs()['chat-1']?.pendingJobIds?.['job-77'];
@@ -393,6 +385,122 @@ describe('useBackgroundCoderJob — SSE dispatch', () => {
     // Initial connect — no Last-Event-ID expected.
     expect(headers['Last-Event-ID']).toBeUndefined();
     expect(headers['Accept']).toBe('text/event-stream');
+
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('useBackgroundCoderJob — regression guards (PR #361 review)', () => {
+  it('inserts the coder-job card into the transcript (does not route through the delegation-inline filter)', async () => {
+    // This pins the fix for the P1 where `appendJobCard` ran the new
+    // card through `filterDelegationCardsForInlineDisplay`, whose
+    // whitelist ({'audit-verdict','commit-review','ask-user'})
+    // silently dropped it — the feature shipped broken because the
+    // earlier test suite mocked the filter to pass everything. The
+    // mock has been removed; this test exercises the real path.
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-guard-1' }), { status: 202 }) as Response,
+      )
+      .mockResolvedValueOnce(
+        new Response(new ReadableStream({ start: (c) => c.close() }), { status: 200 }) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const convs = { 'chat-1': makeConversation('chat-1') };
+    const { hook, getConvs } = useHarness(convs);
+    await hook.startJob({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      envelope: makeEnvelope(),
+      provider: 'openrouter',
+      model: undefined,
+      userProfile: null,
+    });
+
+    const msgs = getConvs()['chat-1'].messages;
+    const card = msgs.flatMap((m) => m.cards ?? []).find((c) => c.type === 'coder-job');
+    expect(card).toBeDefined();
+
+    vi.unstubAllGlobals();
+  });
+
+  it('does not emit any run-engine event from background SSE dispatch (foreground turn owns engine state)', async () => {
+    // Pins the fix for the P1 where the SSE terminal handler emitted
+    // DELEGATION_COMPLETED, which flipped the run engine phase from
+    // 'completed' back to 'executing_tools' after the foreground loop
+    // had already reached LOOP_COMPLETED — breaking isRunActive and
+    // queuing the user's next message as a follow-up. The hook no
+    // longer accepts `emitRunEngineEvent`; if that ever regresses
+    // (either by re-adding the param or by synthesizing a run-engine
+    // call through appendRunEvent), this test fails.
+    const sseEvents = [
+      {
+        id: 'ev-1',
+        timestamp: 1,
+        type: 'subagent.started',
+        executionId: 'job-guard-2',
+        agent: 'coder',
+      },
+      {
+        id: 'ev-2',
+        timestamp: 2,
+        type: 'subagent.completed',
+        executionId: 'job-guard-2',
+        agent: 'coder',
+        summary: 'Done.',
+      },
+    ];
+    const sse = sseEvents
+      .map((e) => `id: ${e.id}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`)
+      .join('');
+    const encoder = new TextEncoder();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-guard-2' }), { status: 202 }) as Response,
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(encoder.encode(sse));
+              c.close();
+            },
+          }),
+          { status: 200 },
+        ) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { hook, appendRunEvent } = useHarness({ 'chat-1': makeConversation() });
+    await hook.startJob({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      envelope: makeEnvelope(),
+      provider: 'openrouter',
+      model: undefined,
+      userProfile: null,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // No run-engine-shaped event should have leaked through the
+    // appendRunEvent sink. appendRunEvent is RunEventInput only —
+    // DELEGATION_* is a RunEngineEvent, a different type family.
+    for (const call of appendRunEvent.mock.calls) {
+      const type = (call[1] as { type: string }).type;
+      expect(type).not.toMatch(/^DELEGATION_/);
+    }
 
     vi.unstubAllGlobals();
   });

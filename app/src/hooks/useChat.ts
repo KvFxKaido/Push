@@ -710,7 +710,6 @@ export function useChat(
     setConversations: updateConversations,
     conversationsRef,
     appendRunEvent,
-    emitRunEngineEvent,
     updateAgentStatus,
   });
 
