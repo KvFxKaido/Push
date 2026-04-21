@@ -10,6 +10,15 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// PR #3a wired the DO's executor adapter to handleCloudflareSandbox,
+// which in turn imports @cloudflare/sandbox — a Cloudflare-only module
+// that isn't resolvable in the node test environment. The adapter is
+// never called in these tests (service overrides inject stubs), so a
+// minimal module mock is enough to keep module load green.
+vi.mock('@cloudflare/sandbox', () => ({
+  getSandbox: vi.fn(),
+}));
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { ProviderStreamFn } from '@push/lib/provider-contract';
 import type { ChatMessage } from '@/types';

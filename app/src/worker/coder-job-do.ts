@@ -164,16 +164,18 @@ export class CoderJob {
   private liveListeners = new Set<(event: RunEvent) => void>();
 
   private readonly ctx: DurableObjectState;
+  private readonly env: Env;
 
   // The DO runtime injects (state, env) at construction time. We keep
-  // plain `ctx` / ignored `env` fields instead of extending the
+  // plain `ctx` / `env` fields instead of extending the
   // `cloudflare:workers` `DurableObject` base class so the DO can be
   // type-checked without pulling ambient-module declarations into the
-  // app tsconfig's `types` array. `env` is reserved for PR #3+ KV
-  // access (e.g. multi-user owner-token keying).
-  constructor(ctx: DurableObjectState, _env: Env) {
-    void _env;
+  // app tsconfig's `types` array. `env` is threaded into the executor
+  // and stream adapters so they can call the existing Worker handlers
+  // directly (no HTTP self-loop and no origin-validation round trip).
+  constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
+    this.env = env;
     this.initSchema();
   }
 
@@ -266,13 +268,22 @@ export class CoderJob {
       const detectors = overrides.detectors ?? createWebDetectorAdapter();
       const executor =
         overrides.executor ??
-        createWebExecutorAdapter({ origin: input.origin, ownerToken: input.ownerToken });
+        createWebExecutorAdapter({
+          env: this.env,
+          origin: input.origin,
+          sandboxId: input.sandboxId,
+          ownerToken: input.ownerToken,
+          provider: input.provider,
+          jobId: input.jobId,
+        });
       const streamFn =
         overrides.streamFn ??
         createWebStreamAdapter({
+          env: this.env,
           origin: input.origin,
           provider: input.provider,
           modelId: input.model,
+          jobId: input.jobId,
         });
 
       const declaredCaps = input.declaredCapabilities ?? Array.from(ROLE_CAPABILITIES.coder);
