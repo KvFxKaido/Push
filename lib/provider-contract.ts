@@ -105,6 +105,79 @@ export type ProviderStreamFn<M extends LlmMessage = LlmMessage, W = unknown> = (
 ) => Promise<void>;
 
 // ---------------------------------------------------------------------------
+// Gateway Abstraction (New Wire Model)
+// ---------------------------------------------------------------------------
+
+export type PushStreamEvent =
+  | { type: 'text_delta'; text: string }
+  | { type: 'reasoning_delta'; text: string }
+  | { type: 'done'; finishReason: 'stop' | 'length' | 'tool_calls' | 'aborted' | 'unknown'; usage?: StreamUsage };
+
+export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
+  provider: AIProviderType;
+  model: string;
+  messages: M[];
+  maxTokens?: number;
+  temperature?: number;
+  topP?: number;
+  signal?: AbortSignal;
+}
+
+export type PushStream<M extends LlmMessage = LlmMessage> =
+  (req: PushStreamRequest<M>) => AsyncIterable<PushStreamEvent>;
+
+/**
+ * Bridge an async-iterable PushStream back to the legacy callback shape.
+ * Helps migrate call sites incrementally.
+ */
+export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
+  gatewayStream: PushStream<M>,
+  provider: AIProviderType
+): ProviderStreamFn<M> {
+  return async (
+    messages,
+    onToken,
+    onDone,
+    onError,
+    onThinkingToken,
+    _workspaceContext,
+    _hasSandbox,
+    modelOverride,
+    _systemPromptOverride,
+    _scratchpadContent,
+    signal,
+    _onPreCompact
+  ) => {
+    try {
+      const stream = gatewayStream({
+        provider,
+        model: modelOverride || 'unknown',
+        messages,
+        signal,
+      });
+
+      for await (const event of stream) {
+        if (signal?.aborted) return;
+        switch (event.type) {
+          case 'text_delta':
+            onToken(event.text);
+            break;
+          case 'reasoning_delta':
+            onThinkingToken?.(event.text);
+            break;
+          case 'done':
+            onDone(event.usage);
+            break;
+        }
+      }
+    } catch (err) {
+      if (signal?.aborted) return;
+      onError(err instanceof Error ? err : new Error(String(err)));
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Review result types
 // ---------------------------------------------------------------------------
 
