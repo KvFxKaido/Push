@@ -63,23 +63,29 @@ describe('createProviderStreamAdapter', () => {
     expect(caught?.message).toBe('network failure');
   });
 
-  it('returns early without onError when signal is aborted', async () => {
+  it('returns early and calls onDone when signal is aborted before start', async () => {
     const controller = new AbortController();
     controller.abort();
+
     const stream: PushStream = vi.fn().mockImplementation(async function* () {
-      throw new Error('should not be caught');
+      yield { type: 'text_delta', text: 'should not run' };
     });
 
     const adapted = createProviderStreamAdapter(stream, provider);
     let caught: Error | undefined;
-    await adapted(messages, () => {}, () => {}, (e) => { caught = e; }, undefined, undefined, undefined, undefined, undefined, undefined, controller.signal);
+    const onDone = vi.fn();
+    await adapted(messages, () => {}, onDone, (e) => { caught = e; }, undefined, undefined, undefined, undefined, undefined, undefined, controller.signal);
+    
     expect(caught).toBeUndefined();
+    expect(onDone).toHaveBeenCalled();
+    expect(stream).not.toHaveBeenCalled();
   });
 
-  it('aborts mid-stream when signal fires', async () => {
+  it('aborts mid-stream when signal fires and calls onDone', async () => {
     const controller = new AbortController();
     const tokens: string[] = [];
     let aborted = false;
+    const onDone = vi.fn();
     const stream: PushStream = vi.fn().mockImplementation(async function* () {
       yield { type: 'text_delta', text: 'a' };
       controller.abort();
@@ -89,19 +95,51 @@ describe('createProviderStreamAdapter', () => {
     });
 
     const adapted = createProviderStreamAdapter(stream, provider);
-    await adapted(messages, (t) => tokens.push(t), () => {}, () => {}, undefined, undefined, undefined, undefined, undefined, undefined, controller.signal);
+    await adapted(messages, (t) => tokens.push(t), onDone, () => {}, undefined, undefined, undefined, undefined, undefined, undefined, controller.signal);
+    
     expect(tokens).toEqual(['a']);
     expect(aborted).toBe(true);
+    expect(onDone).toHaveBeenCalled();
   });
 
-  it('uses modelOverride as the model field', async () => {
-    let receivedModel = '';
+  it('passes systemPromptOverride and scratchpadContent to gateway', async () => {
+    let captured: any;
     const stream: PushStream = vi.fn().mockImplementation(async function* (req) {
-      receivedModel = req.model;
+      captured = req;
+      yield { type: 'done', finishReason: 'stop' };
     });
 
     const adapted = createProviderStreamAdapter(stream, provider);
-    await adapted(messages, () => {}, () => {}, () => {}, undefined, undefined, undefined, 'gpt-4o', undefined, undefined);
-    expect(receivedModel).toBe('gpt-4o');
+    await adapted(messages, () => {}, () => {}, () => {},
+      undefined, undefined, undefined, undefined, 'system-override', 'scratch-content');
+
+    expect(captured.systemPromptOverride).toBe('system-override');
+    expect(captured.scratchpadContent).toBe('scratch-content');
+  });
+
+  it('uses defaultModel from options when no override is present', async () => {
+    let capturedModel = '';
+    const stream: PushStream = vi.fn().mockImplementation(async function* (req) {
+      capturedModel = req.model;
+      yield { type: 'done', finishReason: 'stop' };
+    });
+
+    const adapted = createProviderStreamAdapter(stream, provider, { defaultModel: 'fallback-model' });
+    await adapted(messages, () => {}, () => {}, () => {});
+
+    expect(capturedModel).toBe('fallback-model');
+  });
+
+  it('prioritizes modelOverride over defaultModel', async () => {
+    let capturedModel = '';
+    const stream: PushStream = vi.fn().mockImplementation(async function* (req) {
+      capturedModel = req.model;
+      yield { type: 'done', finishReason: 'stop' };
+    });
+
+    const adapted = createProviderStreamAdapter(stream, provider, { defaultModel: 'fallback-model' });
+    await adapted(messages, () => {}, () => {}, () => {}, undefined, undefined, undefined, 'primary-model');
+
+    expect(capturedModel).toBe('primary-model');
   });
 });

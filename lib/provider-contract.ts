@@ -4,12 +4,6 @@
  * Canonical home for the minimum surface an agent role needs to stream
  * tokens from a provider without importing Web shell state. Lives in `lib/`
  * so CLI (pushd, push-runtime-v2) and Web share one definition.
- *
- * `ProviderStreamFn` is generic over the message shape and the workspace-
- * context shape. Agents that only need the four portable message fields
- * (`LlmMessage`) use the default; callers that carry a richer message type
- * (e.g. Web's `ChatMessage` with attachments/cards) narrow both generics
- * at the boundary.
  */
 
 // ---------------------------------------------------------------------------
@@ -18,10 +12,6 @@
 
 /**
  * Minimum portable message shape understood by all lib/-side agent roles.
- *
- * Intentionally a subset of Web's `ChatMessage` so that reviewer/auditor/
- * explorer can operate on a strict 4-field envelope without dragging the
- * ChatCard / attachments / tool-result metadata universe into lib/.
  */
 export interface LlmMessage {
   id: string;
@@ -74,20 +64,6 @@ export interface PreCompactEvent {
 
 /**
  * Stream a chat completion from a provider.
- *
- * Parameter order is preserved from the pre-extraction `StreamChatFn` so
- * existing Web call sites type-check unchanged via
- * `StreamChatFn = ProviderStreamFn<ChatMessage, WorkspaceContext>`.
- *
- * Runtime safety note for the generic `M` parameter: the concrete Web
- * implementation (`streamSSEChat` in `app/src/lib/orchestrator.ts`) reads
- * `ChatMessage`-only fields (`attachments`, `isToolResult`) via optional
- * chaining / truthy guards only. Passing a plain `LlmMessage[]` through
- * a `ProviderStreamFn<ChatMessage, WorkspaceContext>` is therefore runtime-
- * safe even though contravariance makes the assignment unsound in the
- * abstract. If anyone ever removes those optional-chain guards, the Web
- * shim layer for agents that default to `LlmMessage` needs to widen its
- * message construction to match.
  */
 export type ProviderStreamFn<M extends LlmMessage = LlmMessage, W = unknown> = (
   messages: M[],
@@ -121,6 +97,8 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
   temperature?: number;
   topP?: number;
   signal?: AbortSignal;
+  systemPromptOverride?: string;
+  scratchpadContent?: string;
 }
 
 export type PushStream<M extends LlmMessage = LlmMessage> =
@@ -132,7 +110,8 @@ export type PushStream<M extends LlmMessage = LlmMessage> =
  */
 export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
   gatewayStream: PushStream<M>,
-  provider: AIProviderType
+  provider: AIProviderType,
+  options?: { defaultModel?: string }
 ): ProviderStreamFn<M> {
   return async (
     messages,
@@ -143,21 +122,32 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
     _workspaceContext,
     _hasSandbox,
     modelOverride,
-    _systemPromptOverride,
-    _scratchpadContent,
+    systemPromptOverride,
+    scratchpadContent,
     signal,
     _onPreCompact
   ) => {
+    if (signal?.aborted) {
+      onDone();
+      return;
+    }
+
     try {
       const stream = gatewayStream({
         provider,
-        model: modelOverride || 'unknown',
+        model: modelOverride || options?.defaultModel || 'unknown',
         messages,
         signal,
+        systemPromptOverride,
+        scratchpadContent,
       });
 
       for await (const event of stream) {
-        if (signal?.aborted) return;
+        if (signal?.aborted) {
+          onDone();
+          return;
+        }
+
         switch (event.type) {
           case 'text_delta':
             onToken(event.text);
@@ -167,11 +157,14 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
             break;
           case 'done':
             onDone(event.usage);
-            break;
+            return;
         }
       }
     } catch (err) {
-      if (signal?.aborted) return;
+      if (signal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        onDone();
+        return;
+      }
       onError(err instanceof Error ? err : new Error(String(err)));
     }
   };
