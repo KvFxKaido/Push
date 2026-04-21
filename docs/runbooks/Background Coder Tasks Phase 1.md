@@ -99,10 +99,10 @@ CREATE TABLE event (
 
 - `start()` persists input, flips to `running`, kicks off the loop via `ctx.waitUntil(this.runLoop())` so the DO outlives the request. Wall-clock cap via `storage.setAlarm()` (30 min).
 - `runLoop()` calls the shared `runCoderAgent` kernel. Every lib callback (`onStatus`, `onWorkingMemoryUpdate`) and every `ToolEventEmitter` call (`lib/tool-execution-runtime.ts:57`) writes to `event` and wakes connected SSE streams via an in-memory `EventTarget`.
-- `events()` replays rows with `seq > Last-Event-ID`, then attaches to the live emitter. Heartbeat comment every 15s.
+- `events()` on reconnect: if `Last-Event-ID` is present, resolve it to a `seq` via the `id` unique index, replay rows with `seq > <resolved>`, then attach to the live emitter. Heartbeat comment every 15s.
 - `cancel()` aborts and persists a terminal event.
 
-**Reconnect:** client resumes via `Last-Event-ID: <seq>`; DO replays missed rows, then live-streams. If `status` is terminal, DO flushes the tail and closes.
+**Reconnect:** client resumes via `Last-Event-ID: <RunEvent.id>`; DO translates the id to its internal `seq` and replays any later rows, then live-streams. `seq` stays internal to the DO — the wire id is always `RunEvent.id`. If `status` is terminal, DO flushes the tail and closes.
 
 ## 4. Client integration (four touch points)
 
