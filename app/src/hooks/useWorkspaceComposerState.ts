@@ -9,6 +9,7 @@ const CHAT_MODEL_MEMORY_STORAGE_KEY = 'push:chat:last-used-models';
 const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   ollama: '',
   openrouter: '',
+  cloudflare: '',
   zen: '',
   nvidia: '',
   blackbox: '',
@@ -28,6 +29,7 @@ function readStoredChatModelMemory(): Record<PreferredProvider, string> {
     return {
       ollama: typeof parsed.ollama === 'string' ? parsed.ollama.trim() : '',
       openrouter: typeof parsed.openrouter === 'string' ? parsed.openrouter.trim() : '',
+      cloudflare: typeof parsed.cloudflare === 'string' ? parsed.cloudflare.trim() : '',
       zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
       nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
       blackbox: typeof parsed.blackbox === 'string' ? parsed.blackbox.trim() : '',
@@ -85,6 +87,7 @@ export function useWorkspaceComposerState({
     () => ({
       ollama: catalog.ollama.model,
       openrouter: catalog.openRouter.model,
+      cloudflare: catalog.cloudflare.model,
       zen: catalog.zen.model,
       nvidia: catalog.nvidia.model,
       blackbox: catalog.blackbox.model,
@@ -98,6 +101,7 @@ export function useWorkspaceComposerState({
       catalog.azure.model,
       catalog.bedrock.model,
       catalog.blackbox.model,
+      catalog.cloudflare.model,
       catalog.kilocode.model,
       catalog.nvidia.model,
       catalog.ollama.model,
@@ -164,6 +168,10 @@ export function useWorkspaceComposerState({
           draft?.models?.openrouter?.trim() ||
           rememberedChatModels.openrouter ||
           defaultChatModels.openrouter,
+        cloudflare:
+          draft?.models?.cloudflare?.trim() ||
+          rememberedChatModels.cloudflare ||
+          defaultChatModels.cloudflare,
         zen: draft?.models?.zen?.trim() || rememberedChatModels.zen || defaultChatModels.zen,
         nvidia:
           draft?.models?.nvidia?.trim() || rememberedChatModels.nvidia || defaultChatModels.nvidia,
@@ -324,6 +332,15 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
+  const handleSelectCloudflareModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('cloudflare', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { cloudflare: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
   const handleSelectZenModelFromChat = useCallback(
     (model: string) => {
       rememberChatModel('zen', model);
@@ -405,6 +422,7 @@ export function useWorkspaceComposerState({
     handleSelectBackend,
     handleSelectOllamaModelFromChat,
     handleSelectOpenRouterModelFromChat,
+    handleSelectCloudflareModelFromChat,
     handleSelectZenModelFromChat,
     handleSelectNvidiaModelFromChat,
     handleSelectBlackboxModelFromChat,

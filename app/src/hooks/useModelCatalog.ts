@@ -1,7 +1,12 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import {
+  CLOUDFLARE_MODELS,
   getPreferredProvider,
+  getCloudflareModelName,
+  getCloudflareWorkerConfigured,
   setPreferredProvider,
+  setCloudflareModelName,
+  setCloudflareWorkerConfigured,
   clearPreferredProvider,
   OPENROUTER_MODELS,
   ZEN_MODELS,
@@ -16,6 +21,7 @@ import {
 } from '@/lib/providers';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import {
+  fetchCloudflareModels,
   fetchOllamaModels,
   fetchOpenRouterModels,
   fetchZenModels,
@@ -56,6 +62,14 @@ interface ProviderKeyConfig {
   setModel: (m: string) => void;
   keyInput: string;
   setKeyInput: (v: string) => void;
+}
+
+interface WorkerBoundProviderConfig {
+  configured: boolean;
+  statusLoading: boolean;
+  statusError: string | null;
+  model: string;
+  setModel: (m: string) => void;
 }
 
 interface ExperimentalProviderConfig {
@@ -123,6 +137,7 @@ export interface ModelCatalog {
   // Provider configs (key management + key input state)
   ollama: ProviderKeyConfig;
   openRouter: ProviderKeyConfig;
+  cloudflare: WorkerBoundProviderConfig;
   zen: ProviderKeyConfig;
   nvidia: ProviderKeyConfig;
   blackbox: ProviderKeyConfig;
@@ -144,6 +159,7 @@ export interface ModelCatalog {
   // Per-provider model state
   ollamaModels: ProviderModelState;
   openRouterModels: ProviderModelState;
+  cloudflareModels: ProviderModelState;
   zenModels: ProviderModelState;
   nvidiaModels: ProviderModelState;
   blackboxModels: ProviderModelState;
@@ -153,6 +169,7 @@ export interface ModelCatalog {
   // Model option lists (includes selected even if not in fetched list)
   ollamaModelOptions: string[];
   openRouterModelOptions: string[];
+  cloudflareModelOptions: string[];
   zenModelOptions: string[];
   nvidiaModelOptions: string[];
   blackboxModelOptions: string[];
@@ -166,6 +183,7 @@ export interface ModelCatalog {
   // Refresh callbacks
   refreshOllamaModels: () => Promise<void>;
   refreshOpenRouterModels: () => Promise<void>;
+  refreshCloudflareModels: () => Promise<void>;
   refreshZenModels: () => Promise<void>;
   refreshNvidiaModels: () => Promise<void>;
   refreshBlackboxModels: () => Promise<void>;
@@ -223,6 +241,51 @@ export function useModelCatalog(): ModelCatalog {
   const [vertexRegionInput, setVertexRegionInput] = useState('');
   const [vertexModelInput, setVertexModelInput] = useState('');
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
+  const [cloudflareConfigured, setCloudflareConfiguredState] = useState<boolean>(() =>
+    getCloudflareWorkerConfigured(),
+  );
+  const [cloudflareStatusLoading, setCloudflareStatusLoading] = useState(false);
+  const [cloudflareStatusError, setCloudflareStatusError] = useState<string | null>(null);
+  const [cloudflareModel, setCloudflareModelState] = useState<string>(() =>
+    getCloudflareModelName(),
+  );
+
+  const setCloudflareConfiguredStateAndPersist = useCallback((configured: boolean) => {
+    setCloudflareConfiguredState(configured);
+    setCloudflareWorkerConfigured(configured);
+  }, []);
+
+  const setCloudflareModel = useCallback((value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    setCloudflareModelName(trimmed);
+    setCloudflareModelState(getCloudflareModelName());
+  }, []);
+
+  const refreshCloudflareStatus = useCallback(async () => {
+    setCloudflareStatusLoading(true);
+    setCloudflareStatusError(null);
+    try {
+      const response = await fetch('/api/health', { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`Worker health check failed (${response.status})`);
+      }
+      const payload = (await response.json()) as {
+        services?: {
+          cloudflare?: {
+            configured?: boolean;
+          };
+        };
+      };
+      setCloudflareConfiguredStateAndPersist(Boolean(payload.services?.cloudflare?.configured));
+    } catch (err) {
+      setCloudflareStatusError(
+        err instanceof Error ? err.message : 'Failed to load Worker health status.',
+      );
+    } finally {
+      setCloudflareStatusLoading(false);
+    }
+  }, [setCloudflareConfiguredStateAndPersist]);
 
   // Active backend state
   const [activeBackend, setActiveBackend] = useState<PreferredProvider | null>(() =>
@@ -235,6 +298,7 @@ export function useModelCatalog(): ModelCatalog {
     [
       ['ollama', 'Ollama', ollamaCfg.hasKey],
       ['openrouter', 'OpenRouter', openRouterCfg.hasKey],
+      ['cloudflare', 'Cloudflare Workers AI', cloudflareConfigured],
       ['zen', 'OpenCode Zen', zenCfg.hasKey],
       ['nvidia', 'Nvidia NIM', nvidiaCfg.hasKey],
       ['blackbox', 'Blackbox AI', blackboxCfg.hasKey],
@@ -250,6 +314,7 @@ export function useModelCatalog(): ModelCatalog {
 
   const [ollamaModelList, setOllamaModelList] = useState<string[]>([]);
   const [openRouterModelList, setOpenRouterModelList] = useState<string[]>([]);
+  const [cloudflareModelList, setCloudflareModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
   const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
   const [blackboxModelList, setBlackboxModelList] = useState<string[]>([]);
@@ -258,6 +323,7 @@ export function useModelCatalog(): ModelCatalog {
 
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [openRouterLoading, setOpenRouterLoading] = useState(false);
+  const [cloudflareLoading, setCloudflareLoading] = useState(false);
   const [zenLoading, setZenLoading] = useState(false);
   const [nvidiaLoading, setNvidiaLoading] = useState(false);
   const [blackboxLoading, setBlackboxLoading] = useState(false);
@@ -266,6 +332,7 @@ export function useModelCatalog(): ModelCatalog {
 
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [openRouterError, setOpenRouterError] = useState<string | null>(null);
+  const [cloudflareError, setCloudflareError] = useState<string | null>(null);
   const [zenError, setZenError] = useState<string | null>(null);
   const [nvidiaError, setNvidiaError] = useState<string | null>(null);
   const [blackboxError, setBlackboxError] = useState<string | null>(null);
@@ -274,6 +341,7 @@ export function useModelCatalog(): ModelCatalog {
 
   const [ollamaUpdatedAt, setOllamaUpdatedAt] = useState<number | null>(null);
   const [openRouterUpdatedAt, setOpenRouterUpdatedAt] = useState<number | null>(null);
+  const [cloudflareUpdatedAt, setCloudflareUpdatedAt] = useState<number | null>(null);
   const [zenUpdatedAt, setZenUpdatedAt] = useState<number | null>(null);
   const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
   const [blackboxUpdatedAt, setBlackboxUpdatedAt] = useState<number | null>(null);
@@ -338,6 +406,33 @@ export function useModelCatalog(): ModelCatalog {
       failureMessage: 'Failed to load OpenRouter models.',
     });
   }, [openRouterCfg.hasKey, openRouterLoading, refreshModels]);
+
+  const refreshCloudflareModels = useCallback(async () => {
+    if (cloudflareLoading) return;
+    setCloudflareLoading(true);
+    setCloudflareError(null);
+    try {
+      const models = await fetchCloudflareModels();
+      setCloudflareModelList(models);
+      setCloudflareUpdatedAt(Date.now());
+      setCloudflareConfiguredStateAndPersist(true);
+      setCloudflareStatusError(null);
+      if (models.length === 0) {
+        setCloudflareError('No models returned by Cloudflare Workers AI.');
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to load Cloudflare Workers AI models.';
+      setCloudflareError(message);
+      if (/not configured|worker binding|workers ai/i.test(message)) {
+        setCloudflareConfiguredStateAndPersist(false);
+        setCloudflareModelList([]);
+        setCloudflareUpdatedAt(null);
+      }
+    } finally {
+      setCloudflareLoading(false);
+    }
+  }, [cloudflareLoading, setCloudflareConfiguredStateAndPersist]);
 
   const refreshZenStandardModels = useCallback(async () => {
     await refreshModels({
@@ -420,6 +515,10 @@ export function useModelCatalog(): ModelCatalog {
   // Auto-fetch models when key becomes available.
   // The active provider fetches immediately; all others are deferred via
   // requestIdleCallback (or a short setTimeout) so startup isn't blocked.
+  useEffect(() => {
+    void refreshCloudflareStatus();
+  }, [refreshCloudflareStatus]);
+
   useEffect(
     () =>
       scheduleAutoFetch(
@@ -464,6 +563,29 @@ export function useModelCatalog(): ModelCatalog {
       openRouterLoading,
       openRouterModelList.length,
       refreshOpenRouterModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: cloudflareConfigured,
+          modelCount: cloudflareModelList.length,
+          loading: cloudflareLoading,
+          error: cloudflareError,
+        }),
+        activeProviderLabel === 'cloudflare',
+        () => {
+          void refreshCloudflareModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      cloudflareConfigured,
+      cloudflareError,
+      cloudflareLoading,
+      cloudflareModelList.length,
+      refreshCloudflareModels,
     ],
   );
   useEffect(
@@ -586,6 +708,14 @@ export function useModelCatalog(): ModelCatalog {
 
   // Clear models when key is removed
   useEffect(() => {
+    if (!cloudflareConfigured) {
+      setCloudflareModelList([]);
+      setCloudflareError(null);
+      setCloudflareUpdatedAt(null);
+      setCloudflareLoading(false);
+    }
+  }, [cloudflareConfigured]);
+  useEffect(() => {
     if (!ollamaCfg.hasKey) {
       setOllamaModelList([]);
       setOllamaError(null);
@@ -679,6 +809,14 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [openRouterCfg.model, openRouterModelList],
   );
+  const cloudflareModelOptions = useMemo(
+    () =>
+      includeSelectedModel(
+        cloudflareModelList.length > 0 ? cloudflareModelList : CLOUDFLARE_MODELS,
+        cloudflareModel,
+      ),
+    [cloudflareModel, cloudflareModelList],
+  );
   const zenModelOptions = useMemo(
     () =>
       includeSelectedModel(
@@ -743,6 +881,13 @@ export function useModelCatalog(): ModelCatalog {
       setModel: openRouterCfg.setModel,
       keyInput: openRouterKeyInput,
       setKeyInput: setOpenRouterKeyInput,
+    },
+    cloudflare: {
+      configured: cloudflareConfigured,
+      statusLoading: cloudflareStatusLoading,
+      statusError: cloudflareStatusError,
+      model: cloudflareModel,
+      setModel: setCloudflareModel,
     },
     zen: {
       setKey: zenCfg.setKey,
@@ -893,6 +1038,12 @@ export function useModelCatalog(): ModelCatalog {
       error: openRouterError,
       updatedAt: openRouterUpdatedAt,
     },
+    cloudflareModels: {
+      models: cloudflareModelList,
+      loading: cloudflareLoading,
+      error: cloudflareError,
+      updatedAt: cloudflareUpdatedAt,
+    },
     zenModels: {
       models: activeZenModelList,
       loading: activeZenLoading,
@@ -926,6 +1077,7 @@ export function useModelCatalog(): ModelCatalog {
 
     ollamaModelOptions,
     openRouterModelOptions,
+    cloudflareModelOptions,
     zenModelOptions,
     nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
     blackboxModelOptions,
@@ -937,6 +1089,7 @@ export function useModelCatalog(): ModelCatalog {
 
     refreshOllamaModels,
     refreshOpenRouterModels,
+    refreshCloudflareModels,
     refreshZenModels,
     refreshNvidiaModels,
     refreshBlackboxModels,
