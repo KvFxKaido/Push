@@ -85,7 +85,7 @@ import {
 import {
   buildSystemPromptBase,
   ensureSystemPromptReady,
-  runAssistantLoop,
+  runAssistantTurn,
   DEFAULT_MAX_ROUNDS,
 } from './engine.js';
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.js';
@@ -2675,7 +2675,11 @@ export async function runTUI(options = {}) {
     runAbort = new AbortController();
 
     try {
-      await runAssistantLoop(state, ctx.providerConfig, ctx.apiKey, maxRounds, {
+      // runAssistantTurn runs the planner first. Null/1-feature plans fall
+      // back to the single-agent loop on the already-appended user message;
+      // 2+-feature plans execute as a task graph and emit canonical
+      // subagent.*/task_graph.* events handled by handleEngineEvent.
+      await runAssistantTurn(state, ctx.providerConfig, ctx.apiKey, text, maxRounds, {
         approvalFn: makeApprovalFn(),
         askUserFn: makeAskUserFn(),
         signal: runAbort.signal,

@@ -1458,3 +1458,46 @@ export async function runAssistantLoop(
   dispatchEvent('run_complete', { outcome: 'max_rounds', summary: finalSummaryText });
   return { outcome: 'max_rounds', finalAssistantText: finalSummaryText, rounds: maxRounds, runId };
 }
+
+/**
+ * Top-level entry for a user turn.
+ *
+ * Runs the planner unconditionally (planner-decides policy), then routes:
+ *   - If the planner returns null or a ≤1-feature plan → fall back to
+ *     `runAssistantLoop` on the existing state.messages. Single-agent UX
+ *     is preserved exactly — the caller's pre-appended user message is
+ *     what drives the loop.
+ *   - Otherwise, invokes the task-graph delegation subsystem in
+ *     `cli/delegation-entry.ts`, which emits canonical `subagent.*` /
+ *     `task_graph.*` events via `options.emit` and appends its own
+ *     synthesized final assistant message.
+ *
+ * Callers must still append the user message to `state.messages` before
+ * calling — the fallback path depends on that, and the delegation path
+ * leaves it in place as the turn's input of record.
+ */
+export async function runAssistantTurn(
+  state: SessionState,
+  providerConfig: ProviderConfig,
+  apiKey: string,
+  userText: string,
+  maxRounds: number,
+  options: RunOptions = {},
+): Promise<RunResult> {
+  const { runUserTurnWithDelegation } = await import('./delegation-entry.js');
+
+  const delegationResult = await runUserTurnWithDelegation(
+    state,
+    providerConfig,
+    apiKey,
+    userText,
+    maxRounds,
+    options,
+  );
+
+  if (delegationResult?.delegated && delegationResult.runResult) {
+    return delegationResult.runResult as RunResult;
+  }
+
+  return runAssistantLoop(state, providerConfig, apiKey, maxRounds, options);
+}
