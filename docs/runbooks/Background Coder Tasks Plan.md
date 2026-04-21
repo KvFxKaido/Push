@@ -1,16 +1,22 @@
 # Background Coder Tasks Plan
 
-Date: 2026-02-13 (Updated: 2026-02-19)
-Status: **Deferred — revisit if/when native app is built**
+Date: 2026-02-13 (Updated: 2026-04-21)
+Status: **Phase 1 scoped — see [`Background Coder Tasks Phase 1.md`](Background%20Coder%20Tasks%20Phase%201.md). Phases 2–4 remain deferred.**
 Owner: Push
 
-## Deferral Rationale
+## Status Update (2026-04-21)
+
+Phase 1 was re-scoped and pulled out into `Background Coder Tasks Phase 1.md` as a concrete implementation sketch grounded in current code: a `CoderJob` Durable Object running the already-shared `lib/coder-agent.ts` kernel, SSE event replay by `Last-Event-ID`, and a new `useBackgroundCoderJob` hook on the client. The Phase 1 doc supersedes the status-level "deferred" stance on Phase 1 only; Phases 2–4 (retry/backoff, push notifications, job history, multi-role background jobs) remain out of scope.
+
+The original deferral rationale below still applies to those later phases and to the "full PWA background parity" ambition.
+
+## Original Deferral Rationale (kept for historical context)
 
 Implementing this in a PWA requires fighting the platform (browser background execution limits, iOS WebKit restrictions) and introduces a Durable Object execution layer that duplicates the client-side harness with less visibility and new failure modes. The reliability cost isn't worth it while Push is a PWA.
 
 If Push ever ships as a native app (React Native / native WebView shell), the platform handles background execution and push notifications natively — the DO design may only need to cover reconnect/resume at that point, not the full execution migration.
 
-**Near-term substitute:** surface stall detection in the foreground loop — if no tokens arrive for ~30s mid-round, show a "Task may have stalled" banner. Cheap, no new architecture.
+**Near-term substitute (pre-Phase 1):** surface stall detection in the foreground loop — if no tokens arrive for ~30s mid-round, show a "Task may have stalled" banner. Cheap, no new architecture.
 
 ## Implementation Status Snapshot (2026-02-21)
 

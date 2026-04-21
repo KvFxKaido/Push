@@ -1,32 +1,32 @@
 /**
  * App compatibility wrapper for the shared Coder agent.
  *
- * The canonical module now lives in `lib/coder-agent.ts` (moved in Phase 5D
- * step 2, following the Phase 5D step 1 Explorer precedent). This wrapper
- * preserves the Web-side public API so existing call sites
+ * The canonical module lives in `lib/coder-agent.ts` (Phase 5D step 2).
+ * Three of the 10 DI slots — the `toolExec` closure, the Coder-filtered
+ * detectors, and the `evaluateAfterModel` bridge — are also shared, now
+ * living in `lib/coder-agent-bindings.ts` so the Durable-Object Phase 1
+ * background-jobs runtime (`docs/runbooks/Background Coder Tasks Phase 1.md`)
+ * can call the same closure builders with server-side substitutes for
+ * policy/tracing/HTTP execution.
+ *
+ * This wrapper preserves the Web-side public API so existing call sites
  * (`useAgentDelegation.ts`, `coder-agent.test.ts`,
- * `delegation-handoff.integration.test.ts`) keep working unchanged.
+ * `delegation-handoff.integration.test.ts`) keep working unchanged. It
+ * owns the Web-only setup that is not yet lib-safe:
  *
- * It re-exports the 10 pure helpers + `generateCheckpointAnswer` from the
- * lib kernel and injects the DI points the lib kernel needs at the call
- * boundary:
+ *  - provider/model resolution (`getActiveProvider`, `getProviderStreamFn`,
+ *    `getModelForRole`)
+ *  - `'demo'` provider guard
+ *  - `TurnPolicyRegistry` + `TurnContext` construction (pulls `ChatMessage`)
+ *  - pre-built prompt blocks: `taskPreamble` (delegation brief),
+ *    `verificationPolicyBlock`, `approvalModeBlock` (reads localStorage)
+ *  - ledger services the lib kernel still calls via callbacks:
+ *    `fileLedger`, `symbolLedger`, `execInSandbox`, `fetchSandboxStateSummary`
+ *  - `CapabilityLedger` creation and post-run snapshot
  *
- *  1. `userProfile`             — `getUserProfile()` from `@/hooks/useUserProfile`
- *  2. `taskPreamble`            — `buildCoderDelegationBrief(envelope)` + plannerBrief
- *  3. `symbolSummary`           — `symbolLedger.getSummary()`
- *  4. `toolExec`                — closure wrapping `policyRegistry.evaluateBeforeTool`
- *                                 → `withActiveSpan` + capability check + `executeSandboxToolCall`
- *                                 /`executeWebSearch` → `policyRegistry.evaluateAfterTool`, plus a
- *                                 sandbox health-check probe on `SANDBOX_UNREACHABLE`
- *  5. `detectAllToolCalls`      — wrapped to filter sandbox-source parallel reads
- *  6. `detectAnyToolCall`       — wrapped to keep Coder on sandbox/web-search tools
- *  7. `webSearchToolProtocol`   — `WEB_SEARCH_TOOL_PROTOCOL`
- *  8. `evaluateAfterModel`      — flattened adapter around `policyRegistry.evaluateAfterModel`
- *  9. `verificationPolicyBlock` — `formatVerificationPolicyBlock(verificationPolicy)`
- * 10. `approvalModeBlock`       — `buildApprovalModeBlock(getApprovalMode())`
- *
- * The `'demo'` provider guard stays here — the lib kernel assumes a real
- * provider and rejecting demo is a Web-layer concern.
+ * Everything the lib kernel sees as DI-injected services goes through the
+ * `CoderBindingServices` object assembled below and fed into
+ * `buildCoderToolExec` / `buildCoderDetectors` / `buildCoderEvaluateAfterModel`.
  */
 
 import type {
@@ -54,6 +54,12 @@ import {
   type CoderAfterModelResult,
   type CoderToolExecResult,
 } from '@push/lib/coder-agent';
+import {
+  buildCoderDetectors,
+  buildCoderEvaluateAfterModel,
+  buildCoderToolExec,
+  type CoderBindingServices,
+} from '@push/lib/coder-agent-bindings';
 import { getActiveProvider, getProviderStreamFn, type ActiveProvider } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
@@ -61,11 +67,13 @@ import {
   detectSandboxToolCall,
   executeSandboxToolCall,
   getSandboxToolProtocol,
+  type SandboxToolCall,
 } from './sandbox-tools';
 import {
   detectWebSearchToolCall,
   executeWebSearch,
   WEB_SEARCH_TOOL_PROTOCOL,
+  type WebSearchToolCall,
 } from './web-search-tools';
 import { CapabilityLedger, ROLE_CAPABILITIES } from './capabilities';
 import { detectAllToolCalls, detectAnyToolCall, type AnyToolCall } from './tool-dispatch';
@@ -78,11 +86,7 @@ import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
 import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
 import { createCoderPolicy } from './turn-policies/coder-policy';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
-import {
-  correlationToSpanAttributes,
-  EMPTY_CORRELATION_CONTEXT,
-  type CorrelationContext,
-} from '@push/lib/correlation-context';
+import { type CorrelationContext } from '@push/lib/correlation-context';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
 
 // ---------------------------------------------------------------------------
@@ -305,265 +309,65 @@ export async function runCoderAgent(
   );
   const approvalModeBlock = buildApprovalModeBlock(getApprovalMode());
 
-  // --- DetectAllToolCalls wrapper: filter sandbox-only parallel path ---
-  const detectAllToolCallsFiltered = (text: string) => {
-    const raw = detectAllToolCalls(text);
-    const sandboxReads = raw.readOnly.filter((c) => c.source === 'sandbox');
-    const sandboxFileMutations = raw.fileMutations.filter((c) => c.source === 'sandbox');
-    const sandboxMutating = raw.mutating?.source === 'sandbox' ? raw.mutating : null;
-    return {
-      readOnly: sandboxReads,
-      fileMutations: sandboxFileMutations,
-      mutating: sandboxMutating,
-      extraMutations: raw.extraMutations,
-    };
-  };
-
-  const detectCoderToolCall = (text: string): AnyToolCall | null => {
-    const sandboxCall = detectSandboxToolCall(text);
-    if (sandboxCall) return { source: 'sandbox', call: sandboxCall };
-
-    const webSearchCall = detectWebSearchToolCall(text);
-    if (webSearchCall) return { source: 'web-search', call: webSearchCall };
-
-    const recoveredCall = detectAnyToolCall(text);
-    if (recoveredCall?.source === 'sandbox' || recoveredCall?.source === 'web-search') {
-      return recoveredCall;
-    }
-    return null;
-  };
-
-  // --- toolExec closure: evaluateBeforeTool + withActiveSpan + execute + evaluateAfterTool ---
-  const toolExec = async (
-    call: AnyToolCall,
-    execCtx: { round: number; phase?: string },
-  ): Promise<CoderToolExecResult<ChatCard>> => {
-    turnCtx.round = execCtx.round;
-    turnCtx.phase = execCtx.phase;
-
-    // Extract structural tool/args via cast. Scratchpad is the only variant
-    // where `.call.args` is absent, and Coder never dispatches scratchpad,
-    // so the cast is safe in practice and the before-hook reads both fields
-    // as `unknown`.
-    const callStructural = call as unknown as {
-      call: { tool: string; args?: Record<string, unknown> };
-    };
-
-    if (call.source !== 'sandbox' && call.source !== 'web-search') {
-      return {
-        kind: 'denied',
-        reason: `Coder can only execute sandbox and web_search tools. "${callStructural.call.tool}" is not available to Coder.`,
-      };
-    }
-
-    // Phase-aware tool gating
-    const beforeResult = await policyRegistry.evaluateBeforeTool(
-      callStructural.call.tool,
-      (callStructural.call.args ?? {}) as Record<string, unknown>,
-      turnCtx,
-    );
-    if (beforeResult?.action === 'deny') {
-      return { kind: 'denied', reason: beforeResult.reason };
-    }
-
-    // --- Execute via appropriate source ---
-    if (call.source === 'web-search') {
-      const wsCall = call as Extract<AnyToolCall, { source: 'web-search' }>;
-      const wsResult = await withActiveSpan(
-        'tool.execute',
-        {
-          scope: 'push.coder',
-          kind: SpanKind.INTERNAL,
-          attributes: {
-            ...correlationToSpanAttributes(
-              effectiveDelegationContext?.correlation ?? EMPTY_CORRELATION_CONTEXT,
-            ),
-            'push.agent.role': 'coder',
-            'push.round': execCtx.round,
-            'push.tool.name': 'web_search',
-            'push.tool.source': 'web-search',
-            'push.provider': activeProvider,
-            'push.model': coderModelId,
-          },
-        },
-        async (span) => {
-          if (!capabilityLedger.isToolAllowed('web_search')) {
-            const missing = capabilityLedger.getMissingCapabilities('web_search');
-            return {
-              text: `[Tool Blocked — web_search] This tool requires capabilities not declared for this run: ${missing.join(', ')}. The delegation must include these capabilities to use this tool.`,
-              structuredError: {
-                type: 'APPROVAL_GATE_BLOCKED' as const,
-                retryable: false,
-                message: `Capability violation: ${missing.join(', ')} not declared`,
-              },
-            };
-          }
-          const inner = await executeWebSearch(wsCall.call.args.query, activeProvider);
-          capabilityLedger.recordToolUse('web_search');
-          setSpanAttributes(span, {
-            'push.tool.error_type': inner.structuredError?.type,
-            'push.tool.retryable': inner.structuredError?.retryable,
-          });
-          if (inner.structuredError) {
-            span.setStatus({
-              code: SpanStatusCode.ERROR,
-              message: inner.structuredError.message,
-            });
-          } else {
-            span.setStatus({ code: SpanStatusCode.OK });
-          }
-          return inner;
-        },
-      );
-
-      const afterToolResult = await policyRegistry.evaluateAfterTool(
-        'web_search',
-        call.call.args as Record<string, unknown>,
-        wsResult.text,
-        Boolean(wsResult.structuredError),
-        turnCtx,
-      );
-      const policyPost =
-        afterToolResult?.action === 'inject'
-          ? { kind: 'inject' as const, content: afterToolResult.message.content }
-          : afterToolResult?.action === 'halt'
-            ? { kind: 'halt' as const, summary: afterToolResult.summary }
-            : undefined;
-
-      return {
-        kind: 'executed',
-        resultText: wsResult.text,
-        card: wsResult.card,
-        errorType: wsResult.structuredError?.type,
-        policyPost,
-      };
-    }
-
-    // --- Sandbox path (default) ---
-    const sandboxCall = call as Extract<AnyToolCall, { source: 'sandbox' }>;
-    const sbResult = await withActiveSpan(
-      'tool.execute',
-      {
-        scope: 'push.coder',
-        kind: SpanKind.INTERNAL,
-        attributes: {
-          ...correlationToSpanAttributes(
-            effectiveDelegationContext?.correlation ?? EMPTY_CORRELATION_CONTEXT,
-          ),
-          'push.agent.role': 'coder',
-          'push.round': execCtx.round,
-          'push.tool.name': sandboxCall.call.tool,
-          'push.tool.source': 'sandbox',
-          'push.provider': activeProvider,
-          'push.model': coderModelId,
-        },
-      },
-      async (span) => {
-        if (!capabilityLedger.isToolAllowed(sandboxCall.call.tool)) {
-          const missing = capabilityLedger.getMissingCapabilities(sandboxCall.call.tool);
-          return {
-            text: `[Tool Blocked — ${sandboxCall.call.tool}] This tool requires capabilities not declared for this run: ${missing.join(', ')}. The delegation must include these capabilities to use this tool.`,
-            structuredError: {
-              type: 'APPROVAL_GATE_BLOCKED' as const,
-              retryable: false,
-              message: `Capability violation: ${missing.join(', ')} not declared`,
-            },
-          };
-        }
-        const inner = await executeSandboxToolCall(
-          sandboxCall.call as Parameters<typeof executeSandboxToolCall>[0],
-          sandboxId,
-          {
-            auditorProviderOverride: activeProvider,
-            auditorModelOverride: coderModelId,
-          },
+  // --- Bindings services: the Web-side adapter into the shared
+  // `lib/coder-agent-bindings.ts` closure builders. The adapter layer
+  // exists so the Durable-Object runtime (Phase 1 background jobs) can
+  // build its own services object with server substitutes without
+  // duplicating the policy/tracing/tool-exec plumbing.
+  const bindingsServices: CoderBindingServices<
+    AnyToolCall,
+    SandboxToolCall,
+    WebSearchToolCall,
+    ChatCard
+  > = {
+    policy: policyRegistry,
+    capabilityLedger,
+    turnCtx,
+    onStatus: statusFn,
+    correlation: effectiveDelegationContext?.correlation,
+    activeProvider,
+    activeModel: coderModelId,
+    sandboxId,
+    tracing: {
+      withActiveSpan<T>(
+        name: string,
+        options: { scope?: string; kind?: unknown; attributes?: Record<string, unknown> },
+        fn: (span: { setStatus(status: { code: unknown; message?: string }): void }) => Promise<T>,
+      ): Promise<T> {
+        return withActiveSpan(
+          name,
+          options as Parameters<typeof withActiveSpan>[1],
+          fn as unknown as Parameters<typeof withActiveSpan<T>>[2],
         );
-        capabilityLedger.recordToolUse(sandboxCall.call.tool);
-        setSpanAttributes(span, {
-          'push.tool.error_type': inner.structuredError?.type,
-          'push.tool.retryable': inner.structuredError?.retryable,
-        });
-        if (inner.structuredError) {
-          span.setStatus({
-            code: SpanStatusCode.ERROR,
-            message: inner.structuredError.message,
-          });
-        } else {
-          span.setStatus({ code: SpanStatusCode.OK });
-        }
-        return inner;
       },
-    );
-
-    // --- Sandbox health check on SANDBOX_UNREACHABLE ---
-    let sandboxProbePolicyPost:
-      | { kind: 'inject'; content: string }
-      | { kind: 'halt'; summary: string }
-      | undefined;
-    if (sbResult.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-      statusFn('Health check', 'Sandbox unreachable — validating...');
-      try {
-        const status = await sandboxStatus(sandboxId);
-        const healthMsg = status.error
-          ? `Sandbox health check failed: ${status.error}. Container may be expired or terminated.`
-          : `Sandbox is reachable. HEAD=${status.head}, ${status.changedFiles.length} dirty file(s). Previous error may have been transient.`;
-        sandboxProbePolicyPost = {
-          kind: 'inject',
-          content: `[SANDBOX_HEALTH_CHECK]\n${healthMsg}\nIf the container is unstable, stop mutation attempts and summarize your progress so far.\n[/SANDBOX_HEALTH_CHECK]`,
-        };
-      } catch {
-        sandboxProbePolicyPost = {
-          kind: 'halt',
-          summary: `[Coder stopped — sandbox is unreachable. Container may have expired or terminated. Task is incomplete.]`,
-        };
-      }
-    }
-
-    // --- Policy bridge: afterToolExec ---
-    const afterToolResult = await policyRegistry.evaluateAfterTool(
-      sandboxCall.call.tool,
-      sandboxCall.call.args as Record<string, unknown>,
-      sbResult.text,
-      Boolean(sbResult.structuredError),
-      turnCtx,
-    );
-    const policyFromAfter =
-      afterToolResult?.action === 'inject'
-        ? { kind: 'inject' as const, content: afterToolResult.message.content }
-        : afterToolResult?.action === 'halt'
-          ? { kind: 'halt' as const, summary: afterToolResult.summary }
-          : undefined;
-
-    // Prefer sandbox health probe over afterTool policy (health probe is the
-    // more urgent signal and the original inline code ran it first).
-    const policyPost = sandboxProbePolicyPost ?? policyFromAfter;
-
-    return {
-      kind: 'executed',
-      resultText: sbResult.text,
-      card: sbResult.card,
-      errorType: sbResult.structuredError?.type,
-      policyPost,
-    };
+      setSpanAttributes: (span, attrs) =>
+        setSpanAttributes(
+          span as Parameters<typeof setSpanAttributes>[0],
+          attrs as Parameters<typeof setSpanAttributes>[1],
+        ),
+      spanKindInternal: SpanKind.INTERNAL,
+      spanStatusOk: SpanStatusCode.OK,
+      spanStatusError: SpanStatusCode.ERROR,
+    },
+    executeSandboxToolCall: (call, id, opts) =>
+      executeSandboxToolCall(call, id, {
+        auditorProviderOverride: opts.auditorProviderOverride as ActiveProvider,
+        auditorModelOverride: opts.auditorModelOverride,
+      }),
+    executeWebSearch: (query, provider) => executeWebSearch(query, provider as ActiveProvider),
+    sandboxStatus,
+    detectSandboxToolCall,
+    detectWebSearchToolCall,
+    detectAnyToolCall,
+    detectAllToolCalls,
+    tagSandboxCall: (call): AnyToolCall => ({ source: 'sandbox', call }),
+    tagWebSearchCall: (call): AnyToolCall => ({ source: 'web-search', call }),
   };
 
-  // --- evaluateAfterModel closure ---
-  const evaluateAfterModel = async (
-    response: string,
-    round: number,
-  ): Promise<CoderAfterModelResult> => {
-    turnCtx.round = round;
-    // Coder policy's afterModelCall hooks ignore `messages` (see
-    // turn-policies/coder-policy.ts — _messages is underscore-prefixed). An
-    // empty buffer keeps the lib kernel free of ChatMessage coupling.
-    const emptyMessages: ChatMessage[] = [];
-    const result = await policyRegistry.evaluateAfterModel(response, emptyMessages, turnCtx);
-    if (!result) return null;
-    if (result.action === 'halt') {
-      return { action: 'halt', summary: result.summary };
-    }
-    return { action: 'inject', content: result.message.content };
-  };
+  const { detectAllToolCalls: detectAllToolCallsFiltered, detectAnyToolCall: detectCoderToolCall } =
+    buildCoderDetectors(bindingsServices);
+  const toolExec = buildCoderToolExec(bindingsServices);
+  const evaluateAfterModel = buildCoderEvaluateAfterModel(bindingsServices);
 
   // --- Build lib options ---
   const libOptions: CoderAgentOptions<AnyToolCall, ChatCard> = {
