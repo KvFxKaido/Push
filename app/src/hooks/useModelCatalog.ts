@@ -267,17 +267,24 @@ export function useModelCatalog(): ModelCatalog {
     setCloudflareStatusError(null);
     try {
       const response = await fetch('/api/health', { cache: 'no-store' });
-      if (!response.ok) {
-        throw new Error(`Worker health check failed (${response.status})`);
+      // Parse the payload regardless of HTTP status: /api/health can return
+      // structured JSON with services.cloudflare.configured even on a 503,
+      // and we still want that signal so stale-configured state gets cleared
+      // after a binding removal. Only surface an error if the payload itself
+      // is missing or lacks the cloudflare service entry.
+      type HealthPayload = { services?: { cloudflare?: { configured?: boolean } } };
+      let payload: HealthPayload | null = null;
+      try {
+        payload = (await response.json()) as HealthPayload;
+      } catch {
+        // Non-JSON body (e.g. HTML error page) — fall through to the shape error.
       }
-      const payload = (await response.json()) as {
-        services?: {
-          cloudflare?: {
-            configured?: boolean;
-          };
-        };
-      };
-      setCloudflareConfiguredStateAndPersist(Boolean(payload.services?.cloudflare?.configured));
+      const services = payload?.services;
+      if (services && 'cloudflare' in services) {
+        setCloudflareConfiguredStateAndPersist(Boolean(services.cloudflare?.configured));
+        return;
+      }
+      throw new Error(`Worker health check returned unexpected shape (${response.status})`);
     } catch (err) {
       setCloudflareStatusError(
         err instanceof Error ? err.message : 'Failed to load Worker health status.',
@@ -424,7 +431,11 @@ export function useModelCatalog(): ModelCatalog {
       const message =
         err instanceof Error ? err.message : 'Failed to load Cloudflare Workers AI models.';
       setCloudflareError(message);
-      if (/not configured|worker binding|workers ai/i.test(message)) {
+      // Only flip `configured` to false on errors that explicitly indicate a
+      // missing binding. A looser match (e.g. "workers ai") would catch every
+      // timeout and 5xx message, since all CF errors mention the provider,
+      // and would wrongly hide the provider on transient failures.
+      if (/not configured|worker binding/i.test(message)) {
         setCloudflareConfiguredStateAndPersist(false);
         setCloudflareModelList([]);
         setCloudflareUpdatedAt(null);

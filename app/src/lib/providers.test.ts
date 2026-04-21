@@ -15,7 +15,7 @@ describe('formatModelDisplayName', () => {
     expect(formatModelDisplayName('openrouter', 'openai/gpt-5.4')).toBe('OpenAI / gpt-5.4');
   });
 
-  it('keeps provider-native ids readable when they are not routed', () => {
+  it('groups Blackbox native ids while keeping Ollama native ids readable', () => {
     expect(formatModelDisplayName('blackbox', 'blackbox-pro')).toBe('Blackbox / blackbox-pro');
     expect(formatModelDisplayName('ollama', 'gemini-3-flash-preview')).toBe(
       'gemini-3-flash-preview',

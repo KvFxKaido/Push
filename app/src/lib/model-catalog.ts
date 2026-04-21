@@ -1051,9 +1051,18 @@ export async function fetchCloudflareModels(): Promise<string[]> {
     }
 
     const payload = (await response.json()) as unknown;
-    const liveModels = normalizeModelList(payload).sort((left, right) =>
-      compareProviderModelIds('cloudflare', left, right),
-    );
+    // Parse the CF-specific `{ id, name }[]` shape explicitly. The shared
+    // `normalizeModelList` treats bare arrays as "pull both id and name",
+    // which would inject the human-readable name (e.g. `qwen3-30b-a3b-fp8`)
+    // as a selectable model alongside the real `@cf/...` id.
+    const liveModels = (Array.isArray(payload) ? payload : [])
+      .map((entry): string | null => {
+        if (!entry || typeof entry !== 'object') return null;
+        const id = (entry as { id?: unknown }).id;
+        return typeof id === 'string' && id.trim() ? id.trim() : null;
+      })
+      .filter((id): id is string => Boolean(id))
+      .sort((left, right) => compareProviderModelIds('cloudflare', left, right));
     return liveModels.length > 0 ? liveModels : [...CLOUDFLARE_MODELS];
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
