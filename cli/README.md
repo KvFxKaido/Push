@@ -140,7 +140,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_KILOCODE_URL` | Kilo Code endpoint (default: `https://api.kilo.ai/api/gateway/chat/completions`) |
 | `PUSH_KILOCODE_API_KEY` | Kilo Code API key |
 | `PUSH_KILOCODE_MODEL` | Kilo Code model (default: `google/gemini-3-flash-preview`) |
-| `PUSH_BLACKBOX_URL` | Blackbox AI endpoint (default: `https://www.blackbox.ai/chat/completions`) |
+| `PUSH_BLACKBOX_URL` | Blackbox AI endpoint (default: `https://api.blackbox.ai/chat/completions`) |
 | `PUSH_BLACKBOX_API_KEY` | Blackbox AI API key |
 | `PUSH_BLACKBOX_MODEL` | Blackbox AI model (default: `blackbox-ai`) |
 | `PUSH_OPENADAPTER_URL` | OpenAdapter endpoint (default: `https://api.openadapter.in/v1/chat/completions`) |

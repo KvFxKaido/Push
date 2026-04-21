@@ -105,7 +105,9 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
   },
   blackbox: {
     id: 'blackbox',
-    url: process.env.PUSH_BLACKBOX_URL || 'https://www.blackbox.ai/chat/completions',
+    // `api.blackbox.ai` is the JSON API host. `www.blackbox.ai` is the marketing
+    // frontend and returns HTML, which breaks /models fetch (and chat) silently.
+    url: process.env.PUSH_BLACKBOX_URL || 'https://api.blackbox.ai/chat/completions',
     defaultModel: process.env.PUSH_BLACKBOX_MODEL || BLACKBOX_DEFAULT_MODEL,
     apiKeyEnv: ['PUSH_BLACKBOX_API_KEY', 'BLACKBOX_API_KEY', 'VITE_BLACKBOX_API_KEY'],
     requiresKey: true,
