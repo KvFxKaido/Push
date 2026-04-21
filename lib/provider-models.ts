@@ -5,10 +5,16 @@
  * without inheriting each other's runtime-specific catalog logic.
  */
 
+/**
+ * Providers whose curated models + defaults are shared between the web app
+ * and CLI. Intentionally excludes `cloudflare` — that provider relies on the
+ * Worker's native `env.AI` binding, which doesn't exist in the CLI runtime.
+ * The `CLOUDFLARE_*` constants are still exported from this file so the web
+ * side can import them directly without going through the shared catalog.
+ */
 export type SharedProviderModelId =
   | 'ollama'
   | 'openrouter'
-  | 'cloudflare'
   | 'zen'
   | 'nvidia'
   | 'kilocode'
@@ -141,7 +147,6 @@ export const OPENADAPTER_MODELS: string[] = [
 export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string[]> = {
   ollama: OLLAMA_MODELS,
   openrouter: OPENROUTER_MODELS,
-  cloudflare: CLOUDFLARE_MODELS,
   zen: ZEN_MODELS,
   nvidia: NVIDIA_MODELS,
   kilocode: KILOCODE_MODELS,
@@ -152,7 +157,6 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
 export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, string> = {
   ollama: OLLAMA_DEFAULT_MODEL,
   openrouter: OPENROUTER_DEFAULT_MODEL,
-  cloudflare: CLOUDFLARE_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
   nvidia: NVIDIA_DEFAULT_MODEL,
   kilocode: KILOCODE_DEFAULT_MODEL,
