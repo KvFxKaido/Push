@@ -87,6 +87,7 @@ export type ProviderStreamFn<M extends LlmMessage = LlmMessage, W = unknown> = (
 export type PushStreamEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'reasoning_delta'; text: string }
+  | { type: 'reasoning_end' }
   | {
       type: 'done';
       finishReason: 'stop' | 'length' | 'tool_calls' | 'aborted' | 'unknown';
@@ -182,6 +183,10 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
             break;
           case 'reasoning_delta':
             onThinkingToken?.(event.text);
+            break;
+          case 'reasoning_end':
+            // Legacy callback shape signals end-of-reasoning via null.
+            onThinkingToken?.(null);
             break;
           case 'done':
             onDone(event.usage);
