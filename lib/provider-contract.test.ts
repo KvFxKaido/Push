@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { LlmMessage, PushStream, PushStreamEvent, StreamUsage, AIProviderType } from './provider-contract.js';
+import type {
+  LlmMessage,
+  PushStream,
+  PushStreamEvent,
+  StreamUsage,
+  AIProviderType,
+} from './provider-contract.js';
 import { createProviderStreamAdapter } from './provider-contract.js';
 
 describe('createProviderStreamAdapter', () => {
@@ -17,7 +23,12 @@ describe('createProviderStreamAdapter', () => {
 
     const adapted = createProviderStreamAdapter(stream, provider);
     const tokens: string[] = [];
-    await adapted(messages, (t) => tokens.push(t), () => {}, () => {});
+    await adapted(
+      messages,
+      (t) => tokens.push(t),
+      () => {},
+      () => {},
+    );
     expect(tokens).toEqual(['hello', ' world']);
   });
 
@@ -32,7 +43,13 @@ describe('createProviderStreamAdapter', () => {
 
     const adapted = createProviderStreamAdapter(stream, provider);
     const thoughts: (string | null)[] = [];
-    await adapted(messages, () => {}, () => {}, () => {}, (t) => thoughts.push(t));
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      () => {},
+      (t) => thoughts.push(t),
+    );
     expect(thoughts).toEqual(['thinking...', ' still thinking']);
   });
 
@@ -48,7 +65,14 @@ describe('createProviderStreamAdapter', () => {
 
     const adapted = createProviderStreamAdapter(stream, provider);
     let receivedUsage: StreamUsage | undefined;
-    await adapted(messages, () => {}, (u) => { receivedUsage = u; }, () => {});
+    await adapted(
+      messages,
+      () => {},
+      (u) => {
+        receivedUsage = u;
+      },
+      () => {},
+    );
     expect(receivedUsage).toEqual(usage);
   });
 
@@ -59,7 +83,14 @@ describe('createProviderStreamAdapter', () => {
 
     const adapted = createProviderStreamAdapter(stream, provider);
     let caught: Error | undefined;
-    await adapted(messages, () => {}, () => {}, (e) => { caught = e; });
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      (e) => {
+        caught = e;
+      },
+    );
     expect(caught?.message).toBe('network failure');
   });
 
@@ -74,8 +105,22 @@ describe('createProviderStreamAdapter', () => {
     const adapted = createProviderStreamAdapter(stream, provider);
     let caught: Error | undefined;
     const onDone = vi.fn();
-    await adapted(messages, () => {}, onDone, (e) => { caught = e; }, undefined, undefined, undefined, undefined, undefined, undefined, controller.signal);
-    
+    await adapted(
+      messages,
+      () => {},
+      onDone,
+      (e) => {
+        caught = e;
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      controller.signal,
+    );
+
     expect(caught).toBeUndefined();
     expect(onDone).toHaveBeenCalled();
     expect(stream).not.toHaveBeenCalled();
@@ -95,8 +140,20 @@ describe('createProviderStreamAdapter', () => {
     });
 
     const adapted = createProviderStreamAdapter(stream, provider);
-    await adapted(messages, (t) => tokens.push(t), onDone, () => {}, undefined, undefined, undefined, undefined, undefined, undefined, controller.signal);
-    
+    await adapted(
+      messages,
+      (t) => tokens.push(t),
+      onDone,
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      controller.signal,
+    );
+
     expect(tokens).toEqual(['a']);
     expect(aborted).toBe(true);
     expect(onDone).toHaveBeenCalled();
@@ -110,8 +167,18 @@ describe('createProviderStreamAdapter', () => {
     });
 
     const adapted = createProviderStreamAdapter(stream, provider);
-    await adapted(messages, () => {}, () => {}, () => {},
-      undefined, undefined, undefined, undefined, 'system-override', 'scratch-content');
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'system-override',
+      'scratch-content',
+    );
 
     expect(captured.systemPromptOverride).toBe('system-override');
     expect(captured.scratchpadContent).toBe('scratch-content');
@@ -124,8 +191,15 @@ describe('createProviderStreamAdapter', () => {
       yield { type: 'done', finishReason: 'stop' };
     });
 
-    const adapted = createProviderStreamAdapter(stream, provider, { defaultModel: 'fallback-model' });
-    await adapted(messages, () => {}, () => {}, () => {});
+    const adapted = createProviderStreamAdapter(stream, provider, {
+      defaultModel: 'fallback-model',
+    });
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      () => {},
+    );
 
     expect(capturedModel).toBe('fallback-model');
   });
@@ -137,8 +211,19 @@ describe('createProviderStreamAdapter', () => {
       yield { type: 'done', finishReason: 'stop' };
     });
 
-    const adapted = createProviderStreamAdapter(stream, provider, { defaultModel: 'fallback-model' });
-    await adapted(messages, () => {}, () => {}, () => {}, undefined, undefined, undefined, 'primary-model');
+    const adapted = createProviderStreamAdapter(stream, provider, {
+      defaultModel: 'fallback-model',
+    });
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      'primary-model',
+    );
 
     expect(capturedModel).toBe('primary-model');
   });

@@ -87,7 +87,11 @@ export type ProviderStreamFn<M extends LlmMessage = LlmMessage, W = unknown> = (
 export type PushStreamEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'reasoning_delta'; text: string }
-  | { type: 'done'; finishReason: 'stop' | 'length' | 'tool_calls' | 'aborted' | 'unknown'; usage?: StreamUsage };
+  | {
+      type: 'done';
+      finishReason: 'stop' | 'length' | 'tool_calls' | 'aborted' | 'unknown';
+      usage?: StreamUsage;
+    };
 
 export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
   provider: AIProviderType;
@@ -101,8 +105,9 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
   scratchpadContent?: string;
 }
 
-export type PushStream<M extends LlmMessage = LlmMessage> =
-  (req: PushStreamRequest<M>) => AsyncIterable<PushStreamEvent>;
+export type PushStream<M extends LlmMessage = LlmMessage> = (
+  req: PushStreamRequest<M>,
+) => AsyncIterable<PushStreamEvent>;
 
 /**
  * Bridge an async-iterable PushStream back to the legacy callback shape.
@@ -111,7 +116,7 @@ export type PushStream<M extends LlmMessage = LlmMessage> =
 export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
   gatewayStream: PushStream<M>,
   provider: AIProviderType,
-  options?: { defaultModel?: string }
+  options?: { defaultModel?: string },
 ): ProviderStreamFn<M> {
   return async (
     messages,
@@ -125,7 +130,7 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
     systemPromptOverride,
     scratchpadContent,
     signal,
-    _onPreCompact
+    _onPreCompact,
   ) => {
     if (signal?.aborted) {
       onDone();
