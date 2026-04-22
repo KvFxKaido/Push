@@ -54,6 +54,32 @@ describe('createProviderStreamAdapter', () => {
     expect(thoughts).toEqual(['thinking...', ' still thinking']);
   });
 
+  it('maps reasoning_end events to onThinkingToken(null)', async () => {
+    const events: PushStreamEvent[] = [
+      { type: 'reasoning_delta', text: 'thinking' },
+      { type: 'reasoning_end' },
+      { type: 'text_delta', text: 'answer' },
+      { type: 'done', finishReason: 'stop' },
+    ];
+    const stream: PushStream = vi.fn().mockImplementation(async function* () {
+      for (const e of events) yield e;
+    });
+
+    const adapted = createProviderStreamAdapter(stream, provider, testOptions);
+    const thoughts: (string | null)[] = [];
+    const tokens: string[] = [];
+    await adapted(
+      messages,
+      (t) => tokens.push(t),
+      () => {},
+      () => {},
+      (t) => thoughts.push(t),
+    );
+    // The end-of-reasoning signal is `null`, matching the legacy callback contract.
+    expect(thoughts).toEqual(['thinking', null]);
+    expect(tokens).toEqual(['answer']);
+  });
+
   it('maps done event to onDone with usage', async () => {
     const usage: StreamUsage = { inputTokens: 10, outputTokens: 20, totalTokens: 30 };
     const events: PushStreamEvent[] = [

@@ -34,6 +34,7 @@ import type { ExperimentalProviderType } from '../lib/experimental-providers';
 
 // Gateway Abstraction imports
 import type { LlmMessage, PushStreamRequest, PushStreamEvent } from '@push/lib/provider-contract';
+import { normalizeReasoning } from '@push/lib/reasoning-tokens';
 // --- Cloudflare Workers AI ---
 
 const CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR =
@@ -92,8 +93,18 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
     if (!data || data === '[DONE]') return;
     try {
       const parsed = JSON.parse(data);
-      if (parsed.choices?.[0]?.delta?.content) {
-        yield { type: 'text_delta', text: parsed.choices[0].delta.content };
+      const delta = parsed.choices?.[0]?.delta;
+      // Today's Workers AI reasoning models are mutually exclusive per model:
+      // DeepSeek-R1 uses native `reasoning_content`; Qwen QwQ uses inline
+      // `<think>` tags in `content`. We surface both channels when present —
+      // `normalizeReasoning` downstream latches on the first native
+      // reasoning_delta and stops parsing `<think>` tags for the rest of the
+      // stream, so a future hybrid model that emits both won't double-report.
+      if (delta?.reasoning_content) {
+        yield { type: 'reasoning_delta', text: delta.reasoning_content };
+      }
+      if (delta?.content) {
+        yield { type: 'text_delta', text: delta.content };
       }
     } catch {
       /* skip malformed JSON */
@@ -226,7 +237,12 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
     const body = new ReadableStream<Uint8Array>({
       async start(c) {
         try {
-          const stream = cloudflareStream({ ...pushReq, signal: abortController.signal }, env);
+          // Wrap the provider stream with normalizeReasoning so inline
+          // <think>...</think> tags in content are split into reasoning_delta
+          // events. Native reasoning_delta events from Workers AI's reasoning
+          // models (DeepSeek-R1, QwQ) pass through unchanged.
+          const rawStream = cloudflareStream({ ...pushReq, signal: abortController.signal }, env);
+          const stream = normalizeReasoning(rawStream);
           for await (const event of stream) {
             if (abortController.signal.aborted) break;
             if (event.type === 'text_delta') {
@@ -235,12 +251,22 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
                   `data: ${JSON.stringify({ choices: [{ delta: { content: event.text } }] })}\n\n`,
                 ),
               );
+            } else if (event.type === 'reasoning_delta') {
+              // OpenAI-extended delta shape consumed by the web client
+              // (see app/src/lib/orchestrator.ts — `choice.delta.reasoning_content`).
+              c.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: event.text } }] })}\n\n`,
+                ),
+              );
             } else if (event.type === 'done') {
               c.enqueue(encoder.encode('data: [DONE]\n\n'));
               c.close();
               return;
             }
-            // reasoning_delta events are not emitted by this provider.
+            // reasoning_end is a structural signal for the transducer; the
+            // web client closes its thinking panel on content transition, so
+            // we don't emit a dedicated SSE frame for it.
           }
           // Stream ended without a trailing done event — still close cleanly.
           c.enqueue(encoder.encode('data: [DONE]\n\n'));
