@@ -15,25 +15,35 @@ import {
   buildVertexAnthropicEndpoint,
   buildVertexOpenApiBaseUrl,
   getVertexModelTransport,
-  VERTEX_MODEL_OPTIONS} from './worker-middleware';
+  VERTEX_MODEL_OPTIONS,
+} from './worker-middleware';
 import { REQUEST_ID_HEADER } from '../lib/request-id';
 import { validateAndNormalizeChatRequest } from '../lib/chat-request-guardrails';
 import {
   buildAnthropicMessagesRequest,
-  createAnthropicTranslatedStream} from '../lib/openai-anthropic-bridge';
+  createAnthropicTranslatedStream,
+} from '../lib/openai-anthropic-bridge';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import {
   buildVertexAnthropicEndpoint as buildVertexAnthropicEndpointLib,
   buildVertexOpenApiBaseUrl as buildVertexOpenApiBaseUrlLib,
   getVertexModelTransport as getVertexModelTransportLib,
-  VERTEX_MODEL_OPTIONS as VERTEX_MODEL_OPTIONS_LIB} from '../lib/vertex-provider';
+  VERTEX_MODEL_OPTIONS as VERTEX_MODEL_OPTIONS_LIB,
+} from '../lib/vertex-provider';
 import {
   formatExperimentalProviderHttpError,
-  formatVertexProviderHttpError} from '../lib/provider-error-utils';
+  formatVertexProviderHttpError,
+} from '../lib/provider-error-utils';
 import type { ExperimentalProviderType } from '../lib/experimental-providers';
 
 // Gateway Abstraction imports
-import { createProviderStreamAdapter, type LlmMessage, type PushStream, type PushStreamRequest, type PushStreamEvent } from '../../lib/provider-contract';</content>}}
+import {
+  createProviderStreamAdapter,
+  type LlmMessage,
+  type PushStream,
+  type PushStreamRequest,
+  type PushStreamEvent,
+} from '../../lib/provider-contract';
 // --- Cloudflare Workers AI ---
 
 const CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR =
@@ -81,7 +91,7 @@ function buildCloudflareAiInput(parsedRequest: Record<string, unknown>): Record<
 async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterable<PushStreamEvent> {
   // Build the input for env.AI.run
   const input: Record<string, unknown> = {
-    messages: req.messages.map(m => ({ role: m.role, content: m.content })),
+    messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
     stream: true,
   };
 
@@ -92,7 +102,9 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
 
   try {
     // Run the AI model
-    const stream = (await (env.AI as any).run(req.model, input)) as ReadableStream<Uint8Array> | unknown;
+    const stream = (await (env.AI as any).run(req.model, input)) as
+      | ReadableStream<Uint8Array>
+      | unknown;
 
     if (!(stream instanceof ReadableStream)) {
       throw new Error('Cloudflare AI did not return a stream');
@@ -119,7 +131,12 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
           }
           try {
             const parsed = JSON.parse(data);
-            if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta && parsed.choices[0].delta.content) {
+            if (
+              parsed.choices &&
+              parsed.choices[0] &&
+              parsed.choices[0].delta &&
+              parsed.choices[0].delta.content
+            ) {
               yield { type: 'text_delta', text: parsed.choices[0].delta.content };
             }
           } catch {
@@ -202,14 +219,14 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
 
   try {
     // Convert raw messages to LlmMessage shape for the PushStream contract.
-    const llmMessages: LlmMessage[] = (parsedRequest.messages as { role: string; content: string }[]).map(
-      (m, i) => ({
-        id: `msg-${i}`,
-        role: m.role as 'user' | 'assistant' | 'system',
-        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-        timestamp: Date.now(),
-      }),
-    );
+    const llmMessages: LlmMessage[] = (
+      parsedRequest.messages as { role: string; content: string }[]
+    ).map((m, i) => ({
+      id: `msg-${i}`,
+      role: m.role as 'user' | 'assistant' | 'system',
+      content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+      timestamp: Date.now(),
+    }));
 
     const req: PushStreamRequest = {
       provider: 'cloudflare',
