@@ -271,20 +271,23 @@ export async function* normalizeReasoning(
         continue;
       }
       if (event.type === 'reasoning_delta') {
-        // Native reasoning channel. Flush any pending visible text first so
-        // the order stays content-before-reasoning instead of racing.
-        if (buffer && !insideThink) {
-          yield* closeReasoningIfOpen();
-          yield { type: 'text_delta', text: buffer };
-          buffer = '';
-        }
+        // Native reasoning channel. Flush any buffered tokens first so the
+        // order stays correct even if the provider mixes inline and native
+        // channels — buffered inline text (think or visible) must land
+        // before the new native token.
+        yield* flushRemaining();
         reasoningOpen = true;
         yield event;
         continue;
       }
       if (event.type === 'reasoning_end') {
+        // Forward the upstream event unchanged so the "pass through" contract
+        // holds. If we already have local reasoning open, flip the flag
+        // without emitting a duplicate synthetic reasoning_end — the yielded
+        // event IS the close signal.
         yield* flushRemaining();
-        yield* closeReasoningIfOpen();
+        reasoningOpen = false;
+        yield event;
         continue;
       }
       // done — drain buffer, close any open reasoning block, then forward.

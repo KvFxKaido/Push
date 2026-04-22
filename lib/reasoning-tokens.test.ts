@@ -234,9 +234,10 @@ describe('normalizeReasoning', () => {
   });
 
   it('holds an unresolved < prefix without emitting it prematurely', async () => {
-    // Deliver `<thi` with no `done` event. The transducer's finally block
-    // flushes the buffered prefix as text because the stream ended before
-    // the tag could complete.
+    // Deliver `<thi` with no `done` event. When iteration completes normally,
+    // flushRemaining runs after the for-await loop (the finally block only
+    // handles orphaned reasoning_end cleanup), flushing the buffered prefix
+    // as text because the stream ended before the tag could complete.
     const out: PushStreamEvent[] = [];
     for await (const ev of normalizeReasoning(streamOf([{ type: 'text_delta', text: '<thi' }]))) {
       out.push(ev);
