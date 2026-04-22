@@ -12,10 +12,6 @@ import {
   getVertexNativeConfig,
   getExperimentalUpstreamUrl,
   getGoogleAccessToken,
-  buildVertexAnthropicEndpoint,
-  buildVertexOpenApiBaseUrl,
-  getVertexModelTransport,
-  VERTEX_MODEL_OPTIONS,
 } from './worker-middleware';
 import { REQUEST_ID_HEADER } from '../lib/request-id';
 import { validateAndNormalizeChatRequest } from '../lib/chat-request-guardrails';
@@ -24,6 +20,12 @@ import {
   createAnthropicTranslatedStream,
 } from '../lib/openai-anthropic-bridge';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
+import {
+  buildVertexAnthropicEndpoint,
+  buildVertexOpenApiBaseUrl,
+  getVertexModelTransport,
+  VERTEX_MODEL_OPTIONS,
+} from '../lib/vertex-provider';
 import {
   formatExperimentalProviderHttpError,
   formatVertexProviderHttpError,
