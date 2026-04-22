@@ -22,6 +22,15 @@ PUSH_TUI_ENABLED=0 ./push
 node --import tsx cli/cli.ts
 ```
 
+On Windows, use `.\push.cmd` from `cmd.exe`, PowerShell, or Windows Terminal:
+
+```powershell
+.\push.cmd config init
+$env:PUSH_TUI_ENABLED = "0"
+.\push.cmd
+.\push.cmd tui
+```
+
 `./push config init` walks you through provider, model, API key, and sandbox settings using numbered menus (with free-text fallback). Config is saved to `~/.push/config.json` (mode 0600).
 
 ## Modes
@@ -149,6 +158,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
+| `PUSH_SHELL` | Override the shell used for `exec` / acceptance checks. Useful on Windows if you want to force Git Bash, WSL bash, PowerShell, etc. |
 | `PUSH_SESSION_DIR` | Override session storage location (default: `~/.push/sessions`) |
 | `PUSH_CONFIG_PATH` | Override config file path |
 

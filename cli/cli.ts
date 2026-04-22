@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 // @ts-nocheck — gradual typing in progress for this large module
-import { parseArgs, promisify } from 'node:util';
+import { parseArgs } from 'node:util';
 import { createInterface } from 'node:readline/promises';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
 
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
 import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
@@ -41,13 +40,12 @@ import { appendUserMessageWithFileReferences } from './file-references.js';
 import { compactContext } from './context-manager.js';
 import { buildHeadlessTaskBrief } from './task-brief.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
+import { runCommandInResolvedShell } from './shell.js';
 import {
   readClientAttachState,
   writeClientAttachState,
   makeDebouncedClientAttachWriter,
 } from './client-attach-state.js';
-
-const execFileAsync = promisify(execFile);
 
 const VERSION = '0.1.0';
 export const ATTACH_CLIENT_CAPABILITIES = Object.freeze(['event_v2']);
@@ -233,7 +231,7 @@ async function runAcceptanceChecks(cwd, checks) {
   for (const command of checks) {
     const startedAt = Date.now();
     try {
-      const { stdout, stderr } = await execFileAsync('/bin/bash', ['-lc', command], {
+      const { stdout, stderr } = await runCommandInResolvedShell(command, {
         cwd,
         timeout: 120_000,
         maxBuffer: 4_000_000,

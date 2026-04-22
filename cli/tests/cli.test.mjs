@@ -48,33 +48,26 @@ async function runCli(args, options = {}) {
     ...testEnv.env,
     ...extraEnv,
   };
-  const captureDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-cli-test-'));
-  const stdoutPath = path.join(captureDir, 'stdout.txt');
-  const stderrPath = path.join(captureDir, 'stderr.txt');
   try {
-    let code = 0;
     try {
-      await execFileAsync(
-        '/bin/bash',
-        ['-lc', `${buildCliCommand(args)} >${shQuote(stdoutPath)} 2>${shQuote(stderrPath)}`],
+      const { stdout, stderr } = await execFileAsync(
+        process.execPath,
+        ['--import', 'tsx', CLI_PATH, ...args],
         {
           timeout: 5000,
           env,
           ...execOpts,
         },
       );
+      return { code: 0, stdout, stderr };
     } catch (err) {
-      code = typeof err.code === 'number' ? err.code : 1;
+      return {
+        code: typeof err.code === 'number' ? err.code : 1,
+        stdout: err.stdout || '',
+        stderr: err.stderr || String(err.message || err),
+      };
     }
-
-    const [stdout, stderr] = await Promise.all([
-      fs.readFile(stdoutPath, 'utf8').catch(() => ''),
-      fs.readFile(stderrPath, 'utf8').catch(() => ''),
-    ]);
-
-    return { code, stdout, stderr };
   } finally {
-    await fs.rm(captureDir, { recursive: true, force: true }).catch(() => {});
     await testEnv.cleanup();
   }
 }
