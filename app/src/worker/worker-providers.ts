@@ -37,7 +37,7 @@ import {
   type PushStream,
   type PushStreamRequest,
   type PushStreamEvent,
-} from '../../lib/provider-contract';
+} from '@push/lib/provider-contract';
 // --- Cloudflare Workers AI ---
 
 const CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR =
@@ -62,48 +62,65 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
   if (req.temperature !== undefined) input.temperature = req.temperature;
   if (req.topP !== undefined) input.top_p = req.topP;
 
-  try {
-    // Run the AI model
-    const stream = (await (
-      env.AI as unknown as {
-        run: (
-          model: string,
-          input: Record<string, unknown>,
-        ) => Promise<ReadableStream<Uint8Array> | unknown>;
-      }
-    ).run(req.model, input)) as ReadableStream<Uint8Array> | unknown;
-
-    if (!(stream instanceof ReadableStream)) {
-      throw new Error('Cloudflare AI did not return a stream');
+  const stream = (await (
+    env.AI as unknown as {
+      run: (
+        model: string,
+        input: Record<string, unknown>,
+      ) => Promise<ReadableStream<Uint8Array> | unknown>;
     }
+  ).run(req.model, input)) as ReadableStream<Uint8Array> | unknown;
 
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+  if (!(stream instanceof ReadableStream)) {
+    throw new Error('Cloudflare AI did not return a stream');
+  }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6).trim();
-          if (data === '[DONE]') {
-            yield { type: 'done', finishReason: 'stop' };
-            return;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') {
+          yield { type: 'done', finishReason: 'stop' };
+          return;
+        }
+        try {
+          const parsed = JSON.parse(data);
+          if (
+            parsed.choices &&
+            parsed.choices[0] &&
+            parsed.choices[0].delta &&
+            parsed.choices[0].delta.content
+          ) {
+            yield { type: 'text_delta', text: parsed.choices[0].delta.content };
           }
+        } catch {
+          // Skip malformed JSON
+        }
+      }
+    }
+  }
+
+  // If we exit the loop without [DONE], process remaining buffer then yield done
+  if (buffer.trim()) {
+    const lines = buffer.split('\n');
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6).trim();
+        if (data && data !== '[DONE]') {
           try {
             const parsed = JSON.parse(data);
-            if (
-              parsed.choices &&
-              parsed.choices[0] &&
-              parsed.choices[0].delta &&
-              parsed.choices[0].delta.content
-            ) {
+            if (parsed.choices?.[0]?.delta?.content) {
               yield { type: 'text_delta', text: parsed.choices[0].delta.content };
             }
           } catch {
@@ -112,30 +129,8 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
         }
       }
     }
-
-    // If we exit the loop without [DONE], process remaining buffer then yield done
-    if (buffer.trim()) {
-      const lines = buffer.split('\n');
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6).trim();
-          if (data && data !== '[DONE]') {
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.choices?.[0]?.delta?.content) {
-                yield { type: 'text_delta', text: parsed.choices[0].delta.content };
-              }
-            } catch {
-              // Skip malformed JSON
-            }
-          }
-        }
-      }
-    }
-    yield { type: 'done', finishReason: 'stop' };
-  } catch (error) {
-    throw error;
   }
+  yield { type: 'done', finishReason: 'stop' };
 }
 
 export async function handleCloudflareChat(request: Request, env: Env): Promise<Response> {
