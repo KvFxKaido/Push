@@ -112,6 +112,21 @@ export type PushStream<M extends LlmMessage = LlmMessage> = (
 /**
  * Bridge an async-iterable PushStream back to the legacy callback shape.
  * Helps migrate call sites incrementally.
+ *
+ * Legacy parameters intentionally dropped by this adapter:
+ * - `workspaceContext` — runtime concern; the runtime should assemble
+ *   context into `messages` before calling the gateway.
+ * - `hasSandbox` — runtime concern; gateways don't know about sandboxes.
+ * - `onPreCompact` — runtime budget signal, not a provider event.
+ *
+ * Legacy parameters forwarded into `PushStreamRequest`:
+ * - `modelOverride` → `model` (falls back to `options.defaultModel`, then
+ *   the literal `'unknown'`; callers should supply one of the two).
+ * - `systemPromptOverride`, `scratchpadContent` — passed through for the
+ *   gateway to honor; this adapter does not splice them into `messages`.
+ * - `signal` — aborts settle via `onDone()` (pre-, mid-, and post-stream)
+ *   to match existing `ProviderStreamFn` consumers that treat cancellation
+ *   as a clean finish.
  */
 export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
   gatewayStream: PushStream<M>,
