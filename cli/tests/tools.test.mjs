@@ -15,6 +15,23 @@ import {
   truncateText,
 } from '../tools.ts';
 
+async function rmWithRetry(target, attempts = process.platform === 'win32' ? 8 : 1) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      await fs.rm(target, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if (
+        (err?.code !== 'EBUSY' && err?.code !== 'EPERM') ||
+        attempt === attempts - 1
+      ) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+}
+
 // ─── detectToolCall ──────────────────────────────────────────────
 
 describe('detectToolCall', () => {
@@ -101,7 +118,8 @@ describe('detectAllToolCalls', () => {
 // ─── ensureInsideWorkspace ───────────────────────────────────────
 
 describe('ensureInsideWorkspace', () => {
-  const root = '/home/user/project';
+  const isWindows = process.platform === 'win32';
+  const root = isWindows ? 'C:\\home\\user\\project' : '/home/user/project';
 
   it('resolves a relative path inside workspace', async () => {
     const result = await ensureInsideWorkspace(root, 'src/index.ts');
@@ -122,7 +140,7 @@ describe('ensureInsideWorkspace', () => {
 
   it('rejects absolute path outside workspace', async () => {
     await assert.rejects(
-      () => ensureInsideWorkspace(root, '/etc/passwd'),
+      () => ensureInsideWorkspace(root, isWindows ? 'C:\\etc\\passwd' : '/etc/passwd'),
       /path escapes workspace root/,
     );
   });
@@ -136,14 +154,23 @@ describe('ensureInsideWorkspace', () => {
   });
 
   it('allows absolute path inside workspace', async () => {
-    const result = await ensureInsideWorkspace(root, '/home/user/project/deep/file.txt');
+    const result = await ensureInsideWorkspace(
+      root,
+      isWindows ? 'C:\\home\\user\\project\\deep\\file.txt' : '/home/user/project/deep/file.txt',
+    );
     assert.equal(result, path.join(root, 'deep/file.txt'));
   });
 
   it('rejects path that is a prefix but not a child', async () => {
     // /home/user/project-other should not be inside /home/user/project
     await assert.rejects(
-      () => ensureInsideWorkspace(root, '/home/user/project-other/file.txt'),
+      () =>
+        ensureInsideWorkspace(
+          root,
+          isWindows
+            ? 'C:\\home\\user\\project-other\\file.txt'
+            : '/home/user/project-other/file.txt',
+        ),
       /path escapes workspace root/,
     );
   });
@@ -313,7 +340,7 @@ describe('read_file truncation metadata', () => {
       assert.ok(read.text.includes('truncated_at_line:'), read.text);
       assert.ok(read.text.includes('remaining_bytes:'), read.text);
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 });
@@ -351,7 +378,7 @@ describe('edit_file hashline flow', () => {
       const updated = await fs.readFile(abs, 'utf8');
       assert.ok(updated.startsWith('ALPHA\n'));
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 
@@ -382,7 +409,7 @@ describe('edit_file hashline flow', () => {
       assert.equal(edit.ok, false);
       assert.equal(edit.structuredError.code, 'STALE_WRITE');
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 
@@ -422,7 +449,7 @@ describe('edit_file hashline flow', () => {
       const updated = await fs.readFile(abs, 'utf8');
       assert.equal(updated, 'alpha\nBETA-2\ngamma\n');
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 });
@@ -441,7 +468,7 @@ describe('exec headless hardening', () => {
       assert.equal(result.ok, false);
       assert.equal(result.structuredError.code, 'EXEC_DISABLED');
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 
@@ -456,7 +483,7 @@ describe('exec headless hardening', () => {
       assert.equal(result.ok, true);
       assert.ok(result.text.includes('hello'));
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 
@@ -471,7 +498,7 @@ describe('exec headless hardening', () => {
       assert.equal(result.ok, false);
       assert.equal(result.structuredError.code, 'APPROVAL_REQUIRED');
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 
@@ -484,7 +511,7 @@ describe('exec headless hardening', () => {
       assert.equal(result.ok, true);
       assert.ok(result.text.includes('safe'));
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 });
@@ -621,7 +648,7 @@ describe('safe command exec bypass', () => {
       // rm -rf node_modules is safe — should not trigger approvalFn
       assert.equal(result.ok, true);
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 
@@ -638,7 +665,7 @@ describe('safe command exec bypass', () => {
       assert.equal(result.ok, false);
       assert.ok(result.text.includes('headless'));
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 
@@ -660,10 +687,12 @@ describe('safe command exec bypass', () => {
       );
       // chmod 777 matches user-defined prefix — should not prompt
       assert.equal(result.ok, true);
-      const stat = await fs.stat(target);
-      assert.equal(stat.mode & 0o777, 0o777);
+      if (process.platform !== 'win32') {
+        const stat = await fs.stat(target);
+        assert.equal(stat.mode & 0o777, 0o777);
+      }
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 });
@@ -691,8 +720,9 @@ describe('exec session tools', () => {
       assert.ok(sessionId, 'exec_start should return a session_id');
 
       // Poll on a wall-clock budget rather than a fixed iteration count.
-      // `startExecSession` uses `/bin/bash -lc`, which sources login profiles
-      // (`.bashrc`, `nvm.sh`, etc.) before running the inlined command —
+      // `startExecSession` resolves a command shell (typically `bash -lc` on
+      // Unix), which can source login profiles (`.bashrc`, `nvm.sh`, etc.)
+      // before running the inlined command —
       // measured at ~1200ms on Node 20 CI runners, which blows past any
       // short iteration×sleep window. The command itself only runs ~200ms
       // once bash is up, so a 15s budget is overkill for the happy path
@@ -748,7 +778,7 @@ describe('exec session tools', () => {
       );
       assert.equal(stop.ok, true);
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 
@@ -762,7 +792,7 @@ describe('exec session tools', () => {
       assert.equal(result.ok, false);
       assert.equal(result.structuredError?.code, 'EXEC_DISABLED');
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 });
@@ -782,7 +812,7 @@ describe('lsp_diagnostics tool', () => {
       assert.ok(result.structuredError);
       assert.equal(result.structuredError.code, 'UNSUPPORTED_PROJECT_TYPE');
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 
@@ -825,7 +855,7 @@ describe('lsp_diagnostics tool', () => {
         );
       }
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 
@@ -861,7 +891,7 @@ describe('lsp_diagnostics tool', () => {
         );
       }
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 
@@ -900,7 +930,7 @@ describe('lsp_diagnostics tool', () => {
         );
       }
     } finally {
-      await fs.rm(root, { recursive: true, force: true });
+      await rmWithRetry(root);
     }
   });
 });

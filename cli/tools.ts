@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from './hashline.js';
 import { runDiagnostics } from './diagnostics.js';
+import { runCommandInResolvedShell, spawnCommandInResolvedShell } from './shell.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -581,9 +582,7 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
   const isLocalSandbox = process.env.PUSH_LOCAL_SANDBOX === 'true';
   const canUseScriptTty = ttyRequested && !isLocalSandbox && (await hasScriptBinary());
 
-  const bin = isLocalSandbox ? 'docker' : canUseScriptTty ? 'script' : '/bin/bash';
-
-  const args = isLocalSandbox
+  const sandboxArgs = isLocalSandbox
     ? [
         'run',
         '--rm',
@@ -597,15 +596,29 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
         '-lc',
         command,
       ]
-    : canUseScriptTty
-      ? ['-q', '-f', '-c', command, '/dev/null']
-      : ['-lc', command];
+    : null;
 
-  const child = spawn(bin, args, {
-    cwd: workspaceRoot,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: process.env,
-  });
+  const { child } = isLocalSandbox
+    ? {
+        child: spawn('docker', sandboxArgs!, {
+          cwd: workspaceRoot,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: process.env,
+        }),
+      }
+    : canUseScriptTty
+      ? {
+          child: spawn('script', ['-q', '-f', '-c', command, '/dev/null'], {
+            cwd: workspaceRoot,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: process.env,
+          }),
+        }
+      : await spawnCommandInResolvedShell(command, {
+          cwd: workspaceRoot,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: process.env,
+        });
 
   const sessionId = nextExecSessionId();
   const session = {
@@ -1550,7 +1563,6 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
         try {
           const isLocalSandbox = process.env.PUSH_LOCAL_SANDBOX === 'true';
-          const bin = isLocalSandbox ? 'docker' : '/bin/bash';
           const args = isLocalSandbox
             ? [
                 'run',
@@ -1564,14 +1576,16 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
                 '-lc',
                 command,
               ]
-            : ['-lc', command];
+            : null;
           const execOpts = {
             cwd: workspaceRoot,
             timeout: timeoutMs,
             maxBuffer: 4_000_000,
           };
           if (options.signal) execOpts.signal = options.signal;
-          const { stdout, stderr } = await execFileAsync(bin, args, execOpts);
+          const { stdout, stderr } = isLocalSandbox
+            ? await execFileAsync('docker', args!, execOpts)
+            : await runCommandInResolvedShell(command, execOpts);
           return {
             ok: true,
             text: truncateText(formatExecOutput(stdout, stderr, 0)),

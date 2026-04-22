@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import {
   getSocketPath,
   getPidPath,
+  isNamedPipePath,
   validateAttachToken,
   getRestartPolicy,
   shouldRecover,
@@ -113,7 +114,7 @@ async function canListenOnUnixSocket(socketPath) {
   } catch (err) {
     const code = err && typeof err === 'object' && 'code' in err ? err.code : undefined;
     if (code === 'EPERM' || code === 'EACCES') {
-      return { ok: false, reason: `unix sockets unavailable in this environment (${code})` };
+      return { ok: false, reason: `daemon transport unavailable in this environment (${code})` };
     }
     throw err;
   } finally {
@@ -123,11 +124,21 @@ async function canListenOnUnixSocket(socketPath) {
       // ignore
     }
     try {
-      await fs.unlink(socketPath);
+      if (!isNamedPipePath(socketPath)) {
+        await fs.unlink(socketPath);
+      }
     } catch {
       // ignore
     }
   }
+}
+
+function makeTestSocketPath(name) {
+  const suffix = randomBytes(4).toString('hex');
+  if (process.platform === 'win32') {
+    return `\\\\.\\pipe\\${name}-${suffix}`;
+  }
+  return path.join(os.tmpdir(), `${name}-${suffix}.sock`);
 }
 
 /**
@@ -201,8 +212,12 @@ describe('pushd path helpers', () => {
     const original = process.env.PUSHD_SOCKET;
     delete process.env.PUSHD_SOCKET;
     const p = getSocketPath();
-    assert.ok(p.includes('.push'));
-    assert.ok(p.endsWith('pushd.sock'));
+    if (isNamedPipePath(p)) {
+      assert.ok(p.startsWith('\\\\.\\pipe\\pushd-'));
+    } else {
+      assert.ok(p.includes('.push'));
+      assert.ok(p.endsWith('pushd.sock'));
+    }
     if (original !== undefined) process.env.PUSHD_SOCKET = original;
   });
 
@@ -308,12 +323,12 @@ describe('daemon-client module', () => {
 
   it('tryConnect returns null for nonexistent socket', async () => {
     const { tryConnect } = await import('../daemon-client.ts');
-    const result = await tryConnect('/tmp/nonexistent-pushd-test.sock', 200);
+    const result = await tryConnect(makeTestSocketPath('nonexistent-pushd-test'), 200);
     assert.equal(result, null);
   });
 
   it('connect + request + onEvent works with echo server', async (t) => {
-    const sockPath = path.join(os.tmpdir(), `dc-test-${randomBytes(4).toString('hex')}.sock`);
+    const sockPath = makeTestSocketPath('dc-test');
     const availability = await canListenOnUnixSocket(sockPath);
     if (!availability.ok) return t.skip(availability.reason);
 
@@ -381,7 +396,9 @@ describe('daemon-client module', () => {
     } finally {
       server.close();
       try {
-        await fs.unlink(sockPath);
+        if (!isNamedPipePath(sockPath)) {
+          await fs.unlink(sockPath);
+        }
       } catch {
         /* ignore */
       }
@@ -389,7 +406,7 @@ describe('daemon-client module', () => {
   });
 
   it('onEvent returns unsubscribe function', async (t) => {
-    const sockPath = path.join(os.tmpdir(), `dc-unsub-${randomBytes(4).toString('hex')}.sock`);
+    const sockPath = makeTestSocketPath('dc-unsub');
     const availability = await canListenOnUnixSocket(sockPath);
     if (!availability.ok) return t.skip(availability.reason);
 
@@ -462,7 +479,9 @@ describe('daemon-client module', () => {
     } finally {
       server.close();
       try {
-        await fs.unlink(sockPath);
+        if (!isNamedPipePath(sockPath)) {
+          await fs.unlink(sockPath);
+        }
       } catch {
         /* ignore */
       }

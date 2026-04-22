@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getSocketPath, getPidPath, validateAttachToken } from '../pushd.ts';
+import { getSocketPath, getPidPath, validateAttachToken, isNamedPipePath } from '../pushd.ts';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -11,8 +11,12 @@ describe('pushd path helpers', () => {
     const original = process.env.PUSHD_SOCKET;
     delete process.env.PUSHD_SOCKET;
     const p = getSocketPath();
-    assert.ok(p.includes('.push'));
-    assert.ok(p.endsWith('pushd.sock'));
+    if (isNamedPipePath(p)) {
+      assert.ok(p.startsWith('\\\\.\\pipe\\pushd-'));
+    } else {
+      assert.ok(p.includes('.push'));
+      assert.ok(p.endsWith('pushd.sock'));
+    }
     if (original !== undefined) process.env.PUSHD_SOCKET = original;
   });
 

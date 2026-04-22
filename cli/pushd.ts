@@ -4,7 +4,7 @@
  * pushd.ts — Push daemon (Track 4)
  *
  * Persistent background daemon that reuses the same engine as the CLI.
- * Transport: Unix domain socket, NDJSON (one JSON object per line).
+ * Transport: Unix domain socket or Windows named pipe, NDJSON (one JSON object per line).
  *
  * Supported request types:
  *   hello            — handshake + capability negotiation
@@ -131,8 +131,19 @@ const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 // ─── Socket path ─────────────────────────────────────────────────
 
+function getDefaultWindowsPipePath() {
+  const rawUser = process.env.USERNAME || process.env.USER || 'user';
+  const safeUser = String(rawUser).replace(/[^A-Za-z0-9_.-]/g, '_');
+  return `\\\\.\\pipe\\pushd-${safeUser}`;
+}
+
+export function isNamedPipePath(targetPath) {
+  return typeof targetPath === 'string' && targetPath.startsWith('\\\\.\\pipe\\');
+}
+
 export function getSocketPath() {
   if (process.env.PUSHD_SOCKET) return process.env.PUSHD_SOCKET;
+  if (process.platform === 'win32') return getDefaultWindowsPipePath();
   const pushDir = path.join(os.homedir(), '.push', 'run');
   return path.join(pushDir, 'pushd.sock');
 }
@@ -161,12 +172,14 @@ async function cleanPidFile() {
 }
 
 async function ensureSocketDir(socketPath) {
+  if (isNamedPipePath(socketPath)) return;
   const dir = path.dirname(socketPath);
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
   await fs.chmod(dir, 0o700);
 }
 
 async function cleanStaleSocket(socketPath) {
+  if (isNamedPipePath(socketPath)) return;
   try {
     await fs.unlink(socketPath);
   } catch (err) {
@@ -3653,7 +3666,9 @@ export async function main() {
   server.on('listening', async () => {
     try {
       await writePidFile();
-      await fs.chmod(socketPath, 0o600);
+      if (!isNamedPipePath(socketPath)) {
+        await fs.chmod(socketPath, 0o600);
+      }
     } catch {
       // non-fatal
     }
