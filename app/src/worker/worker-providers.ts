@@ -12,27 +12,28 @@ import {
   getVertexNativeConfig,
   getExperimentalUpstreamUrl,
   getGoogleAccessToken,
-} from './worker-middleware';
-
+  buildVertexAnthropicEndpoint,
+  buildVertexOpenApiBaseUrl,
+  getVertexModelTransport,
+  VERTEX_MODEL_OPTIONS} from './worker-middleware';
 import { REQUEST_ID_HEADER } from '../lib/request-id';
 import { validateAndNormalizeChatRequest } from '../lib/chat-request-guardrails';
 import {
   buildAnthropicMessagesRequest,
-  createAnthropicTranslatedStream,
-} from '../lib/openai-anthropic-bridge';
+  createAnthropicTranslatedStream} from '../lib/openai-anthropic-bridge';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import {
-  buildVertexAnthropicEndpoint,
-  buildVertexOpenApiBaseUrl,
-  getVertexModelTransport,
-  VERTEX_MODEL_OPTIONS,
-} from '../lib/vertex-provider';
+  buildVertexAnthropicEndpoint as buildVertexAnthropicEndpointLib,
+  buildVertexOpenApiBaseUrl as buildVertexOpenApiBaseUrlLib,
+  getVertexModelTransport as getVertexModelTransportLib,
+  VERTEX_MODEL_OPTIONS as VERTEX_MODEL_OPTIONS_LIB} from '../lib/vertex-provider';
 import {
   formatExperimentalProviderHttpError,
-  formatVertexProviderHttpError,
-} from '../lib/provider-error-utils';
+  formatVertexProviderHttpError} from '../lib/provider-error-utils';
 import type { ExperimentalProviderType } from '../lib/experimental-providers';
 
+// Gateway Abstraction imports
+import { createProviderStreamAdapter, type LlmMessage, type PushStream, type PushStreamRequest, type PushStreamEvent } from '../../lib/provider-contract';</content>}}
 // --- Cloudflare Workers AI ---
 
 const CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR =
@@ -73,10 +74,71 @@ function buildCloudflareAiInput(parsedRequest: Record<string, unknown>): Record<
   ] as const) {
     if (key in parsedRequest) input[key] = parsedRequest[key];
   }
-
   return input;
 }
 
+// Cloudflare Workers AI PushStream implementation
+async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterable<PushStreamEvent> {
+  // Build the input for env.AI.run
+  const input: Record<string, unknown> = {
+    messages: req.messages.map(m => ({ role: m.role, content: m.content })),
+    stream: true,
+  };
+
+  // Map PushStreamRequest params to Cloudflare AI params
+  if (req.maxTokens !== undefined) input.max_tokens = req.maxTokens;
+  if (req.temperature !== undefined) input.temperature = req.temperature;
+  if (req.topP !== undefined) input.top_p = req.topP;
+
+  try {
+    // Run the AI model
+    const stream = (await (env.AI as any).run(req.model, input)) as ReadableStream | unknown;
+
+    if (!(stream instanceof ReadableStream)) {
+      throw new Error('Cloudflare AI did not return a stream');
+    }
+
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') {
+            yield { type: 'done', finishReason: 'stop' };
+            return;
+          }
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta && parsed.choices[0].delta.content) {
+              yield { type: 'text_delta', text: parsed.choices[0].delta.content };
+            }
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
+    }
+
+    // If we exit the loop without [DONE], yield done anyway
+    yield { type: 'done', finishReason: 'stop' };
+  } catch (error) {
+    // For errors, we could yield an error event, but since PushStreamEvent doesn't have error type,
+    // throw the error to be handled by the adapter
+    throw error;
+  }
+}
+
+export async function handleCloudflareChat(request: Request, env: Env): Promise<Response> {
 export async function handleCloudflareChat(request: Request, env: Env): Promise<Response> {
   const preamble = await runPreamble(request, env, {
     buildAuth: (runtimeEnv) => (runtimeEnv.AI ? 'WorkersAIBinding' : null),
@@ -122,14 +184,69 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
   });
 
   try {
-    // TODO: narrow once @cloudflare/workers-types exposes a generic run overload.
-    // `Ai.run` is typed per literal model id; we route a dynamic string, so we
-    // cast and rely on the binding to surface invalid-model errors at runtime.
-    // biome-ignore lint/suspicious/noExplicitAny: dynamic model id routing
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const stream = (await (env.AI as any).run(model, buildCloudflareAiInput(parsedRequest))) as
-      | ReadableStream
-      | unknown;
+    // Convert raw messages to LlmMessage shape for the PushStream contract.
+    const llmMessages: LlmMessage[] = (parsedRequest.messages as { role: string; content: string }[]).map(
+      (m, i) => ({
+        id: `msg-${i}`,
+        role: m.role as 'user' | 'assistant' | 'system',
+        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+        timestamp: Date.now(),
+      }),
+    );
+
+    const req: PushStreamRequest = {
+      provider: 'cloudflare',
+      model,
+      messages: llmMessages,
+      maxTokens: parsedRequest.max_tokens as number | undefined,
+      temperature: parsedRequest.temperature as number | undefined,
+      topP: parsedRequest.top_p as number | undefined,
+    };
+
+    // Build a cloudflareStream that is curried over env.
+    const cloudflareFn: PushStream = (r) => cloudflareStream(r, env);
+    const adaptedStream = createProviderStreamAdapter(cloudflareFn, 'cloudflare', {
+      defaultModel: model,
+    });
+
+    // Collect chunks into a SSE stream for the HTTP response.
+    let pending = '';
+
+    // Wire an AbortSignal so cancellation propagates through the adapter.
+    const controller = new AbortController();
+
+    const body = new ReadableStream({
+      start(c) {
+        adaptedStream(
+          messages as Parameters<typeof adaptedStream>[0],
+          (token) => {
+            pending += `data: ${JSON.stringify({ choices: [{ delta: { content: token } }] })}\n\n`;
+            c.enqueue(new TextEncoder().encode(pending));
+            pending = '';
+          },
+          () => {
+            pending += `data: [DONE]\n\n`;
+            c.enqueue(new TextEncoder().encode(pending));
+            pending = '';
+            c.close();
+          },
+          (err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            c.error(new Error(msg));
+          },
+          undefined, // onThinkingToken
+          undefined, // workspaceContext
+          undefined, // hasSandbox
+          undefined, // modelOverride (defaultModel is set above)
+          undefined, // systemPromptOverride
+          undefined, // scratchpadContent
+          controller.signal, // signal — abort here propagates to the adapter
+        );
+      },
+      cancel() {
+        controller.abort();
+      },
+    });
 
     wlog('info', 'upstream_ok', {
       requestId,
@@ -138,22 +255,12 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
       trace_id: spanCtx.traceId,
     });
 
-    if (stream instanceof ReadableStream) {
-      return new Response(stream, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          [REQUEST_ID_HEADER]: requestId,
-          'X-Push-Trace-Id': spanCtx.traceId,
-          'X-Push-Span-Id': spanCtx.spanId,
-        },
-      });
-    }
-
-    return Response.json(stream, {
+    return new Response(body, {
+      status: 200,
       headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
         [REQUEST_ID_HEADER]: requestId,
         'X-Push-Trace-Id': spanCtx.traceId,
         'X-Push-Span-Id': spanCtx.spanId,
