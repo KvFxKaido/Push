@@ -61,11 +61,11 @@ Existing (`lib/sandbox-provider.ts`, authored as part of the original AgentScope
 Every non-create route gates on a token minted at sandbox creation time:
 
 - **Storage**: `SANDBOX_TOKENS` KV namespace, key `token:<sandboxId>`, value `{ token, createdAt, ownerHint? }`, TTL 86,400 s (24 h safety net if `routeCleanup` doesn't run).
-- **Mint**: `issueToken` called after all provisioning succeeds in `routeCreate`. If KV write fails, `routeCreate` destroys the sandbox before propagating the error — no orphaned unreachable containers.
-- **Verify**: `verifyToken` does input-length cap (256 bytes, OOM defense), KV lookup, TokenRecord-shape validation, and timing-safe byte-wise XOR compare. Fails closed on missing binding (503), missing record (404), or mismatch (403).
-- **Revoke**: `routeCleanup` calls `revokeToken` after `sandbox.destroy()` succeeds. If destroy throws, the token survives so the caller can retry with auth intact; KV TTL sweeps up orphans.
+- **Mint**: `issueToken` called after all provisioning succeeds in `routeCreate`. The same token is also written into `/tmp/push-owner-token` inside the sandbox. If either KV write or file write fails, `routeCreate` destroys the sandbox before propagating the error — no orphaned unreachable containers.
+- **Verify**: normal routes verify against the sandbox-local token file first, using the same timing-safe compare + input-length cap (256 bytes, OOM defense) as the old KV path. This intentionally keeps the auth hot path on the sandbox DO itself, avoiding false "session expired" failures from Workers KV propagation lag across PoPs. `cleanup` still falls back to KV so a dead sandbox can be torn down if its token file is already gone.
+- **Revoke**: `routeCleanup` calls `revokeToken` after `sandbox.destroy()` succeeds. If destroy throws, the KV token survives so the caller can retry cleanup; KV TTL still sweeps up orphans.
 
-The dispatcher wraps `verifyToken` in a local try/catch that returns a fail-closed 503 on unexpected throws (e.g., KV transient errors that bypass the in-module catch).
+The dispatcher still wraps auth verification in a local try/catch that returns a fail-closed 503 on unexpected throws.
 
 ### In-container reads (PR #356)
 

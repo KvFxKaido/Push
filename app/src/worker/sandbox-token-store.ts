@@ -73,7 +73,7 @@ export async function issueToken(
 // well under this. The cap prevents an attacker from OOM'ing the Worker by
 // submitting a multi-MB "token" that timingSafeEqual would otherwise encode
 // byte-by-byte into memory.
-const MAX_TOKEN_BYTES = 256;
+export const MAX_TOKEN_BYTES = 256;
 
 export async function verifyToken(
   store: KVNamespace | undefined,
@@ -125,7 +125,7 @@ export async function revokeToken(
  * unequal lengths still run a full scan against the longer string before
  * returning false — no early-exit length-comparison leak.
  */
-function timingSafeEqual(a: string, b: string): boolean {
+export function timingSafeEqual(a: string, b: string): boolean {
   const enc = new TextEncoder();
   const aBytes = enc.encode(a);
   const bBytes = enc.encode(b);

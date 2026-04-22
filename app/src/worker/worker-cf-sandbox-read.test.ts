@@ -11,6 +11,7 @@ const MAX_READ_BYTES = 5_000_000;
 const PROBE_BYTES = MAX_READ_BYTES + 1;
 const DEFAULT_HASH = 'a'.repeat(64);
 const DEFAULT_OWNER_TOKEN = 'test-owner-token';
+const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 
 type ExecResult = { stdout?: string; stderr?: string; exitCode?: number };
 
@@ -59,6 +60,9 @@ function makeReadRequest(body: Record<string, unknown>): Request {
 
 function createFakeSandbox() {
   return {
+    readFile: vi.fn(async (path: string) => ({
+      content: path === OWNER_TOKEN_PATH ? DEFAULT_OWNER_TOKEN : '',
+    })),
     exec: vi.fn(async (command: string): Promise<ExecResult> => {
       void command;
       return { stdout: '', stderr: '', exitCode: 0 };

@@ -8,6 +8,7 @@ vi.mock('@cloudflare/sandbox', () => ({
 }));
 
 const getSandboxMock = vi.mocked(getSandbox);
+const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 
 interface FakeSandbox {
   exec: ReturnType<typeof vi.fn>;
@@ -23,7 +24,9 @@ function createFakeSandbox(): FakeSandbox {
   return {
     exec: vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 })),
     writeFile: vi.fn(async () => ({ success: true })),
-    readFile: vi.fn(async () => ({ content: '' })),
+    readFile: vi.fn(async (path: string) => ({
+      content: path === OWNER_TOKEN_PATH ? DEFAULT_OWNER_TOKEN : '',
+    })),
     listFiles: vi.fn(async () => ({ entries: [] })),
     deleteFile: vi.fn(async () => ({ success: true })),
     gitCheckout: vi.fn(async () => ({ success: true })),
@@ -246,6 +249,7 @@ describe('handleCloudflareSandbox happy paths', () => {
 
   it('connects to a reachable sandbox', async () => {
     const sandbox = mockSandbox();
+    sandbox.readFile.mockResolvedValue({ content: 'ot' });
     sandbox.exec
       .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
       .mockResolvedValueOnce({ stdout: probeStdout(['pyproject.toml']), stderr: '', exitCode: 0 });
@@ -270,6 +274,25 @@ describe('handleCloudflareSandbox happy paths', () => {
     expect(getSandboxMock).toHaveBeenCalledWith(env.Sandbox, 'sb-1');
     expect(sandbox.exec).toHaveBeenNthCalledWith(1, 'true');
     expect(sandbox.exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('authenticates normal routes from the sandbox token file even if KV is stale', async () => {
+    const sandbox = mockSandbox();
+    sandbox.readFile.mockResolvedValue({ content: DEFAULT_OWNER_TOKEN });
+    sandbox.exec.mockResolvedValue({ stdout: 'ok', stderr: '', exitCode: 0 });
+
+    const env = makeEnv({
+      SANDBOX_TOKENS: makeTokensKV('stale-kv-token') as unknown as Env['SANDBOX_TOKENS'],
+    });
+    const response = await callRoute('exec', { sandbox_id: 'sb-1', command: 'pwd' }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      stdout: 'ok',
+      stderr: '',
+      exit_code: 0,
+    });
+    expect(sandbox.readFile).toHaveBeenCalledWith(OWNER_TOKEN_PATH);
   });
 
   it('executes a command in the requested workdir', async () => {
@@ -400,6 +423,23 @@ describe('handleCloudflareSandbox hardened connect and diff paths', () => {
     });
     expect(sandbox.exec).toHaveBeenCalledOnce();
     expect(sandbox.exec).toHaveBeenCalledWith('true');
+  });
+
+  it('falls back to KV auth for cleanup when the sandbox token file is gone', async () => {
+    const sandbox = mockSandbox();
+    sandbox.readFile.mockRejectedValue(new Error('No such file'));
+
+    const response = await callRoute(
+      'cleanup',
+      { sandbox_id: 'sb-1' },
+      makeEnv({
+        SANDBOX_TOKENS: makeTokensKV(DEFAULT_OWNER_TOKEN) as unknown as Env['SANDBOX_TOKENS'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(sandbox.destroy).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -575,6 +615,7 @@ describe('handleCloudflareSandbox snapshot stubs', () => {
   it.each(['hibernate', 'restore-snapshot'])(
     'returns 501 for %s with SNAPSHOT_NOT_SUPPORTED',
     async (route) => {
+      const sandbox = mockSandbox();
       const response = await callRoute(route, { sandbox_id: 'sb-1' });
 
       expect(response.status).toBe(501);
@@ -582,7 +623,8 @@ describe('handleCloudflareSandbox snapshot stubs', () => {
         error: 'Snapshots not supported on the Cloudflare provider yet',
         code: 'SNAPSHOT_NOT_SUPPORTED',
       });
-      expect(getSandboxMock).not.toHaveBeenCalled();
+      expect(getSandboxMock).toHaveBeenCalledOnce();
+      expect(sandbox.readFile).toHaveBeenCalledWith(OWNER_TOKEN_PATH);
     },
   );
 });

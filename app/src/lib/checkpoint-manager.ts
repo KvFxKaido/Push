@@ -15,8 +15,17 @@ import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storag
 
 const CHECKPOINT_MAX_AGE_MS = 25 * 60 * 1000; // 25 min — matches sandbox max age
 const RUN_ACTIVE_PREFIX = 'run_active_';
+const RUN_BROWSER_TAB_ID_KEY = 'run_browser_tab_id';
 const TAB_LOCK_STALE_MS = 60_000; // Consider lock stale after 60s without heartbeat
 const CHECKPOINT_DELTA_WARN_SIZE = 50 * 1024; // 50KB warning threshold
+const PAGE_INSTANCE_ID = createClientInstanceId();
+
+interface RunTabLockRecord {
+  tabId: string;
+  heartbeat: number;
+  browserTabId?: string;
+  pageInstanceId?: string;
+}
 
 export interface ResumeEvent {
   phase: LoopPhase;
@@ -49,6 +58,52 @@ export interface RunCheckpointSnapshot {
 }
 
 const resumeEvents: ResumeEvent[] = [];
+let browserTabIdCache: string | null = null;
+
+function createClientInstanceId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getBrowserTabId(): string {
+  if (browserTabIdCache) return browserTabIdCache;
+
+  const existing = safeStorageGet(RUN_BROWSER_TAB_ID_KEY, 'session');
+  if (existing) {
+    browserTabIdCache = existing;
+    return existing;
+  }
+
+  const created = createClientInstanceId();
+  if (safeStorageSet(RUN_BROWSER_TAB_ID_KEY, created, 'session')) {
+    browserTabIdCache = safeStorageGet(RUN_BROWSER_TAB_ID_KEY, 'session') ?? created;
+    return browserTabIdCache;
+  }
+
+  browserTabIdCache = created;
+  return created;
+}
+
+function parseRunTabLock(raw: string | null): RunTabLockRecord | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as RunTabLockRecord;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (typeof parsed.tabId !== 'string' || !parsed.tabId) return null;
+    if (typeof parsed.heartbeat !== 'number') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function canReclaimFreshRunTabLock(lock: RunTabLockRecord): boolean {
+  return (
+    typeof lock.browserTabId === 'string' &&
+    lock.browserTabId === getBrowserTabId() &&
+    typeof lock.pageInstanceId === 'string' &&
+    lock.pageInstanceId !== PAGE_INSTANCE_ID
+  );
+}
 
 export function checkpointRequiresLiveSandboxStatus(
   checkpoint: Pick<RunCheckpoint, 'reason'>,
@@ -241,44 +296,36 @@ export function buildCheckpointReconciliationMessage(
 
 export function acquireRunTabLock(chatId: string): string | null {
   const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
-  const existing = safeStorageGet(key);
-  if (existing) {
-    try {
-      const lock = JSON.parse(existing) as { tabId: string; heartbeat: number };
-      if (Date.now() - lock.heartbeat < TAB_LOCK_STALE_MS) {
-        return null;
-      }
-    } catch {
-      // Malformed lock; take it over.
+  const existingLock = parseRunTabLock(safeStorageGet(key));
+  if (existingLock) {
+    const isFresh = Date.now() - existingLock.heartbeat < TAB_LOCK_STALE_MS;
+    if (isFresh && !canReclaimFreshRunTabLock(existingLock)) {
+      return null;
     }
   }
 
   const tabId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  safeStorageSet(key, JSON.stringify({ tabId, heartbeat: Date.now() }));
+  safeStorageSet(
+    key,
+    JSON.stringify({
+      tabId,
+      heartbeat: Date.now(),
+      browserTabId: getBrowserTabId(),
+      pageInstanceId: PAGE_INSTANCE_ID,
+    } satisfies RunTabLockRecord),
+  );
 
-  const verify = safeStorageGet(key);
-  if (!verify) return null;
-
-  try {
-    const parsed = JSON.parse(verify) as { tabId: string };
-    return parsed.tabId === tabId ? tabId : null;
-  } catch {
-    return null;
-  }
+  const verify = parseRunTabLock(safeStorageGet(key));
+  return verify?.tabId === tabId ? tabId : null;
 }
 
 export function releaseRunTabLock(chatId: string, ownerTabId: string | null): void {
   if (!ownerTabId) return;
 
   const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
-  const existing = safeStorageGet(key);
-  if (existing) {
-    try {
-      const lock = JSON.parse(existing) as { tabId: string };
-      if (lock.tabId !== ownerTabId) return;
-    } catch {
-      // Malformed lock; safe to remove.
-    }
+  const lock = parseRunTabLock(safeStorageGet(key));
+  if (lock && lock.tabId !== ownerTabId) {
+    return;
   }
 
   safeStorageRemove(key);
@@ -288,16 +335,10 @@ export function heartbeatRunTabLock(chatId: string, ownerTabId: string | null): 
   if (!ownerTabId) return;
 
   const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
-  const existing = safeStorageGet(key);
-  if (!existing) return;
+  const lock = parseRunTabLock(safeStorageGet(key));
+  if (!lock || lock.tabId !== ownerTabId) return;
 
-  try {
-    const lock = JSON.parse(existing) as { tabId: string; heartbeat: number };
-    if (lock.tabId !== ownerTabId) return;
-    safeStorageSet(key, JSON.stringify({ ...lock, heartbeat: Date.now() }));
-  } catch {
-    // Ignore malformed heartbeat payloads.
-  }
+  safeStorageSet(key, JSON.stringify({ ...lock, heartbeat: Date.now() }));
 }
 
 export function recordResumeEvent(checkpoint: RunCheckpoint): void {
@@ -317,4 +358,10 @@ export function recordResumeEvent(checkpoint: RunCheckpoint): void {
 
 export function getResumeEvents(): readonly ResumeEvent[] {
   return resumeEvents;
+}
+
+// Test-only helper: keeps unit tests isolated even though the browser-tab
+// cache is intentionally module-scoped for app runtime stability.
+export function resetRunTabLockBrowserStateForTest(): void {
+  browserTabIdCache = null;
 }

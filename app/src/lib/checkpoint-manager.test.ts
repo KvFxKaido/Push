@@ -15,16 +15,20 @@ vi.mock('./checkpoint-store', () => ({
   saveCheckpoint: (...args: unknown[]) => mockSaveCheckpoint(...(args as [RunCheckpoint])),
 }));
 
-let fakeStorage: Record<string, string> = {};
+let fakeLocalStorage: Record<string, string> = {};
+let fakeSessionStorage: Record<string, string> = {};
 
 vi.mock('./safe-storage', () => ({
-  safeStorageGet: (key: string) => fakeStorage[key] ?? null,
-  safeStorageRemove: (key: string) => {
-    delete fakeStorage[key];
+  safeStorageGet: (key: string, area: 'local' | 'session' = 'local') =>
+    (area === 'session' ? fakeSessionStorage : fakeLocalStorage)[key] ?? null,
+  safeStorageRemove: (key: string, area: 'local' | 'session' = 'local') => {
+    const target = area === 'session' ? fakeSessionStorage : fakeLocalStorage;
+    delete target[key];
     return true;
   },
-  safeStorageSet: (key: string, value: string) => {
-    fakeStorage[key] = value;
+  safeStorageSet: (key: string, value: string, area: 'local' | 'session' = 'local') => {
+    const target = area === 'session' ? fakeSessionStorage : fakeLocalStorage;
+    target[key] = value;
     return true;
   },
 }));
@@ -36,6 +40,7 @@ const {
   checkpointRequiresLiveSandboxStatus,
   detectInterruptedRun,
   heartbeatRunTabLock,
+  resetRunTabLockBrowserStateForTest,
   releaseRunTabLock,
   saveRunCheckpoint,
 } = await import('./checkpoint-manager');
@@ -63,7 +68,9 @@ function makeCheckpoint(overrides: Partial<RunCheckpoint> = {}): RunCheckpoint {
 }
 
 beforeEach(() => {
-  fakeStorage = {};
+  fakeLocalStorage = {};
+  fakeSessionStorage = {};
+  resetRunTabLockBrowserStateForTest();
   mockClearCheckpoint.mockReset().mockResolvedValue(undefined);
   mockLoadCheckpoint.mockReset().mockResolvedValue(null);
   mockSaveCheckpoint.mockReset().mockResolvedValue(undefined);
@@ -239,20 +246,20 @@ describe('checkpoint-manager', () => {
     expect(acquireRunTabLock('chat-1')).toBeNull();
 
     const key = 'run_active_chat-1';
-    const beforeHeartbeat = JSON.parse(fakeStorage[key]).heartbeat as number;
+    const beforeHeartbeat = JSON.parse(fakeLocalStorage[key]).heartbeat as number;
 
     vi.advanceTimersByTime(15_000);
     heartbeatRunTabLock('chat-1', tabId);
 
-    const afterHeartbeat = JSON.parse(fakeStorage[key]).heartbeat as number;
+    const afterHeartbeat = JSON.parse(fakeLocalStorage[key]).heartbeat as number;
     expect(afterHeartbeat).toBeGreaterThan(beforeHeartbeat);
 
     releaseRunTabLock('chat-1', tabId);
-    expect(fakeStorage[key]).toBeUndefined();
+    expect(fakeLocalStorage[key]).toBeUndefined();
   });
 
   it('takes over stale tab locks', () => {
-    fakeStorage['run_active_chat-1'] = JSON.stringify({
+    fakeLocalStorage['run_active_chat-1'] = JSON.stringify({
       tabId: 'old-lock',
       heartbeat: Date.now() - 61_000,
     });
@@ -261,5 +268,37 @@ describe('checkpoint-manager', () => {
 
     expect(tabId).toBeTruthy();
     expect(tabId).not.toBe('old-lock');
+  });
+
+  it('reclaims a fresh tab lock after a same-tab reload', async () => {
+    const firstLockId = acquireRunTabLock('chat-1');
+    expect(firstLockId).toBeTruthy();
+
+    const original = JSON.parse(fakeLocalStorage['run_active_chat-1']) as {
+      browserTabId?: string;
+      pageInstanceId?: string;
+      heartbeat?: number;
+    };
+    expect(original.browserTabId).toBeTruthy();
+    expect(original.pageInstanceId).toBeTruthy();
+
+    fakeLocalStorage['run_active_chat-1'] = JSON.stringify({
+      tabId: firstLockId,
+      heartbeat: original.heartbeat ?? Date.now(),
+      browserTabId: original.browserTabId,
+      pageInstanceId: 'previous-page-instance',
+    });
+
+    const reclaimedLockId = acquireRunTabLock('chat-1');
+
+    expect(reclaimedLockId).toBeTruthy();
+    expect(reclaimedLockId).not.toBe(firstLockId);
+
+    const reclaimed = JSON.parse(fakeLocalStorage['run_active_chat-1']) as {
+      browserTabId?: string;
+      pageInstanceId?: string;
+    };
+    expect(reclaimed.browserTabId).toBe(original.browserTabId);
+    expect(reclaimed.pageInstanceId).toBe(original.pageInstanceId);
   });
 });
