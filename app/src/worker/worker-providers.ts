@@ -25,12 +25,6 @@ import {
 } from '../lib/openai-anthropic-bridge';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import {
-  buildVertexAnthropicEndpoint as buildVertexAnthropicEndpointLib,
-  buildVertexOpenApiBaseUrl as buildVertexOpenApiBaseUrlLib,
-  getVertexModelTransport as getVertexModelTransportLib,
-  VERTEX_MODEL_OPTIONS as VERTEX_MODEL_OPTIONS_LIB,
-} from '../lib/vertex-provider';
-import {
   formatExperimentalProviderHttpError,
   formatVertexProviderHttpError,
 } from '../lib/provider-error-utils';
@@ -55,38 +49,6 @@ function isCloudflareTextGenerationModel(model: AiModelsSearchObject): boolean {
   return taskId.includes('text-generation') || taskName.includes('text generation');
 }
 
-function buildCloudflareAiInput(parsedRequest: Record<string, unknown>): Record<string, unknown> {
-  const input: Record<string, unknown> = {
-    messages: parsedRequest.messages,
-    stream: true,
-  };
-
-  if (Array.isArray(parsedRequest.tools)) input.tools = parsedRequest.tools;
-  if (Array.isArray(parsedRequest.functions)) input.functions = parsedRequest.functions;
-  if (
-    parsedRequest.response_format &&
-    typeof parsedRequest.response_format === 'object' &&
-    !Array.isArray(parsedRequest.response_format)
-  ) {
-    input.response_format = parsedRequest.response_format;
-  }
-
-  for (const key of [
-    'raw',
-    'max_tokens',
-    'temperature',
-    'top_p',
-    'top_k',
-    'seed',
-    'repetition_penalty',
-    'frequency_penalty',
-    'presence_penalty',
-  ] as const) {
-    if (key in parsedRequest) input[key] = parsedRequest[key];
-  }
-  return input;
-}
-
 // Cloudflare Workers AI PushStream implementation
 async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterable<PushStreamEvent> {
   // Build the input for env.AI.run
@@ -102,9 +64,14 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
 
   try {
     // Run the AI model
-    const stream = (await (env.AI as any).run(req.model, input)) as
-      | ReadableStream<Uint8Array>
-      | unknown;
+    const stream = (await (
+      env.AI as unknown as {
+        run: (
+          model: string,
+          input: Record<string, unknown>,
+        ) => Promise<ReadableStream<Uint8Array> | unknown>;
+      }
+    ).run(req.model, input)) as ReadableStream<Uint8Array> | unknown;
 
     if (!(stream instanceof ReadableStream)) {
       throw new Error('Cloudflare AI did not return a stream');
@@ -167,8 +134,6 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
     }
     yield { type: 'done', finishReason: 'stop' };
   } catch (error) {
-    // For errors, we could yield an error event, but since PushStreamEvent doesn't have error type,
-    // throw the error to be handled by the adapter
     throw error;
   }
 }
@@ -227,15 +192,6 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
       content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
       timestamp: Date.now(),
     }));
-
-    const req: PushStreamRequest = {
-      provider: 'cloudflare',
-      model,
-      messages: llmMessages,
-      maxTokens: parsedRequest.max_tokens as number | undefined,
-      temperature: parsedRequest.temperature as number | undefined,
-      topP: parsedRequest.top_p as number | undefined,
-    };
 
     // Build a cloudflareStream that is curried over env.
     const cloudflareFn: PushStream = (r) => cloudflareStream(r, env);
