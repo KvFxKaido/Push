@@ -16,11 +16,15 @@ function normalizeEnvValue(value: string | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function planForShellBin(bin: string, platform: string = process.platform): CommandShellPlan | null {
+function planForShellBin(
+  bin: string,
+  platform: string = process.platform,
+): CommandShellPlan | null {
   const normalized = normalizeEnvValue(bin);
   if (!normalized) return null;
 
-  const base = path.basename(normalized).toLowerCase();
+  const pathModule = platform === 'win32' ? path.win32 : path.posix;
+  const base = pathModule.basename(normalized).toLowerCase();
   if (base === 'cmd' || base === 'cmd.exe') {
     return {
       bin: normalized,
@@ -84,11 +88,11 @@ export function getCommandShellCandidates(
       pushCandidate(envShellPlan.bin);
     }
     if (systemRoot) {
-      pushCandidate(path.join(systemRoot, 'System32', 'bash.exe'));
+      pushCandidate(path.win32.join(systemRoot, 'System32', 'bash.exe'));
     }
     for (const base of programFiles) {
-      pushCandidate(path.join(base, 'Git', 'bin', 'bash.exe'));
-      pushCandidate(path.join(base, 'Git', 'usr', 'bin', 'bash.exe'));
+      pushCandidate(path.win32.join(base, 'Git', 'bin', 'bash.exe'));
+      pushCandidate(path.win32.join(base, 'Git', 'usr', 'bin', 'bash.exe'));
     }
     pushCandidate('bash');
     pushCandidate('sh');
@@ -115,7 +119,7 @@ async function probeShell(plan: CommandShellPlan): Promise<boolean> {
       plan.bin,
       plan.commandMode === 'stdin' ? plan.argsPrefix : [...plan.argsPrefix, 'exit 0'],
       {
-        stdio: 'pipe',
+        stdio: ['pipe', 'ignore', 'ignore'],
         windowsHide: true,
       },
     );
@@ -131,35 +135,42 @@ async function probeShell(plan: CommandShellPlan): Promise<boolean> {
       resolve(value);
     };
 
-    child.once('error', (err: NodeJS.ErrnoException) => {
-      if (err?.code === 'ENOENT') {
-        finish(false);
-        return;
+    const timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        // ignore
       }
+      finish(false);
+    }, 1500);
+
+    child.once('error', () => {
+      clearTimeout(timer);
       finish(false);
     });
 
-    child.once('spawn', () => {
-      if (plan.commandMode === 'argv') {
-        try {
-          child.kill();
-        } catch {
-          // ignore
-        }
-      }
-      finish(true);
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      finish(code === 0);
     });
   });
 }
 
-function createShellExitError(message: string, stdout: string, stderr: string, code, signal) {
-  const err = new Error(message) as NodeJS.ErrnoException & {
+function createShellExitError(
+  message: string,
+  stdout: string,
+  stderr: string,
+  code: number | string | null,
+  signal: string | null,
+) {
+  const err = new Error(message) as Error & {
+    code?: number | string;
     stdout?: string;
     stderr?: string;
     signal?: string | null;
     killed?: boolean;
   };
-  err.code = typeof code === 'number' ? code : 1;
+  err.code = typeof code === 'number' || typeof code === 'string' ? code : 1;
   err.stdout = stdout;
   err.stderr = stderr;
   err.signal = signal;
@@ -190,6 +201,7 @@ function spawnShellCommand(
 let cachedShellKey = '';
 let cachedShellPlan: CommandShellPlan | null = null;
 let cachedShellPromise: Promise<CommandShellPlan> | null = null;
+let cachedShellGeneration = 0;
 
 export async function resolveCommandShell(): Promise<CommandShellPlan> {
   const key = [
@@ -203,6 +215,10 @@ export async function resolveCommandShell(): Promise<CommandShellPlan> {
   if (cachedShellPromise && cachedShellKey === key) return cachedShellPromise;
 
   cachedShellKey = key;
+  cachedShellPlan = null;
+  cachedShellPromise = null;
+  const generation = ++cachedShellGeneration;
+
   cachedShellPromise = (async () => {
     const candidates = getCommandShellCandidates();
     const tried: string[] = [];
@@ -210,14 +226,18 @@ export async function resolveCommandShell(): Promise<CommandShellPlan> {
     for (const candidate of candidates) {
       tried.push(candidate.bin);
       if (await probeShell(candidate)) {
-        cachedShellPlan = candidate;
-        cachedShellPromise = null;
+        if (cachedShellGeneration === generation) {
+          cachedShellPlan = candidate;
+          cachedShellPromise = null;
+        }
         return candidate;
       }
     }
 
-    cachedShellPlan = null;
-    cachedShellPromise = null;
+    if (cachedShellGeneration === generation) {
+      cachedShellPlan = null;
+      cachedShellPromise = null;
+    }
     throw new Error(
       `No usable shell found for command execution. Tried: ${tried.join(', ')}. Set PUSH_SHELL to override.`,
     );
@@ -238,7 +258,8 @@ export async function runCommandInResolvedShell(
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     const spawnOptions = { ...options };
     const timeoutMs = typeof spawnOptions.timeout === 'number' ? spawnOptions.timeout : 0;
-    const maxBuffer = typeof spawnOptions.maxBuffer === 'number' ? spawnOptions.maxBuffer : Infinity;
+    const maxBuffer =
+      typeof spawnOptions.maxBuffer === 'number' ? spawnOptions.maxBuffer : Infinity;
     const abortSignal = spawnOptions.signal;
     delete spawnOptions.timeout;
     delete spawnOptions.maxBuffer;
@@ -316,7 +337,9 @@ export async function runCommandInResolvedShell(
         } catch {
           // ignore
         }
-        finishReject(createShellExitError(`Command failed: ${command}`, stdout, stderr, null, 'SIGTERM'));
+        finishReject(
+          createShellExitError(`Command failed: ${command}`, stdout, stderr, null, 'SIGTERM'),
+        );
       }, timeoutMs);
     }
 
@@ -335,7 +358,9 @@ export async function runCommandInResolvedShell(
         finishResolve();
         return;
       }
-      finishReject(createShellExitError(`Command failed: ${command}`, stdout, stderr, code, signal));
+      finishReject(
+        createShellExitError(`Command failed: ${command}`, stdout, stderr, code, signal),
+      );
     });
   });
 }

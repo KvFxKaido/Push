@@ -19,7 +19,7 @@ if exist "%COMPILED%" (
     )
     if defined NEWER_SRC (
       >&2 echo push: warning - !NEWER_SRC! is newer than cli\dist\cli\cli.js.
-      >&2 echo push: running from source via tsx. Run "npm run build:cli" to refresh the compiled dist,
+      >&2 echo push: running from source via tsx. Run "npm run build:cli" to refresh the compiled dist.
       >&2 echo push: or set PUSH_SKIP_STALE_CHECK=1 to silence this warning.
     ) else (
       set "USE_COMPILED=1"

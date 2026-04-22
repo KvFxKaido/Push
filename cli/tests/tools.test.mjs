@@ -21,10 +21,7 @@ async function rmWithRetry(target, attempts = process.platform === 'win32' ? 8 :
       await fs.rm(target, { recursive: true, force: true });
       return;
     } catch (err) {
-      if (
-        (err?.code !== 'EBUSY' && err?.code !== 'EPERM') ||
-        attempt === attempts - 1
-      ) {
+      if ((err?.code !== 'EBUSY' && err?.code !== 'EPERM') || attempt === attempts - 1) {
         throw err;
       }
       await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));

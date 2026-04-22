@@ -17,9 +17,7 @@ describe('getCommandShellCandidates', () => {
     assert.deepEqual(candidates[0].argsPrefix, ['-l', '-s']);
     assert.equal(candidates[0].commandMode, 'stdin');
     assert.equal(candidates[1].bin, 'C:\\msys64\\usr\\bin\\bash.exe');
-    assert.ok(
-      candidates.some((candidate) => candidate.bin === 'C:\\Windows\\System32\\bash.exe'),
-    );
+    assert.ok(candidates.some((candidate) => candidate.bin === 'C:\\Windows\\System32\\bash.exe'));
     assert.ok(candidates.some((candidate) => candidate.bin === 'bash'));
     assert.ok(candidates.some((candidate) => candidate.bin === 'pwsh'));
     assert.equal(candidates.at(-1).bin, 'C:\\Windows\\System32\\cmd.exe');
