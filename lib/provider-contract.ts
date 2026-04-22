@@ -4,12 +4,6 @@
  * Canonical home for the minimum surface an agent role needs to stream
  * tokens from a provider without importing Web shell state. Lives in `lib/`
  * so CLI (pushd, push-runtime-v2) and Web share one definition.
- *
- * `ProviderStreamFn` is generic over the message shape and the workspace-
- * context shape. Agents that only need the four portable message fields
- * (`LlmMessage`) use the default; callers that carry a richer message type
- * (e.g. Web's `ChatMessage` with attachments/cards) narrow both generics
- * at the boundary.
  */
 
 // ---------------------------------------------------------------------------
@@ -18,10 +12,6 @@
 
 /**
  * Minimum portable message shape understood by all lib/-side agent roles.
- *
- * Intentionally a subset of Web's `ChatMessage` so that reviewer/auditor/
- * explorer can operate on a strict 4-field envelope without dragging the
- * ChatCard / attachments / tool-result metadata universe into lib/.
  */
 export interface LlmMessage {
   id: string;
@@ -74,20 +64,6 @@ export interface PreCompactEvent {
 
 /**
  * Stream a chat completion from a provider.
- *
- * Parameter order is preserved from the pre-extraction `StreamChatFn` so
- * existing Web call sites type-check unchanged via
- * `StreamChatFn = ProviderStreamFn<ChatMessage, WorkspaceContext>`.
- *
- * Runtime safety note for the generic `M` parameter: the concrete Web
- * implementation (`streamSSEChat` in `app/src/lib/orchestrator.ts`) reads
- * `ChatMessage`-only fields (`attachments`, `isToolResult`) via optional
- * chaining / truthy guards only. Passing a plain `LlmMessage[]` through
- * a `ProviderStreamFn<ChatMessage, WorkspaceContext>` is therefore runtime-
- * safe even though contravariance makes the assignment unsound in the
- * abstract. If anyone ever removes those optional-chain guards, the Web
- * shim layer for agents that default to `LlmMessage` needs to widen its
- * message construction to match.
  */
 export type ProviderStreamFn<M extends LlmMessage = LlmMessage, W = unknown> = (
   messages: M[],
@@ -103,6 +79,124 @@ export type ProviderStreamFn<M extends LlmMessage = LlmMessage, W = unknown> = (
   signal?: AbortSignal,
   onPreCompact?: (event: PreCompactEvent) => void,
 ) => Promise<void>;
+
+// ---------------------------------------------------------------------------
+// Gateway Abstraction (New Wire Model)
+// ---------------------------------------------------------------------------
+
+export type PushStreamEvent =
+  | { type: 'text_delta'; text: string }
+  | { type: 'reasoning_delta'; text: string }
+  | {
+      type: 'done';
+      finishReason: 'stop' | 'length' | 'tool_calls' | 'aborted' | 'unknown';
+      usage?: StreamUsage;
+    };
+
+export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
+  provider: AIProviderType;
+  model: string;
+  messages: M[];
+  maxTokens?: number;
+  temperature?: number;
+  topP?: number;
+  signal?: AbortSignal;
+  systemPromptOverride?: string;
+  scratchpadContent?: string;
+}
+
+export type PushStream<M extends LlmMessage = LlmMessage> = (
+  req: PushStreamRequest<M>,
+) => AsyncIterable<PushStreamEvent>;
+
+/**
+ * Bridge an async-iterable PushStream back to the legacy callback shape.
+ * Helps migrate call sites incrementally.
+ *
+ * Legacy parameters intentionally dropped by this adapter:
+ * - `workspaceContext` — runtime concern; the runtime should assemble
+ *   context into `messages` before calling the gateway.
+ * - `hasSandbox` — runtime concern; gateways don't know about sandboxes.
+ * - `onPreCompact` — runtime budget signal, not a provider event.
+ *
+ * Legacy parameters forwarded into `PushStreamRequest`:
+ * - `modelOverride` → `model`, falling back to `options.defaultModel`. If
+ *   neither is supplied, the adapter fails fast via `onError` and never
+ *   invokes `gatewayStream`, so misconfiguration surfaces at the adapter
+ *   boundary instead of as an opaque downstream error.
+ * - `systemPromptOverride`, `scratchpadContent` — passed through for the
+ *   gateway to honor; this adapter does not splice them into `messages`.
+ * - `signal` — aborts settle via `onDone()` (pre-, mid-, and post-stream)
+ *   to match existing `ProviderStreamFn` consumers that treat cancellation
+ *   as a clean finish.
+ */
+export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
+  gatewayStream: PushStream<M>,
+  provider: AIProviderType,
+  options?: { defaultModel?: string },
+): ProviderStreamFn<M> {
+  return async (
+    messages,
+    onToken,
+    onDone,
+    onError,
+    onThinkingToken,
+    _workspaceContext,
+    _hasSandbox,
+    modelOverride,
+    systemPromptOverride,
+    scratchpadContent,
+    signal,
+    _onPreCompact,
+  ) => {
+    if (signal?.aborted) {
+      onDone();
+      return;
+    }
+
+    try {
+      const model = modelOverride || options?.defaultModel;
+      if (!model) {
+        throw new Error(
+          'createProviderStreamAdapter: no model provided — supply modelOverride at call time or defaultModel via adapter options',
+        );
+      }
+      const stream = gatewayStream({
+        provider,
+        model,
+        messages,
+        signal,
+        systemPromptOverride,
+        scratchpadContent,
+      });
+
+      for await (const event of stream) {
+        if (signal?.aborted) {
+          onDone();
+          return;
+        }
+
+        switch (event.type) {
+          case 'text_delta':
+            onToken(event.text);
+            break;
+          case 'reasoning_delta':
+            onThinkingToken?.(event.text);
+            break;
+          case 'done':
+            onDone(event.usage);
+            return;
+        }
+      }
+    } catch (err) {
+      if (signal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        onDone();
+        return;
+      }
+      onError(err instanceof Error ? err : new Error(String(err)));
+    }
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Review result types
