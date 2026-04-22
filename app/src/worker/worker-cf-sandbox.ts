@@ -141,20 +141,32 @@ export async function handleCloudflareSandbox(
   if (route !== 'create') {
     const sandboxId = typeof body.sandbox_id === 'string' ? body.sandbox_id : '';
     const providedToken = typeof body.owner_token === 'string' ? body.owner_token : '';
-    let auth;
+    let auth: VerifyResult;
     try {
       auth = await verifySandboxOwnerToken(env, sandboxId, providedToken);
-      if (!auth.ok && route === 'cleanup') {
-        const kvAuth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
-        if (kvAuth.ok) auth = kvAuth;
-      }
     } catch (err) {
-      wlog('error', 'cf_sandbox_auth_throw', {
-        requestId,
-        route,
-        message: err instanceof Error ? err.message : String(err),
-      });
-      return Response.json({ error: 'Auth check failed', code: 'NOT_CONFIGURED' }, { status: 503 });
+      if (route === 'cleanup') {
+        wlog('warn', 'cf_sandbox_cleanup_auth_fallback', {
+          requestId,
+          route,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        auth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
+      } else {
+        wlog('error', 'cf_sandbox_auth_throw', {
+          requestId,
+          route,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        return Response.json(
+          { error: 'Auth check failed', code: 'NOT_CONFIGURED' },
+          { status: 503 },
+        );
+      }
+    }
+    if (!auth.ok && route === 'cleanup') {
+      const kvAuth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
+      if (kvAuth.ok) auth = kvAuth;
     }
     if (!auth.ok) {
       return Response.json(
@@ -834,8 +846,10 @@ async function verifySandboxOwnerToken(
   }
 
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
-  const tokenRead = (await sandbox.readFile(OWNER_TOKEN_PATH).catch((err) => ({ __error: err }))) as
-    | { content?: string }
+  const tokenRead = (await sandbox
+    .exec(`head -c ${MAX_TOKEN_BYTES + 1} ${shellSingleQuote(OWNER_TOKEN_PATH)}`)
+    .catch((err) => ({ __error: err }))) as
+    | { stdout?: string; stderr?: string; exitCode?: number }
     | { __error: unknown };
   if ('__error' in tokenRead) {
     if (classifyCfError(tokenRead.__error) === 'NOT_FOUND') {
@@ -843,10 +857,20 @@ async function verifySandboxOwnerToken(
     }
     throw tokenRead.__error;
   }
+  if ((tokenRead.exitCode ?? 0) !== 0) {
+    const stderr = typeof tokenRead.stderr === 'string' ? tokenRead.stderr : '';
+    if (classifyCfError(stderr) === 'NOT_FOUND') {
+      return { ok: false, status: 404, code: 'NOT_FOUND' };
+    }
+    throw new Error(stderr || 'Failed to read sandbox owner token');
+  }
 
-  const storedToken = typeof tokenRead.content === 'string' ? tokenRead.content : '';
+  const storedToken = typeof tokenRead.stdout === 'string' ? tokenRead.stdout : '';
   if (!storedToken) {
     return { ok: false, status: 404, code: 'NOT_FOUND' };
+  }
+  if (storedToken.length > MAX_TOKEN_BYTES) {
+    return { ok: false, status: 403, code: 'AUTH_FAILURE' };
   }
   if (!timingSafeEqual(storedToken, providedToken)) {
     return { ok: false, status: 403, code: 'AUTH_FAILURE' };

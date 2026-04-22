@@ -64,8 +64,9 @@ function createFakeSandbox() {
       content: path === OWNER_TOKEN_PATH ? DEFAULT_OWNER_TOKEN : '',
     })),
     exec: vi.fn(async (command: string): Promise<ExecResult> => {
-      void command;
-      return { stdout: '', stderr: '', exitCode: 0 };
+      return command.includes(OWNER_TOKEN_PATH)
+        ? { stdout: DEFAULT_OWNER_TOKEN, stderr: '', exitCode: 0 }
+        : { stdout: '', stderr: '', exitCode: 0 };
     }),
   };
 }
@@ -88,6 +89,9 @@ function commandList(sandbox: ReturnType<typeof createFakeSandbox>): string[] {
 // benign success. Individual tests override specific commands.
 function defaultExec(): (cmd: string) => Promise<ExecResult> {
   return async (command: string): Promise<ExecResult> => {
+    if (command.includes(OWNER_TOKEN_PATH)) {
+      return { stdout: DEFAULT_OWNER_TOKEN, exitCode: 0 };
+    }
     if (command.startsWith('stat -c %s')) return { stdout: '42\n', exitCode: 0 };
     if (command.startsWith('sed -n')) return { stdout: 'line 2\nline 3\n', exitCode: 0 };
     if (command.startsWith('head -c')) return { stdout: 'first bytes', exitCode: 0 };
@@ -136,6 +140,7 @@ describe('handleCloudflareSandbox read route', () => {
     const sandbox = createFakeSandbox();
     const version = '0123456789abcdef'.repeat(4);
     sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
+      if (command.includes(OWNER_TOKEN_PATH)) return { stdout: DEFAULT_OWNER_TOKEN, exitCode: 0 };
       if (command.startsWith('stat')) return { stdout: '100\n', exitCode: 0 };
       if (command.startsWith('head -c')) return { stdout: 'content', exitCode: 0 };
       if (command.includes('sha256sum')) return { stdout: `${version}\n`, exitCode: 0 };
@@ -152,6 +157,7 @@ describe('handleCloudflareSandbox read route', () => {
   it('uses stat -c %s as the authoritative existence probe (NOT_FOUND on fail)', async () => {
     const sandbox = createFakeSandbox();
     sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
+      if (command.includes(OWNER_TOKEN_PATH)) return { stdout: DEFAULT_OWNER_TOKEN, exitCode: 0 };
       if (command.startsWith('stat')) {
         return {
           stdout: '',
@@ -179,6 +185,7 @@ describe('handleCloudflareSandbox read route', () => {
   it('detects truncation when content exceeds the cap (byte path uses >, not >=)', async () => {
     const sandbox = createFakeSandbox();
     sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
+      if (command.includes(OWNER_TOKEN_PATH)) return { stdout: DEFAULT_OWNER_TOKEN, exitCode: 0 };
       if (command.startsWith('stat')) return { stdout: `${MAX_READ_BYTES + 200}\n`, exitCode: 0 };
       if (command.startsWith('head -c')) return { stdout: 'x'.repeat(PROBE_BYTES), exitCode: 0 };
       if (command.includes('sha256sum')) return { stdout: `${DEFAULT_HASH}\n`, exitCode: 0 };
@@ -196,6 +203,7 @@ describe('handleCloudflareSandbox read route', () => {
   it('does NOT mark a file as truncated when its size equals the cap exactly', async () => {
     const sandbox = createFakeSandbox();
     sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
+      if (command.includes(OWNER_TOKEN_PATH)) return { stdout: DEFAULT_OWNER_TOKEN, exitCode: 0 };
       if (command.startsWith('stat')) return { stdout: `${MAX_READ_BYTES}\n`, exitCode: 0 };
       // Content stream returns exactly MAX bytes — head -c MAX+1 capped at EOF.
       if (command.startsWith('head -c')) return { stdout: 'x'.repeat(MAX_READ_BYTES), exitCode: 0 };
@@ -215,6 +223,7 @@ describe('handleCloudflareSandbox read route', () => {
     // empty content sed returned. After the fix, echo the request verbatim.
     const sandbox = createFakeSandbox();
     sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
+      if (command.includes(OWNER_TOKEN_PATH)) return { stdout: DEFAULT_OWNER_TOKEN, exitCode: 0 };
       if (command.startsWith('stat')) return { stdout: '5\n', exitCode: 0 };
       if (command.startsWith('sed -n')) return { stdout: '', exitCode: 0 };
       if (command.includes('sha256sum')) return { stdout: `${DEFAULT_HASH}\n`, exitCode: 0 };
@@ -232,6 +241,7 @@ describe('handleCloudflareSandbox read route', () => {
   it('counts lines via awk END{print NR} for trailing-newline-less files', async () => {
     const sandbox = createFakeSandbox();
     sandbox.exec.mockImplementation(async (command: string): Promise<ExecResult> => {
+      if (command.includes(OWNER_TOKEN_PATH)) return { stdout: DEFAULT_OWNER_TOKEN, exitCode: 0 };
       if (command.startsWith('stat')) return { stdout: '20\n', exitCode: 0 };
       if (command.startsWith('sed -n')) return { stdout: 'line 1\nline 2', exitCode: 0 };
       if (command.includes('sha256sum')) return { stdout: `${DEFAULT_HASH}\n`, exitCode: 0 };
@@ -272,7 +282,9 @@ describe('handleCloudflareSandbox read route', () => {
     // Every command gets the path wrapped in SINGLE quotes — no $ or `
     // interpretation possible inside those.
     const expectedQuoted = `'/tmp/$(whoami)\`id\`.txt'`;
-    for (const cmd of commandList(sandbox)) {
+    for (const cmd of commandList(sandbox).filter(
+      (command) => !command.includes(OWNER_TOKEN_PATH),
+    )) {
       expect(cmd).toContain(expectedQuoted);
       // Negative assertion — the path must NOT appear double-quoted.
       expect(cmd).not.toContain(`"${maliciousPath}"`);
@@ -301,7 +313,9 @@ describe('handleCloudflareSandbox read route', () => {
 
     // Expected quoting: 'it'\''s-a-file.txt' — close, escape-quote, reopen.
     const expectedQuoted = `'/tmp/it'\\''s-a-file.txt'`;
-    for (const cmd of commandList(sandbox)) {
+    for (const cmd of commandList(sandbox).filter(
+      (command) => !command.includes(OWNER_TOKEN_PATH),
+    )) {
       expect(cmd).toContain(expectedQuoted);
     }
   });

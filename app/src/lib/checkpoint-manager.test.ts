@@ -17,6 +17,8 @@ vi.mock('./checkpoint-store', () => ({
 
 let fakeLocalStorage: Record<string, string> = {};
 let fakeSessionStorage: Record<string, string> = {};
+const RUN_BROWSER_TAB_ID_KEY = 'run_browser_tab_id';
+const RUN_RELOAD_MARKER_KEY = 'run_tab_reload_marker';
 
 vi.mock('./safe-storage', () => ({
   safeStorageGet: (key: string, area: 'local' | 'session' = 'local') =>
@@ -35,12 +37,12 @@ vi.mock('./safe-storage', () => ({
 
 const {
   acquireRunTabLock,
+  __resetRunTabLockStateForTesting,
   buildCheckpointReconciliationMessage,
   buildRunCheckpoint,
   checkpointRequiresLiveSandboxStatus,
   detectInterruptedRun,
   heartbeatRunTabLock,
-  resetRunTabLockBrowserStateForTest,
   releaseRunTabLock,
   saveRunCheckpoint,
 } = await import('./checkpoint-manager');
@@ -70,7 +72,7 @@ function makeCheckpoint(overrides: Partial<RunCheckpoint> = {}): RunCheckpoint {
 beforeEach(() => {
   fakeLocalStorage = {};
   fakeSessionStorage = {};
-  resetRunTabLockBrowserStateForTest();
+  __resetRunTabLockStateForTesting();
   mockClearCheckpoint.mockReset().mockResolvedValue(undefined);
   mockLoadCheckpoint.mockReset().mockResolvedValue(null);
   mockSaveCheckpoint.mockReset().mockResolvedValue(undefined);
@@ -288,6 +290,11 @@ describe('checkpoint-manager', () => {
       browserTabId: original.browserTabId,
       pageInstanceId: 'previous-page-instance',
     });
+    fakeSessionStorage[RUN_RELOAD_MARKER_KEY] = JSON.stringify({
+      browserTabId: original.browserTabId,
+      pageInstanceId: 'previous-page-instance',
+      unloadedAt: Date.now(),
+    });
 
     const reclaimedLockId = acquireRunTabLock('chat-1');
 
@@ -300,5 +307,23 @@ describe('checkpoint-manager', () => {
     };
     expect(reclaimed.browserTabId).toBe(original.browserTabId);
     expect(reclaimed.pageInstanceId).toBe(original.pageInstanceId);
+    expect(fakeSessionStorage[RUN_RELOAD_MARKER_KEY]).toBeUndefined();
+  });
+
+  it('does not reclaim a fresh tab lock when another tab only cloned the browser tab id', () => {
+    fakeSessionStorage[RUN_BROWSER_TAB_ID_KEY] = 'shared-browser-tab';
+    fakeSessionStorage[RUN_RELOAD_MARKER_KEY] = JSON.stringify({
+      browserTabId: 'shared-browser-tab',
+      pageInstanceId: 'duplicate-page-instance',
+      unloadedAt: Date.now(),
+    });
+    fakeLocalStorage['run_active_chat-1'] = JSON.stringify({
+      tabId: 'original-lock',
+      heartbeat: Date.now(),
+      browserTabId: 'shared-browser-tab',
+      pageInstanceId: 'original-page-instance',
+    });
+
+    expect(acquireRunTabLock('chat-1')).toBeNull();
   });
 });

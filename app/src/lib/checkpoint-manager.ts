@@ -16,15 +16,22 @@ import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storag
 const CHECKPOINT_MAX_AGE_MS = 25 * 60 * 1000; // 25 min — matches sandbox max age
 const RUN_ACTIVE_PREFIX = 'run_active_';
 const RUN_BROWSER_TAB_ID_KEY = 'run_browser_tab_id';
+const RUN_RELOAD_MARKER_KEY = 'run_tab_reload_marker';
 const TAB_LOCK_STALE_MS = 60_000; // Consider lock stale after 60s without heartbeat
+const RUN_RELOAD_MARKER_MAX_AGE_MS = 15_000;
 const CHECKPOINT_DELTA_WARN_SIZE = 50 * 1024; // 50KB warning threshold
-const PAGE_INSTANCE_ID = createClientInstanceId();
 
 interface RunTabLockRecord {
   tabId: string;
   heartbeat: number;
   browserTabId?: string;
   pageInstanceId?: string;
+}
+
+interface RunTabReloadMarker {
+  browserTabId: string;
+  pageInstanceId: string;
+  unloadedAt: number;
 }
 
 export interface ResumeEvent {
@@ -59,12 +66,67 @@ export interface RunCheckpointSnapshot {
 
 const resumeEvents: ResumeEvent[] = [];
 let browserTabIdCache: string | null = null;
+let pendingRunTabReloadMarker: RunTabReloadMarker | null | undefined;
+let runTabUnloadMarkerInstalled = false;
+let runTabUnloadMarkerHandler: (() => void) | null = null;
 
 function createClientInstanceId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+const PAGE_INSTANCE_ID = createClientInstanceId();
+
+function parseRunTabReloadMarker(raw: string | null): RunTabReloadMarker | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as RunTabReloadMarker;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (typeof parsed.browserTabId !== 'string' || !parsed.browserTabId) return null;
+    if (typeof parsed.pageInstanceId !== 'string' || !parsed.pageInstanceId) return null;
+    if (typeof parsed.unloadedAt !== 'number') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function persistRunTabReloadMarker(): void {
+  safeStorageSet(
+    RUN_RELOAD_MARKER_KEY,
+    JSON.stringify({
+      browserTabId: getBrowserTabId(),
+      pageInstanceId: PAGE_INSTANCE_ID,
+      unloadedAt: Date.now(),
+    } satisfies RunTabReloadMarker),
+    'session',
+  );
+}
+
+function ensureRunTabReloadMarkerTracking(): void {
+  if (runTabUnloadMarkerInstalled || typeof window === 'undefined') return;
+
+  runTabUnloadMarkerHandler = () => {
+    persistRunTabReloadMarker();
+  };
+  window.addEventListener('pagehide', runTabUnloadMarkerHandler);
+  window.addEventListener('beforeunload', runTabUnloadMarkerHandler);
+  runTabUnloadMarkerInstalled = true;
+}
+
+function getPendingRunTabReloadMarker(): RunTabReloadMarker | null {
+  if (pendingRunTabReloadMarker !== undefined) {
+    return pendingRunTabReloadMarker;
+  }
+
+  pendingRunTabReloadMarker = parseRunTabReloadMarker(
+    safeStorageGet(RUN_RELOAD_MARKER_KEY, 'session'),
+  );
+  safeStorageRemove(RUN_RELOAD_MARKER_KEY, 'session');
+  return pendingRunTabReloadMarker;
+}
+
 function getBrowserTabId(): string {
+  ensureRunTabReloadMarkerTracking();
   if (browserTabIdCache) return browserTabIdCache;
 
   const existing = safeStorageGet(RUN_BROWSER_TAB_ID_KEY, 'session');
@@ -75,8 +137,8 @@ function getBrowserTabId(): string {
 
   const created = createClientInstanceId();
   if (safeStorageSet(RUN_BROWSER_TAB_ID_KEY, created, 'session')) {
-    browserTabIdCache = safeStorageGet(RUN_BROWSER_TAB_ID_KEY, 'session') ?? created;
-    return browserTabIdCache;
+    browserTabIdCache = created;
+    return created;
   }
 
   browserTabIdCache = created;
@@ -97,10 +159,15 @@ function parseRunTabLock(raw: string | null): RunTabLockRecord | null {
 }
 
 function canReclaimFreshRunTabLock(lock: RunTabLockRecord): boolean {
+  const reloadMarker = getPendingRunTabReloadMarker();
   return (
+    !!reloadMarker &&
+    Date.now() - reloadMarker.unloadedAt < RUN_RELOAD_MARKER_MAX_AGE_MS &&
     typeof lock.browserTabId === 'string' &&
+    lock.browserTabId === reloadMarker.browserTabId &&
     lock.browserTabId === getBrowserTabId() &&
     typeof lock.pageInstanceId === 'string' &&
+    lock.pageInstanceId === reloadMarker.pageInstanceId &&
     lock.pageInstanceId !== PAGE_INSTANCE_ID
   );
 }
@@ -304,11 +371,11 @@ export function acquireRunTabLock(chatId: string): string | null {
     }
   }
 
-  const tabId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const lockId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   safeStorageSet(
     key,
     JSON.stringify({
-      tabId,
+      tabId: lockId,
       heartbeat: Date.now(),
       browserTabId: getBrowserTabId(),
       pageInstanceId: PAGE_INSTANCE_ID,
@@ -316,7 +383,7 @@ export function acquireRunTabLock(chatId: string): string | null {
   );
 
   const verify = parseRunTabLock(safeStorageGet(key));
-  return verify?.tabId === tabId ? tabId : null;
+  return verify?.tabId === lockId ? lockId : null;
 }
 
 export function releaseRunTabLock(chatId: string, ownerTabId: string | null): void {
@@ -360,8 +427,14 @@ export function getResumeEvents(): readonly ResumeEvent[] {
   return resumeEvents;
 }
 
-// Test-only helper: keeps unit tests isolated even though the browser-tab
-// cache is intentionally module-scoped for app runtime stability.
-export function resetRunTabLockBrowserStateForTest(): void {
+/** @internal Reset module-scoped tab-lock state. Test-only. */
+export function __resetRunTabLockStateForTesting(): void {
   browserTabIdCache = null;
+  pendingRunTabReloadMarker = undefined;
+  if (runTabUnloadMarkerInstalled && runTabUnloadMarkerHandler && typeof window !== 'undefined') {
+    window.removeEventListener('pagehide', runTabUnloadMarkerHandler);
+    window.removeEventListener('beforeunload', runTabUnloadMarkerHandler);
+  }
+  runTabUnloadMarkerHandler = null;
+  runTabUnloadMarkerInstalled = false;
 }
