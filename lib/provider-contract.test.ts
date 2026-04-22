@@ -11,6 +11,7 @@ import { createProviderStreamAdapter } from './provider-contract.js';
 describe('createProviderStreamAdapter', () => {
   const messages: LlmMessage[] = [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }];
   const provider: AIProviderType = 'openrouter';
+  const testOptions = { defaultModel: 'test-model' };
 
   it('maps text_delta events to onToken', async () => {
     const events: PushStreamEvent[] = [
@@ -21,7 +22,7 @@ describe('createProviderStreamAdapter', () => {
       for (const e of events) yield e;
     });
 
-    const adapted = createProviderStreamAdapter(stream, provider);
+    const adapted = createProviderStreamAdapter(stream, provider, testOptions);
     const tokens: string[] = [];
     await adapted(
       messages,
@@ -41,7 +42,7 @@ describe('createProviderStreamAdapter', () => {
       for (const e of events) yield e;
     });
 
-    const adapted = createProviderStreamAdapter(stream, provider);
+    const adapted = createProviderStreamAdapter(stream, provider, testOptions);
     const thoughts: (string | null)[] = [];
     await adapted(
       messages,
@@ -63,7 +64,7 @@ describe('createProviderStreamAdapter', () => {
       for (const e of events) yield e;
     });
 
-    const adapted = createProviderStreamAdapter(stream, provider);
+    const adapted = createProviderStreamAdapter(stream, provider, testOptions);
     let receivedUsage: StreamUsage | undefined;
     await adapted(
       messages,
@@ -81,7 +82,7 @@ describe('createProviderStreamAdapter', () => {
       throw new Error('network failure');
     });
 
-    const adapted = createProviderStreamAdapter(stream, provider);
+    const adapted = createProviderStreamAdapter(stream, provider, testOptions);
     let caught: Error | undefined;
     await adapted(
       messages,
@@ -94,6 +95,25 @@ describe('createProviderStreamAdapter', () => {
     expect(caught?.message).toBe('network failure');
   });
 
+  it('calls onError when neither modelOverride nor defaultModel is provided', async () => {
+    const stream: PushStream = vi.fn().mockImplementation(async function* () {
+      yield { type: 'text_delta', text: 'should not run' };
+    });
+
+    const adapted = createProviderStreamAdapter(stream, provider);
+    let caught: Error | undefined;
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      (e) => {
+        caught = e;
+      },
+    );
+    expect(caught?.message).toMatch(/no model provided/i);
+    expect(stream).not.toHaveBeenCalled();
+  });
+
   it('returns early and calls onDone when signal is aborted before start', async () => {
     const controller = new AbortController();
     controller.abort();
@@ -102,7 +122,7 @@ describe('createProviderStreamAdapter', () => {
       yield { type: 'text_delta', text: 'should not run' };
     });
 
-    const adapted = createProviderStreamAdapter(stream, provider);
+    const adapted = createProviderStreamAdapter(stream, provider, testOptions);
     let caught: Error | undefined;
     const onDone = vi.fn();
     await adapted(
@@ -139,7 +159,7 @@ describe('createProviderStreamAdapter', () => {
       yield { type: 'text_delta', text: 'c' };
     });
 
-    const adapted = createProviderStreamAdapter(stream, provider);
+    const adapted = createProviderStreamAdapter(stream, provider, testOptions);
     await adapted(
       messages,
       (t) => tokens.push(t),
@@ -166,7 +186,7 @@ describe('createProviderStreamAdapter', () => {
       yield { type: 'done', finishReason: 'stop' };
     });
 
-    const adapted = createProviderStreamAdapter(stream, provider);
+    const adapted = createProviderStreamAdapter(stream, provider, testOptions);
     await adapted(
       messages,
       () => {},

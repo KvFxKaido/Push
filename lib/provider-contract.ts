@@ -120,8 +120,10 @@ export type PushStream<M extends LlmMessage = LlmMessage> = (
  * - `onPreCompact` — runtime budget signal, not a provider event.
  *
  * Legacy parameters forwarded into `PushStreamRequest`:
- * - `modelOverride` → `model` (falls back to `options.defaultModel`, then
- *   the literal `'unknown'`; callers should supply one of the two).
+ * - `modelOverride` → `model`, falling back to `options.defaultModel`. If
+ *   neither is supplied, the adapter fails fast via `onError` and never
+ *   invokes `gatewayStream`, so misconfiguration surfaces at the adapter
+ *   boundary instead of as an opaque downstream error.
  * - `systemPromptOverride`, `scratchpadContent` — passed through for the
  *   gateway to honor; this adapter does not splice them into `messages`.
  * - `signal` — aborts settle via `onDone()` (pre-, mid-, and post-stream)
@@ -153,9 +155,15 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
     }
 
     try {
+      const model = modelOverride || options?.defaultModel;
+      if (!model) {
+        throw new Error(
+          'createProviderStreamAdapter: no model provided — supply modelOverride at call time or defaultModel via adapter options',
+        );
+      }
       const stream = gatewayStream({
         provider,
-        model: modelOverride || options?.defaultModel || 'unknown',
+        model,
         messages,
         signal,
         systemPromptOverride,
