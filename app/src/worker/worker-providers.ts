@@ -94,10 +94,12 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
     try {
       const parsed = JSON.parse(data);
       const delta = parsed.choices?.[0]?.delta;
-      // Native reasoning channel — some Workers AI models (DeepSeek-R1, QwQ)
-      // emit reasoning_content deltas alongside or instead of inline <think>
-      // tags. Surface both as reasoning_delta so the downstream transducer
-      // can normalize them uniformly.
+      // Today's Workers AI reasoning models are mutually exclusive per model:
+      // DeepSeek-R1 uses native `reasoning_content`; Qwen QwQ uses inline
+      // `<think>` tags in `content`. We surface both channels when present —
+      // `normalizeReasoning` downstream latches on the first native
+      // reasoning_delta and stops parsing `<think>` tags for the rest of the
+      // stream, so a future hybrid model that emits both won't double-report.
       if (delta?.reasoning_content) {
         yield { type: 'reasoning_delta', text: delta.reasoning_content };
       }

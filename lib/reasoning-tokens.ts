@@ -166,6 +166,14 @@ const CLOSE_PREFIX_HOLD = 10;
  * Leading whitespace immediately after a closing `</think>` tag is stripped
  * to match the legacy callback parser's behavior — most templates emit a
  * newline after the closing tag that the user doesn't want to see.
+ *
+ * Per-stream native-channel latch: once the source stream emits any native
+ * `reasoning_delta` event, subsequent `text_delta` events pass through
+ * unchanged (no `<think>` parsing). This prevents double-reporting reasoning
+ * if a provider ever starts mixing both channels in the same stream —
+ * today's providers are mutually exclusive per model, but new reasoning
+ * models ship often. The latch is one-way; once engaged it stays on for
+ * the remainder of the stream.
  */
 export async function* normalizeReasoning(
   stream: AsyncIterable<PushStreamEvent>,
@@ -174,6 +182,10 @@ export async function* normalizeReasoning(
   let buffer = '';
   // True once we've yielded a reasoning_delta without a matching reasoning_end.
   let reasoningOpen = false;
+  // Per-stream latch: true once we've seen a native reasoning_delta from the
+  // source stream. Engages the "trust native, ignore <think>" path for all
+  // subsequent text_delta events.
+  let nativeSeen = false;
 
   function* closeReasoningIfOpen(): Generator<PushStreamEvent> {
     if (reasoningOpen) {
@@ -266,6 +278,18 @@ export async function* normalizeReasoning(
   try {
     for await (const event of stream) {
       if (event.type === 'text_delta') {
+        if (nativeSeen) {
+          // Latch engaged — trust the native reasoning channel and pass
+          // content through verbatim, including any `<think>` markup. This
+          // avoids double-reporting reasoning if a hybrid provider ever
+          // emits both channels in the same stream.
+          if (reasoningOpen) {
+            reasoningOpen = false;
+            yield { type: 'reasoning_end' };
+          }
+          if (event.text) yield event;
+          continue;
+        }
         buffer += event.text;
         yield* consumeBuffer();
         continue;
@@ -274,8 +298,10 @@ export async function* normalizeReasoning(
         // Native reasoning channel. Flush any buffered tokens first so the
         // order stays correct even if the provider mixes inline and native
         // channels — buffered inline text (think or visible) must land
-        // before the new native token.
+        // before the new native token. Engage the per-stream latch so
+        // subsequent text_delta events skip `<think>` parsing.
         yield* flushRemaining();
+        nativeSeen = true;
         reasoningOpen = true;
         yield event;
         continue;

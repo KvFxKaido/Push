@@ -270,4 +270,65 @@ describe('normalizeReasoning', () => {
       { kind: 'done', finishReason: 'stop', usage: undefined },
     ]);
   });
+
+  it('latches on native reasoning_delta and passes <think>-tagged content through unchanged', async () => {
+    // Once a native reasoning_delta is seen, subsequent text_delta events
+    // are trusted as-is. A hybrid provider that emits both channels in the
+    // same stream won't double-report reasoning.
+    expect(
+      await run([
+        { type: 'reasoning_delta', text: 'native thinking' },
+        { type: 'text_delta', text: '<think>native thinking</think>answer' },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    ).toEqual([
+      { kind: 'reasoning', text: 'native thinking' },
+      { kind: 'reasoning_end' },
+      // The `<think>...</think>` content passes through verbatim — latched
+      // mode ignores inline tags because the native channel is authoritative.
+      { kind: 'text', text: '<think>native thinking</think>answer' },
+      { kind: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
+  it('does not latch on a bare upstream reasoning_end with no preceding reasoning_delta', async () => {
+    // A bare reasoning_end doesn't prove the provider is using the native
+    // channel — it's just a close marker — so <think> parsing stays active.
+    expect(
+      await run([
+        { type: 'reasoning_end' },
+        { type: 'text_delta', text: '<think>still parsed</think>answer' },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    ).toEqual([
+      { kind: 'reasoning_end' },
+      { kind: 'reasoning', text: 'still parsed' },
+      { kind: 'reasoning_end' },
+      { kind: 'text', text: 'answer' },
+      { kind: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
+  it('flushes in-progress inline reasoning before engaging the latch', async () => {
+    // Pathological provider: starts with inline <think> then switches to
+    // native mid-stream. The buffered inline reasoning is flushed as
+    // reasoning_delta before the native event, then the latch engages so
+    // any leftover tags in subsequent text are passed through as-is.
+    expect(
+      await run([
+        { type: 'text_delta', text: '<think>inline start' },
+        { type: 'reasoning_delta', text: ' native continuation' },
+        { type: 'text_delta', text: '</think>answer' },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    ).toEqual([
+      { kind: 'reasoning', text: 'inline start native continuation' },
+      { kind: 'reasoning_end' },
+      // `</think>` survives into visible text because the latch short-circuited
+      // the parser. This is documented pathological behavior — a real hybrid
+      // provider wouldn't leave an orphan closing tag in content.
+      { kind: 'text', text: '</think>answer' },
+      { kind: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
 });
