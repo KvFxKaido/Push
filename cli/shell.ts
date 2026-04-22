@@ -164,13 +164,16 @@ function createShellExitError(
   signal: string | null,
 ) {
   const err = new Error(message) as Error & {
-    code?: number | string;
+    code?: number | string | null;
     stdout?: string;
     stderr?: string;
     signal?: string | null;
     killed?: boolean;
   };
-  err.code = typeof code === 'number' || typeof code === 'string' ? code : 1;
+  // Match Node's child_process convention: code is null when terminated by signal.
+  // Consumers that want a numeric exit code should check `typeof err.code === 'number'`
+  // and fall back themselves; `err.signal`/`err.killed` carry the signal info.
+  err.code = code;
   err.stdout = stdout;
   err.stderr = stderr;
   err.signal = signal;
