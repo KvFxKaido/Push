@@ -33,13 +33,7 @@ import {
 import type { ExperimentalProviderType } from '../lib/experimental-providers';
 
 // Gateway Abstraction imports
-import {
-  createProviderStreamAdapter,
-  type LlmMessage,
-  type PushStream,
-  type PushStreamRequest,
-  type PushStreamEvent,
-} from '@push/lib/provider-contract';
+import type { LlmMessage, PushStreamRequest, PushStreamEvent } from '@push/lib/provider-contract';
 // --- Cloudflare Workers AI ---
 
 const CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR =
@@ -51,15 +45,17 @@ function isCloudflareTextGenerationModel(model: AiModelsSearchObject): boolean {
   return taskId.includes('text-generation') || taskName.includes('text generation');
 }
 
-// Cloudflare Workers AI PushStream implementation
+// Cloudflare Workers AI PushStream implementation.
+// NOTE: SSE parsing here is deliberately minimal to match the chunk shape that
+// env.AI.run emits (single-line `data: {json}` frames terminated by `\n`). If
+// more providers need SSE parsing, extract a shared pump rather than copying
+// this one.
 async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterable<PushStreamEvent> {
-  // Build the input for env.AI.run
   const input: Record<string, unknown> = {
     messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
     stream: true,
   };
 
-  // Map PushStreamRequest params to Cloudflare AI params
   if (req.maxTokens !== undefined) input.max_tokens = req.maxTokens;
   if (req.temperature !== undefined) input.temperature = req.temperature;
   if (req.topP !== undefined) input.top_p = req.topP;
@@ -81,58 +77,74 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  // Propagate abort to the upstream reader so a client disconnect stops
+  // Workers AI from pulling further inference.
+  const onAbort = () => {
+    reader.cancel().catch(() => {
+      /* reader may already be closed */
+    });
+  };
+  req.signal?.addEventListener('abort', onAbort, { once: true });
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+  function* flushLine(line: string): Generator<PushStreamEvent> {
+    if (!line.startsWith('data: ')) return;
+    const data = line.slice(6).trim();
+    if (!data || data === '[DONE]') return;
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed.choices?.[0]?.delta?.content) {
+        yield { type: 'text_delta', text: parsed.choices[0].delta.content };
+      }
+    } catch {
+      /* skip malformed JSON */
+    }
+  }
 
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6).trim();
-        if (data === '[DONE]') {
+  try {
+    while (true) {
+      if (req.signal?.aborted) return;
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('data: ') && trimmed.slice(6).trim() === '[DONE]') {
           yield { type: 'done', finishReason: 'stop' };
           return;
         }
-        try {
-          const parsed = JSON.parse(data);
-          if (
-            parsed.choices &&
-            parsed.choices[0] &&
-            parsed.choices[0].delta &&
-            parsed.choices[0].delta.content
-          ) {
-            yield { type: 'text_delta', text: parsed.choices[0].delta.content };
-          }
-        } catch {
-          // Skip malformed JSON
-        }
+        yield* flushLine(line);
       }
     }
-  }
 
-  // If we exit the loop without [DONE], process remaining buffer then yield done
-  if (buffer.trim()) {
-    const lines = buffer.split('\n');
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6).trim();
-        if (data && data !== '[DONE]') {
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.choices?.[0]?.delta?.content) {
-              yield { type: 'text_delta', text: parsed.choices[0].delta.content };
-            }
-          } catch {
-            // Skip malformed JSON
-          }
-        }
+    // Flush any remaining buffered lines (stream ended without a [DONE] frame).
+    if (buffer.trim()) {
+      for (const line of buffer.split('\n')) {
+        yield* flushLine(line);
       }
     }
+    yield { type: 'done', finishReason: 'stop' };
+  } finally {
+    req.signal?.removeEventListener('abort', onAbort);
+    try {
+      reader.releaseLock();
+    } catch {
+      /* reader may have been cancelled */
+    }
   }
-  yield { type: 'done', finishReason: 'stop' };
+}
+
+// Normalize incoming chat roles to the LlmMessage envelope. `developer` is
+// OpenAI's recent rename of `system`, so collapse it. `tool` messages don't
+// have a direct LlmMessage analogue (Push uses text-embedded tool calls, not
+// native), so surface them as `user` content so the model still sees them.
+function normalizeLlmRole(role: string): 'user' | 'assistant' | 'system' {
+  if (role === 'assistant' || role === 'system') return role;
+  if (role === 'developer') return 'system';
+  return 'user';
 }
 
 export async function handleCloudflareChat(request: Request, env: Env): Promise<Response> {
@@ -180,58 +192,66 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
   });
 
   try {
-    // Convert raw messages to LlmMessage shape for the PushStream contract.
+    // Build LlmMessage envelopes with role normalization.
     const llmMessages: LlmMessage[] = (
-      parsedRequest.messages as { role: string; content: string }[]
+      parsedRequest.messages as { role: string; content: unknown }[]
     ).map((m, i) => ({
       id: `msg-${i}`,
-      role: m.role as 'user' | 'assistant' | 'system',
+      role: normalizeLlmRole(m.role),
       content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
       timestamp: Date.now(),
     }));
 
-    // Build a cloudflareStream that is curried over env.
-    const cloudflareFn: PushStream = (r) => cloudflareStream(r, env);
-    const adaptedStream = createProviderStreamAdapter(cloudflareFn, 'cloudflare', {
-      defaultModel: model,
-    });
+    // Forward request tuning params into the PushStreamRequest. The adapter
+    // layer doesn't propagate these today, so this handler iterates the
+    // PushStream directly — adapter round-tripping only buys us the legacy
+    // callback shape, which this handler doesn't need.
+    const pushReq: PushStreamRequest = {
+      provider: 'cloudflare',
+      model,
+      messages: llmMessages,
+      maxTokens:
+        typeof parsedRequest.max_tokens === 'number' ? parsedRequest.max_tokens : undefined,
+      temperature:
+        typeof parsedRequest.temperature === 'number' ? parsedRequest.temperature : undefined,
+      topP: typeof parsedRequest.top_p === 'number' ? parsedRequest.top_p : undefined,
+    };
 
-    // Collect chunks into a SSE stream for the HTTP response.
-    let pending = '';
+    const encoder = new TextEncoder();
+    const abortController = new AbortController();
 
-    // Wire an AbortSignal so cancellation propagates through the adapter.
-    const controller = new AbortController();
-
-    const body = new ReadableStream({
-      start(c) {
-        adaptedStream(
-          llmMessages,
-          (token) => {
-            pending += `data: ${JSON.stringify({ choices: [{ delta: { content: token } }] })}\n\n`;
-            c.enqueue(new TextEncoder().encode(pending));
-            pending = '';
-          },
-          () => {
-            pending += `data: [DONE]\n\n`;
-            c.enqueue(new TextEncoder().encode(pending));
-            pending = '';
-            c.close();
-          },
-          (err) => {
-            const msg = err instanceof Error ? err.message : String(err);
-            c.error(new Error(msg));
-          },
-          undefined, // onThinkingToken
-          undefined, // workspaceContext
-          undefined, // hasSandbox
-          undefined, // modelOverride (defaultModel is set above)
-          undefined, // systemPromptOverride
-          undefined, // scratchpadContent
-          controller.signal, // signal — abort here propagates to the adapter
-        );
+    const body = new ReadableStream<Uint8Array>({
+      async start(c) {
+        try {
+          const stream = cloudflareStream({ ...pushReq, signal: abortController.signal }, env);
+          for await (const event of stream) {
+            if (abortController.signal.aborted) break;
+            if (event.type === 'text_delta') {
+              c.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ choices: [{ delta: { content: event.text } }] })}\n\n`,
+                ),
+              );
+            } else if (event.type === 'done') {
+              c.enqueue(encoder.encode('data: [DONE]\n\n'));
+              c.close();
+              return;
+            }
+            // reasoning_delta events are not emitted by this provider.
+          }
+          // Stream ended without a trailing done event — still close cleanly.
+          c.enqueue(encoder.encode('data: [DONE]\n\n'));
+          c.close();
+        } catch (err) {
+          try {
+            c.error(err instanceof Error ? err : new Error(String(err)));
+          } catch {
+            // Controller already errored/closed — ignore.
+          }
+        }
       },
       cancel() {
-        controller.abort();
+        abortController.abort();
       },
     });
 
