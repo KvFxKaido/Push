@@ -92,7 +92,7 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
 
   try {
     // Run the AI model
-    const stream = (await (env.AI as any).run(req.model, input)) as ReadableStream | unknown;
+    const stream = (await (env.AI as any).run(req.model, input)) as ReadableStream<Uint8Array> | unknown;
 
     if (!(stream instanceof ReadableStream)) {
       throw new Error('Cloudflare AI did not return a stream');
@@ -129,7 +129,25 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
       }
     }
 
-    // If we exit the loop without [DONE], yield done anyway
+    // If we exit the loop without [DONE], process remaining buffer then yield done
+    if (buffer.trim()) {
+      const lines = buffer.split('\n');
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          if (data && data !== '[DONE]') {
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.choices?.[0]?.delta?.content) {
+                yield { type: 'text_delta', text: parsed.choices[0].delta.content };
+              }
+            } catch {
+              // Skip malformed JSON
+            }
+          }
+        }
+      }
+    }
     yield { type: 'done', finishReason: 'stop' };
   } catch (error) {
     // For errors, we could yield an error event, but since PushStreamEvent doesn't have error type,
@@ -138,7 +156,6 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
   }
 }
 
-export async function handleCloudflareChat(request: Request, env: Env): Promise<Response> {
 export async function handleCloudflareChat(request: Request, env: Env): Promise<Response> {
   const preamble = await runPreamble(request, env, {
     buildAuth: (runtimeEnv) => (runtimeEnv.AI ? 'WorkersAIBinding' : null),
@@ -218,7 +235,7 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
     const body = new ReadableStream({
       start(c) {
         adaptedStream(
-          messages as Parameters<typeof adaptedStream>[0],
+          llmMessages,
           (token) => {
             pending += `data: ${JSON.stringify({ choices: [{ delta: { content: token } }] })}\n\n`;
             c.enqueue(new TextEncoder().encode(pending));
