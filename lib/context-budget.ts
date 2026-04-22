@@ -39,6 +39,13 @@ const GROK_CONTEXT_MAX_TOKENS = 1_500_000;
 const GROK_CONTEXT_TARGET_TOKENS = 1_350_000;
 const GROK_CONTEXT_SUMMARIZE_TOKENS = 180_000;
 
+// Moonshot Kimi models — 262K context on Workers AI / OpenRouter.
+// Margin matches Gemini (~92% of the real cap) because estimateTokens
+// can undercount on code-dense or CJK-heavy conversations.
+const KIMI_CONTEXT_MAX_TOKENS = 240_000;
+const KIMI_CONTEXT_TARGET_TOKENS = 210_000;
+const KIMI_CONTEXT_SUMMARIZE_TOKENS = 160_000;
+
 const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   maxTokens: DEFAULT_CONTEXT_MAX_TOKENS,
   targetTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
@@ -69,6 +76,12 @@ const GROK_CONTEXT_BUDGET: ContextBudget = {
   summarizeTokens: GROK_CONTEXT_SUMMARIZE_TOKENS,
 };
 
+const KIMI_CONTEXT_BUDGET: ContextBudget = {
+  maxTokens: KIMI_CONTEXT_MAX_TOKENS,
+  targetTokens: KIMI_CONTEXT_TARGET_TOKENS,
+  summarizeTokens: KIMI_CONTEXT_SUMMARIZE_TOKENS,
+};
+
 function normalizeModelName(model?: string): string {
   return (model || '').trim().toLowerCase();
 }
@@ -94,6 +107,11 @@ export function getContextBudget(provider?: string, model?: string): ContextBudg
   // Grok models — larger long-term history
   if (normalizedModel.includes('grok')) {
     return GROK_CONTEXT_BUDGET;
+  }
+
+  // Moonshot Kimi models — 262K context on Workers AI and OpenRouter.
+  if (normalizedModel.includes('kimi') || normalizedModel.includes('moonshot')) {
+    return KIMI_CONTEXT_BUDGET;
   }
 
   // Gemini models on any provider — full 1M budget
