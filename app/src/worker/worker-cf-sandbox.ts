@@ -16,8 +16,11 @@
  *     doesn't expose monotonic revisions the way Modal's app.py does.
  *
  * Auth: every route except `create` requires an owner_token matching the
- * one issued at sandbox creation time. See `sandbox-token-store.ts`.
- * Fails closed when SANDBOX_TOKENS KV binding is missing.
+ * one issued at sandbox creation time. The hot path verifies against a
+ * tiny token file inside the live sandbox itself so auth follows the same
+ * strongly-consistent DO path as exec/read/write instead of depending on
+ * eventually-consistent KV reads across PoPs. `SANDBOX_TOKENS` remains as
+ * cleanup metadata / fallback storage.
  */
 
 import type { ExecutionContext } from '@cloudflare/workers-types';
@@ -32,7 +35,14 @@ import {
   RESTORE_MAX_BODY_SIZE_BYTES,
 } from './worker-middleware';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
-import { issueToken, revokeToken, verifyToken } from './sandbox-token-store';
+import {
+  issueToken,
+  MAX_TOKEN_BYTES,
+  revokeToken,
+  timingSafeEqual,
+  verifyToken,
+  type VerifyResult,
+} from './sandbox-token-store';
 
 const ROUTES = new Set([
   'create',
@@ -53,6 +63,7 @@ const ROUTES = new Set([
 ]);
 
 const MAX_READ_BYTES = 5_000_000;
+const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 
 type Json = Record<string, unknown>;
 
@@ -122,21 +133,40 @@ export async function handleCloudflareSandbox(
   // token matching the one issued at sandbox creation time. `create` is
   // the only exemption (that's where tokens are minted). Snapshot stubs
   // stay gated too so real implementations inherit auth for free.
-  // Fails closed on every failure mode: missing binding, missing input,
-  // missing record, mismatch, or unexpected runtime throw.
+  // The primary verifier reads the token from the sandbox itself. That
+  // avoids false "expired" sessions caused by Workers KV propagation lag
+  // when a request lands in a different PoP than the one that created the
+  // sandbox. `cleanup` keeps a KV fallback so a dead sandbox can still be
+  // torn down if the token file is no longer reachable.
   if (route !== 'create') {
     const sandboxId = typeof body.sandbox_id === 'string' ? body.sandbox_id : '';
     const providedToken = typeof body.owner_token === 'string' ? body.owner_token : '';
-    let auth;
+    let auth: VerifyResult;
     try {
-      auth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
+      auth = await verifySandboxOwnerToken(env, sandboxId, providedToken);
     } catch (err) {
-      wlog('error', 'cf_sandbox_auth_throw', {
-        requestId,
-        route,
-        message: err instanceof Error ? err.message : String(err),
-      });
-      return Response.json({ error: 'Auth check failed', code: 'NOT_CONFIGURED' }, { status: 503 });
+      if (route === 'cleanup') {
+        wlog('warn', 'cf_sandbox_cleanup_auth_fallback', {
+          requestId,
+          route,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        auth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
+      } else {
+        wlog('error', 'cf_sandbox_auth_throw', {
+          requestId,
+          route,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        return Response.json(
+          { error: 'Auth check failed', code: 'NOT_CONFIGURED' },
+          { status: 503 },
+        );
+      }
+    }
+    if (!auth.ok && route === 'cleanup') {
+      const kvAuth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
+      if (kvAuth.ok) auth = kvAuth;
     }
     if (!auth.ok) {
       return Response.json(
@@ -265,8 +295,10 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
   let ownerToken: string;
   try {
     ownerToken = await issueToken(env.SANDBOX_TOKENS, sandboxId, ownerHint);
+    await sandbox.writeFile(OWNER_TOKEN_PATH, ownerToken);
   } catch (err) {
     await sandbox.destroy?.().catch(() => {});
+    await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
     throw err;
   }
 
@@ -802,6 +834,48 @@ async function hashSha256(content: string): Promise<string> {
 
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}\n…[truncated]` : s;
+}
+
+async function verifySandboxOwnerToken(
+  env: Env,
+  sandboxId: string,
+  providedToken: string,
+): Promise<VerifyResult> {
+  if (!sandboxId || !providedToken || providedToken.length > MAX_TOKEN_BYTES) {
+    return { ok: false, status: 403, code: 'AUTH_FAILURE' };
+  }
+
+  const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  const tokenRead = (await sandbox
+    .exec(`head -c ${MAX_TOKEN_BYTES + 1} ${shellSingleQuote(OWNER_TOKEN_PATH)}`)
+    .catch((err) => ({ __error: err }))) as
+    | { stdout?: string; stderr?: string; exitCode?: number }
+    | { __error: unknown };
+  if ('__error' in tokenRead) {
+    if (classifyCfError(tokenRead.__error) === 'NOT_FOUND') {
+      return { ok: false, status: 404, code: 'NOT_FOUND' };
+    }
+    throw tokenRead.__error;
+  }
+  if ((tokenRead.exitCode ?? 0) !== 0) {
+    const stderr = typeof tokenRead.stderr === 'string' ? tokenRead.stderr : '';
+    if (classifyCfError(stderr) === 'NOT_FOUND') {
+      return { ok: false, status: 404, code: 'NOT_FOUND' };
+    }
+    throw new Error(stderr || 'Failed to read sandbox owner token');
+  }
+
+  const storedToken = typeof tokenRead.stdout === 'string' ? tokenRead.stdout : '';
+  if (!storedToken) {
+    return { ok: false, status: 404, code: 'NOT_FOUND' };
+  }
+  if (storedToken.length > MAX_TOKEN_BYTES) {
+    return { ok: false, status: 403, code: 'AUTH_FAILURE' };
+  }
+  if (!timingSafeEqual(storedToken, providedToken)) {
+    return { ok: false, status: 403, code: 'AUTH_FAILURE' };
+  }
+  return { ok: true };
 }
 
 // Shell-safe quoting for arguments interpolated into `sandbox.exec` commands.

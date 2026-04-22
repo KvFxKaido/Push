@@ -2,12 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getSandbox } from '@cloudflare/sandbox';
 import { handleCloudflareSandbox } from './worker-cf-sandbox';
 import type { Env } from './worker-middleware';
+import { MAX_TOKEN_BYTES } from './sandbox-token-store';
 
 vi.mock('@cloudflare/sandbox', () => ({
   getSandbox: vi.fn(),
 }));
 
 const getSandboxMock = vi.mocked(getSandbox);
+const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
+const DEFAULT_OWNER_TOKEN = 'test-owner-token';
 
 interface FakeSandbox {
   exec: ReturnType<typeof vi.fn>;
@@ -19,11 +22,54 @@ interface FakeSandbox {
   destroy: ReturnType<typeof vi.fn>;
 }
 
+type ExecResult = { stdout?: string; stderr?: string; exitCode?: number };
+
+function isOwnerTokenReadCommand(command: unknown): command is string {
+  return typeof command === 'string' && command.includes(OWNER_TOKEN_PATH);
+}
+
+function withOwnerTokenAuthExec(
+  sandbox: FakeSandbox,
+  handler: (command: string, options?: unknown) => ExecResult | Promise<ExecResult>,
+  ownerToken: string = DEFAULT_OWNER_TOKEN,
+): void {
+  sandbox.exec.mockImplementation(async (command: string, options?: unknown) => {
+    if (isOwnerTokenReadCommand(command)) {
+      return { stdout: ownerToken, stderr: '', exitCode: 0 };
+    }
+    return await handler(command, options);
+  });
+}
+
+function queueExecResults(
+  sandbox: FakeSandbox,
+  results: Array<ExecResult | Error>,
+  ownerToken: string = DEFAULT_OWNER_TOKEN,
+): void {
+  const pending = [...results];
+  withOwnerTokenAuthExec(
+    sandbox,
+    async () => {
+      const next = pending.shift();
+      if (!next) return { stdout: '', stderr: '', exitCode: 0 };
+      if (next instanceof Error) throw next;
+      return next;
+    },
+    ownerToken,
+  );
+}
+
 function createFakeSandbox(): FakeSandbox {
   return {
-    exec: vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 })),
+    exec: vi.fn(async (command: string) =>
+      isOwnerTokenReadCommand(command)
+        ? { stdout: DEFAULT_OWNER_TOKEN, stderr: '', exitCode: 0 }
+        : { stdout: '', stderr: '', exitCode: 0 },
+    ),
     writeFile: vi.fn(async () => ({ success: true })),
-    readFile: vi.fn(async () => ({ content: '' })),
+    readFile: vi.fn(async (path: string) => ({
+      content: path === OWNER_TOKEN_PATH ? DEFAULT_OWNER_TOKEN : '',
+    })),
     listFiles: vi.fn(async () => ({ entries: [] })),
     deleteFile: vi.fn(async () => ({ success: true })),
     gitCheckout: vi.fn(async () => ({ success: true })),
@@ -36,11 +82,9 @@ function mockSandbox(sandbox = createFakeSandbox()): FakeSandbox {
   return sandbox;
 }
 
-// Default KV mock for SANDBOX_TOKENS — returns a record matching
-// DEFAULT_OWNER_TOKEN for any sandboxId. Tests that specifically exercise
-// auth failures override this by passing their own SANDBOX_TOKENS binding
-// via `makeEnv({ SANDBOX_TOKENS: ... })`.
-const DEFAULT_OWNER_TOKEN = 'test-owner-token';
+// Default KV mock for SANDBOX_TOKENS. Most routes authenticate from the
+// sandbox-local token file now; tests override this when they specifically
+// exercise cleanup fallback or stale-KV behavior.
 
 function makeTokensKV(token: string = DEFAULT_OWNER_TOKEN) {
   return {
@@ -94,9 +138,8 @@ async function callRoute(
   headers: Record<string, string> = {},
 ): Promise<Response> {
   // For non-create routes, inject a default owner_token matching the default
-  // SANDBOX_TOKENS KV mock — so existing tests keep passing after the auth
-  // gate was added. Tests that want to assert auth failures pass their own
-  // owner_token (including empty string) via the body, which takes precedence.
+  // sandbox token-file stub. Tests that want to assert auth failures pass
+  // their own owner_token (including empty string) via the body.
   const needsToken = route !== 'create' && typeof body === 'object' && body !== null;
   const bodyWithToken: Record<string, unknown> | string = needsToken
     ? { owner_token: DEFAULT_OWNER_TOKEN, ...(body as Record<string, unknown>) }
@@ -246,15 +289,16 @@ describe('handleCloudflareSandbox happy paths', () => {
 
   it('connects to a reachable sandbox', async () => {
     const sandbox = mockSandbox();
-    sandbox.exec
-      .mockResolvedValueOnce({ stdout: '', stderr: '', exitCode: 0 })
-      .mockResolvedValueOnce({ stdout: probeStdout(['pyproject.toml']), stderr: '', exitCode: 0 });
+    queueExecResults(
+      sandbox,
+      [
+        { stdout: '', stderr: '', exitCode: 0 },
+        { stdout: probeStdout(['pyproject.toml']), stderr: '', exitCode: 0 },
+      ],
+      'ot',
+    );
 
-    // Override the default SANDBOX_TOKENS mock so it validates 'ot' rather
-    // than DEFAULT_OWNER_TOKEN — the connect test cares about the token
-    // round-tripping through the server's echo, not the auth gate itself.
-    const env = makeEnv({ SANDBOX_TOKENS: makeTokensKV('ot') as unknown as Env['SANDBOX_TOKENS'] });
-    const response = await callRoute('connect', { sandbox_id: 'sb-1', owner_token: 'ot' }, env);
+    const response = await callRoute('connect', { sandbox_id: 'sb-1', owner_token: 'ot' });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
@@ -267,14 +311,37 @@ describe('handleCloudflareSandbox happy paths', () => {
         writable_root: '/workspace',
       },
     });
-    expect(getSandboxMock).toHaveBeenCalledWith(env.Sandbox, 'sb-1');
-    expect(sandbox.exec).toHaveBeenNthCalledWith(1, 'true');
-    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+    expect(getSandboxMock).toHaveBeenCalledWith(expect.anything(), 'sb-1');
+    expect(sandbox.exec.mock.calls[0]?.[0]).toContain(`head -c ${MAX_TOKEN_BYTES + 1}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'true');
+    expect(sandbox.exec).toHaveBeenCalledTimes(3);
+  });
+
+  it('authenticates normal routes from the sandbox token file even if KV is stale', async () => {
+    const sandbox = mockSandbox();
+    withOwnerTokenAuthExec(sandbox, async () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+
+    const env = makeEnv({
+      SANDBOX_TOKENS: makeTokensKV('stale-kv-token') as unknown as Env['SANDBOX_TOKENS'],
+    });
+    const response = await callRoute('exec', { sandbox_id: 'sb-1', command: 'pwd' }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      stdout: 'ok',
+      stderr: '',
+      exit_code: 0,
+    });
+    expect(sandbox.exec.mock.calls[0]?.[0]).toContain(OWNER_TOKEN_PATH);
   });
 
   it('executes a command in the requested workdir', async () => {
     const sandbox = mockSandbox();
-    sandbox.exec.mockResolvedValue({ stdout: 'ok', stderr: 'warn', exitCode: 7 });
+    withOwnerTokenAuthExec(sandbox, async (command, options) => {
+      expect(command).toBe('npm test');
+      expect(options).toEqual({ cwd: '/workspace/app' });
+      return { stdout: 'ok', stderr: 'warn', exitCode: 7 };
+    });
 
     const response = await callRoute('exec', {
       sandbox_id: 'sb-1',
@@ -352,11 +419,11 @@ describe('handleCloudflareSandbox happy paths', () => {
 
   it('probes the sandbox environment', async () => {
     const sandbox = mockSandbox();
-    sandbox.exec.mockResolvedValue({
+    withOwnerTokenAuthExec(sandbox, async () => ({
       stdout: probeStdout(['Cargo.toml']),
       stderr: '',
       exitCode: 0,
-    });
+    }));
 
     const response = await callRoute('probe', { sandbox_id: 'sb-1' });
 
@@ -372,8 +439,8 @@ describe('handleCloudflareSandbox happy paths', () => {
       disk_free: '42G',
       writable_root: '/workspace',
     });
-    expect(sandbox.exec).toHaveBeenCalledTimes(1);
-    expect(sandbox.exec.mock.calls[0][0]).toContain('__node__');
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+    expect(sandbox.exec.mock.calls[1][0]).toContain('__node__');
   });
 });
 
@@ -381,11 +448,18 @@ describe('handleCloudflareSandbox hardened connect and diff paths', () => {
   it.each([
     [
       'non-zero exit',
-      async (sandbox: FakeSandbox) => sandbox.exec.mockResolvedValue({ exitCode: 1 }),
+      async (sandbox: FakeSandbox) =>
+        withOwnerTokenAuthExec(sandbox, async (command) =>
+          command === 'true' ? { exitCode: 1 } : { stdout: '', stderr: '', exitCode: 0 },
+        ),
     ],
     [
       'exec rejection',
-      async (sandbox: FakeSandbox) => sandbox.exec.mockRejectedValue(new Error('container gone')),
+      async (sandbox: FakeSandbox) =>
+        withOwnerTokenAuthExec(sandbox, async (command) => {
+          if (command === 'true') throw new Error('container gone');
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }),
     ],
   ])('returns 404 when connect liveness fails: %s', async (_label, arrange) => {
     const sandbox = mockSandbox();
@@ -398,8 +472,44 @@ describe('handleCloudflareSandbox hardened connect and diff paths', () => {
       error: 'Sandbox is not reachable',
       code: 'NOT_FOUND',
     });
-    expect(sandbox.exec).toHaveBeenCalledOnce();
-    expect(sandbox.exec).toHaveBeenCalledWith('true');
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'true');
+  });
+
+  it('falls back to KV auth for cleanup when the sandbox token file is gone', async () => {
+    const sandbox = mockSandbox();
+    withOwnerTokenAuthExec(sandbox, async () => {
+      throw new Error('container unhealthy');
+    });
+
+    const response = await callRoute(
+      'cleanup',
+      { sandbox_id: 'sb-1' },
+      makeEnv({
+        SANDBOX_TOKENS: makeTokensKV(DEFAULT_OWNER_TOKEN) as unknown as Env['SANDBOX_TOKENS'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(sandbox.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('rejects oversized sandbox token files before comparing them', async () => {
+    const sandbox = mockSandbox();
+    withOwnerTokenAuthExec(
+      sandbox,
+      async () => ({ stdout: 'ok', stderr: '', exitCode: 0 }),
+      'x'.repeat(MAX_TOKEN_BYTES + 1),
+    );
+
+    const response = await callRoute('exec', { sandbox_id: 'sb-1', command: 'pwd' });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Owner token does not match',
+      code: 'AUTH_FAILURE',
+    });
   });
 
   it.each([
@@ -419,7 +529,7 @@ describe('handleCloudflareSandbox hardened connect and diff paths', () => {
     'returns an error field when %s exits non-zero',
     async (_label, diffResult, statusResult, expectedError) => {
       const sandbox = mockSandbox();
-      sandbox.exec.mockResolvedValueOnce(diffResult).mockResolvedValueOnce(statusResult);
+      queueExecResults(sandbox, [diffResult, statusResult]);
 
       const response = await callRoute('diff', { sandbox_id: 'sb-1' });
 
@@ -430,8 +540,8 @@ describe('handleCloudflareSandbox hardened connect and diff paths', () => {
         git_status: '',
         error: expectedError,
       });
-      expect(sandbox.exec).toHaveBeenNthCalledWith(1, 'git -C /workspace diff HEAD');
-      expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'git -C /workspace status --porcelain');
+      expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'git -C /workspace diff HEAD');
+      expect(sandbox.exec).toHaveBeenNthCalledWith(3, 'git -C /workspace status --porcelain');
     },
   );
 });
@@ -442,12 +552,13 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
     const uuid = mockUuid();
     const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
     const tmpTar = `${tmpB64}.tar.gz`;
-    sandbox.exec
-      .mockResolvedValueOnce({ exitCode: 0 })
-      .mockResolvedValueOnce({ exitCode: 0 })
-      .mockResolvedValueOnce({ stdout: 'safe/file.txt\nsafe/dir/\n', exitCode: 0 })
-      .mockResolvedValueOnce({ exitCode: 0 })
-      .mockResolvedValueOnce({ exitCode: 0 });
+    queueExecResults(sandbox, [
+      { exitCode: 0 },
+      { exitCode: 0 },
+      { stdout: 'safe/file.txt\nsafe/dir/\n', exitCode: 0 },
+      { exitCode: 0 },
+      { exitCode: 0 },
+    ]);
 
     const response = await callRoute('restore', {
       sandbox_id: 'sb-1',
@@ -458,20 +569,20 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
     expect(sandbox.writeFile).toHaveBeenCalledWith(tmpB64, 'YXJjaGl2ZQ==');
-    expect(sandbox.exec).toHaveBeenNthCalledWith(1, 'mkdir -p "/workspace/project"');
-    expect(sandbox.exec).toHaveBeenNthCalledWith(2, `base64 -d ${tmpB64} > ${tmpTar}`);
-    expect(sandbox.exec).toHaveBeenNthCalledWith(3, `tar -tzf ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'mkdir -p "/workspace/project"');
+    expect(sandbox.exec).toHaveBeenNthCalledWith(3, `base64 -d ${tmpB64} > ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(4, `tar -tzf ${tmpTar}`);
     expect(sandbox.exec).toHaveBeenNthCalledWith(
-      4,
+      5,
       `tar -xzf ${tmpTar} -C "/workspace/project" --no-same-owner`,
     );
-    expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f ${tmpB64} ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(6, `rm -f ${tmpB64} ${tmpTar}`);
   });
 
   it('returns 500 when creating the target directory fails', async () => {
     const sandbox = mockSandbox();
     mockUuid();
-    sandbox.exec.mockResolvedValueOnce({ exitCode: 1, stderr: 'mkdir denied' });
+    queueExecResults(sandbox, [{ exitCode: 1, stderr: 'mkdir denied' }]);
 
     const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'x' });
 
@@ -480,7 +591,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       error: 'Failed to create target directory: mkdir denied',
       code: 'CF_ERROR',
     });
-    expect(sandbox.exec).toHaveBeenCalledOnce();
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
   });
 
   it('returns 400 and cleans up when base64 decode fails', async () => {
@@ -488,10 +599,11 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
     const uuid = mockUuid();
     const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
     const tmpTar = `${tmpB64}.tar.gz`;
-    sandbox.exec
-      .mockResolvedValueOnce({ exitCode: 0 })
-      .mockResolvedValueOnce({ exitCode: 1, stderr: 'invalid input' })
-      .mockResolvedValueOnce({ exitCode: 0 });
+    queueExecResults(sandbox, [
+      { exitCode: 0 },
+      { exitCode: 1, stderr: 'invalid input' },
+      { exitCode: 0 },
+    ]);
 
     const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'not-base64' });
 
@@ -500,7 +612,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       error: 'Failed to decode archive: invalid input',
       code: 'CF_ERROR',
     });
-    expect(sandbox.exec).toHaveBeenNthCalledWith(3, `rm -f ${tmpB64} ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(4, `rm -f ${tmpB64} ${tmpTar}`);
   });
 
   it('returns 400 and cleans up when archive listing fails', async () => {
@@ -508,11 +620,12 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
     const uuid = mockUuid();
     const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
     const tmpTar = `${tmpB64}.tar.gz`;
-    sandbox.exec
-      .mockResolvedValueOnce({ exitCode: 0 })
-      .mockResolvedValueOnce({ exitCode: 0 })
-      .mockResolvedValueOnce({ exitCode: 2, stderr: 'not gzip' })
-      .mockResolvedValueOnce({ exitCode: 0 });
+    queueExecResults(sandbox, [
+      { exitCode: 0 },
+      { exitCode: 0 },
+      { exitCode: 2, stderr: 'not gzip' },
+      { exitCode: 0 },
+    ]);
 
     const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'bad-tar' });
 
@@ -521,7 +634,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       error: 'Invalid archive: not gzip',
       code: 'CF_ERROR',
     });
-    expect(sandbox.exec).toHaveBeenNthCalledWith(4, `rm -f ${tmpB64} ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f ${tmpB64} ${tmpTar}`);
   });
 
   it.each(['/etc/passwd', 'safe/../evil.txt'])(
@@ -531,11 +644,12 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       const uuid = mockUuid();
       const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
       const tmpTar = `${tmpB64}.tar.gz`;
-      sandbox.exec
-        .mockResolvedValueOnce({ exitCode: 0 })
-        .mockResolvedValueOnce({ exitCode: 0 })
-        .mockResolvedValueOnce({ stdout: `safe/file.txt\n${unsafeMember}\n`, exitCode: 0 })
-        .mockResolvedValueOnce({ exitCode: 0 });
+      queueExecResults(sandbox, [
+        { exitCode: 0 },
+        { exitCode: 0 },
+        { stdout: `safe/file.txt\n${unsafeMember}\n`, exitCode: 0 },
+        { exitCode: 0 },
+      ]);
 
       const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'unsafe-tar' });
 
@@ -544,7 +658,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
         error: `Archive member rejected (path traversal): ${unsafeMember}`,
         code: 'CF_ERROR',
       });
-      expect(sandbox.exec).toHaveBeenNthCalledWith(4, `rm -f ${tmpB64} ${tmpTar}`);
+      expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f ${tmpB64} ${tmpTar}`);
     },
   );
 
@@ -553,12 +667,13 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
     const uuid = mockUuid();
     const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
     const tmpTar = `${tmpB64}.tar.gz`;
-    sandbox.exec
-      .mockResolvedValueOnce({ exitCode: 0 })
-      .mockResolvedValueOnce({ exitCode: 0 })
-      .mockResolvedValueOnce({ stdout: 'safe/file.txt\n', exitCode: 0 })
-      .mockResolvedValueOnce({ exitCode: 2, stderr: 'permission denied' })
-      .mockResolvedValueOnce({ exitCode: 0 });
+    queueExecResults(sandbox, [
+      { exitCode: 0 },
+      { exitCode: 0 },
+      { stdout: 'safe/file.txt\n', exitCode: 0 },
+      { exitCode: 2, stderr: 'permission denied' },
+      { exitCode: 0 },
+    ]);
 
     const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'safe-tar' });
 
@@ -567,7 +682,7 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
       error: 'Archive extraction failed: permission denied',
       code: 'CF_ERROR',
     });
-    expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f ${tmpB64} ${tmpTar}`);
+    expect(sandbox.exec).toHaveBeenNthCalledWith(6, `rm -f ${tmpB64} ${tmpTar}`);
   });
 });
 
@@ -575,6 +690,7 @@ describe('handleCloudflareSandbox snapshot stubs', () => {
   it.each(['hibernate', 'restore-snapshot'])(
     'returns 501 for %s with SNAPSHOT_NOT_SUPPORTED',
     async (route) => {
+      const sandbox = mockSandbox();
       const response = await callRoute(route, { sandbox_id: 'sb-1' });
 
       expect(response.status).toBe(501);
@@ -582,7 +698,8 @@ describe('handleCloudflareSandbox snapshot stubs', () => {
         error: 'Snapshots not supported on the Cloudflare provider yet',
         code: 'SNAPSHOT_NOT_SUPPORTED',
       });
-      expect(getSandboxMock).not.toHaveBeenCalled();
+      expect(getSandboxMock).toHaveBeenCalledOnce();
+      expect(sandbox.exec.mock.calls[0]?.[0]).toContain(OWNER_TOKEN_PATH);
     },
   );
 });

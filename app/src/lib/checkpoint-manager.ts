@@ -15,8 +15,24 @@ import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storag
 
 const CHECKPOINT_MAX_AGE_MS = 25 * 60 * 1000; // 25 min — matches sandbox max age
 const RUN_ACTIVE_PREFIX = 'run_active_';
+const RUN_BROWSER_TAB_ID_KEY = 'run_browser_tab_id';
+const RUN_RELOAD_MARKER_KEY = 'run_tab_reload_marker';
 const TAB_LOCK_STALE_MS = 60_000; // Consider lock stale after 60s without heartbeat
+const RUN_RELOAD_MARKER_MAX_AGE_MS = 15_000;
 const CHECKPOINT_DELTA_WARN_SIZE = 50 * 1024; // 50KB warning threshold
+
+interface RunTabLockRecord {
+  tabId: string;
+  heartbeat: number;
+  browserTabId?: string;
+  pageInstanceId?: string;
+}
+
+interface RunTabReloadMarker {
+  browserTabId: string;
+  pageInstanceId: string;
+  unloadedAt: number;
+}
 
 export interface ResumeEvent {
   phase: LoopPhase;
@@ -49,6 +65,112 @@ export interface RunCheckpointSnapshot {
 }
 
 const resumeEvents: ResumeEvent[] = [];
+let browserTabIdCache: string | null = null;
+let pendingRunTabReloadMarker: RunTabReloadMarker | null | undefined;
+let runTabUnloadMarkerInstalled = false;
+let runTabUnloadMarkerHandler: (() => void) | null = null;
+
+function createClientInstanceId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const PAGE_INSTANCE_ID = createClientInstanceId();
+
+function parseRunTabReloadMarker(raw: string | null): RunTabReloadMarker | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as RunTabReloadMarker;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (typeof parsed.browserTabId !== 'string' || !parsed.browserTabId) return null;
+    if (typeof parsed.pageInstanceId !== 'string' || !parsed.pageInstanceId) return null;
+    if (typeof parsed.unloadedAt !== 'number') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function persistRunTabReloadMarker(): void {
+  safeStorageSet(
+    RUN_RELOAD_MARKER_KEY,
+    JSON.stringify({
+      browserTabId: getBrowserTabId(),
+      pageInstanceId: PAGE_INSTANCE_ID,
+      unloadedAt: Date.now(),
+    } satisfies RunTabReloadMarker),
+    'session',
+  );
+}
+
+function ensureRunTabReloadMarkerTracking(): void {
+  if (runTabUnloadMarkerInstalled || typeof window === 'undefined') return;
+
+  runTabUnloadMarkerHandler = () => {
+    persistRunTabReloadMarker();
+  };
+  window.addEventListener('pagehide', runTabUnloadMarkerHandler);
+  window.addEventListener('beforeunload', runTabUnloadMarkerHandler);
+  runTabUnloadMarkerInstalled = true;
+}
+
+function getPendingRunTabReloadMarker(): RunTabReloadMarker | null {
+  if (pendingRunTabReloadMarker !== undefined) {
+    return pendingRunTabReloadMarker;
+  }
+
+  pendingRunTabReloadMarker = parseRunTabReloadMarker(
+    safeStorageGet(RUN_RELOAD_MARKER_KEY, 'session'),
+  );
+  safeStorageRemove(RUN_RELOAD_MARKER_KEY, 'session');
+  return pendingRunTabReloadMarker;
+}
+
+function getBrowserTabId(): string {
+  ensureRunTabReloadMarkerTracking();
+  if (browserTabIdCache) return browserTabIdCache;
+
+  const existing = safeStorageGet(RUN_BROWSER_TAB_ID_KEY, 'session');
+  if (existing) {
+    browserTabIdCache = existing;
+    return existing;
+  }
+
+  const created = createClientInstanceId();
+  if (safeStorageSet(RUN_BROWSER_TAB_ID_KEY, created, 'session')) {
+    browserTabIdCache = created;
+    return created;
+  }
+
+  browserTabIdCache = created;
+  return created;
+}
+
+function parseRunTabLock(raw: string | null): RunTabLockRecord | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as RunTabLockRecord;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (typeof parsed.tabId !== 'string' || !parsed.tabId) return null;
+    if (typeof parsed.heartbeat !== 'number') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function canReclaimFreshRunTabLock(lock: RunTabLockRecord): boolean {
+  const reloadMarker = getPendingRunTabReloadMarker();
+  return (
+    !!reloadMarker &&
+    Date.now() - reloadMarker.unloadedAt < RUN_RELOAD_MARKER_MAX_AGE_MS &&
+    typeof lock.browserTabId === 'string' &&
+    lock.browserTabId === reloadMarker.browserTabId &&
+    lock.browserTabId === getBrowserTabId() &&
+    typeof lock.pageInstanceId === 'string' &&
+    lock.pageInstanceId === reloadMarker.pageInstanceId &&
+    lock.pageInstanceId !== PAGE_INSTANCE_ID
+  );
+}
 
 export function checkpointRequiresLiveSandboxStatus(
   checkpoint: Pick<RunCheckpoint, 'reason'>,
@@ -241,44 +363,36 @@ export function buildCheckpointReconciliationMessage(
 
 export function acquireRunTabLock(chatId: string): string | null {
   const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
-  const existing = safeStorageGet(key);
-  if (existing) {
-    try {
-      const lock = JSON.parse(existing) as { tabId: string; heartbeat: number };
-      if (Date.now() - lock.heartbeat < TAB_LOCK_STALE_MS) {
-        return null;
-      }
-    } catch {
-      // Malformed lock; take it over.
+  const existingLock = parseRunTabLock(safeStorageGet(key));
+  if (existingLock) {
+    const isFresh = Date.now() - existingLock.heartbeat < TAB_LOCK_STALE_MS;
+    if (isFresh && !canReclaimFreshRunTabLock(existingLock)) {
+      return null;
     }
   }
 
-  const tabId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  safeStorageSet(key, JSON.stringify({ tabId, heartbeat: Date.now() }));
+  const lockId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  safeStorageSet(
+    key,
+    JSON.stringify({
+      tabId: lockId,
+      heartbeat: Date.now(),
+      browserTabId: getBrowserTabId(),
+      pageInstanceId: PAGE_INSTANCE_ID,
+    } satisfies RunTabLockRecord),
+  );
 
-  const verify = safeStorageGet(key);
-  if (!verify) return null;
-
-  try {
-    const parsed = JSON.parse(verify) as { tabId: string };
-    return parsed.tabId === tabId ? tabId : null;
-  } catch {
-    return null;
-  }
+  const verify = parseRunTabLock(safeStorageGet(key));
+  return verify?.tabId === lockId ? lockId : null;
 }
 
 export function releaseRunTabLock(chatId: string, ownerTabId: string | null): void {
   if (!ownerTabId) return;
 
   const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
-  const existing = safeStorageGet(key);
-  if (existing) {
-    try {
-      const lock = JSON.parse(existing) as { tabId: string };
-      if (lock.tabId !== ownerTabId) return;
-    } catch {
-      // Malformed lock; safe to remove.
-    }
+  const lock = parseRunTabLock(safeStorageGet(key));
+  if (lock && lock.tabId !== ownerTabId) {
+    return;
   }
 
   safeStorageRemove(key);
@@ -288,16 +402,10 @@ export function heartbeatRunTabLock(chatId: string, ownerTabId: string | null): 
   if (!ownerTabId) return;
 
   const key = `${RUN_ACTIVE_PREFIX}${chatId}`;
-  const existing = safeStorageGet(key);
-  if (!existing) return;
+  const lock = parseRunTabLock(safeStorageGet(key));
+  if (!lock || lock.tabId !== ownerTabId) return;
 
-  try {
-    const lock = JSON.parse(existing) as { tabId: string; heartbeat: number };
-    if (lock.tabId !== ownerTabId) return;
-    safeStorageSet(key, JSON.stringify({ ...lock, heartbeat: Date.now() }));
-  } catch {
-    // Ignore malformed heartbeat payloads.
-  }
+  safeStorageSet(key, JSON.stringify({ ...lock, heartbeat: Date.now() }));
 }
 
 export function recordResumeEvent(checkpoint: RunCheckpoint): void {
@@ -317,4 +425,16 @@ export function recordResumeEvent(checkpoint: RunCheckpoint): void {
 
 export function getResumeEvents(): readonly ResumeEvent[] {
   return resumeEvents;
+}
+
+/** @internal Reset module-scoped tab-lock state. Test-only. */
+export function __resetRunTabLockStateForTesting(): void {
+  browserTabIdCache = null;
+  pendingRunTabReloadMarker = undefined;
+  if (runTabUnloadMarkerInstalled && runTabUnloadMarkerHandler && typeof window !== 'undefined') {
+    window.removeEventListener('pagehide', runTabUnloadMarkerHandler);
+    window.removeEventListener('beforeunload', runTabUnloadMarkerHandler);
+  }
+  runTabUnloadMarkerHandler = null;
+  runTabUnloadMarkerInstalled = false;
 }
