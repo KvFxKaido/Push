@@ -158,7 +158,10 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
 
   const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
     routeLabel: 'Cloudflare Workers AI',
-    maxOutputTokens: 12_288,
+    // Push-side ceiling — Cloudflare/upstream enforce their own per-model caps
+    // on top. 64K gives Kimi K2.6 room for full-file rewrites and long reviews
+    // without Push being the bottleneck on a 262K-context model.
+    maxOutputTokens: 65_536,
   });
   if (!normalizedRequest.ok) {
     return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
