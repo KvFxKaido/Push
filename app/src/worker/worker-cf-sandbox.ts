@@ -65,6 +65,44 @@ const ROUTES = new Set([
 const MAX_READ_BYTES = 5_000_000;
 const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 
+// Upper bound for a single `sandbox.exec` call. The Cloudflare Sandbox SDK's
+// exec has no abort path — if the container is wedged (commonly after a heavy
+// FS write like `npm install`), the returned promise never resolves, the
+// surrounding route handler hangs, and `callSandboxHandler` waits the full
+// outer 180s before it fires the kernel-facing timeout. This per-exec deadline
+// fires first (150s) so routes that issue multiple execs can fail fast with a
+// route-specific `TIMEOUT` response instead of burning the outer budget on a
+// single stuck call.
+//
+// The abandoned exec continues in the container — we can't cancel a running
+// command through the SDK — but we stop waiting, let the route return 504,
+// and the next call can reach a healthier shard.
+export const SANDBOX_EXEC_TIMEOUT_MS = 150_000;
+
+export class SandboxExecDeadlineError extends Error {
+  readonly timeoutMs: number;
+  constructor(timeoutMs: number) {
+    super(`sandbox exec exceeded ${timeoutMs}ms deadline`);
+    this.name = 'SandboxExecDeadlineError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+function withExecDeadline<T>(
+  exec: Promise<T>,
+  timeoutMs: number = SANDBOX_EXEC_TIMEOUT_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new SandboxExecDeadlineError(timeoutMs));
+    }, timeoutMs);
+  });
+  return Promise.race([exec, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
 type Json = Record<string, unknown>;
 
 export async function handleCloudflareSandbox(
@@ -217,17 +255,23 @@ export async function handleCloudflareSandbox(
         return Response.json({ error: 'Unknown route' }, { status: 404 });
     }
   } catch (err) {
-    wlog('error', 'cf_sandbox_error', {
+    const isDeadline = err instanceof SandboxExecDeadlineError;
+    wlog(isDeadline ? 'warn' : 'error', 'cf_sandbox_error', {
       requestId,
       route,
+      deadline: isDeadline,
       message: err instanceof Error ? err.message : String(err),
     });
     return Response.json(
       {
         error: err instanceof Error ? err.message : String(err),
-        code: classifyCfError(err),
+        code: isDeadline ? 'TIMEOUT' : classifyCfError(err),
       },
-      { status: 500 },
+      // 504 for deadline so callers can distinguish "we stopped waiting"
+      // from "backend crashed". callSandboxHandler already treats any
+      // status >= 500 as retryable, so the kernel surfaces retry-friendly
+      // structured errors for both cases.
+      { status: isDeadline ? 504 : 500 },
     );
   }
 }
@@ -266,9 +310,11 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
     // still evaluate $VAR, backticks, and $(...), so a crafted identity
     // could trigger command substitution during `git config`. Same
     // discipline as routeRead's path interpolation.
-    await sandbox.exec(
-      `git config --global user.name ${shellSingleQuote(githubIdentity.name)} && ` +
-        `git config --global user.email ${shellSingleQuote(githubIdentity.email)}`,
+    await withExecDeadline(
+      sandbox.exec(
+        `git config --global user.name ${shellSingleQuote(githubIdentity.name)} && ` +
+          `git config --global user.email ${shellSingleQuote(githubIdentity.email)}`,
+      ),
     );
   }
 
@@ -319,9 +365,9 @@ async function routeConnect(env: Env, body: Json): Promise<Response> {
   // swallows exec errors (returning an empty payload) so we can't rely on it
   // to signal a dead sandbox — do the probe explicitly here and surface 404
   // when it fails so callers fall back to create/restore.
-  const liveness = (await sandbox.exec('true').catch((err) => ({ __error: err }))) as
-    | { exitCode?: number }
-    | { __error: unknown };
+  const liveness = (await withExecDeadline(sandbox.exec('true')).catch((err) => ({
+    __error: err,
+  }))) as { exitCode?: number } | { __error: unknown };
   if ('__error' in liveness || (liveness as { exitCode?: number }).exitCode !== 0) {
     return Response.json({ error: 'Sandbox is not reachable', code: 'NOT_FOUND' }, { status: 404 });
   }
@@ -355,7 +401,9 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
   const workdir = str(body.workdir);
 
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
-  const result = await sandbox.exec(command, workdir ? { cwd: workdir } : undefined);
+  const result = await withExecDeadline(
+    sandbox.exec(command, workdir ? { cwd: workdir } : undefined),
+  );
 
   const stdout = (result as { stdout?: string }).stdout ?? '';
   const stderr = (result as { stderr?: string }).stderr ?? '';
@@ -408,10 +456,10 @@ async function routeRead(env: Env, body: Json): Promise<Response> {
   const statCommand = `stat -c %s -- ${quotedPath}`;
 
   const [contentResult, hashResult, lineCountResult, statResult] = (await Promise.all([
-    sandbox.exec(contentCommand),
-    sandbox.exec(hashCommand),
-    isLineRangeRead ? sandbox.exec(lineCountCommand) : Promise.resolve(null),
-    sandbox.exec(statCommand),
+    withExecDeadline(sandbox.exec(contentCommand)),
+    withExecDeadline(sandbox.exec(hashCommand)),
+    isLineRangeRead ? withExecDeadline(sandbox.exec(lineCountCommand)) : Promise.resolve(null),
+    withExecDeadline(sandbox.exec(statCommand)),
   ])) as [
     { stdout?: string; stderr?: string; exitCode?: number },
     { stdout?: string; stderr?: string; exitCode?: number },
@@ -616,12 +664,14 @@ async function routeDiff(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
 
-  const diffRes = (await sandbox.exec('git -C /workspace diff HEAD')) as {
+  const diffRes = (await withExecDeadline(sandbox.exec('git -C /workspace diff HEAD'))) as {
     stdout?: string;
     stderr?: string;
     exitCode?: number;
   };
-  const statusRes = (await sandbox.exec('git -C /workspace status --porcelain')) as {
+  const statusRes = (await withExecDeadline(
+    sandbox.exec('git -C /workspace status --porcelain'),
+  )) as {
     stdout?: string;
     stderr?: string;
     exitCode?: number;
@@ -654,8 +704,8 @@ async function routeDownload(env: Env, body: Json): Promise<Response> {
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
 
   // Produce a base64 tar.gz on stdout via the container.
-  const tarResult = (await sandbox.exec(
-    `tar -czf - -C ${JSON.stringify(path)} . | base64 -w0`,
+  const tarResult = (await withExecDeadline(
+    sandbox.exec(`tar -czf - -C ${JSON.stringify(path)} . | base64 -w0`),
   )) as { stdout?: string };
 
   const archive = tarResult.stdout?.trim() ?? '';
@@ -678,7 +728,7 @@ async function routeHydrate(env: Env, body: Json): Promise<Response> {
   const tmpTar = `${tmpB64}.tar.gz`;
   await sandbox.writeFile(tmpB64, archive);
 
-  const mkdir = (await sandbox.exec(`mkdir -p ${JSON.stringify(path)}`)) as {
+  const mkdir = (await withExecDeadline(sandbox.exec(`mkdir -p ${JSON.stringify(path)}`))) as {
     exitCode?: number;
     stderr?: string;
   };
@@ -692,12 +742,12 @@ async function routeHydrate(env: Env, body: Json): Promise<Response> {
     );
   }
 
-  const decode = (await sandbox.exec(`base64 -d ${tmpB64} > ${tmpTar}`)) as {
+  const decode = (await withExecDeadline(sandbox.exec(`base64 -d ${tmpB64} > ${tmpTar}`))) as {
     exitCode?: number;
     stderr?: string;
   };
   if ((decode.exitCode ?? 0) !== 0) {
-    await sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`).catch(() => {});
+    await withExecDeadline(sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`)).catch(() => {});
     return Response.json(
       { error: `Failed to decode archive: ${decode.stderr ?? ''}`.trim(), code: 'CF_ERROR' },
       { status: 400 },
@@ -708,13 +758,13 @@ async function routeHydrate(env: Env, body: Json): Promise<Response> {
   // refuse if any entry is absolute or contains "..". Even with internal
   // traffic we trust, this keeps a bad producer from escaping the target
   // directory during hydrate.
-  const list = (await sandbox.exec(`tar -tzf ${tmpTar}`)) as {
+  const list = (await withExecDeadline(sandbox.exec(`tar -tzf ${tmpTar}`))) as {
     stdout?: string;
     exitCode?: number;
     stderr?: string;
   };
   if ((list.exitCode ?? 0) !== 0) {
-    await sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`).catch(() => {});
+    await withExecDeadline(sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`)).catch(() => {});
     return Response.json(
       { error: `Invalid archive: ${list.stderr ?? ''}`.trim(), code: 'CF_ERROR' },
       { status: 400 },
@@ -723,17 +773,17 @@ async function routeHydrate(env: Env, body: Json): Promise<Response> {
   const members = (list.stdout ?? '').split('\n').filter(Boolean);
   const unsafe = members.find((m) => m.startsWith('/') || m.split('/').some((seg) => seg === '..'));
   if (unsafe) {
-    await sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`).catch(() => {});
+    await withExecDeadline(sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`)).catch(() => {});
     return Response.json(
       { error: `Archive member rejected (path traversal): ${unsafe}`, code: 'CF_ERROR' },
       { status: 400 },
     );
   }
 
-  const extract = (await sandbox.exec(
-    `tar -xzf ${tmpTar} -C ${JSON.stringify(path)} --no-same-owner`,
+  const extract = (await withExecDeadline(
+    sandbox.exec(`tar -xzf ${tmpTar} -C ${JSON.stringify(path)} --no-same-owner`),
   )) as { exitCode?: number; stderr?: string };
-  await sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`).catch(() => {});
+  await withExecDeadline(sandbox.exec(`rm -f ${tmpB64} ${tmpTar}`)).catch(() => {});
 
   if ((extract.exitCode ?? 0) !== 0) {
     return Response.json(
@@ -776,7 +826,7 @@ async function probeEnvironment(sandbox: SandboxStub): Promise<Json> {
     'echo "__df__$(df -h /workspace 2>/dev/null | tail -1 | awk "{print \\$4}")" && ' +
     'ls /workspace 2>/dev/null';
 
-  const result = (await sandbox.exec(script).catch(() => ({ stdout: '' }))) as {
+  const result = (await withExecDeadline(sandbox.exec(script)).catch(() => ({ stdout: '' }))) as {
     stdout?: string;
   };
   const out = result.stdout ?? '';
@@ -846,9 +896,9 @@ async function verifySandboxOwnerToken(
   }
 
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
-  const tokenRead = (await sandbox
-    .exec(`head -c ${MAX_TOKEN_BYTES + 1} ${shellSingleQuote(OWNER_TOKEN_PATH)}`)
-    .catch((err) => ({ __error: err }))) as
+  const tokenRead = (await withExecDeadline(
+    sandbox.exec(`head -c ${MAX_TOKEN_BYTES + 1} ${shellSingleQuote(OWNER_TOKEN_PATH)}`),
+  ).catch((err) => ({ __error: err }))) as
     | { stdout?: string; stderr?: string; exitCode?: number }
     | { __error: unknown };
   if ('__error' in tokenRead) {

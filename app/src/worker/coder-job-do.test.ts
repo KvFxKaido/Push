@@ -22,7 +22,12 @@ vi.mock('@cloudflare/sandbox', () => ({
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { ProviderStreamFn } from '@push/lib/provider-contract';
 import type { ChatMessage } from '@/types';
-import { CoderJob, __setCoderJobServiceOverrides, type CoderJobStartInput } from './coder-job-do';
+import {
+  CoderJob,
+  MAX_JOB_WALL_CLOCK_MS,
+  __setCoderJobServiceOverrides,
+  type CoderJobStartInput,
+} from './coder-job-do';
 import type { CoderJobDetectorAdapter } from './coder-job-detector-adapter';
 import type { CoderJobExecutorAdapter } from './coder-job-executor-adapter';
 import type { Env } from './worker-middleware';
@@ -166,6 +171,26 @@ function createMockStorage() {
       return row ? [row as unknown as Record<string, unknown>] : [];
     }
 
+    if (/^SELECT id, started_at FROM job\s+WHERE status = 'running'/i.test(sql)) {
+      return [...jobs.values()]
+        .filter((j) => j.status === 'running' && j.started_at != null)
+        .map((j) => ({ id: j.id, started_at: j.started_at as number }));
+    }
+
+    if (/^SELECT MIN\(started_at\) AS oldest FROM job/i.test(sql)) {
+      const running = [...jobs.values()].filter(
+        (j) => j.status === 'running' && j.started_at != null,
+      );
+      if (running.length === 0) return [{ oldest: null }];
+      return [{ oldest: Math.min(...running.map((j) => j.started_at as number)) }];
+    }
+
+    if (/^SELECT MAX\(ts\) AS last_ts FROM event WHERE job_id = \?/i.test(sql)) {
+      const jobId = params[0] as string;
+      const tsValues = events.filter((e) => e.job_id === jobId).map((e) => e.ts);
+      return [{ last_ts: tsValues.length > 0 ? Math.max(...tsValues) : null }];
+    }
+
     throw new Error(`Unhandled SQL in mock: ${sql}`);
   }
 
@@ -175,13 +200,22 @@ function createMockStorage() {
 function makeCtx() {
   const storage = createMockStorage();
   const waitUntilPromises: Promise<unknown>[] = [];
+  const alarms: Array<number | null> = [];
   const ctx = {
-    storage: { sql: { exec: storage.exec } },
+    storage: {
+      sql: { exec: storage.exec },
+      setAlarm: async (scheduledTime: number) => {
+        alarms.push(scheduledTime);
+      },
+      deleteAlarm: async () => {
+        alarms.push(null);
+      },
+    },
     waitUntil: (p: Promise<unknown>) => {
       waitUntilPromises.push(p);
     },
   } as unknown as DurableObjectState;
-  return { ctx, storage, waitUntilPromises };
+  return { ctx, storage, waitUntilPromises, alarms };
 }
 
 function makeEnv(): Env {
@@ -395,8 +429,157 @@ describe('CoderJob DO — end-to-end', () => {
     const snapshot = (await statusResponse.json()) as {
       status: string;
       eventCount: number;
+      lastEventAt: number | null;
     };
     expect(snapshot.status).toBe('completed');
     expect(snapshot.eventCount).toBe(2);
+    expect(typeof snapshot.lastEventAt).toBe('number');
+  });
+
+  it('status snapshot reports lastEventAt: null for jobs with no events yet', async () => {
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+
+    // Seed a running job directly without going through handleStart so
+    // no `subagent.started` event is appended.
+    storage.jobs.set('job-noev', {
+      id: 'job-noev',
+      chat_id: 'c',
+      repo: 'a/b',
+      branch: 'main',
+      sandbox_id: 'sb',
+      owner_token: 't',
+      origin: 'https://push.example.test',
+      status: 'running',
+      input_json: '{}',
+      result_json: null,
+      error_text: null,
+      created_at: Date.now(),
+      started_at: Date.now(),
+      finished_at: null,
+    });
+
+    const response = await job.fetch(
+      new Request('https://do/status?jobId=job-noev', { method: 'GET' }),
+    );
+    expect(response.status).toBe(200);
+    const snapshot = (await response.json()) as { lastEventAt: number | null };
+    expect(snapshot.lastEventAt).toBeNull();
+  });
+
+  it('SSE stream emits heartbeat comments while the job is running', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ctx, storage } = makeCtx();
+      const job = new CoderJob(ctx, makeEnv());
+
+      storage.jobs.set('job-hb', {
+        id: 'job-hb',
+        chat_id: 'c',
+        repo: 'a/b',
+        branch: 'main',
+        sandbox_id: 'sb',
+        owner_token: 't',
+        origin: 'https://push.example.test',
+        status: 'running',
+        input_json: '{}',
+        result_json: null,
+        error_text: null,
+        created_at: Date.now(),
+        started_at: Date.now(),
+        finished_at: null,
+      });
+
+      const response = await job.fetch(
+        new Request('https://do/events?jobId=job-hb', { method: 'GET' }),
+      );
+      expect(response.status).toBe(200);
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+
+      // No real events enqueued yet — first read blocks until the
+      // heartbeat interval fires.
+      const firstRead = reader.read();
+      await vi.advanceTimersByTimeAsync(25_000);
+      const { value } = await firstRead;
+      const chunk = decoder.decode(value);
+      expect(chunk).toContain('heartbeat');
+
+      await reader.cancel();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('alarm() force-terminates a run that has exceeded its wall-clock budget', async () => {
+    const { ctx, storage, alarms } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+
+    // Inject a running job whose started_at is beyond the budget. We
+    // write to the storage map directly rather than go through
+    // handleStart + a hanging streamFn so the test doesn't need fake
+    // timers or a promise that never settles.
+    const startedLongAgo = Date.now() - MAX_JOB_WALL_CLOCK_MS - 5_000;
+    storage.jobs.set('job-stalled', {
+      id: 'job-stalled',
+      chat_id: 'chat-1',
+      repo: 'acme/app',
+      branch: 'main',
+      sandbox_id: 'sb-1',
+      owner_token: 'tok-1',
+      origin: 'https://push.example.test',
+      status: 'running',
+      input_json: JSON.stringify(makeStartInput({ jobId: 'job-stalled' })),
+      result_json: null,
+      error_text: null,
+      created_at: startedLongAgo,
+      started_at: startedLongAgo,
+      finished_at: null,
+    });
+
+    await job.alarm();
+
+    const row = storage.jobs.get('job-stalled')!;
+    expect(row.status).toBe('failed');
+    expect(row.error_text).toMatch(/wall-clock budget/i);
+    expect(row.finished_at).toBeTypeOf('number');
+
+    const failed = storage.events.find((e) => e.type === 'subagent.failed');
+    expect(failed).toBeDefined();
+    expect(JSON.parse(failed!.payload_json).error).toMatch(/stalled|forcibly terminated/i);
+
+    // No running jobs left → alarm should be cleared.
+    expect(alarms.at(-1)).toBeNull();
+  });
+
+  it('alarm() leaves a still-fresh running job alone and reschedules the alarm', async () => {
+    const { ctx, storage, alarms } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+
+    const startedRecently = Date.now() - 60_000; // 1 minute ago
+    storage.jobs.set('job-fresh', {
+      id: 'job-fresh',
+      chat_id: 'chat-1',
+      repo: 'acme/app',
+      branch: 'main',
+      sandbox_id: 'sb-1',
+      owner_token: 'tok-1',
+      origin: 'https://push.example.test',
+      status: 'running',
+      input_json: JSON.stringify(makeStartInput({ jobId: 'job-fresh' })),
+      result_json: null,
+      error_text: null,
+      created_at: startedRecently,
+      started_at: startedRecently,
+      finished_at: null,
+    });
+
+    await job.alarm();
+
+    expect(storage.jobs.get('job-fresh')!.status).toBe('running');
+    expect(storage.events.length).toBe(0);
+    // Alarm rescheduled to this job's deadline.
+    expect(alarms.at(-1)).toBe(startedRecently + MAX_JOB_WALL_CLOCK_MS);
   });
 });
