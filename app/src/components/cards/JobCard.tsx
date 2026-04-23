@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Bot, CheckCircle2, CircleDashed, Loader2, Ban, TriangleAlert } from 'lucide-react';
+import {
+  Bot,
+  CheckCircle2,
+  CircleDashed,
+  Loader2,
+  Ban,
+  TriangleAlert,
+  XCircle,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { BackgroundJobStatus, CoderJobCardData } from '@/types';
 import {
@@ -17,6 +25,15 @@ import {
   CARD_TEXT_WARNING,
   formatElapsedTime,
 } from '@/lib/utils';
+
+// A run that hasn't produced a server event in this long while still
+// `running` is surfaced to the user with a cancel affordance. Sized
+// generously so healthy long runs don't false-positive: Phase 1 emits
+// subagent.started and then nothing until terminal, so a 2-minute model
+// thinking burst is routine. At 3 minutes of silence we start nudging
+// the user, and the DO's 30-minute wall-clock alarm is still the
+// authoritative backstop.
+const STALL_WARNING_THRESHOLD_MS = 3 * 60 * 1000;
 
 function getStatusLabel(status: BackgroundJobStatus): string {
   switch (status) {
@@ -56,6 +73,14 @@ const STATUS_ICONS: Record<BackgroundJobStatus, LucideIcon> = {
   cancelled: Ban,
 };
 
+async function postCancel(jobId: string): Promise<void> {
+  try {
+    await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+  } catch (err) {
+    console.warn('[JobCard] Failed to cancel job', jobId, err);
+  }
+}
+
 export function JobCard({ data }: { data: CoderJobCardData }) {
   const classes = getStatusClasses(data.status);
   const StatusIcon = STATUS_ICONS[data.status];
@@ -72,10 +97,29 @@ export function JobCard({ data }: { data: CoderJobCardData }) {
     return () => clearInterval(id);
   }, [isActive]);
 
+  // Disable Cancel after a single click so impatient taps don't spam
+  // /cancel. Terminal states are terminal server-side, so there's no
+  // "this job might come back" path we need to reset for.
+  const [cancelRequested, setCancelRequested] = useState(false);
+
   const endTime = isActive ? now : (data.finishedAt ?? now);
   const elapsed = Math.max(0, endTime - data.startedAt);
   const elapsedLabel = formatElapsedTime(elapsed);
   const statusLine = data.latestStatusLine ?? getStatusLabel(data.status);
+
+  const lastEventAt = data.lastEventAt ?? data.startedAt;
+  const silentFor = Math.max(0, now - lastEventAt);
+  const isStalled = data.status === 'running' && silentFor >= STALL_WARNING_THRESHOLD_MS;
+
+  const handleCancel = async (): Promise<void> => {
+    if (cancelRequested) return;
+    setCancelRequested(true);
+    await postCancel(data.jobId);
+    // Don't flip UI state here — the server's cancelled event will
+    // arrive over SSE and drive the card through its normal terminal
+    // path. If cancel fails (network error), cancelRequested stays true
+    // but the status effect will eventually reset it on reconnect.
+  };
 
   return (
     <div className={CARD_SHELL_CLASS}>
@@ -109,6 +153,30 @@ export function JobCard({ data }: { data: CoderJobCardData }) {
         )}
         {data.error && (data.status === 'failed' || data.status === 'cancelled') && (
           <p className={`text-push-sm leading-relaxed ${CARD_TEXT_ERROR}`}>{data.error}</p>
+        )}
+        {isStalled && (
+          <div
+            role="status"
+            className={`flex items-start gap-2 rounded-md border border-push-edge ${CARD_HEADER_BG_WARNING} px-3 py-2`}
+          >
+            <TriangleAlert className={`mt-0.5 h-4 w-4 shrink-0 ${CARD_TEXT_WARNING}`} />
+            <div className="flex-1 min-w-0">
+              <p className={`text-push-xs font-medium ${CARD_TEXT_WARNING}`}>Looks stalled</p>
+              <p className="text-push-2xs text-push-fg-muted">
+                No activity for {formatElapsedTime(silentFor)}. Cancel if the run is stuck — it'll
+                otherwise auto-terminate at the 30-minute mark.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={cancelRequested}
+              className={`flex shrink-0 items-center gap-1 rounded-md border border-push-edge bg-push-bg px-2 py-1 text-push-2xs font-medium ${CARD_TEXT_WARNING} disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              <XCircle className="h-3 w-3" />
+              <span>{cancelRequested ? 'Cancelling…' : 'Cancel'}</span>
+            </button>
+          </div>
         )}
         <p className="text-push-2xs text-push-fg-dim font-mono truncate" title={data.jobId}>
           job {data.jobId}
