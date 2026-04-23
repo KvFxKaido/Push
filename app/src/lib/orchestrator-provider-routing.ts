@@ -187,6 +187,7 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       model: modelOverride || getOllamaModelName(),
       connectTimeoutMs: 30_000,
       idleTimeoutMs: 45_000,
+      progressTimeoutMs: 60_000,
       stallTimeoutMs: 60_000,
       totalTimeoutMs: 180_000,
       errorMessages: buildErrorMessages('Ollama Cloud', 'server may be cold-starting.'),

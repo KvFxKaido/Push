@@ -37,6 +37,7 @@ export {
 } from './orchestrator-streaming';
 
 import type { StreamProviderConfig, StreamUsage, ChunkMetadata } from './orchestrator-streaming';
+import { selectTimeoutMessage } from './orchestrator-streaming';
 import type { ActiveProvider } from './orchestrator-provider-routing';
 
 // --- Imports from extracted modules ---
@@ -780,8 +781,12 @@ async function streamSSEChatOnce(
         clearTimeout(connectTimer);
         connectTimer = undefined;
         resetIdleTimer();
-        if (progressTimeoutMs) resetProgressTimer();
         if (stallTimeoutMs) resetStallTimer();
+        // progressTimer is deliberately NOT armed here — it only starts on
+        // the first parseable SSE frame (see the JSON.parse branch below).
+        // Arming it pre-body meant a response that succeeds but yields no
+        // body bytes could race progress against idle and surface the
+        // "data is arriving" message when no data had actually arrived.
 
         if (!response.ok) {
           span.setAttribute('http.response.status_code', response.status);
@@ -945,6 +950,12 @@ async function streamSSEChatOnce(
                   if (typeof fnCall.name === 'string') entry.name = fnCall.name;
                   if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
                 }
+                // Native tool-call argument streams count as model progress —
+                // they're user-visible output, just in a different channel than
+                // delta.content. Without this reset, large tool-call argument
+                // payloads (big write_file / edit_file blobs) can hit the stall
+                // timeout mid-generation even while the model is making progress.
+                if (stallTimeoutMs) resetStallTimer();
               }
 
               if (checkFinishReason(choice)) {
@@ -983,25 +994,17 @@ async function streamSSEChatOnce(
             onDone();
             return;
           }
-          let timeoutMsg: string;
-          if (abortReason === 'connect') {
-            timeoutMsg = errorMessages.connect(Math.round(connectTimeoutMs / 1000));
-          } else if (abortReason === 'progress') {
-            timeoutMsg =
-              errorMessages.progress?.(Math.round(progressTimeoutMs! / 1000)) ??
-              errorMessages.stall?.(Math.round((stallTimeoutMs ?? idleTimeoutMs) / 1000)) ??
-              errorMessages.idle(Math.round(idleTimeoutMs / 1000));
-          } else if (abortReason === 'stall') {
-            timeoutMsg =
-              errorMessages.stall?.(Math.round(stallTimeoutMs! / 1000)) ??
-              errorMessages.idle(Math.round(idleTimeoutMs / 1000));
-          } else if (abortReason === 'total') {
-            timeoutMsg =
-              errorMessages.total?.(Math.round(totalTimeoutMs! / 1000)) ??
-              errorMessages.idle(Math.round(idleTimeoutMs / 1000));
-          } else {
-            timeoutMsg = errorMessages.idle(Math.round(idleTimeoutMs / 1000));
-          }
+          const timeoutMsg = selectTimeoutMessage(
+            (abortReason ?? 'idle') as Parameters<typeof selectTimeoutMessage>[0],
+            errorMessages,
+            {
+              connectTimeoutMs,
+              idleTimeoutMs,
+              progressTimeoutMs,
+              stallTimeoutMs,
+              totalTimeoutMs,
+            },
+          );
           recordSpanError(span, new Error(timeoutMsg), {
             'push.abort_reason': abortReason || undefined,
             'push.stream.chunk_count': chunkCount,
