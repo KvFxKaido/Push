@@ -190,6 +190,19 @@ export async function handleCloudflareSandbox(
           message: err instanceof Error ? err.message : String(err),
         });
         auth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
+      } else if (err instanceof SandboxExecDeadlineError) {
+        // A wedged container making the owner-token probe time out is
+        // not a configuration failure — it's the same class of stall
+        // that the per-exec deadline exists to surface. Report it as
+        // TIMEOUT/504 so callers handle it with their retry path
+        // instead of treating it as a provisioning error.
+        wlog('warn', 'cf_sandbox_auth_timeout', {
+          requestId,
+          route,
+          deadline: true,
+          message: err.message,
+        });
+        return Response.json({ error: err.message, code: 'TIMEOUT' }, { status: 504 });
       } else {
         wlog('error', 'cf_sandbox_auth_throw', {
           requestId,

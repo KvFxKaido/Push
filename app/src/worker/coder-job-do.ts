@@ -265,25 +265,25 @@ export class CoderJob {
 
       // Wake any AbortController still held in memory. If the DO was
       // evicted between start and alarm fire, the controller is gone —
-      // that's fine, we still mark the job terminal below.
+      // that's fine, we still claim the terminal transition below.
       const controller = this.abortControllers.get(row.id);
       if (controller && !controller.signal.aborted) {
         controller.abort();
       }
 
-      // Re-check status after a potential (tiny) race with runLoop's
-      // finally. First terminal event wins.
-      if (this.getJobStatus(row.id) !== 'running') continue;
-
       const minutes = Math.round(MAX_JOB_WALL_CLOCK_MS / 60_000);
       const error = `Job exceeded wall-clock budget of ${minutes}m; the sandbox or provider stream appears stalled and was forcibly terminated.`;
-      await this.appendEvent(row.id, {
-        type: 'subagent.failed',
-        executionId: row.id,
-        agent: 'coder',
-        error,
-      });
-      this.markTerminal(row.id, 'failed', null, error);
+      // Conditional mark wins the terminal write if runLoop hasn't
+      // already finished. Only broadcast the failure event if we won —
+      // otherwise SSE would deliver two conflicting terminals.
+      if (this.markTerminal(row.id, 'failed', null, error)) {
+        await this.appendEvent(row.id, {
+          type: 'subagent.failed',
+          executionId: row.id,
+          agent: 'coder',
+          error,
+        });
+      }
     }
 
     await this.rescheduleAlarm();
@@ -292,7 +292,11 @@ export class CoderJob {
   private async rescheduleAlarm(): Promise<void> {
     // DO alarms are singletons — setAlarm replaces any prior schedule.
     // Find the earliest remaining deadline and schedule for it; if no
-    // jobs are running, clear the alarm entirely.
+    // jobs are running, clear the alarm entirely. Calls are direct (not
+    // optional) on purpose: setAlarm/deleteAlarm are part of the base DO
+    // storage contract, and a missing implementation means the wall-
+    // clock backstop is silently disabled. Better to crash loudly than
+    // ship a stuck job nobody is watching.
     const row = this.ctx.storage.sql
       .exec(
         `SELECT MIN(started_at) AS oldest FROM job
@@ -301,10 +305,10 @@ export class CoderJob {
       .toArray()[0] as { oldest?: number | null } | undefined;
 
     if (!row || row.oldest == null) {
-      await this.ctx.storage.deleteAlarm?.();
+      await this.ctx.storage.deleteAlarm();
       return;
     }
-    await this.ctx.storage.setAlarm?.(row.oldest + MAX_JOB_WALL_CLOCK_MS);
+    await this.ctx.storage.setAlarm(row.oldest + MAX_JOB_WALL_CLOCK_MS);
   }
 
   // -------------------------------------------------------------------------
@@ -454,27 +458,37 @@ export class CoderJob {
         signal: abortController.signal,
       });
 
-      await this.appendEvent(input.jobId, {
-        type: 'subagent.completed',
-        executionId: input.jobId,
-        agent: 'coder',
-        summary: result.summary,
-      });
-      this.markTerminal(input.jobId, 'completed', result.summary, null);
+      // Claim the terminal transition atomically. If the alarm() or
+      // /cancel path already wrote 'failed'/'cancelled' for this job
+      // while we were awaiting the kernel (common when a sandbox call
+      // ignores abort and resolves late), markTerminal returns false and
+      // we skip the broadcast — otherwise SSE consumers would see two
+      // conflicting terminal events for the same run.
+      if (this.markTerminal(input.jobId, 'completed', result.summary, null)) {
+        await this.appendEvent(input.jobId, {
+          type: 'subagent.completed',
+          executionId: input.jobId,
+          agent: 'coder',
+          summary: result.summary,
+        });
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await this.appendEvent(input.jobId, {
-        type: 'subagent.failed',
-        executionId: input.jobId,
-        agent: 'coder',
-        error: message,
-      });
-      this.markTerminal(
-        input.jobId,
-        abortController.signal.aborted ? 'cancelled' : 'failed',
-        null,
-        message,
-      );
+      if (
+        this.markTerminal(
+          input.jobId,
+          abortController.signal.aborted ? 'cancelled' : 'failed',
+          null,
+          message,
+        )
+      ) {
+        await this.appendEvent(input.jobId, {
+          type: 'subagent.failed',
+          executionId: input.jobId,
+          agent: 'coder',
+          error: message,
+        });
+      }
     } finally {
       this.abortControllers.delete(input.jobId);
       SERVICE_OVERRIDES.delete(input.jobId);
@@ -697,12 +711,26 @@ export class CoderJob {
     }
   }
 
+  /**
+   * Claim the terminal transition for a job. Returns true only if this
+   * call was the one that actually flipped the row from 'running' to a
+   * terminal state — false means someone else (runLoop, alarm, cancel)
+   * already wrote a terminal state first. Callers gate the terminal
+   * appendEvent on the return so SSE never sees two conflicting
+   * terminals for the same run.
+   *
+   * DO SQL is single-threaded and these two statements contain no
+   * awaits, so the read-then-update is effectively atomic: no other
+   * coroutine can interleave between them.
+   */
   private markTerminal(
     jobId: string,
     status: CoderJobStatus,
     summary: string | null,
     error: string | null,
-  ): void {
+  ): boolean {
+    const current = this.getJobStatus(jobId);
+    if (current !== 'running') return false;
     this.ctx.storage.sql.exec(
       `UPDATE job SET status = ?, finished_at = ?, result_json = ?, error_text = ? WHERE id = ?`,
       status,
@@ -711,6 +739,7 @@ export class CoderJob {
       error,
       jobId,
     );
+    return true;
   }
 
   private getJobStatus(jobId: string): CoderJobStatus | null {

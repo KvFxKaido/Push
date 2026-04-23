@@ -387,6 +387,34 @@ describe('handleCloudflareSandbox happy paths', () => {
     }
   });
 
+  it('returns 504 TIMEOUT when the owner-token probe itself exceeds the deadline', async () => {
+    // Covers the auth-gate path: a wedged container that hangs on the
+    // token file read shouldn't be misclassified as NOT_CONFIGURED/503
+    // just because it tripped the auth probe. The deadline error must
+    // propagate out as TIMEOUT/504 so clients hit their retry path.
+    vi.useFakeTimers();
+    try {
+      const sandbox = mockSandbox();
+      sandbox.exec.mockImplementation((command: unknown) => {
+        if (isOwnerTokenReadCommand(command)) {
+          return new Promise(() => {});
+        }
+        return Promise.resolve({ stdout: 'should-not-run', stderr: '', exitCode: 0 });
+      });
+
+      const pending = callRoute('exec', { sandbox_id: 'sb-1', command: 'ls' });
+      await vi.advanceTimersByTimeAsync(SANDBOX_EXEC_TIMEOUT_MS + 1);
+      const response = await pending;
+
+      expect(response.status).toBe(504);
+      const body = (await response.json()) as { code?: string; error?: string };
+      expect(body.code).toBe('TIMEOUT');
+      expect(body.error).toMatch(/deadline/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // The `read` route is covered comprehensively in worker-cf-sandbox-read.test.ts
   // (10 tests), which exercises the in-container sed/stat/sha256sum/awk
   // pipeline introduced by this PR. The old test in this file mocked

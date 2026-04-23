@@ -467,6 +467,60 @@ describe('CoderJob DO — end-to-end', () => {
     expect(snapshot.lastEventAt).toBeNull();
   });
 
+  it('runLoop does not overwrite a terminal state written by alarm()', async () => {
+    // Simulates the race the reviewers flagged: alarm() fires and marks
+    // the job 'failed' while runLoop is still awaiting the kernel. The
+    // kernel's underlying sandbox/provider promise ignores abort and
+    // resolves cleanly — runLoop would then try to call markTerminal
+    // with 'completed'. Without the conditional guard this would stomp
+    // the alarm's terminal write and emit a duplicate SSE event.
+    const { ctx, storage, waitUntilPromises } = makeCtx();
+    const input = makeStartInput({ jobId: 'job-race' });
+
+    let releaseStream: () => void = () => {};
+    const parkedStream: ProviderStreamFn<ChatMessage> = async (_m, onToken, onDone) => {
+      await new Promise<void>((resolve) => {
+        releaseStream = resolve;
+      });
+      onToken('ignored by alarm');
+      onDone({ inputTokens: 1, outputTokens: 1, totalTokens: 2 });
+    };
+
+    __setCoderJobServiceOverrides(input.jobId, {
+      detectors: stubDetectors,
+      executor: stubExecutor,
+      streamFn: parkedStream,
+    });
+
+    const job = new CoderJob(ctx, makeEnv());
+    await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    // runLoop is now parked inside runCoderAgentLib. Simulate alarm's
+    // winning terminal write by flipping the row directly.
+    storage.jobs.get(input.jobId)!.status = 'failed';
+    storage.jobs.get(input.jobId)!.error_text = 'alarm won';
+
+    // Unblock the stream so runLoop races to its completion path.
+    releaseStream();
+    await Promise.all(waitUntilPromises);
+
+    // Conditional markTerminal saw status !== 'running' and no-opped.
+    expect(storage.jobs.get(input.jobId)!.status).toBe('failed');
+    expect(storage.jobs.get(input.jobId)!.error_text).toBe('alarm won');
+    const terminalEvents = storage.events
+      .map((e) => e.type)
+      .filter((t) => t === 'subagent.completed' || t === 'subagent.failed');
+    // The test seeded the terminal row directly (bypassing appendEvent),
+    // so there should be zero terminal events from runLoop — proving the
+    // broadcast is gated on winning the mark.
+    expect(terminalEvents).toEqual([]);
+  });
+
   it('SSE stream emits heartbeat comments while the job is running', async () => {
     vi.useFakeTimers();
     try {
