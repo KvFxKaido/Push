@@ -63,6 +63,8 @@ function buildErrorMessages(
     keyMissing: `${name} API key not configured`,
     connect: (s) => `${name} API didn't respond within ${s}s — ${connectHint}`,
     idle: (s) => `${name} API stream stalled — no data for ${s}s.`,
+    progress: (s) =>
+      `${name} API stream stalled — data is arriving but no model progress for ${s}s.`,
     stall: (s) =>
       `${name} API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
     total: (s) => `${name} API response exceeded ${s}s total time limit.`,
@@ -74,6 +76,7 @@ function buildErrorMessages(
 const STANDARD_TIMEOUTS = {
   connectTimeoutMs: 30_000,
   idleTimeoutMs: 60_000,
+  progressTimeoutMs: 60_000,
   stallTimeoutMs: 60_000,
   totalTimeoutMs: 180_000,
 } as const;
@@ -237,11 +240,16 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
         authHeader: null,
         model: modelOverride || getCloudflareModelName(),
         ...STANDARD_TIMEOUTS,
+        // Workers AI can emit keepalive/data frames before textual deltas arrive.
+        // Keep no-content guard slightly looser than generic providers.
+        stallTimeoutMs: 90_000,
         errorMessages: {
           keyMissing: 'Cloudflare Workers AI is not configured on this Worker',
           connect: (s) =>
             `Cloudflare Workers AI didn't respond within ${s}s — the Worker may be cold-starting.`,
           idle: (s) => `Cloudflare Workers AI stream stalled — no data for ${s}s.`,
+          progress: (s) =>
+            `Cloudflare Workers AI stream stalled — data is arriving but no model progress for ${s}s.`,
           stall: (s) =>
             `Cloudflare Workers AI stream stalled — receiving data but no content for ${s}s.`,
           total: (s) => `Cloudflare Workers AI response exceeded ${s}s total time limit.`,

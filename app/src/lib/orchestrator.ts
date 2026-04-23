@@ -633,6 +633,7 @@ async function streamSSEChatOnce(
     model,
     connectTimeoutMs,
     idleTimeoutMs,
+    progressTimeoutMs,
     stallTimeoutMs,
     totalTimeoutMs,
     errorMessages,
@@ -660,7 +661,7 @@ async function streamSSEChatOnce(
     },
     async (span) => {
       const controller = new AbortController();
-      type AbortReason = 'connect' | 'idle' | 'user' | 'stall' | 'total' | null;
+      type AbortReason = 'connect' | 'idle' | 'user' | 'progress' | 'stall' | 'total' | null;
       let abortReason: AbortReason = null;
 
       const onExternalAbort = () => {
@@ -690,6 +691,16 @@ async function streamSSEChatOnce(
           abortReason = 'idle';
           controller.abort();
         }, idleTimeoutMs);
+      };
+
+      let progressTimer: ReturnType<typeof setTimeout> | undefined;
+      const resetProgressTimer = () => {
+        if (!progressTimeoutMs) return;
+        clearTimeout(progressTimer);
+        progressTimer = setTimeout(() => {
+          abortReason = 'progress';
+          controller.abort();
+        }, progressTimeoutMs);
       };
 
       let stallTimer: ReturnType<typeof setTimeout> | undefined;
@@ -769,6 +780,7 @@ async function streamSSEChatOnce(
         clearTimeout(connectTimer);
         connectTimer = undefined;
         resetIdleTimer();
+        if (progressTimeoutMs) resetProgressTimer();
         if (stallTimeoutMs) resetStallTimer();
 
         if (!response.ok) {
@@ -876,6 +888,7 @@ async function streamSSEChatOnce(
 
             try {
               const parsed = JSON.parse(jsonStr);
+              if (progressTimeoutMs) resetProgressTimer();
 
               if (parsed.usage) {
                 usage = {
@@ -932,7 +945,6 @@ async function streamSSEChatOnce(
                   if (typeof fnCall.name === 'string') entry.name = fnCall.name;
                   if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
                 }
-                if (stallTimeoutMs) resetStallTimer();
               }
 
               if (checkFinishReason(choice)) {
@@ -957,6 +969,7 @@ async function streamSSEChatOnce(
       } catch (err) {
         clearTimeout(connectTimer);
         clearTimeout(idleTimer);
+        clearTimeout(progressTimer);
         clearTimeout(stallTimer);
         clearTimeout(totalTimer);
         signal?.removeEventListener('abort', onExternalAbort);
@@ -973,6 +986,11 @@ async function streamSSEChatOnce(
           let timeoutMsg: string;
           if (abortReason === 'connect') {
             timeoutMsg = errorMessages.connect(Math.round(connectTimeoutMs / 1000));
+          } else if (abortReason === 'progress') {
+            timeoutMsg =
+              errorMessages.progress?.(Math.round(progressTimeoutMs! / 1000)) ??
+              errorMessages.stall?.(Math.round((stallTimeoutMs ?? idleTimeoutMs) / 1000)) ??
+              errorMessages.idle(Math.round(idleTimeoutMs / 1000));
           } else if (abortReason === 'stall') {
             timeoutMsg =
               errorMessages.stall?.(Math.round(stallTimeoutMs! / 1000)) ??
@@ -1013,6 +1031,7 @@ async function streamSSEChatOnce(
       } finally {
         clearTimeout(connectTimer);
         clearTimeout(idleTimer);
+        clearTimeout(progressTimer);
         clearTimeout(stallTimer);
         clearTimeout(totalTimer);
         signal?.removeEventListener('abort', onExternalAbort);

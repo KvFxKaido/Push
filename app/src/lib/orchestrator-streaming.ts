@@ -14,12 +14,16 @@ export interface StreamProviderConfig {
   model: string;
   connectTimeoutMs: number;
   idleTimeoutMs: number;
+  /** Abort when bytes are still arriving but no parseable model progress occurs. */
+  progressTimeoutMs?: number;
+  /** Abort when stream has progress but still emits no user-visible content. */
   stallTimeoutMs?: number;
   totalTimeoutMs?: number;
   errorMessages: {
     keyMissing: string;
     connect: (seconds: number) => string;
     idle: (seconds: number) => string;
+    progress?: (seconds: number) => string;
     stall?: (seconds: number) => string;
     total?: (seconds: number) => string;
     network: string;
