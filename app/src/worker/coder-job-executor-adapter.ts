@@ -146,6 +146,50 @@ function mapCallToRoute(call: SandboxToolCall): RouteMapping {
 // Handler round-trip
 // ---------------------------------------------------------------------------
 
+// Upper bound for a single sandbox tool round-trip (handler invocation +
+// response body consumption). The Cloudflare Sandbox SDK's `exec` can hang
+// indefinitely if the underlying container is stuck after a heavy FS write
+// (e.g. `npm install` landing ~tens of thousands of files into /workspace)
+// — no abort path fires, and the awaiting `response.text()` never resolves,
+// which wedges the entire runLoop since nothing above this call enforces a
+// deadline. Turning that deadlock into a surfaced error lets the kernel see
+// a structured TIMEOUT, the runLoop reach its `finally`, and the SSE stream
+// emit a terminal event so the browser isn't stuck waiting forever.
+//
+// 180s is comfortably above observed long-but-successful commands (a fresh
+// `npm install` runs ~100s in a cold container) so well-behaved calls are
+// not affected; pathologically stuck calls now recover in finite time.
+export const SANDBOX_TOOL_TIMEOUT_MS = 180_000;
+
+export class SandboxToolTimeoutError extends Error {
+  readonly route: string;
+  readonly timeoutMs: number;
+  constructor(route: string, timeoutMs: number) {
+    super(`sandbox tool '${route}' did not complete within ${timeoutMs}ms`);
+    this.name = 'SandboxToolTimeoutError';
+    this.route = route;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+async function withSandboxTimeout<T>(
+  route: string,
+  timeoutMs: number,
+  op: () => Promise<T>,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new SandboxToolTimeoutError(route, timeoutMs));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([op(), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 interface HandlerRequestArgs {
   env: Env;
   origin: string;
@@ -181,20 +225,22 @@ async function callSandboxHandler({
     },
     body: JSON.stringify({ sandbox_id: sandboxId, owner_token: ownerToken, ...body }),
   });
-  const response = (await handleCloudflareSandbox(
-    req as unknown as Parameters<typeof handleCloudflareSandbox>[0],
-    env as unknown as Parameters<typeof handleCloudflareSandbox>[1],
-    new URL(url) as unknown as Parameters<typeof handleCloudflareSandbox>[2],
-    route,
-  )) as unknown as Response;
-  const text = await response.text();
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = text;
-  }
-  return { status: response.status, text, data };
+  return withSandboxTimeout(route, SANDBOX_TOOL_TIMEOUT_MS, async () => {
+    const response = (await handleCloudflareSandbox(
+      req as unknown as Parameters<typeof handleCloudflareSandbox>[0],
+      env as unknown as Parameters<typeof handleCloudflareSandbox>[1],
+      new URL(url) as unknown as Parameters<typeof handleCloudflareSandbox>[2],
+      route,
+    )) as unknown as Response;
+    const text = await response.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+    return { status: response.status, text, data };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -376,12 +422,18 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
         }
         return { text: formatResult(call, data, status) };
       } catch (err) {
+        const isTimeout = err instanceof SandboxToolTimeoutError;
+        const message = err instanceof Error ? err.message : String(err);
         return {
-          text: `[Tool Error — ${call.tool}] ${err instanceof Error ? err.message : String(err)}`,
+          text: isTimeout
+            ? `[Tool Timeout — ${call.tool}] Sandbox did not respond within ${err.timeoutMs}ms. ` +
+              `The command may still be running in the container, but the job won't wait for it. ` +
+              `Try a faster command or investigate why the sandbox is unresponsive.`
+            : `[Tool Error — ${call.tool}] ${message}`,
           structuredError: {
-            type: 'SANDBOX_UNREACHABLE',
+            type: isTimeout ? 'TIMEOUT' : 'SANDBOX_UNREACHABLE',
             retryable: true,
-            message: err instanceof Error ? err.message : String(err),
+            message,
           },
         };
       }

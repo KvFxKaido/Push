@@ -92,6 +92,12 @@ export interface CoderJobStatusSnapshot {
   startedAt: number | null;
   finishedAt: number | null;
   eventCount: number;
+  /** Wall-clock timestamp of the most recent persisted event, or null if
+   * none yet. Lets the client detect stalls (`status === 'running'` but
+   * `lastEventAt` is N minutes old) without subscribing to the SSE
+   * stream — useful for polling status in the background and surfacing a
+   * "looks stuck" affordance without waiting on a hung event stream. */
+  lastEventAt: number | null;
   error?: string;
 }
 
@@ -106,6 +112,27 @@ export interface CoderJobServiceOverrides {
 }
 
 const SERVICE_OVERRIDES = new Map<string, CoderJobServiceOverrides>();
+
+// Wall-clock budget for a single Coder job. A run that exceeds this is
+// force-terminated by the DO's alarm handler — the backstop against a
+// sandbox subrequest or provider stream that never returns and keeps the
+// runLoop pinned under `ctx.waitUntil`. Without this, a hung run emits no
+// terminal event, SSE stays open, and the browser has nothing to reconcile
+// on refresh.
+//
+// Sized generously: 30 minutes is longer than any single tool round-trip
+// we ever expect to see, so healthy runs never bump into it; unhealthy
+// ones recover in bounded time instead of haunting the DO forever.
+export const MAX_JOB_WALL_CLOCK_MS = 30 * 60 * 1000;
+
+// SSE keepalive cadence. Cloudflare's edge proxies drop HTTP streams that
+// go quiet for ~100s, so a long gap between real events (model thinking,
+// a slow sandbox tool) can disconnect the browser mid-run even though the
+// DO is healthy. Emitting a comment frame well under that threshold keeps
+// the pipe open; SSE comments (`: ...`) are filtered by EventSource so
+// the client never sees them. 20s = five frames per proxy timeout, plenty
+// of margin without meaningfully loading the DO.
+const SSE_HEARTBEAT_INTERVAL_MS = 20 * 1000;
 
 /** Test-only entry point to inject service overrides for a job the
  * DO is about to start. The DO looks up its jobId after `start()`
@@ -214,6 +241,77 @@ export class CoderJob {
   }
 
   // -------------------------------------------------------------------------
+  // alarm — wall-clock backstop
+  // -------------------------------------------------------------------------
+
+  /**
+   * Dispatched by the DO runtime when the scheduled alarm fires. Walks
+   * every `running` job, force-terminates any that have exceeded
+   * `MAX_JOB_WALL_CLOCK_MS`, and reschedules the alarm for the next
+   * outstanding deadline. Idempotent: if runLoop races us and writes its
+   * own terminal event first, the re-check in this handler no-ops.
+   */
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    const rows = this.ctx.storage.sql
+      .exec(
+        `SELECT id, started_at FROM job
+         WHERE status = 'running' AND started_at IS NOT NULL`,
+      )
+      .toArray() as Array<{ id: string; started_at: number }>;
+
+    for (const row of rows) {
+      if (now - row.started_at < MAX_JOB_WALL_CLOCK_MS) continue;
+
+      // Wake any AbortController still held in memory. If the DO was
+      // evicted between start and alarm fire, the controller is gone —
+      // that's fine, we still claim the terminal transition below.
+      const controller = this.abortControllers.get(row.id);
+      if (controller && !controller.signal.aborted) {
+        controller.abort();
+      }
+
+      const minutes = Math.round(MAX_JOB_WALL_CLOCK_MS / 60_000);
+      const error = `Job exceeded wall-clock budget of ${minutes}m; the sandbox or provider stream appears stalled and was forcibly terminated.`;
+      // Conditional mark wins the terminal write if runLoop hasn't
+      // already finished. Only broadcast the failure event if we won —
+      // otherwise SSE would deliver two conflicting terminals.
+      if (this.markTerminal(row.id, 'failed', null, error)) {
+        await this.appendEvent(row.id, {
+          type: 'subagent.failed',
+          executionId: row.id,
+          agent: 'coder',
+          error,
+        });
+      }
+    }
+
+    await this.rescheduleAlarm();
+  }
+
+  private async rescheduleAlarm(): Promise<void> {
+    // DO alarms are singletons — setAlarm replaces any prior schedule.
+    // Find the earliest remaining deadline and schedule for it; if no
+    // jobs are running, clear the alarm entirely. Calls are direct (not
+    // optional) on purpose: setAlarm/deleteAlarm are part of the base DO
+    // storage contract, and a missing implementation means the wall-
+    // clock backstop is silently disabled. Better to crash loudly than
+    // ship a stuck job nobody is watching.
+    const row = this.ctx.storage.sql
+      .exec(
+        `SELECT MIN(started_at) AS oldest FROM job
+         WHERE status = 'running' AND started_at IS NOT NULL`,
+      )
+      .toArray()[0] as { oldest?: number | null } | undefined;
+
+    if (!row || row.oldest == null) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    await this.ctx.storage.setAlarm(row.oldest + MAX_JOB_WALL_CLOCK_MS);
+  }
+
+  // -------------------------------------------------------------------------
   // /start
   // -------------------------------------------------------------------------
 
@@ -251,6 +349,13 @@ export class CoderJob {
 
     // Keep the DO alive beyond the request lifetime while runLoop works.
     this.ctx.waitUntil(this.runLoop(input));
+
+    // Schedule the wall-clock alarm so a hung runLoop eventually gets
+    // force-terminated. `rescheduleAlarm` picks the earliest deadline
+    // across all running jobs so concurrent starts don't stomp on each
+    // other. Best-effort — the alarm is a safety net, not a correctness
+    // invariant, so a storage flake here shouldn't fail the start.
+    await this.rescheduleAlarm().catch(() => {});
 
     return json({ jobId: input.jobId }, 202);
   }
@@ -353,30 +458,43 @@ export class CoderJob {
         signal: abortController.signal,
       });
 
-      await this.appendEvent(input.jobId, {
-        type: 'subagent.completed',
-        executionId: input.jobId,
-        agent: 'coder',
-        summary: result.summary,
-      });
-      this.markTerminal(input.jobId, 'completed', result.summary, null);
+      // Claim the terminal transition atomically. If the alarm() or
+      // /cancel path already wrote 'failed'/'cancelled' for this job
+      // while we were awaiting the kernel (common when a sandbox call
+      // ignores abort and resolves late), markTerminal returns false and
+      // we skip the broadcast — otherwise SSE consumers would see two
+      // conflicting terminal events for the same run.
+      if (this.markTerminal(input.jobId, 'completed', result.summary, null)) {
+        await this.appendEvent(input.jobId, {
+          type: 'subagent.completed',
+          executionId: input.jobId,
+          agent: 'coder',
+          summary: result.summary,
+        });
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await this.appendEvent(input.jobId, {
-        type: 'subagent.failed',
-        executionId: input.jobId,
-        agent: 'coder',
-        error: message,
-      });
-      this.markTerminal(
-        input.jobId,
-        abortController.signal.aborted ? 'cancelled' : 'failed',
-        null,
-        message,
-      );
+      if (
+        this.markTerminal(
+          input.jobId,
+          abortController.signal.aborted ? 'cancelled' : 'failed',
+          null,
+          message,
+        )
+      ) {
+        await this.appendEvent(input.jobId, {
+          type: 'subagent.failed',
+          executionId: input.jobId,
+          agent: 'coder',
+          error: message,
+        });
+      }
     } finally {
       this.abortControllers.delete(input.jobId);
       SERVICE_OVERRIDES.delete(input.jobId);
+      // Collapse or clear the alarm now that this job is done — either it
+      // points at the next still-running job, or it's removed entirely.
+      await this.rescheduleAlarm().catch(() => {});
     }
   }
 
@@ -405,6 +523,18 @@ export class CoderJob {
     // disconnect) can remove the subscription and we don't leak
     // listener closures into the DO's in-memory set.
     let activeListener: ((event: RunEvent) => void) | null = null;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+    const dropListener = (): void => {
+      if (activeListener) {
+        liveListeners.delete(activeListener);
+        activeListener = null;
+      }
+      if (heartbeat !== null) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+    };
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -434,13 +564,11 @@ export class CoderJob {
               ),
             );
             if (isTerminalEventType(event.type)) {
-              liveListeners.delete(listener);
-              activeListener = null;
+              dropListener();
               controller.close();
             }
           } catch {
-            liveListeners.delete(listener);
-            activeListener = null;
+            dropListener();
           }
         };
         activeListener = listener;
@@ -450,19 +578,27 @@ export class CoderJob {
         // close immediately.
         const status = jobStatusLookup(jobId);
         if (status && isTerminalStatus(status)) {
-          liveListeners.delete(listener);
-          activeListener = null;
+          dropListener();
           controller.close();
+          return;
         }
+
+        // Keep the pipe alive through edge proxy idle timeouts while the
+        // job is running. SSE comments (`: ...\n\n`) are invisible to
+        // EventSource consumers but reset the proxy's idle timer.
+        heartbeat = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(': heartbeat\n\n'));
+          } catch {
+            dropListener();
+          }
+        }, SSE_HEARTBEAT_INTERVAL_MS);
       },
       cancel() {
         // Client disconnected before a terminal event — drop the live
         // subscription so the DO's in-memory set doesn't leak closures
         // and keep the instance "hot" longer than necessary.
-        if (activeListener) {
-          liveListeners.delete(activeListener);
-          activeListener = null;
-        }
+        dropListener();
       },
     });
 
@@ -531,6 +667,9 @@ export class CoderJob {
     const eventCountRow = this.ctx.storage.sql
       .exec('SELECT COUNT(*) AS count FROM event WHERE job_id = ?', jobId)
       .toArray()[0] as { count: number };
+    const lastEventRow = this.ctx.storage.sql
+      .exec('SELECT MAX(ts) AS last_ts FROM event WHERE job_id = ?', jobId)
+      .toArray()[0] as { last_ts?: number | null } | undefined;
 
     const snapshot: CoderJobStatusSnapshot = {
       jobId: row.id,
@@ -539,6 +678,7 @@ export class CoderJob {
       startedAt: row.started_at,
       finishedAt: row.finished_at,
       eventCount: eventCountRow.count,
+      lastEventAt: lastEventRow?.last_ts ?? null,
       error: row.error_text ?? undefined,
     };
     return json(snapshot);
@@ -571,12 +711,26 @@ export class CoderJob {
     }
   }
 
+  /**
+   * Claim the terminal transition for a job. Returns true only if this
+   * call was the one that actually flipped the row from 'running' to a
+   * terminal state — false means someone else (runLoop, alarm, cancel)
+   * already wrote a terminal state first. Callers gate the terminal
+   * appendEvent on the return so SSE never sees two conflicting
+   * terminals for the same run.
+   *
+   * DO SQL is single-threaded and these two statements contain no
+   * awaits, so the read-then-update is effectively atomic: no other
+   * coroutine can interleave between them.
+   */
   private markTerminal(
     jobId: string,
     status: CoderJobStatus,
     summary: string | null,
     error: string | null,
-  ): void {
+  ): boolean {
+    const current = this.getJobStatus(jobId);
+    if (current !== 'running') return false;
     this.ctx.storage.sql.exec(
       `UPDATE job SET status = ?, finished_at = ?, result_json = ?, error_text = ? WHERE id = ?`,
       status,
@@ -585,6 +739,7 @@ export class CoderJob {
       error,
       jobId,
     );
+    return true;
   }
 
   private getJobStatus(jobId: string): CoderJobStatus | null {

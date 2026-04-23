@@ -309,6 +309,43 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
     const forwardedReq = handleCloudflareSandboxMock.mock.calls[0]![0] as Request;
     expect(forwardedReq.url).toBe('https://push.example.test/api/sandbox-cf/exec');
   });
+
+  it('returns a TIMEOUT structured error when the sandbox handler hangs', async () => {
+    vi.useFakeTimers();
+    try {
+      // Never resolve — simulates a wedged sandbox subrequest (the repro:
+      // `npm install` under heavy FS pressure, then the next exec stalls
+      // waiting on the Cloudflare Sandbox SDK's gRPC to the container).
+      handleCloudflareSandboxMock.mockImplementation(() => new Promise(() => {}));
+
+      const adapter = createWebExecutorAdapter({
+        env: env(),
+        origin: 'https://push.example.test',
+        sandboxId: 'sb-1',
+        ownerToken: 'tok-1',
+        provider: 'openrouter',
+        jobId: 'job-timeout-1',
+      });
+
+      const pending = adapter.executeSandboxToolCall(
+        { tool: 'sandbox_exec', args: { command: 'sleep 999' } } as SandboxToolCall,
+        'sb-1',
+        { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+      );
+
+      // Advance past the 180s round-trip deadline — without the timeout
+      // guard this would hang forever and wedge runLoop.
+      await vi.advanceTimersByTimeAsync(180_001);
+      const result = await pending;
+
+      expect(result.structuredError?.type).toBe('TIMEOUT');
+      expect(result.structuredError?.retryable).toBe(true);
+      expect(result.text).toContain('Tool Timeout');
+      expect(result.text).toContain('180000ms');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
