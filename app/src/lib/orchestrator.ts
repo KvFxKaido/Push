@@ -612,7 +612,14 @@ export async function streamSSEChat(
   }
 }
 
-async function streamSSEChatOnce(
+/**
+ * Single-attempt SSE streaming call.
+ *
+ * Exported so tests can drive the timer + abort machinery directly without
+ * mocking the full provider routing stack — the production retry wrapper
+ * `streamSSEChat` is still the right entry point for production code.
+ */
+export async function streamSSEChatOnce(
   config: StreamProviderConfig,
   messages: ChatMessage[],
   onToken: (token: string, meta?: ChunkMetadata) => void,
