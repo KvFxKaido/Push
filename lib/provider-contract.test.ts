@@ -447,6 +447,36 @@ describe('createProviderStreamAdapter timer machinery', () => {
     expect(onDone).toHaveBeenCalled();
   });
 
+  it('contentTimeoutMs fires when stream stays active with no user-visible deltas', async () => {
+    // Regression guard for PR #384 review: contentTimer must arm at the
+    // start of iteration (parity with legacy stallTimeoutMs which armed
+    // at response-landing). A stream that keeps the event timer alive
+    // via structural events but never emits text_delta/reasoning_delta
+    // should still trip the content timeout.
+    const { stream, push } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts,
+    });
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const done = adapted(messages, () => {}, onDone, onError);
+
+    await flushMicrotasks();
+    // Push reasoning_end every 5s — keeps eventTimer (10s) alive but
+    // never touches contentTimer (20s). Content should fire first.
+    for (let i = 0; i < 6; i++) {
+      await vi.advanceTimersByTimeAsync(5_000);
+      push({ type: 'reasoning_end' });
+      await flushMicrotasks();
+    }
+    await done;
+
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0][0] as Error).message).toBe('content 20s');
+  });
+
   it('text_delta resets contentTimeoutMs', async () => {
     const { stream, push, end } = makeControllableEventStream();
     const adapted = createProviderStreamAdapter(stream as PushStream, provider, {

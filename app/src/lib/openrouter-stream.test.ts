@@ -25,6 +25,13 @@ vi.mock('./orchestrator', () => ({
     messages.map((m) => ({ role: m.role, content: m.content })),
 }));
 
+// Narrow KNOWN_TOOL_NAMES so tests can assert on known-vs-unknown dispatch
+// without depending on the real registry. sandbox_write_file is common; the
+// unknown case uses 'node_source' (Gemini's internal machinery name).
+vi.mock('./tool-dispatch', () => ({
+  KNOWN_TOOL_NAMES: new Set(['sandbox_write_file', 'sandbox_read_file']),
+}));
+
 // ---------------------------------------------------------------------------
 // Test harness — fetch-mock + controllable ReadableStream
 // ---------------------------------------------------------------------------
@@ -345,5 +352,199 @@ describe('openrouterStream', () => {
       { type: 'text_delta', text: 'partial' },
       { type: 'done', finishReason: 'stop', usage: undefined },
     ]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Native tool_call bridge — PR #384 review #3
+  // -------------------------------------------------------------------------
+
+  it('accumulates native tool_call fragments and flushes them as fenced JSON on finish', async () => {
+    const { push } = installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const events = collect(openrouterStream(baseRequest));
+
+    // Name arrives on one frame, arguments stream across two more.
+    push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [{ index: 0, function: { name: 'sandbox_write_file' } }],
+            },
+          },
+        ],
+      }),
+    );
+    push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [{ index: 0, function: { arguments: '{"path":"foo.ts"' } }],
+            },
+          },
+        ],
+      }),
+    );
+    push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [{ index: 0, function: { arguments: ',"content":"x"}' } }],
+            },
+          },
+        ],
+      }),
+    );
+    // Finish with tool_calls reason — flush happens here.
+    push(
+      JSON.stringify({
+        choices: [{ finish_reason: 'tool_calls', delta: {} }],
+      }),
+    );
+
+    const out = await events;
+    const textEvents = out.filter(
+      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    );
+    expect(textEvents).toHaveLength(1);
+    expect(textEvents[0].text).toContain('sandbox_write_file');
+    expect(textEvents[0].text).toContain('"path":"foo.ts"');
+    expect(textEvents[0].text).toContain('"content":"x"');
+    // Fenced with ```json so the downstream text dispatcher picks it up.
+    expect(textEvents[0].text).toMatch(/```json/);
+    expect(textEvents[0].text).toMatch(/```/);
+    expect(out[out.length - 1]).toEqual({
+      type: 'done',
+      finishReason: 'tool_calls',
+      usage: undefined,
+    });
+  });
+
+  it('drops native tool_calls whose name is not in KNOWN_TOOL_NAMES', async () => {
+    const { push } = installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const events = collect(openrouterStream(baseRequest));
+
+    // "node_source" is the Gemini internal machinery name we used for the
+    // mock's excluded case. Should be dropped entirely on flush.
+    push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [{ index: 0, function: { name: 'node_source', arguments: '{"x":1}' } }],
+            },
+          },
+        ],
+      }),
+    );
+    push(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', delta: {} }] }));
+
+    const out = await events;
+    const textEvents = out.filter((e) => e.type === 'text_delta');
+    expect(textEvents).toHaveLength(0);
+    expect(out[out.length - 1]).toEqual({
+      type: 'done',
+      finishReason: 'tool_calls',
+      usage: undefined,
+    });
+  });
+
+  it('flushes pending native tool_calls on [DONE] even without finish_reason', async () => {
+    const { push, finish } = installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const events = collect(openrouterStream(baseRequest));
+
+    push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  function: { name: 'sandbox_read_file', arguments: '{"path":"a"}' },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    // [DONE] without a prior finish_reason frame — flush must still fire.
+    finish();
+
+    const out = await events;
+    const textEvents = out.filter(
+      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    );
+    expect(textEvents).toHaveLength(1);
+    expect(textEvents[0].text).toContain('sandbox_read_file');
+  });
+
+  it('emits a fenced shell with empty args when tool_call arguments are malformed JSON', async () => {
+    const { push } = installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const events = collect(openrouterStream(baseRequest));
+
+    push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  function: { name: 'sandbox_write_file', arguments: '{broken json' },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    push(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', delta: {} }] }));
+
+    const out = await events;
+    const textEvents = out.filter(
+      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    );
+    // Shell still emitted so malformed diagnostics can guide a retry.
+    expect(textEvents).toHaveLength(1);
+    expect(textEvents[0].text).toContain('sandbox_write_file');
+    expect(textEvents[0].text).toMatch(/"args":\s*\{\s*\}/);
+  });
+
+  // -------------------------------------------------------------------------
+  // Think-tag routing — PR #384 review #2
+  // -------------------------------------------------------------------------
+
+  it('composes with normalizeReasoning to split inline <think> tags out of content', async () => {
+    // Unit test of the composition we wire in orchestrator-provider-routing.
+    // openrouterStream alone does NOT split <think> tags (that's by design —
+    // reasoning-tag splitting is a transducer concern, not a parser concern).
+    // The wired composition at the routing site applies normalizeReasoning.
+    const { push, finish } = installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const { normalizeReasoning } = await import('@push/lib/reasoning-tokens');
+
+    const composed = normalizeReasoning(openrouterStream(baseRequest));
+    const events = collect(composed);
+
+    push(contentFrame('<think>pondering</think>answer'));
+    finish();
+
+    const out = await events;
+    // The inline <think> block landed on the reasoning channel, not text.
+    const textEvents = out.filter(
+      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    );
+    const reasoningEvents = out.filter(
+      (e): e is { type: 'reasoning_delta'; text: string } => e.type === 'reasoning_delta',
+    );
+    expect(reasoningEvents.map((e) => e.text).join('')).toBe('pondering');
+    expect(textEvents.map((e) => e.text).join('')).toBe('answer');
   });
 });

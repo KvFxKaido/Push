@@ -20,6 +20,7 @@ import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-ca
 import { PROVIDER_URLS } from './providers';
 import type { WorkspaceContext } from '@/types';
 import { toLLMMessages } from './orchestrator';
+import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 
 /** Map OpenRouter / OpenAI `finish_reason` strings onto the PushStream done reason. */
 function mapFinishReason(
@@ -138,6 +139,46 @@ export async function* openrouterStream(
   let buffer = '';
   let pendingUsage: StreamUsage | undefined;
 
+  // Native tool-call bridge. Some OpenRouter-served models emit
+  // `delta.tool_calls` instead of (or in addition to) our text-fenced
+  // JSON protocol. Accumulate fragments by `index`, then flush as
+  // fenced JSON text_delta events on finish_reason / [DONE] so the
+  // downstream text-based tool dispatcher picks them up.
+  // Unknown tool names are dropped — matches the legacy path in
+  // `streamSSEChatOnce` which filters against `KNOWN_TOOL_NAMES`.
+  const pendingNativeToolCalls = new Map<number, { name: string; args: string }>();
+
+  function* flushNativeToolCalls(): Generator<PushStreamEvent> {
+    if (pendingNativeToolCalls.size === 0) return;
+    for (const [, tc] of pendingNativeToolCalls) {
+      if (!tc.name && !tc.args) continue;
+      if (!tc.name) {
+        console.warn(
+          '[Push] Native tool call with no function name — args dropped:',
+          tc.args.slice(0, 200),
+        );
+        continue;
+      }
+      if (!KNOWN_TOOL_NAMES.has(tc.name)) {
+        console.warn(`[Push] Native tool call "${tc.name}" is not a known tool — dropped`);
+        continue;
+      }
+      let parsedArgs: unknown = {};
+      try {
+        parsedArgs = tc.args ? JSON.parse(tc.args) : {};
+      } catch {
+        // Malformed args — still emit a fenced shell so the malformed-tool-
+        // call diagnostic path in the dispatcher can guide a retry.
+        parsedArgs = {};
+      }
+      yield {
+        type: 'text_delta',
+        text: `\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: parsedArgs })}\n\`\`\`\n`,
+      };
+    }
+    pendingNativeToolCalls.clear();
+  }
+
   // Propagate abort to the upstream reader so a client disconnect stops
   // the SSE pump and releases the connection.
   const onAbort = () => {
@@ -161,6 +202,7 @@ export async function* openrouterStream(
         const trimmed = line.trim();
         if (!trimmed) continue;
         if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
+          yield* flushNativeToolCalls();
           yield { type: 'done', finishReason: 'stop', usage: pendingUsage };
           return;
         }
@@ -201,8 +243,27 @@ export async function* openrouterStream(
             }
           }
 
+          // Native tool_call fragments — accumulate by index; the name and
+          // arguments often arrive split across frames. We don't yield
+          // anything per-fragment — that happens once on finish.
+          const toolCalls = delta?.tool_calls;
+          if (Array.isArray(toolCalls)) {
+            for (const tc of toolCalls) {
+              const idx = typeof tc?.index === 'number' ? tc.index : 0;
+              const fnCall = tc?.function;
+              if (!fnCall) continue;
+              const entry = pendingNativeToolCalls.get(idx) ?? { name: '', args: '' };
+              if (typeof fnCall.name === 'string') entry.name = fnCall.name;
+              if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
+              pendingNativeToolCalls.set(idx, entry);
+            }
+          }
+
           // Finish reason closes the stream with whatever usage we've seen.
+          // Flush any pending native tool_calls into fenced text_delta events
+          // first so the text-based dispatcher picks them up.
           if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
+            yield* flushNativeToolCalls();
             yield {
               type: 'done',
               finishReason: mapFinishReason(choice.finish_reason),
@@ -216,7 +277,10 @@ export async function* openrouterStream(
       }
     }
 
-    // Stream ended without a `[DONE]` sentinel or finish_reason — treat as clean close.
+    // Stream ended without a `[DONE]` sentinel or finish_reason — treat as
+    // clean close. Flush any pending native tool_calls first so they don't
+    // get dropped on the floor.
+    yield* flushNativeToolCalls();
     yield { type: 'done', finishReason: 'stop', usage: pendingUsage };
   } finally {
     req.signal?.removeEventListener('abort', onAbort);

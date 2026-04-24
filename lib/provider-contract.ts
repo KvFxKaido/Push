@@ -304,9 +304,13 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
         onPreCompact,
       });
 
-      // Arm the first-event window before iteration so "no events ever"
-      // is caught by the timer rather than hanging indefinitely.
+      // Arm both windows before iteration. `resetEventTimer` catches the
+      // "no events ever" case. `resetContentTimer` covers streams that
+      // stay structurally active but never emit a user-visible delta —
+      // matches the legacy `stallTimeoutMs` which armed at response-landing,
+      // not on the first content token.
       resetEventTimer();
+      resetContentTimer();
 
       for await (const event of stream) {
         if (controller.signal.aborted) break;

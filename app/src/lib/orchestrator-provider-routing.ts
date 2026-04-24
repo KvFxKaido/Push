@@ -5,9 +5,11 @@ import type {
   ProviderStreamFn,
 } from '@push/lib/provider-contract';
 import { createProviderStreamAdapter } from '@push/lib/provider-contract';
+import { normalizeReasoning } from '@push/lib/reasoning-tokens';
 import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
 import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-session';
 import { openrouterStream } from './openrouter-stream';
+import type { PushStream } from '@push/lib/provider-contract';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
@@ -485,7 +487,16 @@ export const streamOpenRouterChat: StreamChatFn = async (...args) => {
     },
   };
 
-  const adapted = createProviderStreamAdapter<ChatMessage>(openrouterStream, 'openrouter', {
+  // Compose openrouterStream with normalizeReasoning so inline `<think>…</think>`
+  // tags in `delta.content` are split into the reasoning channel — parity with
+  // the legacy path where `streamSSEChatOnce` routed content through
+  // `createThinkTokenParser`. `openrouterStream` stays focused on SSE parsing
+  // and field-name normalization; reasoning-tag splitting lives here in the
+  // composition layer.
+  const openrouterWithReasoning: PushStream<ChatMessage> = (req) =>
+    normalizeReasoning(openrouterStream(req));
+
+  const adapted = createProviderStreamAdapter<ChatMessage>(openrouterWithReasoning, 'openrouter', {
     defaultModel: modelOverride || getOpenRouterModelName(),
     timeouts,
   });
