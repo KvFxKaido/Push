@@ -94,6 +94,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     snapshots,
     instructions,
     scratchpad,
+    todo,
     protectMain,
     showToolActivity,
     handleStartWorkspace,
@@ -661,6 +662,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             onScratchpadSaveMemory={scratchpad.saveMemory}
             onScratchpadLoadMemory={scratchpad.loadMemory}
             onScratchpadDeleteMemory={scratchpad.deleteMemory}
+            todos={todo.todos}
+            onTodoClear={todo.clear}
             branchProps={branchProps}
             onSandboxBranchSwitch={onSandboxBranchSwitch}
             onFixReviewFinding={handleFixReviewFinding}

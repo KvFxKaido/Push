@@ -8,6 +8,7 @@ import type { ModelCatalog } from '@/hooks/useModelCatalog';
 import type { ProjectInstructionsManager } from '@/hooks/useProjectInstructions';
 import type { RepoOverride } from '@/hooks/useProtectMain';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
+import type { TodoItem } from '@/lib/todo-tools';
 import type { SnapshotManager } from '@/hooks/useSnapshotManager';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 import type {
@@ -154,6 +155,10 @@ export interface ChatRouteWorkspaceDataProps {
     saveMemory: (label: string) => void;
     loadMemory: (id: string | null) => void;
     deleteMemory: (id: string) => void;
+  };
+  todo: {
+    todos: readonly TodoItem[];
+    clear: () => void;
   };
   protectMain: {
     isProtected: boolean;

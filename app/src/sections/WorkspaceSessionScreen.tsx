@@ -478,7 +478,7 @@ export function WorkspaceSessionScreen({
     handleSelectVertexModelFromChat,
   };
 
-  const workspaceDataDomain = { snapshots, instructions, scratchpad, protectMain };
+  const workspaceDataDomain = { snapshots, instructions, scratchpad, todo, protectMain };
 
   const authDomain = {
     token,
