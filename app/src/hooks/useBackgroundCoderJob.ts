@@ -351,8 +351,11 @@ export function useBackgroundCoderJob({
         default:
           // Phase 1 only emits the three above. Anything else is
           // either a future event type (benign — appended to the
-          // journal already) or a drift — logged for visibility.
+          // journal already, and still counted as activity so the
+          // stall clock resets) or a drift that a future PR will want
+          // to handle explicitly.
           upsertJobEntry(chatId, jobId, { lastEventId: runEvent.id });
+          upsertJobCardData(chatId, jobId, { lastEventAt: eventAt });
           break;
       }
     },
