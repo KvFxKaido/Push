@@ -668,12 +668,18 @@ export function buildCuratedOpenRouterModelList(
     if (covered.has(m.id)) continue;
     if (!m.outputModalities.includes('text')) continue;
     if (m.contextLength < MIN_CONTEXT_TOKENS) continue;
-    const normalized = m.id.toLowerCase();
-    if (IMAGE_GENERATION_MODEL_FAMILY_REGEX.test(normalized)) continue;
-    if (/(embed|embedding|rerank|retriev)/.test(normalized)) continue;
+    // Respect models.dev metadata exclusions so a base model we already
+    // rejected from the priority block (e.g. flagged image-only by metadata
+    // even though the OpenRouter catalog reports text) does not resurface.
+    const meta = metadataById?.[m.id];
+    if (meta?.outputModalities?.includes('image') && !meta.outputModalities.includes('text'))
+      continue;
+    // Share the provider-wide family filter so embed/rerank/retrieval/
+    // image-generation families stay consistent with other providers.
+    if (!isProviderTextChatModel(m.id, meta)) continue;
     tail.push(m.id);
   }
-  tail.sort();
+  tail.sort((a, b) => a.localeCompare(b));
 
   return [...curated, ...tail];
 }

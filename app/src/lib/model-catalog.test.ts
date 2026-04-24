@@ -276,6 +276,68 @@ describe('buildCuratedOpenRouterModelList', () => {
     expect(curated).not.toContain('black-forest-labs/flux-1.1-pro');
   });
 
+  it('does not resurface a metadata-rejected priority base model in the tail', () => {
+    const models = parseOpenRouterCatalog({
+      data: [
+        {
+          id: 'anthropic/claude-sonnet-4.6',
+          name: 'Claude Sonnet 4.6',
+          architecture: {
+            input_modalities: ['text'],
+            output_modalities: ['text'],
+          },
+          supported_parameters: ['tools'],
+          top_provider: { context_length: 400_000, is_moderated: true },
+        },
+      ],
+    });
+
+    // Metadata marks the base model as image-only, so the :nitro priority
+    // entry is filtered out. The base id must not sneak back in via the tail.
+    const curated = buildCuratedOpenRouterModelList(models, {
+      'anthropic/claude-sonnet-4.6': {
+        id: 'anthropic/claude-sonnet-4.6',
+        attachment: false,
+        reasoning: false,
+        toolCall: true,
+        structuredOutput: true,
+        openWeights: false,
+        inputModalities: ['text'],
+        outputModalities: ['image'],
+        contextLimit: 400_000,
+      },
+    });
+
+    expect(curated).not.toContain('anthropic/claude-sonnet-4.6:nitro');
+    expect(curated).not.toContain('anthropic/claude-sonnet-4.6');
+  });
+
+  it('excludes nv-rerank and nvolve families from the live tail', () => {
+    const models = parseOpenRouterCatalog({
+      data: [
+        {
+          id: 'nvidia/nv-rerank-qa-mistral-4b',
+          name: 'NV Rerank',
+          architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+          supported_parameters: [],
+          top_provider: { context_length: 128_000, is_moderated: false },
+        },
+        {
+          id: 'nvidia/nvolve-v2',
+          name: 'Nvolve',
+          architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+          supported_parameters: [],
+          top_provider: { context_length: 128_000, is_moderated: false },
+        },
+      ],
+    });
+
+    const curated = buildCuratedOpenRouterModelList(models);
+
+    expect(curated).not.toContain('nvidia/nv-rerank-qa-mistral-4b');
+    expect(curated).not.toContain('nvidia/nvolve-v2');
+  });
+
   it('excludes image-only priority models when metadata is available', () => {
     const models = parseOpenRouterCatalog({
       data: [
