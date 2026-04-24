@@ -30,9 +30,19 @@ describe('orchestrator-prompt-builder (shared lib)', () => {
   it('buildOrchestratorToolInstructions covers the tool execution + error handling sections', () => {
     const text = buildOrchestratorToolInstructions();
     expect(text).toContain('## Tool Execution Model');
+    expect(text).toContain('## Tool Call Placement');
     expect(text).toContain('## Tool Routing');
     expect(text).toContain('## Error Handling');
     expect(text).toContain('EDIT_HASH_MISMATCH');
+    // The placement section specifically addresses reasoning-model
+    // tool-call emission — Kimi K2.6 was seen emitting `{"tool": ...}`
+    // JSON inside its reasoning channel, which the parser never scans
+    // (orchestrator.ts only forwards `content` tokens to `parser.push`).
+    // Regression guard so the instruction isn't silently dropped in a
+    // future refactor; the symptom (two boops per session) is subtle
+    // enough that a missing-section bug would be easy to miss.
+    expect(text).toMatch(/thinking|reasoning/i);
+    expect(text).toMatch(/response content/i);
   });
 
   it('buildOrchestratorDelegation covers delegation + task graph sections', () => {
