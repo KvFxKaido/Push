@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { ChevronsUpDown, Loader2, Lock, RefreshCw, Square } from 'lucide-react';
+import { Check, ChevronsUpDown, Loader2, Lock, RefreshCw, Square } from 'lucide-react';
 import { AttachmentPreview } from './AttachmentPreview';
 import { ContextMeter } from './ContextMeter';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -16,6 +16,14 @@ import {
   REASONING_EFFORT_LABELS,
   type ReasoningEffort,
 } from '@/lib/model-catalog';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import type { AIProviderType, AttachmentData, ChatSendOptions } from '@/types';
 import {
   formatModelDisplayName,
@@ -508,14 +516,38 @@ export function ChatInput({
   const blackboxModelList = providerControls?.blackboxModelOptions ?? EMPTY_MODEL_OPTIONS;
   const blackboxFallbackModel = providerControls?.blackboxModel ?? '';
   const kilocodeModelList = providerControls?.kilocodeModelOptions ?? EMPTY_MODEL_OPTIONS;
+
+  const openRouterCommandGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        key: string;
+        label: string | null;
+        models: { id: string; display: string; hints: string }[];
+      }
+    >();
+
+    for (const model of openRouterModelList) {
+      const groupKey = getModelDisplayGroupKey('openrouter', model);
+      const mapKey = groupKey || '__ungrouped__';
+      const label = groupKey ? getModelDisplayGroupLabel(groupKey) : null;
+      const display = label
+        ? getModelDisplayLeafName('openrouter', model)
+        : formatModelDisplayName('openrouter', model);
+      const hints = formatModelCapabilityHints(getModelCapabilities('openrouter', model));
+      const existing = groups.get(mapKey);
+      if (existing) {
+        existing.models.push({ id: model, display, hints });
+      } else {
+        groups.set(mapKey, { key: mapKey, label, models: [{ id: model, display, hints }] });
+      }
+    }
+
+    return Array.from(groups.values());
+  }, [openRouterModelList]);
   const kilocodeFallbackModel = providerControls?.kilocodeModel ?? '';
   const openAdapterModelList = providerControls?.openadapterModelOptions ?? EMPTY_MODEL_OPTIONS;
   const openAdapterFallbackModel = providerControls?.openadapterModel ?? '';
-
-  const openRouterModelOptions = useMemo(
-    () => renderGroupedModelOptions(openRouterModelList, 'openrouter'),
-    [openRouterModelList],
-  );
 
   const cloudflareModelOptions = useMemo(
     () => renderGroupedModelOptions(cloudflareModelList, 'cloudflare'),
@@ -551,6 +583,7 @@ export function ChatInput({
           : [];
     return renderGroupedModelOptions(models, 'openadapter');
   }, [openAdapterFallbackModel, openAdapterModelList]);
+  const [openRouterPickerOpen, setOpenRouterPickerOpen] = useState(false);
 
   // Reasoning effort (per-provider, only for models that support it)
   const modelCaps = getModelCapabilities(selectedProvider, selectedModel);
@@ -943,19 +976,80 @@ export function ChatInput({
 
                       {selectedProvider === 'openrouter' && (
                         <>
-                          <select
-                            value={providerControls.openRouterModel}
-                            disabled={
-                              !canChangeModel ||
-                              providerControls.openRouterModelOptions.length === 0
-                            }
-                            onChange={(e) =>
-                              providerControls.onSelectOpenRouterModel(e.target.value)
-                            }
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          <Popover
+                            open={openRouterPickerOpen}
+                            onOpenChange={setOpenRouterPickerOpen}
                           >
-                            {openRouterModelOptions}
-                          </select>
+                            <PopoverTrigger asChild>
+                              <button
+                                type="button"
+                                role="combobox"
+                                aria-haspopup="listbox"
+                                aria-expanded={openRouterPickerOpen}
+                                aria-label="Select OpenRouter model"
+                                disabled={
+                                  !canChangeModel ||
+                                  providerControls.openRouterModelOptions.length === 0
+                                }
+                                className="flex h-8 w-full items-center justify-between rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                              >
+                                <span className="flex items-center gap-2 truncate">
+                                  {displayModelName}
+                                  {modelCaps.reasoning && (
+                                    <span className="text-push-2xs text-[#7c879b]">
+                                      {REASONING_EFFORT_LABELS[reasoningEffort]}
+                                    </span>
+                                  )}
+                                </span>
+                                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              className="w-[320px] border-[#2a3447] bg-[#0d1117] p-0 text-[#d7deeb] shadow-md"
+                              align="start"
+                            >
+                              <Command className="bg-transparent">
+                                <CommandInput
+                                  placeholder="Search models..."
+                                  className="border-0 text-[#d7deeb]"
+                                />
+                                <CommandList>
+                                  <CommandEmpty>No models found.</CommandEmpty>
+                                  {openRouterCommandGroups.map((group) => (
+                                    <CommandGroup
+                                      key={group.key}
+                                      heading={group.label || undefined}
+                                      className="text-[#7c879b]"
+                                    >
+                                      {group.models.map((model) => (
+                                        <CommandItem
+                                          key={model.id}
+                                          value={model.id}
+                                          onSelect={() => {
+                                            if (model.id !== providerControls.openRouterModel) {
+                                              providerControls.onSelectOpenRouterModel(model.id);
+                                            }
+                                            setOpenRouterPickerOpen(false);
+                                          }}
+                                          className="text-[#d7deeb] data-[selected=true]:bg-[#1a2332]"
+                                        >
+                                          <span className="flex-1 truncate">{model.display}</span>
+                                          {model.hints && (
+                                            <span className="ml-2 shrink-0 text-[#7c879b]">
+                                              {model.hints}
+                                            </span>
+                                          )}
+                                          {model.id === providerControls.openRouterModel && (
+                                            <Check className="ml-2 h-4 w-4 shrink-0 text-[#d7deeb]" />
+                                          )}
+                                        </CommandItem>
+                                      ))}
+                                    </CommandGroup>
+                                  ))}
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
                           {providerControls.isOpenRouterModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">
                               Current chat locked; choosing a model starts a new chat.
