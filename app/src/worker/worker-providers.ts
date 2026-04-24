@@ -105,11 +105,20 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
       // stall detector sees "data arriving but no content" and trips the
       // 90s timer despite the model working fine (K2.6 can spend multiple
       // minutes thinking before its first visible token).
-      // `normalizeReasoning` latches on the first native reasoning_delta
-      // and stops parsing `<think>` tags for the rest of the stream, so a
-      // hybrid model that emits both won't double-report.
-      const reasoning = delta?.reasoning ?? delta?.reasoning_content;
-      if (typeof reasoning === 'string' && reasoning.length > 0) {
+      // Select the first *valid non-empty string* — not `??`, which
+      // would prefer a non-string `reasoning` (e.g. a future structured
+      // payload) over a sibling string `reasoning_content` in the same
+      // frame and drop the usable one. `normalizeReasoning` downstream
+      // latches on the first native reasoning_delta and stops parsing
+      // `<think>` tags for the rest of the stream, so a hybrid model
+      // that emits both won't double-report.
+      const reasoning =
+        typeof delta?.reasoning === 'string' && delta.reasoning.length > 0
+          ? delta.reasoning
+          : typeof delta?.reasoning_content === 'string' && delta.reasoning_content.length > 0
+            ? delta.reasoning_content
+            : undefined;
+      if (reasoning) {
         yield { type: 'reasoning_delta', text: reasoning };
       }
       if (delta?.content) {

@@ -265,6 +265,37 @@ describe('handleCloudflareChat', () => {
     expect(body).not.toContain('reasoning_content');
     expect(body).toContain('"content":"ok"');
   });
+
+  it('falls back to reasoning_content when `reasoning` is present but non-string in the same frame', async () => {
+    // Mixed-shape frame: `reasoning` is a structured payload (future
+    // shape or migration compat), `reasoning_content` is the usable
+    // string. A naive `??` fallback would prefer the non-string and
+    // drop the frame entirely — the client would then see no progress
+    // and trip the 90s stall detector despite having valid reasoning
+    // text in-stream. Guard: pick the first valid string field.
+    const encoder = new TextEncoder();
+    const upstream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"reasoning":{"type":"structured"},"reasoning_content":"usable text"}}]}\n' +
+              'data: {"choices":[{"delta":{"content":"done"}}]}\n' +
+              'data: [DONE]\n',
+          ),
+        );
+        c.close();
+      },
+    });
+
+    const response = await handleCloudflareChat(
+      makeChatRequest(),
+      makeEnv({ AI: { run: vi.fn(async () => upstream) } as unknown as Env['AI'] }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(body).toContain('"reasoning_content":"usable text"');
+    expect(body).toContain('"content":"done"');
+  });
 });
 
 describe('handleCloudflareModels', () => {
