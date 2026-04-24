@@ -14,7 +14,7 @@ on:
       - 'biome.json'
       - 'package.json'
       - 'package-lock.json'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/**'
   pull_request:
     branches: [main]
     paths:
@@ -28,7 +28,7 @@ on:
       - 'biome.json'
       - 'package.json'
       - 'package-lock.json'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 concurrency:
@@ -36,9 +36,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  workflows:
+    name: Lint GitHub Actions workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run actionlint
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/repo" -w /repo rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+
   app:
     name: Lint, Test, Build (app)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: app
@@ -68,6 +80,7 @@ jobs:
   github-mcp:
     name: Typecheck, Build (github mcp)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: mcp/github-server
@@ -94,6 +107,7 @@ jobs:
   cli:
     name: Format, Typecheck, Test (cli)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Runs from the repo root. Biome, tsx, TypeScript, and @types/node all
     # live in the root devDependencies; the CLI itself has no external npm
     # imports (verified by grep: only node built-ins and relative paths to
@@ -128,10 +142,10 @@ jobs:
       - name: Test
         run: npm run test:cli
 
-  modal:
-    name: Deploy Modal Sandbox
+  sandbox:
+    name: Validate sandbox
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -140,24 +154,5 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Modal CLI
-        run: pip install modal
-
-      - name: Deploy to Modal
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: |
-          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
-            echo "::warning::Modal credentials not configured — skipping sandbox deploy."
-            echo "To fix: add MODAL_TOKEN_ID and MODAL_TOKEN_SECRET to GitHub Secrets."
-            exit 0
-          fi
-          cd sandbox
-          echo "Deploying Modal sandbox app..."
-          if modal deploy app.py 2>&1 | tee deploy.log; then
-            echo "Modal deployment successful"
-          else
-            echo "::error::Modal deployment failed. Check logs above."
-            exit 1
-          fi
+      - name: Validate sandbox app syntax
+        run: python -m py_compile sandbox/app.py

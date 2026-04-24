@@ -19,6 +19,7 @@ defaults:
 jobs:
   invoke:
     runs-on: 'ubuntu-latest'
+    timeout-minutes: 7
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -39,7 +40,7 @@ jobs:
 
       - name: 'Run Gemini CLI'
         id: 'run_gemini'
-        uses: 'google-github-actions/run-gemini-cli@v0' # ratchet:exclude
+        uses: 'google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489' # v0 pinned 2026-04-24
         env:
           GEMINI_CLI_TRUST_WORKSPACE: 'true'
           TITLE: '${{ github.event.pull_request.title || github.event.issue.title }}'

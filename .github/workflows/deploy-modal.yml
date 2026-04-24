@@ -10,6 +10,9 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MODAL_VERSION_SPEC: 'modal>=1,<2'
     steps:
       - uses: actions/checkout@v4
 
@@ -19,7 +22,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install Modal CLI
-        run: pip install modal
+        run: pip install "${MODAL_VERSION_SPEC}"
 
       - name: Validate sandbox app syntax
         run: python -m py_compile sandbox/app.py
