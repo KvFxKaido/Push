@@ -1289,12 +1289,11 @@ export async function processAssistantTurn(
         replace: todo.replace,
         clear: todo.clear,
       });
-      if (result.ok) {
-        if (toolCall.call.tool === 'todo_write') {
-          todoRef.current = { ...todo, todos: toolCall.call.todos };
-        } else if (toolCall.call.tool === 'todo_clear') {
-          todoRef.current = { ...todo, todos: [] };
-        }
+      if (result.ok && result.nextTodos) {
+        // Sync the ref from the canonical list the executor persisted (post
+        // dedupe/clear), not from the raw tool args — otherwise the next
+        // turn's [TODO] prompt block can drift from what was actually stored.
+        todoRef.current = { ...todo, todos: result.nextTodos };
       }
       toolExecResult = { text: result.text };
     }

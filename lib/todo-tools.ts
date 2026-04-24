@@ -172,12 +172,18 @@ export interface TodoExecuteHandlers {
 
 /**
  * Execute a todo tool call. Mirrors executeScratchpadToolCall's shape.
+ *
+ * Returns `nextTodos` (the canonical list after dedupe/clear) so the caller
+ * can sync any ref-mirrors of the todo list from the same normalized data
+ * that was persisted. Callers MUST prefer `nextTodos` over the raw input
+ * when a result is `ok` — otherwise the next turn's [TODO] prompt block can
+ * drift from what was stored.
  */
 export function executeTodoToolCall(
   call: TodoToolCall,
   currentTodos: readonly TodoItem[],
   handlers: TodoExecuteHandlers,
-): { text: string; ok: boolean } {
+): { text: string; ok: boolean; nextTodos?: TodoItem[] } {
   if (call.tool === 'todo_read') {
     if (currentTodos.length === 0) {
       return { text: '[Todo list is empty — call todo_write to populate it]', ok: true };
@@ -191,7 +197,7 @@ export function executeTodoToolCall(
   if (call.tool === 'todo_clear') {
     try {
       handlers.clear();
-      return { text: '[Todo list cleared]', ok: true };
+      return { text: '[Todo list cleared]', ok: true, nextTodos: [] };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { text: `[Todo error: failed to clear — ${msg}]`, ok: false };
@@ -212,6 +218,12 @@ export function executeTodoToolCall(
           ok: false,
         };
       }
+      if (item.activeForm.length > MAX_TODO_CONTENT_LENGTH) {
+        return {
+          text: `[Todo error: item "${item.id}" activeForm exceeds ${MAX_TODO_CONTENT_LENGTH} chars. Keep the present-continuous form short.]`,
+          ok: false,
+        };
+      }
     }
     const inProgressCount = call.todos.filter((t) => t.status === 'in_progress').length;
     if (inProgressCount > 1) {
@@ -221,7 +233,10 @@ export function executeTodoToolCall(
       };
     }
 
-    // Stabilise ids so duplicate-id updates replace rather than append.
+    // Rename duplicate ids so each item stays addressable. This is a
+    // disambiguating suffix (`foo` + `foo` → `foo`, `foo-1`), NOT a
+    // last-write-wins replace — the model should consolidate duplicate
+    // intent into a single item rather than rely on this.
     const deduped = dedupeTodoIds(call.todos);
 
     try {
@@ -229,6 +244,7 @@ export function executeTodoToolCall(
       return {
         text: `[Todo updated — ${deduped.length} items (${countByStatus(deduped)})]`,
         ok: true,
+        nextTodos: deduped,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -291,7 +307,12 @@ export function buildTodoContext(todos: readonly TodoItem[]): string {
     .map((todo) => {
       const marker = todo.status === 'completed' ? 'x' : todo.status === 'in_progress' ? '~' : ' ';
       const label = todo.status === 'in_progress' ? todo.activeForm : todo.content;
-      const escaped = label.replace(/\[TODO\]/gi, '[TODO​]').replace(/\[\/TODO\]/gi, '[/TODO​]');
+      // Use explicit \u200B zero-width-space escapes in the replacement
+      // strings so source doesn't hide invisible characters — matches the
+      // convention buildScratchpadContext uses.
+      const escaped = label
+        .replace(/\[TODO\]/gi, '[TODO\u200B]')
+        .replace(/\[\/TODO\]/gi, '[/TODO\u200B]');
       return `- [${marker}] ${escaped}`;
     })
     .join('\n');

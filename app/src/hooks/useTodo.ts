@@ -18,7 +18,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
-import type { TodoItem } from '@/lib/todo-tools';
+import { MAX_TODO_CONTENT_LENGTH, MAX_TODO_ITEMS, type TodoItem } from '@/lib/todo-tools';
 
 const GLOBAL_STORAGE_KEY = 'push-todo';
 const MAX_STORAGE_SIZE = 200_000; // 200KB soft cap
@@ -27,17 +27,50 @@ function getStorageKey(repoFullName: string | null): string {
   return repoFullName ? `push-todo:${repoFullName}` : GLOBAL_STORAGE_KEY;
 }
 
+/**
+ * Validate + clamp todos loaded from localStorage.
+ *
+ * Structural validation keeps us safe from prior schema versions and
+ * hand-tampering. Clamping enforces the same invariants the tool executor
+ * upholds (max item count, max content/activeForm length, at most one
+ * in_progress) so a stale or corrupted store can't blow up the [TODO]
+ * prompt block or trap the model in a state it can't write back to.
+ */
 function validateTodos(data: unknown): TodoItem[] {
   if (!Array.isArray(data)) return [];
-  return data.filter(
-    (item): item is TodoItem =>
-      typeof item === 'object' &&
-      item !== null &&
-      typeof item.id === 'string' &&
-      typeof item.content === 'string' &&
-      typeof item.activeForm === 'string' &&
-      (item.status === 'pending' || item.status === 'in_progress' || item.status === 'completed'),
-  );
+  const cleaned: TodoItem[] = [];
+  let inProgressKept = false;
+  for (const item of data) {
+    if (typeof item !== 'object' || item === null) continue;
+    const record = item as Record<string, unknown>;
+    if (
+      typeof record.id !== 'string' ||
+      typeof record.content !== 'string' ||
+      typeof record.activeForm !== 'string'
+    ) {
+      continue;
+    }
+    let status: TodoItem['status'];
+    if (record.status === 'in_progress' || record.status === 'completed') {
+      status = record.status;
+    } else {
+      status = 'pending';
+    }
+    // Demote subsequent in_progress items — the invariant is one active step
+    // at a time, so first wins and the rest fall back to pending.
+    if (status === 'in_progress') {
+      if (inProgressKept) status = 'pending';
+      else inProgressKept = true;
+    }
+    cleaned.push({
+      id: record.id,
+      content: record.content.slice(0, MAX_TODO_CONTENT_LENGTH),
+      activeForm: record.activeForm.slice(0, MAX_TODO_CONTENT_LENGTH),
+      status,
+    });
+    if (cleaned.length >= MAX_TODO_ITEMS) break;
+  }
+  return cleaned;
 }
 
 function readStoredTodos(repoFullName: string | null): TodoItem[] {
@@ -87,18 +120,25 @@ export function useTodo(repoFullName: string | null = null) {
   }, []);
 
   const toggleStatus = useCallback((id: string) => {
-    setTodosState((prev) =>
-      prev.map((todo) => {
-        if (todo.id !== id) return todo;
-        const nextStatus: TodoItem['status'] =
-          todo.status === 'pending'
-            ? 'in_progress'
-            : todo.status === 'in_progress'
-              ? 'completed'
-              : 'pending';
-        return { ...todo, status: nextStatus };
-      }),
-    );
+    setTodosState((prev) => {
+      const target = prev.find((todo) => todo.id === id);
+      if (!target) return prev;
+      const nextStatus: TodoItem['status'] =
+        target.status === 'pending'
+          ? 'in_progress'
+          : target.status === 'in_progress'
+            ? 'completed'
+            : 'pending';
+      // Enforce the one-in_progress invariant the tool executor relies on:
+      // when promoting an item, demote any other item that was in_progress.
+      return prev.map((todo) => {
+        if (todo.id === id) return { ...todo, status: nextStatus };
+        if (nextStatus === 'in_progress' && todo.status === 'in_progress') {
+          return { ...todo, status: 'pending' };
+        }
+        return todo;
+      });
+    });
   }, []);
 
   const removeItem = useCallback((id: string) => {
