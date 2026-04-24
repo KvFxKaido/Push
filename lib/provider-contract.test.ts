@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import type {
+  AdapterTimeoutConfig,
   LlmMessage,
   PushStream,
   PushStreamEvent,
@@ -205,6 +206,36 @@ describe('createProviderStreamAdapter', () => {
     expect(onDone).toHaveBeenCalled();
   });
 
+  it('forwards runtime-context fields (workspaceContext, hasSandbox, onPreCompact) to gateway', async () => {
+    let captured: any;
+    const stream: PushStream = vi.fn().mockImplementation(async function* (req) {
+      captured = req;
+      yield { type: 'done', finishReason: 'stop' };
+    });
+
+    const ctx = { mode: 'workspace', description: 'test repo' };
+    const preCompact = vi.fn();
+    const adapted = createProviderStreamAdapter(stream, provider, testOptions);
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      () => {},
+      undefined,
+      ctx,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      preCompact,
+    );
+
+    expect(captured.workspaceContext).toBe(ctx);
+    expect(captured.hasSandbox).toBe(true);
+    expect(captured.onPreCompact).toBe(preCompact);
+  });
+
   it('passes systemPromptOverride and scratchpadContent to gateway', async () => {
     let captured: any;
     const stream: PushStream = vi.fn().mockImplementation(async function* (req) {
@@ -272,5 +303,381 @@ describe('createProviderStreamAdapter', () => {
     );
 
     expect(capturedModel).toBe('primary-model');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Timer machinery
+// ---------------------------------------------------------------------------
+
+/**
+ * Controllable async-iterable stream for timer tests. The generator awaits on
+ * a shared notify promise when the queue is empty, which lets tests push
+ * events interleaved with `vi.advanceTimersByTimeAsync` calls.
+ *
+ * The returned generator respects `req.signal`: aborting the signal makes
+ * the iterator return, matching how a real PushStream implementation
+ * propagates cancellation down to its fetch reader.
+ */
+function makeControllableEventStream() {
+  const events: PushStreamEvent[] = [];
+  let finished = false;
+  let thrownError: Error | null = null;
+  let notify: (() => void) | null = null;
+
+  function signal(): void {
+    const n = notify;
+    notify = null;
+    n?.();
+  }
+
+  async function* iter(sig?: AbortSignal): AsyncIterable<PushStreamEvent> {
+    const onAbort = () => signal();
+    sig?.addEventListener('abort', onAbort);
+    try {
+      while (true) {
+        if (sig?.aborted) return;
+        if (thrownError) throw thrownError;
+        const next = events.shift();
+        if (next) {
+          yield next;
+          continue;
+        }
+        if (finished) return;
+        await new Promise<void>((resolve) => {
+          notify = resolve;
+        });
+      }
+    } finally {
+      sig?.removeEventListener('abort', onAbort);
+    }
+  }
+
+  return {
+    stream: (req: { signal?: AbortSignal }) => iter(req.signal),
+    push(event: PushStreamEvent) {
+      events.push(event);
+      signal();
+    },
+    end() {
+      finished = true;
+      signal();
+    },
+    throwErr(err: Error) {
+      thrownError = err;
+      signal();
+    },
+  };
+}
+
+/** Yield to pending microtasks so awaited iterator + event dispatch settle. */
+async function flushMicrotasks(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(0);
+}
+
+describe('createProviderStreamAdapter timer machinery', () => {
+  const messages: LlmMessage[] = [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }];
+  const provider: AIProviderType = 'openrouter';
+  const testOptions = { defaultModel: 'test-model' };
+
+  const timeouts: AdapterTimeoutConfig = {
+    eventTimeoutMs: 10_000,
+    contentTimeoutMs: 20_000,
+    totalTimeoutMs: 60_000,
+    errorMessages: {
+      event: (s) => `event ${s}s`,
+      content: (s) => `content ${s}s`,
+      total: (s) => `total ${s}s`,
+    },
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('fires eventTimeoutMs when no events arrive at all', async () => {
+    const { stream } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts,
+    });
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const done = adapted(messages, () => {}, onDone, onError);
+
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(11_000);
+    await done;
+
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0][0] as Error).message).toBe('event 10s');
+  });
+
+  it('resets eventTimeoutMs on every event including reasoning_end', async () => {
+    const { stream, push, end } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts,
+    });
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const done = adapted(messages, () => {}, onDone, onError);
+
+    await flushMicrotasks();
+    // Walk 6s, push reasoning_end (resets event timer even though not content).
+    await vi.advanceTimersByTimeAsync(6_000);
+    push({ type: 'reasoning_end' });
+    await flushMicrotasks();
+    // Another 6s — inside the reset event window.
+    await vi.advanceTimersByTimeAsync(6_000);
+    push({ type: 'reasoning_end' });
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(6_000);
+    end();
+    await flushMicrotasks();
+    await done;
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalled();
+  });
+
+  it('text_delta resets contentTimeoutMs', async () => {
+    const { stream, push, end } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts,
+    });
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const done = adapted(messages, () => {}, onDone, onError);
+
+    await flushMicrotasks();
+    // Five text events 8s apart — total 40s, well past contentTimeoutMs of 20s.
+    // contentTimer must reset each time to avoid tripping.
+    for (let i = 0; i < 5; i++) {
+      push({ type: 'text_delta', text: `chunk-${i}` });
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(8_000);
+    }
+    end();
+    await flushMicrotasks();
+    await done;
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalled();
+  });
+
+  it('reasoning_delta resets contentTimeoutMs', async () => {
+    const { stream, push, end } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts,
+    });
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const done = adapted(messages, () => {}, onDone, onError);
+
+    await flushMicrotasks();
+    for (let i = 0; i < 5; i++) {
+      push({ type: 'reasoning_delta', text: `thinking-${i}` });
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(8_000);
+    }
+    end();
+    await flushMicrotasks();
+    await done;
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalled();
+  });
+
+  it('reasoning_end does NOT reset contentTimeoutMs', async () => {
+    // Events arrive (reset eventTimer) but none carry content. Content timer
+    // should still fire at contentTimeoutMs since reasoning_end is
+    // structural, not user-visible progress.
+    const { stream, push } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts,
+    });
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const done = adapted(messages, () => {}, onDone, onError);
+
+    await flushMicrotasks();
+    // Seed with a reasoning_delta to arm the content timer.
+    push({ type: 'reasoning_delta', text: 'warmup' });
+    await flushMicrotasks();
+    // From here on, only reasoning_end events — keeps event timer alive but
+    // leaves content timer ticking against the 20s deadline.
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(5_000);
+      push({ type: 'reasoning_end' });
+      await flushMicrotasks();
+    }
+    await done;
+
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0][0] as Error).message).toBe('content 20s');
+  });
+
+  it('totalTimeoutMs fires regardless of continuous event activity', async () => {
+    const { stream, push } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts,
+    });
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const done = adapted(messages, () => {}, onDone, onError);
+
+    await flushMicrotasks();
+    // Push a text event every 5s. eventTimer and contentTimer never fire
+    // because each push resets both. Total should fire at 60s.
+    for (let i = 0; i < 13; i++) {
+      push({ type: 'text_delta', text: `chunk-${i}` });
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    await done;
+
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0][0] as Error).message).toBe('total 60s');
+  });
+
+  it('external abort wins cleanly over internal timeout and settles via onDone', async () => {
+    const { stream, push } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts,
+    });
+    const abortController = new AbortController();
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const done = adapted(
+      messages,
+      () => {},
+      onDone,
+      onError,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      abortController.signal,
+    );
+
+    await flushMicrotasks();
+    push({ type: 'text_delta', text: 'hi' });
+    await flushMicrotasks();
+    // Abort mid-stream. External abort should beat any pending timer.
+    abortController.abort();
+    await flushMicrotasks();
+    await done;
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('done event clears all timers', async () => {
+    const { stream, push } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts,
+    });
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const usage: StreamUsage = { inputTokens: 5, outputTokens: 7, totalTokens: 12 };
+    const done = adapted(messages, () => {}, onDone, onError);
+
+    await flushMicrotasks();
+    push({ type: 'text_delta', text: 'hi' });
+    await flushMicrotasks();
+    push({ type: 'done', finishReason: 'stop', usage });
+    await flushMicrotasks();
+    // Advance well past every timer — if any timer survived, it would fire.
+    await vi.advanceTimersByTimeAsync(120_000);
+    await done;
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onDone).toHaveBeenCalledWith(usage);
+  });
+
+  it('upstream thrown error clears timers and routes to onError', async () => {
+    const { stream, throwErr } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts,
+    });
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const done = adapted(messages, () => {}, onDone, onError);
+
+    await flushMicrotasks();
+    throwErr(new Error('upstream 500'));
+    await flushMicrotasks();
+    // Advance past every timer — shouldn't fire because they were cleared.
+    await vi.advanceTimersByTimeAsync(120_000);
+    await done;
+
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0][0] as Error).message).toBe('upstream 500');
+  });
+
+  it('works without any timeouts config (backward compatible)', async () => {
+    const { stream, push, end } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, testOptions);
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const done = adapted(messages, () => {}, onDone, onError);
+
+    await flushMicrotasks();
+    push({ type: 'text_delta', text: 'hi' });
+    await flushMicrotasks();
+    // Advance arbitrarily — no timers should exist to fire.
+    await vi.advanceTimersByTimeAsync(600_000);
+    end();
+    await flushMicrotasks();
+    await done;
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalled();
+  });
+
+  it('falls back to a generic message when per-reason renderer is missing', async () => {
+    const { stream } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts: {
+        eventTimeoutMs: 5_000,
+        // No errorMessages at all.
+      },
+    });
+    const onError = vi.fn();
+    const done = adapted(
+      messages,
+      () => {},
+      () => {},
+      onError,
+    );
+
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(6_000);
+    await done;
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    const msg = (onError.mock.calls[0][0] as Error).message;
+    expect(msg).toMatch(/no events for 5s/);
   });
 });
