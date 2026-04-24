@@ -74,6 +74,12 @@ export interface Env {
   // (NOT_CONFIGURED 503) on every route including create when the binding
   // is missing. No silent auth bypass; no half-auth'd sandboxes.
   SANDBOX_TOKENS?: KVNamespace;
+  // Local-dev escape hatch for the per-exec sandbox deadline. Set to "1" in
+  // .dev.vars to raise SANDBOX_EXEC_TIMEOUT_MS from 150s to 300s — covers
+  // first-request container cold-starts on local wrangler, which routinely
+  // overshoot the production deadline. Unset in prod (no wrangler.jsonc var)
+  // so the tighter default stays authoritative for deployed Workers.
+  SANDBOX_DEV_LONG_DEADLINE?: string;
 }
 
 // ---------------------------------------------------------------------------

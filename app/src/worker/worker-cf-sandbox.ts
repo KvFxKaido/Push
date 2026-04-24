@@ -81,6 +81,21 @@ const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 // wedged and no amount of in-container killing can make bytes flow back.
 export const SANDBOX_EXEC_TIMEOUT_MS = 150_000;
 
+// Local-dev override for SANDBOX_EXEC_TIMEOUT_MS. Production containers are
+// pre-warmed by CF infra and 150s is generous; local wrangler builds the
+// sandbox container from Dockerfile.sandbox on demand and first cold-start
+// routinely overshoots 150s. Rather than thread env through every
+// withExecDeadline caller (15+ sites), we keep a per-isolate mutable that
+// handleCloudflareSandbox re-applies on each request entry from
+// env.SANDBOX_DEV_LONG_DEADLINE. Production leaves this at 150_000.
+const DEV_LONG_EXEC_TIMEOUT_MS = 300_000;
+let currentExecDeadlineMs = SANDBOX_EXEC_TIMEOUT_MS;
+
+export function applyEnvExecDeadline(env: Env): void {
+  currentExecDeadlineMs =
+    env.SANDBOX_DEV_LONG_DEADLINE === '1' ? DEV_LONG_EXEC_TIMEOUT_MS : SANDBOX_EXEC_TIMEOUT_MS;
+}
+
 // Container-side wall-clock cap for a single user exec. Kept a few seconds
 // below SANDBOX_EXEC_TIMEOUT_MS so the shell's `timeout` reliably fires first
 // and the SDK call returns with exit_code=124 + whatever partial stdout the
@@ -102,7 +117,7 @@ export class SandboxExecDeadlineError extends Error {
 
 function withExecDeadline<T>(
   exec: Promise<T>,
-  timeoutMs: number = SANDBOX_EXEC_TIMEOUT_MS,
+  timeoutMs: number = currentExecDeadlineMs,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -127,6 +142,7 @@ export async function handleCloudflareSandbox(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _ctx?: ExecutionContext,
 ): Promise<Response> {
+  applyEnvExecDeadline(env);
   const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'sandbox-cf');
 
   if (!ROUTES.has(route)) {
