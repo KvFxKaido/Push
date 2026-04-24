@@ -284,7 +284,14 @@ describe('handleCloudflareSandbox happy paths', () => {
       { branch: 'feature', targetDir: '/workspace' },
     );
     expect(sandbox.writeFile).toHaveBeenCalledWith('/workspace/README.md', 'hello');
-    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+    // Call 2 is the hardlink copy from the image-baked /opt/push-cache
+    // cache (see routeCreate). Assert on a substring rather than the
+    // whole script so the guard shape stays an implementation detail
+    // the test doesn't pin.
+    expect(sandbox.exec.mock.calls[1]?.[0]).toEqual(
+      expect.stringContaining('cp -al "$src/node_modules"'),
+    );
+    expect(sandbox.exec).toHaveBeenCalledTimes(3);
   });
 
   it('connects to a reachable sandbox', async () => {

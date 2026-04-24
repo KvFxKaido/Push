@@ -1,0 +1,48 @@
+# Build context for Dockerfile.sandbox. The image only needs lockfiles + a
+# few system pieces; everything below is either noise that bloats the
+# context tarball sent to the Docker daemon, or state that would pin
+# layer-cache busts to unrelated local activity.
+
+# Dependencies — rebuilt inside the image via `npm ci` into /opt/push-cache.
+node_modules
+**/node_modules
+
+# Git state — the runtime container uses gitCheckout against remotes, not
+# the host-side .git pack.
+.git
+.gitignore
+
+# App build output + Worker state. Neither is consumed by the sandbox image.
+app/dist
+app/build
+dist
+build-out*.txt
+
+# Wrangler state (secrets, tail logs, preview builds).
+.wrangler
+app/.wrangler
+
+# Env files — never leak into an image.
+.env
+.env.*
+!.env.example
+.dev.vars
+
+# Tooling / editor / OS noise.
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Claude Code / Codex workspaces.
+.claude
+.codex
+.kilo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Tests / fixtures / docs — not needed at runtime.
+coverage
+*.md

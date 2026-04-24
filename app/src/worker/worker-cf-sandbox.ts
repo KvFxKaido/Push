@@ -348,6 +348,47 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
       ? `https://x-access-token:${githubToken}@github.com/${repo}.git`
       : `https://github.com/${repo}.git`;
     await sandbox.gitCheckout(cloneUrl, { branch, targetDir: '/workspace' });
+
+    // Pre-populate /workspace/{,app/}node_modules from the image-baked
+    // cache via hardlink copy. Dockerfile.sandbox stages root and app
+    // deps at /opt/push-cache/{,app}/node_modules during build; `cp -al`
+    // creates new directory entries that share inodes with the cache,
+    // so a fresh sandbox gets instant access to deps without paying the
+    // ~100s cold `npm install` wall-clock — the heavy FS write that was
+    // the primary trigger for the stalls patched by #374/#375.
+    //
+    // Write-isolated by construction: a later `rm -rf node_modules` or
+    // `npm install <pkg>` in the sandbox writes to new inodes on the
+    // workspace side; the baked cache's inodes are untouched, so
+    // concurrent sandboxes never stomp each other.
+    //
+    // Gated on a byte-exact lockfile match (`cmp -s`) between the baked
+    // cache and the cloned repo. Any mismatch — different project, or
+    // Push itself on a branch whose deps have shifted from the image —
+    // falls through and lets downstream flows run `npm install` against
+    // the correct lockfile. Critical because `handleCheckTypes` in
+    // `sandbox-verification-handlers.ts` uses `node_modules` existence
+    // as its "install already ran" signal; populating with mismatched
+    // deps would silently regress typecheck results.
+    //
+    // Trailing `true` swallows benign failures (cross-device `cp -al`
+    // if /workspace lives on a separate volume mount, permission
+    // quirks) — the baked cache is an optimization, never a
+    // correctness dependency.
+    await withExecDeadline(
+      sandbox.exec(
+        "src='/opt/push-cache'; " +
+          'if [ -f "$src/package-lock.json" ] && ' +
+          'cmp -s "$src/package-lock.json" /workspace/package-lock.json 2>/dev/null && ' +
+          '[ -d "$src/node_modules" ] && [ ! -e /workspace/node_modules ]; then ' +
+          'cp -al "$src/node_modules" /workspace/node_modules; fi; ' +
+          'if [ -f "$src/app/package-lock.json" ] && [ -d /workspace/app ] && ' +
+          'cmp -s "$src/app/package-lock.json" /workspace/app/package-lock.json 2>/dev/null && ' +
+          '[ -d "$src/app/node_modules" ] && [ ! -e /workspace/app/node_modules ]; then ' +
+          'cp -al "$src/app/node_modules" /workspace/app/node_modules; fi; ' +
+          'true',
+      ),
+    );
   }
 
   for (const seed of seedFiles) {
