@@ -34,15 +34,21 @@ describe('orchestrator-prompt-builder (shared lib)', () => {
     expect(text).toContain('## Tool Routing');
     expect(text).toContain('## Error Handling');
     expect(text).toContain('EDIT_HASH_MISMATCH');
-    // The placement section specifically addresses reasoning-model
-    // tool-call emission — Kimi K2.6 was seen emitting `{"tool": ...}`
-    // JSON inside its reasoning channel, which the parser never scans
-    // (orchestrator.ts only forwards `content` tokens to `parser.push`).
-    // Regression guard so the instruction isn't silently dropped in a
-    // future refactor; the symptom (two boops per session) is subtle
-    // enough that a missing-section bug would be easy to miss.
-    expect(text).toMatch(/thinking|reasoning/i);
-    expect(text).toMatch(/response content/i);
+
+    // Scope the placement-section assertions to the slice between its
+    // heading and the next `##` header — otherwise a regression that
+    // deletes the section could still pass if the tripped words
+    // ("thinking"/"reasoning"/"response content") happened to appear
+    // elsewhere in the tool-instructions block. Kimi K2.6 was seen
+    // emitting `{"tool": ...}` JSON inside its reasoning channel, which
+    // the parser never scans (orchestrator.ts only forwards `content`
+    // tokens to `parser.push`); the symptom (two boops per session) is
+    // subtle enough that a silent section drop would be easy to miss.
+    const placementMatch = text.match(/## Tool Call Placement\n([\s\S]*?)(?=\n## |$)/);
+    expect(placementMatch).not.toBeNull();
+    const placementSection = placementMatch?.[1] ?? '';
+    expect(placementSection).toMatch(/thinking|reasoning/i);
+    expect(placementSection).toMatch(/response content/i);
   });
 
   it('buildOrchestratorDelegation covers delegation + task graph sections', () => {

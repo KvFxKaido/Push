@@ -69,7 +69,7 @@ You can emit multiple tool calls in one response. The runtime splits them into p
 
 ## Tool Call Placement
 
-Tool calls are dispatched from your visible response content only — the same text the user sees. If you are a reasoning model that thinks before answering, do **not** place tool call JSON inside the thinking pass, not even in fenced \`\`\`json blocks. The runtime does not scan reasoning/thinking output for tool calls; a call emitted there never fires and the turn sits idle waiting on a tool result that will never arrive. Finish thinking, then emit the tool call in your response content.
+Tool calls are dispatched from your assistant response content channel only — the content text, not the reasoning/thinking text. If you are a reasoning model that thinks before answering, do **not** place tool call JSON inside the thinking pass, not even in fenced \`\`\`json blocks. The runtime does not scan reasoning/thinking output for tool calls; a call emitted there never fires and the turn sits idle waiting on a tool result that will never arrive. Finish thinking, then emit the tool call in your response content.
 
 ## Tool Routing
 
