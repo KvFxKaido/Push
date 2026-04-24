@@ -30,15 +30,20 @@ RUN git config --global user.email 'sandbox@diff.app' \
 # Copying lockfiles only (not the full tree) keeps these layers cacheable
 # on lockfile hash — a dep change invalidates them, unrelated source
 # churn does not. Layers are consumed at sandbox creation via `cp -al`
-# from /opt/push-cache/* in routeCreate (worker-cf-sandbox.ts); hardlinks
-# keep the per-sandbox cost to a few filesystem entries instead of the
-# ~100s cold-install wall-clock.
+# from /opt/push-cache/* in routeCreate (worker-cf-sandbox.ts), gated on
+# a byte-exact lockfile match so only repos whose deps equal the baked
+# ones get the cache.
+#
+# `HUSKY=0 CI=1` suppresses the husky git-hook install the repo's
+# `prepare` script runs (we have no .git here); keeping install scripts
+# otherwise enabled lets packages like esbuild download their native
+# binaries via postinstall — skipping those produces an unusable cache.
 WORKDIR /opt/push-cache
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund --ignore-scripts
+RUN HUSKY=0 CI=1 npm ci --no-audit --no-fund
 
 WORKDIR /opt/push-cache/app
 COPY app/package.json app/package-lock.json ./
-RUN npm ci --no-audit --no-fund --ignore-scripts
+RUN HUSKY=0 CI=1 npm ci --no-audit --no-fund
 
 WORKDIR /

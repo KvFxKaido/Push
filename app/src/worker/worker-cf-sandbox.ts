@@ -362,18 +362,31 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
     // workspace side; the baked cache's inodes are untouched, so
     // concurrent sandboxes never stomp each other.
     //
-    // Guarded on dir existence and absence of a pre-existing target so
-    // this stays additive — an older image without the cache, or a
-    // cloned repo that already ships a node_modules, both fall through
-    // silently. `|| true` on the tail keeps a benign failure (e.g.
-    // permission quirk) from failing the create.
+    // Gated on a byte-exact lockfile match (`cmp -s`) between the baked
+    // cache and the cloned repo. Any mismatch — different project, or
+    // Push itself on a branch whose deps have shifted from the image —
+    // falls through and lets downstream flows run `npm install` against
+    // the correct lockfile. Critical because `handleCheckTypes` in
+    // `sandbox-verification-handlers.ts` uses `node_modules` existence
+    // as its "install already ran" signal; populating with mismatched
+    // deps would silently regress typecheck results.
+    //
+    // Trailing `true` swallows benign failures (cross-device `cp -al`
+    // if /workspace lives on a separate volume mount, permission
+    // quirks) — the baked cache is an optimization, never a
+    // correctness dependency.
     await withExecDeadline(
       sandbox.exec(
-        'src=/opt/push-cache; ' +
-          'if [ -d "$src/node_modules" ] && [ ! -e /workspace/node_modules ]; then ' +
+        "src='/opt/push-cache'; " +
+          'if [ -f "$src/package-lock.json" ] && ' +
+          'cmp -s "$src/package-lock.json" /workspace/package-lock.json 2>/dev/null && ' +
+          '[ -d "$src/node_modules" ] && [ ! -e /workspace/node_modules ]; then ' +
           'cp -al "$src/node_modules" /workspace/node_modules; fi; ' +
-          'if [ -d "$src/app/node_modules" ] && [ -d /workspace/app ] && [ ! -e /workspace/app/node_modules ]; then ' +
-          'cp -al "$src/app/node_modules" /workspace/app/node_modules; fi; true',
+          'if [ -f "$src/app/package-lock.json" ] && [ -d /workspace/app ] && ' +
+          'cmp -s "$src/app/package-lock.json" /workspace/app/package-lock.json 2>/dev/null && ' +
+          '[ -d "$src/app/node_modules" ] && [ ! -e /workspace/app/node_modules ]; then ' +
+          'cp -al "$src/app/node_modules" /workspace/app/node_modules; fi; ' +
+          'true',
       ),
     );
   }
