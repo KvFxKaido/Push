@@ -12,6 +12,7 @@
 
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { streamChat } from '@/lib/orchestrator';
+import { buildTodoContext } from '@/lib/todo-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
 import { detectAnyToolCall, detectAllToolCalls, isReadOnlyToolCall } from '@/lib/tool-dispatch';
@@ -38,6 +39,7 @@ import {
 } from '@/hooks/chat-tool-execution';
 import { execInSandbox } from '@/lib/sandbox-client';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
+import { executeTodoToolCall, type TodoItem } from '@/lib/todo-tools';
 import { resolveToolCallRecovery, type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { createId } from '@/hooks/chat-persistence';
 import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
@@ -76,6 +78,12 @@ export interface ScratchpadHandlers {
   content: string;
   replace: (text: string) => void;
   append: (text: string) => void;
+}
+
+export interface TodoHandlers {
+  todos: readonly TodoItem[];
+  replace: (todos: TodoItem[]) => void;
+  clear: () => void;
 }
 
 export interface UsageHandler {
@@ -225,6 +233,7 @@ export interface SendLoopContext {
   sandboxIdRef: MutableRefObject<string | null>;
   ensureSandboxRef: MutableRefObject<(() => Promise<string | null>) | null>;
   scratchpadRef: MutableRefObject<ScratchpadHandlers | undefined>;
+  todoRef: MutableRefObject<TodoHandlers | undefined>;
   usageHandlerRef: MutableRefObject<UsageHandler | undefined>;
   workspaceContextRef: MutableRefObject<WorkspaceContext | null>;
   runtimeHandlersRef: MutableRefObject<ChatRuntimeHandlers | undefined>;
@@ -286,6 +295,7 @@ export async function streamAssistantRound(
     abortRef,
     processedContentRef,
     scratchpadRef,
+    todoRef,
     usageHandlerRef,
     workspaceContextRef,
     abortControllerRef,
@@ -378,6 +388,8 @@ export async function streamAssistantRound(
       abortControllerRef.current?.signal,
       lockedProvider,
       resolvedModel,
+      undefined,
+      todoRef.current ? buildTodoContext(todoRef.current.todos) : undefined,
     );
   });
 
@@ -419,6 +431,7 @@ export async function processAssistantTurn(
     sandboxIdRef,
     ensureSandboxRef,
     scratchpadRef,
+    todoRef,
     runtimeHandlersRef,
     repoRef,
     isMainProtectedRef,
@@ -1260,6 +1273,27 @@ export async function processAssistantTurn(
             ...sp,
             content: prev ? `${prev}\n\n${toolCall.call.content}` : toolCall.call.content,
           };
+        }
+      }
+      toolExecResult = { text: result.text };
+    }
+    toolExecDurationMs = Date.now() - toolExecStart;
+  } else if (toolCall.source === 'todo') {
+    const todo = todoRef.current;
+    if (!todo) {
+      toolExecResult = {
+        text: '[Tool Error] Todo list not available. It may not be initialized — try again after the UI loads.',
+      };
+    } else {
+      const result = executeTodoToolCall(toolCall.call, todo.todos, {
+        replace: todo.replace,
+        clear: todo.clear,
+      });
+      if (result.ok) {
+        if (toolCall.call.tool === 'todo_write') {
+          todoRef.current = { ...todo, todos: toolCall.call.todos };
+        } else if (toolCall.call.tool === 'todo_clear') {
+          todoRef.current = { ...todo, todos: [] };
         }
       }
       toolExecResult = { text: result.text };

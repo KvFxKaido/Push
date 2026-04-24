@@ -3,6 +3,7 @@ export type ToolRegistrySource =
   | 'sandbox'
   | 'delegate'
   | 'scratchpad'
+  | 'todo'
   | 'web-search'
   | 'ask-user';
 
@@ -479,6 +480,38 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     protocolSignature: 'scratch_read()',
     protocolDescription: 'Read the current scratchpad content',
     exampleJson: '{"tool": "scratch_read"}',
+  },
+  {
+    canonicalName: 'todo_write',
+    publicName: 'todo_write',
+    source: 'todo',
+    readOnly: false,
+    statusLabel: 'Updating todo list...',
+    protocolSignature: 'todo_write(todos)',
+    protocolDescription:
+      'Replace the entire todo list with a new snapshot of structured task items',
+    exampleJson:
+      '{"tool": "todo_write", "todos": [{"id": "fix-auth", "content": "Fix the auth bug", "activeForm": "Fixing the auth bug", "status": "in_progress"}]}',
+  },
+  {
+    canonicalName: 'todo_read',
+    publicName: 'todo_read',
+    source: 'todo',
+    readOnly: true,
+    statusLabel: 'Reading todo list...',
+    protocolSignature: 'todo_read()',
+    protocolDescription: 'Read the current todo list',
+    exampleJson: '{"tool": "todo_read"}',
+  },
+  {
+    canonicalName: 'todo_clear',
+    publicName: 'todo_clear',
+    source: 'todo',
+    readOnly: false,
+    statusLabel: 'Clearing todo list...',
+    protocolSignature: 'todo_clear()',
+    protocolDescription: 'Clear the todo list (call after shipping)',
+    exampleJson: '{"tool": "todo_clear"}',
   },
   {
     canonicalName: 'web_search',

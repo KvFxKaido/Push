@@ -69,6 +69,7 @@ function makeLoopContext(
     sandboxIdRef: { current: null },
     ensureSandboxRef: { current: null },
     scratchpadRef: { current: undefined },
+    todoRef: { current: undefined },
     usageHandlerRef: { current: undefined },
     workspaceContextRef: { current: null },
     runtimeHandlersRef: { current: undefined },

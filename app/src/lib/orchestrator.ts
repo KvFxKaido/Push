@@ -3,6 +3,7 @@ import { formatVerificationPolicyBlock } from './verification-policy';
 import { TOOL_PROTOCOL } from './github-tools';
 import { getSandboxToolProtocol } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
+import { TODO_TOOL_PROTOCOL } from './todo-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
@@ -167,6 +168,7 @@ function toLLMMessages(
   providerModel?: string,
   onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
   intentHint?: string | null,
+  todoContent?: string,
 ): LLMMessage[] {
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
   // composed a complete system prompt — don't append Orchestrator-specific protocols.
@@ -253,13 +255,23 @@ function toLLMMessages(
         toolProtocols.push(getSandboxToolProtocol());
       }
       toolProtocols.push(SCRATCHPAD_TOOL_PROTOCOL);
+      toolProtocols.push(TODO_TOOL_PROTOCOL);
       toolProtocols.push(WEB_SEARCH_TOOL_PROTOCOL);
       toolProtocols.push(ASK_USER_TOOL_PROTOCOL);
       builder.set('tool_instructions', baseToolInstructions + '\n' + toolProtocols.join('\n'));
 
-      // Scratchpad content — volatile memory that changes between turns.
+      // Memory block — the model's working-memory surfaces. Scratchpad holds
+      // user-visible notes/context; todo holds the current step plan. Both
+      // are volatile and change between turns.
+      const memoryBlocks: string[] = [];
       if (scratchpadContent !== undefined) {
-        builder.set('memory', buildScratchpadContext(scratchpadContent));
+        memoryBlocks.push(buildScratchpadContext(scratchpadContent));
+      }
+      if (todoContent !== undefined) {
+        memoryBlocks.push(todoContent);
+      }
+      if (memoryBlocks.length > 0) {
+        builder.set('memory', memoryBlocks.join('\n\n'));
       }
     }
 
@@ -546,6 +558,7 @@ export async function streamSSEChat(
   signal?: AbortSignal,
   autoRetry?: AutoRetryConfig,
   onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
+  todoContent?: string,
 ): Promise<void> {
   const maxAttempts = autoRetry?.maxAttempts ?? 1;
   const backoffMs = autoRetry?.backoffMs ?? 1000;
@@ -575,6 +588,7 @@ export async function streamSSEChat(
         scratchpadContent,
         signal,
         onPreCompact,
+        todoContent,
       );
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -632,6 +646,7 @@ export async function streamSSEChatOnce(
   scratchpadContent?: string,
   signal?: AbortSignal,
   onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
+  todoContent?: string,
 ): Promise<void> {
   const {
     name,
@@ -760,6 +775,8 @@ export async function streamSSEChatOnce(
             providerType,
             model,
             onPreCompact,
+            undefined,
+            todoContent,
           ),
           stream: true,
         };

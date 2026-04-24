@@ -180,7 +180,12 @@ function toPendingSteerRequest(
 // Hook
 // ---------------------------------------------------------------------------
 
-import type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
+import type {
+  ScratchpadHandlers,
+  TodoHandlers,
+  UsageHandler,
+  ChatRuntimeHandlers,
+} from './chat-send';
 
 export function useChat(
   activeRepoFullName: string | null,
@@ -188,6 +193,7 @@ export function useChat(
   usageHandler?: UsageHandler,
   runtimeHandlers?: ChatRuntimeHandlers,
   branchInfo?: { currentBranch?: string; defaultBranch?: string },
+  todo?: TodoHandlers,
 ) {
   const initialConversationsRef = useRef<Record<string, Conversation> | null>(null);
   if (initialConversationsRef.current === null) {
@@ -237,6 +243,8 @@ export function useChat(
   repoRef.current = activeRepoFullName;
   const scratchpadRef = useRef(scratchpad);
   scratchpadRef.current = scratchpad;
+  const todoRef = useRef(todo);
+  todoRef.current = todo;
   const usageHandlerRef = useRef(usageHandler);
   usageHandlerRef.current = usageHandler;
   const runtimeHandlersRef = useRef(runtimeHandlers);
@@ -957,6 +965,7 @@ export function useChat(
         sandboxIdRef,
         ensureSandboxRef,
         scratchpadRef,
+        todoRef,
         usageHandlerRef,
         workspaceContextRef,
         runtimeHandlersRef,

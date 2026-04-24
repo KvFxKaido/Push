@@ -5,6 +5,7 @@ import { useChat } from '@/hooks/useChat';
 import { conversationBelongsToWorkspace } from '@/hooks/chat-management';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
+import { useTodo } from '@/hooks/useTodo';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { useSnapshotManager } from '@/hooks/useSnapshotManager';
 import { useBranchManager } from '@/hooks/useBranchManager';
@@ -67,6 +68,7 @@ export function WorkspaceSessionScreen({
   const isChat = workspaceSession.kind === 'chat';
   const workspaceRepo = workspaceSession.kind === 'repo' ? workspaceSession.repo : null;
   const scratchpad = useScratchpad(workspaceRepo?.full_name ?? null);
+  const todo = useTodo(workspaceRepo?.full_name ?? null);
   const sandbox = useSandbox(
     isChat ? null : isScratch ? '' : (workspaceRepo?.full_name ?? null),
     isChat
@@ -166,6 +168,11 @@ export function WorkspaceSessionScreen({
     {
       currentBranch: workspaceRepo?.current_branch || workspaceRepo?.default_branch,
       defaultBranch: workspaceRepo?.default_branch,
+    },
+    {
+      todos: todo.todos,
+      replace: todo.replace,
+      clear: todo.clear,
     },
   );
 

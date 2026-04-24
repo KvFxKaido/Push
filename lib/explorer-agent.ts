@@ -150,7 +150,7 @@ Usage:
 Rules:
 - Include the fenced JSON block when requesting a tool. A brief sentence before or after the block is fine, but the JSON block must be present.
 - Use only the tools listed above.
-- Do NOT call ${EXPLORER_MUTATION_BLOCKLIST}, scratchpad tools, or any other mutating tool.
+- Do NOT call ${EXPLORER_MUTATION_BLOCKLIST}, scratchpad tools, todo tools, or any other mutating tool.
 - Prefer search/symbol tools before large file reads.
 - If no sandbox is available, skip sandbox tools and investigate via GitHub tools instead.
 `.trim();
