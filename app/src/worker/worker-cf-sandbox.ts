@@ -426,18 +426,21 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
   const workdir = str(body.workdir);
 
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
-  // Wrap the user command in `timeout -k <grace> <seconds> sh -c '<cmd>'` so
-  // the container kills a stuck process instead of leaving it running after
-  // our SDK-level deadline abandons the call. `timeout` lives in coreutils
-  // and is present in every container image we ship. The inner `sh -c` is
-  // needed so compound commands (pipes, `&&`, redirects) still work —
-  // without it, only the first token is scoped by the timeout. On timeout
-  // fire, the SDK call returns with exit_code=124 + partial stdout so the
+  // Wrap the user command in `timeout -k <grace> <seconds> bash -c '<cmd>'`
+  // so the container kills a stuck process instead of leaving it running
+  // after our SDK-level deadline abandons the call. `timeout` lives in
+  // coreutils and is present in every container image we ship. `bash -c`
+  // is deliberate, not `sh -c`: existing callers rely on bashisms like
+  // `set -o pipefail`, `[[ ... ]]`, and arrays (see
+  // `sandbox-read-only-inspection-handlers.ts` search pipeline), which
+  // POSIX sh rejects. The SDK's own default execution path is bash-based,
+  // so keeping bash preserves the pre-wrapper semantic. On timeout fire
+  // the SDK call returns with exit_code=124 + partial stdout so the
   // caller can see how far the command got.
   const wrappedCommand =
     `timeout -k ${CONTAINER_EXEC_KILL_GRACE_SECONDS} ` +
     `${CONTAINER_EXEC_TIMEOUT_SECONDS} ` +
-    `sh -c ${shellSingleQuote(command)}`;
+    `bash -c ${shellSingleQuote(command)}`;
   const result = await withExecDeadline(
     sandbox.exec(wrappedCommand, workdir ? { cwd: workdir } : undefined),
   );

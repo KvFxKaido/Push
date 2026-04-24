@@ -338,12 +338,14 @@ describe('handleCloudflareSandbox happy paths', () => {
   it('executes a command in the requested workdir (wrapped in container timeout)', async () => {
     const sandbox = mockSandbox();
     withOwnerTokenAuthExec(sandbox, async (command, options) => {
-      // Command is wrapped in `timeout -k <grace> <secs> sh -c '<cmd>'` so
-      // a stuck process is killed inside the container rather than
-      // abandoned when the SDK-level deadline fires. The exact secs /
-      // grace values are internal implementation details, so assert on
-      // shape rather than literal values.
-      expect(command).toMatch(/^timeout -k \d+ \d+ sh -c '.*'$/);
+      // Command is wrapped in `timeout -k <grace> <secs> bash -c '<cmd>'`
+      // so a stuck process is killed inside the container rather than
+      // abandoned when the SDK-level deadline fires. bash (not sh) is
+      // deliberate: existing callers rely on bashisms like `set -o
+      // pipefail`. The exact secs / grace values are internal
+      // implementation details, so assert on shape rather than literal
+      // values.
+      expect(command).toMatch(/^timeout -k \d+ \d+ bash -c '.*'$/);
       expect(command).toContain("'npm test'");
       expect(options).toEqual({ cwd: '/workspace/app' });
       return { stdout: 'ok', stderr: 'warn', exitCode: 7 };
@@ -369,9 +371,9 @@ describe('handleCloudflareSandbox happy paths', () => {
     const sandbox = mockSandbox();
     withOwnerTokenAuthExec(sandbox, async (command) => {
       // Verify the user's compound command is single-quoted inside
-      // `sh -c '...'` so pipes / && / redirects are scoped by the
+      // `bash -c '...'` so pipes / && / redirects are scoped by the
       // timeout wrapper, not split at the first whitespace.
-      expect(command).toContain("sh -c 'ls /workspace && echo done | wc -l'");
+      expect(command).toContain("bash -c 'ls /workspace && echo done | wc -l'");
       return { stdout: '3', stderr: '', exitCode: 0 };
     });
 
@@ -384,6 +386,29 @@ describe('handleCloudflareSandbox happy paths', () => {
     const body = (await response.json()) as { stdout: string; exit_code: number };
     expect(body.stdout).toBe('3');
     expect(body.exit_code).toBe(0);
+  });
+
+  it('preserves bash-specific idioms (set -o pipefail) through the timeout wrapper', async () => {
+    // Regression guard for the Codex P1 reviewer finding: an earlier
+    // version of the wrapper used `sh -c`, which rejects bash-only
+    // options like `set -o pipefail` that sandbox_search relies on.
+    // Keep the assertion on the wrapper shape — the presence of `bash`
+    // is what matters; the inner command is just carried through.
+    const sandbox = mockSandbox();
+    withOwnerTokenAuthExec(sandbox, async (command) => {
+      expect(command).toMatch(/^timeout -k \d+ \d+ bash -c '/);
+      expect(command).toContain('set -o pipefail');
+      return { stdout: 'hit', stderr: '', exitCode: 0 };
+    });
+
+    const response = await callRoute('exec', {
+      sandbox_id: 'sb-1',
+      command: 'set -o pipefail; rg pattern /workspace | head -1',
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { stdout: string; exit_code: number };
+    expect(body.stdout).toBe('hit');
   });
 
   it('surfaces exit_code 124 + partial stdout when the container-side timeout fires', async () => {
