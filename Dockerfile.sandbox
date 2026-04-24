@@ -24,3 +24,21 @@ RUN python3 -m pip install --no-cache-dir ruff pytest
 # Default git identity — overridden per-session when a GitHub token is present.
 RUN git config --global user.email 'sandbox@diff.app' \
  && git config --global user.name 'Push User'
+
+# Pre-bake node_modules into the image so fresh sandboxes skip the cold
+# `npm install` that triggered the container stalls #374/#375 work around.
+# Copying lockfiles only (not the full tree) keeps these layers cacheable
+# on lockfile hash — a dep change invalidates them, unrelated source
+# churn does not. Layers are consumed at sandbox creation via `cp -al`
+# from /opt/push-cache/* in routeCreate (worker-cf-sandbox.ts); hardlinks
+# keep the per-sandbox cost to a few filesystem entries instead of the
+# ~100s cold-install wall-clock.
+WORKDIR /opt/push-cache
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund --ignore-scripts
+
+WORKDIR /opt/push-cache/app
+COPY app/package.json app/package-lock.json ./
+RUN npm ci --no-audit --no-fund --ignore-scripts
+
+WORKDIR /

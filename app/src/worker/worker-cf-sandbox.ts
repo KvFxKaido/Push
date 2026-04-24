@@ -348,6 +348,34 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
       ? `https://x-access-token:${githubToken}@github.com/${repo}.git`
       : `https://github.com/${repo}.git`;
     await sandbox.gitCheckout(cloneUrl, { branch, targetDir: '/workspace' });
+
+    // Pre-populate /workspace/{,app/}node_modules from the image-baked
+    // cache via hardlink copy. Dockerfile.sandbox stages root and app
+    // deps at /opt/push-cache/{,app}/node_modules during build; `cp -al`
+    // creates new directory entries that share inodes with the cache,
+    // so a fresh sandbox gets instant access to deps without paying the
+    // ~100s cold `npm install` wall-clock — the heavy FS write that was
+    // the primary trigger for the stalls patched by #374/#375.
+    //
+    // Write-isolated by construction: a later `rm -rf node_modules` or
+    // `npm install <pkg>` in the sandbox writes to new inodes on the
+    // workspace side; the baked cache's inodes are untouched, so
+    // concurrent sandboxes never stomp each other.
+    //
+    // Guarded on dir existence and absence of a pre-existing target so
+    // this stays additive — an older image without the cache, or a
+    // cloned repo that already ships a node_modules, both fall through
+    // silently. `|| true` on the tail keeps a benign failure (e.g.
+    // permission quirk) from failing the create.
+    await withExecDeadline(
+      sandbox.exec(
+        'src=/opt/push-cache; ' +
+          'if [ -d "$src/node_modules" ] && [ ! -e /workspace/node_modules ]; then ' +
+          'cp -al "$src/node_modules" /workspace/node_modules; fi; ' +
+          'if [ -d "$src/app/node_modules" ] && [ -d /workspace/app ] && [ ! -e /workspace/app/node_modules ]; then ' +
+          'cp -al "$src/app/node_modules" /workspace/app/node_modules; fi; true',
+      ),
+    );
   }
 
   for (const seed of seedFiles) {
