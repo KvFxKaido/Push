@@ -172,6 +172,10 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
       loadMemory: vi.fn(),
       deleteMemory: vi.fn(),
     },
+    todo: {
+      todos: [],
+      clear: vi.fn(),
+    },
     protectMain: {
       isProtected: false,
       globalDefault: false,

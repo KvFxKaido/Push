@@ -64,6 +64,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     reposError,
     catalog,
     scratchpad,
+    todo,
     protectMain,
     showToolActivity,
     handleStartWorkspace,
@@ -348,6 +349,8 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
             onScratchpadSaveMemory={scratchpad.saveMemory}
             onScratchpadLoadMemory={scratchpad.loadMemory}
             onScratchpadDeleteMemory={scratchpad.deleteMemory}
+            todos={todo.todos}
+            onTodoClear={todo.clear}
             branchProps={{
               currentBranch: undefined,
               defaultBranch: undefined,

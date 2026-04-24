@@ -91,6 +91,7 @@ import type {
   SettingsWorkspaceProps,
 } from '@/components/SettingsSheet';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
+import type { TodoItem } from '@/lib/todo-tools';
 import { formatSnapshotAge } from '@/hooks/useSnapshotManager';
 import type { PinnedArtifact } from '@/hooks/usePinnedArtifacts';
 import type {
@@ -204,6 +205,9 @@ interface WorkspaceHubSheetProps {
   onScratchpadSaveMemory: (name: string) => void;
   onScratchpadLoadMemory: (id: string | null) => void;
   onScratchpadDeleteMemory: (id: string) => void;
+  // Todo list — model's working plan, read-only display
+  todos: readonly TodoItem[];
+  onTodoClear: () => void;
   // Branch management
   branchProps: HubBranchProps;
   onSandboxBranchSwitch: (branch: string) => void;
@@ -384,6 +388,8 @@ export function WorkspaceHubSheet({
   onScratchpadSaveMemory,
   onScratchpadLoadMemory,
   onScratchpadDeleteMemory,
+  todos,
+  onTodoClear,
   branchProps,
   onSandboxBranchSwitch,
   onFixReviewFinding,
@@ -1612,6 +1618,8 @@ export function WorkspaceHubSheet({
                 artifacts={pinnedArtifacts}
                 onUnpin={onUnpinArtifact}
                 onUpdateLabel={onUpdateArtifactLabel}
+                todos={todos}
+                onTodoClear={onTodoClear}
               />
             )}
 

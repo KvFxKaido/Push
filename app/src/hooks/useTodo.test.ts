@@ -66,6 +66,17 @@ describe('validateTodos', () => {
     const result = validateTodos(payload);
     expect(result).toHaveLength(MAX_TODO_ITEMS);
   });
+
+  it('suffixes duplicate ids so the loaded list keeps unique keys', () => {
+    const result = validateTodos([
+      { id: 'fix', content: 'First', activeForm: 'Firsting', status: 'pending' },
+      { id: 'fix', content: 'Second', activeForm: 'Seconding', status: 'pending' },
+      { id: 'fix', content: 'Third', activeForm: 'Thirding', status: 'pending' },
+    ]);
+    expect(result.map((todo) => todo.id)).toEqual(['fix', 'fix-1', 'fix-2']);
+    // Content stays paired with its originating item — dedupe must not shuffle.
+    expect(result.map((todo) => todo.content)).toEqual(['First', 'Second', 'Third']);
+  });
 });
 
 describe('toggleTodoStatus', () => {
