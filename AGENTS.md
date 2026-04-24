@@ -41,6 +41,14 @@ This is the **required entry doc** for Push. The loader currently reads `AGENTS.
 - Push never runs `git merge` locally.
 - PR-backed branch diff reviews are the only reviews that can be posted back to GitHub.
 
+## Behavior lives in code
+
+Prompts and docs describe behavior; they do not create it.
+
+- If a prompt change is compensating for something the runtime *should* handle (validation, routing, safety, correctness), fix the runtime instead. Prompts are guidance for model cooperation, not a control plane.
+- Legitimate prompt/doc updates: teaching models about hard runtime boundaries that already exist in code (e.g. PR #378 documenting that the tool-call parser only scans `content`, not reasoning tokens), clarifying role contracts, or surfacing quirks models can't infer.
+- When in doubt: ask whether a non-cooperating model could break the system. If yes, the fix belongs in code.
+
 ## Scratch workspace
 
 - Scratch workspaces are available when GitHub auth is not needed.
