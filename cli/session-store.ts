@@ -185,10 +185,18 @@ export async function saveSessionState(state: SessionState): Promise<void> {
   attachSessionRoot(state, root);
   state.updatedAt = Date.now();
   await ensureSessionDir(state.sessionId, root);
-  await fs.writeFile(getStatePathInRoot(root, state.sessionId), JSON.stringify(state, null, 2), {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
+  const statePath = getStatePathInRoot(root, state.sessionId);
+  const tempPath = `${statePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    await fs.writeFile(tempPath, JSON.stringify(state, null, 2), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    await fs.rename(tempPath, statePath);
+  } catch (error) {
+    await fs.rm(tempPath, { force: true });
+    throw error;
+  }
 }
 
 export async function appendSessionEvent(

@@ -67,6 +67,45 @@ describe('session persistence', () => {
     assert.deepEqual(loaded.messages, [{ role: 'system', content: 'test' }]);
   });
 
+  it('does not expose partial JSON during concurrent saves and loads', async () => {
+    const id = makeSessionId();
+    const baseState = {
+      sessionId: id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/tmp/test',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+    };
+
+    await saveSessionState(baseState);
+
+    const writes = Array.from({ length: 25 }, (_, index) =>
+      saveSessionState({
+        ...baseState,
+        rounds: index,
+        messages: [{ role: 'user', content: `message ${index}`.repeat(1000) }],
+      }),
+    );
+    const reads = Array.from({ length: 25 }, () => loadSessionState(id));
+
+    const loadedStates = await Promise.all(reads.concat(writes)).then((results) =>
+      results.filter((result) => result && typeof result === 'object' && 'sessionId' in result),
+    );
+
+    assert.ok(loadedStates.length > 0);
+    for (const loaded of loadedStates) {
+      assert.equal(loaded.sessionId, id);
+      assert.ok(Array.isArray(loaded.messages));
+    }
+
+    const files = await fs.readdir(getSessionDir(id));
+    assert.ok(!files.some((file) => file.endsWith('.tmp')), 'temporary state files are cleaned up');
+  });
+
   it('rejects loading with invalid session id', async () => {
     await assert.rejects(() => loadSessionState('nonexistent_session'), /Invalid session id/);
   });
