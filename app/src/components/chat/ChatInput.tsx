@@ -520,7 +520,11 @@ export function ChatInput({
   const openRouterCommandGroups = useMemo(() => {
     const groups = new Map<
       string,
-      { label: string | null; models: { id: string; display: string; hints: string }[] }
+      {
+        key: string;
+        label: string | null;
+        models: { id: string; display: string; hints: string }[];
+      }
     >();
 
     for (const model of openRouterModelList) {
@@ -535,7 +539,7 @@ export function ChatInput({
       if (existing) {
         existing.models.push({ id: model, display, hints });
       } else {
-        groups.set(mapKey, { label, models: [{ id: model, display, hints }] });
+        groups.set(mapKey, { key: mapKey, label, models: [{ id: model, display, hints }] });
       }
     }
 
@@ -979,6 +983,10 @@ export function ChatInput({
                             <PopoverTrigger asChild>
                               <button
                                 type="button"
+                                role="combobox"
+                                aria-haspopup="listbox"
+                                aria-expanded={openRouterPickerOpen}
+                                aria-label="Select OpenRouter model"
                                 disabled={
                                   !canChangeModel ||
                                   providerControls.openRouterModelOptions.length === 0
@@ -1007,9 +1015,9 @@ export function ChatInput({
                                 />
                                 <CommandList>
                                   <CommandEmpty>No models found.</CommandEmpty>
-                                  {openRouterCommandGroups.map((group, gi) => (
+                                  {openRouterCommandGroups.map((group) => (
                                     <CommandGroup
-                                      key={group.label || `__ungrouped__${gi}`}
+                                      key={group.key}
                                       heading={group.label || undefined}
                                       className="text-[#7c879b]"
                                     >
@@ -1018,7 +1026,9 @@ export function ChatInput({
                                           key={model.id}
                                           value={model.id}
                                           onSelect={() => {
-                                            providerControls.onSelectOpenRouterModel(model.id);
+                                            if (model.id !== providerControls.openRouterModel) {
+                                              providerControls.onSelectOpenRouterModel(model.id);
+                                            }
                                             setOpenRouterPickerOpen(false);
                                           }}
                                           className="text-[#d7deeb] data-[selected=true]:bg-[#1a2332]"

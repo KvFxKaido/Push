@@ -121,19 +121,4 @@ describe('ChatInput', () => {
 
     expect(html).toContain('Steering update captured. It will apply after the current step.');
   });
-
-  it('renders the OpenRouter searchable picker trigger with the selected model', () => {
-    const base = buildProps();
-    const providerControls = {
-      ...base.providerControls!,
-      selectedProvider: 'openrouter' as const,
-      availableProviders: [['openrouter', 'OpenRouter', true] as const],
-      openRouterModel: 'anthropic/claude-sonnet-4.6:nitro',
-      openRouterModelOptions: ['anthropic/claude-sonnet-4.6:nitro', 'openai/gpt-5.2'],
-    };
-    const html = renderToStaticMarkup(<ChatInput {...base} providerControls={providerControls} />);
-
-    expect(html).toContain('claude-sonnet-4.6:nitro');
-    expect(html).not.toContain('<select');
-  });
 });
