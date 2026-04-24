@@ -42,6 +42,7 @@ function getStorageKey(repoFullName: string | null): string {
 export function validateTodos(data: unknown): TodoItem[] {
   if (!Array.isArray(data)) return [];
   const cleaned: TodoItem[] = [];
+  const seenIds = new Set<string>();
   let inProgressKept = false;
   for (const item of data) {
     if (typeof item !== 'object' || item === null) continue;
@@ -65,8 +66,18 @@ export function validateTodos(data: unknown): TodoItem[] {
       if (inProgressKept) status = 'pending';
       else inProgressKept = true;
     }
+    // Rename duplicate ids so the list keeps unique keys even if localStorage
+    // was hand-tampered or carries legacy entries. `id` + `id-1` + `id-2`…
+    // matches executeTodoToolCall's on-write dedupe so callers can safely use
+    // the id as a React key.
+    let uniqueId = record.id;
+    let suffix = 1;
+    while (seenIds.has(uniqueId)) {
+      uniqueId = `${record.id}-${suffix++}`;
+    }
+    seenIds.add(uniqueId);
     cleaned.push({
-      id: record.id,
+      id: uniqueId,
       content: record.content.slice(0, MAX_TODO_CONTENT_LENGTH),
       activeForm: record.activeForm.slice(0, MAX_TODO_CONTENT_LENGTH),
       status,

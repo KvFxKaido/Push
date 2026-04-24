@@ -94,6 +94,7 @@ export function HubNotesTab({
                   className={`${HUB_MATERIAL_INPUT_CLASS} min-w-[150px] flex-1`}
                 />
                 <button
+                  type="button"
                   onClick={() => {
                     const trimmed = memoryName.trim();
                     if (!trimmed) return;
@@ -109,6 +110,7 @@ export function HubNotesTab({
                   <span className="relative z-10">Save note</span>
                 </button>
                 <button
+                  type="button"
                   onClick={onClear}
                   disabled={!scratchpadContent.trim()}
                   className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
@@ -119,6 +121,7 @@ export function HubNotesTab({
                   <Trash2 className="relative z-10 h-3.5 w-3.5" />
                 </button>
                 <button
+                  type="button"
                   onClick={onExportToRepo}
                   disabled={!scratchpadContent.trim() || !sandboxId}
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
@@ -145,6 +148,7 @@ export function HubNotesTab({
                 </select>
                 {activeMemoryId && (
                   <button
+                    type="button"
                     onClick={() => onDeleteMemory(activeMemoryId)}
                     className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
                     aria-label="Delete selected memory"
@@ -228,6 +232,7 @@ function HubTodoSection({ todos, onClear }: { todos: readonly TodoItem[]; onClea
             </span>
           )}
           <button
+            type="button"
             onClick={onClear}
             disabled={!hasItems}
             className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
