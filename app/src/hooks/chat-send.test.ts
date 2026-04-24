@@ -154,6 +154,85 @@ describe('chat-send', () => {
     expect(usageHandler.trackUsage).toHaveBeenCalledWith('k2p5', 11, 7);
   });
 
+  it('promotes reasoning to content when the stream emits only thinking tokens', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage()]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    mockStreamChat.mockImplementation((_messages, _onToken, onDone, _onError, onThinkingToken) => {
+      onThinkingToken?.('Here is the full answer, accidentally on the reasoning channel.');
+      onDone({ inputTokens: 1, outputTokens: 1 });
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = await streamAssistantRound(
+      0,
+      [makeMessage({ id: 'user-1', role: 'user', content: 'Hi', status: 'done' })],
+      ctx,
+    );
+    warnSpy.mockRestore();
+
+    expect(result).toEqual({
+      accumulated: 'Here is the full answer, accidentally on the reasoning channel.',
+      thinkingAccumulated: '',
+      error: null,
+    });
+    expect(conversationsRef.current['chat-1'].messages.at(-1)).toMatchObject({
+      content: 'Here is the full answer, accidentally on the reasoning channel.',
+      thinking: undefined,
+      status: 'streaming',
+    });
+
+    const engineCalls = (ctx.emitRunEngineEvent as ReturnType<typeof vi.fn>).mock.calls;
+    const lastAccumulated = engineCalls
+      .map(([event]) => event)
+      .filter((e: { type: string }) => e.type === 'ACCUMULATED_UPDATED')
+      .at(-1);
+    expect(lastAccumulated.text).toBe(
+      'Here is the full answer, accidentally on the reasoning channel.',
+    );
+    expect(lastAccumulated.thinking).toBe('');
+  });
+
+  it('does not promote reasoning to content when the turn was aborted', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage()]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    mockStreamChat.mockImplementation((_messages, _onToken, onDone, _onError, onThinkingToken) => {
+      onThinkingToken?.('Starting to think about this...');
+      // Simulate user hitting Stop mid-reasoning. streamAssistantRound
+      // resolves with error=null because abort isn't an error.
+      ctx.abortRef.current = true;
+      onDone();
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await streamAssistantRound(
+        0,
+        [makeMessage({ id: 'user-1', role: 'user', content: 'Hi', status: 'done' })],
+        ctx,
+      );
+
+      // Partial reasoning stays in thinkingAccumulated and is NOT surfaced as
+      // visible assistant content — the user's intent was to cancel the turn.
+      expect(result.accumulated).toBe('');
+      expect(result.thinkingAccumulated).toBe('Starting to think about this...');
+      expect(conversationsRef.current['chat-1'].messages.at(-1)).toMatchObject({
+        content: '',
+        thinking: 'Starting to think about this...',
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('finalizes plain-text assistant turns without tool calls', async () => {
     const conversationsRef = {
       current: makeConversation([makeMessage({ content: 'partial' })]),

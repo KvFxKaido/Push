@@ -38,6 +38,17 @@ jobs:
           permission-issues: 'write'
           permission-pull-requests: 'write'
 
+      - name: 'Configure Gemini shell policy'
+        run: |-
+          mkdir -p .gemini/policies
+          cat > .gemini/policies/github-actions-shell.toml <<'EOF'
+          [[rule]]
+          toolName = "run_shell_command"
+          commandPrefix = ["echo"]
+          decision = "allow"
+          priority = 999
+          EOF
+
       - name: 'Run Gemini CLI'
         id: 'run_gemini'
         uses: 'google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489' # v0 pinned 2026-04-24
@@ -111,6 +122,13 @@ jobs:
                 }
               },
               "tools": {
+                "allowed": [
+                  "run_shell_command(cat)",
+                  "run_shell_command(echo)",
+                  "run_shell_command(grep)",
+                  "run_shell_command(head)",
+                  "run_shell_command(tail)"
+                ],
                 "core": [
                   "run_shell_command(cat)",
                   "run_shell_command(echo)",

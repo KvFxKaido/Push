@@ -81,6 +81,21 @@ const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 // wedged and no amount of in-container killing can make bytes flow back.
 export const SANDBOX_EXEC_TIMEOUT_MS = 150_000;
 
+// Local-dev override for SANDBOX_EXEC_TIMEOUT_MS. Production containers are
+// pre-warmed by CF infra and 150s is generous; local wrangler builds the
+// sandbox container from Dockerfile.sandbox on demand and first cold-start
+// routinely overshoots 150s. Rather than thread env through every
+// withExecDeadline caller (15+ sites), we keep a per-isolate mutable that
+// handleCloudflareSandbox re-applies on each request entry from
+// env.SANDBOX_DEV_LONG_DEADLINE. Production leaves this at 150_000.
+const DEV_LONG_EXEC_TIMEOUT_MS = 300_000;
+let currentExecDeadlineMs = SANDBOX_EXEC_TIMEOUT_MS;
+
+export function applyEnvExecDeadline(env: Env): void {
+  currentExecDeadlineMs =
+    env.SANDBOX_DEV_LONG_DEADLINE === '1' ? DEV_LONG_EXEC_TIMEOUT_MS : SANDBOX_EXEC_TIMEOUT_MS;
+}
+
 // Container-side wall-clock cap for a single user exec. Kept a few seconds
 // below SANDBOX_EXEC_TIMEOUT_MS so the shell's `timeout` reliably fires first
 // and the SDK call returns with exit_code=124 + whatever partial stdout the
@@ -102,7 +117,7 @@ export class SandboxExecDeadlineError extends Error {
 
 function withExecDeadline<T>(
   exec: Promise<T>,
-  timeoutMs: number = SANDBOX_EXEC_TIMEOUT_MS,
+  timeoutMs: number = currentExecDeadlineMs,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -127,6 +142,7 @@ export async function handleCloudflareSandbox(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _ctx?: ExecutionContext,
 ): Promise<Response> {
+  applyEnvExecDeadline(env);
   const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'sandbox-cf');
 
   if (!ROUTES.has(route)) {
@@ -371,13 +387,20 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
     // as its "install already ran" signal; populating with mismatched
     // deps would silently regress typecheck results.
     //
-    // Trailing `true` swallows benign failures (cross-device `cp -al`
-    // if /workspace lives on a separate volume mount, permission
-    // quirks) — the baked cache is an optimization, never a
-    // correctness dependency.
+    // Wrapped in `timeout 30` because wrangler's local container runtime
+    // has been observed to silently wedge `cp -al` across overlay layers
+    // (prod CF infra is unaffected). Without the bound, the copy would
+    // burn the full 150s/300s `withExecDeadline` budget and 504 the whole
+    // create. On timeout (shell exit 124), the `|| { ... }` branch cleans
+    // up any partial node_modules directory so the cold `npm install`
+    // that runs downstream (e.g. typecheck verification) sees a clean
+    // slate and not a half-populated tree. Final `true` keeps the overall
+    // exit status 0 — the cache is an optimization, never a correctness
+    // dependency.
     await withExecDeadline(
       sandbox.exec(
-        "src='/opt/push-cache'; " +
+        "timeout -k 5 30 bash -c '" +
+          'src=/opt/push-cache; ' +
           'if [ -f "$src/package-lock.json" ] && ' +
           'cmp -s "$src/package-lock.json" /workspace/package-lock.json 2>/dev/null && ' +
           '[ -d "$src/node_modules" ] && [ ! -e /workspace/node_modules ]; then ' +
@@ -385,8 +408,8 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
           'if [ -f "$src/app/package-lock.json" ] && [ -d /workspace/app ] && ' +
           'cmp -s "$src/app/package-lock.json" /workspace/app/package-lock.json 2>/dev/null && ' +
           '[ -d "$src/app/node_modules" ] && [ ! -e /workspace/app/node_modules ]; then ' +
-          'cp -al "$src/app/node_modules" /workspace/app/node_modules; fi; ' +
-          'true',
+          'cp -al "$src/app/node_modules" /workspace/app/node_modules; fi' +
+          "' || { rm -rf /workspace/node_modules /workspace/app/node_modules 2>/dev/null; true; }",
       ),
     );
   }

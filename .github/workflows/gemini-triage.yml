@@ -55,6 +55,20 @@ jobs:
             core.info(`Found ${labelNames.length} labels: ${labelNames.join(', ')}`);
             return labelNames;
 
+      - name: 'Configure Gemini shell policy'
+        if: |-
+          ${{ steps.get_labels.outputs.available_labels != '' }}
+        run: |-
+          mkdir -p .gemini/policies
+          cat > .gemini/policies/github-actions-shell.toml <<'EOF'
+          [[rule]]
+          toolName = "run_shell_command"
+          commandPrefix = ["echo"]
+          decision = "allow"
+          priority = 999
+          allowRedirection = true
+          EOF
+
       - name: 'Run Gemini issue analysis'
         id: 'gemini_analysis'
         if: |-
@@ -91,6 +105,9 @@ jobs:
                 "outfile": ".gemini/telemetry.log"
               },
               "tools": {
+                "allowed": [
+                  "run_shell_command(echo)"
+                ],
                 "core": [
                   "run_shell_command(echo)"
                 ]
