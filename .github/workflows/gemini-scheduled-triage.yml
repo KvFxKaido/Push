@@ -85,6 +85,20 @@ jobs:
           ISSUE_COUNT="$(echo "${ISSUES}" | jq 'length')"
           echo "✅ Found ${ISSUE_COUNT} issue(s) to triage! 🎯"
 
+      - name: 'Configure Gemini shell policy'
+        if: |-
+          ${{ steps.find_issues.outputs.issues_to_triage != '[]' }}
+        run: |-
+          mkdir -p .gemini/policies
+          cat > .gemini/policies/github-actions-shell.toml <<'EOF'
+          [[rule]]
+          toolName = "run_shell_command"
+          commandPrefix = ["echo"]
+          decision = "allow"
+          priority = 999
+          allowRedirection = true
+          EOF
+
       - name: 'Run Gemini Issue Analysis'
         id: 'gemini_issue_analysis'
         if: |-
@@ -121,6 +135,11 @@ jobs:
                 "outfile": ".gemini/telemetry.log"
               },
               "tools": {
+                "allowed": [
+                  "run_shell_command(echo)",
+                  "run_shell_command(jq)",
+                  "run_shell_command(printenv)"
+                ],
                 "core": [
                   "run_shell_command(echo)",
                   "run_shell_command(jq)",
