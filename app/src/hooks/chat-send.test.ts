@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, Conversation, VerificationRuntimeState } from '@/types';
 import { setApprovalMode } from '@/lib/approval-mode';
+import type { TodoItem } from '@/lib/todo-tools';
+import type { TodoHandlers } from './chat-send';
 
 const { mockStreamChat } = vi.hoisted(() => ({
   mockStreamChat: vi.fn(),
@@ -387,5 +389,151 @@ describe('chat-send', () => {
     // Should complete normally — grounded by delegation result
     expect(result.loopAction).toBe('break');
     expect(result.loopCompletedNormally).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // todo tool execution — routed through the chat-hook helper, not the runtime
+  // ---------------------------------------------------------------------------
+
+  function makeTodoRef(initial: TodoItem[] = []): {
+    ref: { current: TodoHandlers | undefined };
+    replaceCalls: TodoItem[][];
+    clearCalls: number;
+  } {
+    const replaceCalls: TodoItem[][] = [];
+    let clearCalls = 0;
+    const handlers: TodoHandlers = {
+      todos: initial,
+      replace: (next) => {
+        replaceCalls.push(next);
+      },
+      clear: () => {
+        clearCalls += 1;
+      },
+    };
+    return {
+      ref: { current: handlers },
+      replaceCalls,
+      get clearCalls() {
+        return clearCalls;
+      },
+    };
+  }
+
+  it('executes todo_write against the todo ref and syncs the canonical list', async () => {
+    const conversationsRef = { current: makeConversation([makeMessage()]) };
+    const dirtyRef = { current: new Set<string>() };
+    const todoHarness = makeTodoRef([]);
+    const ctx = makeLoopContext(conversationsRef, dirtyRef, {
+      todoRef: todoHarness.ref,
+    });
+
+    const toolCall = [
+      '```json',
+      '{"tool": "todo_write", "todos": [',
+      '  {"id": "fix-auth", "content": "Fix the auth bug", "activeForm": "Fixing the auth bug", "status": "in_progress"}',
+      ']}',
+      '```',
+    ].join('\n');
+
+    const result = await processAssistantTurn(
+      0,
+      toolCall,
+      '',
+      [makeMessage({ id: 'user-1', role: 'user', content: 'plan it', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('continue');
+    expect(todoHarness.replaceCalls).toHaveLength(1);
+    expect(todoHarness.replaceCalls[0][0].id).toBe('fix-auth');
+    // Ref should reflect the canonical list the executor persisted, not the raw args.
+    expect(todoHarness.ref.current?.todos.map((t) => t.id)).toEqual(['fix-auth']);
+    // Tool result message should appear in the conversation with the success text.
+    const lastMsg = result.nextApiMessages.at(-1);
+    expect(lastMsg?.content).toContain('Todo updated');
+  });
+
+  it('keeps todoRef in sync with the deduped list when the model sends duplicate ids', async () => {
+    const conversationsRef = { current: makeConversation([makeMessage()]) };
+    const dirtyRef = { current: new Set<string>() };
+    const todoHarness = makeTodoRef([]);
+    const ctx = makeLoopContext(conversationsRef, dirtyRef, {
+      todoRef: todoHarness.ref,
+    });
+
+    const toolCall = [
+      '```json',
+      '{"tool": "todo_write", "todos": [',
+      '  {"id": "fix", "content": "Fix A", "activeForm": "Fixing A", "status": "pending"},',
+      '  {"id": "fix", "content": "Fix B", "activeForm": "Fixing B", "status": "pending"}',
+      ']}',
+      '```',
+    ].join('\n');
+
+    await processAssistantTurn(
+      0,
+      toolCall,
+      '',
+      [makeMessage({ id: 'user-1', role: 'user', content: 'plan', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    // The ref must mirror what was persisted (suffixed), never the raw args.
+    const refIds = todoHarness.ref.current?.todos.map((t) => t.id);
+    expect(refIds).toEqual(['fix', 'fix-1']);
+    expect(todoHarness.replaceCalls[0].map((t) => t.id)).toEqual(refIds);
+  });
+
+  it('clears the todo list via the chat-hook helper on todo_clear', async () => {
+    const conversationsRef = { current: makeConversation([makeMessage()]) };
+    const dirtyRef = { current: new Set<string>() };
+    const existing: TodoItem[] = [
+      {
+        id: 'fix',
+        content: 'Fix A',
+        activeForm: 'Fixing A',
+        status: 'in_progress',
+      },
+    ];
+    const todoHarness = makeTodoRef(existing);
+    const ctx = makeLoopContext(conversationsRef, dirtyRef, {
+      todoRef: todoHarness.ref,
+    });
+
+    const result = await processAssistantTurn(
+      0,
+      '```json\n{"tool": "todo_clear"}\n```',
+      '',
+      [makeMessage({ id: 'user-1', role: 'user', content: 'ship', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('continue');
+    expect(todoHarness.clearCalls).toBe(1);
+    expect(result.nextApiMessages.at(-1)?.content).toContain('Todo list cleared');
+  });
+
+  it('surfaces an error when a todo tool fires without todoRef being initialized', async () => {
+    const conversationsRef = { current: makeConversation([makeMessage()]) };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef, {
+      todoRef: { current: undefined },
+    });
+
+    const result = await processAssistantTurn(
+      0,
+      '```json\n{"tool": "todo_read"}\n```',
+      '',
+      [makeMessage({ id: 'user-1', role: 'user', content: 'list', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    expect(result.loopAction).toBe('continue');
+    expect(result.nextApiMessages.at(-1)?.content).toContain('Todo list not available');
   });
 });

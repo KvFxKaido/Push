@@ -35,8 +35,11 @@ function getStorageKey(repoFullName: string | null): string {
  * upholds (max item count, max content/activeForm length, at most one
  * in_progress) so a stale or corrupted store can't blow up the [TODO]
  * prompt block or trap the model in a state it can't write back to.
+ *
+ * Exported so the sanitization can be unit-tested without having to
+ * render the hook.
  */
-function validateTodos(data: unknown): TodoItem[] {
+export function validateTodos(data: unknown): TodoItem[] {
   if (!Array.isArray(data)) return [];
   const cleaned: TodoItem[] = [];
   let inProgressKept = false;
@@ -71,6 +74,32 @@ function validateTodos(data: unknown): TodoItem[] {
     if (cleaned.length >= MAX_TODO_ITEMS) break;
   }
   return cleaned;
+}
+
+/**
+ * Compute the next todo list when `toggleStatus` is invoked for `id`.
+ *
+ * Cycles pending → in_progress → completed → pending on the target. When
+ * promoting to in_progress, any other item that was in_progress is
+ * demoted to pending so the "one active step" invariant holds. Exported
+ * as a pure function so the state-transition logic can be unit-tested.
+ */
+export function toggleTodoStatus(prev: readonly TodoItem[], id: string): TodoItem[] {
+  const target = prev.find((todo) => todo.id === id);
+  if (!target) return [...prev];
+  const nextStatus: TodoItem['status'] =
+    target.status === 'pending'
+      ? 'in_progress'
+      : target.status === 'in_progress'
+        ? 'completed'
+        : 'pending';
+  return prev.map((todo) => {
+    if (todo.id === id) return { ...todo, status: nextStatus };
+    if (nextStatus === 'in_progress' && todo.status === 'in_progress') {
+      return { ...todo, status: 'pending' };
+    }
+    return todo;
+  });
 }
 
 function readStoredTodos(repoFullName: string | null): TodoItem[] {
@@ -120,25 +149,7 @@ export function useTodo(repoFullName: string | null = null) {
   }, []);
 
   const toggleStatus = useCallback((id: string) => {
-    setTodosState((prev) => {
-      const target = prev.find((todo) => todo.id === id);
-      if (!target) return prev;
-      const nextStatus: TodoItem['status'] =
-        target.status === 'pending'
-          ? 'in_progress'
-          : target.status === 'in_progress'
-            ? 'completed'
-            : 'pending';
-      // Enforce the one-in_progress invariant the tool executor relies on:
-      // when promoting an item, demote any other item that was in_progress.
-      return prev.map((todo) => {
-        if (todo.id === id) return { ...todo, status: nextStatus };
-        if (nextStatus === 'in_progress' && todo.status === 'in_progress') {
-          return { ...todo, status: 'pending' };
-        }
-        return todo;
-      });
-    });
+    setTodosState((prev) => toggleTodoStatus(prev, id));
   }, []);
 
   const removeItem = useCallback((id: string) => {
