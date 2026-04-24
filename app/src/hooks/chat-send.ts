@@ -489,10 +489,14 @@ export async function streamAssistantRound(
   // `reasoning_content` deltas or an unclosed `<think>` block that
   // `normalizeReasoning` flushes as `reasoning_delta` at stream end. The user
   // sees the final answer trapped inside a "Thought process" block and no
-  // visible reply. If the stream completed without error, emitted no content,
-  // and produced no native tool call (those flush through the content parser
-  // via `flushNativeToolCalls`), promote the reasoning tail to content.
-  if (!error && !accumulated && thinkingAccumulated) {
+  // visible reply. If the stream completed without error, wasn't cancelled by
+  // the user, emitted no content, and produced no native tool call (those
+  // flush through the content parser via `flushNativeToolCalls`), promote the
+  // reasoning tail to content. Skipping the promotion on abort is load-bearing:
+  // `streamAssistantRound` resolves with `error === null` on user cancel, so
+  // without the guard a cancelled turn with only reasoning tokens would
+  // surface that partial reasoning as if it were the model's final answer.
+  if (!error && !abortRef.current && !accumulated && thinkingAccumulated) {
     console.warn(
       `[Push] Round ${round}: no content emitted, promoting reasoning tail (${thinkingAccumulated.length} chars) to content.`,
     );

@@ -399,7 +399,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
     // dependency.
     await withExecDeadline(
       sandbox.exec(
-        "timeout 30 bash -c '" +
+        "timeout -k 5 30 bash -c '" +
           'src=/opt/push-cache; ' +
           'if [ -f "$src/package-lock.json" ] && ' +
           'cmp -s "$src/package-lock.json" /workspace/package-lock.json 2>/dev/null && ' +
