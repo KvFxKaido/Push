@@ -94,14 +94,32 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
     try {
       const parsed = JSON.parse(data);
       const delta = parsed.choices?.[0]?.delta;
-      // Today's Workers AI reasoning models are mutually exclusive per model:
-      // DeepSeek-R1 uses native `reasoning_content`; Qwen QwQ uses inline
-      // `<think>` tags in `content`. We surface both channels when present —
-      // `normalizeReasoning` downstream latches on the first native
-      // reasoning_delta and stops parsing `<think>` tags for the rest of the
-      // stream, so a future hybrid model that emits both won't double-report.
-      if (delta?.reasoning_content) {
-        yield { type: 'reasoning_delta', text: delta.reasoning_content };
+      // Reasoning-model field layout varies by model/version:
+      //   - DeepSeek-R1 and Kimi K2.5: native `reasoning_content` on delta.
+      //   - Kimi K2.6: renamed to plain `reasoning` (breaking change
+      //     introduced when K2.6 shipped on Workers AI).
+      //   - Qwen QwQ: no native channel; emits `<think>…</think>` tags
+      //     inline in `content`, split downstream by `normalizeReasoning`.
+      // Accept either native field so a model-version bump doesn't
+      // silently drop reasoning tokens — without this the client-side
+      // stall detector sees "data arriving but no content" and trips the
+      // 90s timer despite the model working fine (K2.6 can spend multiple
+      // minutes thinking before its first visible token).
+      // Select the first *valid non-empty string* — not `??`, which
+      // would prefer a non-string `reasoning` (e.g. a future structured
+      // payload) over a sibling string `reasoning_content` in the same
+      // frame and drop the usable one. `normalizeReasoning` downstream
+      // latches on the first native reasoning_delta and stops parsing
+      // `<think>` tags for the rest of the stream, so a hybrid model
+      // that emits both won't double-report.
+      const reasoning =
+        typeof delta?.reasoning === 'string' && delta.reasoning.length > 0
+          ? delta.reasoning
+          : typeof delta?.reasoning_content === 'string' && delta.reasoning_content.length > 0
+            ? delta.reasoning_content
+            : undefined;
+      if (reasoning) {
+        yield { type: 'reasoning_delta', text: reasoning };
       }
       if (delta?.content) {
         yield { type: 'text_delta', text: delta.content };

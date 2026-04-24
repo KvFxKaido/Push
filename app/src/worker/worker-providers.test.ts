@@ -192,6 +192,110 @@ describe('handleCloudflareChat', () => {
     const body = await response.json();
     expect(body.error).toMatch(/Cloudflare Workers AI is not configured/i);
   });
+
+  it('translates both `reasoning` (Kimi K2.6) and `reasoning_content` (K2.5/DeepSeek-R1) delta fields into downstream reasoning_content SSE frames', async () => {
+    // K2.6 broke the field name from `reasoning_content` → `reasoning` when
+    // it shipped on Workers AI. Pre-fix, the worker silently dropped every
+    // reasoning chunk from K2.6, which left the client stream receiving
+    // keepalive bytes but no content for 90s+ and tripping the stall
+    // detector despite the model working fine. Assert both shapes make it
+    // through — mixing them in one stream also guards against a regression
+    // where the `??` fallback gets re-reversed.
+    const encoder = new TextEncoder();
+    const upstream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(
+          encoder.encode(
+            // New (K2.6) shape.
+            'data: {"choices":[{"delta":{"reasoning":"thinking A…"}}]}\n' +
+              // Old (K2.5 / DeepSeek-R1) shape.
+              'data: {"choices":[{"delta":{"reasoning_content":"thinking B…"}}]}\n' +
+              'data: {"choices":[{"delta":{"content":"final"}}]}\n' +
+              'data: [DONE]\n',
+          ),
+        );
+        c.close();
+      },
+    });
+
+    const response = await handleCloudflareChat(
+      makeChatRequest(),
+      makeEnv({ AI: { run: vi.fn(async () => upstream) } as unknown as Env['AI'] }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.text();
+
+    // Downstream shape the web client reads (orchestrator.ts watches
+    // `choice.delta.reasoning_content`). Both upstream reasoning frames
+    // must surface through the same downstream field — that's what
+    // lets `shouldResetStallOnReasoning` reset the stall clock for
+    // either model generation.
+    expect(body).toContain('"reasoning_content":"thinking A…"');
+    expect(body).toContain('"reasoning_content":"thinking B…"');
+    expect(body).toContain('"content":"final"');
+    expect(body).toContain('data: [DONE]');
+  });
+
+  it('ignores non-string `reasoning` delta values (guards against upstream shape drift)', async () => {
+    // If a future model version emits `reasoning` as an object/array (e.g.
+    // a structured thought), don't accidentally stringify it through
+    // `JSON.stringify`-ish coercion — silently skip and let the downstream
+    // text channel carry the visible output. A crash here would error the
+    // whole stream over a non-critical field.
+    const encoder = new TextEncoder();
+    const upstream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"reasoning":{"type":"structured","parts":[]}}}]}\n' +
+              'data: {"choices":[{"delta":{"content":"ok"}}]}\n' +
+              'data: [DONE]\n',
+          ),
+        );
+        c.close();
+      },
+    });
+
+    const response = await handleCloudflareChat(
+      makeChatRequest(),
+      makeEnv({ AI: { run: vi.fn(async () => upstream) } as unknown as Env['AI'] }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(body).not.toContain('reasoning_content');
+    expect(body).toContain('"content":"ok"');
+  });
+
+  it('falls back to reasoning_content when `reasoning` is present but non-string in the same frame', async () => {
+    // Mixed-shape frame: `reasoning` is a structured payload (future
+    // shape or migration compat), `reasoning_content` is the usable
+    // string. A naive `??` fallback would prefer the non-string and
+    // drop the frame entirely — the client would then see no progress
+    // and trip the 90s stall detector despite having valid reasoning
+    // text in-stream. Guard: pick the first valid string field.
+    const encoder = new TextEncoder();
+    const upstream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"reasoning":{"type":"structured"},"reasoning_content":"usable text"}}]}\n' +
+              'data: {"choices":[{"delta":{"content":"done"}}]}\n' +
+              'data: [DONE]\n',
+          ),
+        );
+        c.close();
+      },
+    });
+
+    const response = await handleCloudflareChat(
+      makeChatRequest(),
+      makeEnv({ AI: { run: vi.fn(async () => upstream) } as unknown as Env['AI'] }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(body).toContain('"reasoning_content":"usable text"');
+    expect(body).toContain('"content":"done"');
+  });
 });
 
 describe('handleCloudflareModels', () => {

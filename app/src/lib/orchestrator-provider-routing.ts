@@ -244,6 +244,13 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
         // Workers AI can emit keepalive/data frames before textual deltas arrive.
         // Keep no-content guard slightly looser than generic providers.
         stallTimeoutMs: 90_000,
+        // Reasoning models hosted on Workers AI (Kimi K2.6 especially)
+        // can spend minutes in an extended thinking prelude before their
+        // first visible token. Those chunks arrive as `reasoning_content`
+        // SSE frames through the worker-providers.ts translation layer;
+        // resetting the stall clock on them keeps a long-but-healthy
+        // think from false-positiving against the 90s stall timer.
+        shouldResetStallOnReasoning: true,
         errorMessages: {
           keyMissing: 'Cloudflare Workers AI is not configured on this Worker',
           connect: (s) =>
