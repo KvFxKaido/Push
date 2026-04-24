@@ -45,6 +45,11 @@ export function getHookToolArgs(toolCall: AnyToolCall): Record<string, unknown> 
       return { ...toolCall.call.args };
     case 'scratchpad':
       return toolCall.call.content ? { content: toolCall.call.content } : {};
+    case 'todo':
+      if (toolCall.call.tool === 'todo_write') {
+        return { todos: toolCall.call.todos };
+      }
+      return {};
     default:
       return {};
   }
@@ -66,6 +71,10 @@ export function applyHookToolArgs(
       if (typeof modifiedArgs.content === 'string') {
         toolCall.call.content = modifiedArgs.content;
       }
+      return;
+    case 'todo':
+      // Todo calls are executed in the chat hook and don't flow through the
+      // hook-arg-mutation pipeline; nothing to apply here.
       return;
     default:
       return;
@@ -284,6 +293,10 @@ export class WebToolExecutionRuntime
 
         case 'scratchpad':
           result = { text: '[Tool Error] Scratchpad must be handled by the chat hook.' };
+          break;
+
+        case 'todo':
+          result = { text: '[Tool Error] Todo must be handled by the chat hook.' };
           break;
 
         case 'web-search': {

@@ -40,6 +40,7 @@ export type Capability =
   | 'delegate:coder' // Delegate work to the Coder agent
   | 'delegate:explorer' // Delegate investigation to the Explorer agent
   | 'scratchpad' // Read/write the session scratchpad
+  | 'todo' // Read/write the model's structured todo list
   | 'web:search' // Search the web for current information
   | 'user:ask'; // Ask the user a structured question
 
@@ -60,6 +61,7 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   'delegate:coder',
   'delegate:explorer',
   'scratchpad',
+  'todo',
   'web:search',
   'user:ask',
 ];
@@ -128,6 +130,11 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   set_scratchpad: ['scratchpad'],
   append_scratchpad: ['scratchpad'],
   read_scratchpad: ['scratchpad'],
+
+  // Todo tools
+  todo_write: ['todo'],
+  todo_read: ['todo'],
+  todo_clear: ['todo'],
 
   // Web search
   web_search: ['web:search'],
@@ -220,6 +227,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'delegate:coder',
     'delegate:explorer',
     'scratchpad',
+    'todo',
     'web:search',
     'user:ask',
   ]),
@@ -251,6 +259,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'workflow:read',
     'workflow:trigger',
     'scratchpad',
+    'todo',
     'web:search',
     'user:ask',
   ]),
@@ -300,6 +309,7 @@ export const CAPABILITY_LABELS: Readonly<Record<Capability, string>> = {
   'delegate:coder': 'delegate to Coder',
   'delegate:explorer': 'delegate to Explorer',
   scratchpad: 'use scratchpad',
+  todo: 'track its todo list',
   'web:search': 'search the web',
   'user:ask': 'ask questions',
 };

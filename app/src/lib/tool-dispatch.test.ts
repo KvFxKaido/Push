@@ -198,6 +198,79 @@ describe('detectAnyToolCall resilience', () => {
     expect(result).not.toBeNull();
     expect(result!.source).toBe('sandbox');
   });
+
+  it('detects a flat todo_write call', () => {
+    const text = [
+      '```json',
+      '{"tool": "todo_write", "todos": [',
+      '  {"id": "fix-auth", "content": "Fix the auth bug", "activeForm": "Fixing the auth bug", "status": "in_progress"}',
+      ']}',
+      '```',
+    ].join('\n');
+    const result = detectAnyToolCall(text);
+    expect(result).not.toBeNull();
+    expect(result!.source).toBe('todo');
+    expect(result!.call.tool).toBe('todo_write');
+  });
+
+  it('detects an args-wrapped todo_write call', () => {
+    const text = [
+      '```json',
+      '{"tool": "todo_write", "args": {"todos": [',
+      '  {"id": "a", "content": "Do A", "activeForm": "Doing A", "status": "pending"}',
+      ']}}',
+      '```',
+    ].join('\n');
+    const result = detectAnyToolCall(text);
+    expect(result).not.toBeNull();
+    expect(result!.source).toBe('todo');
+    expect(result!.call.tool).toBe('todo_write');
+  });
+
+  it('detects todo_read with no args', () => {
+    const result = detectAnyToolCall('```json\n{"tool": "todo_read"}\n```');
+    expect(result).not.toBeNull();
+    expect(result!.source).toBe('todo');
+    expect(result!.call.tool).toBe('todo_read');
+  });
+
+  it('detects todo_clear with no args', () => {
+    const result = detectAnyToolCall('```json\n{"tool": "todo_clear"}\n```');
+    expect(result).not.toBeNull();
+    expect(result!.source).toBe('todo');
+    expect(result!.call.tool).toBe('todo_clear');
+  });
+
+  it('classifies todo_read as a read-only parallel call', () => {
+    const text = [
+      '```json',
+      '{"tool": "todo_read"}',
+      '```',
+      '```json',
+      '{"tool": "sandbox_read_file", "args": {"path": "/workspace/main.ts"}}',
+      '```',
+    ].join('\n');
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(2);
+    expect(detected.readOnly.some((c) => c.source === 'todo')).toBe(true);
+    expect(detected.mutating).toBeNull();
+  });
+
+  it('classifies todo_write as a trailing mutation after parallel reads', () => {
+    const text = [
+      '```json',
+      '{"tool": "sandbox_read_file", "args": {"path": "/workspace/main.ts"}}',
+      '```',
+      '```json',
+      '{"tool": "todo_write", "todos": [{"id": "a", "content": "Do A", "activeForm": "Doing A", "status": "pending"}]}',
+      '```',
+    ].join('\n');
+    const detected = detectAllToolCalls(text);
+    expect(detected.readOnly).toHaveLength(1);
+    expect(detected.mutating).not.toBeNull();
+    expect(detected.mutating!.source).toBe('todo');
+    expect(detected.mutating!.call.tool).toBe('todo_write');
+  });
 });
 
 describe('diagnoseToolCallFailure natural language intent detection', () => {

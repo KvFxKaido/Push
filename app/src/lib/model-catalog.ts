@@ -74,6 +74,13 @@ export interface OpenRouterCatalogModel {
 
 export interface ModelsDevOpenRouterMetadata {
   id: string;
+  /**
+   * Optional attachment flag. OpenRouter's catalog does not report this, but
+   * the unified models.dev schema does — we allow the field here so a shared
+   * metadata shape (and tests that fixture the unified shape) stays assignable
+   * to this narrower type.
+   */
+  attachment?: boolean;
   reasoning: boolean;
   toolCall: boolean;
   structuredOutput: boolean;
@@ -684,7 +691,18 @@ export function buildCuratedOpenRouterModelList(
   return [...curated, ...tail];
 }
 
-function isProviderTextChatModel(id: string, metadata?: ModelsDevProviderMetadata): boolean {
+/**
+ * Structural shape used by {@link isProviderTextChatModel} — only the
+ * output-modalities field matters for the text-chat filter. Typed as a
+ * minimal structural type so both {@link ModelsDevProviderMetadata} and
+ * {@link ModelsDevOpenRouterMetadata} satisfy it without requiring the
+ * OpenRouter shape to carry a `attachment` flag it never reports.
+ */
+type TextChatFilterMetadata = {
+  outputModalities?: readonly string[];
+};
+
+function isProviderTextChatModel(id: string, metadata?: TextChatFilterMetadata): boolean {
   // Check for image output or non-text-only modalities
   if (metadata?.outputModalities?.includes('image')) return false;
   if (

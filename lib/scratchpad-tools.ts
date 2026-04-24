@@ -27,9 +27,9 @@ export interface ScratchpadToolCall {
 export const SCRATCHPAD_TOOL_PROTOCOL = `
 ## Scratchpad Tools
 
-You have access to a shared scratchpad — a persistent notepad that both you and the user can see and edit. Use it to consolidate ideas, requirements, decisions, and notes throughout the conversation.
+The scratchpad is your shared working memory with the user for this repo. It persists across chats on this repo — treat it as your continuity layer, not a one-shot note. Concrete step plans for the current effort belong in the todo list (see Todo Tools), not here.
 
-The user can open the scratchpad anytime via the UI. You can update it with these tools:
+The user can open the scratchpad anytime via the UI. Update it with these tools:
 
 ### ${getToolPublicName('set_scratchpad')}
 Replace the entire scratchpad content:
@@ -44,24 +44,36 @@ ${getToolArgHint('append_scratchpad')}
 \`\`\`
 
 ### ${getToolPublicName('read_scratchpad')}
-Read the current scratchpad content (useful to verify before overwriting):
+Read the current scratchpad content (usually unnecessary — the content is already in the [SCRATCHPAD] block above):
 \`\`\`json
 ${getToolArgHint('read_scratchpad')}
 \`\`\`
 
 Legacy long names still work for compatibility, but prefer the short names above.
 
-**When to use:**
-- User says "add this to the scratchpad" or "note this down"
-- Consolidating decisions from the conversation
-- Building up requirements or specs iteratively
-- Keeping track of open questions or TODOs
-- Never treat scratchpad as the user's profile/About You settings. You cannot edit profile fields; ask the user to update Settings > About You for permanent personal info.
+**What belongs here:**
+- Current focus and why (what problem are we solving, for whom)
+- Decisions made and their rationale — so future turns don't re-litigate them
+- Relevant context from the user (constraints, preferences, domain facts)
+- Open questions or blockers waiting on the user
+- Links, file paths, or snippets worth keeping close
+
+**What does NOT belong here:**
+- Step-by-step task plans — those go in the todo list via ${getToolPublicName('todo_write')}
+- The user's profile/About You settings. You cannot edit profile fields; point them at Settings > About You for permanent personal info.
+- Long pasted logs or raw tool output — summarize instead.
+
+**Suggested structure** (adapt as the work evolves):
+\`\`\`markdown
+## Current Focus
+## Decisions
+## Open Questions
+## Context from User
+\`\`\`
 
 **Format tips:**
-- Use markdown headers (##) to organize sections
-- Use bullet points for lists
-- Keep it scannable — this is a working doc, not prose
+- Markdown headers (##) for sections, bullets for lists — keep it scannable.
+- This is a living doc. When an item is resolved, edit it to reflect the resolution rather than stacking contradictory notes.
 `;
 
 /**

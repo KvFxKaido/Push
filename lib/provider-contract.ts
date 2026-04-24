@@ -78,6 +78,7 @@ export type ProviderStreamFn<M extends LlmMessage = LlmMessage, W = unknown> = (
   scratchpadContent?: string,
   signal?: AbortSignal,
   onPreCompact?: (event: PreCompactEvent) => void,
+  todoContent?: string,
 ) => Promise<void>;
 
 // ---------------------------------------------------------------------------
@@ -104,6 +105,7 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
   signal?: AbortSignal;
   systemPromptOverride?: string;
   scratchpadContent?: string;
+  todoContent?: string;
 }
 
 export type PushStream<M extends LlmMessage = LlmMessage> = (
@@ -149,6 +151,7 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
     scratchpadContent,
     signal,
     _onPreCompact,
+    todoContent,
   ) => {
     if (signal?.aborted) {
       onDone();
@@ -169,6 +172,7 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
         signal,
         systemPromptOverride,
         scratchpadContent,
+        todoContent,
       });
 
       for await (const event of stream) {

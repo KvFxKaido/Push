@@ -20,6 +20,7 @@ import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
 import { detectToolCall, type ToolCall } from './github-tools';
 import { detectSandboxToolCall, type SandboxToolCall } from './sandbox-tools';
 import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-tools';
+import { detectTodoToolCall, type TodoToolCall } from './todo-tools';
 import { detectWebSearchToolCall, type WebSearchToolCall } from './web-search-tools';
 import { detectAskUserToolCall, type AskUserToolCall } from './ask-user-tools';
 import { type ActiveProvider } from './orchestrator';
@@ -291,6 +292,11 @@ function getToolCallArgs(toolCall: AnyToolCall): unknown {
       return toolCall.call.args;
     case 'scratchpad':
       return { tool: toolCall.call.tool, content: toolCall.call.content };
+    case 'todo':
+      if (toolCall.call.tool === 'todo_write') {
+        return { tool: toolCall.call.tool, todos: toolCall.call.todos };
+      }
+      return { tool: toolCall.call.tool };
     default:
       return {};
   }
@@ -341,6 +347,7 @@ export type AnyToolCall =
   | { source: 'delegate'; call: { tool: 'delegate_explorer'; args: ExplorerDelegationArgs } }
   | { source: 'delegate'; call: { tool: 'plan_tasks'; args: TaskGraphArgs } }
   | { source: 'scratchpad'; call: ScratchpadToolCall }
+  | { source: 'todo'; call: TodoToolCall }
   | { source: 'web-search'; call: WebSearchToolCall }
   | { source: 'ask-user'; call: AskUserToolCall };
 
@@ -356,6 +363,10 @@ export function detectAnyToolCall(text: string): AnyToolCall | null {
   // Check scratchpad tools (set_scratchpad, append_scratchpad)
   const scratchpadCall = detectScratchpadToolCall(text);
   if (scratchpadCall) return { source: 'scratchpad', call: scratchpadCall };
+
+  // Check todo tools (todo_write, todo_read, todo_clear)
+  const todoCall = detectTodoToolCall(text);
+  if (todoCall) return { source: 'todo', call: todoCall };
 
   // Check web search tool
   const webSearchCall = detectWebSearchToolCall(text);

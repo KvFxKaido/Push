@@ -393,6 +393,7 @@ async function streamProviderChat(
   scratchpadContent?: string,
   signal?: AbortSignal,
   onPreCompact?: (event: PreCompactEvent) => void,
+  todoContent?: string,
 ): Promise<void> {
   const entry = PROVIDER_STREAM_CONFIGS[providerType];
   if (!entry) {
@@ -432,6 +433,7 @@ async function streamProviderChat(
     signal,
     undefined,
     onPreCompact,
+    todoContent,
   );
 }
 
@@ -623,6 +625,7 @@ export async function streamChat(
   providerOverride?: ActiveProvider,
   modelOverride?: string,
   onPreCompact?: (event: PreCompactEvent) => void,
+  todoContent?: string,
 ): Promise<void> {
   const provider = providerOverride || getActiveProvider();
   const { streamFn } = getProviderStreamFn(provider);
@@ -652,5 +655,6 @@ export async function streamChat(
     scratchpadContent,
     signal,
     onPreCompact,
+    todoContent,
   );
 }

@@ -12,6 +12,7 @@
 
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { streamChat } from '@/lib/orchestrator';
+import { buildTodoContext } from '@/lib/todo-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
 import { detectAnyToolCall, detectAllToolCalls, isReadOnlyToolCall } from '@/lib/tool-dispatch';
@@ -28,7 +29,6 @@ import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import {
   executeTool,
   buildToolOutcome,
-  executeParallelTools,
   buildMetaLine,
   collectSideEffects,
   handleRecoveryResult,
@@ -38,6 +38,7 @@ import {
 } from '@/hooks/chat-tool-execution';
 import { execInSandbox } from '@/lib/sandbox-client';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
+import { executeTodoToolCall, type TodoItem } from '@/lib/todo-tools';
 import { resolveToolCallRecovery, type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { createId } from '@/hooks/chat-persistence';
 import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
@@ -78,6 +79,12 @@ export interface ScratchpadHandlers {
   append: (text: string) => void;
 }
 
+export interface TodoHandlers {
+  todos: readonly TodoItem[];
+  replace: (todos: TodoItem[]) => void;
+  clear: () => void;
+}
+
 export interface UsageHandler {
   trackUsage: (model: string, inputTokens: number, outputTokens: number) => void;
 }
@@ -109,6 +116,98 @@ function getDelegateCompletionAgent(call: AnyToolCall): 'explorer' | 'coder' | '
   if (call.call.tool === 'delegate_explorer') return 'explorer';
   if (call.call.tool === 'plan_tasks') return 'task_graph';
   return 'coder';
+}
+
+/** Chat-hook-managed sources — executed against refs in this hook, not the
+ * generic tool-execution runtime which can only see server-owned state. */
+function isChatHookSource(source: AnyToolCall['source']): boolean {
+  return source === 'scratchpad' || source === 'todo';
+}
+
+/**
+ * Wrap `executeTool` so chat-hook sources (scratchpad + todo) are routed
+ * through the local chat-hook executor rather than the runtime, which
+ * would reject them with "must be handled by the chat hook". Used in both
+ * the parallel-reads path and the trailing-mutation path so batched turns
+ * don't deterministically fail when they mix a chat-hook call with a
+ * regular read/mutation.
+ */
+async function executeToolWithChatHooks(
+  call: AnyToolCall,
+  ctx: ToolExecRunContext,
+  refs: {
+    scratchpadRef: MutableRefObject<ScratchpadHandlers | undefined>;
+    todoRef: MutableRefObject<TodoHandlers | undefined>;
+  },
+): Promise<ToolExecRawResult> {
+  if (isChatHookSource(call.source)) {
+    const start = Date.now();
+    const result =
+      executeChatHookToolCall(call, refs) ??
+      ({ text: '[Tool Error] Chat-hook tool dispatch failed.' } as ToolExecutionResult);
+    return { call, raw: result, cards: [], durationMs: Date.now() - start };
+  }
+  return executeTool(call, ctx);
+}
+
+/**
+ * Execute a chat-hook-handled tool call (scratchpad or todo) against the
+ * local refs. Returns the result if the source is handled here, or null if
+ * the caller should fall through to the runtime.
+ *
+ * These tools live in the chat hook because they mutate React state the
+ * runtime can't see. Routed from both the single-call dispatch and the
+ * batched (parallel reads / trailing mutation) paths so a model that
+ * interleaves a todo_write with a read_file in one turn doesn't land on
+ * "[Tool Error] Todo must be handled by the chat hook."
+ */
+function executeChatHookToolCall(
+  call: AnyToolCall,
+  refs: {
+    scratchpadRef: MutableRefObject<ScratchpadHandlers | undefined>;
+    todoRef: MutableRefObject<TodoHandlers | undefined>;
+  },
+): ToolExecutionResult | null {
+  if (call.source === 'scratchpad') {
+    const sp = refs.scratchpadRef.current;
+    if (!sp) {
+      return {
+        text: '[Tool Error] Scratchpad not available. The scratchpad may not be initialized — try again after the UI loads.',
+      };
+    }
+    const result = executeScratchpadToolCall(call.call, sp.content, sp.replace, sp.append);
+    if (result.ok) {
+      if (call.call.tool === 'set_scratchpad') {
+        refs.scratchpadRef.current = { ...sp, content: call.call.content };
+      } else if (call.call.tool === 'append_scratchpad') {
+        const prev = sp.content.trim();
+        refs.scratchpadRef.current = {
+          ...sp,
+          content: prev ? `${prev}\n\n${call.call.content}` : call.call.content,
+        };
+      }
+    }
+    return { text: result.text };
+  }
+
+  if (call.source === 'todo') {
+    const todo = refs.todoRef.current;
+    if (!todo) {
+      return {
+        text: '[Tool Error] Todo list not available. It may not be initialized — try again after the UI loads.',
+      };
+    }
+    const result = executeTodoToolCall(call.call, todo.todos, {
+      replace: todo.replace,
+      clear: todo.clear,
+    });
+    if (result.ok && result.nextTodos) {
+      refs.todoRef.current = { ...todo, todos: result.nextTodos };
+    }
+    return { text: result.text };
+  }
+
+  return null;
 }
 
 function extractChangedPathFromStatusLine(line: string): string | null {
@@ -225,6 +324,7 @@ export interface SendLoopContext {
   sandboxIdRef: MutableRefObject<string | null>;
   ensureSandboxRef: MutableRefObject<(() => Promise<string | null>) | null>;
   scratchpadRef: MutableRefObject<ScratchpadHandlers | undefined>;
+  todoRef: MutableRefObject<TodoHandlers | undefined>;
   usageHandlerRef: MutableRefObject<UsageHandler | undefined>;
   workspaceContextRef: MutableRefObject<WorkspaceContext | null>;
   runtimeHandlersRef: MutableRefObject<ChatRuntimeHandlers | undefined>;
@@ -286,6 +386,7 @@ export async function streamAssistantRound(
     abortRef,
     processedContentRef,
     scratchpadRef,
+    todoRef,
     usageHandlerRef,
     workspaceContextRef,
     abortControllerRef,
@@ -378,6 +479,8 @@ export async function streamAssistantRound(
       abortControllerRef.current?.signal,
       lockedProvider,
       resolvedModel,
+      undefined,
+      todoRef.current ? buildTodoContext(todoRef.current.todos) : undefined,
     );
   });
 
@@ -419,6 +522,7 @@ export async function processAssistantTurn(
     sandboxIdRef,
     ensureSandboxRef,
     scratchpadRef,
+    todoRef,
     runtimeHandlersRef,
     repoRef,
     isMainProtectedRef,
@@ -652,7 +756,11 @@ export async function processAssistantTurn(
       model: resolvedModel,
     };
 
-    const parallelRawResults = await executeParallelTools(parallelToolCalls, runCtx);
+    const parallelRawResults = await Promise.all(
+      parallelToolCalls.map((call) =>
+        executeToolWithChatHooks(call, runCtx, { scratchpadRef, todoRef }),
+      ),
+    );
 
     if (abortRef.current) {
       return {
@@ -935,7 +1043,10 @@ export async function processAssistantTurn(
           provider: lockedProvider,
           model: resolvedModel,
         };
-        mutRawResult = await executeTool(mutCall, mutCtx);
+        mutRawResult = await executeToolWithChatHooks(mutCall, mutCtx, {
+          scratchpadRef,
+          todoRef,
+        });
       }
 
       roundSandboxStatusFetched = false;
@@ -1243,27 +1354,9 @@ export async function processAssistantTurn(
 
   if (toolExecResult) {
     // Runtime verification blocked this tool before dispatch.
-  } else if (toolCall.source === 'scratchpad') {
-    const sp = scratchpadRef.current;
-    if (!sp) {
-      toolExecResult = {
-        text: '[Tool Error] Scratchpad not available. The scratchpad may not be initialized — try again after the UI loads.',
-      };
-    } else {
-      const result = executeScratchpadToolCall(toolCall.call, sp.content, sp.replace, sp.append);
-      if (result.ok) {
-        if (toolCall.call.tool === 'set_scratchpad') {
-          scratchpadRef.current = { ...sp, content: toolCall.call.content };
-        } else if (toolCall.call.tool === 'append_scratchpad') {
-          const prev = sp.content.trim();
-          scratchpadRef.current = {
-            ...sp,
-            content: prev ? `${prev}\n\n${toolCall.call.content}` : toolCall.call.content,
-          };
-        }
-      }
-      toolExecResult = { text: result.text };
-    }
+  } else if (toolCall.source === 'scratchpad' || toolCall.source === 'todo') {
+    const chatHookResult = executeChatHookToolCall(toolCall, { scratchpadRef, todoRef });
+    toolExecResult = chatHookResult ?? { text: '[Tool Error] Chat-hook tool dispatch failed.' };
     toolExecDurationMs = Date.now() - toolExecStart;
   } else if (toolCall.source === 'delegate') {
     toolExecResult = await executeDelegateCall(
