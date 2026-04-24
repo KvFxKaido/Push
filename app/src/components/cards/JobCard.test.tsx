@@ -80,6 +80,27 @@ describe('JobCard', () => {
     expect(html).toContain('something blew up');
   });
 
+  it('surfaces the stall banner when a job is stuck in queued past the threshold', () => {
+    // queued is normally a very brief optimistic state; if a job stays
+    // queued for minutes the SSE stream didn't attach or the start
+    // event never arrived — a cancel affordance is still useful.
+    const now = 1_000_000_000_000;
+    const fiveMinAgo = now - 5 * 60 * 1000;
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const html = renderToStaticMarkup(
+      <JobCard
+        data={baseData({
+          status: 'queued',
+          startedAt: fiveMinAgo,
+          lastEventAt: fiveMinAgo,
+          latestStatusLine: 'Queued',
+        })}
+      />,
+    );
+    expect(html).toContain('Looks stalled');
+    expect(html).toContain('Cancel');
+  });
+
   it('falls back to startedAt when lastEventAt is undefined', () => {
     // Covers the pre-existing-state path (e.g. a card persisted before
     // this field was introduced). Old cards without lastEventAt should

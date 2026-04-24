@@ -73,11 +73,20 @@ const STATUS_ICONS: Record<BackgroundJobStatus, LucideIcon> = {
   cancelled: Ban,
 };
 
-async function postCancel(jobId: string): Promise<void> {
+async function postCancel(jobId: string): Promise<boolean> {
   try {
-    await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+    // fetch() only rejects on network-level failure; a 4xx/5xx response
+    // still resolves. Without the res.ok check a rejected cancel would
+    // look like a success and leave the button stuck in "Cancelling…".
+    if (!res.ok) {
+      console.warn('[JobCard] Cancel request rejected', jobId, res.status);
+      return false;
+    }
+    return true;
   } catch (err) {
     console.warn('[JobCard] Failed to cancel job', jobId, err);
+    return false;
   }
 }
 
@@ -109,16 +118,28 @@ export function JobCard({ data }: { data: CoderJobCardData }) {
 
   const lastEventAt = data.lastEventAt ?? data.startedAt;
   const silentFor = Math.max(0, now - lastEventAt);
-  const isStalled = data.status === 'running' && silentFor >= STALL_WARNING_THRESHOLD_MS;
+  // A job that stays 'queued' past the threshold is almost always stuck
+  // client-side — the SSE stream never attached or `subagent.started`
+  // never arrived — and cancel is the same affordance a user would want
+  // either way. `queued` is otherwise a very brief optimistic state, so
+  // in practice the banner only fires here when something went wrong.
+  const isStalled =
+    (data.status === 'running' || data.status === 'queued') &&
+    silentFor >= STALL_WARNING_THRESHOLD_MS;
 
   const handleCancel = async (): Promise<void> => {
     if (cancelRequested) return;
     setCancelRequested(true);
-    await postCancel(data.jobId);
-    // Don't flip UI state here — the server's cancelled event will
-    // arrive over SSE and drive the card through its normal terminal
-    // path. If cancel fails (network error), cancelRequested stays true
-    // but the status effect will eventually reset it on reconnect.
+    const ok = await postCancel(data.jobId);
+    if (!ok) {
+      // Re-enable the button so the user can retry. The server's
+      // cancelled event — which normally drives the card to its
+      // terminal state — never fires on a rejected request, so without
+      // this reset we'd leave the UI stuck in "Cancelling…" forever.
+      setCancelRequested(false);
+    }
+    // On success, don't flip UI state — the SSE cancelled event will
+    // transition the card through its normal terminal path.
   };
 
   return (
