@@ -640,12 +640,11 @@ export function buildCuratedOpenRouterModelList(
 
   const prioritySet = new Set<string>(OPENROUTER_PRIORITY_MODELS);
   const modelsById = Object.fromEntries(models.map((m) => [m.id, m]));
-  // Apply context filtering to priority models (they bypass context check but must be in live catalog)
-  return OPENROUTER_PRIORITY_MODELS.filter((id) => {
+  // Priority models bypass the context floor but must be in the live catalog.
+  const curated = OPENROUTER_PRIORITY_MODELS.filter((id) => {
     // Match against catalog using base ID (catalog lists base models, not routing variants)
     const baseId = openRouterBaseId(id);
     if (!liveIds.has(id) && !liveIds.has(baseId)) return false;
-    // Priority models bypass context filter but still check if it's a text chat model
     const meta = metadataById?.[id] ?? metadataById?.[baseId];
     // When metadata is available, exclude image-output-only models
     if (meta?.outputModalities?.includes('image') && !meta.outputModalities?.includes('text'))
@@ -655,6 +654,28 @@ export function buildCuratedOpenRouterModelList(
     const filterResult = filterModelByContext(id, contextLimit, prioritySet);
     return filterResult.allowed;
   });
+
+  // Any live model whose base ID is already pinned (directly or via a :nitro variant)
+  // is considered covered and should not be duplicated in the tail.
+  const covered = new Set<string>();
+  for (const id of curated) {
+    covered.add(id);
+    covered.add(openRouterBaseId(id));
+  }
+
+  const tail: string[] = [];
+  for (const m of models) {
+    if (covered.has(m.id)) continue;
+    if (!m.outputModalities.includes('text')) continue;
+    if (m.contextLength < MIN_CONTEXT_TOKENS) continue;
+    const normalized = m.id.toLowerCase();
+    if (IMAGE_GENERATION_MODEL_FAMILY_REGEX.test(normalized)) continue;
+    if (/(embed|embedding|rerank|retriev)/.test(normalized)) continue;
+    tail.push(m.id);
+  }
+  tail.sort();
+
+  return [...curated, ...tail];
 }
 
 function isProviderTextChatModel(id: string, metadata?: ModelsDevProviderMetadata): boolean {

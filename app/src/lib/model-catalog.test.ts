@@ -171,6 +171,111 @@ describe('buildCuratedOpenRouterModelList', () => {
     expect(curated).toContain('openai/gpt-5.4');
   });
 
+  it('appends live chat models that are not in the priority list', () => {
+    const models = parseOpenRouterCatalog({
+      data: [
+        {
+          id: 'anthropic/claude-sonnet-4.6',
+          name: 'Claude Sonnet 4.6',
+          architecture: {
+            input_modalities: ['text'],
+            output_modalities: ['text'],
+          },
+          supported_parameters: ['tools'],
+          top_provider: { context_length: 400_000, is_moderated: true },
+        },
+        {
+          id: 'openai/gpt-5.5',
+          name: 'GPT-5.5',
+          architecture: {
+            input_modalities: ['text'],
+            output_modalities: ['text'],
+          },
+          supported_parameters: ['tools'],
+          top_provider: { context_length: 400_000, is_moderated: true },
+        },
+        {
+          id: 'deepseek/deepseek-v4-flash',
+          name: 'DeepSeek V4 Flash',
+          architecture: {
+            input_modalities: ['text'],
+            output_modalities: ['text'],
+          },
+          supported_parameters: ['tools'],
+          top_provider: { context_length: 256_000, is_moderated: false },
+        },
+      ],
+    });
+
+    const curated = buildCuratedOpenRouterModelList(models);
+
+    // Priority model still pinned at the top.
+    expect(curated[0]).toBe('anthropic/claude-sonnet-4.6:nitro');
+    // New live-only models are appended (sorted) after the priority block.
+    expect(curated).toContain('openai/gpt-5.5');
+    expect(curated).toContain('deepseek/deepseek-v4-flash');
+    expect(curated.indexOf('openai/gpt-5.5')).toBeGreaterThan(
+      curated.indexOf('anthropic/claude-sonnet-4.6:nitro'),
+    );
+  });
+
+  it('does not duplicate a live base model that is already pinned via :nitro', () => {
+    const models = parseOpenRouterCatalog({
+      data: [
+        {
+          id: 'anthropic/claude-sonnet-4.6',
+          name: 'Claude Sonnet 4.6',
+          architecture: {
+            input_modalities: ['text'],
+            output_modalities: ['text'],
+          },
+          supported_parameters: ['tools'],
+          top_provider: { context_length: 400_000, is_moderated: true },
+        },
+      ],
+    });
+
+    const curated = buildCuratedOpenRouterModelList(models);
+
+    expect(curated.filter((id) => id.startsWith('anthropic/claude-sonnet-4.6'))).toEqual([
+      'anthropic/claude-sonnet-4.6:nitro',
+    ]);
+  });
+
+  it('excludes embedding, rerank, and image-generation live models from the tail', () => {
+    const models = parseOpenRouterCatalog({
+      data: [
+        {
+          id: 'openai/text-embedding-3-large',
+          name: 'Embed',
+          architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+          supported_parameters: [],
+          top_provider: { context_length: 128_000, is_moderated: false },
+        },
+        {
+          id: 'cohere/rerank-v3',
+          name: 'Rerank',
+          architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+          supported_parameters: [],
+          top_provider: { context_length: 128_000, is_moderated: false },
+        },
+        {
+          id: 'black-forest-labs/flux-1.1-pro',
+          name: 'Flux',
+          architecture: { input_modalities: ['text'], output_modalities: ['image'] },
+          supported_parameters: [],
+          top_provider: { context_length: 128_000, is_moderated: false },
+        },
+      ],
+    });
+
+    const curated = buildCuratedOpenRouterModelList(models);
+
+    expect(curated).not.toContain('openai/text-embedding-3-large');
+    expect(curated).not.toContain('cohere/rerank-v3');
+    expect(curated).not.toContain('black-forest-labs/flux-1.1-pro');
+  });
+
   it('excludes image-only priority models when metadata is available', () => {
     const models = parseOpenRouterCatalog({
       data: [
