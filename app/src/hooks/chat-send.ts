@@ -484,6 +484,43 @@ export async function streamAssistantRound(
     );
   });
 
+  // Safety net: some providers (observed on Workers AI / GLM-4.7-flash) emit a
+  // round's entire output on the reasoning channel — either via native
+  // `reasoning_content` deltas or an unclosed `<think>` block that
+  // `normalizeReasoning` flushes as `reasoning_delta` at stream end. The user
+  // sees the final answer trapped inside a "Thought process" block and no
+  // visible reply. If the stream completed without error, emitted no content,
+  // and produced no native tool call (those flush through the content parser
+  // via `flushNativeToolCalls`), promote the reasoning tail to content.
+  if (!error && !accumulated && thinkingAccumulated) {
+    console.warn(
+      `[Push] Round ${round}: no content emitted, promoting reasoning tail (${thinkingAccumulated.length} chars) to content.`,
+    );
+    accumulated = thinkingAccumulated;
+    thinkingAccumulated = '';
+    setConversations((prev) => {
+      const conv = prev[chatId];
+      if (!conv) return prev;
+      const msgs = [...conv.messages];
+      const lastIdx = msgs.length - 1;
+      if (msgs[lastIdx]?.role === 'assistant') {
+        msgs[lastIdx] = {
+          ...msgs[lastIdx],
+          content: accumulated,
+          thinking: undefined,
+          status: 'streaming',
+        };
+      }
+      return { ...prev, [chatId]: { ...conv, messages: msgs } };
+    });
+    emitRunEngineEvent({
+      type: 'ACCUMULATED_UPDATED',
+      timestamp: Date.now(),
+      text: accumulated,
+      thinking: '',
+    });
+  }
+
   return { accumulated, thinkingAccumulated, error };
 }
 
