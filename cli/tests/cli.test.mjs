@@ -6,8 +6,14 @@ import os from 'node:os';
 import { promisify } from 'node:util';
 import path from 'node:path';
 
+import { canCaptureChildStdout } from './test-environment.mjs';
+
 const execFileAsync = promisify(execFile);
 const CLI_PATH = path.resolve(import.meta.dirname, '..', 'cli.ts');
+const childStdoutAvailable = await canCaptureChildStdout();
+const needsChildStdout = {
+  skip: !childStdoutAvailable && 'child_process stdout capture is unavailable in this sandbox',
+};
 
 function shQuote(arg) {
   return `'${String(arg).replace(/'/g, `'\\''`)}'`;
@@ -182,7 +188,7 @@ async function runCliPty(args, options = {}) {
 
 // ─── --version ───────────────────────────────────────────────────
 
-describe('--version', () => {
+describe('--version', needsChildStdout, () => {
   it('prints version and exits 0', async () => {
     const { code, stdout } = await runCli(['--version']);
     assert.equal(code, 0);
@@ -198,7 +204,7 @@ describe('--version', () => {
 
 // ─── --help ──────────────────────────────────────────────────────
 
-describe('--help', () => {
+describe('--help', needsChildStdout, () => {
   it('prints usage and exits 0', async () => {
     const { code, stdout } = await runCli(['--help']);
     assert.equal(code, 0);
@@ -209,7 +215,7 @@ describe('--help', () => {
 
 // ─── unknown subcommand ──────────────────────────────────────────
 
-describe('unknown subcommand', () => {
+describe('unknown subcommand', needsChildStdout, () => {
   it('rejects unknown subcommand with error', async () => {
     const { code, stderr } = await runCli(['blah'], { input: '' });
     assert.equal(code, 1);
@@ -225,7 +231,7 @@ describe('unknown subcommand', () => {
 
 // ─── --max-rounds validation ─────────────────────────────────────
 
-describe('--max-rounds validation', () => {
+describe('--max-rounds validation', needsChildStdout, () => {
   it('rejects non-numeric value', async () => {
     const { code, stderr } = await runCli(['run', '--task', 'hi', '--max-rounds', 'banana']);
     assert.equal(code, 1);
@@ -235,7 +241,7 @@ describe('--max-rounds validation', () => {
 
 // ─── --sandbox / --no-sandbox conflict ───────────────────────────
 
-describe('--sandbox / --no-sandbox conflict', () => {
+describe('--sandbox / --no-sandbox conflict', needsChildStdout, () => {
   it('rejects both flags together', async () => {
     const { code, stderr } = await runCli(['--sandbox', '--no-sandbox', 'run', '--task', 'hi']);
     assert.equal(code, 1);
@@ -245,7 +251,7 @@ describe('--sandbox / --no-sandbox conflict', () => {
 
 // ─── unknown flag warning ────────────────────────────────────────
 
-describe('unknown flag warning', () => {
+describe('unknown flag warning', needsChildStdout, () => {
   it('warns on unknown flag but does not block --help', async () => {
     const { code, stdout, stderr } = await runCli(['--banana', '--help']);
     assert.equal(code, 0);
@@ -256,7 +262,7 @@ describe('unknown flag warning', () => {
 
 // ─── non-TTY stdin guard ─────────────────────────────────────────
 
-describe('non-TTY stdin guard', () => {
+describe('non-TTY stdin guard', needsChildStdout, () => {
   it('rejects interactive mode when stdin is not a TTY', async () => {
     // Pipe /dev/null as stdin to ensure !isTTY
     const { code, stderr } = await runCli([], {
@@ -280,7 +286,7 @@ describe('non-TTY stdin guard', () => {
 
 // ─── --cwd validation ────────────────────────────────────────────
 
-describe('--cwd validation', () => {
+describe('--cwd validation', needsChildStdout, () => {
   it('rejects nonexistent path', async () => {
     const { code, stderr } = await runCli([
       '--cwd',
@@ -302,7 +308,7 @@ describe('--cwd validation', () => {
 
 // ─── --session error message ─────────────────────────────────────
 
-describe('--session validation', () => {
+describe('--session validation', needsChildStdout, () => {
   it('gives friendly error for nonexistent session', async () => {
     const { code, stderr } = await runCli(['--session', 'sess_abc123_def456']);
     assert.equal(code, 1);
@@ -318,7 +324,7 @@ describe('--session validation', () => {
 
 // ─── mode-specific flag warnings ─────────────────────────────────
 
-describe('mode-specific flag warnings', () => {
+describe('mode-specific flag warnings', needsChildStdout, () => {
   it('warns when --task is used without run subcommand', async () => {
     // This will also hit the TTY guard, but the warning should appear before it
     const { stderr } = await runCli(['--task', 'something'], { input: '' });
@@ -329,7 +335,7 @@ describe('mode-specific flag warnings', () => {
 
 // ─── interactive REPL /compact (pty) ──────────────────────────────
 
-describe('interactive REPL /compact', () => {
+describe('interactive REPL /compact', needsChildStdout, () => {
   it('compacts saved session context and persists digest', async () => {
     // Skip on environments without util-linux `script` (pseudo-TTY helper).
     try {
@@ -458,7 +464,7 @@ async function seedSessions(root, rows) {
   }
 }
 
-describe('push resume', () => {
+describe('push resume', needsChildStdout, () => {
   it('reports when no sessions exist', async () => {
     const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-resume-empty-'));
     const { code, stdout } = await runCli(['resume'], {
@@ -887,7 +893,7 @@ async function spawnPickerPty(args, input, extraEnv) {
 
 // ─── bare `push` resume prompt ───────────────────────────────────
 
-describe('bare push resume prompt', () => {
+describe('bare push resume prompt', needsChildStdout, () => {
   it('does not trigger picker in non-TTY (TTY guard still fires)', async () => {
     const sessionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-test-bare-nontty-'));
     // Seed a session whose cwd matches where `push` will run so the
@@ -1054,7 +1060,7 @@ async function spawnBarePushPty(input, extraEnv) {
 
 // ─── deprecated provider migration ─────────────────────────────
 
-describe('deprecated provider migration', () => {
+describe('deprecated provider migration', needsChildStdout, () => {
   for (const deprecated of ['mistral', 'zai', 'google', 'minimax']) {
     it(`warns and falls back for --provider ${deprecated}`, async () => {
       // run --task will parse the provider, emit a warning, then proceed.

@@ -43,6 +43,12 @@ import { READ_ONLY_TOOLS, READ_ONLY_TOOL_PROTOCOL } from '../tools.ts';
 import { roleCanUseTool } from '../../lib/capabilities.ts';
 import { buildExplorerSystemPrompt } from '../../lib/explorer-agent.ts';
 import { startMockProviderServer, patchProviderConfig } from './mock-provider-server.mjs';
+import { canListenOnLoopback } from './test-environment.mjs';
+
+const loopbackAvailable = await canListenOnLoopback();
+const needsLoopback = {
+  skip: !loopbackAvailable && 'loopback HTTP listeners are unavailable in this sandbox',
+};
 
 // Enable protocol strict mode for every test in this file via
 // `before`/`after` hooks rather than a raw module-scope assignment.
@@ -656,7 +662,7 @@ describe('daemon version', () => {
   });
 });
 
-describe('send_user_message delegation parity', () => {
+describe('send_user_message delegation parity', needsLoopback, () => {
   it('emits canonical delegation envelopes through daemon attach pipeline', async () => {
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-daemon-delegation-'));
     const prevSessionDir = process.env.PUSH_SESSION_DIR;
@@ -1089,7 +1095,7 @@ async function waitForTaskGraphComplete(entry, executionId, sessionId, timeoutMs
   );
 }
 
-describe('submit_task_graph', () => {
+describe('submit_task_graph', needsLoopback, () => {
   it('rejects missing sessionId', async () => {
     const response = await handleRequest(
       makeRequest('submit_task_graph', { graph: { tasks: [] } }),
@@ -1694,7 +1700,7 @@ async function waitForDelegationComplete(entry, subagentId, sessionId = null, ti
   throw new Error(`delegation background run did not complete within ${timeoutMs}ms (${details})`);
 }
 
-describe('delegate_explorer', () => {
+describe('delegate_explorer', needsLoopback, () => {
   it('rejects missing sessionId', async () => {
     const response = await handleRequest(
       makeRequest('delegate_explorer', { task: 'explore the daemon' }),
@@ -2138,7 +2144,7 @@ const MINIMAL_REVIEWER_DIFF = [
 // deliberately omitted for this tranche — the explorer race test
 // already pins the shared terminal-claim pattern and the coder handler
 // uses the same flow.
-describe('delegate_coder', () => {
+describe('delegate_coder', needsLoopback, () => {
   it('rejects missing sessionId', async () => {
     const response = await handleRequest(
       makeRequest('delegate_coder', { task: 'write a script' }),
@@ -3017,7 +3023,7 @@ describe('Explorer daemon tool protocol namespace', () => {
   });
 });
 
-describe('delegate_reviewer', () => {
+describe('delegate_reviewer', needsLoopback, () => {
   it('rejects missing sessionId', async () => {
     const response = await handleRequest(
       makeRequest('delegate_reviewer', { diff: MINIMAL_REVIEWER_DIFF }),

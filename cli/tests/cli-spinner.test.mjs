@@ -6,8 +6,14 @@ import os from 'node:os';
 import { promisify } from 'node:util';
 import path from 'node:path';
 
+import { canCaptureChildStdout } from './test-environment.mjs';
+
 const execFileAsync = promisify(execFile);
 const CLI_PATH = path.resolve(import.meta.dirname, '..', 'cli.ts');
+const childStdoutAvailable = await canCaptureChildStdout();
+const needsChildStdout = {
+  skip: !childStdoutAvailable && 'child_process stdout capture is unavailable in this sandbox',
+};
 
 function stripAnsi(text) {
   return String(text || '').replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
@@ -57,7 +63,7 @@ async function runSpinner(args, { config, env = {} } = {}) {
   }
 }
 
-describe('push spinner show', () => {
+describe('push spinner show', needsChildStdout, () => {
   it('prints "off" when no spinner pinned', async () => {
     const r = await runSpinner([]);
     assert.equal(r.code, 0);
@@ -86,7 +92,7 @@ describe('push spinner show', () => {
   });
 });
 
-describe('push spinner list', () => {
+describe('push spinner list', needsChildStdout, () => {
   it('marks the active spinner with *', async () => {
     const r = await runSpinner(['list'], { config: { spinner: 'orbit' } });
     assert.equal(r.code, 0);
@@ -112,7 +118,7 @@ describe('push spinner list', () => {
   });
 });
 
-describe('push spinner set', () => {
+describe('push spinner set', needsChildStdout, () => {
   it('persists the pinned spinner to config', async () => {
     const r = await runSpinner(['set', 'braille']);
     assert.equal(r.code, 0);
@@ -164,7 +170,7 @@ describe('push spinner set', () => {
   });
 });
 
-describe('push spinner unpin', () => {
+describe('push spinner unpin', needsChildStdout, () => {
   it('clears a previously pinned spinner', async () => {
     const r = await runSpinner(['unpin'], { config: { spinner: 'braille' } });
     assert.equal(r.code, 0);
@@ -172,7 +178,7 @@ describe('push spinner unpin', () => {
   });
 });
 
-describe('push spinner <bare>', () => {
+describe('push spinner <bare>', needsChildStdout, () => {
   it('accepts `push spinner braille` without an explicit `set`', async () => {
     const r = await runSpinner(['braille']);
     assert.equal(r.code, 0);

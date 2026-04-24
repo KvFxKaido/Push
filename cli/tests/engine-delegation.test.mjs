@@ -17,6 +17,12 @@ import path from 'node:path';
 import { runAssistantTurn } from '../engine.ts';
 import { PROVIDER_CONFIGS } from '../provider.ts';
 import { loadSessionEvents, makeSessionId } from '../session-store.ts';
+import { canListenOnLoopback } from './test-environment.mjs';
+
+const loopbackAvailable = await canListenOnLoopback();
+const needsLoopback = {
+  skip: !loopbackAvailable && 'loopback HTTP listeners are unavailable in this sandbox',
+};
 
 function makeWorkingMemory(overrides = {}) {
   return {
@@ -129,7 +135,7 @@ function makeProviderConfig(url) {
   };
 }
 
-describe('runAssistantTurn — multi-feature delegation event sequence', () => {
+describe('runAssistantTurn — multi-feature delegation event sequence', needsLoopback, () => {
   it('emits canonical subagent.* and task_graph.* envelopes for a 2-feature plan', async () => {
     await withTempSessionDir(async (sessionDir) => {
       // Planner returns a 2-feature plan; each Coder node returns a one-line
@@ -267,56 +273,60 @@ describe('runAssistantTurn — multi-feature delegation event sequence', () => {
   });
 });
 
-describe('runAssistantTurn — single-feature plan falls back to runAssistantLoop', () => {
-  it('does not emit task_graph.* events when the planner returns 1 feature', async () => {
-    await withTempSessionDir(async (sessionDir) => {
-      const plannerPayload = JSON.stringify({
-        approach: 'One-liner task',
-        features: [{ id: 'single', description: 'Do the thing.' }],
+describe(
+  'runAssistantTurn — single-feature plan falls back to runAssistantLoop',
+  needsLoopback,
+  () => {
+    it('does not emit task_graph.* events when the planner returns 1 feature', async () => {
+      await withTempSessionDir(async (sessionDir) => {
+        const plannerPayload = JSON.stringify({
+          approach: 'One-liner task',
+          features: [{ id: 'single', description: 'Do the thing.' }],
+        });
+
+        const server = await startSequencedProviderServer([
+          { tokens: [plannerPayload] },
+          { tokens: ['Single-agent reply to the user.'] },
+        ]);
+
+        try {
+          const providerConfig = makeProviderConfig(server.url);
+          const state = makeState(sessionDir);
+          const emitted = [];
+
+          const result = await runAssistantTurn(
+            state,
+            providerConfig,
+            'mock-key',
+            'Simple follow-up',
+            5,
+            {
+              emit: (event) => emitted.push(event),
+            },
+          );
+
+          assert.equal(result.outcome, 'success');
+          assert.equal(result.finalAssistantText, 'Single-agent reply to the user.');
+
+          const eventTypes = emitted.map((e) => e.type);
+
+          // Planner envelopes still fire — the planner itself runs.
+          assert.ok(eventTypes.includes('subagent.started'));
+          assert.ok(eventTypes.includes('subagent.completed'));
+
+          // But no task_graph.* envelopes: single-feature falls back so the
+          // transcript matches a normal single-agent run.
+          assert.ok(
+            !eventTypes.some((t) => t.startsWith('task_graph.')),
+            `task_graph.* emitted on single-feature plan (got ${eventTypes.join(', ')})`,
+          );
+
+          // runAssistantLoop's normal closure envelopes still fire.
+          assert.ok(eventTypes.includes('run_complete'));
+        } finally {
+          await server.stop();
+        }
       });
-
-      const server = await startSequencedProviderServer([
-        { tokens: [plannerPayload] },
-        { tokens: ['Single-agent reply to the user.'] },
-      ]);
-
-      try {
-        const providerConfig = makeProviderConfig(server.url);
-        const state = makeState(sessionDir);
-        const emitted = [];
-
-        const result = await runAssistantTurn(
-          state,
-          providerConfig,
-          'mock-key',
-          'Simple follow-up',
-          5,
-          {
-            emit: (event) => emitted.push(event),
-          },
-        );
-
-        assert.equal(result.outcome, 'success');
-        assert.equal(result.finalAssistantText, 'Single-agent reply to the user.');
-
-        const eventTypes = emitted.map((e) => e.type);
-
-        // Planner envelopes still fire — the planner itself runs.
-        assert.ok(eventTypes.includes('subagent.started'));
-        assert.ok(eventTypes.includes('subagent.completed'));
-
-        // But no task_graph.* envelopes: single-feature falls back so the
-        // transcript matches a normal single-agent run.
-        assert.ok(
-          !eventTypes.some((t) => t.startsWith('task_graph.')),
-          `task_graph.* emitted on single-feature plan (got ${eventTypes.join(', ')})`,
-        );
-
-        // runAssistantLoop's normal closure envelopes still fire.
-        assert.ok(eventTypes.includes('run_complete'));
-      } finally {
-        await server.stop();
-      }
     });
-  });
-});
+  },
+);

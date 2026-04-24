@@ -6,8 +6,14 @@ import os from 'node:os';
 import { promisify } from 'node:util';
 import path from 'node:path';
 
+import { canCaptureChildStdout } from './test-environment.mjs';
+
 const execFileAsync = promisify(execFile);
 const CLI_PATH = path.resolve(import.meta.dirname, '..', 'cli.ts');
+const childStdoutAvailable = await canCaptureChildStdout();
+const needsChildStdout = {
+  skip: !childStdoutAvailable && 'child_process stdout capture is unavailable in this sandbox',
+};
 
 function stripAnsi(text) {
   return String(text || '').replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
@@ -60,7 +66,7 @@ async function runAnimate(args, { config, env = {} } = {}) {
   }
 }
 
-describe('push animate show', () => {
+describe('push animate show', needsChildStdout, () => {
   it('prints follow-theme when no animation pinned', async () => {
     const r = await runAnimate([]);
     assert.equal(r.code, 0);
@@ -92,7 +98,7 @@ describe('push animate show', () => {
   });
 });
 
-describe('push animate list', () => {
+describe('push animate list', needsChildStdout, () => {
   it('places the active marker on the matching effect', async () => {
     const r = await runAnimate(['list'], { config: { animation: 'pulse' } });
     assert.equal(r.code, 0);
@@ -120,7 +126,7 @@ describe('push animate list', () => {
   });
 });
 
-describe('push animate set', () => {
+describe('push animate set', needsChildStdout, () => {
   it('persists the pinned effect to config', async () => {
     const r = await runAnimate(['set', 'pulse']);
     assert.equal(r.code, 0);
@@ -149,7 +155,7 @@ describe('push animate set', () => {
   });
 });
 
-describe('push animate follow-theme', () => {
+describe('push animate follow-theme', needsChildStdout, () => {
   it('clears a previously pinned effect', async () => {
     const r = await runAnimate(['follow-theme'], { config: { animation: 'pulse' } });
     assert.equal(r.code, 0);
@@ -157,7 +163,7 @@ describe('push animate follow-theme', () => {
   });
 });
 
-describe('push animate <bare>', () => {
+describe('push animate <bare>', needsChildStdout, () => {
   it('accepts `push animate pulse` without an explicit `set`', async () => {
     const r = await runAnimate(['pulse']);
     assert.equal(r.code, 0);
