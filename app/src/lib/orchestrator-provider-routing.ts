@@ -1,7 +1,15 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
-import type { PreCompactEvent, ProviderStreamFn } from '@push/lib/provider-contract';
+import type {
+  AdapterTimeoutConfig,
+  PreCompactEvent,
+  ProviderStreamFn,
+} from '@push/lib/provider-contract';
+import { createProviderStreamAdapter } from '@push/lib/provider-contract';
+import { normalizeReasoning } from '@push/lib/reasoning-tokens';
 import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
 import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-session';
+import { openrouterStream } from './openrouter-stream';
+import type { PushStream } from '@push/lib/provider-contract';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
@@ -444,8 +452,57 @@ async function streamProviderChat(
 export type StreamChatFn = ProviderStreamFn<ChatMessage, WorkspaceContext>;
 
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
-export const streamOpenRouterChat: StreamChatFn = (...args) =>
-  streamProviderChat('openrouter', ...args);
+
+/**
+ * OpenRouter ships via the PushStream abstraction: `openrouterStream` handles
+ * SSE parsing + reasoning channel normalization, `createProviderStreamAdapter`
+ * provides timer/abort safety parity with the legacy `streamSSEChatOnce` path
+ * (connect/idle/progress collapse into `eventTimeoutMs`; stall maps to
+ * `contentTimeoutMs`; total is wall-clock).
+ *
+ * The adapter is built per-call so `defaultModel` tracks the current
+ * `getOpenRouterModelName()` setting.
+ */
+export const streamOpenRouterChat: StreamChatFn = async (...args) => {
+  const apiKey = getOpenRouterKey();
+  if (!apiKey) {
+    // Match legacy behavior — surface a clear error before touching network.
+    // The Worker can still have its own server-side key, but dev (Vite
+    // passthrough) and unconfigured-Worker paths need a client-side key.
+    const [, , , onError] = args;
+    onError(new Error('OpenRouter API key not configured'));
+    return;
+  }
+
+  const modelOverride = args[7];
+  const openRouterErrorMessages = buildErrorMessages('OpenRouter');
+  const timeouts: AdapterTimeoutConfig = {
+    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
+    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
+    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
+    errorMessages: {
+      event: openRouterErrorMessages.idle,
+      content: openRouterErrorMessages.stall,
+      total: openRouterErrorMessages.total,
+    },
+  };
+
+  // Compose openrouterStream with normalizeReasoning so inline `<think>…</think>`
+  // tags in `delta.content` are split into the reasoning channel — parity with
+  // the legacy path where `streamSSEChatOnce` routed content through
+  // `createThinkTokenParser`. `openrouterStream` stays focused on SSE parsing
+  // and field-name normalization; reasoning-tag splitting lives here in the
+  // composition layer.
+  const openrouterWithReasoning: PushStream<ChatMessage> = (req) =>
+    normalizeReasoning(openrouterStream(req));
+
+  const adapted = createProviderStreamAdapter<ChatMessage>(openrouterWithReasoning, 'openrouter', {
+    defaultModel: modelOverride || getOpenRouterModelName(),
+    timeouts,
+  });
+
+  return adapted(...args);
+};
 export const streamCloudflareChat: StreamChatFn = (...args) =>
   streamProviderChat('cloudflare', ...args);
 export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
