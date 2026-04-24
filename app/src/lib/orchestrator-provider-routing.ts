@@ -1,11 +1,20 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type {
+  AdapterTelemetry,
+  AdapterTelemetryStartContext,
   AdapterTimeoutConfig,
   PreCompactEvent,
   ProviderStreamFn,
 } from '@push/lib/provider-contract';
 import { createProviderStreamAdapter } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
+import {
+  getPushTracer,
+  recordSpanError,
+  setSpanAttributes,
+  SpanKind,
+  SpanStatusCode,
+} from './tracing';
 import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
 import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-session';
 import { openrouterStream } from './openrouter-stream';
@@ -451,6 +460,78 @@ async function streamProviderChat(
 
 export type StreamChatFn = ProviderStreamFn<ChatMessage, WorkspaceContext>;
 
+/**
+ * Build the OTEL telemetry hook for a PushStream-adapted provider. Mirrors
+ * the span shape the legacy `streamSSEChatOnce` emits
+ * (`push.model.stream` / `model.stream`) so dashboards keyed on those
+ * attributes keep working for adapted providers.
+ *
+ * Uses `startActiveSpan` so downstream child spans (the gateway's own
+ * fetch) inherit this span as parent via W3C traceparent propagation —
+ * `injectTraceHeaders` pulls from `context.active()` at the call site.
+ */
+function buildAdapterTelemetry(): AdapterTelemetry {
+  const tracer = getPushTracer('push.model');
+  return {
+    wrap: async (
+      ctx: AdapterTelemetryStartContext,
+      run: (finalize: (result: AdapterTelemetryEndResultLike) => void) => Promise<void>,
+    ) => {
+      await tracer.startActiveSpan(
+        'model.stream',
+        {
+          kind: SpanKind.CLIENT,
+          attributes: {
+            'push.provider': ctx.provider,
+            'push.model': ctx.model,
+            'push.message_count': ctx.messageCount,
+          },
+        },
+        async (span) => {
+          let captured: AdapterTelemetryEndResultLike | null = null;
+          try {
+            await run((result) => {
+              captured = result;
+            });
+          } finally {
+            if (captured) {
+              setSpanAttributes(span, {
+                'push.abort_reason': captured.abortReason ?? undefined,
+                'push.stream.chunk_count': captured.eventCount,
+                'push.stream.content_chars': captured.textChars,
+                'push.stream.thinking_chars': captured.reasoningChars,
+                'push.usage.input_tokens': captured.usage?.inputTokens,
+                'push.usage.output_tokens': captured.usage?.outputTokens,
+                'push.usage.total_tokens': captured.usage?.totalTokens,
+              });
+              if (captured.error) {
+                recordSpanError(span, captured.error);
+              } else if (captured.abortReason === 'user') {
+                span.setAttribute('push.cancelled', true);
+              } else {
+                span.setStatus({ code: SpanStatusCode.OK });
+              }
+            }
+            span.end();
+          }
+        },
+      );
+    },
+  };
+}
+
+// Local mirror of AdapterTelemetryEndResult — the typed import from lib
+// widens `abortReason` to accept `null`, and inlining the shape here lets
+// us use it as a `let` initializer without adding an extra import alias.
+interface AdapterTelemetryEndResultLike {
+  abortReason: 'event' | 'content' | 'total' | 'user' | null;
+  eventCount: number;
+  textChars: number;
+  reasoningChars: number;
+  usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  error?: Error;
+}
+
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
 
 /**
@@ -499,6 +580,10 @@ export const streamOpenRouterChat: StreamChatFn = async (...args) => {
   const adapted = createProviderStreamAdapter<ChatMessage>(openrouterWithReasoning, 'openrouter', {
     defaultModel: modelOverride || getOpenRouterModelName(),
     timeouts,
+    // Telemetry closes the observability gap noted in PR #384: OpenRouter
+    // traffic now emits `push.model.stream` spans with the same attribute
+    // vocabulary as the legacy `streamSSEChatOnce` path.
+    telemetry: buildAdapterTelemetry(),
   });
 
   return adapted(...args);

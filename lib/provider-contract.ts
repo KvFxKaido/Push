@@ -159,6 +159,54 @@ export interface AdapterTimeoutConfig {
 
 type AdapterTimeoutReason = 'event' | 'content' | 'total';
 
+// ---------------------------------------------------------------------------
+// Telemetry
+// ---------------------------------------------------------------------------
+
+/**
+ * Context handed to the telemetry wrapper at stream start. Stable shape so
+ * callers can build span attributes without case-matching every field.
+ */
+export interface AdapterTelemetryStartContext {
+  provider: AIProviderType;
+  model: string;
+  messageCount: number;
+}
+
+/**
+ * Outcome summary reported to the telemetry wrapper at stream settlement.
+ * One of `abortReason` or `error` is populated on abnormal termination;
+ * both are `null`/`undefined` on clean completion via a `done` event or
+ * natural stream close.
+ */
+export interface AdapterTelemetryEndResult {
+  abortReason: AdapterTimeoutReason | 'user' | null;
+  eventCount: number;
+  textChars: number;
+  reasoningChars: number;
+  usage?: StreamUsage;
+  error?: Error;
+}
+
+/**
+ * Observability hook for `createProviderStreamAdapter`. `lib/` stays
+ * dependency-free (no OpenTelemetry import); callers that wire OTEL
+ * implement this hook with their own tracer.
+ *
+ * The `wrap` function runs the adapter's async body inside whatever
+ * observability scope the caller wants (typically
+ * `tracer.startActiveSpan(...)` so downstream fetches inherit the span
+ * as parent via W3C traceparent propagation). The adapter calls
+ * `finalize(result)` exactly once before the wrapped promise resolves
+ * so the hook can fold the outcome into the span before closing it.
+ */
+export interface AdapterTelemetry {
+  wrap?: (
+    ctx: AdapterTelemetryStartContext,
+    run: (finalize: (result: AdapterTelemetryEndResult) => void) => Promise<void>,
+  ) => Promise<void>;
+}
+
 function renderAdapterTimeoutMessage(
   reason: AdapterTimeoutReason,
   timeouts: AdapterTimeoutConfig,
@@ -212,6 +260,7 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
   options?: {
     defaultModel?: string;
     timeouts?: AdapterTimeoutConfig;
+    telemetry?: AdapterTelemetry;
   },
 ): ProviderStreamFn<M> {
   return async (
@@ -284,93 +333,134 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
       onError(new Error(renderAdapterTimeoutMessage(reason, timeouts ?? {})));
     };
 
-    try {
-      const model = modelOverride || options?.defaultModel;
-      if (!model) {
-        throw new Error(
-          'createProviderStreamAdapter: no model provided — supply modelOverride at call time or defaultModel via adapter options',
-        );
-      }
-      const stream = gatewayStream({
-        provider,
-        model,
-        messages,
-        signal: controller.signal,
-        systemPromptOverride,
-        scratchpadContent,
-        todoContent,
-        workspaceContext,
-        hasSandbox,
-        onPreCompact,
-      });
+    // Telemetry counters — tallied during iteration, handed to the
+    // telemetry hook at settlement via `finalize()`.
+    let eventCount = 0;
+    let textChars = 0;
+    let reasoningChars = 0;
+    let doneUsage: StreamUsage | undefined;
+    let terminalError: Error | undefined;
 
-      // Arm both windows before iteration. `resetEventTimer` catches the
-      // "no events ever" case. `resetContentTimer` covers streams that
-      // stay structurally active but never emit a user-visible delta —
-      // matches the legacy `stallTimeoutMs` which armed at response-landing,
-      // not on the first content token.
-      resetEventTimer();
-      resetContentTimer();
-
-      for await (const event of stream) {
-        if (controller.signal.aborted) break;
-
-        resetEventTimer();
-
-        switch (event.type) {
-          case 'text_delta':
-            resetContentTimer();
-            onToken(event.text);
-            break;
-          case 'reasoning_delta':
-            resetContentTimer();
-            onThinkingToken?.(event.text);
-            break;
-          case 'reasoning_end':
-            // Structural signal — doesn't reset content timer because it
-            // isn't progress toward user-visible output.
-            onThinkingToken?.(null);
-            break;
-          case 'done':
-            clearAllTimers();
-            onDone(event.usage);
-            return;
+    const runBody = async (finalize: (result: AdapterTelemetryEndResult) => void) => {
+      try {
+        const model = modelOverride || options?.defaultModel;
+        if (!model) {
+          throw new Error(
+            'createProviderStreamAdapter: no model provided — supply modelOverride at call time or defaultModel via adapter options',
+          );
         }
-      }
+        const stream = gatewayStream({
+          provider,
+          model,
+          messages,
+          signal: controller.signal,
+          systemPromptOverride,
+          scratchpadContent,
+          todoContent,
+          workspaceContext,
+          hasSandbox,
+          onPreCompact,
+        });
 
-      // Loop exited without a `done` event. Resolve based on abortReason.
-      clearAllTimers();
-      if (abortReason === 'user') {
+        // Arm both windows before iteration. `resetEventTimer` catches the
+        // "no events ever" case. `resetContentTimer` covers streams that
+        // stay structurally active but never emit a user-visible delta —
+        // matches the legacy `stallTimeoutMs` which armed at response-landing,
+        // not on the first content token.
+        resetEventTimer();
+        resetContentTimer();
+
+        for await (const event of stream) {
+          if (controller.signal.aborted) break;
+
+          eventCount++;
+          resetEventTimer();
+
+          switch (event.type) {
+            case 'text_delta':
+              textChars += event.text.length;
+              resetContentTimer();
+              onToken(event.text);
+              break;
+            case 'reasoning_delta':
+              reasoningChars += event.text.length;
+              resetContentTimer();
+              onThinkingToken?.(event.text);
+              break;
+            case 'reasoning_end':
+              // Structural signal — doesn't reset content timer because it
+              // isn't progress toward user-visible output.
+              onThinkingToken?.(null);
+              break;
+            case 'done':
+              clearAllTimers();
+              doneUsage = event.usage;
+              onDone(event.usage);
+              return;
+          }
+        }
+
+        // Loop exited without a `done` event. Resolve based on abortReason.
+        clearAllTimers();
+        if (abortReason === 'user') {
+          onDone();
+          return;
+        }
+        if (abortReason === 'event' || abortReason === 'content' || abortReason === 'total') {
+          const msg = renderAdapterTimeoutMessage(abortReason, timeouts ?? {});
+          terminalError = new Error(msg);
+          settleTimeout(abortReason);
+          return;
+        }
+        // Stream drained cleanly without a trailing `done` — treat as
+        // completion to match the pre-timer behavior.
         onDone();
-        return;
+      } catch (err) {
+        clearAllTimers();
+        if (abortReason === 'user') {
+          onDone();
+          return;
+        }
+        if (abortReason === 'event' || abortReason === 'content' || abortReason === 'total') {
+          const msg = renderAdapterTimeoutMessage(abortReason, timeouts ?? {});
+          terminalError = new Error(msg);
+          settleTimeout(abortReason);
+          return;
+        }
+        if (err instanceof Error && err.name === 'AbortError') {
+          // Abort from an unknown source (upstream cleanup, etc). Settle
+          // cleanly — if it were a timeout the reason would already be set.
+          onDone();
+          return;
+        }
+        terminalError = err instanceof Error ? err : new Error(String(err));
+        onError(terminalError);
+      } finally {
+        clearAllTimers();
+        signal?.removeEventListener('abort', onExternalAbort);
+        finalize({
+          abortReason,
+          eventCount,
+          textChars,
+          reasoningChars,
+          usage: doneUsage,
+          error: terminalError,
+        });
       }
-      if (abortReason === 'event' || abortReason === 'content' || abortReason === 'total') {
-        settleTimeout(abortReason);
-        return;
-      }
-      // Stream drained cleanly without a trailing `done` — treat as
-      // completion to match the pre-timer behavior.
-      onDone();
-    } catch (err) {
-      clearAllTimers();
-      if (abortReason === 'user') {
-        onDone();
-        return;
-      }
-      if (abortReason === 'event' || abortReason === 'content' || abortReason === 'total') {
-        settleTimeout(abortReason);
-        return;
-      }
-      if (err instanceof Error && err.name === 'AbortError') {
-        // Abort from an unknown source (upstream cleanup, etc). Settle
-        // cleanly — if it were a timeout the reason would already be set.
-        onDone();
-        return;
-      }
-      onError(err instanceof Error ? err : new Error(String(err)));
-    } finally {
-      clearAllTimers();
-      signal?.removeEventListener('abort', onExternalAbort);
+    };
+
+    const telemetry = options?.telemetry;
+    if (telemetry?.wrap) {
+      const telemetryCtx: AdapterTelemetryStartContext = {
+        provider,
+        model: modelOverride || options?.defaultModel || 'unknown',
+        messageCount: messages.length,
+      };
+      await telemetry.wrap(telemetryCtx, runBody);
+    } else {
+      await runBody(() => {
+        /* no-op when no telemetry hook is wired */
+      });
     }
   };
 }
