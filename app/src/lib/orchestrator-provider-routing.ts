@@ -1,11 +1,21 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type {
+  AdapterTelemetry,
+  AdapterTelemetryEndResult,
+  AdapterTelemetryStartContext,
   AdapterTimeoutConfig,
   PreCompactEvent,
   ProviderStreamFn,
 } from '@push/lib/provider-contract';
 import { createProviderStreamAdapter } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
+import {
+  getPushTracer,
+  recordSpanError,
+  setSpanAttributes,
+  SpanKind,
+  SpanStatusCode,
+} from './tracing';
 import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
 import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-session';
 import { openrouterStream } from './openrouter-stream';
@@ -451,6 +461,68 @@ async function streamProviderChat(
 
 export type StreamChatFn = ProviderStreamFn<ChatMessage, WorkspaceContext>;
 
+/**
+ * Build the OTEL telemetry hook for a PushStream-adapted provider. Mirrors
+ * the span shape the legacy `streamSSEChatOnce` emits
+ * (`push.model.stream` / `model.stream`) so dashboards keyed on those
+ * attributes keep working for adapted providers.
+ *
+ * Uses `startActiveSpan` so downstream child spans (the gateway's own
+ * fetch) inherit this span as parent via W3C traceparent propagation —
+ * `injectTraceHeaders` pulls from `context.active()` at the call site.
+ */
+function buildAdapterTelemetry(): AdapterTelemetry {
+  const tracer = getPushTracer('push.model');
+  return {
+    wrap: async (
+      ctx: AdapterTelemetryStartContext,
+      run: (finalize: (result: AdapterTelemetryEndResult) => void) => Promise<void>,
+    ) => {
+      await tracer.startActiveSpan(
+        'model.stream',
+        {
+          kind: SpanKind.CLIENT,
+          attributes: {
+            'push.provider': ctx.provider,
+            'push.model': ctx.model,
+            'push.message_count': ctx.messageCount,
+            ...(typeof ctx.hasSandbox === 'boolean' ? { 'push.has_sandbox': ctx.hasSandbox } : {}),
+            ...(ctx.workspaceMode ? { 'push.workspace_mode': ctx.workspaceMode } : {}),
+          },
+        },
+        async (span) => {
+          let captured: AdapterTelemetryEndResult | null = null;
+          try {
+            await run((result) => {
+              captured = result;
+            });
+          } finally {
+            if (captured) {
+              setSpanAttributes(span, {
+                'push.abort_reason': captured.abortReason ?? undefined,
+                'push.stream.chunk_count': captured.eventCount,
+                'push.stream.content_chars': captured.textChars,
+                'push.stream.thinking_chars': captured.reasoningChars,
+                'push.usage.input_tokens': captured.usage?.inputTokens,
+                'push.usage.output_tokens': captured.usage?.outputTokens,
+                'push.usage.total_tokens': captured.usage?.totalTokens,
+              });
+              if (captured.error) {
+                recordSpanError(span, captured.error);
+              } else if (captured.abortReason === 'user') {
+                span.setAttribute('push.cancelled', true);
+              } else {
+                span.setStatus({ code: SpanStatusCode.OK });
+              }
+            }
+            span.end();
+          }
+        },
+      );
+    },
+  };
+}
+
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
 
 /**
@@ -499,6 +571,10 @@ export const streamOpenRouterChat: StreamChatFn = async (...args) => {
   const adapted = createProviderStreamAdapter<ChatMessage>(openrouterWithReasoning, 'openrouter', {
     defaultModel: modelOverride || getOpenRouterModelName(),
     timeouts,
+    // Telemetry closes the observability gap noted in PR #384: OpenRouter
+    // traffic now emits `push.model.stream` spans with the same attribute
+    // vocabulary as the legacy `streamSSEChatOnce` path.
+    telemetry: buildAdapterTelemetry(),
   });
 
   return adapted(...args);

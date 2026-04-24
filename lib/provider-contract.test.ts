@@ -711,3 +711,401 @@ describe('createProviderStreamAdapter timer machinery', () => {
     expect(msg).toMatch(/no events for 5s/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Telemetry hook
+// ---------------------------------------------------------------------------
+
+describe('createProviderStreamAdapter telemetry hook', () => {
+  const messages: LlmMessage[] = [
+    { id: '1', role: 'user', content: 'hi', timestamp: 0 },
+    { id: '2', role: 'assistant', content: 'previous reply', timestamp: 1 },
+  ];
+  const provider: AIProviderType = 'openrouter';
+  const testOptions = { defaultModel: 'test-model' };
+
+  async function streamFrom(events: PushStreamEvent[]): Promise<PushStream> {
+    return vi.fn().mockImplementation(async function* () {
+      for (const e of events) yield e;
+    });
+  }
+
+  it('invokes wrap with a start context and finalize with a clean result on done', async () => {
+    const events: PushStreamEvent[] = [
+      { type: 'text_delta', text: 'hello' },
+      { type: 'text_delta', text: ' world' },
+      {
+        type: 'done',
+        finishReason: 'stop',
+        usage: { inputTokens: 7, outputTokens: 11, totalTokens: 18 },
+      },
+    ];
+    const stream = await streamFrom(events);
+
+    let capturedCtx: unknown;
+    let capturedResult: unknown;
+    const telemetry = {
+      wrap: vi.fn(async (ctx: unknown, run: (finalize: (r: unknown) => void) => Promise<void>) => {
+        capturedCtx = ctx;
+        await run((r) => {
+          capturedResult = r;
+        });
+      }),
+    };
+
+    const adapted = createProviderStreamAdapter(stream, provider, {
+      ...testOptions,
+      telemetry,
+    });
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      () => {},
+    );
+
+    expect(telemetry.wrap).toHaveBeenCalledTimes(1);
+    expect(capturedCtx).toEqual({
+      provider: 'openrouter',
+      model: 'test-model',
+      messageCount: 2,
+    });
+    expect(capturedResult).toEqual({
+      abortReason: null,
+      eventCount: 3,
+      textChars: 'hello'.length + ' world'.length,
+      reasoningChars: 0,
+      usage: { inputTokens: 7, outputTokens: 11, totalTokens: 18 },
+      error: undefined,
+    });
+  });
+
+  it('tallies reasoning_delta chars separately and preserves reasoning_end in event count', async () => {
+    const events: PushStreamEvent[] = [
+      { type: 'reasoning_delta', text: 'thinking' },
+      { type: 'reasoning_delta', text: ' more' },
+      { type: 'reasoning_end' },
+      { type: 'text_delta', text: 'answer' },
+      { type: 'done', finishReason: 'stop' },
+    ];
+    const stream = await streamFrom(events);
+
+    let capturedResult: unknown;
+    const adapted = createProviderStreamAdapter(stream, provider, {
+      ...testOptions,
+      telemetry: {
+        wrap: async (_ctx, run) => {
+          await run((r) => {
+            capturedResult = r;
+          });
+        },
+      },
+    });
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+    );
+
+    expect(capturedResult).toMatchObject({
+      eventCount: 5,
+      textChars: 'answer'.length,
+      reasoningChars: 'thinking'.length + ' more'.length,
+      abortReason: null,
+    });
+  });
+
+  it('reports abortReason and error on timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      // Use the signal-aware controllable stream from the timer-machinery
+      // suite above — it respects `req.signal` so when the event timer
+      // fires the generator returns instead of hanging forever.
+      const { stream } = makeControllableEventStream();
+
+      let capturedResult: AdapterTimeoutEndLike | undefined;
+      const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+        ...testOptions,
+        timeouts: {
+          eventTimeoutMs: 5_000,
+          errorMessages: { event: (s) => `event ${s}s` },
+        },
+        telemetry: {
+          wrap: async (_ctx, run) => {
+            await run((r) => {
+              capturedResult = r as AdapterTimeoutEndLike;
+            });
+          },
+        },
+      });
+      const done = adapted(
+        messages,
+        () => {},
+        () => {},
+        () => {},
+      );
+      await vi.advanceTimersByTimeAsync(6_000);
+      await done;
+
+      expect(capturedResult?.abortReason).toBe('event');
+      expect(capturedResult?.error?.message).toBe('event 5s');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports abortReason user and no error on external abort', async () => {
+    const controller = new AbortController();
+    const stream: PushStream = vi.fn().mockImplementation(async function* () {
+      yield { type: 'text_delta', text: 'a' };
+      controller.abort();
+      yield { type: 'text_delta', text: 'b' };
+    });
+
+    let capturedResult: AdapterTimeoutEndLike | undefined;
+    const adapted = createProviderStreamAdapter(stream, provider, {
+      ...testOptions,
+      telemetry: {
+        wrap: async (_ctx, run) => {
+          await run((r) => {
+            capturedResult = r as AdapterTimeoutEndLike;
+          });
+        },
+      },
+    });
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      controller.signal,
+    );
+
+    expect(capturedResult?.abortReason).toBe('user');
+    expect(capturedResult?.error).toBeUndefined();
+  });
+
+  it('reports thrown upstream error via result.error', async () => {
+    const stream: PushStream = vi.fn().mockImplementation(async function* () {
+      throw new Error('network boom');
+    });
+
+    let capturedResult: AdapterTimeoutEndLike | undefined;
+    const adapted = createProviderStreamAdapter(stream, provider, {
+      ...testOptions,
+      telemetry: {
+        wrap: async (_ctx, run) => {
+          await run((r) => {
+            capturedResult = r as AdapterTimeoutEndLike;
+          });
+        },
+      },
+    });
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      () => {},
+    );
+
+    expect(capturedResult?.abortReason).toBeNull();
+    expect(capturedResult?.error?.message).toBe('network boom');
+  });
+
+  it('no-op path works with telemetry omitted (backward compat)', async () => {
+    const stream = await streamFrom([
+      { type: 'text_delta', text: 'hi' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const adapted = createProviderStreamAdapter(stream, provider, testOptions);
+    const onDone = vi.fn();
+    await adapted(
+      messages,
+      () => {},
+      onDone,
+      () => {},
+    );
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  // ----------------------------------------------------------------------
+  // Review-feedback regression guards (PR #385)
+  // ----------------------------------------------------------------------
+
+  it('passes the same Error instance to onError and telemetry result on timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const { stream } = makeControllableEventStream();
+      let capturedTelemetryError: Error | undefined;
+      let capturedCallerError: Error | undefined;
+      const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+        ...testOptions,
+        timeouts: {
+          eventTimeoutMs: 5_000,
+          errorMessages: { event: (s) => `event ${s}s` },
+        },
+        telemetry: {
+          wrap: async (_ctx, run) => {
+            await run((r) => {
+              capturedTelemetryError = r.error;
+            });
+          },
+        },
+      });
+      const done = adapted(
+        messages,
+        () => {},
+        () => {},
+        (e) => {
+          capturedCallerError = e;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(6_000);
+      await done;
+
+      expect(capturedCallerError).toBeDefined();
+      expect(capturedTelemetryError).toBeDefined();
+      // Same identity — not two Error instances with the same message.
+      expect(capturedCallerError).toBe(capturedTelemetryError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('forwards hasSandbox and workspaceMode into the telemetry start context', async () => {
+    const events: PushStreamEvent[] = [{ type: 'done', finishReason: 'stop' }];
+    const stream: PushStream = vi.fn().mockImplementation(async function* () {
+      for (const e of events) yield e;
+    });
+    let capturedCtx: AdapterTelemetryStartContextLike | undefined;
+    const adapted = createProviderStreamAdapter(stream, provider, {
+      ...testOptions,
+      telemetry: {
+        wrap: async (ctx, run) => {
+          capturedCtx = ctx as AdapterTelemetryStartContextLike;
+          await run(() => {});
+        },
+      },
+    });
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      () => {},
+      undefined,
+      { mode: 'workspace', description: 'foo' } as unknown as undefined,
+      true,
+    );
+    expect(capturedCtx).toMatchObject({
+      provider: 'openrouter',
+      hasSandbox: true,
+      workspaceMode: 'workspace',
+    });
+  });
+
+  it('omits workspaceMode when no workspaceContext is supplied', async () => {
+    const events: PushStreamEvent[] = [{ type: 'done', finishReason: 'stop' }];
+    const stream: PushStream = vi.fn().mockImplementation(async function* () {
+      for (const e of events) yield e;
+    });
+    let capturedCtx: AdapterTelemetryStartContextLike | undefined;
+    const adapted = createProviderStreamAdapter(stream, provider, {
+      ...testOptions,
+      telemetry: {
+        wrap: async (ctx, run) => {
+          capturedCtx = ctx as AdapterTelemetryStartContextLike;
+          await run(() => {});
+        },
+      },
+    });
+    await adapted(
+      messages,
+      () => {},
+      () => {},
+      () => {},
+    );
+    expect(capturedCtx?.workspaceMode).toBeUndefined();
+  });
+
+  it('falls back to no-telemetry path when wrap rejects before invoking run', async () => {
+    const events: PushStreamEvent[] = [
+      { type: 'text_delta', text: 'hi' },
+      { type: 'done', finishReason: 'stop' },
+    ];
+    const stream: PushStream = vi.fn().mockImplementation(async function* () {
+      for (const e of events) yield e;
+    });
+    const onDone = vi.fn();
+    const onError = vi.fn();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const adapted = createProviderStreamAdapter(stream, provider, {
+      ...testOptions,
+      telemetry: {
+        wrap: async () => {
+          throw new Error('tracer broken');
+        },
+      },
+    });
+    await adapted(messages, () => {}, onDone, onError);
+
+    // The ProviderStreamFn contract still fires — stream runs via fallback.
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('swallows wrap rejections that happen after run settled (no second settlement)', async () => {
+    const events: PushStreamEvent[] = [{ type: 'done', finishReason: 'stop' }];
+    const stream: PushStream = vi.fn().mockImplementation(async function* () {
+      for (const e of events) yield e;
+    });
+    const onDone = vi.fn();
+    const onError = vi.fn();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const adapted = createProviderStreamAdapter(stream, provider, {
+      ...testOptions,
+      telemetry: {
+        wrap: async (_ctx, run) => {
+          await run(() => {});
+          throw new Error('post-run telemetry failure');
+        },
+      },
+    });
+    await adapted(messages, () => {}, onDone, onError);
+
+    // onDone already fired inside `run`; post-run wrap error must not
+    // trigger a second settlement.
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+});
+
+// Helper shape for start-context assertions — avoids awkward casts in tests.
+interface AdapterTelemetryStartContextLike {
+  provider: string;
+  model: string;
+  messageCount: number;
+  hasSandbox?: boolean;
+  workspaceMode?: string;
+}
+
+// Helper shape used by the telemetry tests above.
+interface AdapterTimeoutEndLike {
+  abortReason: 'event' | 'content' | 'total' | 'user' | null;
+  eventCount: number;
+  textChars: number;
+  reasoningChars: number;
+  usage?: StreamUsage;
+  error?: Error;
+}
