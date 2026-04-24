@@ -545,11 +545,6 @@ export function ChatInput({
   const openAdapterModelList = providerControls?.openadapterModelOptions ?? EMPTY_MODEL_OPTIONS;
   const openAdapterFallbackModel = providerControls?.openadapterModel ?? '';
 
-  const openRouterModelOptions = useMemo(
-    () => renderGroupedModelOptions(openRouterModelList, 'openrouter'),
-    [openRouterModelList],
-  );
-
   const cloudflareModelOptions = useMemo(
     () => renderGroupedModelOptions(cloudflareModelList, 'cloudflare'),
     [cloudflareModelList],
