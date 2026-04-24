@@ -299,6 +299,13 @@ export interface CoderJobCardData {
    * JobCard to freeze the elapsed timer at the real end time
    * instead of resetting it to 0. */
   finishedAt?: number;
+  /** Client-side wall clock of the most recent SSE event received for
+   * this job. Updated on every dispatched run event (started, completed,
+   * failed, and any future progress events). Paired with `status ===
+   * 'running'` to detect runs that have gone quiet past a stall
+   * threshold — lets the JobCard surface a cancel affordance before the
+   * DO's 30-minute wall-clock alarm eventually fires. */
+  lastEventAt?: number;
   /** Last `subagent.started` detail or `subagent.completed` summary. */
   latestStatusLine?: string;
   /** Populated on terminal completed/cancelled events. */

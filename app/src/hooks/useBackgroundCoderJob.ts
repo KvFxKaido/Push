@@ -272,6 +272,10 @@ export function useBackgroundCoderJob({
       void _serverTs;
       appendRunEvent(chatId, eventInput as RunEventInput);
 
+      // Every dispatched event counts as server activity; the JobCard
+      // uses lastEventAt with status='running' to detect stalled runs.
+      const eventAt = Date.now();
+
       // Card + persistence updates keyed off the event type.
       switch (runEvent.type) {
         case 'subagent.started': {
@@ -282,6 +286,7 @@ export function useBackgroundCoderJob({
           upsertJobCardData(chatId, jobId, {
             status: 'running',
             latestStatusLine: runEvent.detail ?? 'Running',
+            lastEventAt: eventAt,
           });
           break;
         }
@@ -296,6 +301,7 @@ export function useBackgroundCoderJob({
             latestStatusLine: 'Completed',
             summary: runEvent.summary,
             finishedAt,
+            lastEventAt: eventAt,
           });
           // Do NOT emit DELEGATION_COMPLETED here. The foreground
           // orchestrator already emitted it synchronously at
@@ -329,6 +335,7 @@ export function useBackgroundCoderJob({
             latestStatusLine: cancelled ? 'Cancelled' : 'Failed',
             error: runEvent.error,
             finishedAt,
+            lastEventAt: eventAt,
           });
           // See subagent.completed above — same reason for omitting
           // `emitRunEngineEvent(DELEGATION_COMPLETED)`.
@@ -344,8 +351,11 @@ export function useBackgroundCoderJob({
         default:
           // Phase 1 only emits the three above. Anything else is
           // either a future event type (benign — appended to the
-          // journal already) or a drift — logged for visibility.
+          // journal already, and still counted as activity so the
+          // stall clock resets) or a drift that a future PR will want
+          // to handle explicitly.
           upsertJobEntry(chatId, jobId, { lastEventId: runEvent.id });
+          upsertJobCardData(chatId, jobId, { lastEventAt: eventAt });
           break;
       }
     },
@@ -486,6 +496,11 @@ export function useBackgroundCoderJob({
           chatId: input.chatId,
           status: 'queued',
           startedAt,
+          // Seed lastEventAt so stall detection has a baseline before
+          // the first SSE event arrives. Without this, a run stuck
+          // mid-queue would look "fresh" (undefined → null elapsed)
+          // and never trigger the stall banner.
+          lastEventAt: startedAt,
           taskPreview: input.taskPreview,
           latestStatusLine: 'Queued',
         },

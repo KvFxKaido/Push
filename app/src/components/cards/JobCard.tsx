@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Bot, CheckCircle2, CircleDashed, Loader2, Ban, TriangleAlert } from 'lucide-react';
+import {
+  Bot,
+  CheckCircle2,
+  CircleDashed,
+  Loader2,
+  Ban,
+  TriangleAlert,
+  XCircle,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { BackgroundJobStatus, CoderJobCardData } from '@/types';
 import {
@@ -17,6 +25,15 @@ import {
   CARD_TEXT_WARNING,
   formatElapsedTime,
 } from '@/lib/utils';
+
+// A run that hasn't produced a server event in this long while still
+// `running` is surfaced to the user with a cancel affordance. Sized
+// generously so healthy long runs don't false-positive: Phase 1 emits
+// subagent.started and then nothing until terminal, so a 2-minute model
+// thinking burst is routine. At 3 minutes of silence we start nudging
+// the user, and the DO's 30-minute wall-clock alarm is still the
+// authoritative backstop.
+const STALL_WARNING_THRESHOLD_MS = 3 * 60 * 1000;
 
 function getStatusLabel(status: BackgroundJobStatus): string {
   switch (status) {
@@ -56,6 +73,23 @@ const STATUS_ICONS: Record<BackgroundJobStatus, LucideIcon> = {
   cancelled: Ban,
 };
 
+async function postCancel(jobId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+    // fetch() only rejects on network-level failure; a 4xx/5xx response
+    // still resolves. Without the res.ok check a rejected cancel would
+    // look like a success and leave the button stuck in "Cancelling…".
+    if (!res.ok) {
+      console.warn('[JobCard] Cancel request rejected', jobId, res.status);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[JobCard] Failed to cancel job', jobId, err);
+    return false;
+  }
+}
+
 export function JobCard({ data }: { data: CoderJobCardData }) {
   const classes = getStatusClasses(data.status);
   const StatusIcon = STATUS_ICONS[data.status];
@@ -72,10 +106,41 @@ export function JobCard({ data }: { data: CoderJobCardData }) {
     return () => clearInterval(id);
   }, [isActive]);
 
+  // Disable Cancel after a single click so impatient taps don't spam
+  // /cancel. Terminal states are terminal server-side, so there's no
+  // "this job might come back" path we need to reset for.
+  const [cancelRequested, setCancelRequested] = useState(false);
+
   const endTime = isActive ? now : (data.finishedAt ?? now);
   const elapsed = Math.max(0, endTime - data.startedAt);
   const elapsedLabel = formatElapsedTime(elapsed);
   const statusLine = data.latestStatusLine ?? getStatusLabel(data.status);
+
+  const lastEventAt = data.lastEventAt ?? data.startedAt;
+  const silentFor = Math.max(0, now - lastEventAt);
+  // A job that stays 'queued' past the threshold is almost always stuck
+  // client-side — the SSE stream never attached or `subagent.started`
+  // never arrived — and cancel is the same affordance a user would want
+  // either way. `queued` is otherwise a very brief optimistic state, so
+  // in practice the banner only fires here when something went wrong.
+  const isStalled =
+    (data.status === 'running' || data.status === 'queued') &&
+    silentFor >= STALL_WARNING_THRESHOLD_MS;
+
+  const handleCancel = async (): Promise<void> => {
+    if (cancelRequested) return;
+    setCancelRequested(true);
+    const ok = await postCancel(data.jobId);
+    if (!ok) {
+      // Re-enable the button so the user can retry. The server's
+      // cancelled event — which normally drives the card to its
+      // terminal state — never fires on a rejected request, so without
+      // this reset we'd leave the UI stuck in "Cancelling…" forever.
+      setCancelRequested(false);
+    }
+    // On success, don't flip UI state — the SSE cancelled event will
+    // transition the card through its normal terminal path.
+  };
 
   return (
     <div className={CARD_SHELL_CLASS}>
@@ -109,6 +174,30 @@ export function JobCard({ data }: { data: CoderJobCardData }) {
         )}
         {data.error && (data.status === 'failed' || data.status === 'cancelled') && (
           <p className={`text-push-sm leading-relaxed ${CARD_TEXT_ERROR}`}>{data.error}</p>
+        )}
+        {isStalled && (
+          <div
+            role="status"
+            className={`flex items-start gap-2 rounded-md border border-push-edge ${CARD_HEADER_BG_WARNING} px-3 py-2`}
+          >
+            <TriangleAlert className={`mt-0.5 h-4 w-4 shrink-0 ${CARD_TEXT_WARNING}`} />
+            <div className="flex-1 min-w-0">
+              <p className={`text-push-xs font-medium ${CARD_TEXT_WARNING}`}>Looks stalled</p>
+              <p className="text-push-2xs text-push-fg-muted">
+                No activity for {formatElapsedTime(silentFor)}. Cancel if the run is stuck — it'll
+                otherwise auto-terminate at the 30-minute mark.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={cancelRequested}
+              className={`flex shrink-0 items-center gap-1 rounded-md border border-push-edge bg-push-bg px-2 py-1 text-push-2xs font-medium ${CARD_TEXT_WARNING} disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              <XCircle className="h-3 w-3" />
+              <span>{cancelRequested ? 'Cancelling…' : 'Cancel'}</span>
+            </button>
+          </div>
         )}
         <p className="text-push-2xs text-push-fg-dim font-mono truncate" title={data.jobId}>
           job {data.jobId}

@@ -74,10 +74,22 @@ const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 // route-specific `TIMEOUT` response instead of burning the outer budget on a
 // single stuck call.
 //
-// The abandoned exec continues in the container — we can't cancel a running
-// command through the SDK — but we stop waiting, let the route return 504,
-// and the next call can reach a healthier shard.
+// Pairs with `CONTAINER_EXEC_TIMEOUT_SECONDS` below: the container-side shell
+// `timeout` kills the process a few seconds earlier so the SDK call returns
+// cleanly (exit_code=124) instead of being abandoned. The SDK-level deadline
+// is still the safety net for the case where the gRPC connection itself is
+// wedged and no amount of in-container killing can make bytes flow back.
 export const SANDBOX_EXEC_TIMEOUT_MS = 150_000;
+
+// Container-side wall-clock cap for a single user exec. Kept a few seconds
+// below SANDBOX_EXEC_TIMEOUT_MS so the shell's `timeout` reliably fires first
+// and the SDK call returns with exit_code=124 + whatever partial stdout the
+// command had produced, instead of the worker-side deadline abandoning the
+// process and leaving it running inside the container. `-k 5` escalates to
+// SIGKILL five seconds after the initial SIGTERM so a command that ignores
+// termination can't outlast the outer deadline either.
+const CONTAINER_EXEC_TIMEOUT_SECONDS = 140;
+const CONTAINER_EXEC_KILL_GRACE_SECONDS = 5;
 
 export class SandboxExecDeadlineError extends Error {
   readonly timeoutMs: number;
@@ -414,8 +426,23 @@ async function routeExec(env: Env, body: Json): Promise<Response> {
   const workdir = str(body.workdir);
 
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
+  // Wrap the user command in `timeout -k <grace> <seconds> bash -c '<cmd>'`
+  // so the container kills a stuck process instead of leaving it running
+  // after our SDK-level deadline abandons the call. `timeout` lives in
+  // coreutils and is present in every container image we ship. `bash -c`
+  // is deliberate, not `sh -c`: existing callers rely on bashisms like
+  // `set -o pipefail`, `[[ ... ]]`, and arrays (see
+  // `sandbox-read-only-inspection-handlers.ts` search pipeline), which
+  // POSIX sh rejects. The SDK's own default execution path is bash-based,
+  // so keeping bash preserves the pre-wrapper semantic. On timeout fire
+  // the SDK call returns with exit_code=124 + partial stdout so the
+  // caller can see how far the command got.
+  const wrappedCommand =
+    `timeout -k ${CONTAINER_EXEC_KILL_GRACE_SECONDS} ` +
+    `${CONTAINER_EXEC_TIMEOUT_SECONDS} ` +
+    `bash -c ${shellSingleQuote(command)}`;
   const result = await withExecDeadline(
-    sandbox.exec(command, workdir ? { cwd: workdir } : undefined),
+    sandbox.exec(wrappedCommand, workdir ? { cwd: workdir } : undefined),
   );
 
   const stdout = (result as { stdout?: string }).stdout ?? '';
