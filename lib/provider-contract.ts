@@ -166,18 +166,34 @@ type AdapterTimeoutReason = 'event' | 'content' | 'total';
 /**
  * Context handed to the telemetry wrapper at stream start. Stable shape so
  * callers can build span attributes without case-matching every field.
+ *
+ * `hasSandbox` and `workspaceMode` mirror the attributes the legacy
+ * `streamSSEChatOnce` span records, so dashboards keyed on those
+ * attributes keep working for adapted providers.
  */
 export interface AdapterTelemetryStartContext {
   provider: AIProviderType;
   model: string;
   messageCount: number;
+  /** Forwarded from the ProviderStreamFn `hasSandbox` param. */
+  hasSandbox?: boolean;
+  /** `workspaceContext.mode` if the caller supplied a workspace context. */
+  workspaceMode?: string;
 }
 
 /**
  * Outcome summary reported to the telemetry wrapper at stream settlement.
- * One of `abortReason` or `error` is populated on abnormal termination;
- * both are `null`/`undefined` on clean completion via a `done` event or
- * natural stream close.
+ *
+ * On abnormal termination, `abortReason`, `error`, or both may be populated:
+ * - Timeouts set `abortReason` to `event`/`content`/`total` AND set `error`
+ *   to the rendered timeout message (so telemetry and the caller's
+ *   `onError` see the same Error instance).
+ * - External aborts set `abortReason: 'user'` and leave `error` undefined
+ *   (mirrors the "cancelled is not an error" convention of the legacy path).
+ * - Upstream thrown errors set `error` and leave `abortReason: null`.
+ *
+ * On clean completion via a `done` event or natural stream close,
+ * `abortReason` is `null` and `error` is `undefined`.
  */
 export interface AdapterTelemetryEndResult {
   abortReason: AdapterTimeoutReason | 'user' | null;
@@ -329,9 +345,11 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
       }, timeouts.totalTimeoutMs);
     }
 
-    const settleTimeout = (reason: AdapterTimeoutReason) => {
-      onError(new Error(renderAdapterTimeoutMessage(reason, timeouts ?? {})));
-    };
+    // Build a single Error instance on timeout so telemetry's `terminalError`
+    // and the caller's `onError` share stack + identity — matters for code
+    // paths that instanceof-check or inspect stack traces.
+    const buildTimeoutError = (reason: AdapterTimeoutReason): Error =>
+      new Error(renderAdapterTimeoutMessage(reason, timeouts ?? {}));
 
     // Telemetry counters — tallied during iteration, handed to the
     // telemetry hook at settlement via `finalize()`.
@@ -407,9 +425,8 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
           return;
         }
         if (abortReason === 'event' || abortReason === 'content' || abortReason === 'total') {
-          const msg = renderAdapterTimeoutMessage(abortReason, timeouts ?? {});
-          terminalError = new Error(msg);
-          settleTimeout(abortReason);
+          terminalError = buildTimeoutError(abortReason);
+          onError(terminalError);
           return;
         }
         // Stream drained cleanly without a trailing `done` — treat as
@@ -422,9 +439,8 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
           return;
         }
         if (abortReason === 'event' || abortReason === 'content' || abortReason === 'total') {
-          const msg = renderAdapterTimeoutMessage(abortReason, timeouts ?? {});
-          terminalError = new Error(msg);
-          settleTimeout(abortReason);
+          terminalError = buildTimeoutError(abortReason);
+          onError(terminalError);
           return;
         }
         if (err instanceof Error && err.name === 'AbortError') {
@@ -450,13 +466,53 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
     };
 
     const telemetry = options?.telemetry;
+    // `workspaceMode` is extracted defensively — the legacy `ProviderStreamFn`
+    // generic leaves `W` unconstrained, so we can't assume a `.mode` field.
+    // Real Web callers narrow to `WorkspaceContext` which has `mode`; CLI
+    // callers pass `unknown` and we leave it out.
+    const workspaceRecord =
+      workspaceContext && typeof workspaceContext === 'object'
+        ? (workspaceContext as { mode?: unknown })
+        : undefined;
+    const workspaceMode =
+      typeof workspaceRecord?.mode === 'string' ? workspaceRecord.mode : undefined;
+
+    const telemetryCtx: AdapterTelemetryStartContext = {
+      provider,
+      model: modelOverride || options?.defaultModel || 'unknown',
+      messageCount: messages.length,
+      hasSandbox,
+      workspaceMode,
+    };
+
+    let runEntered = false;
+    const runBodyTracked = async (finalize: (result: AdapterTelemetryEndResult) => void) => {
+      runEntered = true;
+      await runBody(finalize);
+    };
+
     if (telemetry?.wrap) {
-      const telemetryCtx: AdapterTelemetryStartContext = {
-        provider,
-        model: modelOverride || options?.defaultModel || 'unknown',
-        messageCount: messages.length,
-      };
-      await telemetry.wrap(telemetryCtx, runBody);
+      try {
+        await telemetry.wrap(telemetryCtx, runBodyTracked);
+      } catch (err) {
+        // Telemetry hook failed. If it never invoked `run`, the adapter
+        // never honored the ProviderStreamFn contract (onError/onDone never
+        // fired, signal listener not cleaned up). Fall back to the
+        // no-telemetry path so streaming still works. If `run` already
+        // fired, the stream already settled — swallow the post-settle
+        // error so it doesn't surface as a second settlement.
+        if (!runEntered) {
+          console.warn(
+            '[Push] AdapterTelemetry.wrap failed before invoking run; falling back to no-telemetry path',
+            err,
+          );
+          await runBody(() => {
+            /* telemetry failed; no-op finalize */
+          });
+        } else {
+          console.warn('[Push] AdapterTelemetry.wrap rejected after run settled; swallowing', err);
+        }
+      }
     } else {
       await runBody(() => {
         /* no-op when no telemetry hook is wired */

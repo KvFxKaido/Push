@@ -1,6 +1,7 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type {
   AdapterTelemetry,
+  AdapterTelemetryEndResult,
   AdapterTelemetryStartContext,
   AdapterTimeoutConfig,
   PreCompactEvent,
@@ -475,7 +476,7 @@ function buildAdapterTelemetry(): AdapterTelemetry {
   return {
     wrap: async (
       ctx: AdapterTelemetryStartContext,
-      run: (finalize: (result: AdapterTelemetryEndResultLike) => void) => Promise<void>,
+      run: (finalize: (result: AdapterTelemetryEndResult) => void) => Promise<void>,
     ) => {
       await tracer.startActiveSpan(
         'model.stream',
@@ -485,10 +486,12 @@ function buildAdapterTelemetry(): AdapterTelemetry {
             'push.provider': ctx.provider,
             'push.model': ctx.model,
             'push.message_count': ctx.messageCount,
+            ...(typeof ctx.hasSandbox === 'boolean' ? { 'push.has_sandbox': ctx.hasSandbox } : {}),
+            ...(ctx.workspaceMode ? { 'push.workspace_mode': ctx.workspaceMode } : {}),
           },
         },
         async (span) => {
-          let captured: AdapterTelemetryEndResultLike | null = null;
+          let captured: AdapterTelemetryEndResult | null = null;
           try {
             await run((result) => {
               captured = result;
@@ -518,18 +521,6 @@ function buildAdapterTelemetry(): AdapterTelemetry {
       );
     },
   };
-}
-
-// Local mirror of AdapterTelemetryEndResult — the typed import from lib
-// widens `abortReason` to accept `null`, and inlining the shape here lets
-// us use it as a `let` initializer without adding an extra import alias.
-interface AdapterTelemetryEndResultLike {
-  abortReason: 'event' | 'content' | 'total' | 'user' | null;
-  eventCount: number;
-  textChars: number;
-  reasoningChars: number;
-  usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
-  error?: Error;
 }
 
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
