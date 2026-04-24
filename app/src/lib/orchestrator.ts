@@ -158,7 +158,12 @@ export function buildChatInstructionsBlock(profile?: UserProfile): string {
 
 export { buildUserIdentityBlock };
 
-function toLLMMessages(
+/**
+ * Exported so PushStream implementations (e.g. `openrouter-stream.ts`) can
+ * compose messages client-side with the same prompt-assembly path the
+ * legacy streamSSEChatOnce uses. Not part of the public runtime API.
+ */
+export function toLLMMessages(
   messages: ChatMessage[],
   workspaceContext?: WorkspaceContext,
   hasSandbox?: boolean,
