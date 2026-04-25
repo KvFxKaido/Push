@@ -278,6 +278,18 @@ async function runAuditorCore(
   }
 
   const stream = options.stream;
+  const modelId = options.modelId?.trim();
+  if (!modelId) {
+    return {
+      verdict: 'unsafe',
+      card: {
+        verdict: 'unsafe',
+        summary: 'Auditor configuration error: missing model id',
+        risks: [{ level: 'high', description: 'Auditor failed — defaulting to UNSAFE' }],
+        filesReviewed,
+      },
+    };
+  }
   const contextBlock = runtimeContext ?? '';
   const systemPrompt = new SystemPromptBuilder()
     .set('identity', AUDITOR_SYSTEM_PROMPT)
@@ -320,7 +332,7 @@ async function runAuditorCore(
     stream,
     {
       provider: options.provider,
-      model: options.modelId ?? '',
+      model: modelId,
       messages,
       systemPromptOverride: systemPrompt,
       hasSandbox: false,
@@ -464,6 +476,13 @@ export async function runAuditorEvaluation(
   }
 
   const stream = options.stream;
+  const modelId = options.modelId?.trim();
+  if (!modelId) {
+    return {
+      ...INCOMPLETE_DEFAULT,
+      summary: 'Evaluation configuration error: missing model id',
+    };
+  }
 
   onStatus('Evaluating Coder output...');
 
@@ -534,7 +553,7 @@ export async function runAuditorEvaluation(
     stream,
     {
       provider: options.provider,
-      model: options.modelId ?? '',
+      model: modelId,
       messages,
       systemPromptOverride: EVALUATION_SYSTEM_PROMPT,
       hasSandbox: false,

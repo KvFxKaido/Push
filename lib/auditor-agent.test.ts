@@ -189,6 +189,26 @@ describe('runAuditor (PushStream consumer)', () => {
     expect(result.verdict).toBe('unsafe');
   });
 
+  it('returns UNSAFE without invoking the stream when modelId is missing', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      { type: 'text_delta', text: '{"verdict":"safe","summary":"ok","risks":[]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const result = await runAuditor(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      {
+        provider: 'openrouter',
+        modelId: '   ',
+        stream,
+        resolveRuntimeContext: noopRuntime,
+      },
+      () => {},
+    );
+    expect(result.verdict).toBe('unsafe');
+    expect(result.card.summary).toContain('missing model id');
+    expect(capturedRequest.current).toBeNull();
+  });
+
   it('ignores reasoning_delta and reasoning_end while accumulating text', async () => {
     const { stream } = makePushStream([
       { type: 'reasoning_delta', text: 'thinking about it...' },
@@ -263,5 +283,30 @@ describe('runAuditorEvaluation (PushStream consumer)', () => {
 
     expect(result.verdict).toBe('incomplete');
     expect(result.summary).toContain('eval upstream failed');
+  });
+
+  it('returns INCOMPLETE without invoking the stream when modelId is missing', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      {
+        type: 'text_delta',
+        text: '{"verdict":"complete","summary":"ok","gaps":[],"confidence":"high"}',
+      },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const result = await runAuditorEvaluation(
+      'finish the auth fix',
+      'Updated the auth guard.',
+      null,
+      null,
+      {
+        provider: 'openrouter',
+        modelId: '',
+        stream,
+      },
+      () => {},
+    );
+    expect(result.verdict).toBe('incomplete');
+    expect(result.summary).toContain('missing model id');
+    expect(capturedRequest.current).toBeNull();
   });
 });

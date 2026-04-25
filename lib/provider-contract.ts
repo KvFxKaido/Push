@@ -578,9 +578,32 @@ export function providerStreamFnToPushStream<M extends LlmMessage = LlmMessage, 
         notify();
       };
 
+      // Observe req.signal directly. A misbehaving streamFn that ignores
+      // cancellation (or that hangs without ever calling onDone/onError)
+      // would otherwise leave the wake-loop blocked forever once a consumer
+      // like iteratePushStreamText aborts on timeout. We yield a synthetic
+      // `done` event so the iterator settles cleanly even when the upstream
+      // never fires its own callbacks.
+      const signal = req.signal;
+      const onAbort = () => {
+        if (!done) {
+          queue.push({ type: 'done', finishReason: 'aborted' });
+          done = true;
+          notify();
+        }
+      };
+      if (signal?.aborted) {
+        onAbort();
+      } else {
+        signal?.addEventListener('abort', onAbort, { once: true });
+      }
+
       // Kick off the legacy stream. Swallow its returned promise here — the
       // callbacks are the source of truth; an unhandled rejection from the
-      // streamFn's own promise is caught and converted into an onError.
+      // streamFn's own promise is caught and converted into an onError. If
+      // the streamFn resolves without ever invoking onDone/onError (some
+      // legacy implementations rely on the returned promise alone), we fire
+      // onDone ourselves so the consumer iterator can settle.
       const run = (async () => {
         try {
           await streamFn(
@@ -598,6 +621,7 @@ export function providerStreamFnToPushStream<M extends LlmMessage = LlmMessage, 
             req.onPreCompact,
             req.todoContent,
           );
+          if (!done) onDone();
         } catch (err) {
           if (!done) onError(err instanceof Error ? err : new Error(String(err)));
         }
@@ -621,6 +645,7 @@ export function providerStreamFnToPushStream<M extends LlmMessage = LlmMessage, 
           }
         }
       } finally {
+        signal?.removeEventListener('abort', onAbort);
         // Don't swallow — we want the producer to settle so its resources
         // clean up, but we also don't want to block the consumer that's
         // already exited the iterator.

@@ -1251,6 +1251,56 @@ describe('providerStreamFnToPushStream', () => {
     const events = await collect(providerStreamFnToPushStream(streamFn)(baseRequest));
     expect(events.map((e) => e.type)).toEqual(['text_delta', 'done']);
   });
+
+  it('emits a done event when streamFn resolves without invoking onDone/onError', async () => {
+    const streamFn: ProviderStreamFn = async (_msgs, onToken) => {
+      onToken('partial');
+      // Resolves silently — no onDone, no onError.
+    };
+    const events = await collect(providerStreamFnToPushStream(streamFn)(baseRequest));
+    expect(events).toEqual([
+      { type: 'text_delta', text: 'partial' },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
+  it('settles with finishReason aborted when req.signal aborts mid-stream', async () => {
+    const controller = new AbortController();
+    // streamFn that ignores cancellation and never settles its callbacks.
+    const streamFn: ProviderStreamFn = (_msgs, onToken) =>
+      new Promise(() => {
+        onToken('pre-abort');
+      });
+
+    const iter = providerStreamFnToPushStream(streamFn)({
+      ...baseRequest,
+      signal: controller.signal,
+    });
+    const it = iter[Symbol.asyncIterator]();
+    const first = await it.next();
+    expect(first.value).toEqual({ type: 'text_delta', text: 'pre-abort' });
+    controller.abort();
+    const second = await it.next();
+    expect(second.value).toEqual({ type: 'done', finishReason: 'aborted' });
+    const third = await it.next();
+    expect(third.done).toBe(true);
+  });
+
+  it('returns immediately with a done event when req.signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let invoked = false;
+    const streamFn: ProviderStreamFn = async () => {
+      invoked = true;
+    };
+    const events = await collect(
+      providerStreamFnToPushStream(streamFn)({ ...baseRequest, signal: controller.signal }),
+    );
+    expect(events).toEqual([{ type: 'done', finishReason: 'aborted' }]);
+    // The streamFn is still kicked off (so it can clean up resources via signal),
+    // but the bridge already settled before its callbacks could matter.
+    expect(invoked).toBe(true);
+  });
 });
 
 interface AdapterTelemetryStartContextLike {
