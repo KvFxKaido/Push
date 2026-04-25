@@ -451,6 +451,57 @@ describe('zenStream', () => {
     });
   });
 
+  it('yields a tool_call_delta per fragment so the adapter sees progress while buffering', async () => {
+    const { push } = installStreamFetch(fetchMock);
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
+
+    push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [{ index: 0, function: { name: 'sandbox_write_file' } }],
+            },
+          },
+        ],
+      }),
+    );
+    push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [{ index: 0, function: { arguments: '{"path":"foo.ts"' } }],
+            },
+          },
+        ],
+      }),
+    );
+    push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [{ index: 0, function: { arguments: ',"content":"x"}' } }],
+            },
+          },
+        ],
+      }),
+    );
+    push(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', delta: {} }] }));
+
+    const out = await events;
+    expect(out.filter((e) => e.type === 'tool_call_delta')).toHaveLength(3);
+    expect(out.map((e) => e.type)).toEqual([
+      'tool_call_delta',
+      'tool_call_delta',
+      'tool_call_delta',
+      'text_delta',
+      'done',
+    ]);
+  });
+
   it('drops native tool_calls whose name is not in KNOWN_TOOL_NAMES', async () => {
     const { push } = installStreamFetch(fetchMock);
     const { zenStream } = await import('./zen-stream');

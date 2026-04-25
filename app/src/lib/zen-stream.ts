@@ -232,8 +232,13 @@ export async function* zenStream(
             }
           }
 
+          // See `openrouter-stream.ts` — yield a `tool_call_delta` per
+          // fragment so the adapter's content timer counts native tool-arg
+          // streaming as progress rather than tripping `contentTimeoutMs`
+          // while we're buffering toward the eventual fenced-JSON flush.
           const toolCalls = delta?.tool_calls;
           if (Array.isArray(toolCalls)) {
+            let observedFragment = false;
             for (const tc of toolCalls) {
               const idx = typeof tc?.index === 'number' ? tc.index : 0;
               const fnCall = tc?.function;
@@ -242,6 +247,10 @@ export async function* zenStream(
               if (typeof fnCall.name === 'string') entry.name = fnCall.name;
               if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
               pendingNativeToolCalls.set(idx, entry);
+              observedFragment = true;
+            }
+            if (observedFragment) {
+              yield { type: 'tool_call_delta' };
             }
           }
 

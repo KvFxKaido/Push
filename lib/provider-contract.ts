@@ -89,6 +89,13 @@ export type PushStreamEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'reasoning_delta'; text: string }
   | { type: 'reasoning_end' }
+  // Native `delta.tool_calls` fragment from an OpenAI-shaped provider.
+  // Streams emit one per fragment so the adapter's content timer can see
+  // progress while a model is mid-way through a long tool-arg payload.
+  // The fragment payload itself stays internal to the provider stream — by
+  // the time a consumer cares about tool dispatch, the stream has flushed
+  // the assembled call as fenced JSON `text_delta` on finish.
+  | { type: 'tool_call_delta' }
   | {
       type: 'done';
       finishReason: 'stop' | 'length' | 'tool_calls' | 'aborted' | 'unknown';
@@ -409,6 +416,14 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
               // Structural signal — doesn't reset content timer because it
               // isn't progress toward user-visible output.
               onThinkingToken?.(null);
+              break;
+            case 'tool_call_delta':
+              // Provider is mid-stream on a native tool-call payload. Counts
+              // as content progress so the contentTimer doesn't trip while
+              // a model is streaming a long tool-arg payload that flushes as
+              // a single text_delta only on finish_reason. Doesn't surface
+              // to the legacy callbacks — assembly stays inside the stream.
+              resetContentTimer();
               break;
             case 'done':
               clearAllTimers();

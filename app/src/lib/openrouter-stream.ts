@@ -244,10 +244,14 @@ export async function* openrouterStream(
           }
 
           // Native tool_call fragments — accumulate by index; the name and
-          // arguments often arrive split across frames. We don't yield
-          // anything per-fragment — that happens once on finish.
+          // arguments often arrive split across frames. The assembled call is
+          // flushed as fenced JSON `text_delta` on finish_reason / [DONE], but
+          // we yield a `tool_call_delta` per fragment so the adapter's content
+          // timer treats long tool-arg payloads as activity rather than
+          // tripping `contentTimeoutMs` while we're buffering.
           const toolCalls = delta?.tool_calls;
           if (Array.isArray(toolCalls)) {
+            let observedFragment = false;
             for (const tc of toolCalls) {
               const idx = typeof tc?.index === 'number' ? tc.index : 0;
               const fnCall = tc?.function;
@@ -256,6 +260,10 @@ export async function* openrouterStream(
               if (typeof fnCall.name === 'string') entry.name = fnCall.name;
               if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
               pendingNativeToolCalls.set(idx, entry);
+              observedFragment = true;
+            }
+            if (observedFragment) {
+              yield { type: 'tool_call_delta' };
             }
           }
 

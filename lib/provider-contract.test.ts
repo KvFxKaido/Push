@@ -528,6 +528,35 @@ describe('createProviderStreamAdapter timer machinery', () => {
     expect(onDone).toHaveBeenCalled();
   });
 
+  it('tool_call_delta resets contentTimeoutMs', async () => {
+    // Native tool-call streaming sends fragments without producing any
+    // user-visible text until the call assembles and flushes on finish. The
+    // adapter must treat tool_call_delta as content progress so a model
+    // streaming a long tool-arg payload doesn't trip contentTimeoutMs while
+    // the stream is buffering toward the eventual fenced-JSON flush.
+    const { stream, push, end } = makeControllableEventStream();
+    const adapted = createProviderStreamAdapter(stream as PushStream, provider, {
+      ...testOptions,
+      timeouts,
+    });
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const done = adapted(messages, () => {}, onDone, onError);
+
+    await flushMicrotasks();
+    for (let i = 0; i < 5; i++) {
+      push({ type: 'tool_call_delta' });
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(8_000);
+    }
+    end();
+    await flushMicrotasks();
+    await done;
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalled();
+  });
+
   it('reasoning_end does NOT reset contentTimeoutMs', async () => {
     // Events arrive (reset eventTimer) but none carry content. Content timer
     // should still fire at contentTimeoutMs since reasoning_end is
