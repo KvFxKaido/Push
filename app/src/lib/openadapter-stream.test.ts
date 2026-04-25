@@ -276,4 +276,27 @@ describe('openadapterStream', () => {
     const out = await events;
     expect(out.filter((e) => e.type === 'text_delta')).toHaveLength(0);
   });
+
+  it('omits Authorization entirely when the client key is empty', async () => {
+    // standardAuth('OPENADAPTER_API_KEY') on the Worker reads any non-empty
+    // client Authorization as "key supplied" and skips the keyMissingError
+    // 401, so sending `Bearer ` would bypass the configured fallback and
+    // forward an empty bearer to OpenAdapter. The stream therefore omits
+    // Authorization when there's no client key.
+    vi.doMock('@/hooks/useOpenAdapterConfig', () => ({
+      getOpenAdapterKey: () => '',
+    }));
+    installStreamFetch(fetchMock);
+    const { openadapterStream } = await import('./openadapter-stream');
+    const iter = openadapterStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).toHaveBeenCalled();
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
+  });
 });

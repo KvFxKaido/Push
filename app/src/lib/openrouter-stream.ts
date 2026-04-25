@@ -67,13 +67,17 @@ export async function* openrouterStream(
 
   // 3. Headers. The Worker proxy overrides Authorization server-side when
   //    OPENROUTER_API_KEY is configured; we still send the client-side key
-  //    so dev (Vite passthrough) and unconfigured-Worker paths work.
-  const apiKey = getOpenRouterKey() ?? '';
+  //    so dev (Vite passthrough) and unconfigured-Worker paths work. Omit
+  //    the header entirely when no client key is configured — `standardAuth`
+  //    treats any non-empty client `Authorization` as "key supplied" and
+  //    skips the Worker's `keyMissingError` 401, so sending `Bearer ` would
+  //    bypass the configured fallback and forward an empty bearer upstream.
+  const apiKey = (getOpenRouterKey() ?? '').trim();
   const requestId = createRequestId('chat');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     [REQUEST_ID_HEADER]: requestId,
-    Authorization: `Bearer ${apiKey}`,
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
   };
   injectTraceHeaders(headers);
 

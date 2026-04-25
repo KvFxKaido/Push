@@ -2,6 +2,7 @@ import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PreCompactEvent, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
 import { ollamaStream } from './ollama-stream';
+import { cloudflareStream } from './cloudflare-stream';
 import { openrouterStream } from './openrouter-stream';
 import { zenStream } from './zen-stream';
 import { kilocodeStream } from './kilocode-stream';
@@ -182,47 +183,6 @@ function buildVertexStreamConfig(modelOverride?: string): StreamProviderConfig {
 // ---------------------------------------------------------------------------
 
 const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
-  cloudflare: {
-    getKey: () => 'cloudflare-worker-binding',
-    buildConfig: (_apiKey, modelOverride) => {
-      if (!getCloudflareWorkerConfigured()) {
-        throw new Error('Cloudflare Workers AI is not configured on this Worker');
-      }
-      return {
-        name: 'Cloudflare Workers AI',
-        apiUrl: PROVIDER_URLS.cloudflare.chat,
-        apiKey: '',
-        authHeader: null,
-        model: modelOverride || getCloudflareModelName(),
-        ...STANDARD_TIMEOUTS,
-        // Workers AI can emit keepalive/data frames before textual deltas arrive.
-        // Keep no-content guard slightly looser than generic providers.
-        stallTimeoutMs: 90_000,
-        // Reasoning models hosted on Workers AI (Kimi K2.6 especially)
-        // can spend minutes in an extended thinking prelude before their
-        // first visible token. Those chunks arrive as `reasoning_content`
-        // SSE frames through the worker-providers.ts translation layer;
-        // resetting the stall clock on them keeps a long-but-healthy
-        // think from false-positiving against the 90s stall timer.
-        shouldResetStallOnReasoning: true,
-        errorMessages: {
-          connect: (s) =>
-            `Cloudflare Workers AI didn't respond within ${s}s — the Worker may be cold-starting.`,
-          idle: (s) => `Cloudflare Workers AI stream stalled — no data for ${s}s.`,
-          progress: (s) =>
-            `Cloudflare Workers AI stream stalled — data is arriving but no model progress for ${s}s.`,
-          stall: (s) =>
-            `Cloudflare Workers AI stream stalled — receiving data but no content for ${s}s.`,
-          total: (s) => `Cloudflare Workers AI response exceeded ${s}s total time limit.`,
-          network: 'Cannot reach Cloudflare Workers AI — network error. Check your connection.',
-        },
-        parseError: (p, f) => parseProviderError(p, f, true),
-        checkFinishReason: (c) =>
-          hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-        providerType: 'cloudflare',
-      };
-    },
-  },
   azure: {
     getKey: getAzureKey,
     buildConfig: (apiKey, modelOverride) =>
@@ -356,14 +316,14 @@ export function getActiveProvider(): ActiveProvider {
 }
 
 /**
- * Wrap legacy `streamSSEChat`-based providers (ollama / cloudflare / azure /
- * bedrock / vertex) in a native `PushStream` interface. These providers
- * haven't been ported to per-provider native PushStream implementations yet,
- * so the gateway returns this thin queue/wake adapter that drives
- * `streamSSEChat` with callbacks and yields `PushStreamEvent`s. Exists at
- * the app-side seam so `lib/` stays free of legacy callback code; once each
- * legacy provider is ported (a future sweep), this helper deletes alongside
- * the matching `PROVIDER_STREAM_CONFIGS` entries.
+ * Wrap legacy `streamSSEChat`-based providers (azure / bedrock / vertex)
+ * in a native `PushStream` interface. These providers haven't been ported
+ * to per-provider native PushStream implementations yet, so the gateway
+ * returns this thin queue/wake adapter that drives `streamSSEChat` with
+ * callbacks and yields `PushStreamEvent`s. Exists at the app-side seam so
+ * `lib/` stays free of legacy callback code; once each legacy provider is
+ * ported (a future sweep), this helper deletes alongside the matching
+ * `PROVIDER_STREAM_CONFIGS` entries.
  *
  * Mirrors the queue/wake pattern used in `cli/delegation-entry.ts`'s
  * planner stream — small enough to inline rather than extracting a shared
@@ -487,19 +447,19 @@ function legacyChatPushStream(providerType: string): PushStream<ChatMessage> {
  * gateway-to-consumer seam every agent role (Auditor / Reviewer / Planner /
  * Explorer / DeepReviewer / Coder) consumes via `iteratePushStreamText`.
  *
- * For the seven adapter-routed providers (ollama / openrouter / zen /
- * kilocode / openadapter / nvidia / blackbox), the returned PushStream is
- * the existing native `<provider>Stream` composed with `normalizeReasoning`
- * so inline `<think>…</think>` tags split into the reasoning channel —
- * same composition the legacy `streamXChat` callback exports applied
- * internally.
+ * For the eight adapter-routed providers (ollama / cloudflare / openrouter
+ * / zen / kilocode / openadapter / nvidia / blackbox), the returned
+ * PushStream is the existing native `<provider>Stream` composed with
+ * `normalizeReasoning` so inline `<think>…</think>` tags split into the
+ * reasoning channel — same composition the legacy `streamXChat` callback
+ * exports applied internally.
  *
- * For legacy providers (cloudflare / azure / bedrock / vertex) the
- * gateway returns `legacyChatPushStream(provider)` which wraps the existing
- * `streamSSEChat` callback path into a PushStream. The reasoning channel is
- * surfaced via `onThinkingToken`; no extra `normalizeReasoning` wrap is
- * needed because the legacy SSE path's existing `createThinkTokenParser`
- * already feeds `<think>` tokens through that callback.
+ * For legacy providers (azure / bedrock / vertex) the gateway returns
+ * `legacyChatPushStream(provider)` which wraps the existing `streamSSEChat`
+ * callback path into a PushStream. The reasoning channel is surfaced via
+ * `onThinkingToken`; no extra `normalizeReasoning` wrap is needed because
+ * the legacy SSE path's existing `createThinkTokenParser` already feeds
+ * `<think>` tokens through that callback.
  *
  * Phase 9 of the PushStream gateway migration replaced the consumer-side
  * `providerStreamFnToPushStream` reverse bridge with this gateway: every
@@ -524,6 +484,9 @@ export function getProviderPushStream(provider: ActiveProvider): PushStream<Chat
     case 'ollama':
       stream = (req) => normalizeReasoning(ollamaStream(req));
       break;
+    case 'cloudflare':
+      stream = (req) => normalizeReasoning(cloudflareStream(req));
+      break;
     case 'openrouter':
       stream = (req) => normalizeReasoning(openrouterStream(req));
       break;
@@ -542,7 +505,6 @@ export function getProviderPushStream(provider: ActiveProvider): PushStream<Chat
     case 'blackbox':
       stream = (req) => normalizeReasoning(blackboxStream(req));
       break;
-    case 'cloudflare':
     case 'azure':
     case 'bedrock':
     case 'vertex':
@@ -620,12 +582,13 @@ const PROVIDER_DISPLAY_NAMES: Record<ActiveProvider, string> = {
  * Adapter-routed providers (those on a native PushStream + the SSE pump)
  * get the full timer wrap at the iteration layer — same machinery the
  * deleted `createProviderStreamAdapter` applied per-call. Legacy
- * providers (cloudflare / azure / bedrock / vertex) skip the outer wrap
- * because `streamSSEChat` already owns timer machinery internally;
- * doubling up would duplicate timeout error rendering.
+ * providers (azure / bedrock / vertex) skip the outer wrap because
+ * `streamSSEChat` already owns timer machinery internally; doubling up
+ * would duplicate timeout error rendering.
  */
 const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProvider>([
   'ollama',
+  'cloudflare',
   'openrouter',
   'zen',
   'kilocode',
@@ -722,11 +685,11 @@ export async function streamChat(
   // need the outer chunker + OTEL span wrap because their `<provider>Stream`
   // implementations don't apply either internally — the deleted
   // `withChunkedEmitter` + `createProviderStreamAdapter` used to give them
-  // both. Legacy SSE providers (cloudflare / azure / bedrock / vertex)
-  // skip the outer wrap entirely: `streamSSEChatOnce` already chunks
-  // `onToken` via `createChunkedEmitter` and opens its own `model.stream`
-  // span, so wrapping again here would double-chunk (changing token
-  // cadence) and emit nested spans (skewing dashboards).
+  // both. Legacy SSE providers (azure / bedrock / vertex) skip the outer
+  // wrap entirely: `streamSSEChatOnce` already chunks `onToken` via
+  // `createChunkedEmitter` and opens its own `model.stream` span, so
+  // wrapping again here would double-chunk (changing token cadence) and
+  // emit nested spans (skewing dashboards).
   const useOuterWrap = ADAPTER_ROUTED_PROVIDERS.has(provider);
   const chunker = useOuterWrap ? createChunkedEmitter(onToken) : null;
   const wrappedOnToken = chunker ? (text: string) => chunker.push(text) : onToken;

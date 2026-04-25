@@ -49,12 +49,17 @@ export async function* nvidiaStream(
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
   };
 
-  const apiKey = getNvidiaKey() ?? '';
+  // Omit Authorization entirely when no client key is configured —
+  // `standardAuth` treats any non-empty client `Authorization` as "key
+  // supplied" and skips the Worker's `keyMissingError` 401, so sending
+  // `Bearer ` would bypass the configured fallback and forward an empty
+  // bearer upstream.
+  const apiKey = (getNvidiaKey() ?? '').trim();
   const requestId = createRequestId('chat');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     [REQUEST_ID_HEADER]: requestId,
-    Authorization: `Bearer ${apiKey}`,
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
   };
   injectTraceHeaders(headers);
 
