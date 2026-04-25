@@ -1,6 +1,6 @@
 # Push Roadmap (Canonical)
 
-Last updated: 2026-04-21
+Last updated: 2026-04-24
 
 This is the single source of truth for active product and engineering direction.
 
@@ -29,6 +29,7 @@ Current cycle emphasis: transcript-first CLI ergonomics, selective CLI adoption 
 |---|---|---|---|
 | Push CLI Muscle-Memory UX | in_progress | Continue aligning `push` with Claude Code/Codex-style terminal muscle memory using a transcript-first REPL (no full-screen TUI) | Session flow feels transcript-first (prompting, interrupts, outputs, tool visibility), common tasks require fewer commands/flags, and day-to-day usage no longer depends on roadmap-specific operator knowledge |
 | Selective CLI Adoption of Shared Runtime | in_progress | Bring more of the now-shared runtime substrate into CLI only where it improves the terminal product (task framing, events, memory, later task-graph/runtime features) | Adopted CLI flows use the same runtime semantics as web without introducing new CLI-only semantic drift; any remaining differences are shell-specific by design |
+| PushStream Gateway Migration | in_progress | Migrate model-streaming transport from the 12-arg `ProviderStreamFn` callback contract onto the async-iterable `PushStream` contract. Provider side validated end-to-end (Cloudflare via direct iteration, OpenRouter via `createProviderStreamAdapter` with timer + telemetry parity); consumer side (agent roles) not yet migrated. See `docs/decisions/PushStream Gateway Migration.md` for the phase-by-phase status and §"Recommendation for next" — Auditor migration is the next architecturally-meaningful step | Every agent role consumes `PushStream` events directly; `createProviderStreamAdapter` deletable; `streamSSEChatOnce` legacy path removed |
 | CLI/TUI-lite Ergonomics | planned | Add terminal UX improvements that stop short of a full-screen TUI (session picker, transcript navigation, command shortcuts, compact status surfaces) | Interactive users can navigate session history and active runs faster without leaving the transcript-first model |
 | Chat Surface Evolution | planned | Make chat a first-class surface with cleaner chat-first launcher framing, explicit context escalation, and mode-specific restore behavior | Chat can be described as its own surface instead of a workspace flag, while runtime/storage/auth remain shared |
 | Workspace Publish Follow-through | planned | Polish the post-publish repo-backed handoff and decide the optional empty-repo path after the first publish flow shipped | Publishing a workspace to GitHub feels explicit and understandable end-to-end, and the next empty-repo path is either shipped or clearly scoped |
