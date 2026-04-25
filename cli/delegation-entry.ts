@@ -72,6 +72,15 @@ function mintGraphExecutionId() {
  * Wrap the CLI's native OpenAI-compatible PushStream so the outer SIGINT
  * controller cancels the upstream call alongside `iteratePushStreamText`'s
  * own activity-reset signal.
+ *
+ * Behaviour shift: the planner path no longer inherits `streamCompletion`'s
+ * 3-attempt retry policy on 429/5xx/network — symmetric with the
+ * daemon-provider-stream path and with the web side's
+ * `app/src/lib/openrouter-stream.ts`. A transient upstream failure now
+ * surfaces as a single planner error rather than three silent retries.
+ * `runPlannerCore` is fail-open (planner returning `null` falls back to the
+ * non-delegated `runAssistantLoop`), so the user-visible effect is "plan
+ * unavailable, run the task without delegation" rather than a hard failure.
  */
 function buildPlannerPushStream(
   providerConfig: ProviderConfig,

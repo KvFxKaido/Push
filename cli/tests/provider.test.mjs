@@ -234,6 +234,19 @@ describe('streamCompletion', () => {
     return body;
   }
 
+  /** Build an SSE body that mixes native `reasoning_content` deltas with content. */
+  function buildSSEWithReasoning(reasoningTokens, contentTokens) {
+    let body = '';
+    for (const token of reasoningTokens) {
+      body += `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: token } }] })}\n\n`;
+    }
+    for (const token of contentTokens) {
+      body += `data: ${JSON.stringify({ choices: [{ delta: { content: token } }] })}\n\n`;
+    }
+    body += 'data: [DONE]\n\n';
+    return body;
+  }
+
   /** Create a ReadableStream from a string. */
   function stringToStream(str) {
     const encoder = new TextEncoder();
@@ -805,6 +818,59 @@ describe('streamCompletion', () => {
       );
 
       assert.ok(capturedBody.session_id.length <= 256);
+    });
+  });
+
+  // The reasoning split itself is exhaustively tested in
+  // `lib/reasoning-tokens.test.ts` (`normalizeReasoning`) and
+  // `lib/openai-sse-pump.test.ts` (native `reasoning_content` parsing).
+  // This block keeps a single integration test on `streamCompletion` so
+  // `cli/engine.ts`'s `assistant_thinking_*` event path doesn't silently
+  // regress if the wiring through the new gateway breaks.
+  describe('reasoning token routing (integration)', () => {
+    it('routes native reasoning_content deltas to onThinkingToken', async () => {
+      const sseBody = buildSSEWithReasoning(['thinking...'], ['visible']);
+      globalThis.fetch = mockFetchSSE(sseBody);
+
+      const thinkTokens = [];
+      const result = await streamCompletion(
+        testConfig,
+        'key',
+        'model',
+        testMessages,
+        null,
+        DEFAULT_TIMEOUT_MS,
+        null,
+        { onThinkingToken: (t) => thinkTokens.push(t) },
+      );
+
+      assert.equal(result, 'visible');
+      const nonNull = thinkTokens.filter((t) => t !== null);
+      assert.ok(nonNull.join('').includes('thinking...'));
+    });
+
+    it('routes inline <think> tags through onThinkingToken and excludes them from result', async () => {
+      const sseBody = buildSSE(['<think>hidden</think>visible']);
+      globalThis.fetch = mockFetchSSE(sseBody);
+
+      const thinkTokens = [];
+      const result = await streamCompletion(
+        testConfig,
+        'key',
+        'model',
+        testMessages,
+        null,
+        DEFAULT_TIMEOUT_MS,
+        null,
+        { onThinkingToken: (t) => thinkTokens.push(t) },
+      );
+
+      assert.equal(result, 'visible');
+      const nonNull = thinkTokens.filter((t) => t !== null);
+      assert.ok(nonNull.join('').includes('hidden'));
+      // The `null` close signal is what cli/engine.ts uses to fire
+      // `assistant_thinking_done` — assert the wiring still emits it.
+      assert.ok(thinkTokens.includes(null));
     });
   });
 
