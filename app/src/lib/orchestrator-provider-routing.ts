@@ -9,6 +9,9 @@ import { kilocodeStream } from './kilocode-stream';
 import { nvidiaStream } from './nvidia-stream';
 import { blackboxStream } from './blackbox-stream';
 import { openadapterStream } from './openadapter-stream';
+import { azureStream } from './azure-stream';
+import { bedrockStream } from './bedrock-stream';
+import { vertexStream } from './vertex-stream';
 import { iterateChatStream, type IterateChatStreamTimeouts } from './iterate-chat-stream';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
@@ -44,172 +47,22 @@ import {
   getBlackboxModelName,
   getKiloCodeModelName,
   getOpenAdapterModelName,
-  PROVIDER_URLS,
 } from './providers';
 import type { PreferredProvider } from './providers';
-import {
-  buildExperimentalProxyHeaders,
-  normalizeExperimentalBaseUrl,
-} from './experimental-providers';
-import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
-import { streamSSEChat, createChunkedEmitter } from './orchestrator';
-import { parseProviderError, hasFinishReason } from './orchestrator-streaming';
-import type { StreamProviderConfig, StreamUsage, ChunkMetadata } from './orchestrator-streaming';
+import { normalizeExperimentalBaseUrl } from './experimental-providers';
+import { normalizeVertexRegion } from './vertex-provider';
+import { createChunkedEmitter } from './orchestrator';
+import type { StreamUsage, ChunkMetadata } from './orchestrator-streaming';
 
 // ---------------------------------------------------------------------------
-// Error / helper functions
+// Standard timeouts shared with `buildChatTimeouts` below.
 // ---------------------------------------------------------------------------
 
-/** Build a standard set of timeout error messages for a provider. */
-function buildErrorMessages(
-  name: string,
-  connectHint = 'server may be down.',
-): StreamProviderConfig['errorMessages'] {
-  return {
-    connect: (s) => `${name} API didn't respond within ${s}s — ${connectHint}`,
-    idle: (s) => `${name} API stream stalled — no data for ${s}s.`,
-    progress: (s) =>
-      `${name} API stream stalled — data is arriving but no model progress for ${s}s.`,
-    stall: (s) =>
-      `${name} API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
-    total: (s) => `${name} API response exceeded ${s}s total time limit.`,
-    network: `Cannot reach ${name} — network error. Check your connection.`,
-  };
-}
-
-/** Standard timeout config used by most providers. */
 const STANDARD_TIMEOUTS = {
-  connectTimeoutMs: 30_000,
-  idleTimeoutMs: 60_000,
-  progressTimeoutMs: 60_000,
-  stallTimeoutMs: 60_000,
+  eventTimeoutMs: 60_000,
+  contentTimeoutMs: 60_000,
   totalTimeoutMs: 180_000,
 } as const;
-
-interface ProviderStreamEntry {
-  getKey: () => string | null;
-  buildConfig: (
-    apiKey: string,
-    modelOverride?: string,
-  ) => Promise<StreamProviderConfig> | StreamProviderConfig;
-}
-
-// ---------------------------------------------------------------------------
-// Experimental provider config builders
-// ---------------------------------------------------------------------------
-
-function buildExperimentalStreamConfig(
-  provider: 'azure' | 'bedrock' | 'vertex',
-  name: string,
-  apiKey: string,
-  baseUrl: string,
-  model: string,
-): StreamProviderConfig {
-  const headers = buildExperimentalProxyHeaders(provider, baseUrl);
-  if (!headers['X-Push-Upstream-Base']) {
-    throw new Error(`${name} base URL is missing or invalid`);
-  }
-
-  return {
-    name,
-    apiUrl: PROVIDER_URLS[provider].chat,
-    apiKey,
-    model,
-    ...STANDARD_TIMEOUTS,
-    errorMessages: buildErrorMessages(name),
-    parseError: (p, f) => parseProviderError(p, f, true),
-    checkFinishReason: (c) =>
-      hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-    providerType: provider,
-    extraHeaders: headers,
-    shouldResetStallOnReasoning: true,
-  };
-}
-
-function buildVertexStreamConfig(modelOverride?: string): StreamProviderConfig {
-  const mode = getVertexMode();
-  const model = modelOverride || getVertexModelName();
-
-  if (mode === 'legacy') {
-    const legacyKey = getVertexKey();
-    if (!legacyKey) {
-      throw new Error('Google Vertex credentials are missing');
-    }
-    return buildExperimentalStreamConfig(
-      'vertex',
-      'Google Vertex',
-      legacyKey,
-      getVertexBaseUrl(),
-      model,
-    );
-  }
-
-  const serviceAccount = getVertexKey();
-  if (!serviceAccount) {
-    throw new Error('Google Vertex service account is missing');
-  }
-  const encodedServiceAccount = encodeVertexServiceAccountHeader(serviceAccount);
-  if (!encodedServiceAccount) {
-    throw new Error('Google Vertex service account is invalid');
-  }
-
-  const region = getVertexRegion();
-  const normalizedRegion = normalizeVertexRegion(region);
-  if (!normalizedRegion.ok) {
-    throw new Error(normalizedRegion.error);
-  }
-
-  return {
-    name: 'Google Vertex',
-    apiUrl: PROVIDER_URLS.vertex.chat,
-    apiKey: '',
-    authHeader: null,
-    model,
-    ...STANDARD_TIMEOUTS,
-    errorMessages: buildErrorMessages('Google Vertex'),
-    parseError: (p, f) => parseProviderError(p, f, true),
-    checkFinishReason: (c) =>
-      hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-    providerType: 'vertex',
-    extraHeaders: {
-      'X-Push-Vertex-Service-Account': encodedServiceAccount,
-      'X-Push-Vertex-Region': normalizedRegion.normalized,
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Provider stream config registry
-// ---------------------------------------------------------------------------
-
-const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
-  azure: {
-    getKey: getAzureKey,
-    buildConfig: (apiKey, modelOverride) =>
-      buildExperimentalStreamConfig(
-        'azure',
-        'Azure OpenAI',
-        apiKey,
-        getAzureBaseUrl(),
-        modelOverride || getAzureModelName(),
-      ),
-  },
-  bedrock: {
-    getKey: getBedrockKey,
-    buildConfig: (apiKey, modelOverride) =>
-      buildExperimentalStreamConfig(
-        'bedrock',
-        'AWS Bedrock',
-        apiKey,
-        getBedrockBaseUrl(),
-        modelOverride || getBedrockModelName(),
-      ),
-  },
-  vertex: {
-    getKey: getVertexKey,
-    buildConfig: (_apiKey, modelOverride) => buildVertexStreamConfig(modelOverride),
-  },
-};
 
 // ---------------------------------------------------------------------------
 // Active provider detection
@@ -316,150 +169,15 @@ export function getActiveProvider(): ActiveProvider {
 }
 
 /**
- * Wrap legacy `streamSSEChat`-based providers (azure / bedrock / vertex)
- * in a native `PushStream` interface. These providers haven't been ported
- * to per-provider native PushStream implementations yet, so the gateway
- * returns this thin queue/wake adapter that drives `streamSSEChat` with
- * callbacks and yields `PushStreamEvent`s. Exists at the app-side seam so
- * `lib/` stays free of legacy callback code; once each legacy provider is
- * ported (a future sweep), this helper deletes alongside the matching
- * `PROVIDER_STREAM_CONFIGS` entries.
- *
- * Mirrors the queue/wake pattern used in `cli/delegation-entry.ts`'s
- * planner stream — small enough to inline rather than extracting a shared
- * helper that would couple `lib/` to `streamSSEChat`.
- */
-function legacyChatPushStream(providerType: string): PushStream<ChatMessage> {
-  return (req) =>
-    (async function* () {
-      const entry = PROVIDER_STREAM_CONFIGS[providerType];
-      if (!entry) {
-        throw new Error(`Unknown provider: ${providerType}`);
-      }
-
-      const apiKey = entry.getKey();
-      if (!apiKey) {
-        throw new Error(
-          `${providerType.charAt(0).toUpperCase() + providerType.slice(1)} API key not configured`,
-        );
-      }
-
-      const config = await entry.buildConfig(apiKey, req.model);
-
-      const queue: PushStreamEvent[] = [];
-      let done = false;
-      let error: Error | null = null;
-      let wake: (() => void) | undefined;
-      const notify = () => {
-        if (wake) {
-          const w = wake;
-          wake = undefined;
-          w();
-        }
-      };
-
-      const onToken = (token: string) => {
-        if (token.length > 0) queue.push({ type: 'text_delta', text: token });
-        notify();
-      };
-      const onDone = (usage?: StreamUsage) => {
-        queue.push({ type: 'done', finishReason: 'stop', usage });
-        done = true;
-        notify();
-      };
-      const onError = (err: Error) => {
-        error = err;
-        done = true;
-        notify();
-      };
-      const onThinkingToken = (token: string | null) => {
-        if (token === null) queue.push({ type: 'reasoning_end' });
-        else if (token.length > 0) queue.push({ type: 'reasoning_delta', text: token });
-        notify();
-      };
-
-      const signal = req.signal;
-      const onAbort = () => {
-        if (!done) {
-          queue.push({ type: 'done', finishReason: 'aborted' });
-          done = true;
-          notify();
-        }
-      };
-      if (signal?.aborted) {
-        onAbort();
-      } else {
-        signal?.addEventListener('abort', onAbort, { once: true });
-      }
-
-      const run = (async () => {
-        try {
-          await streamSSEChat(
-            config,
-            req.messages as ChatMessage[],
-            onToken,
-            onDone,
-            onError,
-            onThinkingToken,
-            req.workspaceContext as WorkspaceContext | undefined,
-            req.hasSandbox,
-            req.systemPromptOverride,
-            req.scratchpadContent,
-            req.signal,
-            undefined,
-            req.onPreCompact,
-            req.todoContent,
-          );
-          if (!done) onDone();
-        } catch (err) {
-          if (!done) onError(err instanceof Error ? err : new Error(String(err)));
-        }
-      })();
-
-      try {
-        while (true) {
-          while (queue.length === 0 && !done) {
-            await new Promise<void>((resolve) => {
-              wake = resolve;
-            });
-          }
-          while (queue.length > 0) {
-            const event = queue.shift()!;
-            yield event;
-            if (event.type === 'done') return;
-          }
-          if (done) {
-            if (error) throw error;
-            return;
-          }
-        }
-      } finally {
-        signal?.removeEventListener('abort', onAbort);
-        void run.catch(() => {
-          /* error already surfaced via onError */
-        });
-      }
-    })();
-}
-
-/**
  * Return a native `PushStream` for the given provider. This is the
  * gateway-to-consumer seam every agent role (Auditor / Reviewer / Planner /
  * Explorer / DeepReviewer / Coder) consumes via `iteratePushStreamText`.
  *
- * For the eight adapter-routed providers (ollama / cloudflare / openrouter
- * / zen / kilocode / openadapter / nvidia / blackbox), the returned
- * PushStream is the existing native `<provider>Stream` composed with
- * `normalizeReasoning` so inline `<think>…</think>` tags split into the
- * reasoning channel — same composition the legacy `streamXChat` callback
- * exports applied internally.
- *
- * For legacy providers (azure / bedrock / vertex) the gateway returns
- * `legacyChatPushStream(provider)` which wraps the existing `streamSSEChat`
- * callback path into a PushStream. The reasoning channel is surfaced via
- * `onThinkingToken`; no extra `normalizeReasoning` wrap is needed because
- * the legacy SSE path's existing `createThinkTokenParser` already feeds
- * `<think>` tokens through that callback.
+ * Every provider (ollama / cloudflare / openrouter / zen / kilocode /
+ * openadapter / nvidia / blackbox / azure / bedrock / vertex) returns the
+ * native `<provider>Stream` composed with `normalizeReasoning` so inline
+ * `<think>…</think>` tags split into the reasoning channel — same
+ * composition the legacy `streamXChat` callback exports applied internally.
  *
  * Phase 9 of the PushStream gateway migration replaced the consumer-side
  * `providerStreamFnToPushStream` reverse bridge with this gateway: every
@@ -506,9 +224,13 @@ export function getProviderPushStream(provider: ActiveProvider): PushStream<Chat
       stream = (req) => normalizeReasoning(blackboxStream(req));
       break;
     case 'azure':
+      stream = (req) => normalizeReasoning(azureStream(req));
+      break;
     case 'bedrock':
+      stream = (req) => normalizeReasoning(bedrockStream(req));
+      break;
     case 'vertex':
-      stream = legacyChatPushStream(provider);
+      stream = (req) => normalizeReasoning(vertexStream(req));
       break;
     case 'demo': {
       // Callers should guard demo before reaching here. If one slips through,
@@ -581,10 +303,9 @@ const PROVIDER_DISPLAY_NAMES: Record<ActiveProvider, string> = {
 /**
  * Adapter-routed providers (those on a native PushStream + the SSE pump)
  * get the full timer wrap at the iteration layer — same machinery the
- * deleted `createProviderStreamAdapter` applied per-call. Legacy
- * providers (azure / bedrock / vertex) skip the outer wrap because
- * `streamSSEChat` already owns timer machinery internally; doubling up
- * would duplicate timeout error rendering.
+ * deleted `createProviderStreamAdapter` applied per-call. After Phase 10c
+ * every non-demo provider is on a native PushStream, so the set covers
+ * every real provider and the only exclusion is `demo`.
  */
 const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProvider>([
   'ollama',
@@ -595,15 +316,16 @@ const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProv
   'openadapter',
   'nvidia',
   'blackbox',
+  'azure',
+  'bedrock',
+  'vertex',
 ]);
 
 function buildChatTimeouts(provider: ActiveProvider): IterateChatStreamTimeouts | undefined {
   if (!ADAPTER_ROUTED_PROVIDERS.has(provider)) return undefined;
   const name = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
   return {
-    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
-    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
-    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
+    ...STANDARD_TIMEOUTS,
     errorMessages: {
       event: (s) => `${name} API stream stalled — no data for ${s}s.`,
       content: (s) =>
@@ -685,11 +407,9 @@ export async function streamChat(
   // need the outer chunker + OTEL span wrap because their `<provider>Stream`
   // implementations don't apply either internally — the deleted
   // `withChunkedEmitter` + `createProviderStreamAdapter` used to give them
-  // both. Legacy SSE providers (azure / bedrock / vertex) skip the outer
-  // wrap entirely: `streamSSEChatOnce` already chunks `onToken` via
-  // `createChunkedEmitter` and opens its own `model.stream` span, so
-  // wrapping again here would double-chunk (changing token cadence) and
-  // emit nested spans (skewing dashboards).
+  // both. After Phase 10c every non-demo provider is adapter-routed, so the
+  // wrap applies uniformly; the early-return for `demo` above keeps it from
+  // running on the demo welcome path.
   const useOuterWrap = ADAPTER_ROUTED_PROVIDERS.has(provider);
   const chunker = useOuterWrap ? createChunkedEmitter(onToken) : null;
   const wrappedOnToken = chunker ? (text: string) => chunker.push(text) : onToken;
