@@ -78,13 +78,22 @@ export function streamWithTimeout(
  * the event-iteration shape used by agent roles that have migrated off the
  * legacy `ProviderStreamFn` callback.
  *
- * The timer resets on every event (including structural ones like
- * `reasoning_end`), so active streams aren't killed. On timeout, the
- * returned signal is aborted and an Error with `timeoutMessage` is returned
- * in the result's `error` field.
+ * The activity timer resets only on `text_delta` events — matches the
+ * legacy `streamWithTimeout` + `onToken` path the migrated roles came from
+ * (Coder/Reviewer/Planner/Explorer/DeepReviewer all uniformly passed
+ * `undefined` for `onThinkingToken`, so reasoning tokens never counted as
+ * activity at the consumer-side timer). Non-content events
+ * (`reasoning_delta`, `reasoning_end`, `tool_call_delta`) are ignored for
+ * timer purposes too: a model that emits only reasoning indefinitely should
+ * trip the per-role round timeout exactly as it did before the migration.
  *
- * `reasoning_delta` events are ignored — callers that use this helper
- * (Auditor) only consume the final JSON text.
+ * On timeout, the returned signal is aborted and an Error with
+ * `timeoutMessage` is returned in the result's `error` field.
+ *
+ * `reasoning_delta` events are ignored at the accumulation level too — the
+ * helper's text result feeds JSON parsers that don't want reasoning prose
+ * mixed in. Callers that need to surface reasoning to the UI should add a
+ * dedicated handler when a real consumer requires it.
  */
 export async function iteratePushStreamText<M extends LlmMessage>(
   stream: PushStream<M>,
@@ -114,14 +123,18 @@ export async function iteratePushStreamText<M extends LlmMessage>(
     });
     for await (const event of iterable) {
       if (controller.signal.aborted) break;
-      resetTimer();
       if (event.type === 'text_delta') {
+        // Only `text_delta` resets the activity timer. Mirrors the legacy
+        // `onToken`-only reset semantics — a stream stuck emitting reasoning
+        // or tool-call fragments without any user-visible text should still
+        // trip the per-role round timeout.
+        resetTimer();
         text += event.text;
       } else if (event.type === 'done') {
         break;
       }
-      // reasoning_delta / reasoning_end / tool_call_delta ignored — auditor
-      // only consumes final text. They still reset the activity timer above.
+      // reasoning_delta / reasoning_end / tool_call_delta intentionally do
+      // NOT reset the timer — see the doc comment above.
     }
   } catch (err) {
     if (!timedOut) {
