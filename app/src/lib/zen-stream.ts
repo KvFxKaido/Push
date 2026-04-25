@@ -1,28 +1,35 @@
 /**
- * OpenRouter PushStream implementation.
+ * OpenCode Zen PushStream implementation.
  *
- * Hits the existing Worker proxy at `/api/openrouter/chat` (or the Vite dev
- * passthrough at `/openrouter/api/v1/chat/completions`), parses the
- * OpenAI-compatible SSE response, and yields `PushStreamEvent`s.
+ * Hits the Zen chat endpoint (or the Zen Go endpoint when Go mode is on),
+ * parses the OpenAI-compatible SSE response, and yields `PushStreamEvent`s.
  *
  * Runs client-side. Timer/abort safety comes from `createProviderStreamAdapter`
  * wrapping this stream — no timer machinery lives here.
+ *
+ * Structurally mirrors `openrouter-stream.ts`. Zen serves a wide catalog of
+ * OpenAI-compatible models (including reasoning-capable ones that emit
+ * `delta.reasoning` / `delta.reasoning_content` and models that emit native
+ * `delta.tool_calls`), so reasoning + tool-call handling here matches the
+ * OpenRouter stream. Differences vs. OpenRouter:
+ *
+ * - Endpoint switches on `getZenGoMode()`.
+ * - No OpenRouter-specific body fields (`trace`, `session_id`, `reasoning`).
+ * - Auth uses `getZenKey()`.
  */
 
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest, StreamUsage } from '@push/lib/provider-contract';
+import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
-import { buildOpenRouterTrace, getOpenRouterSessionId } from './openrouter-session';
-import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
-import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
-import { PROVIDER_URLS } from './providers';
-import type { WorkspaceContext } from '@/types';
+import { getZenKey } from '@/hooks/useZenConfig';
+import { PROVIDER_URLS, ZEN_GO_URLS, getZenGoMode } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 
-/** Map OpenRouter / OpenAI `finish_reason` strings onto the PushStream done reason. */
+/** Map OpenAI-shaped `finish_reason` strings onto the PushStream done reason. */
 function mapFinishReason(
   value: string | undefined | null,
 ): 'stop' | 'length' | 'tool_calls' | 'unknown' {
@@ -57,12 +64,11 @@ function stripTemplateTokens(text: string): string {
   return text.replace(/<\|[a-z_]+\|>/gi, '');
 }
 
-export async function* openrouterStream(
+export async function* zenStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
-  // 1. Compose messages via the shared prompt builder. Runtime context
-  //    (workspaceContext, hasSandbox, onPreCompact) flows through the
-  //    adapter as opaque passthrough fields — cast locally.
+  // 1. Compose messages via the shared prompt builder. Runtime context flows
+  //    through the adapter as opaque passthrough fields — cast locally.
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
   const llmMessages = toLLMMessages(
     req.messages,
@@ -70,22 +76,15 @@ export async function* openrouterStream(
     req.hasSandbox,
     req.systemPromptOverride,
     req.scratchpadContent,
-    'openrouter',
+    'zen',
     req.model,
     req.onPreCompact,
     undefined,
     req.todoContent,
   );
 
-  // 2. Layer in OpenRouter-specific body extensions. Mirrors the legacy
-  //    `bodyTransform` in orchestrator-provider-routing.ts so the wire
-  //    payload is byte-identical.
-  const supportsReasoning = openRouterModelSupportsReasoning(req.model);
-  const effort = getReasoningEffort('openrouter');
-  const useReasoning = supportsReasoning && effort !== 'off';
-  const sessionId = getOpenRouterSessionId();
-  const trace = buildOpenRouterTrace();
-
+  // 2. Assemble the OpenAI-compatible request body. Zen has no provider-
+  //    specific extensions — just the standard chat-completions shape.
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -93,15 +92,11 @@ export async function* openrouterStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    ...(useReasoning ? { reasoning: { effort } } : {}),
-    ...(sessionId ? { session_id: sessionId } : {}),
-    trace,
   };
 
-  // 3. Headers. The Worker proxy overrides Authorization server-side when
-  //    OPENROUTER_API_KEY is configured; we still send the client-side key
-  //    so dev (Vite passthrough) and unconfigured-Worker paths work.
-  const apiKey = getOpenRouterKey() ?? '';
+  // 3. Headers. Zen uses a straight Bearer token. The Go-mode URL switch is
+  //    the only endpoint branch.
+  const apiKey = getZenKey() ?? '';
   const requestId = createRequestId('chat');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -110,8 +105,10 @@ export async function* openrouterStream(
   };
   injectTraceHeaders(headers);
 
+  const url = getZenGoMode() ? ZEN_GO_URLS.chat : PROVIDER_URLS.zen.chat;
+
   // 4. POST + stream response.
-  const response = await fetch(PROVIDER_URLS.openrouter.chat, {
+  const response = await fetch(url, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -127,25 +124,22 @@ export async function* openrouterStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new Error(`OpenRouter ${response.status}: ${detail}`);
+    throw new Error(`OpenCode Zen ${response.status}: ${detail}`);
   }
 
   const reader = response.body?.getReader();
   if (!reader) {
-    throw new Error('OpenRouter response had no body');
+    throw new Error('OpenCode Zen response had no body');
   }
 
   const decoder = new TextDecoder();
   let buffer = '';
   let pendingUsage: StreamUsage | undefined;
 
-  // Native tool-call bridge. Some OpenRouter-served models emit
-  // `delta.tool_calls` instead of (or in addition to) our text-fenced
-  // JSON protocol. Accumulate fragments by `index`, then flush as
-  // fenced JSON text_delta events on finish_reason / [DONE] so the
-  // downstream text-based tool dispatcher picks them up.
-  // Unknown tool names are dropped — matches the legacy path in
-  // `streamSSEChatOnce` which filters against `KNOWN_TOOL_NAMES`.
+  // Native tool-call bridge. Same shape as the OpenRouter stream — accumulate
+  // `delta.tool_calls` fragments by `index`, then flush as fenced JSON
+  // text_delta events on finish_reason / [DONE] so the downstream text-based
+  // tool dispatcher picks them up. Unknown tool names are dropped.
   const pendingNativeToolCalls = new Map<number, { name: string; args: string }>();
 
   function* flushNativeToolCalls(): Generator<PushStreamEvent> {
@@ -167,8 +161,6 @@ export async function* openrouterStream(
       try {
         parsedArgs = tc.args ? JSON.parse(tc.args) : {};
       } catch {
-        // Malformed args — still emit a fenced shell so the malformed-tool-
-        // call diagnostic path in the dispatcher can guide a retry.
         parsedArgs = {};
       }
       yield {
@@ -179,8 +171,8 @@ export async function* openrouterStream(
     pendingNativeToolCalls.clear();
   }
 
-  // Propagate abort to the upstream reader so a client disconnect stops
-  // the SSE pump and releases the connection.
+  // Propagate abort to the upstream reader so a client disconnect stops the
+  // SSE pump and releases the connection.
   const onAbort = () => {
     reader.cancel().catch(() => {
       /* reader may already be closed */
@@ -211,7 +203,6 @@ export async function* openrouterStream(
         try {
           const parsed = JSON.parse(jsonStr);
 
-          // Usage can arrive on an intermediate frame or alongside finish_reason.
           if (parsed.usage) {
             pendingUsage = mapUsage(parsed.usage);
           }
@@ -221,9 +212,9 @@ export async function* openrouterStream(
 
           const delta = choice.delta;
 
-          // Reasoning channel — accept either field name. OpenRouter-hosted
-          // DeepSeek-R1 and Kimi K2.5 use `reasoning_content`; Kimi K2.6
-          // renamed it to `reasoning`. Pick the first non-empty string.
+          // Reasoning channel — accept either field name. Zen serves the same
+          // reasoning-capable catalogs as OpenRouter, so both the modern
+          // `reasoning` and legacy `reasoning_content` shapes show up.
           const reasoning =
             typeof delta?.reasoning === 'string' && delta.reasoning.length > 0
               ? delta.reasoning
@@ -234,8 +225,6 @@ export async function* openrouterStream(
             yield { type: 'reasoning_delta', text: reasoning };
           }
 
-          // Visible content delta — strip chat-template control tokens some
-          // models leak into the stream, then yield.
           if (typeof delta?.content === 'string' && delta.content) {
             const token = stripTemplateTokens(delta.content);
             if (token) {
@@ -243,12 +232,10 @@ export async function* openrouterStream(
             }
           }
 
-          // Native tool_call fragments — accumulate by index; the name and
-          // arguments often arrive split across frames. The assembled call is
-          // flushed as fenced JSON `text_delta` on finish_reason / [DONE], but
-          // we yield a `tool_call_delta` per fragment so the adapter's content
-          // timer treats long tool-arg payloads as activity rather than
-          // tripping `contentTimeoutMs` while we're buffering.
+          // See `openrouter-stream.ts` — yield a `tool_call_delta` per
+          // fragment so the adapter's content timer counts native tool-arg
+          // streaming as progress rather than tripping `contentTimeoutMs`
+          // while we're buffering toward the eventual fenced-JSON flush.
           const toolCalls = delta?.tool_calls;
           if (Array.isArray(toolCalls)) {
             let observedFragment = false;
@@ -267,9 +254,6 @@ export async function* openrouterStream(
             }
           }
 
-          // Finish reason closes the stream with whatever usage we've seen.
-          // Flush any pending native tool_calls into fenced text_delta events
-          // first so the text-based dispatcher picks them up.
           if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
             yield* flushNativeToolCalls();
             yield {

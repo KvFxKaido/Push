@@ -316,6 +316,12 @@ export async function* normalizeReasoning(
         yield event;
         continue;
       }
+      if (event.type === 'tool_call_delta') {
+        // Structural progress signal — pass through so the adapter's content
+        // timer can see it. Doesn't interact with reasoning buffering.
+        yield event;
+        continue;
+      }
       // done — drain buffer, close any open reasoning block, then forward.
       yield* flushRemaining();
       yield* closeReasoningIfOpen();

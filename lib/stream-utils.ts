@@ -120,7 +120,8 @@ export async function iteratePushStreamText<M extends LlmMessage>(
       } else if (event.type === 'done') {
         break;
       }
-      // reasoning_delta / reasoning_end ignored — auditor only consumes final text.
+      // reasoning_delta / reasoning_end / tool_call_delta ignored — auditor
+      // only consumes final text. They still reset the activity timer above.
     }
   } catch (err) {
     if (!timedOut) {

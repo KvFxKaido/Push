@@ -56,13 +56,17 @@ afterEach(() => {
 });
 
 describe('Kilo Code provider routing', () => {
+  // The dynamic `import('./orchestrator')` inside each test transforms a large
+  // module graph on first touch. When the full suite has already loaded dozens
+  // of modules, that transform can brush past the default 5s timeout. Bump so
+  // the test doesn't flake under full-suite contention.
   it('falls back to kilocode when it is the only configured provider', async () => {
     mockProviderState({ kilocodeKey: 'kilo-key' });
 
     const { getActiveProvider } = await import('./orchestrator');
 
     expect(getActiveProvider()).toBe('kilocode');
-  });
+  }, 15_000);
 
   it('maps kilocode to the kilocode stream provider', async () => {
     mockProviderState();

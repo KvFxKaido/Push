@@ -5,18 +5,22 @@ import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-cont
 // Module-level mocks so the stream's runtime dependencies don't hit real
 // storage or network. Each test reimports the module to pick these up.
 
-vi.mock('@/hooks/useOpenRouterConfig', () => ({
-  getOpenRouterKey: () => 'test-key',
+vi.mock('@/hooks/useZenConfig', () => ({
+  getZenKey: () => 'test-key',
 }));
 
-vi.mock('./openrouter-session', () => ({
-  getOpenRouterSessionId: () => null,
-  buildOpenRouterTrace: () => ({ trace_name: 'test' }),
-}));
-
-vi.mock('./model-catalog', () => ({
-  openRouterModelSupportsReasoning: () => false,
-  getReasoningEffort: () => 'off',
+// Default: Go mode OFF. Individual tests can override via vi.doMock.
+vi.mock('./providers', () => ({
+  getZenGoMode: () => false,
+  PROVIDER_URLS: {
+    zen: {
+      chat: 'https://zen.example/v1/chat/completions',
+      models: 'https://zen.example/v1/models',
+    },
+  },
+  ZEN_GO_URLS: {
+    chat: 'https://zen-go.example/v1/chat/completions',
+  },
 }));
 
 // toLLMMessages pulls in huge dependency graph — stub to a trivial passthrough.
@@ -26,8 +30,7 @@ vi.mock('./orchestrator', () => ({
 }));
 
 // Narrow KNOWN_TOOL_NAMES so tests can assert on known-vs-unknown dispatch
-// without depending on the real registry. sandbox_write_file is common; the
-// unknown case uses 'node_source' (Gemini's internal machinery name).
+// without depending on the real registry.
 vi.mock('./tool-dispatch', () => ({
   KNOWN_TOOL_NAMES: new Set(['sandbox_write_file', 'sandbox_read_file']),
 }));
@@ -119,14 +122,14 @@ function finishFrame(
 }
 
 const baseRequest: PushStreamRequest<ChatMessage> = {
-  provider: 'openrouter',
-  model: 'moonshotai/kimi-k2.6',
+  provider: 'zen',
+  model: 'kimi-k2.6',
   messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 } as unknown as ChatMessage],
 };
 
 // ---------------------------------------------------------------------------
 
-describe('openrouterStream', () => {
+describe('zenStream', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let collect: (stream: AsyncIterable<PushStreamEvent>) => Promise<PushStreamEvent[]>;
 
@@ -148,8 +151,8 @@ describe('openrouterStream', () => {
 
   it('parses text_delta frames and closes on [DONE]', async () => {
     const { push, finish } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events: Promise<PushStreamEvent[]> = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events: Promise<PushStreamEvent[]> = collect(zenStream(baseRequest));
 
     push(contentFrame('hello '));
     push(contentFrame('world'));
@@ -163,10 +166,10 @@ describe('openrouterStream', () => {
     ]);
   });
 
-  it('accepts delta.reasoning (Kimi K2.6 field name)', async () => {
+  it('accepts delta.reasoning (modern field name)', async () => {
     const { push, finish } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
     push(reasoningFrame('thinking...', 'reasoning'));
     push(contentFrame('answer'));
@@ -180,10 +183,10 @@ describe('openrouterStream', () => {
     ]);
   });
 
-  it('accepts delta.reasoning_content (legacy DeepSeek-R1 / Kimi K2.5 name)', async () => {
+  it('accepts delta.reasoning_content (legacy field name)', async () => {
     const { push, finish } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
     push(reasoningFrame('thinking...', 'reasoning_content'));
     push(contentFrame('answer'));
@@ -199,12 +202,11 @@ describe('openrouterStream', () => {
 
   it('maps finish_reason onto the done event', async () => {
     const { push, finish } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
     push(contentFrame('partial...'));
     push(finishFrame('length'));
-    // `[DONE]` after finish_reason — the stream closes on finish_reason first.
     finish();
 
     const out = await events;
@@ -216,8 +218,8 @@ describe('openrouterStream', () => {
 
   it('maps usage onto the done event', async () => {
     const { push } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
     push(contentFrame('hi'));
     push(finishFrame('stop', { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }));
@@ -232,10 +234,9 @@ describe('openrouterStream', () => {
 
   it('picks up usage from an intermediate frame before finish_reason', async () => {
     const { push } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
-    // Some providers emit usage on a separate frame before the final one.
     push(
       JSON.stringify({
         choices: [{ delta: { content: 'ok' } }],
@@ -254,14 +255,13 @@ describe('openrouterStream', () => {
 
   it('strips chat-template control tokens from delta.content', async () => {
     const { push, finish } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
     push(contentFrame('<|start|>hello<|im_end|>'));
     finish();
 
     const out = await events;
-    // Only the stripped token remains as a text_delta.
     expect(out[0]).toEqual({ type: 'text_delta', text: 'hello' });
   });
 
@@ -273,15 +273,16 @@ describe('openrouterStream', () => {
           headers: { 'content-type': 'application/json' },
         }),
     );
-    const { openrouterStream } = await import('./openrouter-stream');
+    const { zenStream } = await import('./zen-stream');
 
     let caught: Error | null = null;
     try {
-      await collect(openrouterStream(baseRequest));
+      await collect(zenStream(baseRequest));
     } catch (e) {
       caught = e as Error;
     }
     expect(caught).not.toBeNull();
+    expect(caught!.message).toMatch(/OpenCode Zen/);
     expect(caught!.message).toMatch(/429/);
     expect(caught!.message).toMatch(/rate limited/);
   });
@@ -289,15 +290,12 @@ describe('openrouterStream', () => {
   it('propagates abort to the upstream reader', async () => {
     const { push } = installStreamFetch(fetchMock);
     const controller = new AbortController();
-    const { openrouterStream } = await import('./openrouter-stream');
+    const { zenStream } = await import('./zen-stream');
 
-    // Abort raises AbortError from the underlying reader — that's
-    // by design. The adapter layer catches and routes to onDone; when
-    // callers iterate the PushStream directly they handle it here.
     const out: PushStreamEvent[] = [];
     const task = (async () => {
       try {
-        for await (const e of openrouterStream({ ...baseRequest, signal: controller.signal })) {
+        for await (const e of zenStream({ ...baseRequest, signal: controller.signal })) {
           out.push(e);
         }
       } catch (err) {
@@ -306,8 +304,6 @@ describe('openrouterStream', () => {
     })();
 
     push(contentFrame('hi'));
-    // Let the reader microtask pick up the chunk before aborting — without
-    // this tick, abort can race ahead of delivery and the event is lost.
     await new Promise((r) => setTimeout(r, 0));
     controller.abort();
     await task;
@@ -317,18 +313,15 @@ describe('openrouterStream', () => {
 
   it('forwards max_tokens / temperature / top_p into the request body', async () => {
     installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const iter = openrouterStream({
+    const { zenStream } = await import('./zen-stream');
+    const iter = zenStream({
       ...baseRequest,
       maxTokens: 1234,
       temperature: 0.7,
       topP: 0.9,
     });
-    // Pull one to trigger the fetch, then stop iterating.
     const it = iter[Symbol.asyncIterator]();
-    // Fire off the promise but don't await — we just need fetch to be called.
     it.next().catch(() => {});
-    // Yield so the fetch mock runs.
     await new Promise((r) => setTimeout(r, 0));
 
     expect(fetchMock).toHaveBeenCalled();
@@ -341,8 +334,8 @@ describe('openrouterStream', () => {
 
   it('closes cleanly when the stream ends without a [DONE] or finish_reason', async () => {
     const { push, close } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
     push(contentFrame('partial'));
     close();
@@ -354,16 +347,55 @@ describe('openrouterStream', () => {
     ]);
   });
 
+  it('hits PROVIDER_URLS.zen.chat when Go mode is off', async () => {
+    installStreamFetch(fetchMock);
+    const { zenStream } = await import('./zen-stream');
+    const iter = zenStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).toHaveBeenCalled();
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://zen.example/v1/chat/completions');
+  });
+
+  it('hits ZEN_GO_URLS.chat when Go mode is on', async () => {
+    vi.doMock('./providers', () => ({
+      getZenGoMode: () => true,
+      PROVIDER_URLS: {
+        zen: {
+          chat: 'https://zen.example/v1/chat/completions',
+          models: 'https://zen.example/v1/models',
+        },
+      },
+      ZEN_GO_URLS: {
+        chat: 'https://zen-go.example/v1/chat/completions',
+      },
+    }));
+    installStreamFetch(fetchMock);
+    const { zenStream } = await import('./zen-stream');
+    const iter = zenStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).toHaveBeenCalled();
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://zen-go.example/v1/chat/completions');
+  });
+
   // -------------------------------------------------------------------------
-  // Native tool_call bridge — PR #384 review #3
+  // Native tool_call bridge — mirrors the OpenRouter coverage.
   // -------------------------------------------------------------------------
 
   it('accumulates native tool_call fragments and flushes them as fenced JSON on finish', async () => {
     const { push } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
-    // Name arrives on one frame, arguments stream across two more.
     push(
       JSON.stringify({
         choices: [
@@ -397,7 +429,6 @@ describe('openrouterStream', () => {
         ],
       }),
     );
-    // Finish with tool_calls reason — flush happens here.
     push(
       JSON.stringify({
         choices: [{ finish_reason: 'tool_calls', delta: {} }],
@@ -412,9 +443,7 @@ describe('openrouterStream', () => {
     expect(textEvents[0].text).toContain('sandbox_write_file');
     expect(textEvents[0].text).toContain('"path":"foo.ts"');
     expect(textEvents[0].text).toContain('"content":"x"');
-    // Fenced with ```json so the downstream text dispatcher picks it up.
     expect(textEvents[0].text).toMatch(/```json/);
-    expect(textEvents[0].text).toMatch(/```/);
     expect(out[out.length - 1]).toEqual({
       type: 'done',
       finishReason: 'tool_calls',
@@ -424,8 +453,8 @@ describe('openrouterStream', () => {
 
   it('yields a tool_call_delta per fragment so the adapter sees progress while buffering', async () => {
     const { push } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
     push(
       JSON.stringify({
@@ -464,7 +493,6 @@ describe('openrouterStream', () => {
 
     const out = await events;
     expect(out.filter((e) => e.type === 'tool_call_delta')).toHaveLength(3);
-    // Order: three progress deltas, then the flushed fenced text_delta, then done.
     expect(out.map((e) => e.type)).toEqual([
       'tool_call_delta',
       'tool_call_delta',
@@ -476,11 +504,9 @@ describe('openrouterStream', () => {
 
   it('drops native tool_calls whose name is not in KNOWN_TOOL_NAMES', async () => {
     const { push } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
-    // "node_source" is the Gemini internal machinery name we used for the
-    // mock's excluded case. Should be dropped entirely on flush.
     push(
       JSON.stringify({
         choices: [
@@ -506,8 +532,8 @@ describe('openrouterStream', () => {
 
   it('flushes pending native tool_calls on [DONE] even without finish_reason', async () => {
     const { push, finish } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
     push(
       JSON.stringify({
@@ -525,7 +551,6 @@ describe('openrouterStream', () => {
         ],
       }),
     );
-    // [DONE] without a prior finish_reason frame — flush must still fire.
     finish();
 
     const out = await events;
@@ -538,8 +563,8 @@ describe('openrouterStream', () => {
 
   it('emits a fenced shell with empty args when tool_call arguments are malformed JSON', async () => {
     const { push } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
-    const events = collect(openrouterStream(baseRequest));
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream(baseRequest));
 
     push(
       JSON.stringify({
@@ -563,33 +588,27 @@ describe('openrouterStream', () => {
     const textEvents = out.filter(
       (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
     );
-    // Shell still emitted so malformed diagnostics can guide a retry.
     expect(textEvents).toHaveLength(1);
     expect(textEvents[0].text).toContain('sandbox_write_file');
     expect(textEvents[0].text).toMatch(/"args":\s*\{\s*\}/);
   });
 
   // -------------------------------------------------------------------------
-  // Think-tag routing — PR #384 review #2
+  // Think-tag routing — mirrors the OpenRouter composition test.
   // -------------------------------------------------------------------------
 
   it('composes with normalizeReasoning to split inline <think> tags out of content', async () => {
-    // Unit test of the composition we wire in orchestrator-provider-routing.
-    // openrouterStream alone does NOT split <think> tags (that's by design —
-    // reasoning-tag splitting is a transducer concern, not a parser concern).
-    // The wired composition at the routing site applies normalizeReasoning.
     const { push, finish } = installStreamFetch(fetchMock);
-    const { openrouterStream } = await import('./openrouter-stream');
+    const { zenStream } = await import('./zen-stream');
     const { normalizeReasoning } = await import('@push/lib/reasoning-tokens');
 
-    const composed = normalizeReasoning(openrouterStream(baseRequest));
+    const composed = normalizeReasoning(zenStream(baseRequest));
     const events = collect(composed);
 
     push(contentFrame('<think>pondering</think>answer'));
     finish();
 
     const out = await events;
-    // The inline <think> block landed on the reasoning channel, not text.
     const textEvents = out.filter(
       (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
     );

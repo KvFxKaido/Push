@@ -17,12 +17,14 @@ function textChunks(...chunks: string[]): PushStreamEvent[] {
  *   { kind: 'text'; text: string }
  *   { kind: 'reasoning'; text: string }
  *   { kind: 'reasoning_end' }
+ *   { kind: 'tool_call_delta' }
  *   { kind: 'done'; finishReason: string; usage?: StreamUsage }
  */
 type Section =
   | { kind: 'text'; text: string }
   | { kind: 'reasoning'; text: string }
   | { kind: 'reasoning_end' }
+  | { kind: 'tool_call_delta' }
   | { kind: 'done'; finishReason: string; usage?: StreamUsage };
 
 function summarize(events: PushStreamEvent[]): Section[] {
@@ -38,6 +40,8 @@ function summarize(events: PushStreamEvent[]): Section[] {
       else sections.push({ kind: 'reasoning', text: event.text });
     } else if (event.type === 'reasoning_end') {
       sections.push({ kind: 'reasoning_end' });
+    } else if (event.type === 'tool_call_delta') {
+      sections.push({ kind: 'tool_call_delta' });
     } else {
       sections.push({ kind: 'done', finishReason: event.finishReason, usage: event.usage });
     }
@@ -161,6 +165,26 @@ describe('normalizeReasoning', () => {
       { kind: 'reasoning_end' },
       { kind: 'text', text: 'ok here it is' },
       { kind: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
+  it('forwards tool_call_delta through unchanged', async () => {
+    // tool_call_delta is structural — the transducer must pass it through
+    // without affecting the reasoning latch or buffer state.
+    expect(
+      await run([
+        { type: 'text_delta', text: 'before' },
+        { type: 'tool_call_delta' },
+        { type: 'tool_call_delta' },
+        { type: 'text_delta', text: 'after' },
+        { type: 'done', finishReason: 'tool_calls' },
+      ]),
+    ).toEqual([
+      { kind: 'text', text: 'before' },
+      { kind: 'tool_call_delta' },
+      { kind: 'tool_call_delta' },
+      { kind: 'text', text: 'after' },
+      { kind: 'done', finishReason: 'tool_calls', usage: undefined },
     ]);
   });
 
