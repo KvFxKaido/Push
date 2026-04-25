@@ -20,6 +20,7 @@ import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-ca
 import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-session';
 import { openrouterStream } from './openrouter-stream';
 import { zenStream } from './zen-stream';
+import { kilocodeStream } from './kilocode-stream';
 import type { PushStream } from '@push/lib/provider-contract';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
@@ -634,8 +635,45 @@ export const streamZenChat: StreamChatFn = async (...args) => {
 export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
 export const streamBlackboxChat: StreamChatFn = (...args) =>
   streamProviderChat('blackbox', ...args);
-export const streamKilocodeChat: StreamChatFn = (...args) =>
-  streamProviderChat('kilocode', ...args);
+
+/**
+ * Kilo Code ships via the PushStream abstraction (Phase 8 follow-up):
+ * `kilocodeStream` handles SSE parsing + reasoning/tool-call normalization,
+ * `createProviderStreamAdapter` provides timer/abort safety. Mirrors
+ * `streamZenChat` and `streamOpenRouterChat`.
+ */
+export const streamKilocodeChat: StreamChatFn = async (...args) => {
+  const apiKey = getKilocodeKey();
+  if (!apiKey) {
+    const [, , , onError] = args;
+    onError(new Error('Kilo Code API key not configured'));
+    return;
+  }
+
+  const modelOverride = args[7];
+  const kilocodeErrorMessages = buildErrorMessages('Kilo Code');
+  const timeouts: AdapterTimeoutConfig = {
+    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
+    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
+    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
+    errorMessages: {
+      event: kilocodeErrorMessages.idle,
+      content: kilocodeErrorMessages.stall,
+      total: kilocodeErrorMessages.total,
+    },
+  };
+
+  const kilocodeWithReasoning: PushStream<ChatMessage> = (req) =>
+    normalizeReasoning(kilocodeStream(req));
+
+  const adapted = createProviderStreamAdapter<ChatMessage>(kilocodeWithReasoning, 'kilocode', {
+    defaultModel: modelOverride || getKiloCodeModelName(),
+    timeouts,
+    telemetry: buildAdapterTelemetry(),
+  });
+
+  return adapted(...args);
+};
 export const streamOpenAdapterChat: StreamChatFn = (...args) =>
   streamProviderChat('openadapter', ...args);
 export const streamAzureChat: StreamChatFn = (...args) => streamProviderChat('azure', ...args);
