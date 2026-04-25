@@ -845,21 +845,30 @@ export async function streamChat(
     return;
   }
 
-  // Chunked emitter — preserves the per-word batching the chat UI relies
-  // on. Adapter-routed providers used `withChunkedEmitter` before 9b;
-  // applying it here uniformly keeps the same behavior at the new seam.
-  // Flushes on terminal callbacks so the trailing buffer never gets stuck
-  // behind the 50ms scheduled flush.
-  const chunker = createChunkedEmitter(onToken);
-  const wrappedOnToken = (text: string) => chunker.push(text);
-  const wrappedOnDone = (usage?: StreamUsage) => {
-    chunker.flush();
-    onDone(usage);
-  };
-  const wrappedOnError = (err: Error) => {
-    chunker.flush();
-    onError(err);
-  };
+  // Adapter-routed providers (the six on a native PushStream + SSE pump)
+  // need the outer chunker + OTEL span wrap because their `<provider>Stream`
+  // implementations don't apply either internally — the deleted
+  // `withChunkedEmitter` + `createProviderStreamAdapter` used to give them
+  // both. Legacy SSE providers (ollama / cloudflare / azure / bedrock /
+  // vertex) skip the outer wrap entirely: `streamSSEChatOnce` already
+  // chunks `onToken` via `createChunkedEmitter` and opens its own
+  // `model.stream` span, so wrapping again here would double-chunk
+  // (changing token cadence) and emit nested spans (skewing dashboards).
+  const useOuterWrap = ADAPTER_ROUTED_PROVIDERS.has(provider);
+  const chunker = useOuterWrap ? createChunkedEmitter(onToken) : null;
+  const wrappedOnToken = chunker ? (text: string) => chunker.push(text) : onToken;
+  const wrappedOnDone = chunker
+    ? (usage?: StreamUsage) => {
+        chunker.flush();
+        onDone(usage);
+      }
+    : onDone;
+  const wrappedOnError = chunker
+    ? (err: Error) => {
+        chunker.flush();
+        onError(err);
+      }
+    : onError;
 
   const stream = getProviderPushStream(provider);
   const model = modelOverride || resolveChatDefaultModel(provider);
@@ -886,7 +895,7 @@ export async function streamChat(
     },
     {
       timeouts: buildChatTimeouts(provider),
-      telemetry: 'enabled',
+      telemetry: useOuterWrap ? 'enabled' : 'disabled',
     },
   );
 }
