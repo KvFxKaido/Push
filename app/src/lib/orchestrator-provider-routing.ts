@@ -1110,30 +1110,76 @@ function legacyChatPushStream(providerType: string): PushStream<ChatMessage> {
  * agent role + the CLI daemon + the worker's coder-job stream adapter now
  * receive a native PushStream instead of a `ProviderStreamFn` they then
  * had to bridge themselves.
+ *
+ * Per-provider memoization preserves the lib-side coalescing semantics —
+ * `lib/reviewer-agent.ts` and `lib/auditor-agent.ts` key concurrent-run
+ * deduplication on PushStream identity (`WeakMap<PushStream, number>`). A
+ * fresh closure per call would defeat the dedupe; we cache the resolved
+ * PushStream in a module-scoped map so repeated `getProviderPushStream(p)`
+ * calls return the same object.
  */
+const PROVIDER_PUSH_STREAM_CACHE = new Map<ActiveProvider, PushStream<ChatMessage>>();
 export function getProviderPushStream(provider: ActiveProvider): PushStream<ChatMessage> {
+  const cached = PROVIDER_PUSH_STREAM_CACHE.get(provider);
+  if (cached) return cached;
+
+  let stream: PushStream<ChatMessage>;
   switch (provider) {
     case 'openrouter':
-      return (req) => normalizeReasoning(openrouterStream(req));
+      stream = (req) => normalizeReasoning(openrouterStream(req));
+      break;
     case 'zen':
-      return (req) => normalizeReasoning(zenStream(req));
+      stream = (req) => normalizeReasoning(zenStream(req));
+      break;
     case 'kilocode':
-      return (req) => normalizeReasoning(kilocodeStream(req));
+      stream = (req) => normalizeReasoning(kilocodeStream(req));
+      break;
     case 'openadapter':
-      return (req) => normalizeReasoning(openadapterStream(req));
+      stream = (req) => normalizeReasoning(openadapterStream(req));
+      break;
     case 'nvidia':
-      return (req) => normalizeReasoning(nvidiaStream(req));
+      stream = (req) => normalizeReasoning(nvidiaStream(req));
+      break;
     case 'blackbox':
-      return (req) => normalizeReasoning(blackboxStream(req));
+      stream = (req) => normalizeReasoning(blackboxStream(req));
+      break;
     case 'ollama':
     case 'cloudflare':
     case 'azure':
     case 'bedrock':
     case 'vertex':
-      return legacyChatPushStream(provider);
-    default:
-      return legacyChatPushStream('ollama');
+      stream = legacyChatPushStream(provider);
+      break;
+    case 'demo': {
+      // Callers should guard demo before reaching here. If one slips through,
+      // surface an explicit error rather than falling back to ollama and
+      // emitting a confusing "Ollama API key not configured" message.
+      // Hand-rolled iterator (instead of `async function*` with a `throw`)
+      // sidesteps the `require-yield` lint rule for yield-less generators.
+      const thrower: AsyncIterable<PushStreamEvent> = {
+        [Symbol.asyncIterator]() {
+          return {
+            next(): Promise<IteratorResult<PushStreamEvent>> {
+              return Promise.reject(
+                new Error(
+                  'Demo provider has no PushStream — guard with a demo check before calling getProviderPushStream.',
+                ),
+              );
+            },
+          };
+        },
+      };
+      stream = () => thrower;
+      break;
+    }
+    default: {
+      const exhaustive: never = provider;
+      throw new Error(`Unhandled provider in getProviderPushStream: ${String(exhaustive)}`);
+    }
   }
+
+  PROVIDER_PUSH_STREAM_CACHE.set(provider, stream);
+  return stream;
 }
 
 /**

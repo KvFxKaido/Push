@@ -336,12 +336,21 @@ describe('CoderJob DO — end-to-end', () => {
     const { ctx, storage, waitUntilPromises } = makeCtx();
     const input = makeStartInput({ jobId: 'job-fail-1' });
 
-    const failingStream: PushStream<ChatMessage> = () =>
-      (async function* () {
-        throw new Error('provider exploded');
-        // unreachable yield to satisfy generator return type
-        yield { type: 'done', finishReason: 'stop' };
-      })();
+    const failingStream: PushStream<ChatMessage> = () => {
+      // Async generator that throws on first iteration. Defined inline rather
+      // than as a `function*` body with a stray `yield` after `throw` to keep
+      // ESLint's `no-unreachable` rule clean.
+      const thrower: AsyncIterable<never> = {
+        [Symbol.asyncIterator]() {
+          return {
+            next(): Promise<IteratorResult<never>> {
+              return Promise.reject(new Error('provider exploded'));
+            },
+          };
+        },
+      };
+      return thrower as unknown as ReturnType<PushStream<ChatMessage>>;
+    };
 
     __setCoderJobServiceOverrides(input.jobId, {
       detectors: stubDetectors,
