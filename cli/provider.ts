@@ -6,9 +6,17 @@ import {
   OLLAMA_DEFAULT_MODEL,
   OPENADAPTER_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
-  OPENROUTER_MAX_SESSION_ID_LENGTH,
   ZEN_DEFAULT_MODEL,
 } from '../lib/provider-models.ts';
+import type { AIProviderType, LlmMessage, PushStreamEvent } from '../lib/provider-contract.ts';
+import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
+import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
+
+// Re-export the shared reasoning-token parser so existing imports keep
+// working. The CLI used to ship its own copy in this file; the shared
+// implementation in `lib/reasoning-tokens.ts` is byte-equivalent and is the
+// canonical home now that `streamCompletion` no longer drives it directly.
+export { createReasoningTokenParser } from '../lib/reasoning-tokens.ts';
 
 export const DEFAULT_TIMEOUT_MS: number = 120_000;
 export const MAX_RETRIES: number = 3;
@@ -41,17 +49,15 @@ interface StreamCompletionOptions {
   sessionId?: string;
 }
 
-interface ReasoningTokenParser {
-  pushContent: (rawToken: string) => void;
-  pushReasoning: (token: string) => void;
-  flush: () => void;
-  closeThinking: () => void;
-}
-
-function isRetryableError(err: unknown, response: Response | undefined): boolean {
-  if (!response) return true; // network error
-  const status: number = response.status;
-  return status === 429 || status >= 500;
+function isRetryableError(err: unknown): boolean {
+  if (err instanceof CliProviderError) {
+    return err.status === 429 || err.status >= 500;
+  }
+  if (err instanceof Error && err.name === 'AbortError') return false;
+  // Anything else (network failure, TypeError from a misbehaving fetch shim)
+  // is treated as transport-level — matches the legacy parser that returned
+  // `true` whenever there was no `Response` object on the catch.
+  return true;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -156,110 +162,15 @@ export function getProviderList(): ProviderListEntry[] {
 }
 
 /**
- * Split provider output into visible assistant content vs reasoning/thinking tokens.
- * Handles both explicit `<think>...</think>` blocks in streamed content and native
- * `reasoning_content` deltas (routed via pushReasoning()).
+ * Stream a chat completion through the shared PushStream gateway and drive
+ * the legacy callback API on top of the parsed event stream.
+ *
+ * SSE parsing lives in `lib/openai-sse-pump.ts`; `<think>` ↔ native-reasoning
+ * normalization lives in `lib/reasoning-tokens.ts#normalizeReasoning`. Both
+ * are shared with the web orchestrator. This wrapper preserves the CLI's
+ * retry policy (3 attempts, exponential backoff for 429 / 5xx / network),
+ * activity-blind total-call timeout, and abort handling.
  */
-export function createReasoningTokenParser(
-  onContentToken: ((token: string) => void) | null | undefined,
-  onThinkingToken: ((token: string | null) => void) | null | undefined,
-): ReasoningTokenParser {
-  let insideThink: boolean = false;
-  let tagBuffer: string = '';
-  let thinkingOpen: boolean = false;
-
-  function emitContent(token: string): void {
-    if (!token) return;
-    onContentToken?.(token);
-  }
-
-  function emitThinking(token: string): void {
-    if (!token) return;
-    thinkingOpen = true;
-    onThinkingToken?.(token);
-  }
-
-  function closeThinking(): void {
-    if (!thinkingOpen) return;
-    thinkingOpen = false;
-    onThinkingToken?.(null);
-  }
-
-  function pushContent(rawToken: string): void {
-    if (!rawToken) return;
-    tagBuffer += rawToken;
-
-    // Detect <think> opening outside a think block.
-    if (!insideThink && tagBuffer.includes('<think>')) {
-      const parts: string[] = tagBuffer.split('<think>');
-      const before: string = parts.shift() || '';
-      const afterOpen: string = parts.join('<think>');
-      if (before) {
-        closeThinking();
-        emitContent(before);
-      }
-      insideThink = true;
-      thinkingOpen = true;
-      tagBuffer = '';
-      if (afterOpen) {
-        pushContent(afterOpen);
-      }
-      return;
-    }
-
-    // Inside <think>...</think> — emit to reasoning channel.
-    if (insideThink) {
-      if (tagBuffer.includes('</think>')) {
-        const thinkContent: string = tagBuffer.split('</think>')[0];
-        if (thinkContent) emitThinking(thinkContent);
-        closeThinking();
-
-        const after: string = tagBuffer.split('</think>').slice(1).join('</think>');
-        insideThink = false;
-        tagBuffer = '';
-        const cleaned: string = after.replace(/^\s+/, '');
-        if (cleaned) emitContent(cleaned);
-      } else {
-        // Hold a short tail so split closing tags can still be detected.
-        const safe: string = tagBuffer.slice(0, -10);
-        if (safe) emitThinking(safe);
-        tagBuffer = tagBuffer.slice(-10);
-      }
-      return;
-    }
-
-    // Normal content — flush when we are not holding a possible partial tag.
-    if (tagBuffer.length > 50 || !tagBuffer.includes('<')) {
-      closeThinking(); // native reasoning_content often precedes visible content
-      emitContent(tagBuffer);
-      tagBuffer = '';
-    }
-  }
-
-  function pushReasoning(token: string): void {
-    emitThinking(token);
-  }
-
-  function flush(): void {
-    if (insideThink) {
-      if (tagBuffer) emitThinking(tagBuffer);
-      insideThink = false;
-      tagBuffer = '';
-      closeThinking();
-      return;
-    }
-    if (tagBuffer) {
-      closeThinking();
-      emitContent(tagBuffer);
-      tagBuffer = '';
-      return;
-    }
-    closeThinking();
-  }
-
-  return { pushContent, pushReasoning, flush, closeThinking };
-}
-
 export async function streamCompletion(
   config: ProviderConfig,
   apiKey: string,
@@ -270,10 +181,10 @@ export async function streamCompletion(
   externalSignal: AbortSignal | null = null,
   options: StreamCompletionOptions | undefined = undefined,
 ): Promise<string> {
+  const onThinkingToken = options?.onThinkingToken ?? null;
   let lastError: Error | undefined;
 
   for (let attempt: number = 1; attempt <= MAX_RETRIES; attempt++) {
-    // Check for external abort before starting attempt
     if (externalSignal?.aborted) {
       const err: Error = new Error('Request aborted.');
       err.name = 'AbortError';
@@ -287,127 +198,69 @@ export async function streamCompletion(
     );
     const signals: AbortSignal[] = [timeoutController.signal];
     if (externalSignal) signals.push(externalSignal);
-    const controller: { signal: AbortSignal } = { signal: AbortSignal.any(signals) };
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
+    const compositeSignal: AbortSignal = AbortSignal.any(signals);
 
-    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-    if (config.id === 'openrouter') {
-      headers['HTTP-Referer'] = process.env.PUSH_OPENROUTER_REFERER || 'https://push.local';
-      headers['X-Title'] = 'Push CLI';
-    }
+    const stream = createCliProviderStream(config, apiKey, {
+      sessionId: options?.sessionId,
+    });
 
-    const baseBody: {
-      model: string;
-      messages: ChatMessage[];
-      stream: boolean;
-      temperature: number;
-    } = {
-      model,
-      messages,
-      stream: true,
-      temperature: 0.1,
-    };
+    let accumulated: string = '';
+    let yieldedAny: boolean = false;
 
-    // OpenRouter session tracking & trace metadata
-    // See: https://openrouter.ai/docs/guides/features/broadcast/overview
-    const requestBody: Record<string, unknown> =
-      config.id === 'openrouter'
-        ? {
-            ...baseBody,
-            ...(options?.sessionId
-              ? { session_id: options.sessionId.slice(0, OPENROUTER_MAX_SESSION_ID_LENGTH) }
-              : {}),
-            trace: { generation_name: 'push-cli-chat', trace_name: 'push-cli' },
-          }
-        : baseBody;
-
-    let response: Response | undefined;
     try {
-      response = await fetch(config.url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-        keepalive: true,
-      });
+      // Map the lib-side message shape onto LlmMessage. The CLI doesn't
+      // populate `id` / `timestamp`, but `LlmMessage` requires them — fill
+      // with placeholders that the gateway never reads.
+      const llmMessages: LlmMessage[] = messages.map((m, idx) => ({
+        id: `cli-${idx}`,
+        role: (m.role as LlmMessage['role']) || 'user',
+        content: m.content,
+        timestamp: 0,
+      }));
 
-      if (!response.ok) {
-        const body: string = await response.text().catch(() => '(no body)');
-        const err: Error = new Error(
-          `Provider error ${response.status} [provider=${config.id} model=${model} url=${config.url}]: ${body.slice(0, 400)}`,
-        );
-        if (attempt < MAX_RETRIES && isRetryableError(err, response)) {
-          lastError = err;
-          clearTimeout(timeout);
-          await sleep(RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1));
-          continue;
-        }
-        throw err;
-      }
+      const events: AsyncIterable<PushStreamEvent> = normalizeReasoning(
+        stream({
+          provider: (config.id as AIProviderType) ?? 'openrouter',
+          model,
+          messages: llmMessages,
+          signal: compositeSignal,
+        }),
+      );
 
-      if (!response.body) {
-        clearTimeout(timeout);
-        const fallbackJson: { choices?: { message?: { content?: string } }[] } | null =
-          await response.json().catch(() => null);
-        return fallbackJson?.choices?.[0]?.message?.content || '';
-      }
-
-      const reader: ReadableStreamDefaultReader<Uint8Array> = response.body.getReader();
-      const decoder: TextDecoder = new TextDecoder();
-      let buffer: string = '';
-      let accumulated: string = '';
-      const reasoningParser: ReasoningTokenParser = createReasoningTokenParser((token: string) => {
-        accumulated += token;
-        if (onToken) onToken(token);
-      }, options?.onThinkingToken);
-
-      while (true) {
-        const { done, value }: ReadableStreamReadResult<Uint8Array> = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines: string[] = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data:')) continue;
-          const data: string = line.slice(5).trim();
-          if (!data || data === '[DONE]') continue;
-
-          try {
-            const parsed: {
-              choices?: {
-                delta?: { content?: string; reasoning_content?: string };
-                message?: { content?: string };
-              }[];
-            } = JSON.parse(data);
-            const choice = parsed.choices?.[0];
-            if (!choice) continue;
-
-            const reasoningToken: string | undefined = choice.delta?.reasoning_content;
-            if (reasoningToken) {
-              reasoningParser.pushReasoning(reasoningToken);
-            }
-
-            const token: string = choice.delta?.content ?? choice.message?.content ?? '';
-            if (token) {
-              reasoningParser.pushContent(token);
-            }
-          } catch {
-            // ignore malformed SSE chunks
-          }
+      for await (const event of events) {
+        yieldedAny = true;
+        switch (event.type) {
+          case 'text_delta':
+            accumulated += event.text;
+            onToken?.(event.text);
+            break;
+          case 'reasoning_delta':
+            onThinkingToken?.(event.text);
+            break;
+          case 'reasoning_end':
+            onThinkingToken?.(null);
+            break;
+          case 'tool_call_delta':
+            // Structural progress signal — not surfaced through the legacy
+            // callback API. The text-based dispatcher picks the assembled
+            // call up later as a fenced JSON `text_delta`.
+            break;
+          case 'done':
+            // Loop exits naturally when the iterator returns after `done`.
+            break;
         }
       }
-
-      reasoningParser.flush();
 
       clearTimeout(timeout);
       return accumulated;
     } catch (err) {
       clearTimeout(timeout);
-      if ((err instanceof DOMException || err instanceof Error) && err.name === 'AbortError') {
+
+      const isAbort: boolean =
+        (err instanceof DOMException || err instanceof Error) &&
+        (err as Error).name === 'AbortError';
+
+      if (isAbort) {
         if (externalSignal?.aborted) {
           const abortErr: Error = new Error('Request aborted.');
           abortErr.name = 'AbortError';
@@ -417,11 +270,16 @@ export async function streamCompletion(
           `Request timed out after ${Math.floor(timeoutMs / 1000)}s [provider=${config.id} model=${model} url=${config.url}]`,
         );
       }
-      if (attempt < MAX_RETRIES && isRetryableError(err, response)) {
+
+      // Mid-stream failures (after the first event) cannot be retried — the
+      // consumer has already observed partial output and a fresh attempt
+      // would duplicate it.
+      if (!yieldedAny && attempt < MAX_RETRIES && isRetryableError(err)) {
         lastError = err as Error;
         await sleep(RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1));
         continue;
       }
+
       throw err;
     }
   }
