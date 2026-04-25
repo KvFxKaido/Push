@@ -280,11 +280,12 @@ describe('cloudflareStream', () => {
 
   it('does not send an Authorization header (Worker uses env.AI binding)', async () => {
     // Cloudflare's Worker authenticates upstream via its `env.AI` binding,
-    // not a Bearer token from the client. The legacy config used
-    // `apiKey: ''` and `authHeader: null` — preserve that by never sending
-    // Authorization, otherwise an empty `Bearer ` would bypass the Worker's
-    // missing-binding 401 (same `standardAuth` shape as the other proxies,
-    // even though Cloudflare doesn't use `standardAuth` directly).
+    // not a Bearer token from the client. `handleCloudflareChat`'s
+    // `runPreamble` checks the binding directly (`runtimeEnv.AI ? ... : null`)
+    // and ignores any client `Authorization` header — unlike the other six
+    // adapter-routed streams that flow through `standardAuth`. The legacy
+    // config left `apiKey: ''` and `authHeader: null`; this stream preserves
+    // that by never setting Authorization on the request.
     installStreamFetch(fetchMock);
     const { cloudflareStream } = await import('./cloudflare-stream');
     const iter = cloudflareStream(baseRequest);
