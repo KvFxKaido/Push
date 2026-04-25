@@ -20,6 +20,7 @@ import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-ca
 import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-session';
 import { openrouterStream } from './openrouter-stream';
 import { zenStream } from './zen-stream';
+import { kilocodeStream } from './kilocode-stream';
 import type { PushStream } from '@push/lib/provider-contract';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
@@ -65,7 +66,7 @@ import {
   normalizeExperimentalBaseUrl,
 } from './experimental-providers';
 import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
-import { streamSSEChat } from './orchestrator';
+import { streamSSEChat, createChunkedEmitter } from './orchestrator';
 import { parseProviderError, hasFinishReason } from './orchestrator-streaming';
 import type { StreamProviderConfig, StreamUsage, ChunkMetadata } from './orchestrator-streaming';
 
@@ -532,6 +533,63 @@ function buildAdapterTelemetry(): AdapterTelemetry {
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
 
 /**
+ * Wrap a `StreamChatFn`'s `onToken`/`onDone`/`onError` so visible content is
+ * batched through `createChunkedEmitter` before reaching the UI callback.
+ * Mirrors the legacy `streamSSEChatOnce` path which fed `onToken` through a
+ * chunker to collapse character/sub-word fragments into per-word emissions.
+ *
+ * Adapter-routed providers (OpenRouter / Zen / Kilo Code) bypass that legacy
+ * path, so without this wrapper sub-word streaming would hammer React with a
+ * `setState` per character on slow mobile devices. `onThinkingToken` is left
+ * unbatched — the legacy path didn't batch reasoning either.
+ *
+ * Flushes on terminal callbacks (onDone / onError) so the trailing buffer
+ * never gets stuck behind the 50ms scheduled flush.
+ */
+export function withChunkedEmitter(args: Parameters<StreamChatFn>): Parameters<StreamChatFn> {
+  const [
+    messages,
+    onToken,
+    onDone,
+    onError,
+    onThinkingToken,
+    workspaceContext,
+    hasSandbox,
+    modelOverride,
+    systemPromptOverride,
+    scratchpadContent,
+    signal,
+    onPreCompact,
+    todoContent,
+  ] = args;
+  const chunker = createChunkedEmitter(onToken);
+  const wrappedOnToken: typeof onToken = (text) => chunker.push(text);
+  const wrappedOnDone: typeof onDone = (usage) => {
+    chunker.flush();
+    onDone(usage);
+  };
+  const wrappedOnError: typeof onError = (err) => {
+    chunker.flush();
+    onError(err);
+  };
+  return [
+    messages,
+    wrappedOnToken,
+    wrappedOnDone,
+    wrappedOnError,
+    onThinkingToken,
+    workspaceContext,
+    hasSandbox,
+    modelOverride,
+    systemPromptOverride,
+    scratchpadContent,
+    signal,
+    onPreCompact,
+    todoContent,
+  ];
+}
+
+/**
  * OpenRouter ships via the PushStream abstraction: `openrouterStream` handles
  * SSE parsing + reasoning channel normalization, `createProviderStreamAdapter`
  * provides timer/abort safety parity with the legacy `streamSSEChatOnce` path
@@ -583,7 +641,7 @@ export const streamOpenRouterChat: StreamChatFn = async (...args) => {
     telemetry: buildAdapterTelemetry(),
   });
 
-  return adapted(...args);
+  return adapted(...withChunkedEmitter(args));
 };
 export const streamCloudflareChat: StreamChatFn = (...args) =>
   streamProviderChat('cloudflare', ...args);
@@ -629,13 +687,50 @@ export const streamZenChat: StreamChatFn = async (...args) => {
     telemetry: buildAdapterTelemetry(),
   });
 
-  return adapted(...args);
+  return adapted(...withChunkedEmitter(args));
 };
 export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
 export const streamBlackboxChat: StreamChatFn = (...args) =>
   streamProviderChat('blackbox', ...args);
-export const streamKilocodeChat: StreamChatFn = (...args) =>
-  streamProviderChat('kilocode', ...args);
+
+/**
+ * Kilo Code ships via the PushStream abstraction (Phase 8 follow-up):
+ * `kilocodeStream` handles SSE parsing + reasoning/tool-call normalization,
+ * `createProviderStreamAdapter` provides timer/abort safety. Mirrors
+ * `streamZenChat` and `streamOpenRouterChat`.
+ */
+export const streamKilocodeChat: StreamChatFn = async (...args) => {
+  const apiKey = getKilocodeKey();
+  if (!apiKey) {
+    const [, , , onError] = args;
+    onError(new Error('Kilo Code API key not configured'));
+    return;
+  }
+
+  const modelOverride = args[7];
+  const kilocodeErrorMessages = buildErrorMessages('Kilo Code');
+  const timeouts: AdapterTimeoutConfig = {
+    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
+    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
+    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
+    errorMessages: {
+      event: kilocodeErrorMessages.idle,
+      content: kilocodeErrorMessages.stall,
+      total: kilocodeErrorMessages.total,
+    },
+  };
+
+  const kilocodeWithReasoning: PushStream<ChatMessage> = (req) =>
+    normalizeReasoning(kilocodeStream(req));
+
+  const adapted = createProviderStreamAdapter<ChatMessage>(kilocodeWithReasoning, 'kilocode', {
+    defaultModel: modelOverride || getKiloCodeModelName(),
+    timeouts,
+    telemetry: buildAdapterTelemetry(),
+  });
+
+  return adapted(...withChunkedEmitter(args));
+};
 export const streamOpenAdapterChat: StreamChatFn = (...args) =>
   streamProviderChat('openadapter', ...args);
 export const streamAzureChat: StreamChatFn = (...args) => streamProviderChat('azure', ...args);
