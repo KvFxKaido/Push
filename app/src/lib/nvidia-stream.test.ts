@@ -257,4 +257,27 @@ describe('nvidiaStream', () => {
     expect(body).not.toHaveProperty('session_id');
     expect(body).not.toHaveProperty('trace');
   });
+
+  it('omits Authorization entirely when the client key is empty', async () => {
+    // standardAuth('NVIDIA_API_KEY') on the Worker reads any non-empty
+    // client Authorization as "key supplied" and skips the keyMissingError
+    // 401, so sending `Bearer ` would bypass the configured fallback and
+    // forward an empty bearer to Nvidia. The stream therefore omits
+    // Authorization when there's no client key.
+    vi.doMock('@/hooks/useNvidiaConfig', () => ({
+      getNvidiaKey: () => '',
+    }));
+    installStreamFetch(fetchMock);
+    const { nvidiaStream } = await import('./nvidia-stream');
+    const iter = nvidiaStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).toHaveBeenCalled();
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
+  });
 });

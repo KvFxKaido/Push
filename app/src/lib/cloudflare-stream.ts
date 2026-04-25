@@ -1,19 +1,25 @@
 /**
- * Blackbox AI PushStream implementation.
+ * Cloudflare Workers AI PushStream implementation (client-side).
  *
- * Hits the Worker proxy at `/api/blackbox/chat` (or the Vite dev passthrough
- * at `/blackbox/chat/completions`), then delegates SSE parsing to the shared
- * `openAISSEPump` in `lib/`.
+ * Hits the Worker proxy at `/api/cloudflare/chat`, then delegates SSE
+ * parsing to the shared `openAISSEPump` in `lib/`.
  *
- * Runs client-side. Timer/abort safety comes from `createProviderStreamAdapter`
- * wrapping this stream — no timer machinery lives here. Plain OpenAI-
- * compatible gateway: single endpoint, Bearer auth, no provider-specific
- * body extensions.
+ * Worker side: `handleCloudflareChat` in `app/src/worker/worker-providers.ts`
+ * iterates a Worker-side `cloudflareStream` (which wraps `env.AI.run`) and
+ * translates each `PushStreamEvent` back into OpenAI-shape SSE frames before
+ * writing them to the response body. From the client's perspective, the wire
+ * is plain `data: { choices: [{ delta: { content | reasoning_content } }] }`
+ * + `[DONE]` — same shape every other adapter-routed provider speaks — which
+ * is why the same `openAISSEPump` consumes it without a bespoke pump.
  *
- * The legacy `streamSSEChatOnce` config set `shouldResetStallOnReasoning:
- * true` for Blackbox. The adapter's `contentTimeoutMs` already resets on
- * `reasoning_delta` (see `AdapterTimeoutConfig` in `lib/provider-contract.ts`),
- * so adapter-routed Blackbox keeps the same stall semantics by construction.
+ * Auth: no Bearer token. The Worker uses its `env.AI` binding for the
+ * upstream call, so the legacy config left `apiKey: ''` and `authHeader: null`.
+ * If the binding is missing, the Worker returns a 401 with
+ * `CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR` — the failure path moves from
+ * a client-side preflight throw to a round-trip 401 with the same message.
+ *
+ * Runs client-side. Timer/abort safety comes from `iterateChatStream`
+ * wrapping this stream — no timer machinery lives here.
  */
 
 import type { ChatMessage } from '@/types';
@@ -23,14 +29,15 @@ import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
-import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 
-export async function* blackboxStream(
+export async function* cloudflareStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
+  // 1. Compose messages via the shared prompt builder. Runtime context flows
+  //    through the adapter as opaque passthrough fields — cast locally.
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
   const llmMessages = toLLMMessages(
     req.messages,
@@ -38,13 +45,15 @@ export async function* blackboxStream(
     req.hasSandbox,
     req.systemPromptOverride,
     req.scratchpadContent,
-    'blackbox',
+    'cloudflare',
     req.model,
     req.onPreCompact,
     undefined,
     req.todoContent,
   );
 
+  // 2. Plain OpenAI-compatible request body. The Worker normalizes the
+  //    upstream `env.AI.run` events back into this shape before responding.
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -54,21 +63,18 @@ export async function* blackboxStream(
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
   };
 
-  // Omit Authorization entirely when no client key is configured —
-  // `standardAuth` treats any non-empty client `Authorization` as "key
-  // supplied" and skips the Worker's `keyMissingError` 401, so sending
-  // `Bearer ` would bypass the configured fallback and forward an empty
-  // bearer upstream.
-  const apiKey = (getBlackboxKey() ?? '').trim();
+  // 3. Headers. No Authorization — the Worker uses its `env.AI` binding for
+  //    upstream auth and surfaces missing-binding as a 401 with
+  //    CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR.
   const requestId = createRequestId('chat');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     [REQUEST_ID_HEADER]: requestId,
-    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
   };
   injectTraceHeaders(headers);
 
-  const response = await fetch(PROVIDER_URLS.blackbox.chat, {
+  // 4. POST + stream response.
+  const response = await fetch(PROVIDER_URLS.cloudflare.chat, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -84,11 +90,11 @@ export async function* blackboxStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new Error(`Blackbox AI ${response.status}: ${detail}`);
+    throw new Error(`Cloudflare Workers AI ${response.status}: ${detail}`);
   }
 
   if (!response.body) {
-    throw new Error('Blackbox AI response had no body');
+    throw new Error('Cloudflare Workers AI response had no body');
   }
 
   yield* openAISSEPump({
