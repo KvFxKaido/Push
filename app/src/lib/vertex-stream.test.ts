@@ -413,4 +413,30 @@ describe('vertexStream', () => {
     expect(caught!.message).toMatch(/region/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("throws when getVertexMode is 'none' (partial / invalid config)", async () => {
+    // `'none'` means neither native nor legacy is fully configured.
+    // PROVIDER_READY_CHECKS.vertex normally filters this out before the
+    // stream is reached, but a `providerOverride: 'vertex'` could route
+    // past that. The stream must fail fast with a local error rather
+    // than falling through to a legacy-shaped fetch that would send the
+    // service-account JSON as a Bearer token.
+    vi.doMock('@/hooks/useVertexConfig', () => ({
+      getVertexBaseUrl: () => '',
+      getVertexKey: () => VALID_SERVICE_ACCOUNT_JSON,
+      getVertexMode: () => 'none' as const,
+      getVertexRegion: () => 'us-central1',
+    }));
+    const { vertexStream } = await import('./vertex-stream');
+
+    let caught: Error | null = null;
+    try {
+      await vertexStream(baseRequest)[Symbol.asyncIterator]().next();
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).not.toBeNull();
+    expect(caught!.message).toMatch(/not fully configured/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

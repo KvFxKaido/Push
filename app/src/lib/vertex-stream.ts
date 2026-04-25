@@ -104,7 +104,7 @@ export async function* vertexStream(
     headers['X-Push-Vertex-Service-Account'] = encodedServiceAccount;
     headers['X-Push-Vertex-Region'] = region.normalized;
     // No Authorization — Worker uses the encoded service account instead.
-  } else {
+  } else if (mode === 'legacy') {
     // Legacy mode: same shape as Azure / Bedrock — Bearer + upstream-base.
     const proxyHeaders = buildExperimentalProxyHeaders('vertex', getVertexBaseUrl());
     if (!proxyHeaders['X-Push-Upstream-Base']) {
@@ -115,6 +115,16 @@ export async function* vertexStream(
     if (apiKey) {
       headers.Authorization = `Bearer ${apiKey}`;
     }
+  } else {
+    // mode === 'none' — partially or invalidly configured. Failing fast
+    // with a local error is much clearer than letting the request fall
+    // through to a legacy-shaped fetch that would send a service-account
+    // JSON as a Bearer token (or skip Authorization entirely with a bad
+    // base URL) and surface a misleading upstream auth/baseURL error.
+    // PROVIDER_READY_CHECKS.vertex normally filters this out before the
+    // stream is reached; this guard backstops a `providerOverride` path
+    // that would otherwise bypass the readiness check.
+    throw new Error('Google Vertex is not fully configured');
   }
   injectTraceHeaders(headers);
 
