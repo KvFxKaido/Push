@@ -491,25 +491,30 @@ function buildAdapterTelemetry(): AdapterTelemetry {
           },
         },
         async (span) => {
-          let captured: AdapterTelemetryEndResult | null = null;
+          // Holder object — TS 6 narrows a `let captured = null` to `null`
+          // even when a closure writes to it across an `await`, so the
+          // post-await `if (captured)` branch ends up typed `never`. A
+          // property write on a const-bound object side-steps the narrowing.
+          const captured: { result: AdapterTelemetryEndResult | null } = { result: null };
           try {
             await run((result) => {
-              captured = result;
+              captured.result = result;
             });
           } finally {
-            if (captured) {
+            const result = captured.result;
+            if (result) {
               setSpanAttributes(span, {
-                'push.abort_reason': captured.abortReason ?? undefined,
-                'push.stream.chunk_count': captured.eventCount,
-                'push.stream.content_chars': captured.textChars,
-                'push.stream.thinking_chars': captured.reasoningChars,
-                'push.usage.input_tokens': captured.usage?.inputTokens,
-                'push.usage.output_tokens': captured.usage?.outputTokens,
-                'push.usage.total_tokens': captured.usage?.totalTokens,
+                'push.abort_reason': result.abortReason ?? undefined,
+                'push.stream.chunk_count': result.eventCount,
+                'push.stream.content_chars': result.textChars,
+                'push.stream.thinking_chars': result.reasoningChars,
+                'push.usage.input_tokens': result.usage?.inputTokens,
+                'push.usage.output_tokens': result.usage?.outputTokens,
+                'push.usage.total_tokens': result.usage?.totalTokens,
               });
-              if (captured.error) {
-                recordSpanError(span, captured.error);
-              } else if (captured.abortReason === 'user') {
+              if (result.error) {
+                recordSpanError(span, result.error);
+              } else if (result.abortReason === 'user') {
                 span.setAttribute('push.cancelled', true);
               } else {
                 span.setStatus({ code: SpanStatusCode.OK });
