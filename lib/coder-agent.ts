@@ -45,10 +45,10 @@
  * string slot needed for them.
  */
 
-import type { AIProviderType, LlmMessage, ProviderStreamFn } from './provider-contract.js';
+import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
 import type { AcceptanceCriterion } from './runtime-contract.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
-import { streamWithTimeout, asRecord } from './stream-utils.js';
+import { iteratePushStreamText, asRecord } from './stream-utils.js';
 import { detectToolFromText } from './tool-call-parsing.js';
 import {
   truncateAgentContent,
@@ -611,13 +611,21 @@ export async function generateCheckpointAnswer(
   question: string,
   coderContext: string,
   opts: {
-    streamFn: ProviderStreamFn;
+    /**
+     * PushStream the Orchestrator iterates directly. Phase 6 of the
+     * PushStream gateway migration moved checkpoint answers off the 12-arg
+     * `ProviderStreamFn` callback — callers now pass either a native
+     * PushStream or a legacy `ProviderStreamFn` wrapped with
+     * `providerStreamFnToPushStream`.
+     */
+    stream: PushStream<LlmMessage>;
+    provider: AIProviderType;
     modelId?: string;
     recentChatHistory?: CoderLoopMessage[];
     signal?: AbortSignal;
   },
 ): Promise<string> {
-  const { streamFn, modelId, recentChatHistory, signal } = opts;
+  const { stream, provider, modelId, recentChatHistory, signal } = opts;
 
   const checkpointSystemPrompt = `You are the Orchestrator agent for Push, answering a question from the Coder agent who has paused mid-task.
 
@@ -665,27 +673,28 @@ If the answer is genuinely uncertain, say so plainly in Decision and give the sa
     timestamp: Date.now(),
   });
 
-  const { promise: streamErrorPromise, getAccumulated } = streamWithTimeout(
+  // Compose the caller's signal with iteratePushStreamText's own activity
+  // controller so user-initiated cancellation aborts the upstream call.
+  const cancellableStream: PushStream<LlmMessage> = signal
+    ? (req) =>
+        stream({
+          ...req,
+          signal: req.signal ? AbortSignal.any([req.signal, signal]) : signal,
+        })
+    : stream;
+
+  const { error: streamError, text: accumulated } = await iteratePushStreamText(
+    cancellableStream,
+    {
+      provider,
+      model: modelId ?? '',
+      messages,
+      systemPromptOverride: checkpointSystemPrompt,
+      hasSandbox: false,
+    },
     CHECKPOINT_ANSWER_TIMEOUT_MS,
     'Checkpoint response timed out',
-    (onToken, onDone, onError) => {
-      return streamFn(
-        messages,
-        onToken,
-        onDone,
-        onError,
-        undefined,
-        undefined,
-        false,
-        modelId,
-        checkpointSystemPrompt,
-        undefined,
-        signal,
-      );
-    },
   );
-  const streamError = await streamErrorPromise;
-  const accumulated = getAccumulated();
 
   if (streamError || !accumulated.trim()) {
     return 'The Orchestrator could not generate a response. Try a different approach or simplify your current step.';
@@ -1045,8 +1054,13 @@ export type CoderToolExecResult<TCard> =
  */
 export interface CoderAgentOptions<TCall, TCard> {
   provider: AIProviderType;
-  /** Injected provider stream function. Caller resolves it. */
-  streamFn: ProviderStreamFn;
+  /**
+   * PushStream the Coder iterates directly. Phase 6 of the PushStream
+   * gateway migration moved the Coder off the 12-arg `ProviderStreamFn`
+   * callback — callers now pass either a native PushStream or a legacy
+   * `ProviderStreamFn` wrapped with `providerStreamFnToPushStream`.
+   */
+  stream: PushStream<LlmMessage>;
   /** Resolved model id the caller wants the Coder to use. */
   modelId: string | undefined;
   sandboxId: string;
@@ -1128,7 +1142,8 @@ export async function runCoderAgent<TCall, TCard>(
   callbacks: CoderAgentCallbacks,
 ): Promise<CoderAgentResult<TCard>> {
   const {
-    streamFn,
+    provider,
+    stream,
     modelId,
     sandboxId: _sandboxId,
     allowedRepo: _allowedRepo,
@@ -1214,10 +1229,17 @@ export async function runCoderAgent<TCall, TCard>(
 
   const systemPrompt = promptBuilder.build();
 
-  // `streamFn` is typed `ProviderStreamFn<LlmMessage>` in lib. Web's
-  // `StreamChatFn` is passed through the shim layer — see provider-contract
-  // for the runtime-safety note on the cross-shape call.
-  const callStream: ProviderStreamFn = streamFn;
+  // Compose the agent-level cancellation signal with iteratePushStreamText's
+  // own activity-timeout controller. Mirrors how the legacy callback path
+  // forwarded `callbacks.signal` as the 11th positional arg into `streamFn`.
+  const externalSignal = callbacks.signal;
+  const cancellableStream: PushStream<LlmMessage> = externalSignal
+    ? (req) =>
+        stream({
+          ...req,
+          signal: req.signal ? AbortSignal.any([req.signal, externalSignal]) : externalSignal,
+        })
+    : stream;
 
   const allCards: TCard[] = [];
   let rounds = 0;
@@ -1277,29 +1299,23 @@ export async function runCoderAgent<TCall, TCard>(
     callbacks.onStatus('Coder working...', `Round ${rounds}`);
 
     // Stream Coder response via the active provider, with a per-round timeout
-    const { promise: roundStreamPromise, getAccumulated: getRoundAccumulated } = streamWithTimeout(
+    const { error: streamError, text: accumulated } = await iteratePushStreamText(
+      cancellableStream,
+      {
+        provider,
+        model: coderModelId ?? '',
+        messages,
+        systemPromptOverride: systemPrompt,
+        hasSandbox: true,
+      },
       CODER_ROUND_TIMEOUT_MS,
       `Coder round ${rounds} timed out after ${CODER_ROUND_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
-      (onToken, onDone, onError) => {
-        return callStream(
-          messages,
-          onToken,
-          onDone,
-          onError,
-          undefined, // no thinking tokens needed
-          undefined, // no workspace context (Coder uses sandbox)
-          true, // hasSandbox
-          coderModelId,
-          systemPrompt,
-          undefined, // no scratchpad needed
-          callbacks.signal,
-        );
-      },
     );
-    const streamError = await roundStreamPromise;
-    const accumulated = getRoundAccumulated();
 
     if (streamError) {
+      if (callbacks.signal?.aborted) {
+        throw new DOMException('Coder cancelled by user.', 'AbortError');
+      }
       throw streamError;
     }
 

@@ -22,6 +22,12 @@ import {
   runDeepReviewer as runDeepReviewerLib,
   type DeepReviewerOptions as LibDeepReviewerOptions,
 } from '@push/lib/deep-reviewer-agent';
+import {
+  providerStreamFnToPushStream,
+  type LlmMessage,
+  type ProviderStreamFn,
+  type PushStream,
+} from '@push/lib/provider-contract';
 import type { ChatCard, DeepReviewCallbacks, ReviewResult } from '@/types';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import { detectAllToolCalls, detectAnyToolCall, type AnyToolCall } from './tool-dispatch';
@@ -50,6 +56,19 @@ export interface DeepReviewerOptions {
   instructionFilename?: string;
 }
 
+// Bridged-PushStream cache, keyed by underlying `ProviderStreamFn` identity.
+// Mirrors the Auditor / Reviewer wrapper pattern so concurrent runs against
+// the same provider see the same `PushStream` object.
+const pushStreamCache = new WeakMap<ProviderStreamFn, PushStream<LlmMessage>>();
+function bridgeStreamFn(streamFn: ProviderStreamFn): PushStream<LlmMessage> {
+  let push = pushStreamCache.get(streamFn);
+  if (!push) {
+    push = providerStreamFnToPushStream(streamFn as ProviderStreamFn<LlmMessage>);
+    pushStreamCache.set(streamFn, push);
+  }
+  return push;
+}
+
 export async function runDeepReviewer(
   diff: string,
   options: DeepReviewerOptions,
@@ -70,15 +89,7 @@ export async function runDeepReviewer(
 
   const libOptions: LibDeepReviewerOptions<AnyToolCall, ChatCard> = {
     provider: options.provider,
-    // Contravariance-unsafe cast: Web's `StreamChatFn` carries ChatMessage,
-    // but the lib kernel only constructs `LlmMessage` values and Web's
-    // `streamSSEChat` reads every ChatMessage-only field via optional
-    // chaining. See `lib/provider-contract.ts` for the runtime-safety
-    // rationale.
-    streamFn: options.streamFn as unknown as LibDeepReviewerOptions<
-      AnyToolCall,
-      ChatCard
-    >['streamFn'],
+    stream: bridgeStreamFn(options.streamFn as unknown as ProviderStreamFn),
     modelId: options.modelId,
     context: options.context,
     sandboxId: options.sandboxId,

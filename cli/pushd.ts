@@ -64,6 +64,7 @@ import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runCoderAgent } from '../lib/coder-agent.ts';
 import { runReviewer } from '../lib/reviewer-agent.ts';
+import { providerStreamFnToPushStream } from '../lib/provider-contract.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
 import { assertValidEvent, isStrictModeEnabled } from './protocol-schema.js';
@@ -1522,7 +1523,7 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleE
   const result = await runExplorerAgent(
     {
       provider,
-      streamFn: daemonStreamFn,
+      stream: providerStreamFnToPushStream(daemonStreamFn),
       modelId: model,
       sandboxId: null,
       allowedRepo: '',
@@ -1633,7 +1634,7 @@ async function runCoderForTaskGraph(
   const result = await runCoderAgent(
     {
       provider,
-      streamFn: daemonStreamFn,
+      stream: providerStreamFnToPushStream(daemonStreamFn),
       modelId: model,
       sandboxId: '',
       allowedRepo: '',
@@ -2376,7 +2377,7 @@ async function handleDelegateExplorer(req) {
       const result = await runExplorerAgent(
         {
           provider: resolvedProvider,
-          streamFn: daemonStreamFn,
+          stream: providerStreamFnToPushStream(daemonStreamFn),
           modelId: resolvedModel,
           sandboxId: null,
           allowedRepo,
@@ -2736,7 +2737,7 @@ async function handleDelegateCoder(req) {
       const result = await runCoderAgent(
         {
           provider: resolvedProvider,
-          streamFn: daemonStreamFn,
+          stream: providerStreamFnToPushStream(daemonStreamFn),
           modelId: resolvedModel,
           sandboxId: '',
           allowedRepo,
@@ -3078,7 +3079,7 @@ async function handleDelegateReviewer(req) {
         diff,
         {
           provider: resolvedProvider,
-          streamFn: signalAwareStreamFn,
+          stream: providerStreamFnToPushStream(signalAwareStreamFn),
           modelId: resolvedModel,
           context: rawContext,
           resolveRuntimeContext: async (_diff, context) => buildReviewerContextBlock(context) || '',

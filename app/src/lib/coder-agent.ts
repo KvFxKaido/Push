@@ -60,6 +60,12 @@ import {
   buildCoderToolExec,
   type CoderBindingServices,
 } from '@push/lib/coder-agent-bindings';
+import {
+  providerStreamFnToPushStream,
+  type LlmMessage,
+  type ProviderStreamFn,
+  type PushStream,
+} from '@push/lib/provider-contract';
 import { getActiveProvider, getProviderStreamFn, type ActiveProvider } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
@@ -111,6 +117,19 @@ export type { CoderAgentOptions, CoderAfterModelResult, CoderToolExecResult };
 // Checkpoint answer — Web-facing signature preserved.
 // ---------------------------------------------------------------------------
 
+// Bridged-PushStream cache, keyed by underlying `ProviderStreamFn` identity.
+// Mirrors the Auditor / Reviewer wrapper pattern so concurrent Coder runs and
+// checkpoint answers against the same provider see the same `PushStream`.
+const pushStreamCache = new WeakMap<ProviderStreamFn, PushStream<LlmMessage>>();
+function bridgeStreamFn(streamFn: ProviderStreamFn): PushStream<LlmMessage> {
+  let push = pushStreamCache.get(streamFn);
+  if (!push) {
+    push = providerStreamFnToPushStream(streamFn as ProviderStreamFn<LlmMessage>);
+    pushStreamCache.set(streamFn, push);
+  }
+  return push;
+}
+
 export async function generateCheckpointAnswer(
   question: string,
   coderContext: string,
@@ -128,9 +147,12 @@ export async function generateCheckpointAnswer(
   const modelId = modelOverride || roleModel?.id;
 
   return generateCheckpointAnswerLib(question, coderContext, {
-    streamFn: streamFn as unknown as Parameters<typeof generateCheckpointAnswerLib>[2]['streamFn'],
+    stream: bridgeStreamFn(streamFn as unknown as ProviderStreamFn),
+    provider: activeProvider,
     modelId,
-    recentChatHistory,
+    recentChatHistory: recentChatHistory as unknown as Parameters<
+      typeof generateCheckpointAnswerLib
+    >[2]['recentChatHistory'],
     signal,
   });
 }
@@ -372,7 +394,7 @@ export async function runCoderAgent(
   // --- Build lib options ---
   const libOptions: CoderAgentOptions<AnyToolCall, ChatCard> = {
     provider: activeProvider,
-    streamFn: streamFn as unknown as CoderAgentOptions<AnyToolCall, ChatCard>['streamFn'],
+    stream: bridgeStreamFn(streamFn as unknown as ProviderStreamFn),
     modelId: coderModelId,
     sandboxId,
     allowedRepo: '',

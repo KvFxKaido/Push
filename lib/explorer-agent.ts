@@ -26,9 +26,9 @@
  * `ChatMessage`.
  */
 
-import type { AIProviderType, LlmMessage, ProviderStreamFn } from './provider-contract.js';
+import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
-import { streamWithTimeout } from './stream-utils.js';
+import { iteratePushStreamText } from './stream-utils.js';
 import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
 import { detectUnimplementedToolCall, diagnoseToolCallFailure } from './tool-call-diagnosis.js';
 import {
@@ -231,8 +231,13 @@ export type ExplorerAfterModelResult =
  */
 export interface ExplorerAgentOptions<TCall, TCard> {
   provider: AIProviderType;
-  /** Injected provider stream function. Caller resolves it (e.g. via getProviderStreamFn). */
-  streamFn: ProviderStreamFn;
+  /**
+   * PushStream the Explorer iterates directly. Phase 6 of the PushStream
+   * gateway migration moved the Explorer off the 12-arg `ProviderStreamFn`
+   * callback — callers now pass either a native PushStream or a legacy
+   * `ProviderStreamFn` wrapped with `providerStreamFnToPushStream`.
+   */
+  stream: PushStream<LlmMessage>;
   /** Resolved model id the caller wants the explorer to use. */
   modelId: string | undefined;
   sandboxId: string | null;
@@ -336,7 +341,8 @@ export async function runExplorerAgent<TCall, TCard>(
   callbacks: ExplorerAgentCallbacks,
 ): Promise<ExplorerAgentResult<TCard>> {
   const {
-    streamFn,
+    provider,
+    stream,
     modelId,
     sandboxId,
     allowedRepo,
@@ -414,11 +420,17 @@ export async function runExplorerAgent<TCall, TCard>(
 
   const cards: TCard[] = [];
 
-  // `streamFn` is typed `ProviderStreamFn<LlmMessage>` in lib. Web's
-  // `StreamChatFn = ProviderStreamFn<ChatMessage, WorkspaceContext>` is
-  // passed through the shim layer — see the provider-contract runtime-
-  // safety note for why this cross-shape call is sound.
-  const callStream: ProviderStreamFn = streamFn;
+  // Compose the agent-level cancellation signal with iteratePushStreamText's
+  // own activity-timeout controller. Mirrors how the legacy callback path
+  // forwarded `callbacks.signal` as the 11th positional arg into `streamFn`.
+  const externalSignal = callbacks.signal;
+  const cancellableStream: PushStream<LlmMessage> = externalSignal
+    ? (req) =>
+        stream({
+          ...req,
+          signal: req.signal ? AbortSignal.any([req.signal, externalSignal]) : externalSignal,
+        })
+    : stream;
 
   let rounds = 0;
 
@@ -430,30 +442,28 @@ export async function runExplorerAgent<TCall, TCard>(
     rounds = round + 1;
     callbacks.onStatus('Explorer investigating...', `Round ${rounds}`);
 
-    const { promise: roundStreamPromise, getAccumulated } = streamWithTimeout(
+    const { error: streamError, text: rawAccumulated } = await iteratePushStreamText(
+      cancellableStream,
+      {
+        provider,
+        model: explorerModelId ?? '',
+        messages,
+        systemPromptOverride: systemPrompt,
+        hasSandbox: Boolean(sandboxId),
+      },
       EXPLORER_ROUND_TIMEOUT_MS,
       `Explorer round ${rounds} timed out after ${EXPLORER_ROUND_TIMEOUT_MS / 1000}s.`,
-      (onToken, onDone, onError) =>
-        callStream(
-          messages,
-          onToken,
-          onDone,
-          onError,
-          undefined,
-          undefined,
-          Boolean(sandboxId),
-          explorerModelId,
-          systemPrompt,
-          undefined,
-          callbacks.signal,
-        ),
     );
 
-    const streamError = await roundStreamPromise;
-    const accumulated = getAccumulated().trim();
     if (streamError) {
+      // Honor cooperative cancellation — match the legacy callback-based path
+      // that surfaced an AbortError when the consumer's signal fired.
+      if (callbacks.signal?.aborted) {
+        throw new DOMException('Explorer cancelled by user.', 'AbortError');
+      }
       throw streamError;
     }
+    const accumulated = rawAccumulated.trim();
 
     messages.push({
       id: `explorer-response-${round}`,

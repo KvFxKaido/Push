@@ -32,7 +32,12 @@ import {
 import { CapabilityLedger, ROLE_CAPABILITIES } from '@push/lib/capabilities';
 import type { AcceptanceCriterion, RunEventInput, RunEvent } from '@push/lib/runtime-contract';
 import type { UserProfile } from '@push/lib/user-identity';
-import type { AIProviderType, ProviderStreamFn } from '@push/lib/provider-contract';
+import {
+  providerStreamFnToPushStream,
+  type AIProviderType,
+  type LlmMessage,
+  type ProviderStreamFn,
+} from '@push/lib/provider-contract';
 import type { VerificationPolicy } from '@push/lib/verification-policy';
 import { formatVerificationPolicyBlock } from '@push/lib/verification-policy';
 import type { CorrelationContext } from '@push/lib/correlation-context';
@@ -431,7 +436,7 @@ export class CoderJob {
 
       const options: CoderAgentOptions<AnyToolCall, ChatCard> = {
         provider: input.provider,
-        streamFn: streamFn as unknown as CoderAgentOptions<AnyToolCall, ChatCard>['streamFn'],
+        stream: providerStreamFnToPushStream(streamFn as unknown as ProviderStreamFn<LlmMessage>),
         modelId: input.model,
         sandboxId: input.sandboxId,
         allowedRepo: input.repoFullName,

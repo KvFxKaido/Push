@@ -7,7 +7,8 @@
  * a plan. The Coder's own internal planning takes over in that case.
  */
 
-import { asRecord, streamWithTimeout } from './stream-utils.js';
+import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
+import { asRecord, iteratePushStreamText } from './stream-utils.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,33 +27,25 @@ export interface PlannerFeatureList {
   features: PlannerFeature[];
 }
 
-export interface PlannerMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-/**
- * The streaming primitive the core depends on. Callers wrap their
- * provider-specific stream function to match this shape.
- */
-export type PlannerStreamFn = (
-  messages: PlannerMessage[],
-  systemPrompt: string,
-  modelId: string | null,
-  callbacks: {
-    onToken: (token: string) => void;
-    onDone: () => void;
-    onError: (err: Error) => void;
-  },
-) => void | Promise<void>;
-
 export interface PlannerCoreOptions {
   task: string;
   files: string[];
-  streamFn: PlannerStreamFn;
+  /**
+   * PushStream the Planner iterates directly. Phase 6 of the PushStream
+   * gateway migration moved the Planner off its custom `PlannerStreamFn`
+   * adapter shape — callers now pass either a native PushStream or a legacy
+   * `ProviderStreamFn` wrapped with `providerStreamFnToPushStream`.
+   */
+  stream: PushStream<LlmMessage>;
+  /**
+   * Provider tag forwarded into the PushStream request. The core only uses
+   * this to assemble the request envelope; routing decisions belong to the
+   * caller.
+   */
+  provider: AIProviderType;
   modelId?: string | null;
   onStatus?: (phase: string) => void;
-  /** Activity-based timeout (resets on each token). Defaults to 45s. */
+  /** Activity-based timeout (resets on each event). Defaults to 45s. */
   timeoutMs?: number;
 }
 
@@ -101,7 +94,8 @@ export async function runPlannerCore(
   const {
     task,
     files,
-    streamFn,
+    stream,
+    provider,
     modelId = null,
     onStatus,
     timeoutMs = PLANNER_TIMEOUT_MS,
@@ -112,22 +106,27 @@ export async function runPlannerCore(
   const fileContext =
     files.length > 0 ? `\n\nRelevant files:\n${files.map((f) => `- ${f}`).join('\n')}` : '';
 
-  const messages: PlannerMessage[] = [
+  const messages: LlmMessage[] = [
     {
+      id: 'planner-task',
       role: 'user',
       content: `Decompose this coding task into implementable features:\n\n${task}${fileContext}`,
+      timestamp: Date.now(),
     },
   ];
 
-  const { promise: streamErrorPromise, getAccumulated } = streamWithTimeout(
+  const { error: streamError, text: accumulated } = await iteratePushStreamText(
+    stream,
+    {
+      provider,
+      model: modelId ?? '',
+      messages,
+      systemPromptOverride: PLANNER_SYSTEM_PROMPT,
+      hasSandbox: false,
+    },
     timeoutMs,
     `Planner timed out after ${Math.round(timeoutMs / 1000)}s.`,
-    (onToken, onDone, onError) =>
-      streamFn(messages, PLANNER_SYSTEM_PROMPT, modelId, { onToken, onDone, onError }),
   );
-
-  const streamError = await streamErrorPromise;
-  const accumulated = getAccumulated();
 
   if (streamError) {
     console.warn('[Planner] Stream error:', streamError.message);

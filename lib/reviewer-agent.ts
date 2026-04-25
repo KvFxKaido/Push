@@ -15,13 +15,13 @@
 import type {
   AIProviderType,
   LlmMessage,
-  ProviderStreamFn,
+  PushStream,
   ReviewComment,
   ReviewResult,
 } from './provider-contract.js';
 import type { ReviewerPromptContext } from './role-context.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
-import { asRecord, streamWithTimeout } from './stream-utils.js';
+import { asRecord, iteratePushStreamText } from './stream-utils.js';
 import {
   parseDiffStats,
   parseDiffIntoFiles,
@@ -111,12 +111,16 @@ const reviewListeners = new Map<string, Set<(phase: string) => void>>();
 const reviewLatestPhase = new Map<string, string>();
 
 /**
- * Stable identity for an injected streamFn. Two concurrent reviews that share
- * every input EXCEPT the stream implementation must not coalesce — otherwise
- * the second caller silently picks up a result from the first caller's
- * backend/auth/session wrapper. We mint a per-reference integer id via WeakMap
- * so distinct functions produce distinct coalesce keys without forcing callers
- * to name their stream implementations.
+ * Stable identity for an injected PushStream. Two concurrent reviews that
+ * share every input EXCEPT the stream implementation must not coalesce —
+ * otherwise the second caller silently picks up a result from the first
+ * caller's backend/auth/session wrapper. We mint a per-reference integer id
+ * via WeakMap so distinct streams produce distinct coalesce keys without
+ * forcing callers to name their stream implementations.
+ *
+ * The Web shim caches its bridged PushStream by the underlying
+ * `ProviderStreamFn` identity, so concurrent reviews with the same provider
+ * still see the same PushStream object and continue to dedupe.
  *
  * NOTE on the other injected callbacks (`resolveRuntimeContext`, `readSymbols`):
  * their identities are intentionally NOT included in the coalesce key. Rationale:
@@ -128,22 +132,22 @@ const reviewLatestPhase = new Map<string, string>();
  * - `resolveRuntimeContext` closes over deterministic memory-query state that
  *   is itself a function of the serialized `context` option already in the key.
  * If those assumptions ever break, add `resolveFnId`/`readSymbolsFnId` slots
- * using the same WeakMap pattern as `streamFnId`.
+ * using the same WeakMap pattern as `streamId`.
  */
-const streamFnIds = new WeakMap<ProviderStreamFn, number>();
-let nextStreamFnId = 0;
+const streamIds = new WeakMap<PushStream<LlmMessage>, number>();
+let nextStreamId = 0;
 
-function getStreamFnId(streamFn: ProviderStreamFn): number {
-  let id = streamFnIds.get(streamFn);
+function getStreamId(stream: PushStream<LlmMessage>): number {
+  let id = streamIds.get(stream);
   if (id === undefined) {
-    id = nextStreamFnId++;
-    streamFnIds.set(streamFn, id);
+    id = nextStreamId++;
+    streamIds.set(stream, id);
   }
   return id;
 }
 
 function reviewCoalesceKey(
-  streamFn: ProviderStreamFn,
+  stream: PushStream<LlmMessage>,
   diff: string,
   provider: string,
   modelId: string | undefined,
@@ -151,7 +155,7 @@ function reviewCoalesceKey(
   sandboxId?: string,
 ): string {
   return JSON.stringify({
-    streamFnId: getStreamFnId(streamFn),
+    streamId: getStreamId(stream),
     provider,
     modelId: modelId ?? '',
     runtimeContext,
@@ -288,8 +292,13 @@ export type ReadSymbolsFn = (
 
 export interface ReviewerOptions {
   provider: AIProviderType;
-  /** Injected provider stream function. Caller resolves it (e.g. via getProviderStreamFn). */
-  streamFn: ProviderStreamFn;
+  /**
+   * PushStream the Reviewer iterates directly. Phase 6 of the PushStream
+   * gateway migration moved the Reviewer off the 12-arg `ProviderStreamFn`
+   * callback — callers now pass either a native PushStream or a legacy
+   * `ProviderStreamFn` wrapped with `providerStreamFnToPushStream`.
+   */
+  stream: PushStream<LlmMessage>;
   /** Resolved model id the caller wants the reviewer to use. */
   modelId: string;
   context?: ReviewerPromptContext;
@@ -309,7 +318,7 @@ export async function runReviewer(
   onStatus: (phase: string) => void,
 ): Promise<ReviewResult> {
   const key = reviewCoalesceKey(
-    options.streamFn,
+    options.stream,
     diff,
     options.provider,
     options.modelId,
@@ -333,11 +342,19 @@ export async function runReviewer(
     });
   })();
   pendingReviews.set(key, run);
-  run.finally(() => {
-    pendingReviews.delete(key);
-    reviewListeners.delete(key);
-    reviewLatestPhase.delete(key);
-  });
+  // The cleanup `.finally(...)` returns a new promise that mirrors `run`'s
+  // rejection. The caller awaits `run` (handling the rejection) but never
+  // awaits the cleanup chain, so a `.catch(() => {})` is needed to keep
+  // upstream-failure paths from surfacing as unhandled rejections.
+  run
+    .finally(() => {
+      pendingReviews.delete(key);
+      reviewListeners.delete(key);
+      reviewLatestPhase.delete(key);
+    })
+    .catch(() => {
+      /* error already surfaced via `await run` in the original caller */
+    });
   return run;
 }
 
@@ -353,7 +370,7 @@ async function runReviewerCore(
   const totalFiles = parseDiffStats(diff).filesChanged;
   const filesReviewed = parseDiffStats(chunkedDiff).filesChanged;
   const truncated = filesReviewed < totalFiles;
-  const { provider, streamFn, modelId, sandboxId, readSymbols } = options;
+  const { provider, stream, modelId, sandboxId, readSymbols } = options;
 
   let fileStructureBlock: string | null = null;
   if (sandboxId && readSymbols) {
@@ -380,26 +397,18 @@ async function runReviewerCore(
     },
   ];
 
-  const { promise: streamErrorPromise, getAccumulated } = streamWithTimeout(
+  const { error: streamError, text: accumulated } = await iteratePushStreamText(
+    stream,
+    {
+      provider,
+      model: modelId,
+      messages,
+      systemPromptOverride: systemPrompt,
+      hasSandbox: false,
+    },
     REVIEWER_TIMEOUT_MS,
     `Reviewer timed out after ${REVIEWER_TIMEOUT_MS / 1000}s.`,
-    (onToken, onDone, onError) => {
-      return streamFn(
-        messages,
-        onToken,
-        onDone,
-        onError,
-        undefined,
-        undefined,
-        false,
-        modelId,
-        systemPrompt,
-      );
-    },
   );
-
-  const streamError = await streamErrorPromise;
-  const accumulated = getAccumulated();
 
   if (streamError) {
     throw new Error(streamError.message);
