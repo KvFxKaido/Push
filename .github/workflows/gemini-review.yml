@@ -124,16 +124,45 @@ jobs:
         # `cat` from inside its prompt. Doing the I/O here (deterministic, no
         # LLM tool-calling) keeps the analysis layer decoupled from GitHub
         # API and MCP server versions.
+        #
+        # Non-PR guard: gemini-dispatch.yml fires on `issue_comment` events
+        # too, so a `@gemini-cli /review` typed on a regular issue (not a
+        # PR) routes here. `gh pr view` would error out and the dispatch's
+        # `fallthrough` job would post a generic "I was unable" comment.
+        # Detect the case and post a clearer message instead, then short-
+        # circuit subsequent steps via the `non_pr` output.
+        id: 'gather'
         env:
           GH_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
           PULL_REQUEST_NUMBER: '${{ github.event.pull_request.number || github.event.issue.number }}'
           REPOSITORY: '${{ github.repository }}'
         run: |-
           mkdir -p .gemini/work
-          gh pr view "$PULL_REQUEST_NUMBER" \
-            --repo "$REPOSITORY" \
-            --json title,body,headRefName,baseRefName,changedFiles,additions,deletions,author \
-            > .gemini/work/pr-meta.json
+          GH_ERROR_FILE=.gemini/work/gh-error.txt
+          if ! gh pr view "$PULL_REQUEST_NUMBER" \
+              --repo "$REPOSITORY" \
+              --json title,body,headRefName,baseRefName,changedFiles,additions,deletions,author \
+              > .gemini/work/pr-meta.json 2> "$GH_ERROR_FILE"; then
+            # Distinguish "this number is not a PR" from "gh failed for some
+            # other reason" (auth expired, rate limit, transient API outage).
+            # The not-a-PR case is benign — short-circuit with the friendly
+            # explainer comment. Other failures should propagate so the
+            # dispatcher's fallthrough job surfaces them as the real errors
+            # they are, instead of getting silently swallowed as "non-PR".
+            if grep -Eiq 'not a pull request|could not resolve to pullrequest' "$GH_ERROR_FILE"; then
+              echo "::warning::Target #$PULL_REQUEST_NUMBER is not a Pull Request; skipping review"
+              cat "$GH_ERROR_FILE"
+              gh issue comment "$PULL_REQUEST_NUMBER" \
+                --repo "$REPOSITORY" \
+                --body "🤖 The \`/review\` command only works on Pull Requests. Open a PR and try again." \
+                || echo "::warning::Failed to post non-PR explainer comment"
+              echo "non_pr=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::Failed to load PR metadata for #$PULL_REQUEST_NUMBER"
+            cat "$GH_ERROR_FILE"
+            exit 1
+          fi
           gh pr diff "$PULL_REQUEST_NUMBER" \
             --repo "$REPOSITORY" \
             > .gemini/work/pr.diff
@@ -142,6 +171,8 @@ jobs:
           echo "Diff size: $(wc -l < .gemini/work/pr.diff) lines"
 
       - name: 'Run Gemini analysis'
+        if: |-
+          steps.gather.outputs.non_pr != 'true'
         uses: 'google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489' # ratchet:exclude
         id: 'gemini_pr_review'
         env:
@@ -290,13 +321,16 @@ jobs:
             Read the PR metadata and diff, perform the review, then emit the JSON object on stdout — nothing else. If you find no issues, emit a JSON object with an empty `comments` array and a brief approving summary. The workflow handles all GitHub posting after you exit.
 
       - name: 'Post review to GitHub'
+        if: |-
+          steps.gather.outputs.non_pr != 'true'
         # Parse Gemini's JSON output, build the GitHub Pull Request Review API
         # payload, and POST it. Failure modes:
         #   - Output isn't valid JSON          → fall back to a single comment
         #     with the raw output, so the human still sees what Gemini said.
+        #   - Output is JSON but violates the schema → same fallback.
         #   - GitHub API rejects the structured review (e.g. comment on a
-        #     line not in the diff) → fall back to the same single comment.
-        # In both cases this step still exits 0 — a posting failure shouldn't
+        #     line not in the diff) → same fallback.
+        # In all cases this step still exits 0 — a posting failure shouldn't
         # block the workflow from finishing.
         env:
           GH_TOKEN: '${{ steps.mint_identity_token.outputs.token || secrets.GITHUB_TOKEN || github.token }}'
@@ -339,21 +373,71 @@ jobs:
           #   <code suggestion>
           #   ```
           # The suggestion fence is only added when Gemini provided one.
-          jq '{
-            event: "COMMENT",
-            body: .summary,
-            comments: [
-              .comments[]? | {
-                path: .path,
-                line: .line,
-                side: (.side // "RIGHT"),
-                body: (
-                  (.severity + " " + .body) +
-                  (if .suggestion then "\n\n```suggestion\n" + .suggestion + "\n```" else "" end)
-                )
+          #
+          # Schema validation happens HERE (not just at the empty/JSON-syntax
+          # check above): the transform uses `jq -e` and explicit type guards
+          # so a JSON-valid-but-schema-violating response (e.g. severity is a
+          # number, comments isn't an array, line is missing) trips this
+          # branch's fallback with an accurate "transform failed" message
+          # instead of bleeding into the next branch's "API rejected" log.
+          if ! jq -e '
+            def string_or($default):
+              if . == null then $default
+              elif type == "string" then .
+              else tostring
+              end;
+            # Root must be a JSON object. Without this guard, an array/number/
+            # string Gemini response would survive `jq empty` (those are valid
+            # JSON), yield nulls when we read .summary/.comments, and produce
+            # a blank review — losing the raw output we should have fallen
+            # back to.
+            def root_object:
+              if type == "object" then .
+              else error("root JSON value must be an object")
+              end;
+            def review_comments:
+              (.comments // [])
+              | if type == "array" then .
+                else error("comments must be an array")
+                end;
+            root_object
+            | {
+                event: "COMMENT",
+                body: (.summary | string_or("")),
+                comments: [
+                  review_comments[] |
+                  if (.path | type) != "string" then
+                    error("comment.path must be a string")
+                  # Integer constraint: GitHub'\''s reviews API rejects
+                  # non-integer line numbers. Failing here gives an accurate
+                  # "transform failed" log instead of bleeding into the
+                  # downstream "API rejected" branch.
+                  elif ((.line | type) != "number" or (.line | floor) != .line) then
+                    error("comment.line must be an integer")
+                  elif (.side != null and .side != "RIGHT" and .side != "LEFT") then
+                    error("comment.side must be RIGHT or LEFT")
+                  else
+                    {
+                      path: .path,
+                      line: .line,
+                      side: (.side // "RIGHT"),
+                      body: (
+                        ((.severity | string_or("🟡")) + " " + (.body | string_or(""))) +
+                        (if .suggestion != null then
+                           "\n\n```suggestion\n" + (.suggestion | string_or("")) + "\n```"
+                         else
+                           ""
+                         end)
+                      )
+                    }
+                  end
+                ]
               }
-            ]
-          }' .gemini/work/gemini-output.txt > .gemini/work/review-payload.json
+          ' .gemini/work/gemini-output.txt > .gemini/work/review-payload.json; then
+            echo "::warning::Structured review payload generation failed; falling back to raw comment"
+            fallback_review "## 📋 Gemini Review (raw fallback — structured transform failed)"
+            exit 0
+          fi
 
           n_comments=$(jq '.comments | length' .gemini/work/review-payload.json)
           echo "Posting review with $n_comments inline comment(s)"
