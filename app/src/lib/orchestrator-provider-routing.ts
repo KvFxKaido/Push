@@ -19,6 +19,7 @@ import {
 import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
 import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-session';
 import { openrouterStream } from './openrouter-stream';
+import { zenStream } from './zen-stream';
 import type { PushStream } from '@push/lib/provider-contract';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
@@ -586,7 +587,50 @@ export const streamOpenRouterChat: StreamChatFn = async (...args) => {
 };
 export const streamCloudflareChat: StreamChatFn = (...args) =>
   streamProviderChat('cloudflare', ...args);
-export const streamZenChat: StreamChatFn = (...args) => streamProviderChat('zen', ...args);
+
+/**
+ * OpenCode Zen ships via the PushStream abstraction (Phase 8): `zenStream`
+ * handles SSE parsing + reasoning/tool-call normalization,
+ * `createProviderStreamAdapter` provides timer/abort safety parity with the
+ * legacy `streamSSEChatOnce` path. Structure mirrors `streamOpenRouterChat`.
+ *
+ * The adapter is built per-call so `defaultModel` tracks the current
+ * `getZenModelName()` setting.
+ */
+export const streamZenChat: StreamChatFn = async (...args) => {
+  const apiKey = getZenKey();
+  if (!apiKey) {
+    const [, , , onError] = args;
+    onError(new Error('OpenCode Zen API key not configured'));
+    return;
+  }
+
+  const modelOverride = args[7];
+  const zenErrorMessages = buildErrorMessages('OpenCode Zen');
+  const timeouts: AdapterTimeoutConfig = {
+    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
+    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
+    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
+    errorMessages: {
+      event: zenErrorMessages.idle,
+      content: zenErrorMessages.stall,
+      total: zenErrorMessages.total,
+    },
+  };
+
+  // Compose zenStream with normalizeReasoning so inline `<think>…</think>`
+  // tags in `delta.content` are split into the reasoning channel — parity
+  // with the legacy path.
+  const zenWithReasoning: PushStream<ChatMessage> = (req) => normalizeReasoning(zenStream(req));
+
+  const adapted = createProviderStreamAdapter<ChatMessage>(zenWithReasoning, 'zen', {
+    defaultModel: modelOverride || getZenModelName(),
+    timeouts,
+    telemetry: buildAdapterTelemetry(),
+  });
+
+  return adapted(...args);
+};
 export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
 export const streamBlackboxChat: StreamChatFn = (...args) =>
   streamProviderChat('blackbox', ...args);

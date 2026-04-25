@@ -47,10 +47,11 @@ The plan was sketched in the original design conversation that produced PR #365.
 | 3 | [#369](https://github.com/KvFxKaido/Push/pull/369) | 3 | 2026-04-22 | `normalizeReasoning` transducer in `lib/reasoning-tokens.ts`. Splits inline `<think>...</think>` out of `text_delta` into `reasoning_delta` + `reasoning_end` events. Per-stream `nativeSeen` latch prevents double-reporting when a hybrid provider emits both channels. |
 | 4 | [#384](https://github.com/KvFxKaido/Push/pull/384) | 4 | 2026-04-24 | Adapter timer machinery (`eventTimeoutMs` / `contentTimeoutMs` / `totalTimeoutMs` collapsed from legacy connect/idle/progress/stall/total to three reasons the adapter can actually observe), runtime-context passthrough on `PushStreamRequest`, OpenRouter port via `openrouterStream` + `createProviderStreamAdapter`. Required follow-up commits on adapter content-timer arming, `<think>` wiring through `normalizeReasoning`, and native `delta.tool_calls` accumulation/flush. |
 | 5 | [#385](https://github.com/KvFxKaido/Push/pull/385) | 5 | 2026-04-24 | Adapter-level OpenTelemetry telemetry hook. `lib/` stays OTEL-free; the app exposes an `AdapterTelemetry` shape that the adapter calls with `wrap(ctx, run)` and the caller implements with `tracer.startActiveSpan`. Attribute names mirror the legacy `streamSSEChatOnce` span exactly so dashboards keyed on `push.provider`/`push.model`/`push.stream.chunk_count`/`push.usage.*` keep working. Includes single-Error-instance handling on timeout, `hasSandbox`/`workspaceMode` start-context fields, and a wrap-failure fallback so a broken tracer can't break the `ProviderStreamFn` contract. |
-| 6 | _this branch_ | 6 | 2026-04-25 | First agent-role migration — Auditor. Replaces the `streamFn?: ProviderStreamFn` option with `stream?: PushStream<LlmMessage>` on both `runAuditor` and `runAuditorEvaluation`, iterates events via a new `iteratePushStreamText` helper in `lib/stream-utils.ts` (activity-reset idle timeout; `text_delta` accumulation; `reasoning_*` ignored). Adds the reverse bridge `providerStreamFnToPushStream` in `lib/provider-contract.ts` so providers without a native PushStream still work (legacy callbacks → events). App-side wrapper caches the bridged PushStream per underlying `streamFn` so the Auditor's coalescing key (`auditCoalesceKey`) keeps deduping concurrent identical audits. |
+| 6 | [#389](https://github.com/KvFxKaido/Push/pull/389) | 6 | 2026-04-25 | First agent-role migration — Auditor. Replaces the `streamFn?: ProviderStreamFn` option with `stream?: PushStream<LlmMessage>` on both `runAuditor` and `runAuditorEvaluation`, iterates events via a new `iteratePushStreamText` helper in `lib/stream-utils.ts` (activity-reset idle timeout; `text_delta` accumulation; `reasoning_*` ignored). Adds the reverse bridge `providerStreamFnToPushStream` in `lib/provider-contract.ts` so providers without a native PushStream still work (legacy callbacks → events). App-side wrapper caches the bridged PushStream per underlying `streamFn` so the Auditor's coalescing key (`auditCoalesceKey`) keeps deduping concurrent identical audits. |
+| 7 | _this branch_ | 8 (first port) | 2026-04-25 | First OpenAI-compatible-catalog port — OpenCode Zen. `zenStream: PushStream` in `app/src/lib/zen-stream.ts` mirrors `openrouterStream`'s shape (same SSE parsing, reasoning channel normalization, native `delta.tool_calls` accumulation); branch differences vs. OpenRouter are endpoint (`getZenGoMode()` switch between `ZEN_GO_URLS.chat` and `PROVIDER_URLS.zen.chat`) and the absence of OpenRouter-specific body fields (`session_id`, `trace`, `reasoning`). `streamZenChat` now composes `normalizeReasoning(zenStream(req))` through `createProviderStreamAdapter` with the same telemetry hook OpenRouter uses. 18 unit tests in `zen-stream.test.ts` parallel the OpenRouter coverage. |
 
 Provider side now well-validated:
-- Two providers shipped (Cloudflare via direct iteration, OpenRouter via the adapter).
+- Three providers shipped (Cloudflare via direct iteration, OpenRouter + OpenCode Zen via the adapter).
 - Reasoning channel normalization tested across both `<think>` tags and native `reasoning_content` / `reasoning` field renames.
 - Timer machinery has parity with the legacy `streamSSEChatOnce` safety net.
 - Telemetry attribute vocabulary preserved.
@@ -58,24 +59,22 @@ Provider side now well-validated:
 
 ## What's left
 
-**Phase 7 — Extract a shared SSE pump.** Justified once Phase 6 surfaces the contract's consumer needs and a third provider port is on the horizon. `cloudflareStream` parses `env.AI.run` chunks; `openrouterStream` parses standard OpenAI SSE. Both currently duplicate buffer + line-split + JSON.parse logic. The right time to extract is when there's a third caller pulling for it — not before. Phase 6's Auditor migration didn't add a third caller (it consumes events without parsing wire bytes), so the pressure for extraction hasn't appeared yet.
+**Phase 7 — Extract a shared SSE pump.** Now has a third caller (`zenStream`) that duplicates the buffer + line-split + OpenAI-shape delta parsing from `openrouterStream` almost verbatim. The duplication is now concrete enough to justify extraction — the Zen port intentionally copied the pattern so the shape of what needs to be shared is visible. Next Phase 8 ports (Kilocode, OpenAdapter, Nvidia, Blackbox) should happen _after_ the pump extraction so they benefit from it rather than compounding the duplication.
 
-**Phase 8 — Port the rest of the OpenAI-compatible catalog.** Zen, Kilocode, OpenAdapter, Nvidia, Blackbox all use `streamProviderChat('<provider>', ...)` today and would adopt `openrouterStream`'s shape with provider-specific config swaps (URL, body transforms, auth). Mechanical work that becomes obvious once the SSE pump is shared.
+**Phase 8 — Port the rest of the OpenAI-compatible catalog.** Kilocode, OpenAdapter, Nvidia, Blackbox remain on `streamProviderChat('<provider>', ...)`. Same mechanical shape as the Zen port. Deferred until Phase 7 lands the shared pump.
 
 **Phase 9 — Retire `createProviderStreamAdapter`.** Gated on every agent role being migrated to PushStream consumption. The adapter exists exclusively to bridge legacy callback consumers; once nothing calls it, delete the function and its tests.
 
 ## Recommendation for next
 
-**Phase 8 — port more OpenAI-compatible providers.** Reasoning:
+**Phase 7 — extract the shared SSE pump.** The Zen port landed the third caller the extraction was waiting for: `zenStream` and `openrouterStream` now duplicate the buffer + line-split + OpenAI-shape delta parsing + native tool-call accumulation almost line-for-line. Before porting the remaining four (Kilocode, OpenAdapter, Nvidia, Blackbox), extract the pump so the rest of Phase 8 is additive config rather than copy-pasted parsers.
 
-- Auditor (Phase 6) validated event-iteration on the consumer side: a `PushStream<LlmMessage>` with `text_delta` accumulation + `done` termination is enough for a JSON-shaped agent role. The contract didn't grow new variants. Reasoning events flowed through unchanged. No surprises.
-- The reverse bridge `providerStreamFnToPushStream` makes it cheap to migrate the remaining agent roles (Coder/Orchestrator/Reviewer) since they can iterate events against any provider, native PushStream or otherwise.
-- Phase 7 (shared SSE pump) hasn't grown a third caller yet, so extraction would still be premature.
-- More provider ports give Phase 7 the third caller it needs and validate that the next agent-role migration (Coder is the natural follow-up) doesn't bottleneck on missing native PushStream impls.
+Remaining sub-steps, in order:
 
-**Why not Coder migration next.** Coder has working memory, tool calls, and abort orchestration that the Auditor doesn't exercise — a bigger surface than is comfortable to attack right after the first consumer-side proof. Better to widen the provider base first.
-
-**Why not Phase 7 first.** Two callers still isn't a lot of duplication, and the Auditor migration didn't add a third. Phase 8 will.
+- Lift the common pump out of `openrouter-stream.ts` + `zen-stream.ts` into a shared helper (open question: lives in `lib/` with injected config, or app-side with shared provider primitives — see Open questions below).
+- Rewrite both provider streams against the helper to prove the shape holds.
+- Sweep Kilocode / OpenAdapter / Nvidia / Blackbox onto the helper — each should be ~50 lines of config + a thin wrapper.
+- After the sweep, Phase 6-style agent migrations (Coder next) can proceed against a fully-native provider surface.
 
 ## Decisions captured along the way
 
