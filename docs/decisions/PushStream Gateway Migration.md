@@ -1,7 +1,7 @@
 # PushStream Gateway Migration
 
-Date: 2026-04-24
-Status: in_progress — provider side validated end-to-end, agent-role migration not yet started
+Date: 2026-04-24 (last updated 2026-04-25)
+Status: in_progress — provider side validated end-to-end, first agent-role migration (Auditor) landed
 
 Companion to: `Architecture Remediation Plan — Defusing the Big Four.md`
 
@@ -47,6 +47,7 @@ The plan was sketched in the original design conversation that produced PR #365.
 | 3 | [#369](https://github.com/KvFxKaido/Push/pull/369) | 3 | 2026-04-22 | `normalizeReasoning` transducer in `lib/reasoning-tokens.ts`. Splits inline `<think>...</think>` out of `text_delta` into `reasoning_delta` + `reasoning_end` events. Per-stream `nativeSeen` latch prevents double-reporting when a hybrid provider emits both channels. |
 | 4 | [#384](https://github.com/KvFxKaido/Push/pull/384) | 4 | 2026-04-24 | Adapter timer machinery (`eventTimeoutMs` / `contentTimeoutMs` / `totalTimeoutMs` collapsed from legacy connect/idle/progress/stall/total to three reasons the adapter can actually observe), runtime-context passthrough on `PushStreamRequest`, OpenRouter port via `openrouterStream` + `createProviderStreamAdapter`. Required follow-up commits on adapter content-timer arming, `<think>` wiring through `normalizeReasoning`, and native `delta.tool_calls` accumulation/flush. |
 | 5 | [#385](https://github.com/KvFxKaido/Push/pull/385) | 5 | 2026-04-24 | Adapter-level OpenTelemetry telemetry hook. `lib/` stays OTEL-free; the app exposes an `AdapterTelemetry` shape that the adapter calls with `wrap(ctx, run)` and the caller implements with `tracer.startActiveSpan`. Attribute names mirror the legacy `streamSSEChatOnce` span exactly so dashboards keyed on `push.provider`/`push.model`/`push.stream.chunk_count`/`push.usage.*` keep working. Includes single-Error-instance handling on timeout, `hasSandbox`/`workspaceMode` start-context fields, and a wrap-failure fallback so a broken tracer can't break the `ProviderStreamFn` contract. |
+| 6 | _this branch_ | 6 | 2026-04-25 | First agent-role migration — Auditor. Replaces the `streamFn?: ProviderStreamFn` option with `stream?: PushStream<LlmMessage>` on both `runAuditor` and `runAuditorEvaluation`, iterates events via a new `iteratePushStreamText` helper in `lib/stream-utils.ts` (activity-reset idle timeout; `text_delta` accumulation; `reasoning_*` ignored). Adds the reverse bridge `providerStreamFnToPushStream` in `lib/provider-contract.ts` so providers without a native PushStream still work (legacy callbacks → events). App-side wrapper caches the bridged PushStream per underlying `streamFn` so the Auditor's coalescing key (`auditCoalesceKey`) keeps deduping concurrent identical audits. |
 
 Provider side now well-validated:
 - Two providers shipped (Cloudflare via direct iteration, OpenRouter via the adapter).
@@ -57,11 +58,7 @@ Provider side now well-validated:
 
 ## What's left
 
-**Phase 6 — Migrate Auditor off the 12-arg callback.** Lowest-traffic agent role with the simplest turn structure: analyze a diff, return a verdict. No nested delegation, no tool-call orchestration. Highest signal-per-effort PR for validating the consumer side of the contract — surfaces contract gaps that aren't visible from the provider side. Auditor today calls `streamProviderChat(...)` which builds a `StreamProviderConfig` and runs through `streamSSEChatOnce`. Migration: have Auditor iterate a `PushStream` directly instead of going through the adapter.
-
-The auditor migration also resolves an open architectural question: **does the runtime layer want event-shaped consumption or callback-shaped consumption?** Today every agent role is on callbacks. We don't know if event iteration is genuinely better for any role until one tries it.
-
-**Phase 7 — Extract a shared SSE pump.** Justified once Phase 6 surfaces the contract's consumer needs and a third provider port is on the horizon. `cloudflareStream` parses `env.AI.run` chunks; `openrouterStream` parses standard OpenAI SSE. Both currently duplicate buffer + line-split + JSON.parse logic. The right time to extract is when there's a third caller pulling for it — not before.
+**Phase 7 — Extract a shared SSE pump.** Justified once Phase 6 surfaces the contract's consumer needs and a third provider port is on the horizon. `cloudflareStream` parses `env.AI.run` chunks; `openrouterStream` parses standard OpenAI SSE. Both currently duplicate buffer + line-split + JSON.parse logic. The right time to extract is when there's a third caller pulling for it — not before. Phase 6's Auditor migration didn't add a third caller (it consumes events without parsing wire bytes), so the pressure for extraction hasn't appeared yet.
 
 **Phase 8 — Port the rest of the OpenAI-compatible catalog.** Zen, Kilocode, OpenAdapter, Nvidia, Blackbox all use `streamProviderChat('<provider>', ...)` today and would adopt `openrouterStream`'s shape with provider-specific config swaps (URL, body transforms, auth). Mechanical work that becomes obvious once the SSE pump is shared.
 
@@ -69,19 +66,16 @@ The auditor migration also resolves an open architectural question: **does the r
 
 ## Recommendation for next
 
-**Phase 6 — migrate Auditor.** Reasoning:
+**Phase 8 — port more OpenAI-compatible providers.** Reasoning:
 
-- Provider side has two production providers and full safety-net coverage. Doing more provider ports or extracting the SSE pump piles on the same side without learning anything new.
-- The consumer side has zero validation. Every agent role currently goes through the adapter. The contract claims event iteration is sufficient for runtime needs — that claim has never been tested by an actual consumer.
-- Auditor is the cleanest test target. A regression there is contained (lowest traffic, simplest turn), and the migration shape is small enough that the design surface is the focus rather than the mechanics.
-- If the contract works for Auditor, Coder/Orchestrator become questions of mechanics. If it doesn't, we learn what's missing from `PushStreamEvent` before adding more providers that would need to emit it.
+- Auditor (Phase 6) validated event-iteration on the consumer side: a `PushStream<LlmMessage>` with `text_delta` accumulation + `done` termination is enough for a JSON-shaped agent role. The contract didn't grow new variants. Reasoning events flowed through unchanged. No surprises.
+- The reverse bridge `providerStreamFnToPushStream` makes it cheap to migrate the remaining agent roles (Coder/Orchestrator/Reviewer) since they can iterate events against any provider, native PushStream or otherwise.
+- Phase 7 (shared SSE pump) hasn't grown a third caller yet, so extraction would still be premature.
+- More provider ports give Phase 7 the third caller it needs and validate that the next agent-role migration (Coder is the natural follow-up) doesn't bottleneck on missing native PushStream impls.
 
-**Why not Phase 7 first.** Three reasons:
-1. Two callers isn't a lot of duplication. The `lib/coder-agent.ts` taste of premature abstraction in the architecture remediation plan is the cautionary tale.
-2. The shape of the shared pump might be different after Auditor migration if events grow new variants (e.g., `tool_call_delta` if hybrid models appear).
-3. Doing 7 first delays the architectural risk we're not yet sure we've contained.
+**Why not Coder migration next.** Coder has working memory, tool calls, and abort orchestration that the Auditor doesn't exercise — a bigger surface than is comfortable to attack right after the first consumer-side proof. Better to widen the provider base first.
 
-**Why not Phase 8 first.** Doubles down on the validated side without unblocking the un-validated side.
+**Why not Phase 7 first.** Two callers still isn't a lot of duplication, and the Auditor migration didn't add a third. Phase 8 will.
 
 ## Decisions captured along the way
 
@@ -100,6 +94,10 @@ The auditor migration also resolves an open architectural question: **does the r
 - **Single Error instance on timeout (Phase 5 fix #2).** Telemetry's `terminalError` and the caller's `onError` receive the same Error object. Matters for stack-trace inspection and identity checks downstream.
 
 - **Wrap-failure fallback (Phase 5 fix #5).** If `telemetry.wrap` rejects before invoking `run`, the adapter falls back to running without telemetry so a broken tracer can't break the `ProviderStreamFn` contract. `runEntered` sentinel distinguishes pre-run from post-run rejections; post-run rejections are swallowed (stream already settled).
+
+- **Reverse bridge in Phase 6 (`providerStreamFnToPushStream`).** During the staged migration, agent roles that consume PushStream events still need to talk to providers that haven't been ported off `ProviderStreamFn` yet. Rather than dual-wiring each consumer (native PushStream vs. legacy callback path), the Auditor migration added a single bridge in `lib/provider-contract.ts` that wraps any `ProviderStreamFn` as a `PushStream`. The bridge is the symmetric inverse of `createProviderStreamAdapter` — once Phase 8 finishes and every provider has a native PushStream, both bridges become deletable together with Phase 9.
+
+- **PushStream caching by streamFn identity (Auditor wrapper).** The app-side `resolveAuditorPushStream` caches the bridged PushStream in a `WeakMap` keyed by the underlying `streamFn` so successive `runAuditor` calls for the same provider see the same `PushStream` object. The `auditCoalesceKey` uses stream identity to dedupe concurrent identical audits; without the cache, a fresh wrapper per call would defeat coalescing.
 
 ## Open questions
 
