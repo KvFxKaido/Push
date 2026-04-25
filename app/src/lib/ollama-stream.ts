@@ -53,12 +53,17 @@ export async function* ollamaStream(
 
   // 3. Headers. Ollama Cloud uses a straight Bearer token; the Worker proxy
   //    overrides Authorization server-side when OLLAMA_API_KEY is configured.
-  const apiKey = getOllamaKey() ?? '';
+  //    When neither the client nor the Worker has a key configured we omit
+  //    Authorization entirely — sending `Bearer ` (empty token) reads as a
+  //    truthy header to `standardAuth('OLLAMA_API_KEY')` and bypasses the
+  //    Worker's `keyMissingError` 401, surfacing as an upstream auth error
+  //    instead of the configured "key not configured" message.
+  const apiKey = (getOllamaKey() ?? '').trim();
   const requestId = createRequestId('chat');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     [REQUEST_ID_HEADER]: requestId,
-    Authorization: `Bearer ${apiKey}`,
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
   };
   injectTraceHeaders(headers);
 

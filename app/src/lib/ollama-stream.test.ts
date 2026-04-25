@@ -350,6 +350,30 @@ describe('ollamaStream', () => {
     expect(auth).toBe('Bearer test-key');
   });
 
+  it('omits Authorization entirely when the client key is empty', async () => {
+    // standardAuth('OLLAMA_API_KEY') on the Worker reads any non-empty client
+    // Authorization as "key supplied" and skips the keyMissingError 401, so
+    // sending `Bearer ` would bypass the configured fallback and forward an
+    // empty bearer to Ollama. The stream therefore omits Authorization when
+    // there's no client key — letting the Worker (or the upstream) surface a
+    // proper key-missing error.
+    vi.doMock('@/hooks/useOllamaConfig', () => ({
+      getOllamaKey: () => '',
+    }));
+    installStreamFetch(fetchMock);
+    const { ollamaStream } = await import('./ollama-stream');
+    const iter = ollamaStream(baseRequest);
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(fetchMock).toHaveBeenCalled();
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
+  });
+
   // -------------------------------------------------------------------------
   // Native tool_call bridge — mirrors the OpenRouter / Zen coverage.
   // -------------------------------------------------------------------------
