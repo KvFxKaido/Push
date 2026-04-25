@@ -1,8 +1,6 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PreCompactEvent, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
-import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
-import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-session';
 import { openrouterStream } from './openrouter-stream';
 import { zenStream } from './zen-stream';
 import { kilocodeStream } from './kilocode-stream';
@@ -45,8 +43,6 @@ import {
   getKiloCodeModelName,
   getOpenAdapterModelName,
   PROVIDER_URLS,
-  ZEN_GO_URLS,
-  getZenGoMode,
 } from './providers';
 import type { PreferredProvider } from './providers';
 import {
@@ -68,7 +64,6 @@ function buildErrorMessages(
   connectHint = 'server may be down.',
 ): StreamProviderConfig['errorMessages'] {
   return {
-    keyMissing: `${name} API key not configured`,
     connect: (s) => `${name} API didn't respond within ${s}s — ${connectHint}`,
     idle: (s) => `${name} API stream stalled — no data for ${s}s.`,
     progress: (s) =>
@@ -206,36 +201,6 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
       providerType: 'ollama',
     }),
   },
-  openrouter: {
-    getKey: getOpenRouterKey,
-    buildConfig: (apiKey, modelOverride) => {
-      const model = modelOverride || getOpenRouterModelName();
-      const supportsReasoning = openRouterModelSupportsReasoning(model);
-      const effort = getReasoningEffort('openrouter');
-      const useReasoning = supportsReasoning && effort !== 'off';
-      const sessionId = getOpenRouterSessionId();
-      const trace = buildOpenRouterTrace();
-      return {
-        name: 'OpenRouter',
-        apiUrl: PROVIDER_URLS.openrouter.chat,
-        apiKey,
-        model,
-        ...STANDARD_TIMEOUTS,
-        errorMessages: buildErrorMessages('OpenRouter'),
-        parseError: (p, f) => parseProviderError(p, f, true),
-        checkFinishReason: (c) =>
-          hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-        providerType: 'openrouter',
-        shouldResetStallOnReasoning: useReasoning,
-        bodyTransform: (body) => ({
-          ...body,
-          ...(useReasoning ? { reasoning: { effort } } : {}),
-          ...(sessionId ? { session_id: sessionId } : {}),
-          trace,
-        }),
-      };
-    },
-  },
   cloudflare: {
     getKey: () => 'cloudflare-worker-binding',
     buildConfig: (_apiKey, modelOverride) => {
@@ -260,7 +225,6 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
         // think from false-positiving against the 90s stall timer.
         shouldResetStallOnReasoning: true,
         errorMessages: {
-          keyMissing: 'Cloudflare Workers AI is not configured on this Worker',
           connect: (s) =>
             `Cloudflare Workers AI didn't respond within ${s}s — the Worker may be cold-starting.`,
           idle: (s) => `Cloudflare Workers AI stream stalled — no data for ${s}s.`,
@@ -277,82 +241,6 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
         providerType: 'cloudflare',
       };
     },
-  },
-  zen: {
-    getKey: getZenKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'OpenCode Zen',
-      apiUrl: getZenGoMode() ? ZEN_GO_URLS.chat : PROVIDER_URLS.zen.chat,
-      apiKey,
-      model: modelOverride || getZenModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('OpenCode Zen'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) =>
-        hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'zen',
-    }),
-  },
-  nvidia: {
-    getKey: getNvidiaKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Nvidia NIM',
-      apiUrl: PROVIDER_URLS.nvidia.chat,
-      apiKey,
-      model: modelOverride || getNvidiaModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('Nvidia NIM'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) =>
-        hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'nvidia',
-    }),
-  },
-  blackbox: {
-    getKey: getBlackboxKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Blackbox AI',
-      apiUrl: PROVIDER_URLS.blackbox.chat,
-      apiKey,
-      model: modelOverride || getBlackboxModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('Blackbox AI'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) =>
-        hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      shouldResetStallOnReasoning: true,
-      providerType: 'blackbox',
-    }),
-  },
-  kilocode: {
-    getKey: getKilocodeKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Kilo Code',
-      apiUrl: PROVIDER_URLS.kilocode.chat,
-      apiKey,
-      model: modelOverride || getKiloCodeModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('Kilo Code'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) =>
-        hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'kilocode',
-    }),
-  },
-  openadapter: {
-    getKey: getOpenAdapterKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'OpenAdapter',
-      apiUrl: PROVIDER_URLS.openadapter.chat,
-      apiKey,
-      model: modelOverride || getOpenAdapterModelName(),
-      ...STANDARD_TIMEOUTS,
-      errorMessages: buildErrorMessages('OpenAdapter'),
-      parseError: (p, f) => parseProviderError(p, f, true),
-      checkFinishReason: (c) =>
-        hasFinishReason(c, ['stop', 'length', 'end_turn', 'tool_calls', 'function_call']),
-      providerType: 'openadapter',
-    }),
   },
   azure: {
     getKey: getAzureKey,

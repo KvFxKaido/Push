@@ -31,7 +31,6 @@ export interface StreamProviderConfig {
   stallTimeoutMs?: number;
   totalTimeoutMs?: number;
   errorMessages: {
-    keyMissing: string;
     connect: (seconds: number) => string;
     idle: (seconds: number) => string;
     progress?: (seconds: number) => string;
@@ -55,10 +54,6 @@ export interface StreamProviderConfig {
     | 'azure'
     | 'bedrock'
     | 'vertex';
-  /** Override the fetch URL (e.g., for providers with alternate endpoints) */
-  apiUrlOverride?: string;
-  /** Transform the request body before sending (e.g., swap model for agent_id) */
-  bodyTransform?: (body: Record<string, unknown>) => Record<string, unknown>;
   /** Extra headers required by proxy adapters. */
   extraHeaders?: Record<string, string>;
 }

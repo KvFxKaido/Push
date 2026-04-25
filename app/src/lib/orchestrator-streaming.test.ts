@@ -10,7 +10,6 @@ function makeMessages(
   overrides: Partial<StreamProviderConfig['errorMessages']> = {},
 ): StreamProviderConfig['errorMessages'] {
   return {
-    keyMissing: 'missing',
     connect: (s) => `connect ${s}s`,
     idle: (s) => `idle ${s}s`,
     progress: (s) => `progress ${s}s`,

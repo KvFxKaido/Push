@@ -43,9 +43,10 @@ export async function* openrouterStream(
     req.todoContent,
   );
 
-  // 2. Layer in OpenRouter-specific body extensions. Mirrors the legacy
-  //    `bodyTransform` in orchestrator-provider-routing.ts so the wire
-  //    payload is byte-identical.
+  // 2. Layer in OpenRouter-specific body extensions (reasoning effort,
+  //    Push session id, trace flags). These were previously injected via the
+  //    legacy `bodyTransform` slot on `StreamProviderConfig`; that slot is
+  //    gone post-Phase-9c, so the wire shape now lives here directly.
   const supportsReasoning = openRouterModelSupportsReasoning(req.model);
   const effort = getReasoningEffort('openrouter');
   const useReasoning = supportsReasoning && effort !== 'off';

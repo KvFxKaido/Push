@@ -658,8 +658,6 @@ export async function streamSSEChatOnce(
     checkFinishReason,
     shouldResetStallOnReasoning = false,
     providerType,
-    apiUrlOverride,
-    bodyTransform,
     extraHeaders,
   } = config;
 
@@ -750,7 +748,7 @@ export async function streamSSEChatOnce(
       };
 
       try {
-        const requestUrl = apiUrlOverride || apiUrl;
+        const requestUrl = apiUrl;
         const requestId = createRequestId('chat');
         setSpanAttributes(span, {
           'push.request_id': requestId,
@@ -758,7 +756,7 @@ export async function streamSSEChatOnce(
         });
         console.log(`[Push] POST ${requestUrl} (model: ${model}, request: ${requestId})`);
 
-        let requestBody: Record<string, unknown> = {
+        const requestBody: Record<string, unknown> = {
           model,
           messages: toLLMMessages(
             messages,
@@ -774,10 +772,6 @@ export async function streamSSEChatOnce(
           ),
           stream: true,
         };
-
-        if (bodyTransform) {
-          requestBody = bodyTransform(requestBody);
-        }
 
         const requestHeaders: Record<string, string> = {
           'Content-Type': 'application/json',
