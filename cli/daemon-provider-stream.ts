@@ -12,15 +12,19 @@
  * so per-role routing stays out of this module. API keys are resolved
  * lazily on each invocation — `resolveApiKey` throws when the env is not
  * configured, and that throw surfaces as the iterator throwing.
+ *
+ * Behaviour change vs. the pre-#402-follow-up shim: this no longer wraps
+ * `streamCompletion` (which has built-in 3-attempt retries on 429/5xx/
+ * network) — the daemon path now matches the web side, which has no
+ * automatic retry. Agent-role consumers (iteratePushStreamText) treat
+ * transient failures as errors instead of silently re-trying. Symmetric
+ * with `app/src/lib/openrouter-stream.ts` and friends.
  */
 
-import type { LlmMessage, PushStream, PushStreamEvent } from '../lib/provider-contract.ts';
-import { PROVIDER_CONFIGS, resolveApiKey, streamCompletion } from './provider.js';
-
-interface ChatMessage {
-  role: string;
-  content: string;
-}
+import type { LlmMessage, PushStream } from '../lib/provider-contract.ts';
+import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
+import { createCliProviderStream } from './openai-stream.ts';
+import { PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
 
 export function createDaemonProviderStream(
   provider: string,
@@ -33,108 +37,10 @@ export function createDaemonProviderStream(
 
   return (req) =>
     (async function* () {
-      const queue: PushStreamEvent[] = [];
-      let done = false;
-      let error: Error | null = null;
-      let wake: (() => void) | undefined;
-      const notify = () => {
-        if (wake) {
-          const w = wake;
-          wake = undefined;
-          w();
-        }
-      };
-
-      const onToken = (token: string) => {
-        if (token.length > 0) queue.push({ type: 'text_delta', text: token });
-        notify();
-      };
-      const onThinkingToken = (token: string | null) => {
-        if (token === null) queue.push({ type: 'reasoning_end' });
-        else if (token.length > 0) queue.push({ type: 'reasoning_delta', text: token });
-        notify();
-      };
-
-      const signal = req.signal;
-      const onAbort = () => {
-        if (!done) {
-          queue.push({ type: 'done', finishReason: 'aborted' });
-          done = true;
-          notify();
-        }
-      };
-      if (signal?.aborted) {
-        onAbort();
-      } else {
-        signal?.addEventListener('abort', onAbort, { once: true });
-      }
-
-      const run = (async () => {
-        try {
-          const apiKey: string = resolveApiKey(config);
-
-          // lib agents pass user/assistant messages only; the system prompt
-          // arrives as the request's `systemPromptOverride`. See
-          // lib/explorer-agent.ts — `messages` starts with a user
-          // taskPreamble, not a system role.
-          const chatMessages: ChatMessage[] = [];
-          const systemPromptOverride = req.systemPromptOverride;
-          if (typeof systemPromptOverride === 'string' && systemPromptOverride.trim()) {
-            chatMessages.push({ role: 'system', content: systemPromptOverride });
-          }
-          for (const m of req.messages) {
-            chatMessages.push({ role: m.role, content: m.content });
-          }
-
-          const model: string = req.model && req.model.trim() ? req.model : config.defaultModel;
-
-          await streamCompletion(
-            config,
-            apiKey,
-            model,
-            chatMessages,
-            onToken,
-            undefined,
-            signal ?? null,
-            {
-              onThinkingToken,
-              sessionId,
-            },
-          );
-          if (!done) {
-            queue.push({ type: 'done', finishReason: 'stop' });
-            done = true;
-            notify();
-          }
-        } catch (err) {
-          error = err instanceof Error ? err : new Error(String(err));
-          done = true;
-          notify();
-        }
-      })();
-
-      try {
-        while (true) {
-          while (queue.length === 0 && !done) {
-            await new Promise<void>((resolve) => {
-              wake = resolve;
-            });
-          }
-          while (queue.length > 0) {
-            const event = queue.shift()!;
-            yield event;
-            if (event.type === 'done') return;
-          }
-          if (done) {
-            if (error) throw error;
-            return;
-          }
-        }
-      } finally {
-        signal?.removeEventListener('abort', onAbort);
-        void run.catch(() => {
-          /* error already surfaced via the queue */
-        });
-      }
+      // Resolve the key per-call so an env-var change between invocations is
+      // observed. The throw lands on the consumer's first `.next()` and is
+      // caught by the agent role's try/catch around iteratePushStreamText.
+      const apiKey = resolveApiKey(config);
+      yield* normalizeReasoning(createCliProviderStream(config, apiKey, { sessionId })(req));
     })();
 }

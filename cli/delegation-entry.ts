@@ -45,9 +45,11 @@ import {
   formatPlannerBrief,
   type PlannerFeatureList,
 } from '../lib/planner-core.js';
-import type { LlmMessage, PushStream, PushStreamEvent } from '../lib/provider-contract.js';
+import type { LlmMessage, PushStream } from '../lib/provider-contract.js';
+import { normalizeReasoning } from '../lib/reasoning-tokens.js';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.js';
-import { streamCompletion, type ProviderConfig } from './provider.js';
+import { createCliProviderStream } from './openai-stream.js';
+import { type ProviderConfig } from './provider.js';
 import { buildSystemPromptBase, runAssistantLoop } from './engine.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { appendSessionEvent, makeRunId, saveSessionState } from './session-store.js';
@@ -63,96 +65,38 @@ function mintGraphExecutionId() {
 }
 
 // ---------------------------------------------------------------------------
-// Planner PushStream adapter (Phase 6)
+// Planner PushStream adapter
 // ---------------------------------------------------------------------------
 
+/**
+ * Wrap the CLI's native OpenAI-compatible PushStream so the outer SIGINT
+ * controller cancels the upstream call alongside `iteratePushStreamText`'s
+ * own activity-reset signal.
+ *
+ * Behaviour shift: the planner path no longer inherits `streamCompletion`'s
+ * 3-attempt retry policy on 429/5xx/network — symmetric with the
+ * daemon-provider-stream path and with the web side's
+ * `app/src/lib/openrouter-stream.ts`. A transient upstream failure now
+ * surfaces as a single planner error rather than three silent retries.
+ * `runPlannerCore` is fail-open (planner returning `null` falls back to the
+ * non-delegated `runAssistantLoop`), so the user-visible effect is "plan
+ * unavailable, run the task without delegation" rather than a hard failure.
+ */
 function buildPlannerPushStream(
   providerConfig: ProviderConfig,
   apiKey: string,
   signal: AbortSignal,
 ): PushStream<LlmMessage> {
+  const stream = createCliProviderStream(providerConfig, apiKey);
   return (req) =>
-    (async function* () {
-      const fullMessages = [
-        { role: 'system', content: req.systemPromptOverride ?? '' },
-        ...req.messages.map((m) => ({ role: m.role, content: m.content })),
-      ];
-
-      const queue: PushStreamEvent[] = [];
-      let done = false;
-      let error: Error | null = null;
-      let wake: (() => void) | undefined;
-      const notify = () => {
-        if (wake) {
-          const w = wake;
-          wake = undefined;
-          w();
-        }
-      };
-
-      // Compose the outer SIGINT signal with the consumer's per-stream signal
-      // (used by iteratePushStreamText for activity-reset timeouts).
-      const composite = new AbortController();
-      const onAbort = () => composite.abort();
-      if (signal.aborted) composite.abort();
-      else signal.addEventListener('abort', onAbort, { once: true });
-      const reqSignal = req.signal;
-      if (reqSignal?.aborted) composite.abort();
-      else reqSignal?.addEventListener('abort', onAbort, { once: true });
-
-      const onToken = (token: string) => {
-        if (token.length > 0) queue.push({ type: 'text_delta', text: token });
-        notify();
-      };
-
-      const run = (async () => {
-        try {
-          // planner-core wraps this with its own activity-based timeout via
-          // iteratePushStreamText, so we don't pass one here (would double-enforce).
-          await streamCompletion(
-            providerConfig,
-            apiKey,
-            req.model || providerConfig.defaultModel,
-            fullMessages,
-            onToken,
-            undefined,
-            composite.signal,
-          );
-          queue.push({ type: 'done', finishReason: 'stop' });
-          done = true;
-          notify();
-        } catch (err) {
-          error = err instanceof Error ? err : new Error(String(err));
-          done = true;
-          notify();
-        }
-      })();
-
-      try {
-        while (true) {
-          while (queue.length === 0 && !done) {
-            await new Promise<void>((resolve) => {
-              wake = resolve;
-            });
-          }
-          while (queue.length > 0) {
-            const event = queue.shift()!;
-            yield event;
-            if (event.type === 'done') return;
-          }
-          if (done) {
-            if (error) throw error;
-            return;
-          }
-        }
-      } finally {
-        signal.removeEventListener('abort', onAbort);
-        reqSignal?.removeEventListener('abort', onAbort);
-        void run.catch(() => {
-          /* error already surfaced via the queue */
-        });
-      }
-    })();
+    normalizeReasoning(
+      stream({
+        ...req,
+        // Compose the outer SIGINT signal with the consumer's per-stream
+        // signal (set by iteratePushStreamText for activity-reset timeouts).
+        signal: req.signal ? AbortSignal.any([signal, req.signal]) : signal,
+      }),
+    );
 }
 
 // ---------------------------------------------------------------------------

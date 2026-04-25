@@ -12,12 +12,6 @@ import type { AIProviderType, LlmMessage, PushStreamEvent } from '../lib/provide
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
 
-// Re-export the shared reasoning-token parser so existing imports keep
-// working. The CLI used to ship its own copy in this file; the shared
-// implementation in `lib/reasoning-tokens.ts` is byte-equivalent and is the
-// canonical home now that `streamCompletion` no longer drives it directly.
-export { createReasoningTokenParser } from '../lib/reasoning-tokens.ts';
-
 export const DEFAULT_TIMEOUT_MS: number = 120_000;
 export const MAX_RETRIES: number = 3;
 const RETRY_BASE_DELAY_MS: number = 1_000;
