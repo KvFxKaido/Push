@@ -21,6 +21,9 @@ import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-sessi
 import { openrouterStream } from './openrouter-stream';
 import { zenStream } from './zen-stream';
 import { kilocodeStream } from './kilocode-stream';
+import { nvidiaStream } from './nvidia-stream';
+import { blackboxStream } from './blackbox-stream';
+import { openadapterStream } from './openadapter-stream';
 import type { PushStream } from '@push/lib/provider-contract';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
@@ -689,9 +692,84 @@ export const streamZenChat: StreamChatFn = async (...args) => {
 
   return adapted(...withChunkedEmitter(args));
 };
-export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
-export const streamBlackboxChat: StreamChatFn = (...args) =>
-  streamProviderChat('blackbox', ...args);
+/**
+ * Nvidia NIM ships via the PushStream abstraction (Phase 8 final port):
+ * `nvidiaStream` delegates SSE parsing to the shared `openAISSEPump`,
+ * `createProviderStreamAdapter` provides timer/abort safety. Mirrors
+ * `streamKilocodeChat`.
+ */
+export const streamNvidiaChat: StreamChatFn = async (...args) => {
+  const apiKey = getNvidiaKey();
+  if (!apiKey) {
+    const [, , , onError] = args;
+    onError(new Error('Nvidia API key not configured'));
+    return;
+  }
+
+  const modelOverride = args[7];
+  const nvidiaErrorMessages = buildErrorMessages('Nvidia NIM');
+  const timeouts: AdapterTimeoutConfig = {
+    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
+    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
+    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
+    errorMessages: {
+      event: nvidiaErrorMessages.idle,
+      content: nvidiaErrorMessages.stall,
+      total: nvidiaErrorMessages.total,
+    },
+  };
+
+  const nvidiaWithReasoning: PushStream<ChatMessage> = (req) =>
+    normalizeReasoning(nvidiaStream(req));
+
+  const adapted = createProviderStreamAdapter<ChatMessage>(nvidiaWithReasoning, 'nvidia', {
+    defaultModel: modelOverride || getNvidiaModelName(),
+    timeouts,
+    telemetry: buildAdapterTelemetry(),
+  });
+
+  return adapted(...withChunkedEmitter(args));
+};
+
+/**
+ * Blackbox AI ships via the PushStream abstraction (Phase 8 final port):
+ * `blackboxStream` delegates SSE parsing to the shared `openAISSEPump`,
+ * `createProviderStreamAdapter` provides timer/abort safety. The legacy
+ * `shouldResetStallOnReasoning: true` flag is covered by the adapter's
+ * `contentTimeoutMs` resetting on `reasoning_delta`.
+ */
+export const streamBlackboxChat: StreamChatFn = async (...args) => {
+  const apiKey = getBlackboxKey();
+  if (!apiKey) {
+    const [, , , onError] = args;
+    onError(new Error('Blackbox API key not configured'));
+    return;
+  }
+
+  const modelOverride = args[7];
+  const blackboxErrorMessages = buildErrorMessages('Blackbox AI');
+  const timeouts: AdapterTimeoutConfig = {
+    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
+    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
+    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
+    errorMessages: {
+      event: blackboxErrorMessages.idle,
+      content: blackboxErrorMessages.stall,
+      total: blackboxErrorMessages.total,
+    },
+  };
+
+  const blackboxWithReasoning: PushStream<ChatMessage> = (req) =>
+    normalizeReasoning(blackboxStream(req));
+
+  const adapted = createProviderStreamAdapter<ChatMessage>(blackboxWithReasoning, 'blackbox', {
+    defaultModel: modelOverride || getBlackboxModelName(),
+    timeouts,
+    telemetry: buildAdapterTelemetry(),
+  });
+
+  return adapted(...withChunkedEmitter(args));
+};
 
 /**
  * Kilo Code ships via the PushStream abstraction (Phase 8 follow-up):
@@ -731,8 +809,48 @@ export const streamKilocodeChat: StreamChatFn = async (...args) => {
 
   return adapted(...withChunkedEmitter(args));
 };
-export const streamOpenAdapterChat: StreamChatFn = (...args) =>
-  streamProviderChat('openadapter', ...args);
+/**
+ * OpenAdapter ships via the PushStream abstraction (Phase 8 final port):
+ * `openadapterStream` delegates SSE parsing to the shared `openAISSEPump`,
+ * `createProviderStreamAdapter` provides timer/abort safety. Mirrors
+ * `streamKilocodeChat`.
+ */
+export const streamOpenAdapterChat: StreamChatFn = async (...args) => {
+  const apiKey = getOpenAdapterKey();
+  if (!apiKey) {
+    const [, , , onError] = args;
+    onError(new Error('OpenAdapter API key not configured'));
+    return;
+  }
+
+  const modelOverride = args[7];
+  const openAdapterErrorMessages = buildErrorMessages('OpenAdapter');
+  const timeouts: AdapterTimeoutConfig = {
+    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
+    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
+    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
+    errorMessages: {
+      event: openAdapterErrorMessages.idle,
+      content: openAdapterErrorMessages.stall,
+      total: openAdapterErrorMessages.total,
+    },
+  };
+
+  const openadapterWithReasoning: PushStream<ChatMessage> = (req) =>
+    normalizeReasoning(openadapterStream(req));
+
+  const adapted = createProviderStreamAdapter<ChatMessage>(
+    openadapterWithReasoning,
+    'openadapter',
+    {
+      defaultModel: modelOverride || getOpenAdapterModelName(),
+      timeouts,
+      telemetry: buildAdapterTelemetry(),
+    },
+  );
+
+  return adapted(...withChunkedEmitter(args));
+};
 export const streamAzureChat: StreamChatFn = (...args) => streamProviderChat('azure', ...args);
 export const streamBedrockChat: StreamChatFn = (...args) => streamProviderChat('bedrock', ...args);
 export const streamVertexChat: StreamChatFn = (...args) => streamProviderChat('vertex', ...args);
