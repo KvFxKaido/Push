@@ -61,14 +61,25 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
   if (req.temperature !== undefined) input.temperature = req.temperature;
   if (req.topP !== undefined) input.top_p = req.topP;
 
-  const stream = (await (
-    env.AI as unknown as {
-      run: (
-        model: string,
-        input: Record<string, unknown>,
-      ) => Promise<ReadableStream<Uint8Array> | unknown>;
-    }
-  ).run(req.model, input)) as ReadableStream<Uint8Array> | unknown;
+  // Workers AI binding routes through AI Gateway natively when given a
+  // `gateway.id`. The binding handles auth via account context — no
+  // cf-aig-authorization header required for the binding path. We omit the
+  // third argument entirely when the gateway is unconfigured so callers/tests
+  // observing `run`'s call shape see the legacy 2-arg form.
+  const account = env.CF_AI_GATEWAY_ACCOUNT_ID?.trim();
+  const slug = env.CF_AI_GATEWAY_SLUG?.trim();
+  const runner = env.AI as unknown as {
+    run: (
+      model: string,
+      input: Record<string, unknown>,
+      options?: { gateway?: { id: string } },
+    ) => Promise<ReadableStream<Uint8Array> | unknown>;
+  };
+  const stream = (
+    account && slug
+      ? await runner.run(req.model, input, { gateway: { id: slug } })
+      : await runner.run(req.model, input)
+  ) as ReadableStream<Uint8Array> | unknown;
 
   if (!(stream instanceof ReadableStream)) {
     throw new Error('Cloudflare AI did not return a stream');
@@ -422,6 +433,11 @@ export const handleOpenRouterChat = createStreamProxyHandler({
     'HTTP-Referer': new URL(request.url).origin,
     'X-Title': 'Push',
   }),
+  // Per Cloudflare AI Gateway docs the rewritten URL is
+  // `/v1/{account}/{gateway}/openrouter/chat/completions` — the provider slug
+  // already absorbs OpenRouter's `/api/v1` prefix, so the suffix is just the
+  // OpenAI-compat endpoint name.
+  gateway: { provider: 'openrouter', pathSuffix: '/chat/completions' },
 });
 
 export const handleOpenRouterModels = createJsonProxyHandler({
