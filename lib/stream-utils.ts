@@ -6,6 +6,8 @@
  * `app/src/lib/utils.ts` re-exports these so existing call sites don't churn.
  */
 
+import type { LlmMessage, PushStream, PushStreamRequest } from './provider-contract.js';
+
 // ---------------------------------------------------------------------------
 // JSON helpers
 // ---------------------------------------------------------------------------
@@ -65,3 +67,75 @@ export function streamWithTimeout(
   });
   return { promise, getAccumulated: () => accumulated };
 }
+
+// ---------------------------------------------------------------------------
+// PushStream iteration helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Consume a PushStream, accumulating `text_delta` into a single string with
+ * an activity-reset idle timeout. Analogous to `streamWithTimeout` but for
+ * the event-iteration shape used by agent roles that have migrated off the
+ * legacy `ProviderStreamFn` callback.
+ *
+ * The timer resets on every event (including structural ones like
+ * `reasoning_end`), so active streams aren't killed. On timeout, the
+ * returned signal is aborted and an Error with `timeoutMessage` is returned
+ * in the result's `error` field.
+ *
+ * `reasoning_delta` events are ignored — callers that use this helper
+ * (Auditor) only consume the final JSON text.
+ */
+export async function iteratePushStreamText<M extends LlmMessage>(
+  stream: PushStream<M>,
+  request: Omit<PushStreamRequest<M>, 'signal'>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<{ error: Error | null; text: string }> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  let text = '';
+  let error: Error | null = null;
+
+  const resetTimer = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+  };
+
+  try {
+    resetTimer();
+    const iterable = stream({
+      ...(request as PushStreamRequest<M>),
+      signal: controller.signal,
+    });
+    for await (const event of iterable) {
+      if (controller.signal.aborted) break;
+      resetTimer();
+      if (event.type === 'text_delta') {
+        text += event.text;
+      } else if (event.type === 'done') {
+        break;
+      }
+      // reasoning_delta / reasoning_end ignored — auditor only consumes final text.
+    }
+  } catch (err) {
+    if (!timedOut) {
+      error = err instanceof Error ? err : new Error(String(err));
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (timedOut && !error) {
+    error = new Error(timeoutMessage);
+  }
+
+  return { error, text };
+}
+
+// Re-export event type for callers that want to narrow.
+export type { PushStreamEvent } from './provider-contract.js';

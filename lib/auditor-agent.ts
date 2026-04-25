@@ -16,11 +16,11 @@
  * the verdict defaults to UNSAFE / INCOMPLETE.
  */
 
-import type { AIProviderType, LlmMessage, ProviderStreamFn } from './provider-contract.js';
+import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
 import type { MemoryScope } from './runtime-contract.js';
 import type { AuditorPromptContext } from './role-context.js';
 import { formatCoderState, type CoderWorkingMemory } from './working-memory.js';
-import { asRecord, streamWithTimeout } from './stream-utils.js';
+import { asRecord, iteratePushStreamText } from './stream-utils.js';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils.js';
 import { detectAiCommentPatterns, formatCommentCheckBlock } from './comment-check.js';
 import type { AuditorFileContext } from './auditor-file-context.js';
@@ -43,7 +43,17 @@ export interface AuditVerdictCardData {
 
 export interface AuditorRunOptions {
   provider: AIProviderType;
-  streamFn?: ProviderStreamFn;
+  /**
+   * PushStream the Auditor iterates directly. Phase 6 of the PushStream
+   * gateway migration moved the Auditor off the 12-arg `ProviderStreamFn`
+   * callback — callers are now responsible for assembling a PushStream for
+   * the target provider (either a native one like `openrouterStream`, or a
+   * legacy `ProviderStreamFn` wrapped with `providerStreamFnToPushStream`).
+   *
+   * When omitted (or when `provider === 'demo'`), the Auditor fails safely
+   * with an UNSAFE verdict.
+   */
+  stream?: PushStream<LlmMessage>;
   modelId?: string;
   context?: AuditorPromptContext;
   hookResult?: HookResult | null;
@@ -64,7 +74,8 @@ export type ResolveAuditorEvaluationMemoryBlockFn = (
 
 export interface AuditorEvaluationOptions {
   provider: AIProviderType;
-  streamFn?: ProviderStreamFn;
+  /** See `AuditorRunOptions.stream`. */
+  stream?: PushStream<LlmMessage>;
   modelId?: string;
   coderRounds?: number;
   coderMaxRounds?: number;
@@ -85,15 +96,15 @@ const pendingAudits = new Map<string, Promise<AuditResult>>();
 const auditListeners = new Map<string, Set<(phase: string) => void>>();
 const auditLatestPhase = new Map<string, string>();
 
-const streamFnIds = new WeakMap<ProviderStreamFn, number>();
-let nextStreamFnId = 0;
+const streamIds = new WeakMap<PushStream<LlmMessage>, number>();
+let nextStreamId = 0;
 
-function getStreamFnId(streamFn: ProviderStreamFn | undefined): number | null {
-  if (!streamFn) return null;
-  let id = streamFnIds.get(streamFn);
+function getStreamId(stream: PushStream<LlmMessage> | undefined): number | null {
+  if (!stream) return null;
+  let id = streamIds.get(stream);
   if (id === undefined) {
-    id = nextStreamFnId++;
-    streamFnIds.set(streamFn, id);
+    id = nextStreamId++;
+    streamIds.set(stream, id);
   }
   return id;
 }
@@ -108,7 +119,7 @@ function fingerprintString(value: string): string {
 }
 
 function auditCoalesceKey(
-  streamFn: ProviderStreamFn | undefined,
+  stream: PushStream<LlmMessage> | undefined,
   diff: string,
   provider: string,
   modelId: string | undefined,
@@ -117,7 +128,7 @@ function auditCoalesceKey(
   fileContexts?: AuditorFileContext[],
 ): string {
   return JSON.stringify({
-    streamFnId: getStreamFnId(streamFn),
+    streamId: getStreamId(stream),
     provider,
     modelId: modelId ?? '',
     runtimeContext,
@@ -205,7 +216,7 @@ export async function runAuditor(
   onStatus: (phase: string) => void,
 ): Promise<AuditResult> {
   const key = auditCoalesceKey(
-    options.streamFn,
+    options.stream,
     diff,
     options.provider,
     options.modelId,
@@ -252,7 +263,7 @@ async function runAuditorCore(
   const filesReviewed = parseDiffStats(diff).filesChanged;
 
   // Fail-safe: require an active AI provider with a valid key
-  if (options.provider === 'demo' || !options.streamFn) {
+  if (options.provider === 'demo' || !options.stream) {
     return {
       verdict: 'unsafe',
       card: {
@@ -266,7 +277,7 @@ async function runAuditorCore(
     };
   }
 
-  const streamFn = options.streamFn;
+  const stream = options.stream;
   const contextBlock = runtimeContext ?? '';
   const systemPrompt = new SystemPromptBuilder()
     .set('identity', AUDITOR_SYSTEM_PROMPT)
@@ -305,25 +316,18 @@ async function runAuditorCore(
     },
   ];
 
-  const { promise: streamErrorPromise, getAccumulated } = streamWithTimeout(
+  const { error: streamError, text: accumulated } = await iteratePushStreamText(
+    stream,
+    {
+      provider: options.provider,
+      model: options.modelId ?? '',
+      messages,
+      systemPromptOverride: systemPrompt,
+      hasSandbox: false,
+    },
     AUDITOR_TIMEOUT_MS,
     `Auditor timed out after ${AUDITOR_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
-    (onToken, onDone, onError) => {
-      return streamFn(
-        messages,
-        onToken,
-        onDone,
-        onError,
-        undefined, // no thinking tokens
-        undefined, // no workspace context
-        false, // no sandbox
-        options.modelId,
-        systemPrompt,
-      );
-    },
   );
-  const streamError = await streamErrorPromise;
-  const accumulated = getAccumulated();
 
   if (streamError) {
     // Error → fail-safe to unsafe
@@ -452,14 +456,14 @@ export async function runAuditorEvaluation(
     confidence: 'low',
   };
 
-  if (options.provider === 'demo' || !options.streamFn) {
+  if (options.provider === 'demo' || !options.stream) {
     return {
       ...INCOMPLETE_DEFAULT,
       summary: 'No AI provider configured. Cannot run evaluation.',
     };
   }
 
-  const streamFn = options.streamFn;
+  const stream = options.stream;
 
   onStatus('Evaluating Coder output...');
 
@@ -526,25 +530,18 @@ export async function runAuditorEvaluation(
     },
   ];
 
-  const { promise: streamErrorPromise, getAccumulated } = streamWithTimeout(
+  const { error: streamError, text: accumulated } = await iteratePushStreamText(
+    stream,
+    {
+      provider: options.provider,
+      model: options.modelId ?? '',
+      messages,
+      systemPromptOverride: EVALUATION_SYSTEM_PROMPT,
+      hasSandbox: false,
+    },
     EVALUATION_TIMEOUT_MS,
     `Evaluation timed out after ${EVALUATION_TIMEOUT_MS / 1000}s.`,
-    (onToken, onDone, onError) => {
-      return streamFn(
-        messages,
-        onToken,
-        onDone,
-        onError,
-        undefined,
-        undefined,
-        false,
-        options.modelId,
-        EVALUATION_SYSTEM_PROMPT,
-      );
-    },
   );
-  const streamError = await streamErrorPromise;
-  const accumulated = getAccumulated();
 
   if (streamError) {
     return { ...INCOMPLETE_DEFAULT, summary: `Evaluation error: ${streamError.message}` };

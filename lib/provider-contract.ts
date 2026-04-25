@@ -521,6 +521,116 @@ export function createProviderStreamAdapter<M extends LlmMessage = LlmMessage>(
   };
 }
 
+/**
+ * Reverse of `createProviderStreamAdapter`: wrap a legacy `ProviderStreamFn`
+ * as a `PushStream` so consumers can iterate events regardless of whether
+ * the underlying provider has been ported to a native PushStream yet.
+ *
+ * Used by Phase 6+ consumers (agent roles that have migrated off the 12-arg
+ * callback) to talk to providers that still only expose the callback shape.
+ * Once every provider has a native PushStream, this bridge is deletable.
+ *
+ * Callback → event mapping:
+ * - `onToken(text)` → `{ type: 'text_delta', text }`
+ * - `onThinkingToken(text)` → `{ type: 'reasoning_delta', text }`
+ * - `onThinkingToken(null)` → `{ type: 'reasoning_end' }`
+ * - `onDone(usage?)` → `{ type: 'done', finishReason: 'stop', usage }`
+ * - `onError(err)` → the iterator throws `err`
+ *
+ * Abort handling: the request's `signal` is passed straight through to the
+ * wrapped `streamFn`. Consumers that break out of the `for await` loop must
+ * abort the signal themselves to stop the upstream call.
+ */
+export function providerStreamFnToPushStream<M extends LlmMessage = LlmMessage, W = unknown>(
+  streamFn: ProviderStreamFn<M, W>,
+): PushStream<M> {
+  return (req) =>
+    (async function* () {
+      const queue: PushStreamEvent[] = [];
+      let done = false;
+      let error: Error | null = null;
+      let wake: (() => void) | undefined;
+      const notify = () => {
+        if (wake) {
+          const w = wake;
+          wake = undefined;
+          w();
+        }
+      };
+
+      const onToken = (text: string) => {
+        if (text.length > 0) queue.push({ type: 'text_delta', text });
+        notify();
+      };
+      const onDone = (usage?: StreamUsage) => {
+        queue.push({ type: 'done', finishReason: 'stop', usage });
+        done = true;
+        notify();
+      };
+      const onError = (err: Error) => {
+        error = err;
+        done = true;
+        notify();
+      };
+      const onThinkingToken = (token: string | null) => {
+        if (token === null) queue.push({ type: 'reasoning_end' });
+        else if (token.length > 0) queue.push({ type: 'reasoning_delta', text: token });
+        notify();
+      };
+
+      // Kick off the legacy stream. Swallow its returned promise here — the
+      // callbacks are the source of truth; an unhandled rejection from the
+      // streamFn's own promise is caught and converted into an onError.
+      const run = (async () => {
+        try {
+          await streamFn(
+            req.messages,
+            onToken,
+            onDone,
+            onError,
+            onThinkingToken,
+            req.workspaceContext as W | undefined,
+            req.hasSandbox,
+            req.model,
+            req.systemPromptOverride,
+            req.scratchpadContent,
+            req.signal,
+            req.onPreCompact,
+            req.todoContent,
+          );
+        } catch (err) {
+          if (!done) onError(err instanceof Error ? err : new Error(String(err)));
+        }
+      })();
+
+      try {
+        while (true) {
+          while (queue.length === 0 && !done) {
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+            });
+          }
+          while (queue.length > 0) {
+            const event = queue.shift()!;
+            yield event;
+            if (event.type === 'done') return;
+          }
+          if (done) {
+            if (error) throw error;
+            return;
+          }
+        }
+      } finally {
+        // Don't swallow — we want the producer to settle so its resources
+        // clean up, but we also don't want to block the consumer that's
+        // already exited the iterator.
+        void run.catch(() => {
+          /* error already surfaced via onError */
+        });
+      }
+    })();
+}
+
 // ---------------------------------------------------------------------------
 // Review result types
 // ---------------------------------------------------------------------------

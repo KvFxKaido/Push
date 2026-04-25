@@ -12,6 +12,8 @@ import {
   type AuditorEvaluationOptions as LibAuditorEvaluationOptions,
   type AuditorRunOptions as LibAuditorRunOptions,
 } from '@push/lib/auditor-agent';
+import { providerStreamFnToPushStream } from '@push/lib/provider-contract';
+import type { LlmMessage, ProviderStreamFn, PushStream } from '@push/lib/provider-contract';
 import type { AuditVerdictCardData, CoderWorkingMemory, MemoryScope } from '@/types';
 import { getActiveProvider, getProviderStreamFn, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
@@ -49,9 +51,36 @@ function resolveAuditorModel(
   return getModelForRole(provider, 'auditor')?.id;
 }
 
-function resolveAuditorStreamFn(provider: ActiveProvider): LibAuditorRunOptions['streamFn'] {
+/**
+ * Phase 6 of the PushStream gateway migration (see
+ * `docs/decisions/PushStream Gateway Migration.md`): the Auditor iterates
+ * `PushStreamEvent`s directly rather than going through the 12-arg
+ * callback. Per-provider PushStream implementations aren't all ported yet,
+ * so we bridge the existing `ProviderStreamFn` into a PushStream here.
+ *
+ * `streamOpenRouterChat` internally wraps `openrouterStream` with the
+ * adapter; bridging it back yields a PushStream round-trip (events →
+ * callbacks → events). Acceptable during migration — the cost is modest
+ * for auditor-shaped workloads (single diff → JSON verdict), and keeping
+ * one uniform bridge is simpler than dual-wiring a native openrouter path
+ * just for the Auditor. Swap for direct `openrouterStream` usage once
+ * every provider has a native PushStream (Phase 8).
+ *
+ * The wrapped PushStream is cached by underlying streamFn identity so
+ * concurrent audits with the same provider see the same PushStream — keeps
+ * `auditCoalesceKey` deduplication working across calls.
+ */
+const pushStreamCache = new WeakMap<ProviderStreamFn, PushStream<LlmMessage>>();
+function resolveAuditorPushStream(provider: ActiveProvider): LibAuditorRunOptions['stream'] {
   if (provider === 'demo') return undefined;
-  return getProviderStreamFn(provider).streamFn as unknown as LibAuditorRunOptions['streamFn'];
+  const streamFn = getProviderStreamFn(provider)
+    .streamFn as unknown as ProviderStreamFn<LlmMessage>;
+  let push = pushStreamCache.get(streamFn);
+  if (!push) {
+    push = providerStreamFnToPushStream(streamFn);
+    pushStreamCache.set(streamFn, push);
+  }
+  return push;
 }
 
 export async function runAuditor(
@@ -67,7 +96,7 @@ export async function runAuditor(
     diff,
     {
       provider,
-      streamFn: resolveAuditorStreamFn(provider),
+      stream: resolveAuditorPushStream(provider),
       modelId: resolveAuditorModel(provider, options),
       context,
       hookResult,
@@ -96,11 +125,7 @@ export async function runAuditorEvaluation(
   },
 ): Promise<import('@push/lib/auditor-agent').EvaluationResult> {
   const provider = resolveAuditorProvider(options);
-  const streamFn =
-    provider === 'demo'
-      ? undefined
-      : (getProviderStreamFn(provider)
-          .streamFn as unknown as LibAuditorEvaluationOptions['streamFn']);
+  const stream = resolveAuditorPushStream(provider) as LibAuditorEvaluationOptions['stream'];
   return runAuditorEvaluationLib(
     task,
     coderSummary,
@@ -108,7 +133,7 @@ export async function runAuditorEvaluation(
     diff,
     {
       provider,
-      streamFn,
+      stream,
       modelId: resolveAuditorModel(provider, options),
       coderRounds: options?.coderRounds,
       coderMaxRounds: options?.coderMaxRounds,
