@@ -206,17 +206,27 @@ export async function streamCompletion(
 
     let accumulated: string = '';
     let yieldedAny: boolean = false;
+    // Set when the post-loop abort handler raises so the catch below knows
+    // the error has already been translated and must propagate without
+    // going through the retry policy.
+    let postLoopAbort: boolean = false;
 
     try {
       // Map the lib-side message shape onto LlmMessage. The CLI doesn't
       // populate `id` / `timestamp`, but `LlmMessage` requires them — fill
-      // with placeholders that the gateway never reads.
-      const llmMessages: LlmMessage[] = messages.map((m, idx) => ({
-        id: `cli-${idx}`,
-        role: (m.role as LlmMessage['role']) || 'user',
-        content: m.content,
-        timestamp: 0,
-      }));
+      // with placeholders that the gateway never reads. The role validator
+      // narrows `string` to the union explicitly: a stray 'tool' or empty
+      // string would otherwise be forwarded to the upstream and rejected.
+      const llmMessages: LlmMessage[] = messages.map((m, idx) => {
+        const role: LlmMessage['role'] =
+          m.role === 'user' || m.role === 'assistant' || m.role === 'system' ? m.role : 'user';
+        return {
+          id: `cli-${idx}`,
+          role,
+          content: m.content,
+          timestamp: 0,
+        };
+      });
 
       const events: AsyncIterable<PushStreamEvent> = normalizeReasoning(
         stream({
@@ -251,10 +261,31 @@ export async function streamCompletion(
         }
       }
 
+      // The shared SSE pump exits cleanly (no throw) when its `signal`
+      // aborts mid-read, so the for-await above can return normally even
+      // though the request was cancelled. Translate the abort here so the
+      // caller still sees AbortError/timeout instead of a truncated success.
+      if (compositeSignal.aborted) {
+        postLoopAbort = true;
+        if (externalSignal?.aborted) {
+          const abortErr: Error = new Error('Request aborted.');
+          abortErr.name = 'AbortError';
+          throw abortErr;
+        }
+        throw new Error(
+          `Request timed out after ${Math.floor(timeoutMs / 1000)}s [provider=${config.id} model=${model} url=${config.url}]`,
+        );
+      }
+
       clearTimeout(timeout);
       return accumulated;
     } catch (err) {
       clearTimeout(timeout);
+
+      // Already translated by the post-loop abort handler — propagate
+      // without consulting the retry policy (an aborted/timed-out request
+      // shouldn't fire another attempt).
+      if (postLoopAbort) throw err;
 
       const isAbort: boolean =
         (err instanceof DOMException || err instanceof Error) &&

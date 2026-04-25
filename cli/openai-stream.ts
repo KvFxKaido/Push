@@ -13,9 +13,11 @@
  * `choices[0].delta` parsing, native `tool_calls` accumulation/flush, usage
  * capture, and `finish_reason` mapping.
  *
- * Errors throw `CliProviderError` carrying the upstream status (or `0` for
- * network/parse failures) so `streamCompletion`'s retry policy can decide
- * whether to back off and try again.
+ * Non-2xx HTTP responses throw `CliProviderError` carrying the upstream
+ * status so `streamCompletion`'s retry policy can decide whether to back off
+ * and try again. Transport, abort, or parse failures propagate verbatim as
+ * non-`CliProviderError` exceptions; the retry policy treats every
+ * non-AbortError as transport-level and retries it.
  */
 
 import process from 'node:process';
@@ -30,7 +32,7 @@ import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
 import type { ProviderConfig } from './provider.ts';
 
 export class CliProviderError extends Error {
-  /** Upstream HTTP status, or 0 when the failure happened before/instead of a response. */
+  /** Upstream HTTP status from the non-2xx response. */
   readonly status: number;
   constructor(message: string, status: number) {
     super(message);
@@ -120,12 +122,14 @@ async function* cliProviderStream(
   // Network failures (fetch throws) and aborts propagate verbatim. The
   // caller's retry policy treats every non-AbortError as transport-level
   // failure worth a retry, matching the legacy `streamCompletion` shape.
+  // `keepalive` is intentionally not set: it is browser-only (allows requests
+  // to outlive the page) and Node's undici enforces a 64KiB request-body cap
+  // when it's true, which long chat histories would routinely exceed.
   const response = await fetch(config.url, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
     signal: req.signal,
-    keepalive: true,
   });
 
   if (!response.ok) {
