@@ -824,6 +824,117 @@ describe('streamCompletion', () => {
         },
       );
     });
+
+    // Regression: the shared SSE pump returns cleanly (no throw) when its
+    // signal aborts mid-read, so naive iteration would fall through to a
+    // truncated `return accumulated`. streamCompletion must observe the
+    // abort and translate it into AbortError (or timeout) instead.
+    it('throws AbortError when external signal fires after streaming starts', async () => {
+      const controller = new AbortController();
+      let streamController;
+      const body = new ReadableStream({
+        start(c) {
+          streamController = c;
+        },
+      });
+      const encoder = new TextEncoder();
+
+      globalThis.fetch = async (_url, opts) => {
+        // Forward abort to the body stream so the pump's signal-abort branch
+        // observes it and returns cleanly. This mimics what real fetch does
+        // with the request signal.
+        opts.signal?.addEventListener(
+          'abort',
+          () => {
+            try {
+              streamController.close();
+            } catch {
+              /* already closed */
+            }
+          },
+          { once: true },
+        );
+        return {
+          ok: true,
+          status: 200,
+          body,
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const tokens = [];
+      const promise = streamCompletion(
+        testConfig,
+        'key',
+        'model',
+        testMessages,
+        (t) => tokens.push(t),
+        DEFAULT_TIMEOUT_MS,
+        controller.signal,
+      );
+
+      // Yield a single token to start streaming, then abort the external
+      // signal. The pump sees `signal.aborted` on its next read and returns.
+      await new Promise((r) => setTimeout(r, 5));
+      streamController.enqueue(
+        encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}\n\n`),
+      );
+      await new Promise((r) => setTimeout(r, 5));
+      controller.abort();
+
+      await assert.rejects(promise, (err) => {
+        assert.equal(err.name, 'AbortError');
+        assert.ok(err.message.includes('aborted'));
+        return true;
+      });
+      // The token that arrived before the abort is still observable to the
+      // caller's onToken — we just don't return it as a successful result.
+      assert.deepEqual(tokens, ['hi']);
+    });
+
+    it('throws timeout error when timer fires after streaming starts', async () => {
+      let streamController;
+      const body = new ReadableStream({
+        start(c) {
+          streamController = c;
+        },
+      });
+
+      globalThis.fetch = async (_url, opts) => {
+        opts.signal?.addEventListener(
+          'abort',
+          () => {
+            try {
+              streamController.close();
+            } catch {
+              /* already closed */
+            }
+          },
+          { once: true },
+        );
+        return {
+          ok: true,
+          status: 200,
+          body,
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      // 50ms timeout, never push any tokens — the timer fires while the
+      // pump is parked on an empty read, the body stream closes, the pump
+      // returns cleanly, and streamCompletion must surface "timed out".
+      await assert.rejects(
+        () => streamCompletion(testConfig, 'key', 'model', testMessages, null, 50, null),
+        (err) => {
+          assert.ok(err.message.includes('timed out'));
+          return true;
+        },
+      );
+    });
   });
 
   describe('OpenRouter-specific behavior', () => {
