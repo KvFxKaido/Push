@@ -468,11 +468,6 @@ function createThinkTokenParser(
 // Smart Chunking — reduces UI updates on mobile by batching tokens
 // ---------------------------------------------------------------------------
 
-interface ChunkedEmitter {
-  push(token: string): void;
-  flush(): void;
-}
-
 /**
  * Creates a chunked emitter that batches tokens for smoother mobile UI.
  *
@@ -484,7 +479,12 @@ interface ChunkedEmitter {
  * This reduces React setState calls from per-character to per-word,
  * dramatically improving performance on slower mobile devices.
  */
-function createChunkedEmitter(
+export interface ChunkedEmitter {
+  push(token: string): void;
+  flush(): void;
+}
+
+export function createChunkedEmitter(
   emit: (chunk: string, meta?: ChunkMetadata) => void,
   options?: { minChunkSize?: number; flushIntervalMs?: number },
 ): ChunkedEmitter {

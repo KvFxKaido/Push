@@ -66,7 +66,7 @@ import {
   normalizeExperimentalBaseUrl,
 } from './experimental-providers';
 import { encodeVertexServiceAccountHeader, normalizeVertexRegion } from './vertex-provider';
-import { streamSSEChat } from './orchestrator';
+import { streamSSEChat, createChunkedEmitter } from './orchestrator';
 import { parseProviderError, hasFinishReason } from './orchestrator-streaming';
 import type { StreamProviderConfig, StreamUsage, ChunkMetadata } from './orchestrator-streaming';
 
@@ -533,6 +533,63 @@ function buildAdapterTelemetry(): AdapterTelemetry {
 export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
 
 /**
+ * Wrap a `StreamChatFn`'s `onToken`/`onDone`/`onError` so visible content is
+ * batched through `createChunkedEmitter` before reaching the UI callback.
+ * Mirrors the legacy `streamSSEChatOnce` path which fed `onToken` through a
+ * chunker to collapse character/sub-word fragments into per-word emissions.
+ *
+ * Adapter-routed providers (OpenRouter / Zen / Kilo Code) bypass that legacy
+ * path, so without this wrapper sub-word streaming would hammer React with a
+ * `setState` per character on slow mobile devices. `onThinkingToken` is left
+ * unbatched — the legacy path didn't batch reasoning either.
+ *
+ * Flushes on terminal callbacks (onDone / onError) so the trailing buffer
+ * never gets stuck behind the 50ms scheduled flush.
+ */
+export function withChunkedEmitter(args: Parameters<StreamChatFn>): Parameters<StreamChatFn> {
+  const [
+    messages,
+    onToken,
+    onDone,
+    onError,
+    onThinkingToken,
+    workspaceContext,
+    hasSandbox,
+    modelOverride,
+    systemPromptOverride,
+    scratchpadContent,
+    signal,
+    onPreCompact,
+    todoContent,
+  ] = args;
+  const chunker = createChunkedEmitter(onToken);
+  const wrappedOnToken: typeof onToken = (text) => chunker.push(text);
+  const wrappedOnDone: typeof onDone = (usage) => {
+    chunker.flush();
+    onDone(usage);
+  };
+  const wrappedOnError: typeof onError = (err) => {
+    chunker.flush();
+    onError(err);
+  };
+  return [
+    messages,
+    wrappedOnToken,
+    wrappedOnDone,
+    wrappedOnError,
+    onThinkingToken,
+    workspaceContext,
+    hasSandbox,
+    modelOverride,
+    systemPromptOverride,
+    scratchpadContent,
+    signal,
+    onPreCompact,
+    todoContent,
+  ];
+}
+
+/**
  * OpenRouter ships via the PushStream abstraction: `openrouterStream` handles
  * SSE parsing + reasoning channel normalization, `createProviderStreamAdapter`
  * provides timer/abort safety parity with the legacy `streamSSEChatOnce` path
@@ -584,7 +641,7 @@ export const streamOpenRouterChat: StreamChatFn = async (...args) => {
     telemetry: buildAdapterTelemetry(),
   });
 
-  return adapted(...args);
+  return adapted(...withChunkedEmitter(args));
 };
 export const streamCloudflareChat: StreamChatFn = (...args) =>
   streamProviderChat('cloudflare', ...args);
@@ -630,7 +687,7 @@ export const streamZenChat: StreamChatFn = async (...args) => {
     telemetry: buildAdapterTelemetry(),
   });
 
-  return adapted(...args);
+  return adapted(...withChunkedEmitter(args));
 };
 export const streamNvidiaChat: StreamChatFn = (...args) => streamProviderChat('nvidia', ...args);
 export const streamBlackboxChat: StreamChatFn = (...args) =>
@@ -672,7 +729,7 @@ export const streamKilocodeChat: StreamChatFn = async (...args) => {
     telemetry: buildAdapterTelemetry(),
   });
 
-  return adapted(...args);
+  return adapted(...withChunkedEmitter(args));
 };
 export const streamOpenAdapterChat: StreamChatFn = (...args) =>
   streamProviderChat('openadapter', ...args);

@@ -97,3 +97,117 @@ describe('Cloudflare provider routing', () => {
     expect(getActiveProvider()).toBe('cloudflare');
   });
 });
+
+describe('withChunkedEmitter', () => {
+  // Each test reimports the module so previous mockProviderState calls don't
+  // leak. We don't actually need provider state for these tests, but
+  // resetModules in afterEach demands a clean import here.
+
+  it('batches sub-word text fragments into per-word emissions', async () => {
+    mockProviderState();
+    const { withChunkedEmitter } = await import('./orchestrator-provider-routing');
+
+    const onTokenSpy = vi.fn<(text: string) => void>();
+    const onDoneSpy = vi.fn<() => void>();
+    const onErrorSpy = vi.fn<(err: Error) => void>();
+    const noop = () => {};
+
+    const args: Parameters<typeof withChunkedEmitter>[0] = [
+      [],
+      onTokenSpy,
+      onDoneSpy,
+      onErrorSpy,
+      noop,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ];
+    const [, wrappedOnToken, wrappedOnDone] = withChunkedEmitter(args);
+
+    // Stream "hello world" character by character.
+    for (const ch of 'hello world') {
+      wrappedOnToken(ch);
+    }
+    // Trailing buffer ('world') needs onDone's flush to surface.
+    wrappedOnDone();
+
+    // Without batching this would have fired 11 times, one per character.
+    // With batching, the chunker emits on word boundaries (spaces) once the
+    // buffer is large enough plus a terminal flush — so two calls.
+    expect(onTokenSpy).toHaveBeenCalledTimes(2);
+    expect(onTokenSpy.mock.calls.map(([t]) => t).join('')).toBe('hello world');
+    expect(onDoneSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('flushes the trailing buffer on terminal callbacks', async () => {
+    mockProviderState();
+    const { withChunkedEmitter } = await import('./orchestrator-provider-routing');
+
+    const onTokenSpy = vi.fn<(text: string) => void>();
+    const onErrorSpy = vi.fn<(err: Error) => void>();
+    const noop = () => {};
+
+    const args: Parameters<typeof withChunkedEmitter>[0] = [
+      [],
+      onTokenSpy,
+      noop as () => void,
+      onErrorSpy,
+      noop,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ];
+    const [, wrappedOnToken, , wrappedOnError] = withChunkedEmitter(args);
+
+    // 'no' is below MIN_CHUNK_SIZE (4) and has no word boundary, so the
+    // chunker holds it. onError must flush the tail before propagating.
+    wrappedOnToken('no');
+    expect(onTokenSpy).not.toHaveBeenCalled();
+
+    const err = new Error('boom');
+    wrappedOnError(err);
+
+    expect(onTokenSpy).toHaveBeenCalledTimes(1);
+    expect(onTokenSpy).toHaveBeenCalledWith('no', expect.objectContaining({ chunkIndex: 1 }));
+    expect(onErrorSpy).toHaveBeenCalledWith(err);
+  });
+
+  it('passes onThinkingToken through unbatched (legacy parity)', async () => {
+    mockProviderState();
+    const { withChunkedEmitter } = await import('./orchestrator-provider-routing');
+
+    const onThinkingSpy = vi.fn<(t: string | null) => void>();
+    const noop = () => {};
+
+    const args: Parameters<typeof withChunkedEmitter>[0] = [
+      [],
+      noop,
+      noop as () => void,
+      noop as (e: Error) => void,
+      onThinkingSpy,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ];
+    const [, , , , wrappedOnThinking] = withChunkedEmitter(args);
+
+    // Reasoning tokens should pass through verbatim — the legacy path also
+    // didn't batch reasoning, only visible content.
+    expect(wrappedOnThinking).toBe(onThinkingSpy);
+  });
+});
