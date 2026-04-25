@@ -14,7 +14,7 @@
  * `delegation-handoff.integration.test.ts`) keep working unchanged. It
  * owns the Web-only setup that is not yet lib-safe:
  *
- *  - provider/model resolution (`getActiveProvider`, `getProviderStreamFn`,
+ *  - provider/model resolution (`getActiveProvider`, `getProviderPushStream`,
  *    `getModelForRole`)
  *  - `'demo'` provider guard
  *  - `TurnPolicyRegistry` + `TurnContext` construction (pulls `ChatMessage`)
@@ -60,13 +60,8 @@ import {
   buildCoderToolExec,
   type CoderBindingServices,
 } from '@push/lib/coder-agent-bindings';
-import {
-  providerStreamFnToPushStream,
-  type LlmMessage,
-  type ProviderStreamFn,
-  type PushStream,
-} from '@push/lib/provider-contract';
-import { getActiveProvider, getProviderStreamFn, type ActiveProvider } from './orchestrator';
+import type { LlmMessage, PushStream } from '@push/lib/provider-contract';
+import { getActiveProvider, getProviderPushStream, type ActiveProvider } from './orchestrator';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import { getModelForRole } from './providers';
 import {
@@ -117,19 +112,6 @@ export type { CoderAgentOptions, CoderAfterModelResult, CoderToolExecResult };
 // Checkpoint answer — Web-facing signature preserved.
 // ---------------------------------------------------------------------------
 
-// Bridged-PushStream cache, keyed by underlying `ProviderStreamFn` identity.
-// Mirrors the Auditor / Reviewer wrapper pattern so concurrent Coder runs and
-// checkpoint answers against the same provider see the same `PushStream`.
-const pushStreamCache = new WeakMap<ProviderStreamFn, PushStream<LlmMessage>>();
-function bridgeStreamFn(streamFn: ProviderStreamFn): PushStream<LlmMessage> {
-  let push = pushStreamCache.get(streamFn);
-  if (!push) {
-    push = providerStreamFnToPushStream(streamFn as ProviderStreamFn<LlmMessage>);
-    pushStreamCache.set(streamFn, push);
-  }
-  return push;
-}
-
 export async function generateCheckpointAnswer(
   question: string,
   coderContext: string,
@@ -142,12 +124,11 @@ export async function generateCheckpointAnswer(
   if (activeProvider === 'demo') {
     return 'No AI provider configured. Try a different approach.';
   }
-  const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'orchestrator');
   const modelId = modelOverride || roleModel?.id;
 
   return generateCheckpointAnswerLib(question, coderContext, {
-    stream: bridgeStreamFn(streamFn as unknown as ProviderStreamFn),
+    stream: getProviderPushStream(activeProvider) as unknown as PushStream<LlmMessage>,
     provider: activeProvider,
     modelId,
     recentChatHistory: recentChatHistory as unknown as Parameters<
@@ -288,7 +269,6 @@ export async function runCoderAgent(
   if (activeProvider === 'demo') {
     throw new Error('No AI provider configured. Add an API key in Settings.');
   }
-  const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'coder');
   const coderModelId = effectiveModelOverride || roleModel?.id;
 
@@ -394,7 +374,7 @@ export async function runCoderAgent(
   // --- Build lib options ---
   const libOptions: CoderAgentOptions<AnyToolCall, ChatCard> = {
     provider: activeProvider,
-    stream: bridgeStreamFn(streamFn as unknown as ProviderStreamFn),
+    stream: getProviderPushStream(activeProvider) as unknown as PushStream<LlmMessage>,
     modelId: coderModelId,
     sandboxId,
     allowedRepo: '',

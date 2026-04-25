@@ -360,6 +360,41 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     vi.restoreAllMocks();
   });
 
+  /**
+   * Drain the PushStream into the legacy callback-shaped buckets the existing
+   * test cases assert on. Lets the assertions stay focused on text-token
+   * accumulation, terminal `done`, and structured errors without restating
+   * each case as a `for await` loop.
+   */
+  async function drain(
+    stream: ReturnType<typeof createWebStreamAdapter>,
+    options: { messages?: ChatMessage[]; signal?: AbortSignal } = {},
+  ): Promise<{ tokens: string[]; doneCalled: boolean; errors: Error[] }> {
+    const tokens: string[] = [];
+    let doneCalled = false;
+    const errors: Error[] = [];
+    const messages: ChatMessage[] = options.messages ?? [
+      { id: '1', role: 'user', content: 'hi', timestamp: 0 },
+    ];
+    try {
+      for await (const event of stream({
+        provider: 'openrouter',
+        model: 'sonnet-4.6',
+        messages,
+        signal: options.signal,
+      })) {
+        if (event.type === 'text_delta') {
+          tokens.push(event.text);
+        } else if (event.type === 'done') {
+          doneCalled = true;
+        }
+      }
+    } catch (err) {
+      errors.push(err instanceof Error ? err : new Error(String(err)));
+    }
+    return { tokens, doneCalled, errors };
+  }
+
   function sseResponse(chunks: string[], status = 200): Response {
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
@@ -384,7 +419,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
         'data: [DONE]\n\n',
       ]),
     );
-    const streamFn = createWebStreamAdapter({
+    const stream = createWebStreamAdapter({
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
@@ -392,17 +427,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       jobId: 'job-test-1',
     });
 
-    const tokens: string[] = [];
-    let doneCalled = false;
-    const errors: Error[] = [];
-    await streamFn(
-      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
-      (t) => tokens.push(t),
-      () => {
-        doneCalled = true;
-      },
-      (e) => errors.push(e),
-    );
+    const { tokens, doneCalled, errors } = await drain(stream);
 
     expect(tokens.join('')).toBe('Hello');
     expect(doneCalled).toBe(true);
@@ -416,43 +441,31 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(body.messages).toEqual([{ role: 'user', content: 'hi' }]);
   });
 
-  it('invokes onError when the provider handler returns a non-2xx status', async () => {
+  it('throws when the provider handler returns a non-2xx status', async () => {
     providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
       new Response('upstream went boom', { status: 502 }),
     );
-    const streamFn = createWebStreamAdapter({
+    const stream = createWebStreamAdapter({
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
       modelId: 'sonnet-4.6',
       jobId: 'job-test-1',
     });
-    const errors: Error[] = [];
-    await streamFn(
-      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
-      () => {},
-      () => {},
-      (e) => errors.push(e),
-    );
+    const { errors } = await drain(stream);
     expect(errors.length).toBe(1);
     expect(errors[0]!.message).toContain('502');
   });
 
-  it('fails via onError for unsupported providers (azure in Phase 1)', async () => {
-    const streamFn = createWebStreamAdapter({
+  it('throws for unsupported providers (azure in Phase 1)', async () => {
+    const stream = createWebStreamAdapter({
       env: env(),
       origin: 'https://push.example.test',
       provider: 'azure',
       modelId: 'gpt-4o',
       jobId: 'job-test-1',
     });
-    const errors: Error[] = [];
-    await streamFn(
-      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
-      () => {},
-      () => {},
-      (e) => errors.push(e),
-    );
+    const { errors } = await drain(stream);
     expect(errors.length).toBe(1);
     expect(errors[0]!.message).toContain('azure');
     expect(providerHandlerMocks.handleOpenRouterChat).not.toHaveBeenCalled();
@@ -466,24 +479,14 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
         'data: [DONE]\n\n',
       ]),
     );
-    const streamFn = createWebStreamAdapter({
+    const stream = createWebStreamAdapter({
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
       modelId: 'sonnet-4.6',
       jobId: 'job-test-1',
     });
-    const tokens: string[] = [];
-    const errors: Error[] = [];
-    let doneCalled = false;
-    await streamFn(
-      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
-      (t) => tokens.push(t),
-      () => {
-        doneCalled = true;
-      },
-      (e) => errors.push(e),
-    );
+    const { tokens, doneCalled, errors } = await drain(stream);
     expect(tokens.join('')).toBe('ok');
     expect(doneCalled).toBe(true);
     expect(errors).toEqual([]);
@@ -497,70 +500,43 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
         'data: [DONE]\r\n\r\n',
       ]),
     );
-    const streamFn = createWebStreamAdapter({
+    const stream = createWebStreamAdapter({
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
       modelId: 'sonnet-4.6',
       jobId: 'job-test-1',
     });
-    const tokens: string[] = [];
-    let doneCalled = false;
-    await streamFn(
-      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
-      (t) => tokens.push(t),
-      () => {
-        doneCalled = true;
-      },
-      () => {},
-    );
+    const { tokens, doneCalled } = await drain(stream);
     expect(tokens.join('')).toBe('hello');
     expect(doneCalled).toBe(true);
   });
 
   it('stamps X-Forwarded-For with job:<jobId> so jobs get distinct rate-limit buckets', async () => {
     providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(sseResponse(['data: [DONE]\n\n']));
-    const streamFn = createWebStreamAdapter({
+    const stream = createWebStreamAdapter({
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
       modelId: 'sonnet-4.6',
       jobId: 'job-rate-limit-1',
     });
-    await streamFn(
-      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
-      () => {},
-      () => {},
-      () => {},
-    );
+    await drain(stream);
     const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
     expect(req.headers.get('X-Forwarded-For')).toBe('job:job-rate-limit-1');
   });
 
-  it('honors an aborted AbortSignal by invoking onError before dispatch', async () => {
+  it('honors an aborted AbortSignal by throwing before dispatch', async () => {
     const controller = new AbortController();
     controller.abort();
-    const streamFn = createWebStreamAdapter({
+    const stream = createWebStreamAdapter({
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
       modelId: 'sonnet-4.6',
       jobId: 'job-test-1',
     });
-    const errors: Error[] = [];
-    await streamFn(
-      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
-      () => {},
-      () => {},
-      (e) => errors.push(e),
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      controller.signal,
-    );
+    const { errors } = await drain(stream, { signal: controller.signal });
     expect(errors.length).toBe(1);
     expect(errors[0]!.message).toMatch(/abort/i);
     expect(providerHandlerMocks.handleOpenRouterChat).not.toHaveBeenCalled();
@@ -568,19 +544,14 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
 
   it('normalizes a trailing-slash origin so URLs do not become double-slashed', async () => {
     providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(sseResponse(['data: [DONE]\n\n']));
-    const streamFn = createWebStreamAdapter({
+    const stream = createWebStreamAdapter({
       env: env(),
       origin: 'https://push.example.test/',
       provider: 'openrouter',
       modelId: 'sonnet-4.6',
       jobId: 'job-test-1',
     });
-    await streamFn(
-      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }] as ChatMessage[],
-      () => {},
-      () => {},
-      () => {},
-    );
+    await drain(stream);
     const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
     expect(req.url).toBe('https://push.example.test/api/openrouter/chat');
   });

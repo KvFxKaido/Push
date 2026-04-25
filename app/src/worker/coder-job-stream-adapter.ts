@@ -1,12 +1,10 @@
 /**
- * Provider stream adapter — PR #3a real implementation.
- *
- * Builds a `ProviderStreamFn` that runs inside the CoderJob DO by
- * calling the existing Worker provider handler (e.g.
- * `handleOpenRouterChat`) directly — same architecture decision as
- * the executor adapter: skip HTTP self-loop, skip origin validation
- * round trip, reuse the exact upstream-proxy behavior the browser
- * path already gets.
+ * Provider stream adapter — returns a `PushStream<ChatMessage>` that runs
+ * inside the CoderJob DO by calling the existing Worker provider handler
+ * (e.g. `handleOpenRouterChat`) directly. Same architecture decision as
+ * the executor adapter: skip HTTP self-loop, skip origin validation round
+ * trip, reuse the exact upstream-proxy behaviour the browser path already
+ * gets.
  *
  * Scope note (Phase 1):
  *   PR #3a wires the direct Worker handlers currently validated for
@@ -19,13 +17,13 @@
  * SSE parsing:
  *   Providers proxy OpenAI-compatible SSE. We normalize CRLF to LF so
  *   providers that frame events with `\r\n\r\n` still split on the
- *   blank-line delimiter, parse `data: {...}` events, and dispatch
- *   `choices[0].delta.content` through `onToken`. Malformed chunks
+ *   blank-line delimiter, parse `data: {...}` events, and yield
+ *   `text_delta` events for `choices[0].delta.content`. Malformed chunks
  *   are skipped silently (providers interleave heartbeats that aren't
  *   always valid JSON); `[DONE]` sentinels close the stream cleanly.
  */
 
-import type { AIProviderType, ProviderStreamFn } from '@push/lib/provider-contract';
+import type { AIProviderType, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
 import type { ChatMessage } from '@/types';
 import type { Env } from './worker-middleware';
 import {
@@ -85,105 +83,73 @@ function resolveProviderHandler(provider: AIProviderType): ProviderHandler | nul
   return null;
 }
 
-export function createWebStreamAdapter(
-  args: CoderJobStreamAdapterArgs,
-): ProviderStreamFn<ChatMessage> {
+export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStream<ChatMessage> {
   // Strip trailing slash so URL construction can't produce double
   // slashes (`https://host//api/...`).
   const origin = args.origin.replace(/\/$/, '');
   const handler = resolveProviderHandler(args.provider);
 
-  return async (
-    messages,
-    onToken,
-    onDone,
-    onError,
-    _onThinkingToken,
-    _ws,
-    _hasSandbox,
-    modelOverride,
-    systemPromptOverride,
-    _scratchpadContent,
-    signal,
-  ) => {
-    if (!handler) {
-      onError(
-        new Error(
+  return (req) =>
+    (async function* () {
+      if (!handler) {
+        throw new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
             `Supported in Phase 1 PR #3a: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, openadapter.`,
-        ),
-      );
-      return;
-    }
+        );
+      }
 
-    if (signal?.aborted) {
-      onError(new Error('Stream aborted before provider dispatch'));
-      return;
-    }
+      const signal = req.signal;
+      if (signal?.aborted) {
+        throw new Error('Stream aborted before provider dispatch');
+      }
 
-    // Build an OpenAI-compatible chat payload. The Worker's
-    // createStreamProxyHandler validates and normalizes this body
-    // before forwarding upstream, so we only need the portable shape.
-    // `role` is widened to string because the Coder kernel mixes in
-    // 'system' messages that the Web ChatMessage union doesn't carry.
-    const payloadMessages: Array<{ role: string; content: string }> = messages.map((m) => ({
-      role: m.role,
-      content: m.content ?? '',
-    }));
-    if (systemPromptOverride && !payloadMessages.some((m) => m.role === 'system')) {
-      payloadMessages.unshift({ role: 'system', content: systemPromptOverride });
-    }
+      // Build an OpenAI-compatible chat payload. The Worker's
+      // createStreamProxyHandler validates and normalizes this body
+      // before forwarding upstream, so we only need the portable shape.
+      const payloadMessages: Array<{ role: string; content: string }> = req.messages.map((m) => ({
+        role: m.role,
+        content: m.content ?? '',
+      }));
+      const systemPromptOverride = req.systemPromptOverride;
+      if (systemPromptOverride && !payloadMessages.some((m) => m.role === 'system')) {
+        payloadMessages.unshift({ role: 'system', content: systemPromptOverride });
+      }
 
-    const body = JSON.stringify({
-      model: modelOverride ?? args.modelId,
-      messages: payloadMessages,
-      stream: true,
-    });
+      const body = JSON.stringify({
+        model: req.model || args.modelId,
+        messages: payloadMessages,
+        stream: true,
+      });
 
-    const request = new Request(`${origin}/api/${providerSlug(args.provider)}/chat`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        Origin: origin,
-        // Stable per-job rate-limit key. Without this, the preamble's
-        // `getClientIp(req)` falls back to 'unknown' for every
-        // synthetic internal Request and all background jobs share one
-        // bucket — a single burst can 429 every other running job.
-        'X-Forwarded-For': `job:${args.jobId}`,
-      },
-      body,
-      signal,
-    });
+      const request = new Request(`${origin}/api/${providerSlug(args.provider)}/chat`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Origin: origin,
+          // Stable per-job rate-limit key. Without this, the preamble's
+          // `getClientIp(req)` falls back to 'unknown' for every
+          // synthetic internal Request and all background jobs share one
+          // bucket — a single burst can 429 every other running job.
+          'X-Forwarded-For': `job:${args.jobId}`,
+        },
+        body,
+        signal,
+      });
 
-    let response: Response;
-    try {
-      response = (await handler(
+      const response = (await handler(
         request as unknown as Request,
         args.env as unknown as Env,
       )) as unknown as Response;
-    } catch (err) {
-      onError(err instanceof Error ? err : new Error(String(err)));
-      return;
-    }
 
-    if (!response.ok || !response.body) {
-      const errText = await response.text().catch(() => '');
-      onError(
-        new Error(
+      if (!response.ok || !response.body) {
+        const errText = await response.text().catch(() => '');
+        throw new Error(
           `Provider ${args.provider} returned ${response.status}${errText ? `: ${errText.slice(0, 200)}` : ''}`,
-        ),
-      );
-      return;
-    }
+        );
+      }
 
-    await pumpSseBody(
-      response.body as unknown as ReadableStream<Uint8Array>,
-      onToken,
-      onDone,
-      onError,
-      signal,
-    );
-  };
+      yield* pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
+    })();
 }
 
 // Provider slug for URL construction. Matches PROVIDER_URLS in
@@ -194,25 +160,18 @@ function providerSlug(provider: AIProviderType): string {
 }
 
 // ---------------------------------------------------------------------------
-// SSE pump — parses an OpenAI-compatible stream body.
+// SSE pump — parses an OpenAI-compatible stream body into PushStream events.
 // ---------------------------------------------------------------------------
 
-async function pumpSseBody(
+async function* pumpSseBody(
   body: ReadableStream<Uint8Array>,
-  onToken: (token: string) => void,
-  onDone: () => void,
-  onError: (err: Error) => void,
   signal?: AbortSignal,
-): Promise<void> {
+): AsyncIterable<PushStreamEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let closed = false;
 
   const onAbort = () => {
-    // Best-effort: cancel the reader so the pending `read()` rejects
-    // and the loop exits. The outer kernel treats the aborted run as
-    // a terminal failure and emits `subagent.failed`.
     reader.cancel().catch(() => {});
   };
   signal?.addEventListener('abort', onAbort);
@@ -220,40 +179,34 @@ async function pumpSseBody(
   try {
     while (true) {
       if (signal?.aborted) {
-        closed = true;
-        onError(new Error('Stream aborted'));
-        return;
+        throw new Error('Stream aborted');
       }
       const { done, value } = await reader.read();
       if (done) break;
-      // Normalize CRLF to LF so providers that frame SSE events with
-      // `\r\n\r\n` still match the `\n\n` delimiter below. Without this,
-      // valid streams from CRLF-framing providers would buffer
-      // indefinitely and produce zero output.
       buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
 
-      // SSE events are separated by blank lines. Split off complete
-      // events; keep any partial trailing event in `buffer`.
       let delimiterIdx = buffer.indexOf('\n\n');
       while (delimiterIdx !== -1) {
         const rawEvent = buffer.slice(0, delimiterIdx);
         buffer = buffer.slice(delimiterIdx + 2);
-        const handled = handleSseEvent(rawEvent, onToken);
-        if (handled === 'done') {
-          closed = true;
-          onDone();
+        const yielded = parseSseEvent(rawEvent);
+        for (const ev of yielded.events) {
+          yield ev;
+        }
+        if (yielded.done) {
+          yield { type: 'done', finishReason: 'stop' };
           return;
         }
         delimiterIdx = buffer.indexOf('\n\n');
       }
     }
-    // Flush any trailing event the stream closed before we saw \n\n on.
     if (buffer.trim().length > 0) {
-      handleSseEvent(buffer, onToken);
+      const yielded = parseSseEvent(buffer);
+      for (const ev of yielded.events) {
+        yield ev;
+      }
     }
-    if (!closed) onDone();
-  } catch (err) {
-    if (!closed) onError(err instanceof Error ? err : new Error(String(err)));
+    yield { type: 'done', finishReason: 'stop' };
   } finally {
     signal?.removeEventListener('abort', onAbort);
     try {
@@ -265,10 +218,7 @@ async function pumpSseBody(
   }
 }
 
-function handleSseEvent(rawEvent: string, onToken: (token: string) => void): 'continue' | 'done' {
-  // An SSE event can span multiple `data: ` lines; OpenAI-format
-  // streams use exactly one data line per event in practice, but we
-  // tolerate both.
+function parseSseEvent(rawEvent: string): { events: PushStreamEvent[]; done: boolean } {
   const lines = rawEvent.split('\n');
   const dataParts: string[] = [];
   for (const line of lines) {
@@ -277,23 +227,23 @@ function handleSseEvent(rawEvent: string, onToken: (token: string) => void): 'co
       dataParts.push(trimmed.slice(5).trim());
     }
   }
-  if (dataParts.length === 0) return 'continue';
+  if (dataParts.length === 0) return { events: [], done: false };
   const data = dataParts.join('\n');
-  if (data === '[DONE]') return 'done';
+  if (data === '[DONE]') return { events: [], done: true };
   try {
     const parsed = JSON.parse(data) as {
       choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
     };
+    const events: PushStreamEvent[] = [];
     const delta = parsed.choices?.[0]?.delta?.content;
     if (typeof delta === 'string' && delta.length > 0) {
-      onToken(delta);
+      events.push({ type: 'text_delta', text: delta });
     }
-    if (parsed.choices?.[0]?.finish_reason) {
-      return 'done';
-    }
+    const done = Boolean(parsed.choices?.[0]?.finish_reason);
+    return { events, done };
   } catch {
-    // Malformed chunk — skip quietly. Don't fire onError: providers
+    // Malformed chunk — skip quietly. Don't surface errors: providers
     // occasionally interleave heartbeats and non-JSON control frames.
+    return { events: [], done: false };
   }
-  return 'continue';
 }

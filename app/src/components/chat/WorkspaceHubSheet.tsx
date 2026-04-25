@@ -46,9 +46,9 @@ import {
   sanitizeBranchName,
 } from '@/lib/branch-names';
 import { parseDiffStats } from '@/lib/diff-utils';
-import { getActiveProvider, getProviderStreamFn } from '@/lib/orchestrator';
+import { getActiveProvider, getProviderPushStream } from '@/lib/orchestrator';
 import { getModelForRole, type PreferredProvider } from '@/lib/providers';
-import { streamWithTimeout } from '@/lib/utils';
+import { iteratePushStreamText } from '@push/lib/stream-utils';
 import {
   HUB_MATERIAL_BUTTON_CLASS,
   HUB_MATERIAL_INPUT_CLASS,
@@ -803,7 +803,7 @@ export function WorkspaceHubSheet({
 
       const stats = parseDiffStats(diffResult.diff);
       const diffSnippet = diffResult.diff.slice(0, 20_000);
-      const { streamFn } = getProviderStreamFn(activeProvider);
+      const stream = getProviderPushStream(activeProvider);
       const modelId = getModelForRole(activeProvider, 'orchestrator')?.id;
 
       const prompt = [
@@ -825,30 +825,23 @@ export function WorkspaceHubSheet({
         },
       ];
 
-      const { promise, getAccumulated } = streamWithTimeout(
+      const { error: streamError, text: accumulated } = await iteratePushStreamText(
+        stream,
+        {
+          provider: activeProvider,
+          model: modelId ?? '',
+          messages: llmMessages,
+          systemPromptOverride: COMMIT_MESSAGE_SUGGEST_SYSTEM_PROMPT,
+          hasSandbox: false,
+        },
         COMMIT_MESSAGE_SUGGEST_TIMEOUT_MS,
         `Commit message suggestion timed out after ${COMMIT_MESSAGE_SUGGEST_TIMEOUT_MS / 1000}s.`,
-        (onToken, onDone, onError) => {
-          streamFn(
-            llmMessages,
-            onToken,
-            onDone,
-            onError,
-            undefined,
-            undefined,
-            false,
-            modelId,
-            COMMIT_MESSAGE_SUGGEST_SYSTEM_PROMPT,
-          );
-        },
       );
-
-      const streamError = await promise;
       if (streamError) {
         throw streamError;
       }
 
-      const suggested = normalizeSuggestedCommitMessage(getAccumulated());
+      const suggested = normalizeSuggestedCommitMessage(accumulated);
       setCommitMessage(suggested);
       toast.success('Commit message suggested.');
     } catch (err) {
@@ -881,7 +874,7 @@ export function WorkspaceHubSheet({
 
       const stats = parseDiffStats(diffResult.diff);
       const diffSnippet = diffResult.diff.slice(0, 20_000);
-      const { streamFn } = getProviderStreamFn(activeProvider);
+      const stream = getProviderPushStream(activeProvider);
       const modelId = getModelForRole(activeProvider, 'orchestrator')?.id;
       const prompt = [
         `Generate a git branch name for this change.`,
@@ -907,30 +900,23 @@ export function WorkspaceHubSheet({
         },
       ];
 
-      const { promise, getAccumulated } = streamWithTimeout(
+      const { error: streamError, text: accumulated } = await iteratePushStreamText(
+        stream,
+        {
+          provider: activeProvider,
+          model: modelId ?? '',
+          messages: llmMessages,
+          systemPromptOverride: BRANCH_NAME_SUGGEST_SYSTEM_PROMPT,
+          hasSandbox: false,
+        },
         BRANCH_NAME_SUGGEST_TIMEOUT_MS,
         `Branch name suggestion timed out after ${BRANCH_NAME_SUGGEST_TIMEOUT_MS / 1000}s.`,
-        (onToken, onDone, onError) => {
-          streamFn(
-            llmMessages,
-            onToken,
-            onDone,
-            onError,
-            undefined,
-            undefined,
-            false,
-            modelId,
-            BRANCH_NAME_SUGGEST_SYSTEM_PROMPT,
-          );
-        },
       );
-
-      const streamError = await promise;
       if (streamError) {
         throw streamError;
       }
 
-      const suggested = normalizeSuggestedBranchName(getAccumulated(), branchSuggestionPrefix);
+      const suggested = normalizeSuggestedBranchName(accumulated, branchSuggestionPrefix);
       setNewBranchName(suggested || fallbackBranchName);
     } catch {
       setNewBranchName(fallbackBranchName);

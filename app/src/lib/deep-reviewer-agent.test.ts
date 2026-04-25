@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  mockStreamFn,
+  mockGetProviderPushStream,
   mockBuildReviewerRuntimeContext,
   mockGetUserProfile,
   mockExecuteAnyToolCall,
   mockCreateExplorerToolHooks,
 } = vi.hoisted(() => ({
-  mockStreamFn: vi.fn(),
+  mockGetProviderPushStream: vi.fn(),
   mockBuildReviewerRuntimeContext: vi.fn(),
   mockGetUserProfile: vi.fn(),
   mockExecuteAnyToolCall: vi.fn(),
@@ -20,15 +20,11 @@ vi.mock('@/hooks/useUserProfile', () => ({
 
 vi.mock('./orchestrator', () => ({
   buildUserIdentityBlock: vi.fn(() => ''),
+  getProviderPushStream: (...args: unknown[]) => mockGetProviderPushStream(...args),
 }));
 
-/**
- * Shared deep-reviewer options used across tests. Providers now inject streamFn
- * and modelId, so tests pass them explicitly.
- */
 const baseDeepOptions = {
   provider: 'openrouter' as const,
-  streamFn: mockStreamFn as unknown as import('./orchestrator-provider-routing').StreamChatFn,
   modelId: 'default-reviewer-model',
 };
 
@@ -62,6 +58,30 @@ vi.mock('./web-tool-execution-runtime', () => ({
 }));
 
 import { runDeepReviewer } from './deep-reviewer-agent';
+import type { PushStream, PushStreamEvent } from '@push/lib/provider-contract';
+
+/**
+ * Build a PushStream whose round-by-round responses are computed by `respond`.
+ * Each invocation increments the round counter and emits the event sequence
+ * the function returns. Mirrors the legacy mockStreamFn pattern (per-call
+ * branching) without coupling to the 12-arg callback shape.
+ */
+function makeRoundStream(respond: (round: number) => PushStreamEvent[]): {
+  stream: PushStream;
+  callCount: () => number;
+} {
+  let round = 0;
+  const stream: PushStream = () => {
+    const events = respond(round);
+    round += 1;
+    return (async function* () {
+      for (const event of events) {
+        yield event;
+      }
+    })();
+  };
+  return { stream, callCount: () => round };
+}
 
 function makeAddedFileDiff(path: string, addedContent: string): string {
   return [
@@ -76,7 +96,7 @@ function makeAddedFileDiff(path: string, addedContent: string): string {
 
 describe('runDeepReviewer', () => {
   beforeEach(() => {
-    mockStreamFn.mockReset();
+    mockGetProviderPushStream.mockReset();
     mockBuildReviewerRuntimeContext.mockReset();
     mockGetUserProfile.mockReset();
     mockExecuteAnyToolCall.mockReset();
@@ -89,19 +109,22 @@ describe('runDeepReviewer', () => {
   });
 
   it('marks results truncated when diff chunking omits files', async () => {
-    let streamCalls = 0;
-    mockStreamFn.mockImplementation(
-      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        if (streamCalls === 0) {
-          onToken('{"tool":"sandbox_read_file","args":{"path":"/workspace/src/large.ts"}}');
-        } else {
-          onToken('[REVIEW_COMPLETE]\n{"summary":"Looks good","comments":[]}');
-        }
-        streamCalls++;
-        onDone();
-        return Promise.resolve();
-      },
-    );
+    const { stream } = makeRoundStream((round) => {
+      if (round === 0) {
+        return [
+          {
+            type: 'text_delta',
+            text: '{"tool":"sandbox_read_file","args":{"path":"/workspace/src/large.ts"}}',
+          },
+          { type: 'done', finishReason: 'stop' },
+        ];
+      }
+      return [
+        { type: 'text_delta', text: '[REVIEW_COMPLETE]\n{"summary":"Looks good","comments":[]}' },
+        { type: 'done', finishReason: 'stop' },
+      ];
+    });
+    mockGetProviderPushStream.mockImplementation(() => stream);
 
     const diff = [
       makeAddedFileDiff('src/large.ts', 'x'.repeat(45_000)),
@@ -122,17 +145,17 @@ describe('runDeepReviewer', () => {
 
   it('does not make a final forced-output call after cancellation', async () => {
     const abortController = new AbortController();
-    let streamCalls = 0;
-
-    mockStreamFn.mockImplementation(
-      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        streamCalls++;
-        onToken('Still investigating');
-        onDone();
-        if (streamCalls === 7) abortController.abort();
-        return Promise.resolve();
-      },
-    );
+    const { stream, callCount } = makeRoundStream((round) => {
+      // Abort during the 7th round so the loop's own circuit breaker
+      // (MAX_DEEP_REVIEW_ROUNDS=7) doesn't fire first; the kernel's pre-loop
+      // signal check should reject before launching the forced-output call.
+      if (round === 6) abortController.abort();
+      return [
+        { type: 'text_delta', text: 'Still investigating' },
+        { type: 'done', finishReason: 'stop' },
+      ];
+    });
+    mockGetProviderPushStream.mockImplementation(() => stream);
 
     await expect(
       runDeepReviewer(
@@ -142,6 +165,6 @@ describe('runDeepReviewer', () => {
       ),
     ).rejects.toMatchObject({ name: 'AbortError' });
 
-    expect(mockStreamFn).toHaveBeenCalledTimes(7);
+    expect(callCount()).toBe(7);
   });
 });
