@@ -64,6 +64,8 @@ describe('runPlanner', () => {
 
     expect(plan?.features).toHaveLength(1);
     expect(mockGetProviderStreamFn).toHaveBeenCalledWith('openrouter');
+    // PushStream consumer assembles `req.model` from `modelId` and passes it
+    // through the bridged ProviderStreamFn as the 8th positional argument.
     expect(mockStreamFn.mock.calls[0]?.[7]).toBe('coder-default-model');
   });
 

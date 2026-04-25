@@ -44,8 +44,8 @@ import {
   runPlannerCore,
   formatPlannerBrief,
   type PlannerFeatureList,
-  type PlannerStreamFn,
 } from '../lib/planner-core.js';
+import type { LlmMessage, PushStream, PushStreamEvent } from '../lib/provider-contract.js';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.js';
 import { streamCompletion, type ProviderConfig } from './provider.js';
 import { buildSystemPromptBase, runAssistantLoop } from './engine.js';
@@ -63,36 +63,96 @@ function mintGraphExecutionId() {
 }
 
 // ---------------------------------------------------------------------------
-// Planner stream adapter
+// Planner PushStream adapter (Phase 6)
 // ---------------------------------------------------------------------------
 
-function buildPlannerStreamFn(
+function buildPlannerPushStream(
   providerConfig: ProviderConfig,
   apiKey: string,
   signal: AbortSignal,
-): PlannerStreamFn {
-  return async (messages, systemPrompt, modelId, { onToken, onDone, onError }) => {
-    try {
+): PushStream<LlmMessage> {
+  return (req) =>
+    (async function* () {
       const fullMessages = [
-        { role: 'system', content: systemPrompt },
-        ...messages.map((m) => ({ role: m.role, content: m.content })),
+        { role: 'system', content: req.systemPromptOverride ?? '' },
+        ...req.messages.map((m) => ({ role: m.role, content: m.content })),
       ];
-      // planner-core wraps this with its own activity-based timeout via
-      // streamWithTimeout, so we don't pass one here (would double-enforce).
-      await streamCompletion(
-        providerConfig,
-        apiKey,
-        modelId || providerConfig.defaultModel,
-        fullMessages,
-        onToken,
-        undefined,
-        signal,
-      );
-      onDone();
-    } catch (err) {
-      onError(err instanceof Error ? err : new Error(String(err)));
-    }
-  };
+
+      const queue: PushStreamEvent[] = [];
+      let done = false;
+      let error: Error | null = null;
+      let wake: (() => void) | undefined;
+      const notify = () => {
+        if (wake) {
+          const w = wake;
+          wake = undefined;
+          w();
+        }
+      };
+
+      // Compose the outer SIGINT signal with the consumer's per-stream signal
+      // (used by iteratePushStreamText for activity-reset timeouts).
+      const composite = new AbortController();
+      const onAbort = () => composite.abort();
+      if (signal.aborted) composite.abort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+      const reqSignal = req.signal;
+      if (reqSignal?.aborted) composite.abort();
+      else reqSignal?.addEventListener('abort', onAbort, { once: true });
+
+      const onToken = (token: string) => {
+        if (token.length > 0) queue.push({ type: 'text_delta', text: token });
+        notify();
+      };
+
+      const run = (async () => {
+        try {
+          // planner-core wraps this with its own activity-based timeout via
+          // iteratePushStreamText, so we don't pass one here (would double-enforce).
+          await streamCompletion(
+            providerConfig,
+            apiKey,
+            req.model || providerConfig.defaultModel,
+            fullMessages,
+            onToken,
+            undefined,
+            composite.signal,
+          );
+          queue.push({ type: 'done', finishReason: 'stop' });
+          done = true;
+          notify();
+        } catch (err) {
+          error = err instanceof Error ? err : new Error(String(err));
+          done = true;
+          notify();
+        }
+      })();
+
+      try {
+        while (true) {
+          while (queue.length === 0 && !done) {
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+            });
+          }
+          while (queue.length > 0) {
+            const event = queue.shift()!;
+            yield event;
+            if (event.type === 'done') return;
+          }
+          if (done) {
+            if (error) throw error;
+            return;
+          }
+        }
+      } finally {
+        signal.removeEventListener('abort', onAbort);
+        reqSignal?.removeEventListener('abort', onAbort);
+        void run.catch(() => {
+          /* error already surfaced via the queue */
+        });
+      }
+    })();
 }
 
 // ---------------------------------------------------------------------------
@@ -155,11 +215,12 @@ export async function runDelegatedHeadless(
 
   try {
     // 1. Plan
-    const plannerStreamFn = buildPlannerStreamFn(providerConfig, apiKey, ac.signal);
+    const plannerStream = buildPlannerPushStream(providerConfig, apiKey, ac.signal);
     const plan = await runPlannerCore({
       task,
       files: [],
-      streamFn: plannerStreamFn,
+      stream: plannerStream,
+      provider: providerConfig.id,
       modelId: state.model || providerConfig.defaultModel,
       onStatus: (phase) => {
         if (!jsonOutput) process.stderr.write(`${fmt.dim(`[planner] ${phase}`)}\n`);
@@ -619,11 +680,12 @@ export async function runUserTurnWithDelegation(
 
   let plan: PlannerFeatureList | null = null;
   try {
-    const plannerStreamFn = buildPlannerStreamFn(providerConfig, apiKey, plannerSignal);
+    const plannerStream = buildPlannerPushStream(providerConfig, apiKey, plannerSignal);
     plan = await runPlannerCore({
       task: userText,
       files: [],
-      streamFn: plannerStreamFn,
+      stream: plannerStream,
+      provider: providerConfig.id,
       modelId: state.model || providerConfig.defaultModel,
       onStatus: () => {},
     });

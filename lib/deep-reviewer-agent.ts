@@ -21,7 +21,7 @@
 import type {
   AIProviderType,
   LlmMessage,
-  ProviderStreamFn,
+  PushStream,
   ReviewComment,
   ReviewResult,
 } from './provider-contract.js';
@@ -29,7 +29,7 @@ import type { ReviewerOptions } from './reviewer-agent.js';
 import { annotateDiffWithLineNumbers, REVIEWER_CRITERIA_BLOCK } from './reviewer-agent.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils.js';
-import { asRecord, streamWithTimeout } from './stream-utils.js';
+import { asRecord, iteratePushStreamText } from './stream-utils.js';
 import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
 import { detectUnimplementedToolCall, diagnoseToolCallFailure } from './tool-call-diagnosis.js';
 import {
@@ -346,7 +346,7 @@ export async function runDeepReviewer<TCall, TCard>(
 ): Promise<ReviewResult> {
   const {
     provider,
-    streamFn,
+    stream,
     modelId,
     context,
     sandboxId,
@@ -417,11 +417,17 @@ export async function runDeepReviewer<TCall, TCard>(
     },
   ];
 
-  // `streamFn` is typed `ProviderStreamFn<LlmMessage>` in lib. Web's
-  // `StreamChatFn = ProviderStreamFn<ChatMessage, WorkspaceContext>` is
-  // passed through the shim layer — see the provider-contract runtime-
-  // safety note for why this cross-shape call is sound.
-  const callStream: ProviderStreamFn = streamFn;
+  // Compose the agent-level cancellation signal with iteratePushStreamText's
+  // own activity-timeout controller. Mirrors how the legacy callback path
+  // forwarded `callbacks.signal` as the 11th positional arg into `streamFn`.
+  const externalSignal = callbacks.signal;
+  const cancellableStream: PushStream<LlmMessage> = externalSignal
+    ? (req) =>
+        stream({
+          ...req,
+          signal: req.signal ? AbortSignal.any([req.signal, externalSignal]) : externalSignal,
+        })
+    : stream;
 
   let totalToolCalls = 0;
   let allAccumulated = '';
@@ -434,30 +440,25 @@ export async function runDeepReviewer<TCall, TCard>(
     const roundNum = round + 1;
     callbacks.onStatus('Deep review investigating...', `Round ${roundNum}`);
 
-    const { promise: roundStreamPromise, getAccumulated } = streamWithTimeout(
+    const { error: streamError, text: rawAccumulated } = await iteratePushStreamText(
+      cancellableStream,
+      {
+        provider,
+        model: modelId,
+        messages,
+        systemPromptOverride: systemPrompt,
+        hasSandbox: Boolean(sandboxId),
+      },
       DEEP_REVIEW_ROUND_TIMEOUT_MS,
       `Deep review round ${roundNum} timed out after ${DEEP_REVIEW_ROUND_TIMEOUT_MS / 1000}s.`,
-      (onToken, onDone, onError) =>
-        callStream(
-          messages,
-          onToken,
-          onDone,
-          onError,
-          undefined,
-          undefined,
-          Boolean(sandboxId),
-          modelId,
-          systemPrompt,
-          undefined,
-          callbacks.signal,
-        ),
     );
-
-    const streamError = await roundStreamPromise;
-    const accumulated = getAccumulated().trim();
     if (streamError) {
+      if (callbacks.signal?.aborted) {
+        throw new DOMException('Deep review cancelled by user.', 'AbortError');
+      }
       throw streamError;
     }
+    const accumulated = rawAccumulated.trim();
 
     messages.push({
       id: `deep-review-response-${round}`,
@@ -637,27 +638,19 @@ export async function runDeepReviewer<TCall, TCard>(
     timestamp: Date.now(),
   });
 
-  const { promise: finalStreamPromise, getAccumulated: getFinalAccumulated } = streamWithTimeout(
+  const { error: finalError, text: rawFinalAccumulated } = await iteratePushStreamText(
+    cancellableStream,
+    {
+      provider,
+      model: modelId,
+      messages,
+      systemPromptOverride: systemPrompt,
+      hasSandbox: Boolean(sandboxId),
+    },
     DEEP_REVIEW_ROUND_TIMEOUT_MS,
     'Deep review final output timed out.',
-    (onToken, onDone, onError) =>
-      callStream(
-        messages,
-        onToken,
-        onDone,
-        onError,
-        undefined,
-        undefined,
-        Boolean(sandboxId),
-        modelId,
-        systemPrompt,
-        undefined,
-        callbacks.signal,
-      ),
   );
-
-  const finalError = await finalStreamPromise;
-  const finalAccumulated = getFinalAccumulated().trim();
+  const finalAccumulated = rawFinalAccumulated.trim();
 
   if (finalError) {
     return buildFallbackResult(allAccumulated, activeProvider, modelId, coverage);
