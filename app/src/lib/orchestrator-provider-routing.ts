@@ -1,23 +1,6 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
-import type {
-  AdapterTelemetry,
-  AdapterTelemetryEndResult,
-  AdapterTelemetryStartContext,
-  AdapterTimeoutConfig,
-  PreCompactEvent,
-  ProviderStreamFn,
-  PushStream,
-  PushStreamEvent,
-} from '@push/lib/provider-contract';
-import { createProviderStreamAdapter } from '@push/lib/provider-contract';
+import type { PreCompactEvent, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
-import {
-  getPushTracer,
-  recordSpanError,
-  setSpanAttributes,
-  SpanKind,
-  SpanStatusCode,
-} from './tracing';
 import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
 import { getOpenRouterSessionId, buildOpenRouterTrace } from './openrouter-session';
 import { openrouterStream } from './openrouter-stream';
@@ -26,6 +9,7 @@ import { kilocodeStream } from './kilocode-stream';
 import { nvidiaStream } from './nvidia-stream';
 import { blackboxStream } from './blackbox-stream';
 import { openadapterStream } from './openadapter-stream';
+import { iterateChatStream, type IterateChatStreamTimeouts } from './iterate-chat-stream';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
@@ -399,464 +383,6 @@ const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
 };
 
 // ---------------------------------------------------------------------------
-// Provider stream dispatch
-// ---------------------------------------------------------------------------
-
-/** Core streaming function — looks up provider config and delegates to streamSSEChat. */
-async function streamProviderChat(
-  providerType: string,
-  messages: ChatMessage[],
-  onToken: (token: string, meta?: ChunkMetadata) => void,
-  onDone: (usage?: StreamUsage) => void,
-  onError: (error: Error) => void,
-  onThinkingToken?: (token: string | null) => void,
-  workspaceContext?: WorkspaceContext,
-  hasSandbox?: boolean,
-  modelOverride?: string,
-  systemPromptOverride?: string,
-  scratchpadContent?: string,
-  signal?: AbortSignal,
-  onPreCompact?: (event: PreCompactEvent) => void,
-  todoContent?: string,
-): Promise<void> {
-  const entry = PROVIDER_STREAM_CONFIGS[providerType];
-  if (!entry) {
-    onError(new Error(`Unknown provider: ${providerType}`));
-    return;
-  }
-
-  const apiKey = entry.getKey();
-  if (!apiKey) {
-    onError(
-      new Error(
-        `${providerType.charAt(0).toUpperCase() + providerType.slice(1)} API key not configured`,
-      ),
-    );
-    return;
-  }
-
-  let config: StreamProviderConfig;
-  try {
-    config = await entry.buildConfig(apiKey, modelOverride);
-  } catch (err) {
-    onError(err instanceof Error ? err : new Error(String(err)));
-    return;
-  }
-
-  return streamSSEChat(
-    config,
-    messages,
-    onToken,
-    onDone,
-    onError,
-    onThinkingToken,
-    workspaceContext,
-    hasSandbox,
-    systemPromptOverride,
-    scratchpadContent,
-    signal,
-    undefined,
-    onPreCompact,
-    todoContent,
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Thin wrappers preserving existing exports
-// ---------------------------------------------------------------------------
-
-export type StreamChatFn = ProviderStreamFn<ChatMessage, WorkspaceContext>;
-
-/**
- * Build the OTEL telemetry hook for a PushStream-adapted provider. Mirrors
- * the span shape the legacy `streamSSEChatOnce` emits
- * (`push.model.stream` / `model.stream`) so dashboards keyed on those
- * attributes keep working for adapted providers.
- *
- * Uses `startActiveSpan` so downstream child spans (the gateway's own
- * fetch) inherit this span as parent via W3C traceparent propagation —
- * `injectTraceHeaders` pulls from `context.active()` at the call site.
- */
-function buildAdapterTelemetry(): AdapterTelemetry {
-  const tracer = getPushTracer('push.model');
-  return {
-    wrap: async (
-      ctx: AdapterTelemetryStartContext,
-      run: (finalize: (result: AdapterTelemetryEndResult) => void) => Promise<void>,
-    ) => {
-      await tracer.startActiveSpan(
-        'model.stream',
-        {
-          kind: SpanKind.CLIENT,
-          attributes: {
-            'push.provider': ctx.provider,
-            'push.model': ctx.model,
-            'push.message_count': ctx.messageCount,
-            ...(typeof ctx.hasSandbox === 'boolean' ? { 'push.has_sandbox': ctx.hasSandbox } : {}),
-            ...(ctx.workspaceMode ? { 'push.workspace_mode': ctx.workspaceMode } : {}),
-          },
-        },
-        async (span) => {
-          // Holder object — TS 6 narrows a `let captured = null` to `null`
-          // even when a closure writes to it across an `await`, so the
-          // post-await `if (captured)` branch ends up typed `never`. A
-          // property write on a const-bound object side-steps the narrowing.
-          const captured: { result: AdapterTelemetryEndResult | null } = { result: null };
-          try {
-            await run((result) => {
-              captured.result = result;
-            });
-          } finally {
-            const result = captured.result;
-            if (result) {
-              setSpanAttributes(span, {
-                'push.abort_reason': result.abortReason ?? undefined,
-                'push.stream.chunk_count': result.eventCount,
-                'push.stream.content_chars': result.textChars,
-                'push.stream.thinking_chars': result.reasoningChars,
-                'push.usage.input_tokens': result.usage?.inputTokens,
-                'push.usage.output_tokens': result.usage?.outputTokens,
-                'push.usage.total_tokens': result.usage?.totalTokens,
-              });
-              if (result.error) {
-                recordSpanError(span, result.error);
-              } else if (result.abortReason === 'user') {
-                span.setAttribute('push.cancelled', true);
-              } else {
-                span.setStatus({ code: SpanStatusCode.OK });
-              }
-            }
-            span.end();
-          }
-        },
-      );
-    },
-  };
-}
-
-export const streamOllamaChat: StreamChatFn = (...args) => streamProviderChat('ollama', ...args);
-
-/**
- * Wrap a `StreamChatFn`'s `onToken`/`onDone`/`onError` so visible content is
- * batched through `createChunkedEmitter` before reaching the UI callback.
- * Mirrors the legacy `streamSSEChatOnce` path which fed `onToken` through a
- * chunker to collapse character/sub-word fragments into per-word emissions.
- *
- * Adapter-routed providers (OpenRouter / Zen / Kilo Code) bypass that legacy
- * path, so without this wrapper sub-word streaming would hammer React with a
- * `setState` per character on slow mobile devices. `onThinkingToken` is left
- * unbatched — the legacy path didn't batch reasoning either.
- *
- * Flushes on terminal callbacks (onDone / onError) so the trailing buffer
- * never gets stuck behind the 50ms scheduled flush.
- */
-export function withChunkedEmitter(args: Parameters<StreamChatFn>): Parameters<StreamChatFn> {
-  const [
-    messages,
-    onToken,
-    onDone,
-    onError,
-    onThinkingToken,
-    workspaceContext,
-    hasSandbox,
-    modelOverride,
-    systemPromptOverride,
-    scratchpadContent,
-    signal,
-    onPreCompact,
-    todoContent,
-  ] = args;
-  const chunker = createChunkedEmitter(onToken);
-  const wrappedOnToken: typeof onToken = (text) => chunker.push(text);
-  const wrappedOnDone: typeof onDone = (usage) => {
-    chunker.flush();
-    onDone(usage);
-  };
-  const wrappedOnError: typeof onError = (err) => {
-    chunker.flush();
-    onError(err);
-  };
-  return [
-    messages,
-    wrappedOnToken,
-    wrappedOnDone,
-    wrappedOnError,
-    onThinkingToken,
-    workspaceContext,
-    hasSandbox,
-    modelOverride,
-    systemPromptOverride,
-    scratchpadContent,
-    signal,
-    onPreCompact,
-    todoContent,
-  ];
-}
-
-/**
- * OpenRouter ships via the PushStream abstraction: `openrouterStream` handles
- * SSE parsing + reasoning channel normalization, `createProviderStreamAdapter`
- * provides timer/abort safety parity with the legacy `streamSSEChatOnce` path
- * (connect/idle/progress collapse into `eventTimeoutMs`; stall maps to
- * `contentTimeoutMs`; total is wall-clock).
- *
- * The adapter is built per-call so `defaultModel` tracks the current
- * `getOpenRouterModelName()` setting.
- */
-export const streamOpenRouterChat: StreamChatFn = async (...args) => {
-  const apiKey = getOpenRouterKey();
-  if (!apiKey) {
-    // Match legacy behavior — surface a clear error before touching network.
-    // The Worker can still have its own server-side key, but dev (Vite
-    // passthrough) and unconfigured-Worker paths need a client-side key.
-    const [, , , onError] = args;
-    onError(new Error('OpenRouter API key not configured'));
-    return;
-  }
-
-  const modelOverride = args[7];
-  const openRouterErrorMessages = buildErrorMessages('OpenRouter');
-  const timeouts: AdapterTimeoutConfig = {
-    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
-    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
-    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
-    errorMessages: {
-      event: openRouterErrorMessages.idle,
-      content: openRouterErrorMessages.stall,
-      total: openRouterErrorMessages.total,
-    },
-  };
-
-  // Compose openrouterStream with normalizeReasoning so inline `<think>…</think>`
-  // tags in `delta.content` are split into the reasoning channel — parity with
-  // the legacy path where `streamSSEChatOnce` routed content through
-  // `createThinkTokenParser`. `openrouterStream` stays focused on SSE parsing
-  // and field-name normalization; reasoning-tag splitting lives here in the
-  // composition layer.
-  const openrouterWithReasoning: PushStream<ChatMessage> = (req) =>
-    normalizeReasoning(openrouterStream(req));
-
-  const adapted = createProviderStreamAdapter<ChatMessage>(openrouterWithReasoning, 'openrouter', {
-    defaultModel: modelOverride || getOpenRouterModelName(),
-    timeouts,
-    // Telemetry closes the observability gap noted in PR #384: OpenRouter
-    // traffic now emits `push.model.stream` spans with the same attribute
-    // vocabulary as the legacy `streamSSEChatOnce` path.
-    telemetry: buildAdapterTelemetry(),
-  });
-
-  return adapted(...withChunkedEmitter(args));
-};
-export const streamCloudflareChat: StreamChatFn = (...args) =>
-  streamProviderChat('cloudflare', ...args);
-
-/**
- * OpenCode Zen ships via the PushStream abstraction (Phase 8): `zenStream`
- * handles SSE parsing + reasoning/tool-call normalization,
- * `createProviderStreamAdapter` provides timer/abort safety parity with the
- * legacy `streamSSEChatOnce` path. Structure mirrors `streamOpenRouterChat`.
- *
- * The adapter is built per-call so `defaultModel` tracks the current
- * `getZenModelName()` setting.
- */
-export const streamZenChat: StreamChatFn = async (...args) => {
-  const apiKey = getZenKey();
-  if (!apiKey) {
-    const [, , , onError] = args;
-    onError(new Error('OpenCode Zen API key not configured'));
-    return;
-  }
-
-  const modelOverride = args[7];
-  const zenErrorMessages = buildErrorMessages('OpenCode Zen');
-  const timeouts: AdapterTimeoutConfig = {
-    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
-    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
-    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
-    errorMessages: {
-      event: zenErrorMessages.idle,
-      content: zenErrorMessages.stall,
-      total: zenErrorMessages.total,
-    },
-  };
-
-  // Compose zenStream with normalizeReasoning so inline `<think>…</think>`
-  // tags in `delta.content` are split into the reasoning channel — parity
-  // with the legacy path.
-  const zenWithReasoning: PushStream<ChatMessage> = (req) => normalizeReasoning(zenStream(req));
-
-  const adapted = createProviderStreamAdapter<ChatMessage>(zenWithReasoning, 'zen', {
-    defaultModel: modelOverride || getZenModelName(),
-    timeouts,
-    telemetry: buildAdapterTelemetry(),
-  });
-
-  return adapted(...withChunkedEmitter(args));
-};
-/**
- * Nvidia NIM ships via the PushStream abstraction (Phase 8 final port):
- * `nvidiaStream` delegates SSE parsing to the shared `openAISSEPump`,
- * `createProviderStreamAdapter` provides timer/abort safety. Mirrors
- * `streamKilocodeChat`.
- */
-export const streamNvidiaChat: StreamChatFn = async (...args) => {
-  const apiKey = getNvidiaKey();
-  if (!apiKey) {
-    const [, , , onError] = args;
-    onError(new Error('Nvidia API key not configured'));
-    return;
-  }
-
-  const modelOverride = args[7];
-  const nvidiaErrorMessages = buildErrorMessages('Nvidia NIM');
-  const timeouts: AdapterTimeoutConfig = {
-    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
-    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
-    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
-    errorMessages: {
-      event: nvidiaErrorMessages.idle,
-      content: nvidiaErrorMessages.stall,
-      total: nvidiaErrorMessages.total,
-    },
-  };
-
-  const nvidiaWithReasoning: PushStream<ChatMessage> = (req) =>
-    normalizeReasoning(nvidiaStream(req));
-
-  const adapted = createProviderStreamAdapter<ChatMessage>(nvidiaWithReasoning, 'nvidia', {
-    defaultModel: modelOverride || getNvidiaModelName(),
-    timeouts,
-    telemetry: buildAdapterTelemetry(),
-  });
-
-  return adapted(...withChunkedEmitter(args));
-};
-
-/**
- * Blackbox AI ships via the PushStream abstraction (Phase 8 final port):
- * `blackboxStream` delegates SSE parsing to the shared `openAISSEPump`,
- * `createProviderStreamAdapter` provides timer/abort safety. The legacy
- * `shouldResetStallOnReasoning: true` flag is covered by the adapter's
- * `contentTimeoutMs` resetting on `reasoning_delta`.
- */
-export const streamBlackboxChat: StreamChatFn = async (...args) => {
-  const apiKey = getBlackboxKey();
-  if (!apiKey) {
-    const [, , , onError] = args;
-    onError(new Error('Blackbox API key not configured'));
-    return;
-  }
-
-  const modelOverride = args[7];
-  const blackboxErrorMessages = buildErrorMessages('Blackbox AI');
-  const timeouts: AdapterTimeoutConfig = {
-    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
-    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
-    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
-    errorMessages: {
-      event: blackboxErrorMessages.idle,
-      content: blackboxErrorMessages.stall,
-      total: blackboxErrorMessages.total,
-    },
-  };
-
-  const blackboxWithReasoning: PushStream<ChatMessage> = (req) =>
-    normalizeReasoning(blackboxStream(req));
-
-  const adapted = createProviderStreamAdapter<ChatMessage>(blackboxWithReasoning, 'blackbox', {
-    defaultModel: modelOverride || getBlackboxModelName(),
-    timeouts,
-    telemetry: buildAdapterTelemetry(),
-  });
-
-  return adapted(...withChunkedEmitter(args));
-};
-
-/**
- * Kilo Code ships via the PushStream abstraction (Phase 8 follow-up):
- * `kilocodeStream` handles SSE parsing + reasoning/tool-call normalization,
- * `createProviderStreamAdapter` provides timer/abort safety. Mirrors
- * `streamZenChat` and `streamOpenRouterChat`.
- */
-export const streamKilocodeChat: StreamChatFn = async (...args) => {
-  const apiKey = getKilocodeKey();
-  if (!apiKey) {
-    const [, , , onError] = args;
-    onError(new Error('Kilo Code API key not configured'));
-    return;
-  }
-
-  const modelOverride = args[7];
-  const kilocodeErrorMessages = buildErrorMessages('Kilo Code');
-  const timeouts: AdapterTimeoutConfig = {
-    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
-    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
-    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
-    errorMessages: {
-      event: kilocodeErrorMessages.idle,
-      content: kilocodeErrorMessages.stall,
-      total: kilocodeErrorMessages.total,
-    },
-  };
-
-  const kilocodeWithReasoning: PushStream<ChatMessage> = (req) =>
-    normalizeReasoning(kilocodeStream(req));
-
-  const adapted = createProviderStreamAdapter<ChatMessage>(kilocodeWithReasoning, 'kilocode', {
-    defaultModel: modelOverride || getKiloCodeModelName(),
-    timeouts,
-    telemetry: buildAdapterTelemetry(),
-  });
-
-  return adapted(...withChunkedEmitter(args));
-};
-/**
- * OpenAdapter ships via the PushStream abstraction (Phase 8 final port):
- * `openadapterStream` delegates SSE parsing to the shared `openAISSEPump`,
- * `createProviderStreamAdapter` provides timer/abort safety. Mirrors
- * `streamKilocodeChat`.
- */
-export const streamOpenAdapterChat: StreamChatFn = async (...args) => {
-  const apiKey = getOpenAdapterKey();
-  if (!apiKey) {
-    const [, , , onError] = args;
-    onError(new Error('OpenAdapter API key not configured'));
-    return;
-  }
-
-  const modelOverride = args[7];
-  const openAdapterErrorMessages = buildErrorMessages('OpenAdapter');
-  const timeouts: AdapterTimeoutConfig = {
-    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
-    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
-    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
-    errorMessages: {
-      event: openAdapterErrorMessages.idle,
-      content: openAdapterErrorMessages.stall,
-      total: openAdapterErrorMessages.total,
-    },
-  };
-
-  const openadapterWithReasoning: PushStream<ChatMessage> = (req) =>
-    normalizeReasoning(openadapterStream(req));
-
-  const adapted = createProviderStreamAdapter<ChatMessage>(
-    openadapterWithReasoning,
-    'openadapter',
-    {
-      defaultModel: modelOverride || getOpenAdapterModelName(),
-      timeouts,
-      telemetry: buildAdapterTelemetry(),
-    },
-  );
-
-  return adapted(...withChunkedEmitter(args));
-};
-export const streamAzureChat: StreamChatFn = (...args) => streamProviderChat('azure', ...args);
-export const streamBedrockChat: StreamChatFn = (...args) => streamProviderChat('bedrock', ...args);
-export const streamVertexChat: StreamChatFn = (...args) => streamProviderChat('vertex', ...args);
-
-// ---------------------------------------------------------------------------
 // Active provider detection
 // ---------------------------------------------------------------------------
 
@@ -1182,39 +708,6 @@ export function getProviderPushStream(provider: ActiveProvider): PushStream<Chat
   return stream;
 }
 
-/**
- * Map an active provider to its stream function and provider type.
- * Centralises the provider → function routing used by Coder / Auditor agents.
- */
-export function getProviderStreamFn(provider: ActiveProvider) {
-  switch (provider) {
-    case 'ollama':
-      return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
-    case 'openrouter':
-      return { providerType: 'openrouter' as const, streamFn: streamOpenRouterChat };
-    case 'cloudflare':
-      return { providerType: 'cloudflare' as const, streamFn: streamCloudflareChat };
-    case 'zen':
-      return { providerType: 'zen' as const, streamFn: streamZenChat };
-    case 'nvidia':
-      return { providerType: 'nvidia' as const, streamFn: streamNvidiaChat };
-    case 'blackbox':
-      return { providerType: 'blackbox' as const, streamFn: streamBlackboxChat };
-    case 'kilocode':
-      return { providerType: 'kilocode' as const, streamFn: streamKilocodeChat };
-    case 'openadapter':
-      return { providerType: 'openadapter' as const, streamFn: streamOpenAdapterChat };
-    case 'azure':
-      return { providerType: 'azure' as const, streamFn: streamAzureChat };
-    case 'bedrock':
-      return { providerType: 'bedrock' as const, streamFn: streamBedrockChat };
-    case 'vertex':
-      return { providerType: 'vertex' as const, streamFn: streamVertexChat };
-    default:
-      return { providerType: 'ollama' as const, streamFn: streamOllamaChat };
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Public router — picks the right provider at runtime
 // ---------------------------------------------------------------------------
@@ -1229,6 +722,93 @@ Here's what I can help with:
 - **Monitor pipelines** — check CI/CD status and deployment health
 
 Connect your GitHub account in settings to get started, or just ask me anything about code.`;
+
+/**
+ * Display name per provider — used to build per-provider timeout error
+ * messages so a Worker / fetch error mentions "OpenRouter" rather than
+ * "openrouter". Mirrors the names the legacy `streamXChat` exports passed
+ * into `buildErrorMessages` before Phase 9b.
+ */
+const PROVIDER_DISPLAY_NAMES: Record<ActiveProvider, string> = {
+  ollama: 'Ollama Cloud',
+  openrouter: 'OpenRouter',
+  cloudflare: 'Cloudflare Workers AI',
+  zen: 'OpenCode Zen',
+  nvidia: 'Nvidia NIM',
+  blackbox: 'Blackbox AI',
+  kilocode: 'Kilo Code',
+  openadapter: 'OpenAdapter',
+  azure: 'Azure',
+  bedrock: 'Bedrock',
+  vertex: 'Google Vertex',
+  demo: 'Demo',
+};
+
+/**
+ * Adapter-routed providers (the six on a native PushStream + the SSE
+ * pump) get the full timer wrap at the iteration layer — same machinery
+ * the deleted `createProviderStreamAdapter` applied per-call. Legacy
+ * providers (ollama / cloudflare / azure / bedrock / vertex) skip the
+ * outer wrap because `streamSSEChat` already owns timer machinery
+ * internally; doubling up would duplicate timeout error rendering.
+ */
+const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProvider>([
+  'openrouter',
+  'zen',
+  'kilocode',
+  'openadapter',
+  'nvidia',
+  'blackbox',
+]);
+
+function buildChatTimeouts(provider: ActiveProvider): IterateChatStreamTimeouts | undefined {
+  if (!ADAPTER_ROUTED_PROVIDERS.has(provider)) return undefined;
+  const name = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+  return {
+    eventTimeoutMs: STANDARD_TIMEOUTS.idleTimeoutMs,
+    contentTimeoutMs: STANDARD_TIMEOUTS.stallTimeoutMs,
+    totalTimeoutMs: STANDARD_TIMEOUTS.totalTimeoutMs,
+    errorMessages: {
+      event: (s) => `${name} API stream stalled — no data for ${s}s.`,
+      content: (s) =>
+        `${name} API stream stalled — receiving data but no content for ${s}s. The model may be stuck.`,
+      total: (s) => `${name} API response exceeded ${s}s total time limit.`,
+    },
+  };
+}
+
+/**
+ * Resolve the configured default model for a provider. Mirrors the
+ * `defaultModel` resolution each `streamXChat` export did before Phase 9b.
+ */
+function resolveChatDefaultModel(provider: ActiveProvider): string {
+  switch (provider) {
+    case 'ollama':
+      return getOllamaModelName();
+    case 'openrouter':
+      return getOpenRouterModelName();
+    case 'cloudflare':
+      return getCloudflareModelName();
+    case 'zen':
+      return getZenModelName();
+    case 'nvidia':
+      return getNvidiaModelName();
+    case 'blackbox':
+      return getBlackboxModelName();
+    case 'kilocode':
+      return getKiloCodeModelName();
+    case 'openadapter':
+      return getOpenAdapterModelName();
+    case 'azure':
+      return getAzureModelName();
+    case 'bedrock':
+      return getBedrockModelName();
+    case 'vertex':
+      return getVertexModelName();
+    case 'demo':
+      return '';
+  }
+}
 
 export async function streamChat(
   messages: ChatMessage[],
@@ -1246,7 +826,6 @@ export async function streamChat(
   todoContent?: string,
 ): Promise<void> {
   const provider = providerOverride || getActiveProvider();
-  const { streamFn } = getProviderStreamFn(provider);
 
   // Demo mode: no API keys in dev → show welcome message
   if (provider === 'demo' && import.meta.env.DEV) {
@@ -1260,19 +839,54 @@ export async function streamChat(
     onDone();
     return;
   }
-  return streamFn(
-    messages,
-    onToken,
-    onDone,
-    onError,
-    onThinkingToken,
-    workspaceContext,
-    hasSandbox,
-    modelOverride,
-    undefined,
-    scratchpadContent,
-    signal,
-    onPreCompact,
-    todoContent,
+
+  if (provider === 'demo') {
+    onError(new Error('No AI provider configured.'));
+    return;
+  }
+
+  // Chunked emitter — preserves the per-word batching the chat UI relies
+  // on. Adapter-routed providers used `withChunkedEmitter` before 9b;
+  // applying it here uniformly keeps the same behavior at the new seam.
+  // Flushes on terminal callbacks so the trailing buffer never gets stuck
+  // behind the 50ms scheduled flush.
+  const chunker = createChunkedEmitter(onToken);
+  const wrappedOnToken = (text: string) => chunker.push(text);
+  const wrappedOnDone = (usage?: StreamUsage) => {
+    chunker.flush();
+    onDone(usage);
+  };
+  const wrappedOnError = (err: Error) => {
+    chunker.flush();
+    onError(err);
+  };
+
+  const stream = getProviderPushStream(provider);
+  const model = modelOverride || resolveChatDefaultModel(provider);
+
+  await iterateChatStream(
+    stream,
+    {
+      provider,
+      model,
+      messages,
+      systemPromptOverride: undefined,
+      scratchpadContent,
+      todoContent,
+      workspaceContext,
+      hasSandbox,
+      onPreCompact,
+      signal,
+    },
+    {
+      onToken: wrappedOnToken,
+      onDone: wrappedOnDone,
+      onError: wrappedOnError,
+      onThinkingToken,
+    },
+    {
+      timeouts: buildChatTimeouts(provider),
+      telemetry: 'enabled',
+    },
   );
 }
