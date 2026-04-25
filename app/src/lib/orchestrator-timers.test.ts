@@ -101,7 +101,6 @@ function testConfig(overrides: Partial<StreamProviderConfig> = {}): StreamProvid
     stallTimeoutMs: 25_000,
     totalTimeoutMs: 120_000,
     errorMessages: {
-      keyMissing: 'no key',
       connect: (s) => `connect ${s}s`,
       idle: (s) => `idle ${s}s`,
       progress: (s) => `progress ${s}s`,
