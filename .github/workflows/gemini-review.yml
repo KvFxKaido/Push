@@ -138,18 +138,30 @@ jobs:
           REPOSITORY: '${{ github.repository }}'
         run: |-
           mkdir -p .gemini/work
+          GH_ERROR_FILE=.gemini/work/gh-error.txt
           if ! gh pr view "$PULL_REQUEST_NUMBER" \
               --repo "$REPOSITORY" \
               --json title,body,headRefName,baseRefName,changedFiles,additions,deletions,author \
-              > .gemini/work/pr-meta.json 2> .gemini/work/gh-error.txt; then
-            echo "::warning::Target #$PULL_REQUEST_NUMBER is not a Pull Request; skipping review"
-            cat .gemini/work/gh-error.txt
-            gh issue comment "$PULL_REQUEST_NUMBER" \
-              --repo "$REPOSITORY" \
-              --body "🤖 The \`/review\` command only works on Pull Requests. Open a PR and try again." \
-              || echo "::warning::Failed to post non-PR explainer comment"
-            echo "non_pr=true" >> "$GITHUB_OUTPUT"
-            exit 0
+              > .gemini/work/pr-meta.json 2> "$GH_ERROR_FILE"; then
+            # Distinguish "this number is not a PR" from "gh failed for some
+            # other reason" (auth expired, rate limit, transient API outage).
+            # The not-a-PR case is benign — short-circuit with the friendly
+            # explainer comment. Other failures should propagate so the
+            # dispatcher's fallthrough job surfaces them as the real errors
+            # they are, instead of getting silently swallowed as "non-PR".
+            if grep -Eiq 'not a pull request|could not resolve to pullrequest' "$GH_ERROR_FILE"; then
+              echo "::warning::Target #$PULL_REQUEST_NUMBER is not a Pull Request; skipping review"
+              cat "$GH_ERROR_FILE"
+              gh issue comment "$PULL_REQUEST_NUMBER" \
+                --repo "$REPOSITORY" \
+                --body "🤖 The \`/review\` command only works on Pull Requests. Open a PR and try again." \
+                || echo "::warning::Failed to post non-PR explainer comment"
+              echo "non_pr=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::Failed to load PR metadata for #$PULL_REQUEST_NUMBER"
+            cat "$GH_ERROR_FILE"
+            exit 1
           fi
           gh pr diff "$PULL_REQUEST_NUMBER" \
             --repo "$REPOSITORY" \
@@ -374,39 +386,53 @@ jobs:
               elif type == "string" then .
               else tostring
               end;
+            # Root must be a JSON object. Without this guard, an array/number/
+            # string Gemini response would survive `jq empty` (those are valid
+            # JSON), yield nulls when we read .summary/.comments, and produce
+            # a blank review — losing the raw output we should have fallen
+            # back to.
+            def root_object:
+              if type == "object" then .
+              else error("root JSON value must be an object")
+              end;
             def review_comments:
               (.comments // [])
               | if type == "array" then .
                 else error("comments must be an array")
                 end;
-            {
-              event: "COMMENT",
-              body: (.summary | string_or("")),
-              comments: [
-                review_comments[] |
-                if (.path | type) != "string" then
-                  error("comment.path must be a string")
-                elif (.line | type) != "number" then
-                  error("comment.line must be a number")
-                elif (.side != null and .side != "RIGHT" and .side != "LEFT") then
-                  error("comment.side must be RIGHT or LEFT")
-                else
-                  {
-                    path: .path,
-                    line: .line,
-                    side: (.side // "RIGHT"),
-                    body: (
-                      ((.severity | string_or("🟡")) + " " + (.body | string_or(""))) +
-                      (if .suggestion != null then
-                         "\n\n```suggestion\n" + (.suggestion | string_or("")) + "\n```"
-                       else
-                         ""
-                       end)
-                    )
-                  }
-                end
-              ]
-            }
+            root_object
+            | {
+                event: "COMMENT",
+                body: (.summary | string_or("")),
+                comments: [
+                  review_comments[] |
+                  if (.path | type) != "string" then
+                    error("comment.path must be a string")
+                  # Integer constraint: GitHub'\''s reviews API rejects
+                  # non-integer line numbers. Failing here gives an accurate
+                  # "transform failed" log instead of bleeding into the
+                  # downstream "API rejected" branch.
+                  elif ((.line | type) != "number" or (.line | floor) != .line) then
+                    error("comment.line must be an integer")
+                  elif (.side != null and .side != "RIGHT" and .side != "LEFT") then
+                    error("comment.side must be RIGHT or LEFT")
+                  else
+                    {
+                      path: .path,
+                      line: .line,
+                      side: (.side // "RIGHT"),
+                      body: (
+                        ((.severity | string_or("🟡")) + " " + (.body | string_or(""))) +
+                        (if .suggestion != null then
+                           "\n\n```suggestion\n" + (.suggestion | string_or("")) + "\n```"
+                         else
+                           ""
+                         end)
+                      )
+                    }
+                  end
+                ]
+              }
           ' .gemini/work/gemini-output.txt > .gemini/work/review-payload.json; then
             echo "::warning::Structured review payload generation failed; falling back to raw comment"
             fallback_review "## 📋 Gemini Review (raw fallback — structured transform failed)"
