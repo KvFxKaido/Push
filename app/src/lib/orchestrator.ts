@@ -58,20 +58,8 @@ export {
   type ActiveProvider,
   getActiveProvider,
   isProviderAvailable,
-  getProviderStreamFn,
   getProviderPushStream,
   streamChat,
-  streamOllamaChat,
-  streamOpenRouterChat,
-  streamCloudflareChat,
-  streamZenChat,
-  streamNvidiaChat,
-  streamBlackboxChat,
-  streamKilocodeChat,
-  streamOpenAdapterChat,
-  streamAzureChat,
-  streamBedrockChat,
-  streamVertexChat,
 } from './orchestrator-provider-routing';
 
 // ---------------------------------------------------------------------------
