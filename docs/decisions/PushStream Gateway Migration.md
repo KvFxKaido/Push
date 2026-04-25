@@ -18,7 +18,7 @@ The migration is incremental. The adapter exists as a bridge so agent roles can 
 
 ## Phased plan
 
-The plan was sketched in the original design conversation that produced PR #365. Six phases, in order:
+The plan was sketched in the original design conversation that produced PR #365. Nine phases, in order:
 
 1. **Land the contract types and the adapter.** Establish `PushStreamEvent`, `PushStreamRequest`, `PushStream`, and `createProviderStreamAdapter` in `lib/provider-contract.ts`. Adapter bridges PushStream → legacy `ProviderStreamFn` so existing consumers keep working unchanged.
 
