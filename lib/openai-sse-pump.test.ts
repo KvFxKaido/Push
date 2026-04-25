@@ -398,6 +398,126 @@ describe('openAISSEPump', () => {
     expect(() => s.body.getReader()).not.toThrow();
   });
 
+  it('returns without emitting a final done when abort races a clean close', async () => {
+    // Abort race: the abort listener calls reader.cancel(), which resolves
+    // the pending read with { done: true }. The pre-fix pump would then
+    // fall through to the post-loop tail and yield a spurious
+    // { type: 'done', finishReason: 'stop' } even though the consumer asked
+    // to abort. Verify the recheck after `reader.read()` short-circuits.
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+    });
+    const ac = new AbortController();
+
+    const out: PushStreamEvent[] = [];
+    const task = (async () => {
+      for await (const e of openAISSEPump({ body, signal: ac.signal })) {
+        out.push(e);
+      }
+    })();
+
+    controller.enqueue(encoder.encode(`data: ${contentFrame('hi')}\n\n`));
+    await new Promise((r) => setTimeout(r, 0));
+    // Fire the abort (cancels the reader, which resolves read() cleanly with
+    // done: true). No `controller.error` — this is the clean-close race.
+    ac.abort();
+    await task;
+
+    // The 'hi' fragment was delivered before the abort. No spurious 'done'
+    // should follow once the signal is aborted.
+    expect(out).toEqual([{ type: 'text_delta', text: 'hi' }]);
+  });
+
+  it('flushes the decoder so a final char split across chunks is preserved', async () => {
+    // "✓" (U+2713) encodes as three UTF-8 bytes (0xE2 0x9C 0x93). Split it
+    // across two chunks so the first decode(stream:true) call returns a
+    // partial replacement; the post-loop decoder.decode() flush must
+    // reassemble the trailing two bytes into the real char.
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+    });
+
+    const events = collect(openAISSEPump({ body }));
+
+    const frame = contentFrame('done ✓');
+    const bytes = encoder.encode(`data: ${frame}\n\n`);
+    // Split inside the multi-byte ✓ sequence (the byte BEFORE 0x93 trail
+    // sits a couple of bytes inside the JSON string). Cut one byte off
+    // the end so the trailing byte is delivered separately.
+    controller.enqueue(bytes.slice(0, bytes.length - 1));
+    controller.enqueue(bytes.slice(bytes.length - 1));
+    controller.close();
+
+    const out = await events;
+    const text = out
+      .filter((e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta')
+      .map((e) => e.text)
+      .join('');
+    expect(text).toBe('done ✓');
+  });
+
+  it('parses a trailing complete frame that arrived without a closing newline', async () => {
+    // Some upstreams ship the last data: line without a final \n\n. The
+    // pump's line-split keeps that line in `buffer`; after the reader
+    // closes, the post-loop block must run it through the parser before
+    // emitting the clean close.
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+    });
+
+    const events = collect(openAISSEPump({ body }));
+
+    controller.enqueue(encoder.encode(`data: ${contentFrame('first')}\n`));
+    // No trailing newline on the second frame.
+    controller.enqueue(encoder.encode(`data: ${contentFrame('last')}`));
+    controller.close();
+
+    const out = await events;
+    const text = out
+      .filter((e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta')
+      .map((e) => e.text)
+      .join('');
+    expect(text).toBe('firstlast');
+  });
+
+  it('handles a trailing frame that itself carries the [DONE] sentinel', async () => {
+    // Trailing-buffer parse path: if the last bytes from the upstream are
+    // `data: [DONE]` with no closing newline, the pump should still treat
+    // it as the explicit close and not emit a second clean-close `done`.
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+    });
+
+    const events = collect(openAISSEPump({ body }));
+
+    controller.enqueue(encoder.encode(`data: ${contentFrame('hi')}\n\n`));
+    controller.enqueue(encoder.encode('data: [DONE]'));
+    controller.close();
+
+    const out = await events;
+    expect(out.filter((e) => e.type === 'done')).toHaveLength(1);
+    expect(out).toEqual([
+      { type: 'text_delta', text: 'hi' },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
   // -------------------------------------------------------------------------
   // Native delta.tool_calls accumulation
   // -------------------------------------------------------------------------

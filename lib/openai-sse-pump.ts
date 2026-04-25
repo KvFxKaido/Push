@@ -105,6 +105,7 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
   const decoder = new TextDecoder();
   let buffer = '';
   let pendingUsage: StreamUsage | undefined;
+  let stopped = false;
 
   // Accumulate native `delta.tool_calls` fragments by index; flush as
   // fenced JSON text_delta on finish_reason / [DONE] / clean close so the
@@ -144,6 +145,109 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
     pendingNativeToolCalls.clear();
   }
 
+  // Per-line parser. Sets `stopped` when the line carried a `[DONE]`
+  // sentinel or a `finish_reason`; the caller checks `stopped` after each
+  // `yield*` to break out cleanly. Pulled into a helper so the trailing-
+  // buffer code path (after the reader closes) can reuse the same parser
+  // on whatever bytes were left after the decoder flush.
+  function* parseLine(line: string): Generator<PushStreamEvent> {
+    if (stopped) return;
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
+      yield* flushNativeToolCalls();
+      yield { type: 'done', finishReason: 'stop', usage: pendingUsage };
+      stopped = true;
+      return;
+    }
+    if (!trimmed.startsWith('data:')) return;
+    const jsonStr = trimmed[5] === ' ' ? trimmed.slice(6) : trimmed.slice(5);
+    let parsed: {
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+      choices?: Array<{
+        delta?: {
+          content?: unknown;
+          reasoning?: unknown;
+          reasoning_content?: unknown;
+          tool_calls?: unknown;
+        };
+        finish_reason?: unknown;
+      }>;
+    };
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch {
+      // Skip malformed JSON — upstream may emit keepalive or comment lines.
+      return;
+    }
+
+    // Usage may arrive on an intermediate frame or alongside finish_reason.
+    if (parsed.usage) {
+      pendingUsage = mapOpenAIUsage(parsed.usage);
+    }
+
+    const choice = parsed.choices?.[0];
+    if (!choice) return;
+
+    const delta = choice.delta;
+
+    // Reasoning channel — accept either field name. Modern providers
+    // (Kimi K2.6) use `reasoning`; older ones (DeepSeek-R1, Kimi K2.5)
+    // use `reasoning_content`. Pick the first non-empty string.
+    const reasoning =
+      typeof delta?.reasoning === 'string' && delta.reasoning.length > 0
+        ? delta.reasoning
+        : typeof delta?.reasoning_content === 'string' && delta.reasoning_content.length > 0
+          ? delta.reasoning_content
+          : undefined;
+    if (reasoning) {
+      yield { type: 'reasoning_delta', text: reasoning };
+    }
+
+    if (typeof delta?.content === 'string' && delta.content) {
+      const token = stripTemplateTokens(delta.content);
+      if (token) {
+        yield { type: 'text_delta', text: token };
+      }
+    }
+
+    // Native tool_call fragments — accumulate by index; the name and
+    // arguments often arrive split across frames. Flushed as fenced
+    // JSON `text_delta` on finish_reason / [DONE]. Yield one
+    // `tool_call_delta` per fragment so the adapter's content timer
+    // counts native tool-arg streaming as progress while we buffer.
+    const toolCalls = delta?.tool_calls;
+    if (Array.isArray(toolCalls)) {
+      let observedFragment = false;
+      for (const tc of toolCalls as Array<{
+        index?: unknown;
+        function?: { name?: unknown; arguments?: unknown };
+      }>) {
+        const idx = typeof tc?.index === 'number' ? tc.index : 0;
+        const fnCall = tc?.function;
+        if (!fnCall) continue;
+        const entry = pendingNativeToolCalls.get(idx) ?? { name: '', args: '' };
+        if (typeof fnCall.name === 'string') entry.name = fnCall.name;
+        if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
+        pendingNativeToolCalls.set(idx, entry);
+        observedFragment = true;
+      }
+      if (observedFragment) {
+        yield { type: 'tool_call_delta' };
+      }
+    }
+
+    if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
+      yield* flushNativeToolCalls();
+      yield {
+        type: 'done',
+        finishReason: mapOpenAIFinishReason(choice.finish_reason),
+        usage: pendingUsage,
+      };
+      stopped = true;
+    }
+  }
+
   const onAbort = () => {
     reader.cancel().catch(() => {
       /* reader may already be closed */
@@ -155,6 +259,11 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
     while (true) {
       if (signal?.aborted) return;
       const { done, value } = await reader.read();
+      // `reader.cancel()` (fired by our abort listener) resolves the
+      // pending read with `{ done: true }` — recheck after the await so
+      // we don't fall through to the post-loop tail and emit a spurious
+      // `done` event after an external abort.
+      if (signal?.aborted) return;
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -162,89 +271,22 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
-          yield* flushNativeToolCalls();
-          yield { type: 'done', finishReason: 'stop', usage: pendingUsage };
-          return;
-        }
-        if (!trimmed.startsWith('data:')) continue;
-        const jsonStr = trimmed[5] === ' ' ? trimmed.slice(6) : trimmed.slice(5);
-        try {
-          const parsed = JSON.parse(jsonStr);
-
-          // Usage may arrive on an intermediate frame or alongside finish_reason.
-          if (parsed.usage) {
-            pendingUsage = mapOpenAIUsage(parsed.usage);
-          }
-
-          const choice = parsed.choices?.[0];
-          if (!choice) continue;
-
-          const delta = choice.delta;
-
-          // Reasoning channel — accept either field name. Modern providers
-          // (Kimi K2.6) use `reasoning`; older ones (DeepSeek-R1, Kimi K2.5)
-          // use `reasoning_content`. Pick the first non-empty string.
-          const reasoning =
-            typeof delta?.reasoning === 'string' && delta.reasoning.length > 0
-              ? delta.reasoning
-              : typeof delta?.reasoning_content === 'string' && delta.reasoning_content.length > 0
-                ? delta.reasoning_content
-                : undefined;
-          if (reasoning) {
-            yield { type: 'reasoning_delta', text: reasoning };
-          }
-
-          if (typeof delta?.content === 'string' && delta.content) {
-            const token = stripTemplateTokens(delta.content);
-            if (token) {
-              yield { type: 'text_delta', text: token };
-            }
-          }
-
-          // Native tool_call fragments — accumulate by index; the name and
-          // arguments often arrive split across frames. Flushed as fenced
-          // JSON `text_delta` on finish_reason / [DONE]. Yield one
-          // `tool_call_delta` per fragment so the adapter's content timer
-          // counts native tool-arg streaming as progress while we buffer.
-          const toolCalls = delta?.tool_calls;
-          if (Array.isArray(toolCalls)) {
-            let observedFragment = false;
-            for (const tc of toolCalls) {
-              const idx = typeof tc?.index === 'number' ? tc.index : 0;
-              const fnCall = tc?.function;
-              if (!fnCall) continue;
-              const entry = pendingNativeToolCalls.get(idx) ?? { name: '', args: '' };
-              if (typeof fnCall.name === 'string') entry.name = fnCall.name;
-              if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
-              pendingNativeToolCalls.set(idx, entry);
-              observedFragment = true;
-            }
-            if (observedFragment) {
-              yield { type: 'tool_call_delta' };
-            }
-          }
-
-          if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
-            yield* flushNativeToolCalls();
-            yield {
-              type: 'done',
-              finishReason: mapOpenAIFinishReason(choice.finish_reason),
-              usage: pendingUsage,
-            };
-            return;
-          }
-        } catch {
-          // Skip malformed JSON — upstream may emit keepalive or comment lines.
-        }
+        yield* parseLine(line);
+        if (stopped) return;
       }
     }
 
-    // Stream ended without a `[DONE]` sentinel or finish_reason — treat as
-    // clean close. Flush any pending native tool_calls first so they don't
-    // get dropped on the floor.
+    // Stream ended without `[DONE]` / finish_reason. Flush any remaining
+    // bytes from the decoder (handles a final chunk that ended mid-UTF-8
+    // multi-byte sequence) and parse any trailing buffered line — some
+    // upstreams ship the last frame without a trailing newline. Then emit
+    // a clean close so the consumer sees the final `done`.
+    buffer += decoder.decode();
+    if (buffer) {
+      yield* parseLine(buffer);
+      buffer = '';
+      if (stopped) return;
+    }
     yield* flushNativeToolCalls();
     yield { type: 'done', finishReason: 'stop', usage: pendingUsage };
   } finally {
