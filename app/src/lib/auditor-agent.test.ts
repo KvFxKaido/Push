@@ -1,18 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  mockStreamFn,
-  mockStreamFnAlt,
+  mockGetProviderPushStream,
   mockGetActiveProvider,
-  mockGetProviderStreamFn,
   mockGetModelForRole,
   mockBuildAuditorRuntimeContext,
   mockBuildAuditorEvaluationMemoryBlock,
 } = vi.hoisted(() => ({
-  mockStreamFn: vi.fn(),
-  mockStreamFnAlt: vi.fn(),
+  mockGetProviderPushStream: vi.fn(),
   mockGetActiveProvider: vi.fn(),
-  mockGetProviderStreamFn: vi.fn(),
   mockGetModelForRole: vi.fn(),
   mockBuildAuditorRuntimeContext: vi.fn(),
   mockBuildAuditorEvaluationMemoryBlock: vi.fn(),
@@ -20,7 +16,7 @@ const {
 
 vi.mock('./orchestrator', () => ({
   getActiveProvider: (...args: unknown[]) => mockGetActiveProvider(...args),
-  getProviderStreamFn: (...args: unknown[]) => mockGetProviderStreamFn(...args),
+  getProviderPushStream: (...args: unknown[]) => mockGetProviderPushStream(...args),
 }));
 
 vi.mock(import('./providers'), async (importOriginal) => {
@@ -38,6 +34,46 @@ vi.mock('./role-memory-context', () => ({
 }));
 
 import { runAuditor, runAuditorEvaluation } from './auditor-agent';
+import type { PushStream } from '@push/lib/provider-contract';
+
+interface CapturedRequest {
+  model: string;
+  systemPromptOverride?: string;
+  messages: Array<{ content: string }>;
+}
+
+function captureStream(events?: () => string): {
+  stream: PushStream;
+  capturedRequests: CapturedRequest[];
+} {
+  const capturedRequests: CapturedRequest[] = [];
+  const stream: PushStream = (req) => {
+    capturedRequests.push({
+      model: req.model,
+      systemPromptOverride: req.systemPromptOverride,
+      messages: req.messages.map((m) => ({ content: m.content })),
+    });
+    const text = events ? events() : '{"verdict":"safe","summary":"Looks good","risks":[]}';
+    return (async function* () {
+      yield { type: 'text_delta', text };
+      yield { type: 'done', finishReason: 'stop' };
+    })();
+  };
+  return { stream, capturedRequests };
+}
+
+function asyncStream(text: string, delayMs = 10): { stream: PushStream; calls: () => number } {
+  let calls = 0;
+  const stream: PushStream = () => {
+    calls += 1;
+    return (async function* () {
+      await new Promise((r) => setTimeout(r, delayMs));
+      yield { type: 'text_delta', text };
+      yield { type: 'done', finishReason: 'stop' };
+    })();
+  };
+  return { stream, calls: () => calls };
+}
 
 function makeAddedFileDiff(path: string, addedContent: string): string {
   return [
@@ -51,37 +87,25 @@ function makeAddedFileDiff(path: string, addedContent: string): string {
 }
 
 describe('runAuditor', () => {
+  let captured: CapturedRequest[];
+  let activeStream: PushStream;
+
   beforeEach(() => {
-    mockStreamFn.mockReset();
-    mockStreamFnAlt.mockReset();
+    mockGetProviderPushStream.mockReset();
     mockGetActiveProvider.mockReset();
-    mockGetProviderStreamFn.mockReset();
     mockGetModelForRole.mockReset();
     mockBuildAuditorRuntimeContext.mockReset();
     mockBuildAuditorEvaluationMemoryBlock.mockReset();
 
     mockGetActiveProvider.mockReturnValue('openrouter');
-    mockGetProviderStreamFn.mockImplementation((provider: string) => ({
-      providerType: provider,
-      streamFn: mockStreamFn,
-    }));
     mockGetModelForRole.mockReturnValue({ id: 'default-auditor-model' });
     mockBuildAuditorRuntimeContext.mockResolvedValue('');
     mockBuildAuditorEvaluationMemoryBlock.mockResolvedValue(null);
-    mockStreamFn.mockImplementation(
-      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
-        onDone();
-        return Promise.resolve();
-      },
-    );
-    mockStreamFnAlt.mockImplementation(
-      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
-        onDone();
-        return Promise.resolve();
-      },
-    );
+
+    const { stream, capturedRequests } = captureStream();
+    captured = capturedRequests;
+    activeStream = stream;
+    mockGetProviderPushStream.mockImplementation(() => activeStream);
   });
 
   it('uses explicit provider/model overrides when supplied', async () => {
@@ -97,20 +121,13 @@ describe('runAuditor', () => {
     );
 
     expect(result.verdict).toBe('safe');
-    expect(mockGetProviderStreamFn).toHaveBeenCalledWith('vertex');
-    expect(mockStreamFn).toHaveBeenCalled();
-    expect(mockStreamFn.mock.calls[0]?.[7]).toBe('google/gemini-2.5-pro');
+    expect(mockGetProviderPushStream).toHaveBeenCalledWith('vertex');
+    expect(captured[0]?.model).toBe('google/gemini-2.5-pro');
   });
 
   it('coalesces concurrent identical audits into a single stream call', async () => {
-    // Use an async mock so the first call is still in-flight when the second arrives
-    mockStreamFn.mockImplementation(
-      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        await new Promise((r) => setTimeout(r, 10));
-        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
-        onDone();
-      },
-    );
+    const { stream, calls } = asyncStream('{"verdict":"safe","summary":"Looks good","risks":[]}');
+    activeStream = stream;
 
     const statuses1: string[] = [];
     const statuses2: string[] = [];
@@ -125,52 +142,36 @@ describe('runAuditor', () => {
       }),
     ]);
 
-    // Both callers get the same result
     expect(r1).toBe(r2);
     expect(r1.verdict).toBe('safe');
-    // Only one stream call was made
-    expect(mockStreamFn).toHaveBeenCalledTimes(1);
-    // Both callers received status updates
+    expect(calls()).toBe(1);
     expect(statuses1.length).toBeGreaterThan(0);
     expect(statuses2.length).toBeGreaterThan(0);
   });
 
   it('does not coalesce concurrent audits with different stream functions', async () => {
-    const makeAsyncStream =
-      (summary: string) =>
-      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        await new Promise((r) => setTimeout(r, 10));
-        onToken(`{"verdict":"safe","summary":"${summary}","risks":[]}`);
-        onDone();
-      };
-
-    mockStreamFn.mockImplementation(makeAsyncStream('Primary'));
-    mockStreamFnAlt.mockImplementation(makeAsyncStream('Alternate'));
-    mockGetProviderStreamFn
-      .mockReturnValueOnce({ providerType: 'openrouter', streamFn: mockStreamFn })
-      .mockReturnValueOnce({ providerType: 'openrouter', streamFn: mockStreamFnAlt });
+    const primary = asyncStream('{"verdict":"safe","summary":"Primary","risks":[]}');
+    const alternate = asyncStream('{"verdict":"safe","summary":"Alternate","risks":[]}');
+    mockGetProviderPushStream
+      .mockReturnValueOnce(primary.stream)
+      .mockReturnValueOnce(alternate.stream);
 
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
 
-    const [primary, alternate] = await Promise.all([
+    const [primaryResult, alternateResult] = await Promise.all([
       runAuditor(diff, () => {}),
       runAuditor(diff, () => {}),
     ]);
 
-    expect(mockStreamFn).toHaveBeenCalledTimes(1);
-    expect(mockStreamFnAlt).toHaveBeenCalledTimes(1);
-    expect(primary.card.summary).toBe('Primary');
-    expect(alternate.card.summary).toBe('Alternate');
+    expect(primary.calls()).toBe(1);
+    expect(alternate.calls()).toBe(1);
+    expect(primaryResult.card.summary).toBe('Primary');
+    expect(alternateResult.card.summary).toBe('Alternate');
   });
 
   it('does not coalesce concurrent audits with different hook output', async () => {
-    mockStreamFn.mockImplementation(
-      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        await new Promise((r) => setTimeout(r, 10));
-        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
-        onDone();
-      },
-    );
+    const { stream, calls } = asyncStream('{"verdict":"safe","summary":"Looks good","risks":[]}');
+    activeStream = stream;
 
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
 
@@ -179,17 +180,12 @@ describe('runAuditor', () => {
       runAuditor(diff, () => {}, undefined, { exitCode: 1, output: 'lint failed: b' }),
     ]);
 
-    expect(mockStreamFn).toHaveBeenCalledTimes(2);
+    expect(calls()).toBe(2);
   });
 
   it('does not coalesce concurrent audits with different file context', async () => {
-    mockStreamFn.mockImplementation(
-      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        await new Promise((r) => setTimeout(r, 10));
-        onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
-        onDone();
-      },
-    );
+    const { stream, calls } = asyncStream('{"verdict":"safe","summary":"Looks good","risks":[]}');
+    activeStream = stream;
 
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
 
@@ -212,21 +208,26 @@ describe('runAuditor', () => {
       ]),
     ]);
 
-    expect(mockStreamFn).toHaveBeenCalledTimes(2);
+    expect(calls()).toBe(2);
   });
 
   it('replays the latest status to a late-joining coalesced auditor subscriber', async () => {
     const releaseStream: { current: null | (() => void) } = { current: null };
-    mockStreamFn.mockImplementation(
-      async (_messages: unknown, onToken: (token: string) => void, onDone: () => void) =>
-        new Promise<void>((resolve) => {
-          releaseStream.current = () => {
-            onToken('{"verdict":"safe","summary":"Looks good","risks":[]}');
-            onDone();
-            resolve();
-          };
-        }),
-    );
+    let calls = 0;
+    const slowStream: PushStream = () => {
+      calls += 1;
+      return (async function* () {
+        await new Promise<void>((resolve) => {
+          releaseStream.current = resolve;
+        });
+        yield {
+          type: 'text_delta',
+          text: '{"verdict":"safe","summary":"Looks good","risks":[]}',
+        };
+        yield { type: 'done', finishReason: 'stop' };
+      })();
+    };
+    activeStream = slowStream;
 
     const diff = makeAddedFileDiff('src/app.ts', 'const x = 1;');
     const statuses1: string[] = [];
@@ -246,7 +247,7 @@ describe('runAuditor', () => {
     if (releaseStream.current) releaseStream.current();
     await Promise.all([first, second]);
 
-    expect(mockStreamFn).toHaveBeenCalledTimes(1);
+    expect(calls).toBe(1);
   });
 
   it('builds file hints from the chunked diff only', async () => {
@@ -255,8 +256,7 @@ describe('runAuditor', () => {
 
     await runAuditor(hugeProductionDiff + omittedTestDiff, () => {});
 
-    const messages = mockStreamFn.mock.calls[0]?.[0] as Array<{ content: string }>;
-    const prompt = messages[0]?.content ?? '';
+    const prompt = captured[0]?.messages[0]?.content ?? '';
     const fileHints = prompt.match(/\[FILE HINTS\]\n([\s\S]*?)\n\[\/FILE HINTS\]/)?.[1] ?? '';
 
     expect(fileHints).toContain('- src/huge.ts: production');
@@ -274,9 +274,8 @@ describe('runAuditor', () => {
       activeBranch: 'feature/audit',
     });
 
-    const systemPrompt = mockStreamFn.mock.calls[0]?.[8] as string;
-    expect(systemPrompt).toContain('[RETRIEVED_VERIFICATION]');
-    expect(systemPrompt).toContain('npm test: passed');
+    expect(captured[0]?.systemPromptOverride).toContain('[RETRIEVED_VERIFICATION]');
+    expect(captured[0]?.systemPromptOverride).toContain('npm test: passed');
   });
 
   it('injects retrieved memory into auditor evaluation requests', async () => {
@@ -299,8 +298,7 @@ describe('runAuditor', () => {
       },
     );
 
-    const messages = mockStreamFn.mock.calls[0]?.[0] as Array<{ content: string }>;
-    const prompt = messages[0]?.content ?? '';
+    const prompt = captured[0]?.messages[0]?.content ?? '';
     expect(prompt).toContain('[RETRIEVED_TASK_MEMORY]');
     expect(prompt).toContain('Previous checkpoint answer');
   });

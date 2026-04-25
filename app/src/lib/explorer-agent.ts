@@ -37,12 +37,6 @@ import {
   type ExplorerAgentOptions as LibExplorerAgentOptions,
   type ExplorerAfterModelResult,
 } from '@push/lib/explorer-agent';
-import {
-  providerStreamFnToPushStream,
-  type LlmMessage,
-  type ProviderStreamFn,
-  type PushStream,
-} from '@push/lib/provider-contract';
 import type {
   ChatCard,
   ChatMessage,
@@ -56,10 +50,11 @@ import { EXPLORER_ALLOWED_TOOLS } from './explorer-constants';
 import { createToolHookRegistry, type ToolHookRegistry } from './tool-hooks';
 import { getModelForRole } from './providers';
 import { resolveProviderSpecificModel } from './provider-selection';
+import type { LlmMessage, PushStream } from '@push/lib/provider-contract';
 import {
   getActiveProvider,
   isProviderAvailable,
-  getProviderStreamFn,
+  getProviderPushStream,
   type ActiveProvider,
 } from './orchestrator';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
@@ -129,19 +124,6 @@ export function createExplorerToolHooks(): ToolHookRegistry {
   return buildExplorerHooks();
 }
 
-// Bridged-PushStream cache, keyed by underlying `ProviderStreamFn` identity.
-// Mirrors the Auditor / Reviewer wrapper pattern so concurrent Explorer runs
-// against the same provider see the same `PushStream` object.
-const pushStreamCache = new WeakMap<ProviderStreamFn, PushStream<LlmMessage>>();
-function bridgeStreamFn(streamFn: ProviderStreamFn): PushStream<LlmMessage> {
-  let push = pushStreamCache.get(streamFn);
-  if (!push) {
-    push = providerStreamFnToPushStream(streamFn as ProviderStreamFn<LlmMessage>);
-    pushStreamCache.set(streamFn, push);
-  }
-  return push;
-}
-
 // ---------------------------------------------------------------------------
 // Main entry point — preserves the original Web-facing signature.
 // ---------------------------------------------------------------------------
@@ -162,7 +144,6 @@ export async function runExplorerAgent(
     throw new Error('No AI provider configured. Add an API key in Settings.');
   }
 
-  const { streamFn } = getProviderStreamFn(activeProvider);
   const roleModel = getModelForRole(activeProvider, 'explorer');
   const explorerModelId =
     resolveProviderSpecificModel(activeProvider, envelope.model, envelope.provider) ||
@@ -188,7 +169,7 @@ export async function runExplorerAgent(
 
   const libOptions: LibExplorerAgentOptions<AnyToolCall, ChatCard> = {
     provider: activeProvider,
-    stream: bridgeStreamFn(streamFn as unknown as ProviderStreamFn),
+    stream: getProviderPushStream(activeProvider) as unknown as PushStream<LlmMessage>,
     modelId: explorerModelId,
     sandboxId,
     allowedRepo,

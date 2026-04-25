@@ -20,7 +20,7 @@ import {
   fetchLatestCommitDiff,
 } from '@/lib/github-tools';
 import { parseDiffStats } from '@/lib/diff-utils';
-import { getProviderStreamFn, type ActiveProvider } from '@/lib/orchestrator';
+import { type ActiveProvider } from '@/lib/orchestrator';
 import {
   OLLAMA_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
@@ -746,7 +746,6 @@ export function HubReviewTab({
       if (requestedReviewDepth === 'deep') {
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
-        const { streamFn: deepStreamFn } = getProviderStreamFn(selectedProvider);
         const deepModelId =
           selectedReviewModel?.trim() ||
           getModelForRole(selectedProvider, 'reviewer')?.id ||
@@ -755,7 +754,6 @@ export function HubReviewTab({
           diff,
           {
             provider: selectedProvider,
-            streamFn: deepStreamFn,
             modelId: deepModelId,
             sandboxId: reviewerSandboxId,
             context: {
@@ -784,7 +782,6 @@ export function HubReviewTab({
         );
         abortControllerRef.current = null;
       } else {
-        const { streamFn } = getProviderStreamFn(selectedProvider);
         const resolvedModelId =
           selectedReviewModel?.trim() ||
           getModelForRole(selectedProvider, 'reviewer')?.id ||
@@ -793,7 +790,6 @@ export function HubReviewTab({
           diff,
           {
             provider: selectedProvider,
-            streamFn,
             modelId: resolvedModelId,
             sandboxId: reviewerSandboxId,
             context: {

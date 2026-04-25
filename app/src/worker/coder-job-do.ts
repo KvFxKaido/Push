@@ -32,12 +32,7 @@ import {
 import { CapabilityLedger, ROLE_CAPABILITIES } from '@push/lib/capabilities';
 import type { AcceptanceCriterion, RunEventInput, RunEvent } from '@push/lib/runtime-contract';
 import type { UserProfile } from '@push/lib/user-identity';
-import {
-  providerStreamFnToPushStream,
-  type AIProviderType,
-  type LlmMessage,
-  type ProviderStreamFn,
-} from '@push/lib/provider-contract';
+import type { AIProviderType, LlmMessage, PushStream } from '@push/lib/provider-contract';
 import type { VerificationPolicy } from '@push/lib/verification-policy';
 import { formatVerificationPolicyBlock } from '@push/lib/verification-policy';
 import type { CorrelationContext } from '@push/lib/correlation-context';
@@ -113,7 +108,7 @@ export interface CoderJobStatusSnapshot {
 export interface CoderJobServiceOverrides {
   detectors?: CoderJobDetectorAdapter;
   executor?: CoderJobExecutorAdapter;
-  streamFn?: ProviderStreamFn<ChatMessage>;
+  stream?: PushStream<ChatMessage>;
 }
 
 const SERVICE_OVERRIDES = new Map<string, CoderJobServiceOverrides>();
@@ -386,8 +381,8 @@ export class CoderJob {
           provider: input.provider,
           jobId: input.jobId,
         });
-      const streamFn =
-        overrides.streamFn ??
+      const stream =
+        overrides.stream ??
         createWebStreamAdapter({
           env: this.env,
           origin: input.origin,
@@ -436,7 +431,7 @@ export class CoderJob {
 
       const options: CoderAgentOptions<AnyToolCall, ChatCard> = {
         provider: input.provider,
-        stream: providerStreamFnToPushStream(streamFn as unknown as ProviderStreamFn<LlmMessage>),
+        stream: stream as unknown as PushStream<LlmMessage>,
         modelId: input.model,
         sandboxId: input.sandboxId,
         allowedRepo: input.repoFullName,

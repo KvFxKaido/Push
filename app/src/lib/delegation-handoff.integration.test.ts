@@ -1,16 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  mockStreamFn,
-  mockGetProviderStreamFn,
+  mockGetProviderPushStream,
   mockGetModelForRole,
   mockGetUserProfile,
   mockGetSandboxDiff,
   mockIsProviderAvailable,
   mockExecuteSandboxToolCall,
 } = vi.hoisted(() => ({
-  mockStreamFn: vi.fn(),
-  mockGetProviderStreamFn: vi.fn(),
+  mockGetProviderPushStream: vi.fn(),
   mockGetModelForRole: vi.fn(),
   mockGetUserProfile: vi.fn(),
   mockGetSandboxDiff: vi.fn(),
@@ -26,7 +24,7 @@ vi.mock('./orchestrator', () => ({
   buildUserIdentityBlock: vi.fn(() => ''),
   getActiveProvider: vi.fn(() => 'openrouter'),
   isProviderAvailable: (...args: unknown[]) => mockIsProviderAvailable(...args),
-  getProviderStreamFn: (...args: unknown[]) => mockGetProviderStreamFn(...args),
+  getProviderPushStream: (...args: unknown[]) => mockGetProviderPushStream(...args),
 }));
 
 vi.mock('./providers', async () => {
@@ -57,11 +55,44 @@ import { detectToolCall } from './github-tools';
 import { runCoderAgent } from './coder-agent';
 import { runExplorerAgent } from './explorer-agent';
 import { symbolLedger } from './symbol-persistence-ledger';
+import type { PushStream } from '@push/lib/provider-contract';
+
+interface CapturedRequest {
+  model: string;
+  systemPromptOverride?: string;
+  messages: Array<{ content: string }>;
+}
+
+/**
+ * Build a PushStream that returns one event sequence per round, computed by
+ * `respond(round)`. Captures every request envelope so tests can assert on
+ * the model and system prompt without relying on positional callback args.
+ */
+function makeRoundStream(respond: (round: number) => string): {
+  stream: PushStream;
+  capturedRequests: CapturedRequest[];
+} {
+  const capturedRequests: CapturedRequest[] = [];
+  let round = 0;
+  const stream: PushStream = (req) => {
+    capturedRequests.push({
+      model: req.model,
+      systemPromptOverride: req.systemPromptOverride,
+      messages: req.messages.map((m) => ({ content: m.content })),
+    });
+    const text = respond(round);
+    round += 1;
+    return (async function* () {
+      yield { type: 'text_delta', text };
+      yield { type: 'done', finishReason: 'stop' };
+    })();
+  };
+  return { stream, capturedRequests };
+}
 
 describe('delegation handoff integration', () => {
   beforeEach(() => {
-    mockStreamFn.mockReset();
-    mockGetProviderStreamFn.mockReset();
+    mockGetProviderPushStream.mockReset();
     mockGetModelForRole.mockReset();
     mockGetUserProfile.mockReset();
     mockGetSandboxDiff.mockReset();
@@ -83,10 +114,6 @@ describe('delegation handoff integration', () => {
       120,
     );
 
-    mockGetProviderStreamFn.mockImplementation((provider: string) => ({
-      providerType: provider,
-      streamFn: mockStreamFn,
-    }));
     mockIsProviderAvailable.mockReturnValue(true);
     mockGetModelForRole.mockImplementation((_provider: string, role: string) => ({
       id: `${role}-default-model`,
@@ -114,15 +141,11 @@ describe('delegation handoff integration', () => {
       },
     });
 
-    mockStreamFn.mockImplementation(
-      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        onToken(
-          'Summary:\nAuth refresh traced.\nFindings:\n- src/auth.ts:42 triggers the refresh path.\nRelevant files:\n- src/auth.ts\nOpen questions:\n- none\nRecommended next step:\nanswer directly with the trace.',
-        );
-        onDone();
-        return Promise.resolve();
-      },
+    const { stream, capturedRequests } = makeRoundStream(
+      () =>
+        'Summary:\nAuth refresh traced.\nFindings:\n- src/auth.ts:42 triggers the refresh path.\nRelevant files:\n- src/auth.ts\nOpen questions:\n- none\nRecommended next step:\nanswer directly with the trace.',
     );
+    mockGetProviderPushStream.mockImplementation(() => stream);
 
     if (!parsed || parsed.tool !== 'delegate_explorer' || !parsed.args.task) {
       throw new Error('Expected delegate_explorer tool call');
@@ -148,9 +171,8 @@ describe('delegation handoff integration', () => {
       { onStatus: () => {} },
     );
 
-    const messages = mockStreamFn.mock.calls[0]?.[0] as Array<{ content: string }>;
-    const systemPrompt = mockStreamFn.mock.calls[0]?.[8] as string;
-    const taskBrief = messages[0]?.content ?? '';
+    const taskBrief = capturedRequests[0]?.messages[0]?.content ?? '';
+    const systemPrompt = capturedRequests[0]?.systemPromptOverride ?? '';
 
     expect(result.summary).toContain('Summary:');
     expect(taskBrief).toContain('Task: Trace the auth refresh flow');
@@ -189,15 +211,11 @@ describe('delegation handoff integration', () => {
       },
     });
 
-    mockStreamFn.mockImplementation(
-      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        onToken(
-          '**Done:** Implemented the auth refresh fix.\n**Changed:** src/auth.ts, src/auth.test.ts\n**Verified:** not run\n**Open:** nothing',
-        );
-        onDone();
-        return Promise.resolve();
-      },
+    const { stream, capturedRequests } = makeRoundStream(
+      () =>
+        '**Done:** Implemented the auth refresh fix.\n**Changed:** src/auth.ts, src/auth.test.ts\n**Verified:** not run\n**Open:** nothing',
     );
+    mockGetProviderPushStream.mockImplementation(() => stream);
 
     if (!parsed || parsed.tool !== 'delegate_coder' || !parsed.args.task) {
       throw new Error('Expected delegate_coder tool call');
@@ -224,9 +242,8 @@ describe('delegation handoff integration', () => {
       { onStatus: () => {} },
     );
 
-    const messages = mockStreamFn.mock.calls[0]?.[0] as Array<{ content: string }>;
-    const systemPrompt = mockStreamFn.mock.calls[0]?.[8] as string;
-    const taskBrief = messages[0]?.content ?? '';
+    const taskBrief = capturedRequests[0]?.messages[0]?.content ?? '';
+    const systemPrompt = capturedRequests[0]?.systemPromptOverride ?? '';
 
     expect(result.summary).toContain('**Done:** Implemented the auth refresh fix.');
     expect(result.summary).not.toContain('[Sandbox State]');
@@ -244,26 +261,16 @@ describe('delegation handoff integration', () => {
   });
 
   it('keeps Coder tool detection scoped to sandbox and web-search calls', async () => {
-    let streamRound = 0;
-    mockStreamFn.mockImplementation(
-      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        streamRound++;
-        if (streamRound === 1) {
-          onToken(
-            [
-              '{"tool":"ask_user","args":{"question":"Which option?","options":[{"id":"a","label":"A"}]}}',
-              '{"tool":"sandbox_read_file","args":{"path":"/workspace/src/auth.ts"}}',
-            ].join('\n'),
-          );
-        } else {
-          onToken(
-            '**Done:** Read src/auth.ts through sandbox_read_file.\n**Changed:** No file changes; read src/auth.ts only.\n**Verified:** sandbox_read_file completed for /workspace/src/auth.ts.\n**Open:** nothing',
-          );
-        }
-        onDone();
-        return Promise.resolve();
-      },
-    );
+    const { stream } = makeRoundStream((round) => {
+      if (round === 0) {
+        return [
+          '{"tool":"ask_user","args":{"question":"Which option?","options":[{"id":"a","label":"A"}]}}',
+          '{"tool":"sandbox_read_file","args":{"path":"/workspace/src/auth.ts"}}',
+        ].join('\n');
+      }
+      return '**Done:** Read src/auth.ts through sandbox_read_file.\n**Changed:** No file changes; read src/auth.ts only.\n**Verified:** sandbox_read_file completed for /workspace/src/auth.ts.\n**Open:** nothing';
+    });
+    mockGetProviderPushStream.mockImplementation(() => stream);
 
     const result = await runCoderAgent(
       {
@@ -287,15 +294,11 @@ describe('delegation handoff integration', () => {
 
   it('falls back to the active provider model when the delegated explorer provider is unavailable', async () => {
     mockIsProviderAvailable.mockImplementation((provider: string) => provider === 'openrouter');
-    mockStreamFn.mockImplementation(
-      (_messages: unknown, onToken: (token: string) => void, onDone: () => void) => {
-        onToken(
-          'Summary:\nFallback used.\nFindings:\n- none\nRelevant files:\n- none\nOpen questions:\n- none\nRecommended next step:\nanswer directly with the result.',
-        );
-        onDone();
-        return Promise.resolve();
-      },
+    const { stream, capturedRequests } = makeRoundStream(
+      () =>
+        'Summary:\nFallback used.\nFindings:\n- none\nRelevant files:\n- none\nOpen questions:\n- none\nRecommended next step:\nanswer directly with the result.',
     );
+    mockGetProviderPushStream.mockImplementation(() => stream);
 
     await runExplorerAgent(
       {
@@ -309,7 +312,7 @@ describe('delegation handoff integration', () => {
       { onStatus: () => {} },
     );
 
-    expect(mockGetProviderStreamFn).toHaveBeenCalledWith('openrouter');
-    expect(mockStreamFn.mock.calls[0]?.[7]).toBe('explorer-default-model');
+    expect(mockGetProviderPushStream).toHaveBeenCalledWith('openrouter');
+    expect(capturedRequests[0]?.model).toBe('explorer-default-model');
   });
 });

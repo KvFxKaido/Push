@@ -59,6 +59,7 @@ export {
   getActiveProvider,
   isProviderAvailable,
   getProviderStreamFn,
+  getProviderPushStream,
   streamChat,
   streamOllamaChat,
   streamOpenRouterChat,

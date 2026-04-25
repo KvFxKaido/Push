@@ -6,6 +6,8 @@ import type {
   AdapterTimeoutConfig,
   PreCompactEvent,
   ProviderStreamFn,
+  PushStream,
+  PushStreamEvent,
 } from '@push/lib/provider-contract';
 import { createProviderStreamAdapter } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
@@ -24,7 +26,6 @@ import { kilocodeStream } from './kilocode-stream';
 import { nvidiaStream } from './nvidia-stream';
 import { blackboxStream } from './blackbox-stream';
 import { openadapterStream } from './openadapter-stream';
-import type { PushStream } from '@push/lib/provider-contract';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
@@ -957,6 +958,228 @@ export function getActiveProvider(): ActiveProvider {
     if (PROVIDER_READY_CHECKS[p]()) return p;
   }
   return 'demo';
+}
+
+/**
+ * Wrap legacy `streamSSEChat`-based providers (ollama / cloudflare / azure /
+ * bedrock / vertex) in a native `PushStream` interface. These providers
+ * haven't been ported to per-provider native PushStream implementations yet,
+ * so the gateway returns this thin queue/wake adapter that drives
+ * `streamSSEChat` with callbacks and yields `PushStreamEvent`s. Exists at
+ * the app-side seam so `lib/` stays free of legacy callback code; once each
+ * legacy provider is ported (a future sweep), this helper deletes alongside
+ * the matching `PROVIDER_STREAM_CONFIGS` entries.
+ *
+ * Mirrors the queue/wake pattern used in `cli/delegation-entry.ts`'s
+ * planner stream — small enough to inline rather than extracting a shared
+ * helper that would couple `lib/` to `streamSSEChat`.
+ */
+function legacyChatPushStream(providerType: string): PushStream<ChatMessage> {
+  return (req) =>
+    (async function* () {
+      const entry = PROVIDER_STREAM_CONFIGS[providerType];
+      if (!entry) {
+        throw new Error(`Unknown provider: ${providerType}`);
+      }
+
+      const apiKey = entry.getKey();
+      if (!apiKey) {
+        throw new Error(
+          `${providerType.charAt(0).toUpperCase() + providerType.slice(1)} API key not configured`,
+        );
+      }
+
+      const config = await entry.buildConfig(apiKey, req.model);
+
+      const queue: PushStreamEvent[] = [];
+      let done = false;
+      let error: Error | null = null;
+      let wake: (() => void) | undefined;
+      const notify = () => {
+        if (wake) {
+          const w = wake;
+          wake = undefined;
+          w();
+        }
+      };
+
+      const onToken = (token: string) => {
+        if (token.length > 0) queue.push({ type: 'text_delta', text: token });
+        notify();
+      };
+      const onDone = (usage?: StreamUsage) => {
+        queue.push({ type: 'done', finishReason: 'stop', usage });
+        done = true;
+        notify();
+      };
+      const onError = (err: Error) => {
+        error = err;
+        done = true;
+        notify();
+      };
+      const onThinkingToken = (token: string | null) => {
+        if (token === null) queue.push({ type: 'reasoning_end' });
+        else if (token.length > 0) queue.push({ type: 'reasoning_delta', text: token });
+        notify();
+      };
+
+      const signal = req.signal;
+      const onAbort = () => {
+        if (!done) {
+          queue.push({ type: 'done', finishReason: 'aborted' });
+          done = true;
+          notify();
+        }
+      };
+      if (signal?.aborted) {
+        onAbort();
+      } else {
+        signal?.addEventListener('abort', onAbort, { once: true });
+      }
+
+      const run = (async () => {
+        try {
+          await streamSSEChat(
+            config,
+            req.messages as ChatMessage[],
+            onToken,
+            onDone,
+            onError,
+            onThinkingToken,
+            req.workspaceContext as WorkspaceContext | undefined,
+            req.hasSandbox,
+            req.systemPromptOverride,
+            req.scratchpadContent,
+            req.signal,
+            undefined,
+            req.onPreCompact,
+            req.todoContent,
+          );
+          if (!done) onDone();
+        } catch (err) {
+          if (!done) onError(err instanceof Error ? err : new Error(String(err)));
+        }
+      })();
+
+      try {
+        while (true) {
+          while (queue.length === 0 && !done) {
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+            });
+          }
+          while (queue.length > 0) {
+            const event = queue.shift()!;
+            yield event;
+            if (event.type === 'done') return;
+          }
+          if (done) {
+            if (error) throw error;
+            return;
+          }
+        }
+      } finally {
+        signal?.removeEventListener('abort', onAbort);
+        void run.catch(() => {
+          /* error already surfaced via onError */
+        });
+      }
+    })();
+}
+
+/**
+ * Return a native `PushStream` for the given provider. This is the
+ * gateway-to-consumer seam every agent role (Auditor / Reviewer / Planner /
+ * Explorer / DeepReviewer / Coder) consumes via `iteratePushStreamText`.
+ *
+ * For the six adapter-routed providers (openrouter / zen / kilocode /
+ * openadapter / nvidia / blackbox), the returned PushStream is the existing
+ * native `<provider>Stream` composed with `normalizeReasoning` so inline
+ * `<think>…</think>` tags split into the reasoning channel — same composition
+ * the legacy `streamXChat` callback exports applied internally.
+ *
+ * For legacy providers (ollama / cloudflare / azure / bedrock / vertex) the
+ * gateway returns `legacyChatPushStream(provider)` which wraps the existing
+ * `streamSSEChat` callback path into a PushStream. The reasoning channel is
+ * surfaced via `onThinkingToken`; no extra `normalizeReasoning` wrap is
+ * needed because the legacy SSE path's existing `createThinkTokenParser`
+ * already feeds `<think>` tokens through that callback.
+ *
+ * Phase 9 of the PushStream gateway migration replaced the consumer-side
+ * `providerStreamFnToPushStream` reverse bridge with this gateway: every
+ * agent role + the CLI daemon + the worker's coder-job stream adapter now
+ * receive a native PushStream instead of a `ProviderStreamFn` they then
+ * had to bridge themselves.
+ *
+ * Per-provider memoization preserves the lib-side coalescing semantics —
+ * `lib/reviewer-agent.ts` and `lib/auditor-agent.ts` key concurrent-run
+ * deduplication on PushStream identity (`WeakMap<PushStream, number>`). A
+ * fresh closure per call would defeat the dedupe; we cache the resolved
+ * PushStream in a module-scoped map so repeated `getProviderPushStream(p)`
+ * calls return the same object.
+ */
+const PROVIDER_PUSH_STREAM_CACHE = new Map<ActiveProvider, PushStream<ChatMessage>>();
+export function getProviderPushStream(provider: ActiveProvider): PushStream<ChatMessage> {
+  const cached = PROVIDER_PUSH_STREAM_CACHE.get(provider);
+  if (cached) return cached;
+
+  let stream: PushStream<ChatMessage>;
+  switch (provider) {
+    case 'openrouter':
+      stream = (req) => normalizeReasoning(openrouterStream(req));
+      break;
+    case 'zen':
+      stream = (req) => normalizeReasoning(zenStream(req));
+      break;
+    case 'kilocode':
+      stream = (req) => normalizeReasoning(kilocodeStream(req));
+      break;
+    case 'openadapter':
+      stream = (req) => normalizeReasoning(openadapterStream(req));
+      break;
+    case 'nvidia':
+      stream = (req) => normalizeReasoning(nvidiaStream(req));
+      break;
+    case 'blackbox':
+      stream = (req) => normalizeReasoning(blackboxStream(req));
+      break;
+    case 'ollama':
+    case 'cloudflare':
+    case 'azure':
+    case 'bedrock':
+    case 'vertex':
+      stream = legacyChatPushStream(provider);
+      break;
+    case 'demo': {
+      // Callers should guard demo before reaching here. If one slips through,
+      // surface an explicit error rather than falling back to ollama and
+      // emitting a confusing "Ollama API key not configured" message.
+      // Hand-rolled iterator (instead of `async function*` with a `throw`)
+      // sidesteps the `require-yield` lint rule for yield-less generators.
+      const thrower: AsyncIterable<PushStreamEvent> = {
+        [Symbol.asyncIterator]() {
+          return {
+            next(): Promise<IteratorResult<PushStreamEvent>> {
+              return Promise.reject(
+                new Error(
+                  'Demo provider has no PushStream — guard with a demo check before calling getProviderPushStream.',
+                ),
+              );
+            },
+          };
+        },
+      };
+      stream = () => thrower;
+      break;
+    }
+    default: {
+      const exhaustive: never = provider;
+      throw new Error(`Unhandled provider in getProviderPushStream: ${String(exhaustive)}`);
+    }
+  }
+
+  PROVIDER_PUSH_STREAM_CACHE.set(provider, stream);
+  return stream;
 }
 
 /**

@@ -20,7 +20,7 @@ vi.mock('@cloudflare/sandbox', () => ({
   getSandbox: vi.fn(),
 }));
 import type { DurableObjectState } from '@cloudflare/workers-types';
-import type { ProviderStreamFn } from '@push/lib/provider-contract';
+import type { PushStream } from '@push/lib/provider-contract';
 import type { ChatMessage } from '@/types';
 import {
   CoderJob,
@@ -252,11 +252,16 @@ const stubExecutor: CoderJobExecutorAdapter = {
 /** Stream fn that immediately produces a short text response with no
  * tool calls — the kernel's first round completes, detector returns
  * null, loop exits. */
-function makeNoToolStreamFn(summary: string): ProviderStreamFn<ChatMessage> {
-  return async (_messages, onToken, onDone) => {
-    onToken(summary);
-    onDone({ inputTokens: 1, outputTokens: 1, totalTokens: 2 });
-  };
+function makeNoToolStreamFn(summary: string): PushStream<ChatMessage> {
+  return () =>
+    (async function* () {
+      yield { type: 'text_delta', text: summary };
+      yield {
+        type: 'done',
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+    })();
 }
 
 function makeStartInput(overrides: Partial<CoderJobStartInput> = {}): CoderJobStartInput {
@@ -296,7 +301,7 @@ describe('CoderJob DO — end-to-end', () => {
     __setCoderJobServiceOverrides(input.jobId, {
       detectors: stubDetectors,
       executor: stubExecutor,
-      streamFn: makeNoToolStreamFn('Task complete.'),
+      stream: makeNoToolStreamFn('Task complete.'),
     });
 
     const job = new CoderJob(ctx, makeEnv());
@@ -331,14 +336,26 @@ describe('CoderJob DO — end-to-end', () => {
     const { ctx, storage, waitUntilPromises } = makeCtx();
     const input = makeStartInput({ jobId: 'job-fail-1' });
 
-    const failingStream: ProviderStreamFn<ChatMessage> = async (_m, _t, _d, onError) => {
-      onError(new Error('provider exploded'));
+    const failingStream: PushStream<ChatMessage> = () => {
+      // Async generator that throws on first iteration. Defined inline rather
+      // than as a `function*` body with a stray `yield` after `throw` to keep
+      // ESLint's `no-unreachable` rule clean.
+      const thrower: AsyncIterable<never> = {
+        [Symbol.asyncIterator]() {
+          return {
+            next(): Promise<IteratorResult<never>> {
+              return Promise.reject(new Error('provider exploded'));
+            },
+          };
+        },
+      };
+      return thrower as unknown as ReturnType<PushStream<ChatMessage>>;
     };
 
     __setCoderJobServiceOverrides(input.jobId, {
       detectors: stubDetectors,
       executor: stubExecutor,
-      streamFn: failingStream,
+      stream: failingStream,
     });
 
     const job = new CoderJob(ctx, makeEnv());
@@ -365,7 +382,7 @@ describe('CoderJob DO — end-to-end', () => {
     __setCoderJobServiceOverrides(input.jobId, {
       detectors: stubDetectors,
       executor: stubExecutor,
-      streamFn: makeNoToolStreamFn('done'),
+      stream: makeNoToolStreamFn('done'),
     });
 
     const job = new CoderJob(ctx, makeEnv());
@@ -410,7 +427,7 @@ describe('CoderJob DO — end-to-end', () => {
     __setCoderJobServiceOverrides(input.jobId, {
       detectors: stubDetectors,
       executor: stubExecutor,
-      streamFn: makeNoToolStreamFn('ok'),
+      stream: makeNoToolStreamFn('ok'),
     });
     const job = new CoderJob(ctx, makeEnv());
     await job.fetch(
@@ -478,18 +495,23 @@ describe('CoderJob DO — end-to-end', () => {
     const input = makeStartInput({ jobId: 'job-race' });
 
     let releaseStream: () => void = () => {};
-    const parkedStream: ProviderStreamFn<ChatMessage> = async (_m, onToken, onDone) => {
-      await new Promise<void>((resolve) => {
-        releaseStream = resolve;
-      });
-      onToken('ignored by alarm');
-      onDone({ inputTokens: 1, outputTokens: 1, totalTokens: 2 });
-    };
+    const parkedStream: PushStream<ChatMessage> = () =>
+      (async function* () {
+        await new Promise<void>((resolve) => {
+          releaseStream = resolve;
+        });
+        yield { type: 'text_delta', text: 'ignored by alarm' };
+        yield {
+          type: 'done',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      })();
 
     __setCoderJobServiceOverrides(input.jobId, {
       detectors: stubDetectors,
       executor: stubExecutor,
-      streamFn: parkedStream,
+      stream: parkedStream,
     });
 
     const job = new CoderJob(ctx, makeEnv());

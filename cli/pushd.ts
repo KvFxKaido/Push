@@ -64,7 +64,6 @@ import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runCoderAgent } from '../lib/coder-agent.ts';
 import { runReviewer } from '../lib/reviewer-agent.ts';
-import { providerStreamFnToPushStream } from '../lib/provider-contract.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
 import { assertValidEvent, isStrictModeEnabled } from './protocol-schema.js';
@@ -1511,7 +1510,7 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleE
   const { provider, model } = resolveRoleRouting(entry, 'explorer');
   const toolExec = makeDaemonExplorerToolExec({ entry, signal });
   const evaluateAfterModel = async () => null;
-  const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
+  const daemonStream = createDaemonProviderStream(provider, sessionId);
 
   // Splice graph-internal memory (from executeTaskGraph's
   // enrichedContext) and typed-memory retrieval blocks into the
@@ -1523,7 +1522,7 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleE
   const result = await runExplorerAgent(
     {
       provider,
-      stream: providerStreamFnToPushStream(daemonStreamFn),
+      stream: daemonStream,
       modelId: model,
       sandboxId: null,
       allowedRepo: '',
@@ -1609,7 +1608,7 @@ async function runCoderForTaskGraph(
 ) {
   const startedAt = Date.now();
   const { provider, model } = resolveRoleRouting(entry, 'coder');
-  const daemonStreamFn = createDaemonProviderStream(provider, sessionId);
+  const daemonStream = createDaemonProviderStream(provider, sessionId);
   // `parentRunId` can be null when `submit_task_graph` is called on a
   // session with no active run AND no `parentRunId` payload override.
   // `buildApprovalFn` would emit `approval_required` events with
@@ -1634,7 +1633,7 @@ async function runCoderForTaskGraph(
   const result = await runCoderAgent(
     {
       provider,
-      stream: providerStreamFnToPushStream(daemonStreamFn),
+      stream: daemonStream,
       modelId: model,
       sandboxId: '',
       allowedRepo: '',
@@ -2373,11 +2372,11 @@ async function handleDelegateExplorer(req) {
     let outcome;
     let runError = null;
     try {
-      const daemonStreamFn = createDaemonProviderStream(resolvedProvider, sessionId);
+      const daemonStream = createDaemonProviderStream(resolvedProvider, sessionId);
       const result = await runExplorerAgent(
         {
           provider: resolvedProvider,
-          stream: providerStreamFnToPushStream(daemonStreamFn),
+          stream: daemonStream,
           modelId: resolvedModel,
           sandboxId: null,
           allowedRepo,
@@ -2733,11 +2732,11 @@ async function handleDelegateCoder(req) {
     let outcome;
     let runError = null;
     try {
-      const daemonStreamFn = createDaemonProviderStream(resolvedProvider, sessionId);
+      const daemonStream = createDaemonProviderStream(resolvedProvider, sessionId);
       const result = await runCoderAgent(
         {
           provider: resolvedProvider,
-          stream: providerStreamFnToPushStream(daemonStreamFn),
+          stream: daemonStream,
           modelId: resolvedModel,
           sandboxId: '',
           allowedRepo,
@@ -3041,45 +3040,23 @@ async function handleDelegateReviewer(req) {
     let reviewResult = null;
     let runError = null;
     try {
-      const baseStreamFn = createDaemonProviderStream(resolvedProvider, sessionId);
-      // runReviewer doesn't forward a signal through the 12-arg envelope —
-      // it calls streamFn with 9 positional args. Wrap the adapter so that
-      // arg 11 (signal) is always the handler's abort signal, giving
-      // cancel_delegation a clean AbortError path through streamCompletion.
-      const signalAwareStreamFn = (
-        messages,
-        onToken,
-        onDone,
-        onError,
-        onThinkingToken,
-        workspaceContext,
-        hasSandbox,
-        modelOverride,
-        systemPromptOverride,
-        scratchpadContent,
-        _ignoredSignal,
-        onPreCompact,
-      ) =>
-        baseStreamFn(
-          messages,
-          onToken,
-          onDone,
-          onError,
-          onThinkingToken,
-          workspaceContext,
-          hasSandbox,
-          modelOverride,
-          systemPromptOverride,
-          scratchpadContent,
-          abortController.signal,
-          onPreCompact,
-        );
+      const baseStream = createDaemonProviderStream(resolvedProvider, sessionId);
+      // The lib reviewer's `iteratePushStreamText` only owns its own activity
+      // controller. Compose `abortController.signal` with the consumer's
+      // per-stream signal so cancel_delegation aborts the upstream call.
+      const signalAwareStream = (req) =>
+        baseStream({
+          ...req,
+          signal: req.signal
+            ? AbortSignal.any([req.signal, abortController.signal])
+            : abortController.signal,
+        });
 
       reviewResult = await runReviewer(
         diff,
         {
           provider: resolvedProvider,
-          stream: providerStreamFnToPushStream(signalAwareStreamFn),
+          stream: signalAwareStream,
           modelId: resolvedModel,
           context: rawContext,
           resolveRuntimeContext: async (_diff, context) => buildReviewerContextBlock(context) || '',
