@@ -1,6 +1,7 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PreCompactEvent, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
+import { ollamaStream } from './ollama-stream';
 import { openrouterStream } from './openrouter-stream';
 import { zenStream } from './zen-stream';
 import { kilocodeStream } from './kilocode-stream';
@@ -181,26 +182,6 @@ function buildVertexStreamConfig(modelOverride?: string): StreamProviderConfig {
 // ---------------------------------------------------------------------------
 
 const PROVIDER_STREAM_CONFIGS: Record<string, ProviderStreamEntry> = {
-  ollama: {
-    getKey: getOllamaKey,
-    buildConfig: (apiKey, modelOverride) => ({
-      name: 'Ollama Cloud',
-      apiUrl: PROVIDER_URLS.ollama.chat,
-      apiKey,
-      model: modelOverride || getOllamaModelName(),
-      connectTimeoutMs: 30_000,
-      idleTimeoutMs: 45_000,
-      progressTimeoutMs: 60_000,
-      stallTimeoutMs: 60_000,
-      totalTimeoutMs: 180_000,
-      errorMessages: buildErrorMessages('Ollama Cloud', 'server may be cold-starting.'),
-      parseError: (p, f) => parseProviderError(p, f),
-      checkFinishReason: (c) =>
-        hasFinishReason(c, ['stop', 'end_turn', 'length', 'tool_calls', 'function_call']),
-      shouldResetStallOnReasoning: true,
-      providerType: 'ollama',
-    }),
-  },
   cloudflare: {
     getKey: () => 'cloudflare-worker-binding',
     buildConfig: (_apiKey, modelOverride) => {
@@ -506,13 +487,14 @@ function legacyChatPushStream(providerType: string): PushStream<ChatMessage> {
  * gateway-to-consumer seam every agent role (Auditor / Reviewer / Planner /
  * Explorer / DeepReviewer / Coder) consumes via `iteratePushStreamText`.
  *
- * For the six adapter-routed providers (openrouter / zen / kilocode /
- * openadapter / nvidia / blackbox), the returned PushStream is the existing
- * native `<provider>Stream` composed with `normalizeReasoning` so inline
- * `<think>…</think>` tags split into the reasoning channel — same composition
- * the legacy `streamXChat` callback exports applied internally.
+ * For the seven adapter-routed providers (ollama / openrouter / zen /
+ * kilocode / openadapter / nvidia / blackbox), the returned PushStream is
+ * the existing native `<provider>Stream` composed with `normalizeReasoning`
+ * so inline `<think>…</think>` tags split into the reasoning channel —
+ * same composition the legacy `streamXChat` callback exports applied
+ * internally.
  *
- * For legacy providers (ollama / cloudflare / azure / bedrock / vertex) the
+ * For legacy providers (cloudflare / azure / bedrock / vertex) the
  * gateway returns `legacyChatPushStream(provider)` which wraps the existing
  * `streamSSEChat` callback path into a PushStream. The reasoning channel is
  * surfaced via `onThinkingToken`; no extra `normalizeReasoning` wrap is
@@ -539,6 +521,9 @@ export function getProviderPushStream(provider: ActiveProvider): PushStream<Chat
 
   let stream: PushStream<ChatMessage>;
   switch (provider) {
+    case 'ollama':
+      stream = (req) => normalizeReasoning(ollamaStream(req));
+      break;
     case 'openrouter':
       stream = (req) => normalizeReasoning(openrouterStream(req));
       break;
@@ -557,7 +542,6 @@ export function getProviderPushStream(provider: ActiveProvider): PushStream<Chat
     case 'blackbox':
       stream = (req) => normalizeReasoning(blackboxStream(req));
       break;
-    case 'ollama':
     case 'cloudflare':
     case 'azure':
     case 'bedrock':
@@ -633,14 +617,15 @@ const PROVIDER_DISPLAY_NAMES: Record<ActiveProvider, string> = {
 };
 
 /**
- * Adapter-routed providers (the six on a native PushStream + the SSE
- * pump) get the full timer wrap at the iteration layer — same machinery
- * the deleted `createProviderStreamAdapter` applied per-call. Legacy
- * providers (ollama / cloudflare / azure / bedrock / vertex) skip the
- * outer wrap because `streamSSEChat` already owns timer machinery
- * internally; doubling up would duplicate timeout error rendering.
+ * Adapter-routed providers (those on a native PushStream + the SSE pump)
+ * get the full timer wrap at the iteration layer — same machinery the
+ * deleted `createProviderStreamAdapter` applied per-call. Legacy
+ * providers (cloudflare / azure / bedrock / vertex) skip the outer wrap
+ * because `streamSSEChat` already owns timer machinery internally;
+ * doubling up would duplicate timeout error rendering.
  */
 const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProvider>([
+  'ollama',
   'openrouter',
   'zen',
   'kilocode',
@@ -733,15 +718,15 @@ export async function streamChat(
     return;
   }
 
-  // Adapter-routed providers (the six on a native PushStream + SSE pump)
+  // Adapter-routed providers (those on a native PushStream + SSE pump)
   // need the outer chunker + OTEL span wrap because their `<provider>Stream`
   // implementations don't apply either internally — the deleted
   // `withChunkedEmitter` + `createProviderStreamAdapter` used to give them
-  // both. Legacy SSE providers (ollama / cloudflare / azure / bedrock /
-  // vertex) skip the outer wrap entirely: `streamSSEChatOnce` already
-  // chunks `onToken` via `createChunkedEmitter` and opens its own
-  // `model.stream` span, so wrapping again here would double-chunk
-  // (changing token cadence) and emit nested spans (skewing dashboards).
+  // both. Legacy SSE providers (cloudflare / azure / bedrock / vertex)
+  // skip the outer wrap entirely: `streamSSEChatOnce` already chunks
+  // `onToken` via `createChunkedEmitter` and opens its own `model.stream`
+  // span, so wrapping again here would double-chunk (changing token
+  // cadence) and emit nested spans (skewing dashboards).
   const useOuterWrap = ADAPTER_ROUTED_PROVIDERS.has(provider);
   const chunker = useOuterWrap ? createChunkedEmitter(onToken) : null;
   const wrappedOnToken = chunker ? (text: string) => chunker.push(text) : onToken;
