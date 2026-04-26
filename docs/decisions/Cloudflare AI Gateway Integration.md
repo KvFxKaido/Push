@@ -20,6 +20,8 @@ Three optional env vars on the Worker (`Env` in `worker-middleware.ts`):
 - `CF_AI_GATEWAY_SLUG` — the gateway id within that account.
 - `CF_AI_GATEWAY_TOKEN` — only required when the gateway has authenticated mode enabled. When set, attaches `cf-aig-authorization: Bearer <token>` to gateway-bound HTTP requests.
 
+> **Note on tokens.** Cloudflare's "Getting started" docs walk you through creating a *Cloudflare API token* with `AI Gateway - Read`/`Edit` permissions — that token is for managing the gateway via the CF REST API and is **not** what `CF_AI_GATEWAY_TOKEN` expects. The token this var wants is the per-gateway *Authenticated Gateway token*, generated inside the gateway's own Settings → Authentication tab after flipping the "Authenticated Gateway" toggle. If that toggle is off, leave `CF_AI_GATEWAY_TOKEN` unset entirely — the gateway accepts unauthenticated traffic and the helper stays a no-op.
+
 When `CF_AI_GATEWAY_ACCOUNT_ID` or `CF_AI_GATEWAY_SLUG` is unset, every code path is a no-op and traffic flows direct to the upstream provider exactly as before. The token is independent: it only attaches the gateway auth header when the request is actually being routed through the gateway, so an orphan token without account/slug never leaks to the direct provider.
 
 ## What v1 does NOT do
@@ -40,4 +42,9 @@ Explicitly out of scope for this pass — opening these has follow-on schema/aut
 
 ## Operational note
 
-Add the env vars via `wrangler secret put` (token) and dashboard `vars` (account + slug) when ready to enable. Until then, the gateway is dormant — there is no behavioral change for direct-to-provider traffic.
+Everything can be done from the Cloudflare dashboard — no `wrangler` required. Workers & Pages → `push` → Settings → Variables and Secrets:
+
+- `CF_AI_GATEWAY_ACCOUNT_ID` and `CF_AI_GATEWAY_SLUG` as plaintext vars (account ID is in the dashboard sidebar; slug is the gateway's own id).
+- `CF_AI_GATEWAY_TOKEN` as an encrypted secret, only if authenticated mode is on (see the note above).
+
+The Worker hot-reloads on the next request, so no redeploy is needed. Until the vars are set, the gateway is dormant and direct-to-provider traffic is bit-identical to pre-gateway behavior. To roll back, delete the vars — no code change.
