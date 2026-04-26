@@ -349,6 +349,17 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     exampleJson: '{"tool": "diff", "args": {}}',
   },
   {
+    canonicalName: 'sandbox_create_branch',
+    publicName: 'create_branch',
+    source: 'sandbox',
+    readOnly: false,
+    statusLabel: 'Creating branch...',
+    protocolSignature: 'create_branch(name, from?)',
+    protocolDescription:
+      'Create a new git branch in the sandbox and switch to it. Push tracks the new branch automatically. Pass "from" to branch off a specific ref instead of HEAD.',
+    exampleJson: '{"tool": "create_branch", "args": {"name": "feature/foo"}}',
+  },
+  {
     canonicalName: 'sandbox_prepare_commit',
     publicName: 'commit',
     aliases: ['sandbox_commit'],

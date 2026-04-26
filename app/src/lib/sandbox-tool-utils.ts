@@ -488,6 +488,8 @@ const GIT_MUTATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\bgit\s+push\b/i, label: 'git push' },
   { pattern: /\bgit\s+merge\b/i, label: 'git merge' },
   { pattern: /\bgit\s+rebase\b/i, label: 'git rebase' },
+  { pattern: /\bgit\s+checkout\s+-b\b/i, label: 'git checkout -b' },
+  { pattern: /\bgit\s+switch\s+-c\b/i, label: 'git switch -c' },
 ];
 
 /**

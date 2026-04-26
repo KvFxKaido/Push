@@ -49,6 +49,7 @@ import {
   isLikelyMutatingSandboxExec,
   detectBlockedGitCommand,
   createGitHubRepo,
+  shellEscape,
 } from './sandbox-tool-utils';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
@@ -255,9 +256,19 @@ export async function executeSandboxToolCall(
         // In full-auto mode, allow direct git — the system has granted blanket permission
         const blockedGitOp = detectBlockedGitCommand(call.args.command);
         const currentApprovalMode = getApprovalMode();
-        if (blockedGitOp && !call.args.allowDirectGit && currentApprovalMode !== 'full-auto') {
-          const guardDetail =
-            currentApprovalMode === 'autonomous'
+        const isBranchCreate =
+          blockedGitOp === 'git checkout -b' || blockedGitOp === 'git switch -c';
+        // Full-auto skips the consent-style block (commit/push/merge/rebase)
+        // because the model has blanket permission. Branch-create variants
+        // are different: the issue is state synchronization, not consent —
+        // raw `git checkout -b` leaves Push's currentBranch out of sync with
+        // sandbox HEAD regardless of approval mode. Always route those
+        // through sandbox_create_branch.
+        const shouldBlock = isBranchCreate || currentApprovalMode !== 'full-auto';
+        if (blockedGitOp && !call.args.allowDirectGit && shouldBlock) {
+          const guardDetail = isBranchCreate
+            ? 'Use sandbox_create_branch to create a branch — it keeps Push and the sandbox in sync.'
+            : currentApprovalMode === 'autonomous'
               ? 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or retry with allowDirectGit: true.'
               : 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.';
           const guardErr: StructuredToolError = {
@@ -266,8 +277,9 @@ export async function executeSandboxToolCall(
             message: `Direct "${blockedGitOp}" is blocked`,
             detail: guardDetail,
           };
-          const guidance =
-            currentApprovalMode === 'autonomous'
+          const guidance = isBranchCreate
+            ? `Direct "${blockedGitOp}" is blocked. Use sandbox_create_branch({"name": "<branch-name>"}) — it creates the branch in the sandbox and keeps Push's branch state in sync. Pass "from": "<base>" to branch from a specific ref instead of HEAD.`
+            : currentApprovalMode === 'autonomous'
               ? `Direct "${blockedGitOp}" is blocked. Use sandbox_prepare_commit + sandbox_push for the audited flow. If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`
               : [
                   `Direct "${blockedGitOp}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
@@ -386,6 +398,101 @@ export async function executeSandboxToolCall(
 
       case 'sandbox_diff': {
         return handleSandboxDiff(buildGitReleaseContext(sandboxId));
+      }
+
+      case 'sandbox_create_branch': {
+        // Strict ref validation: no shell metachars, no leading '-' (would be
+        // parsed as a git flag), no '..', no leading/trailing slash.
+        // shellEscape quotes the value but defense in depth — git itself
+        // rejects most of these too. Applied to both name and from since
+        // either can land on the command line as a ref argument.
+        const isInvalidRef = (ref: string): boolean =>
+          !/^[A-Za-z0-9._/-]+$/.test(ref) ||
+          ref.startsWith('-') ||
+          ref.startsWith('/') ||
+          ref.endsWith('/') ||
+          ref.includes('..');
+
+        const refDetail =
+          'Branch refs may contain letters, digits, ".", "_", "/", "-" and may not start with "-", may not start or end with "/", and may not contain "..".';
+
+        const name = call.args.name;
+        if (isInvalidRef(name)) {
+          const err: StructuredToolError = {
+            type: 'INVALID_ARG',
+            retryable: false,
+            message: 'Invalid branch name',
+            detail: refDetail,
+          };
+          return {
+            text: formatStructuredError(
+              err,
+              `[Tool Error — sandbox_create_branch] Invalid branch name "${name}".`,
+            ),
+            structuredError: err,
+          };
+        }
+
+        const from = call.args.from;
+        if (from !== undefined && isInvalidRef(from)) {
+          const err: StructuredToolError = {
+            type: 'INVALID_ARG',
+            retryable: false,
+            message: 'Invalid base ref',
+            detail: refDetail,
+          };
+          return {
+            text: formatStructuredError(
+              err,
+              `[Tool Error — sandbox_create_branch] Invalid base ref "${from}".`,
+            ),
+            structuredError: err,
+          };
+        }
+
+        // Atomic form: `git checkout -b <name> [<from>]` only changes HEAD
+        // on success. The previous chained form left HEAD on `<from>` if
+        // branch creation failed, silently mutating branch state on the
+        // error path.
+        const cmd = from
+          ? `cd /workspace && git checkout -b ${shellEscape(name)} ${shellEscape(from)}`
+          : `cd /workspace && git checkout -b ${shellEscape(name)}`;
+
+        const result = await execInSandbox(sandboxId, cmd, undefined, {
+          markWorkspaceMutated: true,
+        });
+
+        if (result.exitCode !== 0) {
+          const reason = result.stderr || result.stdout || 'git checkout -b failed';
+          const err = classifyError(reason, cmd);
+          return {
+            text: formatStructuredError(err, `[Tool Error — sandbox_create_branch]\n${reason}`),
+            structuredError: err,
+          };
+        }
+
+        // Branch switch changes the entire working tree — invalidate caches
+        // and ledgers the same way sandbox_exec does for mutating commands,
+        // otherwise subsequent edits use versions from the previous branch
+        // and trip stale-write / workspace-changed errors.
+        clearFileVersionCache(sandboxId);
+        clearPrefetchedEditFileCache(sandboxId);
+        const staleMarked = fileLedger.markAllStale();
+
+        const lines = [
+          `[Tool Result — sandbox_create_branch]`,
+          `Created and switched to ${name}${from ? ` from ${from}` : ''}.`,
+        ];
+        if (staleMarked > 0) {
+          lines.push(
+            `\n[Context] Marked ${staleMarked} previously-read file(s) as stale after branch switch. Re-read before editing.`,
+          );
+        }
+
+        return {
+          text: lines.join('\n'),
+          branchSwitch: name,
+        };
       }
 
       case 'sandbox_prepare_commit': {

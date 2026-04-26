@@ -49,6 +49,17 @@ vi.mock('./github-auth', () => ({
   getActiveGitHubToken: vi.fn(),
 }));
 
+// Partial-mock approval-mode so tests can flip the mode without writing to
+// localStorage. Default returns 'supervised' to preserve every existing test
+// that depends on the production default.
+vi.mock('./approval-mode', async () => {
+  const actual = await vi.importActual<typeof import('./approval-mode')>('./approval-mode');
+  return {
+    ...actual,
+    getApprovalMode: vi.fn(() => 'supervised'),
+  };
+});
+
 vi.mock('./edit-metrics', () => ({
   recordWriteFileMetric: (...args: unknown[]) => mockRecordWriteFileMetric(...args),
   recordReadFileMetric: (...args: unknown[]) => mockRecordReadFileMetric(...args),
@@ -68,6 +79,7 @@ import * as sandboxClient from './sandbox-client';
 import { runAuditor } from './auditor-agent';
 import { createGitHubRepo } from './sandbox-tool-utils';
 import { getActiveGitHubToken } from './github-auth';
+import { getApprovalMode } from './approval-mode';
 import { fileLedger } from './file-awareness-ledger';
 import { symbolLedger } from './symbol-persistence-ledger';
 import { calculateLineHash } from './hashline';
@@ -4033,5 +4045,234 @@ describe('sandbox_search_replace', () => {
     expect(result.text).toContain('Encoding mismatch');
     expect(result.structuredError?.retryable).toBe(true);
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+  });
+});
+
+describe('validateSandboxToolCall -- sandbox_create_branch', () => {
+  it('accepts a valid branch name and ignores empty from', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_create_branch',
+      args: { name: 'feature/foo', from: '   ' },
+    });
+    expect(result).not.toBeNull();
+    if (result?.tool === 'sandbox_create_branch') {
+      expect(result.args.name).toBe('feature/foo');
+      expect(result.args.from).toBeUndefined();
+    }
+  });
+
+  it('preserves a non-empty from arg', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_create_branch',
+      args: { name: 'feature/foo', from: 'main' },
+    });
+    if (result?.tool === 'sandbox_create_branch') {
+      expect(result.args.from).toBe('main');
+    }
+  });
+
+  it('rejects missing name', () => {
+    expect(validateSandboxToolCall({ tool: 'sandbox_create_branch', args: {} })).toBeNull();
+  });
+
+  it('rejects whitespace-only name', () => {
+    expect(
+      validateSandboxToolCall({ tool: 'sandbox_create_branch', args: { name: '   ' } }),
+    ).toBeNull();
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_create_branch', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('runs git checkout -b and returns branchSwitch on success', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: "Switched to a new branch 'feature/foo'",
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/foo' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Result — sandbox_create_branch]');
+    expect(result.text).toContain('Created and switched to feature/foo');
+    expect(result.branchSwitch).toBe('feature/foo');
+
+    const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toContain("git checkout -b 'feature/foo'");
+    expect(calls[0][3]?.markWorkspaceMutated).toBe(true);
+  });
+
+  it('uses atomic git checkout -b <name> <from> when from is provided', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/foo', from: 'main' } },
+      'sb-1',
+    );
+
+    expect(result.branchSwitch).toBe('feature/foo');
+    expect(result.text).toContain('from main');
+    // Single atomic command, not two chained checkouts. Important: a failed
+    // create must NOT leave HEAD on `from`.
+    const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
+    expect(calls).toHaveLength(1);
+    const cmd = calls[0][1];
+    expect(cmd).toContain("git checkout -b 'feature/foo' 'main'");
+    // No separate `git checkout 'main'` — the previous chained form left
+    // HEAD on `main` if branch creation failed. Atomic form avoids that.
+    expect(cmd).not.toContain("git checkout 'main'");
+  });
+
+  it('rejects invalid base ref without invoking the sandbox', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/foo', from: '-evil' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('INVALID_ARG');
+    expect(result.text).toContain('Invalid base ref');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('marks previously-read files stale after a successful branch switch', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export const x = 1;',
+      truncated: false,
+      version: 'v1',
+    });
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/x.ts' } },
+      'sb-1',
+    );
+
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/foo' } },
+      'sb-1',
+    );
+
+    expect(result.branchSwitch).toBe('feature/foo');
+    expect(result.text).toContain('[Context] Marked');
+    expect(result.text).toContain('previously-read file');
+  });
+
+  it('rejects invalid branch names without invoking the sandbox', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: '-evil' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('INVALID_ARG');
+    expect(result.text).toContain('Invalid branch name');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a structured error when git fails', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: "fatal: a branch named 'feature/foo' already exists",
+      exitCode: 128,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/foo' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_create_branch]');
+    expect(result.text).toContain('already exists');
+    expect(result.branchSwitch).toBeUndefined();
+    expect(result.structuredError).toBeDefined();
+  });
+});
+
+describe('executeSandboxToolCall -- git guard for branch creation', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('blocks raw git checkout -b and points the model at sandbox_create_branch', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout -b feature/foo' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Blocked — sandbox_exec]');
+    expect(result.text).toContain('sandbox_create_branch');
+    expect(result.structuredError).toEqual({
+      type: 'GIT_GUARD_BLOCKED',
+      retryable: false,
+      message: 'Direct "git checkout -b" is blocked',
+      detail:
+        'Use sandbox_create_branch to create a branch — it keeps Push and the sandbox in sync.',
+    });
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('blocks raw git switch -c and points the model at sandbox_create_branch', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git switch -c feature/foo' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(result.structuredError?.message).toBe('Direct "git switch -c" is blocked');
+    expect(result.text).toContain('sandbox_create_branch');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('blocks raw git checkout -b even in full-auto mode', async () => {
+    // Full-auto normally skips the consent-style guard for commit/push/merge/
+    // rebase, but branch-create has to block regardless because the issue is
+    // state synchronization (Push's currentBranch must follow sandbox HEAD),
+    // not consent.
+    vi.mocked(getApprovalMode).mockReturnValueOnce('full-auto');
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout -b feature/foo' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(result.text).toContain('sandbox_create_branch');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('still allows raw git push in full-auto mode (consent-style block carve-out)', async () => {
+    vi.mocked(getApprovalMode).mockReturnValueOnce('full-auto');
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git push origin main' } },
+      'sb-1',
+    );
+
+    // Not blocked — full-auto carve-out applies to commit/push/merge/rebase.
+    expect(result.structuredError?.type).not.toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalled();
   });
 });

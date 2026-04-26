@@ -448,6 +448,7 @@ export type ToolErrorType =
   | 'GIT_GUARD_BLOCKED'
   | 'APPROVAL_GATE_BLOCKED'
   | 'ROLE_CAPABILITY_DENIED'
+  | 'INVALID_ARG'
   | 'WRITE_FAILED'
   | 'UNKNOWN';
 
