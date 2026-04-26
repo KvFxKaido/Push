@@ -568,6 +568,28 @@ describe('createWebExecutorAdapter — sandbox_create_branch (slice 3)', () => {
     expect(result.text).toContain("isn't available in background Coder jobs");
     expect(handleCloudflareSandboxMock).not.toHaveBeenCalled();
   });
+
+  it('explains `git switch feat/foo` is unsupported in background jobs', async () => {
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git switch feat/foo' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+
+    expect(result.structuredError?.type).toBe('APPROVAL_GATE_BLOCKED');
+    expect(result.structuredError?.message).toContain('branch switching unsupported');
+    expect(result.text).toContain("isn't available in background Coder jobs");
+    expect(handleCloudflareSandboxMock).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

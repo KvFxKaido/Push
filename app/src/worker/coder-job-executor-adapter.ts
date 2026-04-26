@@ -27,26 +27,9 @@ import { handleCloudflareSandbox } from './worker-cf-sandbox';
 import type { SandboxStatusResult, SandboxToolExecResult } from '@push/lib/coder-agent-bindings';
 import type { ChatCard } from '@/types';
 import type { AIProviderType } from '@push/lib/provider-contract';
+import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from '@/lib/git-ref-validation';
 import { detectBlockedGitCommand, shellEscape } from '@/lib/sandbox-tool-utils';
 import type { SandboxToolCall } from './coder-job-detector-adapter';
-
-// Inline copy of the foreground `sandbox_create_branch` ref-validation
-// rule (sandbox-tools.ts). Duplicated here rather than extracted to a
-// shared lib helper to keep slice 3 focused; if a future slice promotes
-// `sandbox_switch_branch` to background too, lift this into a single
-// `lib/` source of truth then.
-const VALID_REF = /^[A-Za-z0-9._/-]+$/;
-const INVALID_REF_DETAIL =
-  'Branch refs may contain letters, digits, ".", "_", "/", "-" and may not start with "-", may not start or end with "/", and may not contain "..".';
-function isInvalidRef(ref: string): boolean {
-  return (
-    !VALID_REF.test(ref) ||
-    ref.startsWith('-') ||
-    ref.startsWith('/') ||
-    ref.endsWith('/') ||
-    ref.includes('..')
-  );
-}
 
 export interface CoderJobExecutorAdapter {
   executeSandboxToolCall: (
@@ -161,20 +144,20 @@ function mapCallToRoute(call: SandboxToolCall): RouteMapping {
       // both foreground and background converge on the same effect.
       // Validation is enforced here (defense in depth — the foreground
       // path validates separately in `sandbox-tools.ts`).
-      if (isInvalidRef(call.args.name)) {
+      if (isInvalidGitRef(call.args.name)) {
         return {
           kind: 'invalid_arg',
           field: 'name',
           value: call.args.name,
-          detail: INVALID_REF_DETAIL,
+          detail: GIT_REF_VALIDATION_DETAIL,
         };
       }
-      if (call.args.from !== undefined && isInvalidRef(call.args.from)) {
+      if (call.args.from !== undefined && isInvalidGitRef(call.args.from)) {
         return {
           kind: 'invalid_arg',
           field: 'from',
           value: call.args.from,
-          detail: INVALID_REF_DETAIL,
+          detail: GIT_REF_VALIDATION_DETAIL,
         };
       }
       // Atomic form: failure leaves HEAD untouched. Same construction

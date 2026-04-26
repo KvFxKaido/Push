@@ -51,6 +51,7 @@ import {
   createGitHubRepo,
   shellEscape,
 } from './sandbox-tool-utils';
+import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
 
@@ -415,28 +416,13 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_create_branch': {
-        // Strict ref validation: no shell metachars, no leading '-' (would be
-        // parsed as a git flag), no '..', no leading/trailing slash.
-        // shellEscape quotes the value but defense in depth — git itself
-        // rejects most of these too. Applied to both name and from since
-        // either can land on the command line as a ref argument.
-        const isInvalidRef = (ref: string): boolean =>
-          !/^[A-Za-z0-9._/-]+$/.test(ref) ||
-          ref.startsWith('-') ||
-          ref.startsWith('/') ||
-          ref.endsWith('/') ||
-          ref.includes('..');
-
-        const refDetail =
-          'Branch refs may contain letters, digits, ".", "_", "/", "-" and may not start with "-", may not start or end with "/", and may not contain "..".';
-
         const name = call.args.name;
-        if (isInvalidRef(name)) {
+        if (isInvalidGitRef(name)) {
           const err: StructuredToolError = {
             type: 'INVALID_ARG',
             retryable: false,
             message: 'Invalid branch name',
-            detail: refDetail,
+            detail: GIT_REF_VALIDATION_DETAIL,
           };
           return {
             text: formatStructuredError(
@@ -448,12 +434,12 @@ export async function executeSandboxToolCall(
         }
 
         const from = call.args.from;
-        if (from !== undefined && isInvalidRef(from)) {
+        if (from !== undefined && isInvalidGitRef(from)) {
           const err: StructuredToolError = {
             type: 'INVALID_ARG',
             retryable: false,
             message: 'Invalid base ref',
-            detail: refDetail,
+            detail: GIT_REF_VALIDATION_DETAIL,
           };
           return {
             text: formatStructuredError(
@@ -514,23 +500,13 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_switch_branch': {
-        // Strict ref validation — same shape as sandbox_create_branch since
-        // the value lands on the git command line as a ref argument.
-        const isInvalidRef = (ref: string): boolean =>
-          !/^[A-Za-z0-9._/-]+$/.test(ref) ||
-          ref.startsWith('-') ||
-          ref.startsWith('/') ||
-          ref.endsWith('/') ||
-          ref.includes('..');
-
         const branch = call.args.branch;
-        if (isInvalidRef(branch)) {
+        if (isInvalidGitRef(branch)) {
           const err: StructuredToolError = {
             type: 'INVALID_ARG',
             retryable: false,
             message: 'Invalid branch name',
-            detail:
-              'Branch refs may contain letters, digits, ".", "_", "/", "-" and may not start with "-", may not start or end with "/", and may not contain "..".',
+            detail: GIT_REF_VALIDATION_DETAIL,
           };
           return {
             text: formatStructuredError(
