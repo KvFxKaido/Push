@@ -508,8 +508,9 @@ const GIT_MUTATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
  *
  * For `git checkout`, operands containing `/` are allowed through as
  * path-shaped (e.g. `git checkout src/utils`). This means feat-branch-style
- * names like `feat/foo` also fall through. `git switch` is branch-only by
- * spec, so slash-shaped operands there are blocked as branch switches.
+ * names like `feat/foo` also fall through. `git switch` has no path-restore
+ * mode, so any qualifying single positional operand there is blocked as a
+ * branch switch, including names containing `.` or `/`.
  *
  * Bare-positional false positives (e.g. `git checkout README`) are blocked
  * with guidance pointing at `sandbox_switch_branch` and the `--` escape
