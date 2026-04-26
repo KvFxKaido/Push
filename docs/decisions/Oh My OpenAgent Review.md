@@ -46,14 +46,14 @@ plugins.
 
 Push already overlaps meaningfully. Before we start copying, the honest list:
 
-- **Role-based agents** with locked roles and replaceable models (`docs/architecture.md:15`).
-- **Delegation and orchestration** including dependency-aware task graphs via `plan_tasks` (`docs/architecture.md:37`).
-- **Adaptive hashline edits, patchset transactions, resumable sessions** already listed under harness reliability (`docs/architecture.md:42`). See also `docs/decisions/Hashline System Review.md`.
-- **Project-instruction loading** for `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` (`docs/architecture.md:44`).
-- **Shared runtime contract** for task-graph, memory, delegation briefs, role-context, and run events in root `lib/` (`docs/architecture.md:39`).
+- **Role-based agents** with locked roles and replaceable models ([architecture: Agent Roles](../architecture.md#agent-roles)).
+- **Delegation and orchestration** including dependency-aware task graphs via `plan_tasks` ([architecture: Key Systems](../architecture.md#key-systems)).
+- **Adaptive hashline edits, patchset transactions, resumable sessions** already listed under harness reliability ([architecture: Key Systems](../architecture.md#key-systems)). See also `docs/decisions/Hashline System Review.md`.
+- **Project-instruction loading** for `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, plus the CLI `.push/instructions.md` override ([architecture: Key Systems](../architecture.md#key-systems)).
+- **Shared runtime contract** for task-graph, memory, delegation briefs, role-context, and run events in root `lib/` ([architecture: Shared Runtime Shape](../architecture.md#shared-runtime-shape)).
 - **MCP integration** exists in `mcp/` but without a formal per-skill teardown story.
-- **Auditor** pre-commit gate with SAFE/UNSAFE verdict (`docs/architecture.md:23`).
-- **Reviewer** on-demand diff review (`docs/architecture.md:22`).
+- **Auditor** pre-commit gate with SAFE/UNSAFE verdict ([architecture: Agent Roles](../architecture.md#agent-roles)).
+- **Reviewer** on-demand diff review ([architecture: Agent Roles](../architecture.md#agent-roles)).
 
 So: persona naming, hashline, shared runtime, role separation, project
 instructions, and delegation graphs are covered. The genuine deltas are in
@@ -89,7 +89,7 @@ Ranked by effort vs payoff.
 4. **Task-category tags on delegation briefs.** Add
    `category: 'quick' | 'deep' | 'visual' | 'ultrabrain'` to the delegation
    brief. Settings maps category → model per backend. Chat-lock
-   (`docs/architecture.md:27-31`) remains the override. Touches provider
+   ([architecture: Provider Routing](../architecture.md#provider-routing)) remains the override. Touches provider
    routing but the diff is contained.
 
 5. **Todo Enforcer around `plan_tasks`.** After each task-graph step, check

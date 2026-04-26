@@ -46,7 +46,7 @@ agent = SandboxAgent(name="coder", model="gpt-5", capabilities=[Shell()])
 
 **Push status:** We don't have a formal manifest abstraction. Our sandbox init is imperative — `sandbox/app.py:create()` clones a repo, probes the environment, and writes tokens. The workspace shape is implicit in the create flow, not declared as a portable object.
 
-**Worth adopting?** Medium priority. A manifest-like declaration would help if we ever add a second sandbox provider (e.g., Cloudflare Workers for lighter workloads). Not urgent while Modal is the only backend. If we implement the `SandboxProvider` interface recommended in `AgentScope Architecture Review.md`, the manifest becomes the natural input to `SandboxProvider.create()`.
+**Worth adopting?** Medium priority. A manifest-like declaration would help make the now-pluggable sandbox providers more portable. `SandboxProvider.create()` is the natural place for that manifest if/when we formalize it beyond today's imperative create flow.
 
 ### 3.2 Multi-provider sandbox support
 
@@ -54,9 +54,9 @@ The SDK integrates with: **Blaxel, Cloudflare, Daytona, E2B, Modal, Runloop, Ver
 
 Also supports mounting external storage: **AWS S3, Google Cloud Storage, Azure Blob Storage, Cloudflare R2**.
 
-**Push status:** Modal-only today. The `AgentScope Architecture Review.md` already recommended extracting a `SandboxProvider` interface to decouple sandbox management from the Modal-specific code in `sandbox/app.py`. This OpenAI release confirms the industry is moving toward provider-agnostic sandbox abstractions.
+**Push status:** Cloudflare Sandbox is now the default, with Modal retained as an explicit fallback behind the shared `SandboxProvider` interface. This OpenAI release confirms the industry is moving toward provider-agnostic sandbox abstractions.
 
-**Worth adopting?** Already planned via the SandboxProvider extraction. This validates the direction but doesn't change our roadmap.
+**Worth adopting?** Already adopted at the provider-abstraction level. This validates the direction but doesn't change our roadmap.
 
 ### 3.3 Snapshotting and rehydration
 
@@ -107,8 +107,8 @@ Built-in tracing collects LLM generations, tool calls, handoffs, guardrails, and
 |---|---|---|---|
 | Harness/sandbox separation | Yes | — | Validates architecture |
 | Manifest abstraction | No | Partially (SandboxProvider interface) | Confirms direction |
-| Multi-provider sandboxes | No (Modal only) | Yes (SandboxProvider extraction) | Confirms direction |
-| Snapshotting/rehydration | No | Yes (Modal Snapshots Design, Phase 0) | Confirms priority |
+| Multi-provider sandboxes | Yes (Cloudflare default, Modal fallback) | Continue hardening provider parity | Confirms direction |
+| Snapshotting/rehydration | Partial (Modal path), no Cloudflare parity yet | Yes (sandbox snapshots follow-up) | Confirms priority |
 | Approvals/HITL | Yes | — | No new signal |
 | Durable execution | No | Yes (Cloudflare-native, Vercel review §5.4) | Confirms priority |
 | Configurable memory | Partial | Yes (Context Memory arch doc) | Minor |
@@ -126,8 +126,8 @@ Built-in tracing collects LLM generations, tool calls, handoffs, guardrails, and
 
 4. **OpenTelemetry tracing** — confirmed by OpenAI's tracing investment. Build on OTel, not their vendor-specific format.
 
-**One thing to watch:** The `SandboxAgent` + `Manifest` + `SandboxRunConfig` API shape is clean and worth studying when the Python SDK stabilizes. If our SandboxProvider extraction hasn't started by then, use their API as a reference for the interface design.
+**One thing to watch:** The `SandboxAgent` + `Manifest` + `SandboxRunConfig` API shape is clean and worth studying when the Python SDK stabilizes. Use their API as a reference if we formalize Push's imperative sandbox create flow into a portable manifest for `SandboxProvider.create()`.
 
 ## 6. Bottom line
 
-This is a "the industry is converging on where we already are" release. The harness/sandbox separation, snapshotting, durable execution, and provider-agnostic sandbox abstraction are all things Push either already has or has actively designed. The main value of this announcement is external validation — it increases confidence in the Modal Snapshots design, the SandboxProvider extraction, and the Cloudflare durability plan. No course corrections needed.
+This is a "the industry is converging on where we already are" release. The harness/sandbox separation, snapshotting, durable execution, and provider-agnostic sandbox abstraction are all things Push either already has or has actively designed. The main value of this announcement is external validation — it increases confidence in sandbox snapshots, the SandboxProvider direction, and the Cloudflare durability plan. No course corrections needed.

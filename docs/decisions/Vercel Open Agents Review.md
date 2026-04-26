@@ -3,7 +3,7 @@
 **Date:** 2026-04-14
 **Source:** [vercel-labs/open-agents](https://github.com/vercel-labs/open-agents) (MIT)
 **Companion site:** [open-agents.dev](https://open-agents.dev)
-**Status:** Comparative research reference. Informs the priority list at the bottom, with **Modal sandbox snapshots** flagged as the headline adoption target.
+**Status:** Comparative research reference. Informs the priority list at the bottom, with sandbox snapshots flagged as the headline adoption target. Some implementation details have since shifted from Modal-only assumptions to the Cloudflare-default `SandboxProvider` stack.
 
 ---
 
@@ -54,7 +54,7 @@ Honest list of what we already cover. Don't reimplement these:
 
 - **Agent-outside-sandbox topology** — Push agent runs in the Worker/CLI; Modal is dumb compute. Same shape.
 - **Tool dispatch and registry** — `lib/tool-registry.ts` + `app/src/lib/tool-dispatch.ts` define ~40 tools shared across web and CLI. More unified than open-agents (we also feed a CLI; they don't).
-- **Role split** — Orchestrator / Explorer / Coder / Reviewer / Auditor (`docs/architecture.md:25`). Open Agents has a single chat-driven agent; ours is more sophisticated.
+- **Role split** — Orchestrator / Explorer / Coder / Reviewer / Auditor ([architecture: Agent Roles](../architecture.md#agent-roles)). Open Agents has a single chat-driven agent; ours is more sophisticated.
 - **GitHub App + OAuth + PAT** — `app/src/lib/github-auth.ts`, `app/src/hooks/useGitHubAppAuth.ts`. Token refresh, commit identity, PAT fallback all wired.
 - **MCP** — `mcp/github-server/src/index.ts` exposes ~17 GitHub tools over stdio.
 - **Skills (filesystem)** — `cli/skill-loader.ts` loads `.push/skills/` and `.claude/commands/` `.md` files at runtime; supports shadowing built-ins.
@@ -64,7 +64,7 @@ Honest list of what we already cover. Don't reimplement these:
 
 ## 5. Genuine gaps worth adopting
 
-### 5.1 Modal sandbox snapshots — primary target ⭐
+### 5.1 Sandbox snapshots — primary target ⭐
 
 **The headline adoption.** Push's resume strategy today is:
 
@@ -82,9 +82,9 @@ Modal supports memory snapshots and filesystem checkpoints. Adopting them would 
 **Open questions to answer in a follow-up design doc:**
 
 - Modal snapshot lifecycle: what's the actual resume latency, snapshot size budget, and pricing impact per session?
-- Where snapshots live in the runtime contract: is "hibernated" a new sandbox phase exposed to the agent via the session capability block in [`docs/architecture.md`'s sandbox/session architecture section](../architecture.md#sandbox-architecture)?
+- Where snapshots live in the runtime contract: is "hibernated" a new sandbox phase exposed to the agent via the session capability block described in [architecture: Key Systems](../architecture.md#key-systems)?
 - Interaction with the existing `run-journal` checkpoint flow — is the journal still authoritative, or does the snapshot become the source of truth and the journal degrade to an audit log?
-- Branch switching tears down the sandbox (`docs/architecture.md:62`). Should snapshots be keyed by `(repo, branch)` so per-branch resume is instant?
+- Branch transitions now preserve the sandbox and route via `BranchSwitchPayload`. Snapshot design should key by workspace identity and branch, but can no longer assume branch switching tears down the sandbox.
 - Multi-tenant cleanup: TTL, eviction policy, and how we handle stale snapshots on Modal.
 - CLI parity: snapshots are useless in the local CLI (the FS *is* the user's repo), so this is a web-only feature. Confirm the runtime contract still holds.
 
@@ -137,7 +137,7 @@ Vercel introduced [skills.sh](https://vercel.com/changelog/introducing-skills-th
 
 ## 7. Recommended sequencing
 
-1. **Modal sandbox snapshots design doc** (5.1). This is the user-flagged primary target. Unblocks fast resume and dovetails with port exposure.
+1. **Sandbox snapshots design doc** (5.1). This is the user-flagged primary target. Unblocks fast resume and dovetails with port exposure.
 2. **Sandbox port exposure** (5.2). High-impact, low-risk, complements snapshots directly.
 3. **Read-only share links** (5.3). Forces the server-side persistence work that **5.4** also needs.
 4. **Server-side durable runs on Cloudflare** (5.4). Larger re-architecture; sequence after we have server-side run state from **5.3**.

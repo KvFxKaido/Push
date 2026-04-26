@@ -50,7 +50,7 @@ When the user returns to a previously-active sandbox session — minutes, hours,
 | Create | `sandbox/app.py:1023` `create()` | `modal.Sandbox.create("sleep", "infinity", image=sandbox_image, timeout=3600)` then `git clone --depth=50 --branch <branch>`. Issues an owner token to `/tmp/push-owner-token` (`OWNER_TOKEN_FILE`). Initializes the workspace revision counter at `/tmp/push-workspace-revision` (`WORKSPACE_REVISION_FILE`). Runs an environment probe. |
 | Resume (current) | `sandbox/app.py:656` `_load_sandbox()` → `modal.Sandbox.from_id()` | Looks up the existing container by ID. Works only while the container is still alive (≤1h). Returns "not found / expired" once it dies. |
 | Per-call validation | `_validate_owner_token()` | Re-reads the token file from inside the sandbox and HMAC-compares. |
-| Cleanup | `sandbox/app.py:1648` `cleanup()` | `sb.terminate()`. Called explicitly on branch switch (`docs/architecture.md:67`). |
+| Cleanup | `sandbox/app.py:1648` `cleanup()` | `sb.terminate()`. Called explicitly when the user tears down a Modal sandbox. Branch transitions now preserve sandbox context and should not be treated as automatic cleanup. |
 | Client-side persistence | `app/src/lib/sandbox-session.ts` | Stores `{sandboxId, ownerToken, repoFullName, branch, createdAt}` in localStorage, keyed `sandbox_session:repo:<full>:<branch>`. **Already keyed per repo + branch** — this is exactly the snapshot key we need. |
 
 Two facts from this matter for the design:
@@ -81,13 +81,13 @@ Today the sandbox is either **active** or **gone**. The new model adds two state
 ```
 active ──idle timeout──▶ snapshotting ──▶ snapshotted ──resume request──▶ restoring ──▶ active
    │                                            │
-   └──explicit cleanup / branch switch──▶ dead  └──TTL eviction──▶ dead
+   └──explicit cleanup──▶ dead                  └──TTL eviction──▶ dead
 ```
 
 | State | Meaning | Visible to the agent? |
 |---|---|---|
 | `active` | Container is running, accepting calls. | Yes (existing). |
-| `snapshotting` | A snapshot is being taken; container still serves reads but blocks mutations. | Yes — surfaced in the session capability block (`docs/architecture.md:32`) so the agent knows not to dispatch more tools. |
+| `snapshotting` | A snapshot is being taken; container still serves reads but blocks mutations. | Yes — surfaced in the session capability block described in [architecture: Key Systems](../architecture.md#key-systems) so the agent knows not to dispatch more tools. |
 | `snapshotted` | Container has been terminated; a snapshot exists for `(repo, branch)`. No live container. | No — the agent sees "no sandbox" until it's restored. |
 | `restoring` | A new container is being created from the snapshot. | Yes — surfaced as a capability-block phase, similar to today's "creating sandbox" state. |
 | `dead` | No container, no usable snapshot. Must clone fresh. | No. |
@@ -114,7 +114,7 @@ The "since last tool call" signal is already available — the run journal track
 
 **C. Explicit user hibernate (optional UI affordance).** Workspace Hub gets a "Hibernate sandbox" action that triggers an immediate snapshot. Useful for "I'm done for today, see you tomorrow." Not required for the first ship.
 
-**Crucially: branch switch does NOT snapshot.** Branch switch already has explicit teardown semantics (`docs/architecture.md:67`); switching branches snapshots the *outgoing* branch and creates fresh on the incoming one. This means switching back resumes instantly, which is a real UX win independent of session-resume.
+**Crucially: branch switch does NOT snapshot.** Branch transitions now preserve context and route through `BranchSwitchPayload`; they are not automatic teardown points. Snapshotting should remain tied to eviction, idle hibernation, or an explicit user action, and any future branch-aware snapshot UX needs to respect the fork/switch semantics in `docs/architecture.md`.
 
 ### 4. When to resume
 
@@ -149,7 +149,7 @@ A daily Worker cron walks the snapshot index and evicts expired entries.
 
 ### 7. Capability block update
 
-Today the session capability block already exposes "container lifetime, creation/download events, and recent workspace lifecycle state" (`docs/architecture.md:32`). Add three things:
+Today the session capability block already exposes container lifetime, creation/download events, and recent workspace lifecycle state ([architecture: Key Systems](../architecture.md#key-systems)). Add three things:
 
 - `sandbox.phase` extended with `snapshotting | snapshotted | restoring`.
 - `sandbox.snapshotAge` (seconds since the snapshot was taken; null if active).

@@ -123,7 +123,7 @@ Playbooks are a **compiler for `plan_tasks` input**, not a replacement. Given th
 
 - **Visible selection.** The UI shows which playbook is running, and the user can cancel or override.
 - **Auditor stays binding.** Playbook commits still go through the SAFE/UNSAFE gate. Playbooks cannot skip the Auditor.
-- **No silent branch moves.** Playbooks never create or switch branches. That remains UI-owned.
+- **No silent branch moves.** Playbooks never create or switch branches invisibly. If a playbook ever needs a branch transition, it must emit the same typed tools (`create_branch` / `switch_branch`) the Orchestrator uses so the transcript shows the move and Push's `branchSwitch` handling keeps chat + sandbox state in sync.
 - **No playbook may bypass harness safety.** Hashline edits, patchset transactions, and structured tool-error reporting all still apply.
 - **Override escape hatch.** The `??` prefix (shared with the Tiered Routing spike) forces freeform planning and skips the registry.
 

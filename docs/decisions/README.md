@@ -17,7 +17,7 @@ This folder contains architecture decisions, research, analysis, and shipped des
 |---|---|---|
 | `Agent Experience Wishlist.md` | Historical | Shipped 2026-02-19; useful for provenance and feature rationale. |
 | `Agent Tool Patterns — Claude Code Cross-Reference.md` | Reference, refreshed 2026-03-30 | Comparative design notes; several February borrow items are now shipped or partial. Remaining CLI follow-through is narrower memory adoption and later task-graph/product decisions. |
-| `AgentScope Architecture Review.md` | Current, refreshed after tracing pass | Web-side OTel spans are now in place for model/tool/sandbox/delegation boundaries; main remaining work is Worker/server propagation and sandbox-provider abstraction. |
+| `AgentScope Architecture Review.md` | Current, refreshed after tracing pass | Web-side OTel spans and sandbox-provider abstraction are now in place; main remaining work is Worker/server propagation and provider parity hardening. |
 | `Architecture Rating Snapshot.md` | Reference snapshot, added 2026-03-30 | Three-way architecture rating panel (Codex, Claude, Gemini) plus synthesis. |
 | `Architecture Remediation Plan — Defusing the Big Four.md` | Draft, added 2026-04-14, step 1 landed 2026-04-14 | Working plan for the four dense coordination modules flagged by every panel. |
 | `CLI Prompt Builder Convergence.md` | Implemented core path, refreshed 2026-04-05 | Shared `SystemPromptBuilder` lives in root `lib/`; CLI prompt pipeline consumes it. |
@@ -38,7 +38,7 @@ This folder contains architecture decisions, research, analysis, and shipped des
 | `Resumable Sessions Design.md` | Historical | Shipped 2026-02-19 (Phases 1–4); useful as provenance and for journal-adjacent designs like Modal Sandbox Snapshots. |
 | `Sectioned System Prompts.md` | Shipped design reference | Sectioned system prompt builder refactor. |
 | `Tool-Call Parser Convergence Gap.md` | CLI side resolved 2026-04-15, Web side pending | `lib/tool-dispatch.ts` now owns the CLI detection kernel; Web dispatcher migration deferred until the phase-grouping state machine can be unified. |
-| `Vercel Open Agents Review.md` | Current, added 2026-04-14 | Adoption target is Modal sandbox snapshots; secondary targets are sandbox port exposure, read-only share links, and server-side durable runs on Cloudflare. |
+| `Vercel Open Agents Review.md` | Current, added 2026-04-14 | Adoption target is sandbox snapshots; secondary targets are sandbox port exposure, read-only share links, and server-side durable runs on Cloudflare. |
 | `Web and CLI Runtime Contract.md` | Current, refreshed 2026-04-05 | Architecture rule for Push shells: share agent-runtime semantics across web and CLI, allow divergence in transport and UX shell. |
 
 ## Quick Triage
@@ -47,6 +47,6 @@ If we are choosing implementation work from this folder, the best live clusters 
 
 1. End-to-end tracing follow-through (Worker/server propagation, exporter rollout, metric retirement).
 2. Working-memory evolution and invalidation-aware investigation state, with a concrete follow-up in `Context Memory and Retrieval Architecture.md`.
-3. Modal sandbox snapshots Phase 3 (explicit hibernate/forget UX in Workspace Hub, snapshot-age on resume banner, Settings "Hibernated sandboxes" list) and Phase 4 (eviction cron + KV index). Phases 1–2 landed 2026-04-16.
+3. Sandbox snapshots Phase 3 (explicit hibernate/forget UX in Workspace Hub, snapshot-age on resume banner, Settings "Hibernated sandboxes" list) and Phase 4 (eviction cron + KV index). Modal snapshot Phases 1–2 landed 2026-04-16; Cloudflare snapshot parity remains a separate provider-parity item.
 4. Phase 5B `ToolExecutionRuntime` interface land + Phase 5C deep-reviewer move.
 5. Selective CLI adoption of the shared runtime substrate where it clearly improves the terminal product.

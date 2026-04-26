@@ -88,19 +88,19 @@ Paths interpolated into `sandbox.exec` commands go through `shellSingleQuote`, w
 - **Workspace-revision = 0**: The SDK doesn't expose a monotonic counter. File-level SHA still gates stale writes; workspace-level optimistic concurrency doesn't work on the CF path.
 - **No persistence across provider restarts**: the `ownerTokens` Map on `CloudflareSandboxProvider` lives in-memory. Browser reload loses tokens; callers must invoke `connect(sandboxId, ownerToken)` with a persisted token to re-establish. Modal has equivalent via `safe-storage`; the CF path hasn't wired that yet.
 - **Modal fallback is explicit**: `resolveDefaultProvider()` in `modal-sandbox-provider.ts` falls back to `"cloudflare"` when `PUSH_SANDBOX_PROVIDER` is unset. Use `PUSH_SANDBOX_PROVIDER=modal` to route through Modal.
-- **Deploy requires operator setup**: `SANDBOX_TOKENS` is intentionally absent from the default `wrangler.jsonc` because a placeholder id would break `wrangler deploy`. Operator must run `npx wrangler kv:namespace create SANDBOX_TOKENS` and add the binding before first CF-backed deploy.
+- **Deploy requires operator-owned bindings**: this repo's `wrangler.jsonc` includes the Push deployment's `SANDBOX_TOKENS` binding. Operators running their own fork/deploy should create their own KV namespace and replace the committed id before first CF-backed deploy.
 
 ## Operator setup
 
-Before first deploy with `PUSH_SANDBOX_PROVIDER=cloudflare`:
+Before first deploy of a fresh fork with `PUSH_SANDBOX_PROVIDER=cloudflare`:
 
 ```bash
 # 1. Create the KV namespace for owner tokens.
 npx wrangler kv:namespace create SANDBOX_TOKENS
 # → outputs: { binding: "SANDBOX_TOKENS", id: "<namespace_id>" }
 
-# 2. Add the binding to wrangler.jsonc under kv_namespaces.
-#    Paste alongside the existing SNAPSHOT_INDEX entry:
+# 2. Replace/add the binding in wrangler.jsonc under kv_namespaces.
+#    Paste alongside the SNAPSHOT_INDEX entry:
 #    { "binding": "SANDBOX_TOKENS", "id": "<namespace_id>" }
 
 # 3. Ensure PUSH_SANDBOX_PROVIDER is set to "cloudflare" (or "modal" to opt out).

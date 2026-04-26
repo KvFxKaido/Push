@@ -8,7 +8,7 @@
 ## Why this exists
 
 Push ships hashline-anchored edits as part of its "harness reliability"
-story (`docs/architecture.md:42`, `docs/decisions/Hashline System Review.md`).
+story ([architecture: Key Systems](../architecture.md#key-systems), `docs/decisions/Hashline System Review.md`).
 The external comparable, `oh-my-openagent`, publishes a concrete before/after
 edit-success delta for the same technique (claimed 6.7% → 68.3% on one
 benchmark). Push has the mechanism but no published number. That gap is
