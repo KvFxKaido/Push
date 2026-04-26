@@ -253,10 +253,17 @@ export interface ChatMessage {
   isMalformed?: boolean; // Assistant message that attempted a tool call but produced invalid JSON
   /** Provenance metadata — present on tool result messages for audit trail. */
   toolMeta?: ToolMeta;
-  /** Branch active when this message was authored. Stamped at write time
-   *  (user submit, model first-chunk, tool-call dispatch, system event write).
-   *  Falls back to the parent conversation's branch when undefined (legacy
-   *  messages from before per-message stamping landed). */
+  /** Branch active when this message was authored. Currently stamped at
+   *  write time on (a) `branch_forked` system events via
+   *  `createBranchForkedMessage`, (b) delegate tool result messages via the
+   *  R11 originBranch propagation chain, and (c) messages constructed
+   *  through the `createMessage` factory in `lib/chat-message.ts`. Other
+   *  message-creation paths (user submit, model streaming, regular tool
+   *  results) currently leave this undefined and rely on the read-boundary
+   *  fallback in `effectiveMessageBranch`. Migrating those paths to use
+   *  `createMessage` so every new message stamps `branch` is a planned
+   *  follow-up; for now the fallback (`msg.branch ?? conv.branch ?? 'main'`)
+   *  preserves correctness for unstamped messages. */
   branch?: string;
   /** Discriminator for synthetic message kinds. Plain user/assistant messages
    *  leave this undefined. */

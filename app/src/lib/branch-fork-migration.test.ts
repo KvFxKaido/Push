@@ -51,6 +51,7 @@ type SetConversationsMock = Dispatch<SetStateAction<Record<string, Conversation>
 
 interface MockContext {
   activeChatIdRef: { current: string | null };
+  conversationsRef: { current: Record<string, Conversation> };
   branchInfoRef: {
     current: { currentBranch?: string; defaultBranch?: string } | undefined;
   };
@@ -100,6 +101,7 @@ function makeContext(initialConv: Conversation = makeConversation()): MockContex
   ) as unknown as SetConversationsMock;
   return {
     activeChatIdRef: { current: initialConv.id },
+    conversationsRef: { current: conversations },
     branchInfoRef: { current: { currentBranch: initialConv.branch, defaultBranch: 'main' } },
     skipAutoCreateRef: { current: null },
     setConversations,
@@ -178,7 +180,13 @@ describe('applyBranchSwitchPayload — forked, with active chat', () => {
     });
   });
 
-  it('clears the cross-tab marker after writes settle (not the in-tab guard)', () => {
+  it('keeps both the cross-tab marker AND in-tab guard set after migration', () => {
+    // PR #412 review (Copilot): clearing the marker in the migration
+    // handler's `finally` raced with the async ~3s flushDirty cycle. Other
+    // tabs could observe currentBranch changes before the migrated
+    // conversation landed in IndexedDB. Both signals now release together
+    // in `useBranchForkGuard`'s state-observed effect once the migration is
+    // observable in render state — see useBranchForkGuard.ts comment block.
     const ctx = makeContext();
     const payload: BranchSwitchPayload = {
       name: 'feature/foo',
@@ -188,9 +196,14 @@ describe('applyBranchSwitchPayload — forked, with active chat', () => {
 
     applyBranchSwitchPayload(payload, ctx);
 
-    // Cross-tab marker cleared immediately (try/finally).
-    expect(getMigrationMarker()).toBeNull();
-    // In-tab guard remains set — useChat's state-observed effect releases it.
+    // Cross-tab marker stays set — released by useBranchForkGuard alongside
+    // the in-tab guard once the migration is observable.
+    expect(getMigrationMarker()).toMatchObject({
+      chatId: 'chat-1',
+      fromBranch: 'main',
+      toBranch: 'feature/foo',
+    });
+    // In-tab guard also stays set, same release mechanism.
     expect(ctx.skipAutoCreateRef.current).toEqual({
       chatId: 'chat-1',
       toBranch: 'feature/foo',
@@ -308,11 +321,14 @@ describe('applyBranchSwitchPayload — forked, with active chat', () => {
     expect(ctx.dirtyConversationIdsRef.current.has('chat-1')).toBe(true);
   });
 
-  it('stale-capture avoidance: uses activeChatIdRef.current at resolution time', () => {
-    // Simulate the chat being switched between dispatch and the migration
-    // call: activeChatIdRef.current points at chat-2, conversations only
-    // has chat-1. Migration finds no conversation under chat-2 and the
-    // setConversations updater returns prev unchanged.
+  it('stale-capture / missing-conv: bails before setting any guards', () => {
+    // PR #412 review (Codex P1 + Copilot converged): if the chat was
+    // switched away or deleted between dispatch and resolution
+    // (`activeChatIdRef.current` points at a chat not in conversations),
+    // setting the in-tab guard before checking would leave it stuck — the
+    // useBranchForkGuard state-observed clear can't fire because
+    // `conversations[guard.chatId]` is undefined. Treat missing-conv same
+    // as no-active-chat fallback: only sync the workspace branch.
     const ctx = makeContext();
     ctx.activeChatIdRef.current = 'chat-2'; // switched away
 
@@ -321,9 +337,46 @@ describe('applyBranchSwitchPayload — forked, with active chat', () => {
       ctx,
     );
 
-    // setConversations is still invoked (the updater handles the missing
-    // conv internally), but chat-1 stays unchanged.
+    // No guard set, no marker set, no setConversations call — the only
+    // side effect is the workspace branch sync via onBranchSwitch.
+    expect(ctx.skipAutoCreateRef.current).toBeNull();
+    expect(getMigrationMarker()).toBeNull();
+    expect(ctx.setConversations).not.toHaveBeenCalled();
+    expect(ctx.onBranchSwitchSpy).toHaveBeenCalledWith('feature/foo');
+    // chat-1 stays unchanged.
     expect(ctx.conversations['chat-1'].branch).toBe('main');
     expect(ctx.conversations['chat-1'].messages).toHaveLength(0);
+  });
+
+  it('R12 backfill: legacy conv with undefined branch falls back to fromBranch', () => {
+    // PR #412 review (Codex P2): Conversation.branch is optional; legacy
+    // chats from before per-conversation branches landed have it undefined.
+    // Without the fallback, backfill would write `branch: undefined` onto
+    // pre-fork messages — then conv.branch becomes the new branch and read-
+    // side fallback (effectiveMessageBranch) attributes pre-fork messages
+    // to the new branch, erasing provenance.
+    const oldMessage = makeMessage({ id: 'm1', content: 'pre-fork message' });
+    // Construct a conversation without a `branch` field (legacy shape).
+    const legacyConv = {
+      ...makeConversation({ messages: [oldMessage] }),
+      branch: undefined,
+    } as Conversation;
+    const ctx = makeContext(legacyConv);
+    // Workspace currentBranch is 'develop' — that's our fromBranch when the
+    // payload doesn't supply one.
+    ctx.branchInfoRef.current = { currentBranch: 'develop', defaultBranch: 'main' };
+
+    applyBranchSwitchPayload(
+      { name: 'feature/foo', kind: 'forked', source: 'sandbox_create_branch' },
+      ctx,
+    );
+
+    const updated = ctx.conversations['chat-1'];
+    // The pre-fork message gets stamped with 'develop' (the fromBranch),
+    // not undefined. Read-side fallback now correctly attributes it.
+    expect(updated.messages[0].branch).toBe('develop');
+    // The branch_forked event itself stamps with the new branch.
+    expect(updated.messages[1].branch).toBe('feature/foo');
+    expect(updated.branch).toBe('feature/foo');
   });
 });

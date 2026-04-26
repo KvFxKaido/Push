@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import type { ChatMessage, CardAction, AttachmentData } from '@/types';
 import { CardRenderer } from '@/components/cards/CardRenderer';
-import { PushMarkIcon } from '@/components/icons/push-custom-icons';
+import { BranchWaveIcon, PushMarkIcon } from '@/components/icons/push-custom-icons';
 import {
   looksLikeToolCall,
   ONLY_BRACKETS_RE,
@@ -437,6 +437,27 @@ export const MessageBubble = memo(function MessageBubble({
   // Hide tool result messages — they now live in the Console drawer
   if (message.isToolResult || (message.role as string) === 'tool') {
     return null;
+  }
+
+  // Slice 2: render `branch_forked` events as a centered transcript divider
+  // rather than as an empty assistant bubble. The event has empty `content`
+  // (transcript metadata, visibleToModel: false), so without this special
+  // case MessageBubble would draw an empty assistant row with avatar +
+  // spacing — visible UX bug flagged in PR #412 review (Copilot + Codex).
+  if (message.kind === 'branch_forked' && message.branchForkedMeta) {
+    const { from, to } = message.branchForkedMeta;
+    return (
+      <div className="my-3 flex items-center justify-center px-4">
+        <div className="flex items-center gap-2 rounded-full border border-push-border bg-push-surface px-3 py-1 text-push-2xs text-push-fg-dim">
+          <BranchWaveIcon className="h-3 w-3" />
+          <span>
+            Forked <span className="font-mono text-push-fg-secondary">{from}</span>
+            <span className="mx-1">→</span>
+            <span className="font-mono text-push-fg-secondary">{to}</span>
+          </span>
+        </div>
+      </div>
+    );
   }
 
   // Hide tool call / malformed messages only when they have no cards.

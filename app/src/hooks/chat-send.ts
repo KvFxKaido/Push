@@ -345,6 +345,9 @@ export interface SendLoopContext {
   // closure-capture time, so a chat switch between dispatch and resolution
   // doesn't migrate the wrong conversation.
   activeChatIdRef: MutableRefObject<string | null>;
+  // Used by applyBranchSwitchPayload to verify the target conversation
+  // exists BEFORE setting guards — see Codex P1 review feedback.
+  conversationsRef: MutableRefObject<Record<string, Conversation>>;
   // State mutation
   setConversations: Dispatch<SetStateAction<Record<string, Conversation>>>;
   dirtyConversationIdsRef: MutableRefObject<Set<string>>;
@@ -592,6 +595,7 @@ export async function processAssistantTurn(
     executeDelegateCall,
     skipAutoCreateRef,
     activeChatIdRef,
+    conversationsRef,
   } = ctx;
 
   const applyPostToolPolicyEffects = (
@@ -1538,6 +1542,7 @@ export async function processAssistantTurn(
     // falls through to the existing auto-switch behavior.
     applyBranchSwitchPayload(toolExecResult.branchSwitch, {
       activeChatIdRef,
+      conversationsRef,
       branchInfoRef,
       skipAutoCreateRef,
       setConversations,

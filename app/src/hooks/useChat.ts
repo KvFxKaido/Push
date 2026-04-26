@@ -1003,6 +1003,9 @@ export function useChat(
         // suppressing useChat's auto-switch effect during migration.
         skipAutoCreateRef,
         activeChatIdRef,
+        // applyBranchSwitchPayload reads this to verify the target conversation
+        // exists BEFORE setting guards (Codex P1 review feedback).
+        conversationsRef,
       };
 
       let loopCompletedNormally = false;
