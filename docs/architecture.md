@@ -58,9 +58,10 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 
 - Exactly one active branch exists per repo session.
 - The active branch is the commit target, push target, diff base, and chat context.
-- Chats are branch-scoped and stay bound to the branch where they started.
-- Switching branches is explicit and tears down the current sandbox before starting fresh on the target branch.
-- Branch creation is UI-owned; assistants should not create or switch branches themselves.
+- Chats are branch-scoped. They stay bound to the branch they were started on, except in a *fork*: when the user (or a model tool call) creates a new branch from the current workspace state, the active conversation migrates to the new branch alongside the still-running sandbox.
+- Branch transitions are explicit but preserve context. The sandbox is *not* torn down — it stays alive across the switch. The chat hook receives a normalized `BranchSwitchPayload { kind: 'forked' | 'switched', name, previous?, ... }`: `'forked'` migrates the active conversation onto the new branch, `'switched'` routes to the existing chat for the target branch (or auto-creates one).
+- Branch creation and switching are tool-callable, not UI-only. Foreground tools `create_branch` (creates a new branch from current state, emits `kind: 'forked'`) and `switch_branch` (switches to an existing branch, emits `kind: 'switched'`) keep Push's tracked branch in sync with sandbox HEAD. Long-form aliases `sandbox_create_branch` and `sandbox_switch_branch` still resolve. Raw `git checkout <branch>` / `git switch <branch>` (and `-b` / `-c` variants) are blocked in `sandbox_exec` regardless of approval mode and routed through the typed tools — the issue is state synchronization, not consent. The detection is best-effort: bare names are caught, but `/` or `.` in the operand defers to the user (paths like `src/utils` and feat-branch names like `feat/foo` fall through). Models that know they're switching branches should use the typed tools directly.
+- Foreground/background result boundary: foreground tools emit `branchSwitch` for UI routing (chat migration / selection); background coder jobs emit `meta: { branchCreated?, branchSwitched? }` for observability only. No background result fires chat or routing side effects. `create_branch` is wired for both surfaces; `switch_branch` is foreground-only.
 
 ## Delivery and Review Rules
 

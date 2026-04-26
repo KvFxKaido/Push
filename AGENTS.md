@@ -11,8 +11,8 @@ This is the **required entry doc** for Push. Repo instruction loaders read `AGEN
 - Repo context is locked to the selected repo.
 - Chats are branch-scoped.
 - The **active branch** is the commit target, push target, diff base, and chat context.
-- Branch switching is explicit and tears down the sandbox.
-- Branch creation is UI-owned; the assistant should not create or switch branches itself.
+- Branch transitions preserve context: the sandbox stays alive, and the active chat either migrates to the new branch (fork) or routes to the existing chat for that branch (switch).
+- Models can create branches via `create_branch` and switch to existing branches via `switch_branch` (long-form aliases `sandbox_create_branch` / `sandbox_switch_branch` still resolve). Both keep Push's tracked branch in sync with sandbox HEAD. Raw `git checkout <branch>` / `git switch <branch>` (and `-b` / `-c` variants) are blocked in `sandbox_exec` and route through the typed tools — this is best-effort: bare names (`main`, `develop`, `README`) are caught, but `/`-containing operands (`feat/foo`, `src/utils`) and operands with `.` are deliberately allowed through to avoid breaking legitimate file restores. Use the typed tools directly when the model knows the operand is a branch.
 
 ## Repo map
 
