@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { createBranchForkedMessage, createMessage, effectiveMessageBranch } from './chat-message';
+import {
+  createBranchForkedMessage,
+  createMessage,
+  effectiveMessageBranch,
+  filterModelVisibleMessages,
+} from './chat-message';
 
 describe('createMessage', () => {
   it('stamps the provided current branch', () => {
@@ -98,5 +103,48 @@ describe('effectiveMessageBranch', () => {
     // Critical for R12: after a conversation migrates from main to feature/foo,
     // old stamped messages must keep their original branch.
     expect(effectiveMessageBranch({ branch: 'main' }, 'feature/foo')).toBe('main');
+  });
+});
+
+describe('filterModelVisibleMessages', () => {
+  it('keeps messages with undefined visibleToModel (default visible)', () => {
+    const messages: { id: string; visibleToModel?: boolean }[] = [
+      { id: 'a' },
+      { id: 'b' },
+      { id: 'c' },
+    ];
+    expect(filterModelVisibleMessages(messages)).toHaveLength(3);
+  });
+
+  it('keeps messages with explicit visibleToModel: true', () => {
+    const messages: { id: string; visibleToModel?: boolean }[] = [
+      { id: 'a', visibleToModel: true },
+      { id: 'b', visibleToModel: true },
+    ];
+    expect(filterModelVisibleMessages(messages)).toHaveLength(2);
+  });
+
+  it('strips messages with explicit visibleToModel: false', () => {
+    const messages: { id: string; visibleToModel?: boolean }[] = [
+      { id: 'a' },
+      { id: 'b', visibleToModel: false },
+      { id: 'c' },
+    ];
+    const out = filterModelVisibleMessages(messages);
+    expect(out).toHaveLength(2);
+    expect(out.map((m) => m.id)).toEqual(['a', 'c']);
+  });
+
+  it('strips a branch_forked transcript event', () => {
+    // Real-world shape: createBranchForkedMessage produces visibleToModel: false.
+    const event = createBranchForkedMessage({ from: 'main', to: 'feature/foo' });
+    const messages = [
+      createMessage({ role: 'user', content: 'hi', currentBranch: 'main' }),
+      event,
+      createMessage({ role: 'assistant', content: 'reply', currentBranch: 'feature/foo' }),
+    ];
+    const out = filterModelVisibleMessages(messages);
+    expect(out).toHaveLength(2);
+    expect(out.find((m) => m.id === event.id)).toBeUndefined();
   });
 });

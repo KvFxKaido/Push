@@ -113,3 +113,19 @@ export function effectiveMessageBranch(
 ): string {
   return msg.branch ?? conversationBranch ?? 'main';
 }
+
+/** Centralized prompt-pack filter: strip messages explicitly marked
+ *  `visibleToModel: false`. Apply at every site that converts ChatMessage[]
+ *  into LLM-ready messages. Currently used by `toLLMMessages` in the
+ *  orchestrator (foreground packer); the auditor/coder/explorer agents
+ *  consume structured inputs (diff, task, file context) rather than raw
+ *  conversation messages, so they don't need to filter.
+ *
+ *  Default behavior (undefined) is model-visible. Only an explicit `false`
+ *  filters the message — slice 2's `branch_forked` event is the first
+ *  consumer of the flag. */
+export function filterModelVisibleMessages<M extends Pick<ChatMessage, 'visibleToModel'>>(
+  messages: readonly M[],
+): M[] {
+  return messages.filter((m) => m.visibleToModel !== false);
+}

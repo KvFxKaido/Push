@@ -18,6 +18,7 @@ import {
   buildOrchestratorBasePrompt,
 } from './orchestrator-prompt-builder';
 import { manageContext } from './message-context-manager';
+import { filterModelVisibleMessages } from './chat-message';
 // --- Re-exports from orchestrator-streaming (break circular dependency) ---
 export {
   parseProviderError,
@@ -296,9 +297,20 @@ export function toLLMMessages(
       : { role: 'system', content: systemContent },
   ];
 
+  // Centralized model-visibility filter (slice 2): strip messages explicitly
+  // marked `visibleToModel: false`. Applied here at the top of the prompt-
+  // pack path so transcript-only events (e.g. `branch_forked`) never reach
+  // the model regardless of which surface created them.
+  const visibleMessages = filterModelVisibleMessages(messages);
+
   // Smart context management — summarize old messages instead of dropping
   const contextBudget = getContextBudget(providerType, providerModel);
-  const windowedMessages = manageContext(messages, contextBudget, providerType, onPreCompact);
+  const windowedMessages = manageContext(
+    visibleMessages,
+    contextBudget,
+    providerType,
+    onPreCompact,
+  );
 
   for (const msg of windowedMessages) {
     // Check for attachments (multimodal message)
