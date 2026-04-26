@@ -137,6 +137,7 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
     saveExpiryCheckpoint: vi.fn(),
     ciStatus: null,
     diagnoseCIFailure: vi.fn(),
+    forkBranchFromUI: vi.fn(async () => ({ ok: true as const })),
     repos: [],
     reposLoading: false,
     reposError: null,

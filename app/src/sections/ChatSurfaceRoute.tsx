@@ -359,6 +359,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
               onSwitchBranch: () => {},
               onRefreshBranches: () => {},
               onShowBranchCreate: () => {},
+              onShowBranchFork: () => {},
               onShowMergeFlow: () => {},
               onDeleteBranch: async () => false,
             }}

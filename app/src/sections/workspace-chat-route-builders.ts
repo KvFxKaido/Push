@@ -375,6 +375,7 @@ export function buildWorkspaceHubBranchProps(args: {
   loadRepoBranches: (repoFullName: string) => Promise<void> | void;
   setCurrentBranch: ChatRouteProps['setCurrentBranch'];
   setShowBranchCreate: (open: boolean) => void;
+  setShowBranchFork: (open: boolean) => void;
   setShowMergeFlow: (open: boolean) => void;
   handleDeleteBranch: NonNullable<WorkspaceHubProps['branchProps']>['onDeleteBranch'];
 }): WorkspaceHubProps['branchProps'] {
@@ -392,6 +393,7 @@ export function buildWorkspaceHubBranchProps(args: {
         }
       : () => {},
     onShowBranchCreate: () => args.setShowBranchCreate(true),
+    onShowBranchFork: () => args.setShowBranchFork(true),
     onShowMergeFlow: () => args.setShowMergeFlow(true),
     onDeleteBranch: args.handleDeleteBranch,
   };
