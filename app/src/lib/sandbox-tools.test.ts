@@ -4291,6 +4291,41 @@ describe('executeSandboxToolCall -- git guard for branch creation', () => {
     expect(result.structuredError?.type).not.toBe('GIT_GUARD_BLOCKED');
     expect(sandboxClient.execInSandbox).toHaveBeenCalled();
   });
+
+  it('blocks branch-create even with allowDirectGit:true (state-sync, not consent)', async () => {
+    // Codex P1 regression pin: pre-fix the branch guard honored
+    // `allowDirectGit`, which let a model use the consent escape hatch
+    // to run `git checkout -b` directly and desync Push's tracked
+    // branch from sandbox HEAD. The escape hatch only applies to
+    // commit/push/merge/rebase; branch-create has no consent-style
+    // bypass because the issue isn't permission, it's state sync.
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_exec',
+        args: { command: 'git checkout -b feature/foo', allowDirectGit: true },
+      },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(result.text).toContain('sandbox_create_branch');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('blocks branch-switch even with allowDirectGit:true (state-sync, not consent)', async () => {
+    // Same as above but for the slice 2.5 bare-checkout case.
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_exec',
+        args: { command: 'git checkout main', allowDirectGit: true },
+      },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(result.text).toContain('sandbox_switch_branch');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
 });
 
 describe('executeSandboxToolCall -- git guard for plain branch checkout/switch', () => {
@@ -4448,6 +4483,62 @@ describe('executeSandboxToolCall -- git guard for plain branch checkout/switch',
     expect(result.structuredError?.message).toBe('Direct "git checkout <branch>" is blocked');
     expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
   });
+
+  // Copilot review pin: shell-side tokens (redirects, fd dups, command
+  // substitution, backticks) used to bypass the guard because tokenization
+  // counted them as additional positionals and triggered the multi-positional
+  // file-restore skip. Now they're stripped (or trigger a defensive block
+  // for substitution).
+  it('blocks `git checkout main >/dev/null` (stdout redirect bypass)', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout main >/dev/null' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(result.structuredError?.message).toBe('Direct "git checkout <branch>" is blocked');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('blocks `git checkout main 2>&1` (fd-redirect bypass)', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout main 2>&1' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('blocks `git switch main > log.txt` (separated-redirect bypass)', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git switch main > log.txt' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('blocks `git checkout $(echo main)` (command-substitution bypass)', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout $(echo main)' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('blocks `git checkout `pwd`' + '` (backtick-substitution bypass)', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout `pwd`' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
 });
 
 describe('validateSandboxToolCall -- sandbox_switch_branch', () => {
@@ -4489,7 +4580,7 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
     vi.mocked(sandboxClient.execInSandbox).mockReset();
   });
 
-  it('captures previous via git rev-parse, runs git checkout, returns kind:switched', async () => {
+  it('captures previous via git rev-parse, runs git switch, returns kind:switched', async () => {
     vi.mocked(sandboxClient.execInSandbox)
       // 1) HEAD probe
       .mockResolvedValueOnce({
@@ -4583,6 +4674,40 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
       kind: 'switched',
       source: 'sandbox_switch_branch',
     });
+  });
+
+  it('proceeds without previous when HEAD probe THROWS (transport/timeout)', async () => {
+    // Copilot review pin: pre-fix the HEAD probe wasn't wrapped in
+    // try/catch, so an `execInSandbox` throw on transport/timeout would
+    // abort the whole tool before attempting the actual switch — even
+    // though the source comment described the probe as "non-fatal".
+    vi.mocked(sandboxClient.execInSandbox)
+      // 1) HEAD probe throws — simulates a wedged sandbox subrequest
+      //    or non-2xx upstream error.
+      .mockRejectedValueOnce(new Error('sandbox subrequest failed'))
+      // 2) git switch must still run despite the probe throw.
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_switch_branch', args: { branch: 'main' } },
+      'sb-1',
+    );
+
+    // Branch switch completed successfully; previous omitted because
+    // the probe never returned a value.
+    expect(result.branchSwitch).toEqual({
+      name: 'main',
+      kind: 'switched',
+      source: 'sandbox_switch_branch',
+    });
+    // Both the probe and the actual switch were attempted.
+    expect(vi.mocked(sandboxClient.execInSandbox)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(sandboxClient.execInSandbox).mock.calls[1][1]).toContain("git switch 'main'");
   });
 
   it('rejects invalid branch names without invoking the sandbox', async () => {

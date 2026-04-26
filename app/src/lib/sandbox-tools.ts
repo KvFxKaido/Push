@@ -266,8 +266,16 @@ export async function executeSandboxToolCall(
         // consent — raw `git checkout` leaves Push's currentBranch out of
         // sync with sandbox HEAD regardless of approval mode. Always route
         // those through sandbox_create_branch / sandbox_switch_branch.
-        const shouldBlock = isBranchCreate || isBranchSwitch || currentApprovalMode !== 'full-auto';
-        if (blockedGitOp && !call.args.allowDirectGit && shouldBlock) {
+        const isBranchOp = isBranchCreate || isBranchSwitch;
+        const shouldBlock = isBranchOp || currentApprovalMode !== 'full-auto';
+        // `allowDirectGit` is the consent escape hatch for commit/push/
+        // merge/rebase. It does NOT apply to branch create/switch — those
+        // would still desync Push's tracked branch from sandbox HEAD even
+        // with explicit user approval, so the only safe path is the typed
+        // tool. Honoring `allowDirectGit` here would re-open the bypass
+        // the slice 2.5 guard exists to close.
+        const allowDirectGitApplies = !isBranchOp && call.args.allowDirectGit;
+        if (blockedGitOp && !allowDirectGitApplies && shouldBlock) {
           const guardDetail = isBranchCreate
             ? 'Use sandbox_create_branch to create a branch — it keeps Push and the sandbox in sync.'
             : isBranchSwitch
@@ -536,15 +544,22 @@ export async function executeSandboxToolCall(
         // Capture HEAD before switching so the result can carry `previous`.
         // `--abbrev-ref HEAD` returns the branch name, or literally "HEAD"
         // when detached. Failures here are non-fatal: we proceed without
-        // `previous` rather than blocking the switch.
+        // `previous` rather than blocking the switch. `execInSandbox` can
+        // throw on transport / timeout / non-2xx — wrap in try/catch so a
+        // probe failure can never abort the actual switch we were asked
+        // to perform.
         let previous: string | undefined;
-        const headProbe = await execInSandbox(
-          sandboxId,
-          'cd /workspace && git rev-parse --abbrev-ref HEAD',
-        );
-        if (headProbe.exitCode === 0) {
-          const head = headProbe.stdout.trim();
-          if (head && head !== 'HEAD') previous = head;
+        try {
+          const headProbe = await execInSandbox(
+            sandboxId,
+            'cd /workspace && git rev-parse --abbrev-ref HEAD',
+          );
+          if (headProbe.exitCode === 0) {
+            const head = headProbe.stdout.trim();
+            if (head && head !== 'HEAD') previous = head;
+          }
+        } catch {
+          // Probe failed; continue without `previous`.
         }
 
         // `git switch` (not `git checkout`): branch-only by spec, so a path
