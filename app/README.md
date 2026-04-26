@@ -42,4 +42,4 @@ Worker secrets (set via `wrangler secret put`):
 Push runs tasks inside ephemeral Linux workspaces. Two backends are supported, selected per-deploy via the `PUSH_SANDBOX_PROVIDER` var in `wrangler.jsonc`:
 
 - **Cloudflare Sandbox (default, `"cloudflare"`)** — runs inside a Worker-bound container defined by `Dockerfile.sandbox`. The `containers` block, `Sandbox` Durable Object binding, and `SANDBOX_TOKENS` KV namespace in `wrangler.jsonc` are already provisioned; no extra deploy step beyond `wrangler deploy`.
-- **Modal (`"modal"`)** — runs in Modal's managed cloud. Deploy with `cd ../sandbox && modal deploy app.py` (6 web endpoints) and set the `MODAL_SANDBOX_BASE_URL` secret. Remains available as a fallback while CF-specific gaps (owner tokens, snapshots, workspace-revision parity) are closed.
+- **Modal (`"modal"`)** — runs in Modal's managed cloud. Deploy with `cd ../sandbox && modal deploy app.py` (6 web endpoints) and set the `MODAL_SANDBOX_BASE_URL` secret. Remains available as an explicit fallback.

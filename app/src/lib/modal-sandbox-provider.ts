@@ -410,14 +410,13 @@ export type SandboxProviderName = 'modal' | 'cloudflare';
  *   1. Explicit `options.provider` (useful for tests + advanced callers).
  *   2. PUSH_SANDBOX_PROVIDER env var (CLI / Node only — browser/Worker
  *      bundles have no process.env).
- *   3. Default: "modal" as a conservative CLI fallback.
+ *   3. Default: "cloudflare"; Modal remains available when explicitly selected.
  *
  * Note on asymmetry: the Worker's /api/sandbox/* dispatcher reads the same
- * env var via wrangler `vars` and has its own default (currently
- * "cloudflare"). This factory is only consulted by callers that run outside
- * the Worker — primarily the CLI. Browser surfaces hit /api/sandbox/*
- * through the ModalSandboxProvider's HTTP client and the Worker's
- * server-side dispatch decides which backend actually handles the request.
+ * env var via wrangler `vars` and also defaults to "cloudflare". Browser
+ * surfaces hit /api/sandbox/* through the ModalSandboxProvider's HTTP client
+ * and the Worker's server-side dispatch decides which backend actually handles
+ * the request.
  *
  * When adding a third backend, note that the SNAPSHOT_INDEX KV schema is
  * Modal-specific (imageId + restoreToken) — give each provider its own KV
@@ -447,5 +446,5 @@ function resolveDefaultProvider(): SandboxProviderName {
   } catch {
     // Ignore — fall through to default.
   }
-  return 'modal';
+  return 'cloudflare';
 }
