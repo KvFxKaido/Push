@@ -33,6 +33,7 @@ export type Capability =
   | 'git:commit' // Create commits (prepare + auditor review)
   | 'git:push' // Push commits to the remote
   | 'git:draft' // Quick-save uncommitted changes to a draft branch
+  | 'git:branch' // Create a new branch and switch to it
   | 'pr:read' // Read PRs, check mergeability, find existing PRs
   | 'pr:write' // Create or merge PRs, delete branches
   | 'workflow:read' // List and view workflow runs and logs
@@ -54,6 +55,7 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   'git:commit',
   'git:push',
   'git:draft',
+  'git:branch',
   'pr:read',
   'pr:write',
   'workflow:read',
@@ -119,6 +121,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   sandbox_push: ['git:push'],
   sandbox_download: ['sandbox:download'],
   sandbox_save_draft: ['git:draft'],
+  sandbox_create_branch: ['git:branch'],
   promote_to_github: ['sandbox:download'],
 
   // Delegation tools
@@ -161,6 +164,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   git_status: ['repo:read'],
   git_diff: ['repo:read'],
   git_commit: ['git:commit'],
+  git_create_branch: ['git:branch'],
   lsp_diagnostics: ['repo:read'],
   save_memory: ['scratchpad'],
   write_file: ['repo:write'],
@@ -254,6 +258,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'git:commit',
     'git:push',
     'git:draft',
+    'git:branch',
     'pr:read',
     'pr:write',
     'workflow:read',
@@ -302,6 +307,7 @@ export const CAPABILITY_LABELS: Readonly<Record<Capability, string>> = {
   'git:commit': 'create commits',
   'git:push': 'push to remote',
   'git:draft': 'save draft branches',
+  'git:branch': 'create branches',
   'pr:read': 'read pull requests',
   'pr:write': 'create/merge pull requests',
   'workflow:read': 'view CI/CD runs',

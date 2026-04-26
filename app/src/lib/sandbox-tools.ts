@@ -49,6 +49,7 @@ import {
   isLikelyMutatingSandboxExec,
   detectBlockedGitCommand,
   createGitHubRepo,
+  shellEscape,
 } from './sandbox-tool-utils';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
@@ -386,6 +387,61 @@ export async function executeSandboxToolCall(
 
       case 'sandbox_diff': {
         return handleSandboxDiff(buildGitReleaseContext(sandboxId));
+      }
+
+      case 'sandbox_create_branch': {
+        const name = call.args.name;
+        // Strict ref validation: no shell metachars, no leading '-', no '..',
+        // no leading/trailing slash. shellEscape quotes the value but defense
+        // in depth — git itself rejects most of these too.
+        const validRef =
+          /^[A-Za-z0-9._/-]+$/.test(name) &&
+          !name.startsWith('-') &&
+          !name.startsWith('/') &&
+          !name.endsWith('/') &&
+          !name.includes('..');
+        if (!validRef) {
+          const err: StructuredToolError = {
+            type: 'INVALID_ARG',
+            retryable: false,
+            message: 'Invalid branch name',
+            detail:
+              'Branch names may contain letters, digits, ".", "_", "/", "-" and may not start with "-" or contain "..".',
+          };
+          return {
+            text: formatStructuredError(
+              err,
+              `[Tool Error — sandbox_create_branch] Invalid branch name "${name}".`,
+            ),
+            structuredError: err,
+          };
+        }
+
+        const from = call.args.from;
+        const cmd = from
+          ? `cd /workspace && git checkout ${shellEscape(from)} && git checkout -b ${shellEscape(name)}`
+          : `cd /workspace && git checkout -b ${shellEscape(name)}`;
+
+        const result = await execInSandbox(sandboxId, cmd, undefined, {
+          markWorkspaceMutated: true,
+        });
+
+        if (result.exitCode !== 0) {
+          const reason = result.stderr || result.stdout || 'git checkout -b failed';
+          const err = classifyError(reason, cmd);
+          return {
+            text: formatStructuredError(err, `[Tool Error — sandbox_create_branch]\n${reason}`),
+            structuredError: err,
+          };
+        }
+
+        return {
+          text: [
+            `[Tool Result — sandbox_create_branch]`,
+            `Created and switched to ${name}${from ? ` from ${from}` : ''}.`,
+          ].join('\n'),
+          branchSwitch: name,
+        };
       }
 
       case 'sandbox_prepare_commit': {

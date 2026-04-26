@@ -137,6 +137,7 @@ function mapCallToRoute(call: SandboxToolCall): RouteMapping {
 
     case 'sandbox_download':
     case 'sandbox_save_draft':
+    case 'sandbox_create_branch':
     case 'promote_to_github':
       return { kind: 'unsupported' };
   }

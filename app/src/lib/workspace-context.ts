@@ -168,6 +168,7 @@ export function buildSessionCapabilityBlock(
     },
     workflow: {
       branchSwitching: workspaceContext.mode === 'repo' ? 'explicit_ui_only' : 'not_applicable',
+      branchCreation: workspaceContext.mode === 'repo' ? 'tool_available' : 'not_applicable',
       commitTarget: workspaceContext.mode === 'repo' ? 'active_branch' : 'none',
       mergeFlow: workspaceContext.mode === 'repo' ? 'github_pr_only' : 'not_applicable',
     },

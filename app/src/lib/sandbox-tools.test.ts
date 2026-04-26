@@ -4035,3 +4035,116 @@ describe('sandbox_search_replace', () => {
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 });
+
+describe('validateSandboxToolCall -- sandbox_create_branch', () => {
+  it('accepts a valid branch name and ignores empty from', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_create_branch',
+      args: { name: 'feature/foo', from: '   ' },
+    });
+    expect(result).not.toBeNull();
+    if (result?.tool === 'sandbox_create_branch') {
+      expect(result.args.name).toBe('feature/foo');
+      expect(result.args.from).toBeUndefined();
+    }
+  });
+
+  it('preserves a non-empty from arg', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_create_branch',
+      args: { name: 'feature/foo', from: 'main' },
+    });
+    if (result?.tool === 'sandbox_create_branch') {
+      expect(result.args.from).toBe('main');
+    }
+  });
+
+  it('rejects missing name', () => {
+    expect(validateSandboxToolCall({ tool: 'sandbox_create_branch', args: {} })).toBeNull();
+  });
+
+  it('rejects whitespace-only name', () => {
+    expect(
+      validateSandboxToolCall({ tool: 'sandbox_create_branch', args: { name: '   ' } }),
+    ).toBeNull();
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_create_branch', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('runs git checkout -b and returns branchSwitch on success', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: "Switched to a new branch 'feature/foo'",
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/foo' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Result — sandbox_create_branch]');
+    expect(result.text).toContain('Created and switched to feature/foo');
+    expect(result.branchSwitch).toBe('feature/foo');
+
+    const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toContain("git checkout -b 'feature/foo'");
+    expect(calls[0][3]?.markWorkspaceMutated).toBe(true);
+  });
+
+  it('chains checkout of base ref when from is provided', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/foo', from: 'main' } },
+      'sb-1',
+    );
+
+    expect(result.branchSwitch).toBe('feature/foo');
+    expect(result.text).toContain('from main');
+    const cmd = vi.mocked(sandboxClient.execInSandbox).mock.calls[0][1];
+    expect(cmd).toContain("git checkout 'main'");
+    expect(cmd).toContain("git checkout -b 'feature/foo'");
+  });
+
+  it('rejects invalid branch names without invoking the sandbox', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: '-evil' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('INVALID_ARG');
+    expect(result.text).toContain('Invalid branch name');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a structured error when git fails', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: "fatal: a branch named 'feature/foo' already exists",
+      exitCode: 128,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/foo' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_create_branch]');
+    expect(result.text).toContain('already exists');
+    expect(result.branchSwitch).toBeUndefined();
+    expect(result.structuredError).toBeDefined();
+  });
+});

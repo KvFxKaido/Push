@@ -64,6 +64,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_verify_workspace'; args: Record<string, never> }
   | { tool: 'sandbox_download'; args: { path?: string } }
   | { tool: 'sandbox_save_draft'; args: { message?: string; branch_name?: string } }
+  | { tool: 'sandbox_create_branch'; args: { name: string; from?: string } }
   | {
       tool: 'promote_to_github';
       args: { repo_name: string; description?: string; private?: boolean };
@@ -280,6 +281,15 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
         message: typeof args.message === 'string' ? args.message : undefined,
         branch_name: typeof args.branch_name === 'string' ? args.branch_name : undefined,
       },
+    };
+  }
+  if (tool === 'sandbox_create_branch' && typeof args.name === 'string') {
+    const name = args.name.trim();
+    if (!name) return null;
+    const from = typeof args.from === 'string' ? args.from.trim() : undefined;
+    return {
+      tool: 'sandbox_create_branch',
+      args: { name, ...(from ? { from } : {}) },
     };
   }
   if (tool === 'sandbox_read_symbols' && typeof args.path === 'string') {

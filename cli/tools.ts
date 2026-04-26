@@ -785,6 +785,7 @@ Available tools:
 - git_status() — workspace git status (branch, dirty files)
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
 - git_commit(message, paths?) — stage and commit files (all files if paths not specified)
+- git_create_branch(name, from?) — create a new git branch and switch to it. Optional 'from' branches off a specific ref instead of HEAD.
 - undo_edit(path) — restore a file from its most recent backup (created before each write/edit)
 - lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
 - save_memory(content) — persist learnings across sessions (stored in .push/memory.md). Save project patterns, build commands, conventions. Keep concise — this is loaded into every future session. Structured form: save_memory(type, content, tags?, files?) where type is decision|task|next|fact|blocker — stored in .push/memory.json as typed entries.
@@ -2157,6 +2158,46 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         }
       }
 
+      case 'git_create_branch': {
+        const name = asString(call.args.name, 'name').trim();
+        const validRef =
+          /^[A-Za-z0-9._/-]+$/.test(name) &&
+          !name.startsWith('-') &&
+          !name.startsWith('/') &&
+          !name.endsWith('/') &&
+          !name.includes('..');
+        if (!validRef) {
+          return {
+            ok: false,
+            text: `Invalid branch name "${name}". Use letters, digits, ".", "_", "/", "-"; no leading "-" or ".." allowed.`,
+            structuredError: {
+              code: 'INVALID_ARG',
+              message: 'Invalid branch name',
+              retryable: false,
+            },
+          };
+        }
+        const from = typeof call.args.from === 'string' ? call.args.from.trim() : '';
+
+        try {
+          if (from) {
+            await execFileAsync('git', ['checkout', from], { cwd: workspaceRoot });
+          }
+          await execFileAsync('git', ['checkout', '-b', name], { cwd: workspaceRoot });
+          return {
+            ok: true,
+            text: `Created and switched to ${name}${from ? ` from ${from}` : ''}.`,
+            meta: { branch: name, from: from || null },
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            text: `git create_branch failed: ${err.message}`,
+            structuredError: { code: 'GIT_ERROR', message: err.message, retryable: false },
+          };
+        }
+      }
+
       case 'undo_edit': {
         const filePath = await ensureInsideWorkspace(
           workspaceRoot,
@@ -2326,7 +2367,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       default:
         return {
           ok: false,
-          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, exec_start, exec_poll, exec_write, exec_stop, exec_list_sessions, write_file, edit_file, undo_edit, read_symbols, read_symbol, git_status, git_diff, git_commit, save_memory, lsp_diagnostics`,
+          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, exec_start, exec_poll, exec_write, exec_stop, exec_list_sessions, write_file, edit_file, undo_edit, read_symbols, read_symbol, git_status, git_diff, git_commit, git_create_branch, save_memory, lsp_diagnostics`,
           structuredError: {
             code: 'UNKNOWN_TOOL',
             message: `Unknown tool: ${call.tool}`,
