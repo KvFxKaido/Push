@@ -113,6 +113,23 @@ export interface CoderTracingAdapter {
   spanStatusError: unknown;
 }
 
+/** Headless-side observability metadata for branch-affecting tools.
+ *
+ * The boundary rule: foreground tools emit `branchSwitch` for UI routing
+ * (conversation migration / chat selection); background-job tools emit
+ * `meta` for logs and future observability features only — no chat or
+ * routing side effects fire from a background result.
+ *
+ * Shape is intentionally broad so future headless branch-affecting
+ * producers (e.g. a backgrounded `sandbox_switch_branch`) inherit the
+ * contract without churn. Slice 3 wires only the `branchCreated`
+ * producer; `branchSwitched` is reserved.
+ */
+export interface SandboxToolMeta {
+  branchCreated?: { name: string };
+  branchSwitched?: { name: string };
+}
+
 /** Minimal sandbox/web-search tool-execution result shape the
  * tool-exec closure consumes. The richer Web `ToolExecutionResult`
  * satisfies this structurally. */
@@ -124,6 +141,11 @@ export interface SandboxToolExecResult<TCard> {
     retryable: boolean;
     message: string;
   };
+  /** Background-side observability for branch-affecting tools. See
+   *  `SandboxToolMeta`. Undefined for foreground results — those use
+   *  the richer `branchSwitch` field on the Web `ToolExecutionResult`
+   *  instead, which carries UI-routing semantics. */
+  meta?: SandboxToolMeta;
 }
 
 export interface SandboxStatusResult {

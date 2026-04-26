@@ -517,12 +517,48 @@ const GIT_MUTATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
  * hatch for true file restores. The cost of guiding the model toward an
  * unambiguous form is lower than the cost of letting state desync.
  */
+// Standalone shell operator: redirect introducer (`>`, `2>`, `>>`, `2>&1`,
+// `<<`, `<<<`) that consumes the NEXT token as its target. The "single
+// positional" heuristic must disregard these AND their target; otherwise
+// `git checkout main > log.txt` reads as three positionals and slips past
+// the guard via the multi-positional file-restore skip.
+const REDIRECT_INTRODUCER = /^(?:[0-9]*[<>]+&?[-0-9]*|<<-?|<<<)$/;
+// Redirect fused to its target with no whitespace, e.g. `>/dev/null`,
+// `2>/tmp/log`, `<input.txt`. Self-contained — no trailing target token.
+const FUSED_REDIRECT = /^[0-9]*[<>]/;
+// Pipe / list separators. The outer regex already terminates on `;`, `|`,
+// `&` so any tokens we see here are a leading-position match — but keep
+// the test for defense in depth (e.g. against future regex changes).
+const LIST_SEPARATOR_TOKEN = /^(?:&&|\|\|?|;|&)$/;
+
 function detectBlockedBranchCheckout(command: string): string | null {
   const re = /\bgit\s+(checkout|switch)\s+([^\n;|&]+)/gi;
   let match: RegExpExecArray | null;
   while ((match = re.exec(command)) !== null) {
     const subcommand = match[1].toLowerCase();
-    const tokens = match[2].trim().split(/\s+/).filter(Boolean);
+    const rawTokens = match[2].trim().split(/\s+/).filter(Boolean);
+    if (rawTokens.length === 0) continue;
+    // Command substitution / backticks make the operand dynamic — the
+    // model could be using these to bypass static detection. Block
+    // defensively rather than try to expand.
+    if (rawTokens.some((t) => t.includes('$(') || t.includes('`'))) {
+      return `git ${subcommand} <branch>`;
+    }
+    // Strip shell-side tokens (redirects, fd dups, etc.) before the
+    // single-positional check. They're the shell's, not git's. A
+    // standalone redirect introducer consumes the NEXT token as its
+    // target; a fused redirect is self-contained.
+    const tokens: string[] = [];
+    for (let i = 0; i < rawTokens.length; i++) {
+      const t = rawTokens[i];
+      if (LIST_SEPARATOR_TOKEN.test(t)) continue;
+      if (REDIRECT_INTRODUCER.test(t)) {
+        i++;
+        continue;
+      }
+      if (FUSED_REDIRECT.test(t)) continue;
+      tokens.push(t);
+    }
     if (tokens.length === 0) continue;
     // Any flag (-b, -c, --detach, --, etc.) — caller knows what they're
     // doing, or a different rule (e.g. -b/-c above) handles it.
