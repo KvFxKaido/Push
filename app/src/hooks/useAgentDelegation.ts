@@ -155,6 +155,7 @@ async function startBackgroundCoderJob(
           protectMain: refs.isMainProtectedRef.current,
         }
       : undefined,
+    originBranch: refs.branchInfoRef.current?.currentBranch,
     provider: input.lockedProviderForChat,
     model: input.resolvedModelForChat,
     projectInstructions: refs.agentsMdRef.current ?? undefined,
@@ -621,6 +622,7 @@ export function useAgentDelegation({
               fileCount: latestDiffPaths?.length,
             }),
             delegationOutcome: coderOutcome,
+            originBranch: auditorInput.originBranch,
           };
           appendRunEvent(chatId, {
             type: 'subagent.completed',

@@ -1596,8 +1596,12 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
     expect(result.text).toContain('Commit: abc1234');
     expect(result.text).toContain('Pushed to remote.');
     expect(result.card?.type).toBe('diff-preview');
-    // branchSwitch is propagated when a new draft branch was created
-    expect(result.branchSwitch).toMatch(/^draft\/main-/);
+    // branchSwitch is propagated when a new draft branch was created.
+    // Slice 2: release_draft emits 'switched' (not 'forked') because user
+    // intent is checkpointing, not forking the conversation.
+    expect(result.branchSwitch?.name).toMatch(/^draft\/main-/);
+    expect(result.branchSwitch?.kind).toBe('switched');
+    expect(result.branchSwitch?.source).toBe('release_draft');
 
     // checkout, stage, commit, push all set markWorkspaceMutated: true
     const mutationCalls = vi
@@ -4102,7 +4106,11 @@ describe('executeSandboxToolCall -- sandbox_create_branch', () => {
 
     expect(result.text).toContain('[Tool Result — sandbox_create_branch]');
     expect(result.text).toContain('Created and switched to feature/foo');
-    expect(result.branchSwitch).toBe('feature/foo');
+    expect(result.branchSwitch).toEqual({
+      name: 'feature/foo',
+      kind: 'forked',
+      source: 'sandbox_create_branch',
+    });
 
     const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
     expect(calls).toHaveLength(1);
@@ -4123,7 +4131,11 @@ describe('executeSandboxToolCall -- sandbox_create_branch', () => {
       'sb-1',
     );
 
-    expect(result.branchSwitch).toBe('feature/foo');
+    expect(result.branchSwitch).toEqual({
+      name: 'feature/foo',
+      kind: 'forked',
+      source: 'sandbox_create_branch',
+    });
     expect(result.text).toContain('from main');
     // Single atomic command, not two chained checkouts. Important: a failed
     // create must NOT leave HEAD on `from`.
@@ -4169,7 +4181,11 @@ describe('executeSandboxToolCall -- sandbox_create_branch', () => {
       'sb-1',
     );
 
-    expect(result.branchSwitch).toBe('feature/foo');
+    expect(result.branchSwitch).toEqual({
+      name: 'feature/foo',
+      kind: 'forked',
+      source: 'sandbox_create_branch',
+    });
     expect(result.text).toContain('[Context] Marked');
     expect(result.text).toContain('previously-read file');
   });

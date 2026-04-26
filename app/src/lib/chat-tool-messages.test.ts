@@ -168,6 +168,31 @@ describe('chat-tool-messages', () => {
     });
     expect(message.content).toContain('[meta] round=1');
     expect(message.content).toContain('[Tool Result] ok');
+    // No branch passed -> message left unstamped, deferring to the
+    // read-boundary fallback.
+    expect(message.branch).toBeUndefined();
+  });
+
+  it('stamps the provided branch on the tool result message', () => {
+    const toolMeta = buildToolMeta({
+      toolName: 'delegate_coder',
+      source: 'delegate',
+      provider: 'openrouter',
+      durationMs: 100,
+      isError: false,
+    });
+
+    const message = buildToolResultMessage({
+      id: 'tool-result-2',
+      timestamp: 200,
+      text: '[Tool Result] coder done',
+      toolMeta,
+      branch: 'main',
+    });
+
+    // Critical for R11: when the caller passes the dispatch-time
+    // originBranch, the resulting message stamps that branch verbatim.
+    expect(message.branch).toBe('main');
   });
 
   it('marks the last assistant message as a completed tool call', () => {

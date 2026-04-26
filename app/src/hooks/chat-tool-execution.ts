@@ -174,6 +174,11 @@ export function buildToolOutcome(
       durationMs: rawResult.durationMs,
       isError: rawResult.raw.text.includes('[Tool Error]'),
     }),
+    // R11: stamp delegate result messages with their LAUNCH branch (captured
+    // at delegation dispatch into ToolExecutionResult.originBranch). For
+    // non-delegate tools this is undefined and the message stays unstamped,
+    // falling back to conv.branch via effectiveMessageBranch.
+    branch: rawResult.raw.originBranch,
   });
 
   return { ...rawResult, resultMessage };
@@ -215,7 +220,7 @@ export function buildMetaLine(
 
 export interface ToolSideEffects {
   promotion: ToolExecutionResult['promotion'] | undefined;
-  branchSwitch: string | undefined;
+  branchSwitch: ToolExecutionResult['branchSwitch'];
   sandboxUnreachable: string | undefined;
 }
 

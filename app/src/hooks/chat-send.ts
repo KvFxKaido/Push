@@ -41,6 +41,8 @@ import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { executeTodoToolCall, type TodoItem } from '@/lib/todo-tools';
 import { resolveToolCallRecovery, type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { createId } from '@/hooks/chat-persistence';
+import { type MigrationGuard } from '@/lib/chat-message';
+import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
 import {
   createOrchestratorPolicy,
@@ -334,6 +336,18 @@ export interface SendLoopContext {
   checkpointRefs: CheckpointRefs;
   processedContentRef: MutableRefObject<Set<string>>;
   lastCoderStateRef: MutableRefObject<CoderWorkingMemory | null>;
+  // Slice 2 conversation-fork migration. Set by chat-send when a 'forked'
+  // branchSwitch arrives; cleared by useChat's state-observed effect once the
+  // migration is observable. While set, useChat's auto-switch effect early-
+  // returns to suppress both auto-create AND chat-id-steal.
+  skipAutoCreateRef: MutableRefObject<MigrationGuard | null>;
+  // For stale-capture avoidance: read activeChatId at migration time, not at
+  // closure-capture time, so a chat switch between dispatch and resolution
+  // doesn't migrate the wrong conversation.
+  activeChatIdRef: MutableRefObject<string | null>;
+  // Used by applyBranchSwitchPayload to verify the target conversation
+  // exists BEFORE setting guards — see Codex P1 review feedback.
+  conversationsRef: MutableRefObject<Record<string, Conversation>>;
   // State mutation
   setConversations: Dispatch<SetStateAction<Record<string, Conversation>>>;
   dirtyConversationIdsRef: MutableRefObject<Set<string>>;
@@ -579,6 +593,9 @@ export async function processAssistantTurn(
     getVerificationState,
     updateVerificationState,
     executeDelegateCall,
+    skipAutoCreateRef,
+    activeChatIdRef,
+    conversationsRef,
   } = ctx;
 
   const applyPostToolPolicyEffects = (
@@ -1518,7 +1535,20 @@ export async function processAssistantTurn(
   }
 
   if (toolExecResult.branchSwitch) {
-    runtimeHandlersRef.current?.onBranchSwitch?.(toolExecResult.branchSwitch);
+    // Slice 2 conversation-fork migration. Migration logic lives in
+    // branch-fork-migration.ts so this dispatcher stays small and the
+    // migration is testable in isolation. Dispatches on payload.kind:
+    // 'forked' migrates the active conversation; 'switched' or undefined
+    // falls through to the existing auto-switch behavior.
+    applyBranchSwitchPayload(toolExecResult.branchSwitch, {
+      activeChatIdRef,
+      conversationsRef,
+      branchInfoRef,
+      skipAutoCreateRef,
+      setConversations,
+      dirtyConversationIdsRef,
+      runtimeHandlersRef,
+    });
   }
 
   if (toolExecResult.structuredError?.type === 'SANDBOX_UNREACHABLE') {

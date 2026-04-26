@@ -216,6 +216,9 @@ export async function handleTaskGraphDelegation(
 
   const executionId = createId();
   const graphArgs = toolCall.call.args;
+  // Capture the foreground branch at dispatch — see R11 in the slice 2
+  // design doc. Bound to this delegation's result for its lifetime.
+  const originBranch = ctx.branchInfoRef.current?.currentBranch;
 
   ctx.emitRunEngineEvent({
     type: 'DELEGATION_STARTED',
@@ -227,13 +230,16 @@ export async function handleTaskGraphDelegation(
     const validationErrors = validateTaskGraph(graphArgs.tasks);
     if (validationErrors.length > 0) {
       const errorMessages = validationErrors.map((e) => `- ${e.message}`).join('\n');
-      return { text: `[Tool Error] Invalid task graph:\n${errorMessages}` };
+      return { text: `[Tool Error] Invalid task graph:\n${errorMessages}`, originBranch };
     }
 
     const currentSandboxId = ctx.sandboxIdRef.current;
     const hasCoderTasks = graphArgs.tasks.some((task) => task.agent === 'coder');
     if (hasCoderTasks && !currentSandboxId) {
-      return { text: '[Tool Error] No sandbox available for task graph execution.' };
+      return {
+        text: '[Tool Error] No sandbox available for task graph execution.',
+        originBranch,
+      };
     }
 
     ctx.appendRunEvent(chatId, {
@@ -923,6 +929,7 @@ export async function handleTaskGraphDelegation(
         taskCount: graphResult.nodeStates.size,
       }),
       delegationOutcome: graphOutcome,
+      originBranch,
     };
     ctx.appendRunEvent(chatId, {
       type: 'subagent.completed',
@@ -937,6 +944,7 @@ export async function handleTaskGraphDelegation(
     if (isAbort || ctx.abortRef.current) {
       return {
         text: '[Tool Result — plan_tasks]\nTask graph execution cancelled by user.',
+        originBranch,
       };
     }
     const msg = err instanceof Error ? err.message : String(err);
@@ -946,6 +954,6 @@ export async function handleTaskGraphDelegation(
       agent: 'task_graph',
       error: summarizeToolResultPreview(msg),
     });
-    return { text: `[Tool Error] Task graph execution failed: ${msg}` };
+    return { text: `[Tool Error] Task graph execution failed: ${msg}`, originBranch };
   }
 }

@@ -253,6 +253,64 @@ export interface ChatMessage {
   isMalformed?: boolean; // Assistant message that attempted a tool call but produced invalid JSON
   /** Provenance metadata — present on tool result messages for audit trail. */
   toolMeta?: ToolMeta;
+  /** Branch active when this message was authored. Currently stamped at
+   *  write time on (a) `branch_forked` system events via
+   *  `createBranchForkedMessage`, (b) delegate tool result messages via the
+   *  R11 originBranch propagation chain, and (c) messages constructed
+   *  through the `createMessage` factory in `lib/chat-message.ts`. Other
+   *  message-creation paths (user submit, model streaming, regular tool
+   *  results) currently leave this undefined and rely on the read-boundary
+   *  fallback in `effectiveMessageBranch`. Migrating those paths to use
+   *  `createMessage` so every new message stamps `branch` is a planned
+   *  follow-up; for now the fallback (`msg.branch ?? conv.branch ?? 'main'`)
+   *  preserves correctness for unstamped messages. */
+  branch?: string;
+  /** Discriminator for synthetic message kinds. Plain user/assistant messages
+   *  leave this undefined. */
+  kind?: 'branch_forked';
+  /** Payload for `kind: 'branch_forked'` events. Records the branch
+   *  transition that happened at this point in the conversation. */
+  branchForkedMeta?: BranchForkedMeta;
+  /** When explicitly `false`, this message is transcript metadata only —
+   *  filtered out of every prompt-pack path. Default behavior (undefined)
+   *  is model-visible. Used for system events like `branch_forked` that
+   *  must not be misread as model-directed instructions. */
+  visibleToModel?: boolean;
+}
+
+/** Where a branch-switch result originated. Not user-facing; aids debugging
+ *  and tests. */
+export type BranchSwitchSource =
+  | 'sandbox_create_branch'
+  | 'github_create_branch'
+  | 'release_draft'
+  | 'ui';
+
+/** Normalized payload for a branch transition reported by a tool result.
+ *  `kind: 'forked'` means the tool just created a new branch and the active
+ *  conversation should follow it (slice 2). `kind: 'switched'` means the
+ *  branch changed but the conversation should NOT migrate — existing
+ *  pre-slice-2 behavior (auto-select existing chat for the target branch
+ *  via `useChat`'s filter, or auto-create one). */
+export interface BranchSwitchPayload {
+  name: string;
+  kind: 'forked' | 'switched';
+  /** Source branch (for forked: the base; for switched: optional context). */
+  from?: string;
+  /** Commit SHA of the new branch's HEAD, when known. */
+  sha?: string;
+  /** Producer that emitted this payload. */
+  source?: BranchSwitchSource;
+}
+
+/** Payload for a `kind: 'branch_forked'` system event in the conversation.
+ *  Mirrors `BranchSwitchPayload` but tied to the message rather than a tool
+ *  result, since the event lives in chat history after the migration. */
+export interface BranchForkedMeta {
+  from: string;
+  to: string;
+  sha?: string;
+  source?: BranchSwitchSource;
 }
 
 // Discriminated union for rich inline cards
@@ -474,11 +532,22 @@ export interface ToolExecutionResult {
     warning?: string;
     htmlUrl?: string;
   };
-  /** When set, the sandbox has switched to this branch (e.g. draft checkout).
-   *  The app should sync its active branch state without tearing down the sandbox. */
-  branchSwitch?: string;
+  /** When set, the sandbox has switched to this branch (e.g. draft checkout
+   *  or model-initiated fork). The app syncs its active branch state without
+   *  tearing down the sandbox. The `kind` field distinguishes a *fork* (new
+   *  branch created from current state — conversation should follow) from a
+   *  *switch* (branch changed but conversation stays put). See
+   *  `BranchSwitchPayload` for the field contract. */
+  branchSwitch?: BranchSwitchPayload;
   /** Structured delegation outcome — present when this result came from a delegated agent. */
   delegationOutcome?: DelegationOutcome;
+  /** Foreground branch active when the delegated run was dispatched. Set by
+   *  delegation handlers (Coder/Explorer/task graph) and used at message
+   *  construction time to stamp `branch: originBranch` on the result message,
+   *  binding the result to its launch branch even if the foreground has
+   *  since forked. Undefined for non-delegate tool results. See R11 in the
+   *  slice 2 design doc. */
+  originBranch?: string;
   /** Post-hook policy action: inject this message after the tool result. */
   postHookInject?: ChatMessage;
   /** Post-hook policy action: halt the agent loop with this summary. */
@@ -1127,6 +1196,13 @@ export interface DelegationEnvelope extends DelegationBriefFields {
     defaultBranch: string;
     protectMain: boolean;
   };
+  /** Branch active in the foreground when this delegation was dispatched.
+   *  Bound to the delegate for the lifetime of the run; the result message
+   *  stamps `branch: originBranch` even when the foreground has since
+   *  forked away. See R11 in the slice 2 design doc. Distinct from
+   *  `branchContext.activeBranch`, which the agent reads as runtime state;
+   *  this field is provenance, not policy. */
+  originBranch?: string;
   /** Explicit provider for this delegation (not inherited from chat). */
   provider: AIProviderType;
   /** Explicit model override (not inherited from chat). */
@@ -1183,6 +1259,8 @@ export interface ExplorerDelegationEnvelope extends DelegationBriefFields {
     defaultBranch: string;
     protectMain: boolean;
   };
+  /** Foreground branch at dispatch — see {@link DelegationEnvelope.originBranch}. */
+  originBranch?: string;
   provider: AIProviderType;
   model?: string;
   projectInstructions?: string;
@@ -1241,6 +1319,8 @@ export interface ParallelDelegationEnvelope {
     defaultBranch: string;
     protectMain: boolean;
   };
+  /** Foreground branch at dispatch — see {@link DelegationEnvelope.originBranch}. */
+  originBranch?: string;
   provider: AIProviderType;
   model?: string;
   projectInstructions?: string;

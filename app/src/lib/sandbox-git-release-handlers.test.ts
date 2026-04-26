@@ -521,7 +521,11 @@ describe('handleSaveDraft', () => {
     expect(result.text).toContain('Commit: abc1234');
     expect(result.text).toContain('Pushed to remote.');
     expect(result.card?.type).toBe('diff-preview');
-    expect(result.branchSwitch).toMatch(/^draft\/main-/);
+    // Slice 2: release_draft emits 'switched' (not 'forked') because user
+    // intent here is checkpointing, not forking the conversation.
+    expect(result.branchSwitch?.name).toMatch(/^draft\/main-/);
+    expect(result.branchSwitch?.kind).toBe('switched');
+    expect(result.branchSwitch?.source).toBe('release_draft');
 
     const mutationCalls = ctx.execCalls.filter((c) => c[3]?.markWorkspaceMutated === true);
     expect(mutationCalls).toHaveLength(4);
@@ -565,7 +569,11 @@ describe('handleSaveDraft', () => {
     });
     const result = await handleSaveDraft(ctx, { branch_name: 'draft/requested' });
     expect(result.text).toContain('Draft saved to branch: draft/requested');
-    expect(result.branchSwitch).toBe('draft/requested');
+    expect(result.branchSwitch).toEqual({
+      name: 'draft/requested',
+      kind: 'switched',
+      source: 'release_draft',
+    });
     expect(ctx.execInSandbox).toHaveBeenCalledTimes(5);
     // Second exec is the checkout — confirm it targets the requested branch.
     expect(ctx.execCalls[1][1]).toContain("git checkout -b 'draft/requested'");

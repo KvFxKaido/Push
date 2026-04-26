@@ -618,7 +618,18 @@ export async function handleSaveDraft(
   return {
     text: draftLines.join('\n'),
     card: { type: 'diff-preview', data: draftCardData },
-    // Propagate branch switch to app state so chat/merge context stays in sync
-    ...(needsNewBranch ? { branchSwitch: activeDraftBranch } : {}),
+    // Propagate branch switch to app state so chat/merge context stays in
+    // sync. 'switched' (not 'forked'): user intent here is checkpointing /
+    // staging a commit, not "fork my work into a new conversation". Slice 2
+    // may revisit if runtime usage proves this wrong.
+    ...(needsNewBranch
+      ? {
+          branchSwitch: {
+            name: activeDraftBranch,
+            kind: 'switched' as const,
+            source: 'release_draft' as const,
+          },
+        }
+      : {}),
   };
 }
