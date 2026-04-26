@@ -67,6 +67,13 @@ export interface ChatRouteWorkspaceProps {
   sandboxDownloading: boolean;
   setCurrentBranch: (branch: string) => void;
   onSandboxBranchSwitch: (branch: string) => void;
+  /** Slice 2.1: UI-initiated fork. Calls sandbox_create_branch tool path
+   *  then dispatches the resulting payload through applyBranchSwitchPayload
+   *  so conversation migration fires the same way as model-initiated forks. */
+  forkBranchFromUI: (
+    name: string,
+    from?: string,
+  ) => Promise<import('@/lib/fork-branch-in-workspace').ForkBranchInWorkspaceResult>;
   sandboxState: SandboxStateCardData | null;
   sandboxStateLoading: boolean;
   fetchSandboxState: (id: string) => void;

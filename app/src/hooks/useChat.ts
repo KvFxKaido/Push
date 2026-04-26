@@ -70,6 +70,11 @@ import { useVerificationState } from './useVerificationState';
 import { usePendingSteer, type PendingSteerRequest } from './usePendingSteer';
 import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
 import { getMigrationMarker } from '@/lib/branch-migration-marker';
+import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
+import {
+  forkBranchInWorkspace,
+  type ForkBranchInWorkspaceResult,
+} from '@/lib/fork-branch-in-workspace';
 import { useBranchForkGuard } from './useBranchForkGuard';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
@@ -1345,6 +1350,33 @@ export function useChat(
   });
 
   // ---------------------------------------------------------------------------
+  // UI-initiated branch fork (slice 2.1)
+  // ---------------------------------------------------------------------------
+
+  // Wraps the sandbox_create_branch tool path so the UI button and the model
+  // emit the same operation, then dispatches the resulting BranchSwitchPayload
+  // through applyBranchSwitchPayload so conversation migration fires the same
+  // way it does for model-initiated forks. Single source of truth for the
+  // migration logic — no parallel implementation in the UI handler.
+  const forkBranchFromUI = useCallback(
+    async (name: string, from?: string): Promise<ForkBranchInWorkspaceResult> => {
+      const result = await forkBranchInWorkspace(sandboxIdRef.current, name, from);
+      if (!result.ok || !result.branchSwitch) return result;
+      applyBranchSwitchPayload(result.branchSwitch, {
+        activeChatIdRef,
+        conversationsRef,
+        branchInfoRef,
+        skipAutoCreateRef,
+        setConversations: updateConversations,
+        dirtyConversationIdsRef,
+        runtimeHandlersRef,
+      });
+      return result;
+    },
+    [updateConversations, skipAutoCreateRef],
+  );
+
+  // ---------------------------------------------------------------------------
   // Return
   // ---------------------------------------------------------------------------
 
@@ -1409,5 +1441,8 @@ export function useChat(
     saveExpiryCheckpoint,
     ciStatus,
     diagnoseCIFailure,
+
+    // Slice 2.1 UI-initiated fork
+    forkBranchFromUI,
   };
 }

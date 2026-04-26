@@ -30,6 +30,11 @@ const BranchCreateSheet = lazy(() =>
     default: module.BranchCreateSheet,
   })),
 );
+const BranchForkSheet = lazy(() =>
+  import('@/components/chat/BranchForkSheet').then((module) => ({
+    default: module.BranchForkSheet,
+  })),
+);
 const MergeFlowSheet = lazy(() =>
   import('@/components/chat/MergeFlowSheet').then((module) => ({ default: module.MergeFlowSheet })),
 );
@@ -182,6 +187,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     repoBranchesError,
     showBranchCreate,
     setShowBranchCreate,
+    showBranchFork,
+    setShowBranchFork,
     showMergeFlow,
     setShowMergeFlow,
     loadRepoBranches,
@@ -191,6 +198,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   const [newChatSheetMounted, setNewChatSheetMounted] = useState(false);
   const [launcherSheetMounted, setLauncherSheetMounted] = useState(false);
   const [branchCreateMounted, setBranchCreateMounted] = useState(false);
+  const [branchForkMounted, setBranchForkMounted] = useState(false);
   const [mergeFlowMounted, setMergeFlowMounted] = useState(false);
 
   const { markSnapshotActivity } = snapshots;
@@ -364,6 +372,16 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     [setShowBranchCreate],
   );
 
+  const setShowBranchForkWithMount = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setBranchForkMounted(true);
+      }
+      setShowBranchFork(open);
+    },
+    [setShowBranchFork],
+  );
+
   const setShowMergeFlowWithMount = useCallback(
     (open: boolean) => {
       if (open) {
@@ -473,6 +491,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     loadRepoBranches,
     setCurrentBranch,
     setShowBranchCreate: setShowBranchCreateWithMount,
+    setShowBranchFork: setShowBranchForkWithMount,
     setShowMergeFlow: setShowMergeFlowWithMount,
     handleDeleteBranch,
   });
@@ -707,6 +726,17 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             onOpenChange={setShowBranchCreateWithMount}
             activeRepo={activeRepo}
             setCurrentBranch={setCurrentBranch}
+          />
+        </Suspense>
+      )}
+
+      {activeRepo && branchForkMounted && (
+        <Suspense fallback={null}>
+          <BranchForkSheet
+            open={showBranchFork}
+            onOpenChange={setShowBranchForkWithMount}
+            fromBranch={activeRepo.current_branch || activeRepo.default_branch}
+            forkBranch={props.forkBranchFromUI}
           />
         </Suspense>
       )}

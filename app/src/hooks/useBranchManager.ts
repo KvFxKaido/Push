@@ -25,6 +25,8 @@ export interface BranchManager {
   deletingBranch: string | null;
   showBranchCreate: boolean;
   setShowBranchCreate: (open: boolean) => void;
+  showBranchFork: boolean;
+  setShowBranchFork: (open: boolean) => void;
   showMergeFlow: boolean;
   setShowMergeFlow: (open: boolean) => void;
   loadRepoBranches: (repoFullName: string) => Promise<void>;
@@ -48,6 +50,7 @@ export function useBranchManager(
   const [pendingDeleteBranch, setPendingDeleteBranch] = useState<string | null>(null);
   const [deletingBranch, setDeletingBranch] = useState<string | null>(null);
   const [showBranchCreate, setShowBranchCreate] = useState(false);
+  const [showBranchFork, setShowBranchFork] = useState(false);
   const [showMergeFlow, setShowMergeFlow] = useState(false);
   const branchFetchSeqRef = useRef(0);
 
@@ -163,6 +166,8 @@ export function useBranchManager(
     deletingBranch,
     showBranchCreate,
     setShowBranchCreate,
+    showBranchFork,
+    setShowBranchFork,
     showMergeFlow,
     setShowMergeFlow,
     loadRepoBranches,

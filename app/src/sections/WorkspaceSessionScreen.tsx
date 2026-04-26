@@ -144,6 +144,7 @@ export function WorkspaceSessionScreen({
     saveExpiryCheckpoint,
     ciStatus,
     diagnoseCIFailure,
+    forkBranchFromUI,
   } = useChat(
     workspaceRepo?.full_name ?? null,
     {
@@ -450,6 +451,7 @@ export function WorkspaceSessionScreen({
     saveExpiryCheckpoint,
     ciStatus,
     diagnoseCIFailure,
+    forkBranchFromUI,
   };
 
   const repositoryDomain = {

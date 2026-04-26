@@ -148,6 +148,7 @@ export interface HubBranchProps {
   onSwitchBranch: (branch: string) => void;
   onRefreshBranches: () => void;
   onShowBranchCreate: () => void;
+  onShowBranchFork: () => void;
   onShowMergeFlow: () => void;
   onDeleteBranch: (branch: string) => Promise<boolean>;
 }
@@ -1159,6 +1160,22 @@ export function WorkspaceHubSheet({
                                 Merge into {branchProps.defaultBranch}
                               </button>
                             )}
+                            {/* Fork (slice 2): always available regardless of
+                                current branch — different semantics from
+                                "Create branch" (which is GitHub-side). This
+                                forks the current workspace state into a new
+                                branch and brings the active conversation
+                                along via the slice 2 migration handler. */}
+                            <button
+                              onClick={() => {
+                                setBranchDropdownOpen(false);
+                                branchProps.onShowBranchFork();
+                              }}
+                              className="flex w-full items-center gap-2 border-t border-push-edge/80 px-3 py-2.5 text-xs text-push-sky transition-colors hover:bg-white/[0.04]"
+                            >
+                              <BranchWaveIcon className="h-3.5 w-3.5" />
+                              New Branch from Here
+                            </button>
                             <div className="border-t border-push-edge/80" />
 
                             {/* Refresh */}
