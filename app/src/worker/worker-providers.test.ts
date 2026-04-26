@@ -145,6 +145,122 @@ describe('handleOpenRouterChat', () => {
   });
 });
 
+describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
+  // Asserts that the gateway is purely opt-in: when the env vars are unset,
+  // every request flows direct to OpenRouter exactly as before. Account/slug
+  // together flip routing; the token is independent and only attaches the
+  // `cf-aig-authorization` header when actually routing through the gateway.
+  function captureFetch(): { current: { url: string; headers: Record<string, string> } | null } {
+    const captured: { current: { url: string; headers: Record<string, string> } | null } = {
+      current: null,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured.current = { url, headers: init.headers as Record<string, string> };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    return captured;
+  }
+
+  it('leaves the URL unchanged when gateway env is unset', async () => {
+    const captured = captureFetch();
+    await handleOpenRouterChat(makeChatRequest(), makeEnv({ OPENROUTER_API_KEY: 'sk-or' }));
+    expect(captured.current?.url).toBe('https://openrouter.ai/api/v1/chat/completions');
+    expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+  });
+
+  it('rewrites the URL through the gateway when account + slug are set', async () => {
+    const captured = captureFetch();
+    await handleOpenRouterChat(
+      makeChatRequest(),
+      makeEnv({
+        OPENROUTER_API_KEY: 'sk-or',
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+        CF_AI_GATEWAY_SLUG: 'push-prod',
+      }),
+    );
+    expect(captured.current?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/openrouter/chat/completions',
+    );
+    // Provider auth still flows untouched — the gateway forwards it to OpenRouter.
+    expect(captured.current?.headers.Authorization).toBe('Bearer sk-or');
+  });
+
+  it('attaches cf-aig-authorization when CF_AI_GATEWAY_TOKEN is set', async () => {
+    const captured = captureFetch();
+    await handleOpenRouterChat(
+      makeChatRequest(),
+      makeEnv({
+        OPENROUTER_API_KEY: 'sk-or',
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+        CF_AI_GATEWAY_SLUG: 'push-prod',
+        CF_AI_GATEWAY_TOKEN: 'aig-secret',
+      }),
+    );
+    expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+    // Provider Authorization header still survives alongside the gateway token.
+    expect(captured.current?.headers.Authorization).toBe('Bearer sk-or');
+  });
+
+  it('omits cf-aig-authorization when the token is unset', async () => {
+    const captured = captureFetch();
+    await handleOpenRouterChat(
+      makeChatRequest(),
+      makeEnv({
+        OPENROUTER_API_KEY: 'sk-or',
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+        CF_AI_GATEWAY_SLUG: 'push-prod',
+      }),
+    );
+    expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+  });
+
+  it('does not leak cf-aig-authorization to the direct provider when the token is set without account/slug', async () => {
+    // Defense-in-depth: if an operator sets the token but forgets the
+    // account/slug, the request still flows direct — we must not attach the
+    // gateway header to a direct-to-OpenRouter call.
+    const captured = captureFetch();
+    await handleOpenRouterChat(
+      makeChatRequest(),
+      makeEnv({ OPENROUTER_API_KEY: 'sk-or', CF_AI_GATEWAY_TOKEN: 'aig-secret' }),
+    );
+    expect(captured.current?.url).toBe('https://openrouter.ai/api/v1/chat/completions');
+    expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+  });
+});
+
+describe('handleCloudflareChat — Cloudflare AI Gateway', () => {
+  it('passes the gateway id to env.AI.run when account + slug are set', async () => {
+    const run = vi.fn(async () => new ReadableStream());
+    await handleCloudflareChat(
+      makeChatRequest(),
+      makeEnv({
+        AI: { run } as unknown as Env['AI'],
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+        CF_AI_GATEWAY_SLUG: 'push-prod',
+      }),
+    );
+    expect(run).toHaveBeenCalledWith(
+      'test-model',
+      { messages: [{ role: 'user', content: 'hello' }], stream: true },
+      { gateway: { id: 'push-prod' } },
+    );
+  });
+
+  it('omits the gateway option when env is unset (legacy 2-arg call shape preserved)', async () => {
+    const run = vi.fn(async () => new ReadableStream());
+    await handleCloudflareChat(makeChatRequest(), makeEnv({ AI: { run } as unknown as Env['AI'] }));
+    // Two args, not three — guards against accidentally forcing the gateway
+    // path on Workers without the env vars set.
+    expect(run.mock.calls[0]).toHaveLength(2);
+  });
+});
+
 describe('handleOpenRouterModels', () => {
   it('GETs openrouter.ai/api/v1/models with no body', async () => {
     let captured: { url: string; init: RequestInit } | undefined;

@@ -80,6 +80,14 @@ export interface Env {
   // overshoot the production deadline. Unset in prod (no wrangler.jsonc var)
   // so the tighter default stays authoritative for deployed Workers.
   SANDBOX_DEV_LONG_DEADLINE?: string;
+  // Cloudflare AI Gateway — opt-in observability/cache/rate-limit layer in
+  // front of upstream providers. All three are optional; when account or slug
+  // is unset the gateway path is a no-op and traffic flows direct to the
+  // provider exactly as before. CF_AI_GATEWAY_TOKEN is only required when the
+  // configured gateway has authenticated mode enabled.
+  CF_AI_GATEWAY_ACCOUNT_ID?: string;
+  CF_AI_GATEWAY_SLUG?: string;
+  CF_AI_GATEWAY_TOKEN?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -482,6 +490,47 @@ export function getExperimentalUpstreamUrl(
 }
 
 // ---------------------------------------------------------------------------
+// Cloudflare AI Gateway — opt-in observability/cache layer in front of upstream
+// providers. Per-handler config is declarative (provider slug + path); the
+// helpers below resolve env vars and only rewrite the URL when both account
+// and slug are present. Token is independent: presence enables the
+// `cf-aig-authorization` header for authenticated gateways. All paths are
+// no-ops when the gateway env vars are unset, so direct-to-provider traffic
+// stays bit-identical to pre-gateway behavior.
+// ---------------------------------------------------------------------------
+
+export interface AiGatewayBinding {
+  /** Gateway provider slug (e.g. `openrouter`). Forms the path segment after the gateway id. */
+  provider: string;
+  /** Path appended after the provider slug, e.g. `/chat/completions`. Includes the leading slash. */
+  pathSuffix: string;
+}
+
+/**
+ * Returns the AI-Gateway-rewritten upstream URL when the gateway is configured,
+ * or `null` when callers should fall back to the direct provider URL.
+ */
+export function buildAiGatewayUrl(env: Env, binding: AiGatewayBinding): string | null {
+  const account = env.CF_AI_GATEWAY_ACCOUNT_ID?.trim();
+  const slug = env.CF_AI_GATEWAY_SLUG?.trim();
+  if (!account || !slug) return null;
+  return `https://gateway.ai.cloudflare.com/v1/${account}/${slug}/${binding.provider}${binding.pathSuffix}`;
+}
+
+/**
+ * Returns the value for the `cf-aig-authorization` header when
+ * `CF_AI_GATEWAY_TOKEN` is set, otherwise `null`. Independent of account/slug
+ * presence — callers should only attach the header when the request is
+ * actually being routed through the gateway (i.e. `buildAiGatewayUrl` returned
+ * a non-null URL), so an orphan token never leaks to the direct provider.
+ */
+export function getAiGatewayAuthHeader(env: Env): string | null {
+  const token = env.CF_AI_GATEWAY_TOKEN?.trim();
+  if (!token) return null;
+  return `Bearer ${token}`;
+}
+
+// ---------------------------------------------------------------------------
 // Stream proxy factory — for SSE chat endpoints
 // ---------------------------------------------------------------------------
 
@@ -497,6 +546,8 @@ export interface StreamProxyConfig {
   extraFetchHeaders?: Record<string, string> | ((request: Request) => Record<string, string>);
   preserveUpstreamHeaders?: boolean;
   formatUpstreamError?: (status: number, bodyText: string) => { error: string; code?: string };
+  /** Opt-in Cloudflare AI Gateway routing. No-op when gateway env vars are unset. */
+  gateway?: AiGatewayBinding;
 }
 
 export function createStreamProxyHandler(
@@ -536,8 +587,18 @@ export function createStreamProxyHandler(
       model: normalizedRequest.value.parsed.model,
     });
 
-    const upstreamUrl =
+    const directUrl =
       typeof config.upstreamUrl === 'function' ? config.upstreamUrl(request) : config.upstreamUrl;
+    const gatewayUrl = config.gateway ? buildAiGatewayUrl(env, config.gateway) : null;
+    const upstreamUrl = gatewayUrl ?? directUrl;
+
+    // Only attach cf-aig-authorization when actually routing through the
+    // gateway — an orphan token without account/slug must not leak to the
+    // direct provider.
+    const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
+    const gatewayHeaders: Record<string, string> = aigAuth
+      ? { 'cf-aig-authorization': aigAuth }
+      : {};
 
     const extraHeaders =
       typeof config.extraFetchHeaders === 'function'
@@ -567,6 +628,7 @@ export function createStreamProxyHandler(
             [REQUEST_ID_HEADER]: requestId,
             traceparent: buildTraceparent(upstreamCtx),
             ...extraHeaders,
+            ...gatewayHeaders,
           },
           body: normalizedRequest.value.bodyText,
           signal: controller.signal,
