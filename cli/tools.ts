@@ -2160,16 +2160,25 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
       case 'git_create_branch': {
         const name = asString(call.args.name, 'name').trim();
-        const validRef =
-          /^[A-Za-z0-9._/-]+$/.test(name) &&
-          !name.startsWith('-') &&
-          !name.startsWith('/') &&
-          !name.endsWith('/') &&
-          !name.includes('..');
-        if (!validRef) {
+        const from = typeof call.args.from === 'string' ? call.args.from.trim() : '';
+
+        // Apply the same ref validation to both name and from. shellEscape is
+        // not in play here (execFileAsync passes args without a shell), but
+        // a leading '-' would still be parsed by git as a flag.
+        const isInvalidRef = (ref) =>
+          !/^[A-Za-z0-9._/-]+$/.test(ref) ||
+          ref.startsWith('-') ||
+          ref.startsWith('/') ||
+          ref.endsWith('/') ||
+          ref.includes('..');
+
+        const refDetail =
+          'Branch refs may contain letters, digits, ".", "_", "/", "-"; no leading "-" or "/", no trailing "/", and no ".." allowed.';
+
+        if (isInvalidRef(name)) {
           return {
             ok: false,
-            text: `Invalid branch name "${name}". Use letters, digits, ".", "_", "/", "-"; no leading "-" or ".." allowed.`,
+            text: `Invalid branch name "${name}". ${refDetail}`,
             structuredError: {
               code: 'INVALID_ARG',
               message: 'Invalid branch name',
@@ -2177,13 +2186,26 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             },
           };
         }
-        const from = typeof call.args.from === 'string' ? call.args.from.trim() : '';
+        if (from && isInvalidRef(from)) {
+          return {
+            ok: false,
+            text: `Invalid base ref "${from}". ${refDetail}`,
+            structuredError: {
+              code: 'INVALID_ARG',
+              message: 'Invalid base ref',
+              retryable: false,
+            },
+          };
+        }
 
         try {
-          if (from) {
-            await execFileAsync('git', ['checkout', from], { cwd: workspaceRoot });
-          }
-          await execFileAsync('git', ['checkout', '-b', name], { cwd: workspaceRoot });
+          // Atomic form: `git checkout -b <name> [<from>]` only changes HEAD
+          // on success. The previous chained form left HEAD on `<from>` if
+          // branch creation failed (e.g. branch already exists), silently
+          // mutating workspace branch state on the error path.
+          const args = ['checkout', '-b', name];
+          if (from) args.push(from);
+          await execFileAsync('git', args, { cwd: workspaceRoot });
           return {
             ok: true,
             text: `Created and switched to ${name}${from ? ` from ${from}` : ''}.`,
