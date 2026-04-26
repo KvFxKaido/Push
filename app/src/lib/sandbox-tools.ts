@@ -257,8 +257,11 @@ export async function executeSandboxToolCall(
         const blockedGitOp = detectBlockedGitCommand(call.args.command);
         const currentApprovalMode = getApprovalMode();
         if (blockedGitOp && !call.args.allowDirectGit && currentApprovalMode !== 'full-auto') {
-          const guardDetail =
-            currentApprovalMode === 'autonomous'
+          const isBranchCreate =
+            blockedGitOp === 'git checkout -b' || blockedGitOp === 'git switch -c';
+          const guardDetail = isBranchCreate
+            ? 'Use sandbox_create_branch to create a branch — it keeps Push and the sandbox in sync.'
+            : currentApprovalMode === 'autonomous'
               ? 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or retry with allowDirectGit: true.'
               : 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.';
           const guardErr: StructuredToolError = {
@@ -267,8 +270,9 @@ export async function executeSandboxToolCall(
             message: `Direct "${blockedGitOp}" is blocked`,
             detail: guardDetail,
           };
-          const guidance =
-            currentApprovalMode === 'autonomous'
+          const guidance = isBranchCreate
+            ? `Direct "${blockedGitOp}" is blocked. Use sandbox_create_branch({"name": "<branch-name>"}) — it creates the branch in the sandbox and keeps Push's branch state in sync. Pass "from": "<base>" to branch from a specific ref instead of HEAD.`
+            : currentApprovalMode === 'autonomous'
               ? `Direct "${blockedGitOp}" is blocked. Use sandbox_prepare_commit + sandbox_push for the audited flow. If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`
               : [
                   `Direct "${blockedGitOp}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,

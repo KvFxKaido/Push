@@ -4148,3 +4148,39 @@ describe('executeSandboxToolCall -- sandbox_create_branch', () => {
     expect(result.structuredError).toBeDefined();
   });
 });
+
+describe('executeSandboxToolCall -- git guard for branch creation', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('blocks raw git checkout -b and points the model at sandbox_create_branch', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout -b feature/foo' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Blocked — sandbox_exec]');
+    expect(result.text).toContain('sandbox_create_branch');
+    expect(result.structuredError).toEqual({
+      type: 'GIT_GUARD_BLOCKED',
+      retryable: false,
+      message: 'Direct "git checkout -b" is blocked',
+      detail:
+        'Use sandbox_create_branch to create a branch — it keeps Push and the sandbox in sync.',
+    });
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('blocks raw git switch -c and points the model at sandbox_create_branch', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git switch -c feature/foo' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(result.structuredError?.message).toBe('Direct "git switch -c" is blocked');
+    expect(result.text).toContain('sandbox_create_branch');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+});
