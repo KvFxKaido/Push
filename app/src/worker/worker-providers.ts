@@ -402,8 +402,8 @@ export const handleOllamaModels = createJsonProxyHandler({
   keyMissingError:
     'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama Cloud model list timed out after 30 seconds',
+  gateway: { provider: 'ollama', pathSuffix: '/models' },
 });
-
 export const handleOllamaChat = createStreamProxyHandler({
   name: 'Ollama Cloud API',
   logTag: 'api/ollama/chat',
@@ -414,11 +414,12 @@ export const handleOllamaChat = createStreamProxyHandler({
   keyMissingError:
     'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama Cloud request timed out after 180 seconds',
+  gateway: { provider: 'ollama', pathSuffix: '/chat/completions' },
 });
 
-// --- Mistral ---
 
 // --- OpenRouter ---
+
 
 export const handleOpenRouterChat = createStreamProxyHandler({
   name: 'OpenRouter',
@@ -476,6 +477,7 @@ export const handleZenChat = createStreamProxyHandler({
   keyMissingError:
     'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
   timeoutError: 'OpenCode Zen request timed out after 120 seconds',
+  gateway: { provider: 'zen', pathSuffix: '/chat/completions' },
 });
 
 export const handleZenModels = createJsonProxyHandler({
@@ -488,6 +490,7 @@ export const handleZenModels = createJsonProxyHandler({
   keyMissingError:
     'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
   timeoutError: 'OpenCode Zen model list timed out after 30 seconds',
+  gateway: { provider: 'zen', pathSuffix: '/models' },
 });
 
 // --- Kilo Code (OpenAI-compatible gateway) ---
@@ -502,6 +505,7 @@ export const handleKiloCodeChat = createStreamProxyHandler({
   keyMissingError:
     'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
   timeoutError: 'Kilo Code request timed out after 120 seconds',
+  gateway: { provider: 'kilocode', pathSuffix: '/chat/completions' },
 });
 
 export const handleKiloCodeModels = createJsonProxyHandler({
@@ -514,6 +518,7 @@ export const handleKiloCodeModels = createJsonProxyHandler({
   keyMissingError:
     'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
   timeoutError: 'Kilo Code model list timed out after 30 seconds',
+  gateway: { provider: 'kilocode', pathSuffix: '/models' },
 });
 
 export const handleOpenAdapterChat = createStreamProxyHandler({
@@ -526,6 +531,7 @@ export const handleOpenAdapterChat = createStreamProxyHandler({
   keyMissingError:
     'OpenAdapter API key not configured. Add it in Settings or set OPENADAPTER_API_KEY on the Worker.',
   timeoutError: 'OpenAdapter request timed out after 120 seconds',
+  gateway: { provider: 'openadapter', pathSuffix: '/chat/completions' },
 });
 
 export const handleOpenAdapterModels = createJsonProxyHandler({
@@ -538,6 +544,7 @@ export const handleOpenAdapterModels = createJsonProxyHandler({
   keyMissingError:
     'OpenAdapter API key not configured. Add it in Settings or set OPENADAPTER_API_KEY on the Worker.',
   timeoutError: 'OpenAdapter model list timed out after 30 seconds',
+  gateway: { provider: 'openadapter', pathSuffix: '/models' },
 });
 
 // --- OpenCode Zen Go tier (mixed OpenAI + Anthropic transports) ---
@@ -725,6 +732,7 @@ export const handleNvidiaChat = createStreamProxyHandler({
   keyMissingError:
     'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
   timeoutError: 'Nvidia NIM request timed out after 120 seconds',
+  gateway: { provider: 'nvidia', pathSuffix: '/chat/completions' },
 });
 
 export const handleNvidiaModels = createJsonProxyHandler({
@@ -737,6 +745,7 @@ export const handleNvidiaModels = createJsonProxyHandler({
   keyMissingError:
     'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
   timeoutError: 'Nvidia NIM model list timed out after 30 seconds',
+  gateway: { provider: 'nvidia', pathSuffix: '/models' },
 });
 
 // --- Blackbox AI ---
@@ -751,6 +760,7 @@ export const handleBlackboxChat = createStreamProxyHandler({
   keyMissingError:
     'Blackbox AI API key not configured. Add it in Settings or set BLACKBOX_API_KEY on the Worker.',
   timeoutError: 'Blackbox AI request timed out after 120 seconds',
+  gateway: { provider: 'blackbox', pathSuffix: '/chat/completions' },
 });
 
 export const handleBlackboxModels = createJsonProxyHandler({
@@ -763,6 +773,7 @@ export const handleBlackboxModels = createJsonProxyHandler({
   keyMissingError:
     'Blackbox AI API key not configured. Add it in Settings or set BLACKBOX_API_KEY on the Worker.',
   timeoutError: 'Blackbox AI model list timed out after 30 seconds',
+  gateway: { provider: 'blackbox', pathSuffix: '/models' },
 });
 
 // --- Experimental private connectors (OpenAI-compatible upstreams) ---
