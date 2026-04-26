@@ -27,8 +27,26 @@ import { handleCloudflareSandbox } from './worker-cf-sandbox';
 import type { SandboxStatusResult, SandboxToolExecResult } from '@push/lib/coder-agent-bindings';
 import type { ChatCard } from '@/types';
 import type { AIProviderType } from '@push/lib/provider-contract';
-import { detectBlockedGitCommand } from '@/lib/sandbox-tool-utils';
+import { detectBlockedGitCommand, shellEscape } from '@/lib/sandbox-tool-utils';
 import type { SandboxToolCall } from './coder-job-detector-adapter';
+
+// Inline copy of the foreground `sandbox_create_branch` ref-validation
+// rule (sandbox-tools.ts). Duplicated here rather than extracted to a
+// shared lib helper to keep slice 3 focused; if a future slice promotes
+// `sandbox_switch_branch` to background too, lift this into a single
+// `lib/` source of truth then.
+const VALID_REF = /^[A-Za-z0-9._/-]+$/;
+const INVALID_REF_DETAIL =
+  'Branch refs may contain letters, digits, ".", "_", "/", "-" and may not start with "-", may not start or end with "/", and may not contain "..".';
+function isInvalidRef(ref: string): boolean {
+  return (
+    !VALID_REF.test(ref) ||
+    ref.startsWith('-') ||
+    ref.startsWith('/') ||
+    ref.endsWith('/') ||
+    ref.includes('..')
+  );
+}
 
 export interface CoderJobExecutorAdapter {
   executeSandboxToolCall: (
@@ -60,6 +78,7 @@ export interface WebExecutorAdapterArgs {
 type RouteMapping =
   | { kind: 'ok'; route: string; body: Record<string, unknown> }
   | { kind: 'git_blocked'; op: string }
+  | { kind: 'invalid_arg'; field: string; value: string; detail: string }
   | { kind: 'not_implemented_yet' }
   | { kind: 'unsupported' };
 
@@ -135,9 +154,47 @@ function mapCallToRoute(call: SandboxToolCall): RouteMapping {
     case 'sandbox_read_symbols':
       return { kind: 'not_implemented_yet' };
 
+    case 'sandbox_create_branch': {
+      // Slice 3: route through the existing `exec` handler with a
+      // constructed `git checkout -b` command rather than adding a new
+      // worker route. The branch state mutation lives at the git level;
+      // both foreground and background converge on the same effect.
+      // Validation is enforced here (defense in depth — the foreground
+      // path validates separately in `sandbox-tools.ts`).
+      if (isInvalidRef(call.args.name)) {
+        return {
+          kind: 'invalid_arg',
+          field: 'name',
+          value: call.args.name,
+          detail: INVALID_REF_DETAIL,
+        };
+      }
+      if (call.args.from !== undefined && isInvalidRef(call.args.from)) {
+        return {
+          kind: 'invalid_arg',
+          field: 'from',
+          value: call.args.from,
+          detail: INVALID_REF_DETAIL,
+        };
+      }
+      // Atomic form: failure leaves HEAD untouched. Same construction
+      // as the foreground handler in `sandbox-tools.ts`.
+      const cmd = call.args.from
+        ? `cd /workspace && git checkout -b ${shellEscape(call.args.name)} ${shellEscape(call.args.from)}`
+        : `cd /workspace && git checkout -b ${shellEscape(call.args.name)}`;
+      return {
+        kind: 'ok',
+        route: 'exec',
+        // `allow_direct_git: true` so the command bypasses the worker's
+        // git guard the same way the model would with an explicit opt-in.
+        // The branch-create form is allowed by design; the guard is a
+        // sandbox_exec-level brake on ad-hoc git, not a sandbox-wide one.
+        body: { command: cmd, allow_direct_git: true },
+      };
+    }
+
     case 'sandbox_download':
     case 'sandbox_save_draft':
-    case 'sandbox_create_branch':
     case 'sandbox_switch_branch':
     case 'promote_to_github':
       return { kind: 'unsupported' };
@@ -384,6 +441,18 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
           },
         };
       }
+      if (mapping.kind === 'invalid_arg') {
+        return {
+          text:
+            `[Tool Error — ${call.tool}] Invalid ${mapping.field} "${mapping.value}". ` +
+            mapping.detail,
+          structuredError: {
+            type: 'INVALID_ARG',
+            retryable: false,
+            message: `Invalid ${mapping.field}: ${mapping.value}`,
+          },
+        };
+      }
 
       try {
         const { status, data } = await callSandboxHandler({
@@ -421,6 +490,31 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
               },
             };
           }
+        }
+        // sandbox_create_branch: routed through `exec`, but we own the
+        // result shape — surface a clean tool-result message and (on
+        // success) the headless-side `meta.branchCreated` observability
+        // signal. No `branchSwitch` is emitted from the background path
+        // by design (foreground-only routing rule, see SandboxToolMeta).
+        if (call.tool === 'sandbox_create_branch') {
+          const r = data as ExecResponse;
+          if ((r.exit_code ?? 0) !== 0) {
+            const reason = r.stderr || r.stdout || 'git checkout -b failed';
+            return {
+              text: `[Tool Error — sandbox_create_branch]\n${reason}`,
+              structuredError: {
+                type: 'WRITE_FAILED',
+                retryable: false,
+                message: reason,
+              },
+            };
+          }
+          return {
+            text:
+              `[Tool Result — sandbox_create_branch] Created and switched to ` +
+              `${call.args.name}${call.args.from ? ` from ${call.args.from}` : ''}.`,
+            meta: { branchCreated: { name: call.args.name } },
+          };
         }
         return { text: formatResult(call, data, status) };
       } catch (err) {

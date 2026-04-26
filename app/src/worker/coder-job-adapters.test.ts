@@ -349,6 +349,172 @@ describe('createWebExecutorAdapter — sandbox tool dispatch', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Slice 3: sandbox_create_branch in background jobs
+//
+// Background path routes through the existing `exec` worker handler with a
+// constructed `git checkout -b` command. Result carries `meta.branchCreated`
+// (observability only, no UI routing — that boundary is the slice 3 contract).
+// ---------------------------------------------------------------------------
+
+describe('createWebExecutorAdapter — sandbox_create_branch (slice 3)', () => {
+  beforeEach(() => {
+    handleCloudflareSandboxMock.mockReset();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('routes through exec with git checkout -b and returns meta.branchCreated on success', async () => {
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          stdout: "Switched to a new branch 'feature/foo'",
+          stderr: '',
+          exit_code: 0,
+        }),
+        { status: 200 },
+      ),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/foo' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+
+    expect(handleCloudflareSandboxMock).toHaveBeenCalledTimes(1);
+    const forwardedReq = handleCloudflareSandboxMock.mock.calls[0]![0] as Request;
+    expect(handleCloudflareSandboxMock.mock.calls[0]![3]).toBe('exec');
+    const body = JSON.parse(await forwardedReq.text()) as Record<string, unknown>;
+    expect(body.command).toBe(`cd /workspace && git checkout -b 'feature/foo'`);
+    // allow_direct_git: true is required so the reused exec path bypasses
+    // the worker-side git guard for this branch-create form.
+    expect(body.allow_direct_git).toBe(true);
+
+    expect(result.text).toContain('[Tool Result — sandbox_create_branch]');
+    expect(result.text).toContain('Created and switched to feature/foo');
+    expect(result.meta).toEqual({ branchCreated: { name: 'feature/foo' } });
+    expect(result.structuredError).toBeUndefined();
+  });
+
+  it('includes `from` in the constructed atomic git checkout -b command', async () => {
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(JSON.stringify({ stdout: '', stderr: '', exit_code: 0 }), { status: 200 }),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+
+    const result = await adapter.executeSandboxToolCall(
+      {
+        tool: 'sandbox_create_branch',
+        args: { name: 'feature/foo', from: 'main' },
+      } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+
+    const forwardedReq = handleCloudflareSandboxMock.mock.calls[0]![0] as Request;
+    const body = JSON.parse(await forwardedReq.text()) as Record<string, unknown>;
+    // Atomic single-command form, not chained — failure must not leave HEAD on `from`.
+    expect(body.command).toBe(`cd /workspace && git checkout -b 'feature/foo' 'main'`);
+    expect(result.text).toContain('from main');
+    expect(result.meta).toEqual({ branchCreated: { name: 'feature/foo' } });
+  });
+
+  it('returns a structured error on non-zero exit (e.g. branch already exists)', async () => {
+    handleCloudflareSandboxMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          stdout: '',
+          stderr: "fatal: a branch named 'feature/foo' already exists",
+          exit_code: 128,
+        }),
+        { status: 200 },
+      ),
+    );
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/foo' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+
+    expect(result.structuredError?.type).toBe('WRITE_FAILED');
+    expect(result.structuredError?.message).toContain('already exists');
+    expect(result.text).toContain('[Tool Error — sandbox_create_branch]');
+    expect(result.meta).toBeUndefined();
+  });
+
+  it('rejects invalid branch name without invoking the handler', async () => {
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: '-evil' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+
+    expect(result.structuredError?.type).toBe('INVALID_ARG');
+    expect(result.text).toContain('Invalid name "-evil"');
+    expect(result.meta).toBeUndefined();
+    expect(handleCloudflareSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid `from` ref without invoking the handler', async () => {
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+
+    const result = await adapter.executeSandboxToolCall(
+      {
+        tool: 'sandbox_create_branch',
+        args: { name: 'feature/foo', from: '-evil' },
+      } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+
+    expect(result.structuredError?.type).toBe('INVALID_ARG');
+    expect(result.text).toContain('Invalid from "-evil"');
+    expect(handleCloudflareSandboxMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Stream adapter
 // ---------------------------------------------------------------------------
 
