@@ -12,7 +12,7 @@ Push is built around execution-first reliability. We favor explicit state and hu
 
 ## Tech Stack
 
-- React 19 + TypeScript 6 + Vite 7
+- React 19 + TypeScript 6 (emit) / 7 native-preview (typecheck via `tsgo`) + Vite 7
 - Tailwind CSS 3 + shadcn/ui (Radix primitives)
 - GitHub REST API for repo operations
 - Multi-backend AI with built-ins plus opt-in private connectors
