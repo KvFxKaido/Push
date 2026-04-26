@@ -122,6 +122,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   sandbox_download: ['sandbox:download'],
   sandbox_save_draft: ['git:draft'],
   sandbox_create_branch: ['git:branch'],
+  sandbox_switch_branch: ['git:branch'],
   promote_to_github: ['sandbox:download'],
 
   // Delegation tools

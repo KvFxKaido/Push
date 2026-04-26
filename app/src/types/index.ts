@@ -282,6 +282,7 @@ export interface ChatMessage {
  *  and tests. */
 export type BranchSwitchSource =
   | 'sandbox_create_branch'
+  | 'sandbox_switch_branch'
   | 'github_create_branch'
   | 'release_draft'
   | 'ui';
@@ -297,6 +298,12 @@ export interface BranchSwitchPayload {
   kind: 'forked' | 'switched';
   /** Source branch (for forked: the base; for switched: optional context). */
   from?: string;
+  /** Branch the sandbox was on immediately before this switch. Captured by
+   *  producers that read HEAD pre-switch (e.g. `sandbox_switch_branch`).
+   *  Useful for UI context (e.g. "switched main → feat/foo") and future
+   *  rollback/debug affordances. Optional because not all producers know
+   *  the previous branch (UI flows can pass it explicitly). */
+  previous?: string;
   /** Commit SHA of the new branch's HEAD, when known. */
   sha?: string;
   /** Producer that emitted this payload. */

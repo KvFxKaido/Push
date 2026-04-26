@@ -360,6 +360,17 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     exampleJson: '{"tool": "create_branch", "args": {"name": "feature/foo"}}',
   },
   {
+    canonicalName: 'sandbox_switch_branch',
+    publicName: 'switch_branch',
+    source: 'sandbox',
+    readOnly: false,
+    statusLabel: 'Switching branch...',
+    protocolSignature: 'switch_branch(branch)',
+    protocolDescription:
+      'Switch the sandbox to an existing git branch. Push routes the conversation to the existing chat for that branch (or auto-creates one if none exists). Use create_branch to make a new branch instead.',
+    exampleJson: '{"tool": "switch_branch", "args": {"branch": "main"}}',
+  },
+  {
     canonicalName: 'sandbox_prepare_commit',
     publicName: 'commit',
     aliases: ['sandbox_commit'],

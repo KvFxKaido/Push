@@ -65,6 +65,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_download'; args: { path?: string } }
   | { tool: 'sandbox_save_draft'; args: { message?: string; branch_name?: string } }
   | { tool: 'sandbox_create_branch'; args: { name: string; from?: string } }
+  | { tool: 'sandbox_switch_branch'; args: { branch: string } }
   | {
       tool: 'promote_to_github';
       args: { repo_name: string; description?: string; private?: boolean };
@@ -290,6 +291,14 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
     return {
       tool: 'sandbox_create_branch',
       args: { name, ...(from ? { from } : {}) },
+    };
+  }
+  if (tool === 'sandbox_switch_branch' && typeof args.branch === 'string') {
+    const branch = args.branch.trim();
+    if (!branch) return null;
+    return {
+      tool: 'sandbox_switch_branch',
+      args: { branch },
     };
   }
   if (tool === 'sandbox_read_symbols' && typeof args.path === 'string') {

@@ -493,6 +493,48 @@ const GIT_MUTATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
 ];
 
 /**
+ * Detect plain `git checkout <branch>` / `git switch <branch>` invocations
+ * that target a branch (not a path, not a ref expression). Branch-targeting
+ * checkouts must go through `sandbox_switch_branch` so Push's tracked branch
+ * stays in sync with sandbox HEAD.
+ *
+ * Returns the matched label or null. We only block when the operand
+ * unambiguously denotes a branch:
+ *   - a single positional argument
+ *   - no flags (any `-x` token defers to the user)
+ *   - not a ref expression (HEAD, `~`, `^`, `@{`)
+ *   - not path-shaped (`/`, `./`, `../`, contains `.`)
+ *
+ * False negatives (branches that contain `.` or live behind disambiguators)
+ * are acceptable — the model can call `sandbox_switch_branch` directly. The
+ * cost of a false positive (blocking a legitimate file restore) is higher
+ * than the cost of letting the rare dotted-branch case through.
+ */
+function detectBlockedBranchCheckout(command: string): string | null {
+  const re = /\bgit\s+(checkout|switch)\s+([^\n;|&]+)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(command)) !== null) {
+    const subcommand = match[1].toLowerCase();
+    const tokens = match[2].trim().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) continue;
+    // Any flag (-b, -c, --detach, --, etc.) — caller knows what they're
+    // doing, or a different rule (e.g. -b/-c above) handles it.
+    if (tokens.some((t) => t.startsWith('-'))) continue;
+    // Multiple positional → file restore form: `git checkout main some/file`.
+    if (tokens.length > 1) continue;
+    const arg = tokens[0];
+    // Ref expressions
+    if (/^HEAD(?:[~^@].*)?$/i.test(arg)) continue;
+    if (/[~^]/.test(arg) || arg.includes('@{')) continue;
+    // Path-shaped operands
+    if (arg.startsWith('/') || arg.startsWith('./') || arg.startsWith('../')) continue;
+    if (arg.includes('.')) continue;
+    return `git ${subcommand} <branch>`;
+  }
+  return null;
+}
+
+/**
  * Detect git mutation commands that should go through the audited flow.
  * Returns the matched command label, or null if the command is safe.
  */
@@ -500,5 +542,5 @@ export function detectBlockedGitCommand(command: string): string | null {
   for (const { pattern, label } of GIT_MUTATION_PATTERNS) {
     if (pattern.test(command)) return label;
   }
-  return null;
+  return detectBlockedBranchCheckout(command);
 }
