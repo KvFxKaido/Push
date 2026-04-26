@@ -794,6 +794,10 @@ export function createJsonProxyHandler(
 
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
+        const isHtml = /<html/i.test(errBody.slice(0, 200));
+        const safeBody = isHtml
+          ? `${config.name} responded with status ${upstream.status} (content type not JSON)`
+          : errBody.slice(0, 200);
         wlog('error', 'upstream_error', {
           requestId,
           route: config.logTag,
@@ -806,7 +810,7 @@ export function createJsonProxyHandler(
           return Response.json(formatted, { status: upstream.status });
         }
         return Response.json(
-          { error: `${config.name} error ${upstream.status}: ${errBody.slice(0, 200)}` },
+          { error: `${config.name} error ${upstream.status}: ${safeBody}` },
           { status: upstream.status },
         );
       }

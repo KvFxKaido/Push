@@ -913,4 +913,130 @@ describe('createJsonProxyHandler', () => {
     await handler(makeGetRequest(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
     expect(capturedHeaders['X-Extra']).toBe('yes');
   });
+
+  // ---------------------------------------------------------------------------
+  // createJsonProxyHandler — AI Gateway routing
+  // ---------------------------------------------------------------------------
+
+  describe('createJsonProxyHandler — AI Gateway routing', () => {
+    const jsonBaseConfig = {
+      name: 'Test JSON Provider',
+      logTag: 'api/test/models',
+      upstreamUrl: 'https://upstream.test/v1/models',
+      method: 'GET',
+      timeoutMs: 30_000,
+      buildAuth: standardAuth('OLLAMA_API_KEY'),
+      keyMissingError: 'missing key',
+      timeoutError: 'timed out',
+      gateway: { provider: 'openrouter', pathSuffix: '/models' },
+    };
+
+    function makeGetRequest(): Request {
+      return new Request('https://push.example.test/api/models', {
+        method: 'GET',
+        headers: { Origin: 'https://push.example.test' },
+      });
+    }
+
+    beforeEach(() => {
+      silenceWlog();
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    });
+
+    it('uses direct URL when gateway env vars are unset', async () => {
+      let capturedUrl = '';
+      let capturedHeaders: Record<string, string> = {};
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string, init: RequestInit) => {
+          capturedUrl = url;
+          capturedHeaders = init.headers as Record<string, string>;
+          return new Response('{}', { status: 200 });
+        }),
+      );
+      const handler = createJsonProxyHandler({ ...jsonBaseConfig });
+      await handler(makeGetRequest(), makeEnv({ OLLAMA_API_KEY: 'sk' }));
+
+      expect(capturedUrl).toBe('https://upstream.test/v1/models');
+      expect(capturedHeaders['cf-aig-authorization']).toBeUndefined();
+    });
+
+    it('rewrites URL to gateway when account+slug are set', async () => {
+      let capturedUrl = '';
+      let capturedHeaders: Record<string, string> = {};
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string, init: RequestInit) => {
+          capturedUrl = url;
+          capturedHeaders = init.headers as Record<string, string>;
+          return new Response('{}', { status: 200 });
+        }),
+      );
+      const handler = createJsonProxyHandler({ ...jsonBaseConfig });
+      await handler(
+        makeGetRequest(),
+        makeEnv({
+          OLLAMA_API_KEY: 'sk',
+          CF_AI_GATEWAY_ACCOUNT_ID: 'test-account',
+          CF_AI_GATEWAY_SLUG: 'test-gateway',
+        }),
+      );
+
+      expect(capturedUrl).toBe(
+        'https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/openrouter/models',
+      );
+      expect(capturedHeaders.Authorization).toBe('Bearer sk');
+      expect(capturedHeaders['cf-aig-authorization']).toBeUndefined();
+    });
+
+    it('attaches gateway auth header when token is set', async () => {
+      let capturedHeaders: Record<string, string> = {};
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          return new Response('{}', { status: 200 });
+        }),
+      );
+      const handler = createJsonProxyHandler({ ...jsonBaseConfig });
+      await handler(
+        makeGetRequest(),
+        makeEnv({
+          OLLAMA_API_KEY: 'sk',
+          CF_AI_GATEWAY_ACCOUNT_ID: 'test-account',
+          CF_AI_GATEWAY_SLUG: 'test-gateway',
+          CF_AI_GATEWAY_TOKEN: 'test-token',
+        }),
+      );
+
+      expect(capturedHeaders['cf-aig-authorization']).toBe('Bearer test-token');
+    });
+
+    it('orphan token does not leak when gateway URL is null', async () => {
+      let capturedUrl = '';
+      let capturedHeaders: Record<string, string> = {};
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string, init: RequestInit) => {
+          capturedUrl = url;
+          capturedHeaders = init.headers as Record<string, string>;
+          return new Response('{}', { status: 200 });
+        }),
+      );
+      const handler = createJsonProxyHandler({ ...jsonBaseConfig });
+      await handler(
+        makeGetRequest(),
+        makeEnv({
+          OLLAMA_API_KEY: 'sk',
+          CF_AI_GATEWAY_TOKEN: 'orphan-token',
+        }),
+      );
+
+      expect(capturedUrl).toBe('https://upstream.test/v1/models');
+      expect(capturedHeaders['cf-aig-authorization']).toBeUndefined();
+    });
+  });
 });
