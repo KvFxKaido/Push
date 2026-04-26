@@ -38,3 +38,7 @@ Push is being built around a few strong constraints:
 - reliability and observability over black-box automation
 
 Those constraints are part of the product, not temporary limitations.
+
+## Local development
+
+The root `npm run typecheck` runs against `cli/tsconfig.json` using `tsgo` from `@typescript/native-preview` (TypeScript 7.0). The native binary is delivered through platform-specific `optionalDependencies` (linux/darwin/win × x64/arm64). If you install with `--no-optional`, run on an unsupported platform, or otherwise see `tsgo: not found`, fall back to `cd cli && npx tsc --noEmit` — emit and `build:cli` still use `tsc`, so nothing else changes. The fan-out across all leaf tsconfigs lives at `npm run typecheck:tsgo`.
