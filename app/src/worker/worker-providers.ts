@@ -417,9 +417,7 @@ export const handleOllamaChat = createStreamProxyHandler({
   gateway: { provider: 'ollama', pathSuffix: '/chat/completions' },
 });
 
-
 // --- OpenRouter ---
-
 
 export const handleOpenRouterChat = createStreamProxyHandler({
   name: 'OpenRouter',

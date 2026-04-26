@@ -788,7 +788,6 @@ export function createJsonProxyHandler(
         };
         if (needsBody) fetchInit.body = bodyText;
         upstream = await fetch(upstreamUrl, fetchInit);
-
       } finally {
         clearTimeout(timeoutId);
       }
