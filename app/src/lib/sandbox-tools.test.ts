@@ -4310,9 +4310,9 @@ describe('executeSandboxToolCall -- git guard for plain branch checkout/switch',
     expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
   });
 
-  it('blocks `git switch feat/foo` and points the model at sandbox_switch_branch', async () => {
+  it('blocks `git switch develop` and points the model at sandbox_switch_branch', async () => {
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_exec', args: { command: 'git switch feat/foo' } },
+      { tool: 'sandbox_exec', args: { command: 'git switch develop' } },
       'sb-1',
     );
 
@@ -4320,6 +4320,27 @@ describe('executeSandboxToolCall -- git guard for plain branch checkout/switch',
     expect(result.structuredError?.message).toBe('Direct "git switch <branch>" is blocked');
     expect(result.text).toContain('sandbox_switch_branch');
     expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('does not block `git checkout src/utils` (slash-shaped path operand)', async () => {
+    // Slash-containing operands are deferred to git: they may be a nested
+    // path (most common) or a feat-branch name. Trade-off documented in
+    // detectBlockedBranchCheckout — over-blocking legitimate file restores
+    // is a worse failure mode than letting feat/foo slip past the guard
+    // (the model is expected to call sandbox_switch_branch directly).
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout src/utils' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).not.toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalled();
   });
 
   it('blocks plain `git checkout` even in full-auto mode (state-sync, not consent)', async () => {
@@ -4502,7 +4523,7 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
     const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls[0][1]).toContain('git rev-parse --abbrev-ref HEAD');
-    expect(calls[1][1]).toContain("git checkout 'main'");
+    expect(calls[1][1]).toContain("git switch 'main'");
     // Branch switch must be marked as workspace-mutating so the cache/ledger
     // invalidation hooks fire (same as sandbox_create_branch).
     expect(calls[1][3]?.markWorkspaceMutated).toBe(true);
@@ -4575,7 +4596,7 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
     expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
   });
 
-  it('surfaces a structured error when git checkout fails', async () => {
+  it('surfaces a structured error when git switch fails', async () => {
     vi.mocked(sandboxClient.execInSandbox)
       .mockResolvedValueOnce({
         stdout: 'feat/old\n',
@@ -4585,7 +4606,7 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
       })
       .mockResolvedValueOnce({
         stdout: '',
-        stderr: "error: pathspec 'nonexistent' did not match any file(s) known to git",
+        stderr: 'fatal: invalid reference: nonexistent',
         exitCode: 1,
         truncated: false,
       });
@@ -4596,7 +4617,7 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
     );
 
     expect(result.text).toContain('[Tool Error — sandbox_switch_branch]');
-    expect(result.text).toContain('did not match');
+    expect(result.text).toContain('invalid reference');
     expect(result.branchSwitch).toBeUndefined();
     expect(result.structuredError).toBeDefined();
   });

@@ -503,12 +503,19 @@ const GIT_MUTATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
  *   - a single positional argument
  *   - no flags (any `-x` token defers to the user)
  *   - not a ref expression (HEAD, `~`, `^`, `@{`)
- *   - not path-shaped (`/`, `./`, `../`, contains `.`)
+ *   - not path-shaped (starts with `/`, `./`, `../`; contains `/` or `.`)
  *
- * False negatives (branches that contain `.` or live behind disambiguators)
- * are acceptable — the model can call `sandbox_switch_branch` directly. The
- * cost of a false positive (blocking a legitimate file restore) is higher
- * than the cost of letting the rare dotted-branch case through.
+ * Operands containing `/` are allowed through as path-shaped (e.g.
+ * `git checkout src/utils`). This means feat-branch-style names like
+ * `feat/foo` also fall through — but a `feat/foo` branch is unambiguous
+ * to git, so even raw `git checkout feat/foo` would either move HEAD or
+ * fail; the slice 2.5 contract is best-effort guidance to the model
+ * rather than a hard sandbox-state contract for cross-namespace branches.
+ *
+ * Bare-positional false positives (e.g. `git checkout README`) are blocked
+ * with guidance pointing at `sandbox_switch_branch` and the `--` escape
+ * hatch for true file restores. The cost of guiding the model toward an
+ * unambiguous form is lower than the cost of letting state desync.
  */
 function detectBlockedBranchCheckout(command: string): string | null {
   const re = /\bgit\s+(checkout|switch)\s+([^\n;|&]+)/gi;
@@ -526,9 +533,11 @@ function detectBlockedBranchCheckout(command: string): string | null {
     // Ref expressions
     if (/^HEAD(?:[~^@].*)?$/i.test(arg)) continue;
     if (/[~^]/.test(arg) || arg.includes('@{')) continue;
-    // Path-shaped operands
-    if (arg.startsWith('/') || arg.startsWith('./') || arg.startsWith('../')) continue;
-    if (arg.includes('.')) continue;
+    // Path-shaped operands. Any `/` (leading or embedded) defers to the
+    // user — covers absolute/relative paths AND nested files like
+    // `src/utils`. Trade-off: feat-branch names also fall through.
+    // A `.` anywhere covers `./`, `../`, dotfiles, and file extensions.
+    if (arg.includes('/') || arg.includes('.')) continue;
     return `git ${subcommand} <branch>`;
   }
   return null;

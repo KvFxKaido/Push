@@ -547,13 +547,17 @@ export async function executeSandboxToolCall(
           if (head && head !== 'HEAD') previous = head;
         }
 
-        const cmd = `cd /workspace && git checkout ${shellEscape(branch)}`;
+        // `git switch` (not `git checkout`): branch-only by spec, so a path
+        // collision (e.g. `docs/` directory and no `docs` branch) fails fast
+        // with non-zero exit instead of silently doing a path-mode checkout
+        // that leaves HEAD where it was while we'd still emit `branchSwitch`.
+        const cmd = `cd /workspace && git switch ${shellEscape(branch)}`;
         const result = await execInSandbox(sandboxId, cmd, undefined, {
           markWorkspaceMutated: true,
         });
 
         if (result.exitCode !== 0) {
-          const reason = result.stderr || result.stdout || 'git checkout failed';
+          const reason = result.stderr || result.stdout || 'git switch failed';
           const err = classifyError(reason, cmd);
           return {
             text: formatStructuredError(err, `[Tool Error — sandbox_switch_branch]\n${reason}`),
