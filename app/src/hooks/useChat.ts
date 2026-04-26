@@ -69,6 +69,8 @@ import { useRunEngine } from './useRunEngine';
 import { useVerificationState } from './useVerificationState';
 import { usePendingSteer, type PendingSteerRequest } from './usePendingSteer';
 import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
+import { getMigrationMarker } from '@/lib/branch-migration-marker';
+import { useBranchForkGuard } from './useBranchForkGuard';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
@@ -569,6 +571,14 @@ export function useChat(
 
   // --- Auto-switch effect ---
   useEffect(() => {
+    // Slice 2: suppress auto-switch while a fork migration is in flight. Both
+    // branches below (auto-create AND chat-id reassignment) would otherwise
+    // disrupt the active chat during the transition. The in-tab `skipAutoCreateRef`
+    // covers the migrating tab; `getMigrationMarker()` (cross-tab localStorage)
+    // covers other tabs that observe the persisted state changes mid-migration.
+    if (skipAutoCreateRef.current) return;
+    if (getMigrationMarker()) return;
+
     if (sortedChatIds.length === 0 && activeRepoFullName) {
       if (!autoCreateRef.current) {
         autoCreateRef.current = true;
@@ -601,6 +611,11 @@ export function useChat(
       saveActiveChatId(sortedChatIds[0]);
     }
   }, [sortedChatIds, activeChatId, activeRepoFullName, updateConversations]);
+
+  // Slice 2 conversation-fork migration guard. The hook owns the ref + the
+  // state-observed clear effect; the auto-switch effect above early-returns
+  // while the ref is set. See useBranchForkGuard for D2 rationale.
+  const skipAutoCreateRef = useBranchForkGuard(conversations, sortedChatIds);
 
   // --- Sandbox setters ---
   const setSandboxId = useCallback((id: string | null) => {
@@ -984,6 +999,10 @@ export function useChat(
         updateVerificationState: updateVerificationStateForChat,
         executeDelegateCall,
         emitRunEngineEvent,
+        // Slice 2: chat-send sets this when a 'forked' branchSwitch arrives,
+        // suppressing useChat's auto-switch effect during migration.
+        skipAutoCreateRef,
+        activeChatIdRef,
       };
 
       let loopCompletedNormally = false;

@@ -129,3 +129,16 @@ export function filterModelVisibleMessages<M extends Pick<ChatMessage, 'visibleT
 ): M[] {
   return messages.filter((m) => m.visibleToModel !== false);
 }
+
+/** In-memory guard for an in-progress conversation-fork migration. Held in a
+ *  ref by the migrating tab. Set immediately when a `'forked'` branchSwitch
+ *  arrives; cleared by a state-observed effect once the migration is
+ *  observable in the rendered state. While set, `useChat`'s auto-switch
+ *  effect early-returns to avoid auto-creating or chat-id-stealing during
+ *  the in-flight transition.
+ *
+ *  Cross-tab coordination is separate (see `branch-migration-marker.ts`). */
+export interface MigrationGuard {
+  chatId: string;
+  toBranch: string;
+}
