@@ -43,7 +43,7 @@ Ship a Cloudflare Sandbox backend behind the existing `SandboxProvider` interfac
 
 ### Wire format
 
-`/api/sandbox/*` POST requests dispatch to `handleCloudflareSandbox` (from `worker-cf-sandbox.ts`) when `env.PUSH_SANDBOX_PROVIDER === 'cloudflare'`, else fall through to the existing `handleSandbox` (Modal). A secondary route `/api/sandbox-cf/*` always goes to the CF handler regardless of the var — useful for A/B debugging and forced-CF testing without redeploy.
+`/api/sandbox/*` POST requests dispatch to `handleCloudflareSandbox` (from `worker-cf-sandbox.ts`) by default. Setting `env.PUSH_SANDBOX_PROVIDER=modal` falls through to the existing `handleSandbox` (Modal). A secondary route `/api/sandbox-cf/*` always goes to the CF handler regardless of the var — useful for A/B debugging and forced-CF testing without redeploy.
 
 Both handlers share an identical snake_case wire format — Modal's convention (`sandbox_id`, `owner_token`, `github_token`, `github_identity`, `seed_files`, `workspace_revision`, `exit_code`, …). A client can target either handler with the same request body; the `PUSH_SANDBOX_PROVIDER` toggle is the only thing that changes backends on `/api/sandbox/*`. The TypeScript result shapes in `lib/sandbox-provider.ts` are intentionally mixed: lifecycle/session/exec types use camelCase (`sandboxId`, `ownerToken`, `exitCode`, `workspaceRevision`), while file-operation results (`FileReadResult`, `WriteResult`, `BatchWriteResult`, `DiffResult`) keep snake_case keys (`workspace_revision`, `bytes_written`, `new_version`, `git_status`, …) so they can be returned verbatim from the wire. Each provider's adapter only transforms the former group.
 
@@ -54,7 +54,7 @@ Existing (`lib/sandbox-provider.ts`, authored as part of the original AgentScope
 - `ModalSandboxProvider` — wraps the pre-existing `sandbox-client.ts` HTTP functions against Modal's FastAPI endpoints.
 - `CloudflareSandboxProvider` — talks to `/api/sandbox-cf/*` via `fetch`, caches owner tokens in a per-instance `Map` keyed by `sandboxId`, and injects the token into every non-create request body.
 
-`createSandboxProvider({ provider })` picks between them. Browser/Worker contexts pass the name explicitly (no `process.env`); CLI contexts default to a Modal fallback when `PUSH_SANDBOX_PROVIDER` is unset, to match the conservative "if you didn't configure it, don't auto-switch backends" principle.
+`createSandboxProvider({ provider })` picks between them. Browser/Worker contexts pass the name explicitly (no `process.env`); CLI/Node contexts also default to Cloudflare when `PUSH_SANDBOX_PROVIDER` is unset. Modal remains available by setting `PUSH_SANDBOX_PROVIDER=modal`.
 
 ### Owner-token auth (PR #355)
 
@@ -87,7 +87,7 @@ Paths interpolated into `sandbox.exec` commands go through `shellSingleQuote`, w
 - **No snapshots**: `capabilities.snapshots = false`; `hibernate` / `restore-snapshot` routes return HTTP 501. Follow-up: R2-backed tar.gz archives with the same index pattern as Modal's `SNAPSHOT_INDEX` (separate KV namespace per the per-provider prefix discipline).
 - **Workspace-revision = 0**: The SDK doesn't expose a monotonic counter. File-level SHA still gates stale writes; workspace-level optimistic concurrency doesn't work on the CF path.
 - **No persistence across provider restarts**: the `ownerTokens` Map on `CloudflareSandboxProvider` lives in-memory. Browser reload loses tokens; callers must invoke `connect(sandboxId, ownerToken)` with a persisted token to re-establish. Modal has equivalent via `safe-storage`; the CF path hasn't wired that yet.
-- **CLI still defaults to Modal**: `resolveDefaultProvider()` in `modal-sandbox-provider.ts` falls back to `"modal"` when `PUSH_SANDBOX_PROVIDER` is unset. Web is CF-default via wrangler vars; CLI is Modal-default pending CLI-against-CF test coverage.
+- **Modal fallback is explicit**: `resolveDefaultProvider()` in `modal-sandbox-provider.ts` falls back to `"cloudflare"` when `PUSH_SANDBOX_PROVIDER` is unset. Use `PUSH_SANDBOX_PROVIDER=modal` to route through Modal.
 - **Deploy requires operator setup**: `SANDBOX_TOKENS` is intentionally absent from the default `wrangler.jsonc` because a placeholder id would break `wrangler deploy`. Operator must run `npx wrangler kv:namespace create SANDBOX_TOKENS` and add the binding before first CF-backed deploy.
 
 ## Operator setup

@@ -18,7 +18,8 @@ describe('push built-in project context', () => {
     expect(builtIn).toContain(
       'Explorer: autonomous read-only investigator for codebase understanding',
     );
-    expect(builtIn).toContain('Branch creation is UI-owned');
+    expect(builtIn).toContain('Models can create branches via create_branch');
+    expect(builtIn).toContain('Cloudflare Sandbox is the default');
   });
 
   it('merges built-in context with repo-authored instructions', () => {

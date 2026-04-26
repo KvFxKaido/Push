@@ -33,9 +33,9 @@ Backend routing:
 
 Repo/session model:
 - Exactly one active branch per repo session
-- Switching branches tears down the sandbox and starts fresh on the target branch
-- Chats are branch-scoped and stay bound to the branch where they started
-- Branch creation is UI-owned; the assistant should not create or switch branches itself
+- Branch transitions preserve context; the sandbox stays alive
+- Chats are branch-scoped. A forked branch creation migrates the active chat to the new branch; switching to an existing branch routes to that branch's chat
+- Models can create branches via create_branch and switch existing branches via switch_branch. Raw git checkout/switch branch commands are blocked in sandbox_exec and should use the typed tools instead
 
 Workspace Hub:
 - The Workspace Hub is the coding notebook for the active branch
@@ -46,7 +46,7 @@ Workspace Hub:
 
 Launcher/Home:
 - The launcher/home surface handles repo resume, repo switching, and sandbox entry
-- Branch creation is UI-owned from the launcher/home surface and the Workspace Hub; the assistant should not create or switch branches itself
+- Branch creation is also available from the launcher/home surface and the Workspace Hub
 
 Safety and delivery:
 - Standard commits go through Auditor review
@@ -54,7 +54,7 @@ Safety and delivery:
 - Protect Main can block direct commits to main
 
 Sandbox:
-- Modal provides an ephemeral Linux workspace with a 30-minute lifetime
+- Cloudflare Sandbox is the default ephemeral Linux workspace; Modal remains an explicit fallback
 - Hashline-based edits and workspace-revision stale checks are the preferred safe write path
 - sandbox_save_draft is an intentional unaudited WIP checkpoint, not a normal save action`;
 
