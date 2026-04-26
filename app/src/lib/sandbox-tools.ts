@@ -491,7 +491,11 @@ export async function executeSandboxToolCall(
 
         return {
           text: lines.join('\n'),
-          branchSwitch: name,
+          // 'forked' tells the foreground app the active conversation should
+          // follow this branch (slice 2). Other producers (github_create_branch,
+          // release_draft) emit 'switched' because their UX expectation is
+          // "branch changed but conversation stays put".
+          branchSwitch: { name, kind: 'forked', source: 'sandbox_create_branch' },
         };
       }
 

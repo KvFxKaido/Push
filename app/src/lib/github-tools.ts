@@ -97,7 +97,18 @@ export async function executeCreateBranch(
   }
 
   return {
-    branchSwitch: branchName,
+    // 'switched' (not 'forked'): github-side branch creation is typically
+    // PR-side branching that doesn't intend conversation migration. The user
+    // is creating a branch on GitHub for some other purpose, not forking
+    // their current chat. Slice 2 may revisit if runtime usage proves this
+    // wrong.
+    branchSwitch: {
+      name: branchName,
+      kind: 'switched',
+      from: sourceRef,
+      sha,
+      source: 'github_create_branch',
+    },
     text: [
       `[Tool Result — create_branch]`,
       `Branch "${branchName}" created on ${repo} from ${sourceRef} (${sha.slice(0, 7)}).`,

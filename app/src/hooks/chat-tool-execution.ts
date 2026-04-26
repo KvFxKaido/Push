@@ -215,7 +215,7 @@ export function buildMetaLine(
 
 export interface ToolSideEffects {
   promotion: ToolExecutionResult['promotion'] | undefined;
-  branchSwitch: string | undefined;
+  branchSwitch: ToolExecutionResult['branchSwitch'];
   sandboxUnreachable: string | undefined;
 }
 

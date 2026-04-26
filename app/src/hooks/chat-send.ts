@@ -1518,7 +1518,11 @@ export async function processAssistantTurn(
   }
 
   if (toolExecResult.branchSwitch) {
-    runtimeHandlersRef.current?.onBranchSwitch?.(toolExecResult.branchSwitch);
+    // Piece A: pass the branch name to the existing onBranchSwitch handler
+    // signature so behavior is unchanged. Piece B replaces this with a
+    // kind-aware dispatcher that routes 'forked' results through a
+    // conversation-migration handler instead.
+    runtimeHandlersRef.current?.onBranchSwitch?.(toolExecResult.branchSwitch.name);
   }
 
   if (toolExecResult.structuredError?.type === 'SANDBOX_UNREACHABLE') {

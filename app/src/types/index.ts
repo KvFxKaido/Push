@@ -253,6 +253,57 @@ export interface ChatMessage {
   isMalformed?: boolean; // Assistant message that attempted a tool call but produced invalid JSON
   /** Provenance metadata — present on tool result messages for audit trail. */
   toolMeta?: ToolMeta;
+  /** Branch active when this message was authored. Stamped at write time
+   *  (user submit, model first-chunk, tool-call dispatch, system event write).
+   *  Falls back to the parent conversation's branch when undefined (legacy
+   *  messages from before per-message stamping landed). */
+  branch?: string;
+  /** Discriminator for synthetic message kinds. Plain user/assistant messages
+   *  leave this undefined. */
+  kind?: 'branch_forked';
+  /** Payload for `kind: 'branch_forked'` events. Records the branch
+   *  transition that happened at this point in the conversation. */
+  branchForkedMeta?: BranchForkedMeta;
+  /** When explicitly `false`, this message is transcript metadata only —
+   *  filtered out of every prompt-pack path. Default behavior (undefined)
+   *  is model-visible. Used for system events like `branch_forked` that
+   *  must not be misread as model-directed instructions. */
+  visibleToModel?: boolean;
+}
+
+/** Where a branch-switch result originated. Not user-facing; aids debugging
+ *  and tests. */
+export type BranchSwitchSource =
+  | 'sandbox_create_branch'
+  | 'github_create_branch'
+  | 'release_draft'
+  | 'ui';
+
+/** Normalized payload for a branch transition reported by a tool result.
+ *  `kind: 'forked'` means the tool just created a new branch and the active
+ *  conversation should follow it (slice 2). `kind: 'switched'` means the
+ *  branch changed but the conversation should NOT migrate — existing
+ *  pre-slice-2 behavior (auto-select existing chat for the target branch
+ *  via `useChat`'s filter, or auto-create one). */
+export interface BranchSwitchPayload {
+  name: string;
+  kind: 'forked' | 'switched';
+  /** Source branch (for forked: the base; for switched: optional context). */
+  from?: string;
+  /** Commit SHA of the new branch's HEAD, when known. */
+  sha?: string;
+  /** Producer that emitted this payload. */
+  source?: BranchSwitchSource;
+}
+
+/** Payload for a `kind: 'branch_forked'` system event in the conversation.
+ *  Mirrors `BranchSwitchPayload` but tied to the message rather than a tool
+ *  result, since the event lives in chat history after the migration. */
+export interface BranchForkedMeta {
+  from: string;
+  to: string;
+  sha?: string;
+  source?: BranchSwitchSource;
 }
 
 // Discriminated union for rich inline cards
@@ -474,9 +525,13 @@ export interface ToolExecutionResult {
     warning?: string;
     htmlUrl?: string;
   };
-  /** When set, the sandbox has switched to this branch (e.g. draft checkout).
-   *  The app should sync its active branch state without tearing down the sandbox. */
-  branchSwitch?: string;
+  /** When set, the sandbox has switched to this branch (e.g. draft checkout
+   *  or model-initiated fork). The app syncs its active branch state without
+   *  tearing down the sandbox. The `kind` field distinguishes a *fork* (new
+   *  branch created from current state — conversation should follow) from a
+   *  *switch* (branch changed but conversation stays put). See
+   *  `BranchSwitchPayload` for the field contract. */
+  branchSwitch?: BranchSwitchPayload;
   /** Structured delegation outcome — present when this result came from a delegated agent. */
   delegationOutcome?: DelegationOutcome;
   /** Post-hook policy action: inject this message after the tool result. */
