@@ -20,7 +20,14 @@
   // PRs. Flip back with: `npx wrangler deploy --var PUSH_SANDBOX_PROVIDER:modal`
   // or edit this file and redeploy.
   "vars": {
-    "PUSH_SANDBOX_PROVIDER": "cloudflare"
+    "PUSH_SANDBOX_PROVIDER": "cloudflare",
+    // Cloudflare AI Gateway — see docs/decisions/Cloudflare AI Gateway Integration.md.
+    // Account ID and slug are non-secret identifiers (the slug appears in the
+    // gateway URL itself); plaintext here is intentional. CF_AI_GATEWAY_TOKEN
+    // is set separately as an encrypted secret IF the gateway has
+    // Authenticated Gateway mode enabled — otherwise leave it unset.
+    "CF_AI_GATEWAY_ACCOUNT_ID": "9dcfdc3504e0fc0c962b53feeb9381cd",
+    "CF_AI_GATEWAY_SLUG": "push-gate"
   },
   // Worker bundle shim — `import.meta.env` is Vite-only (client build). The
   // Worker runtime doesn't have it, so transitive imports of client modules
