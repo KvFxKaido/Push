@@ -117,6 +117,9 @@ export async function handleExplorerDelegation(
 ): Promise<ToolExecutionResult> {
   const { chatId, toolCall, baseCorrelation, lockedProviderForChat, resolvedModelForChat } = input;
   const executionId = createId();
+  // Capture the foreground branch at dispatch — see R11 in the slice 2
+  // design doc. Bound to this delegation's result for its lifetime.
+  const originBranch = ctx.branchInfoRef.current?.currentBranch;
   ctx.emitRunEngineEvent({
     type: 'DELEGATION_STARTED',
     timestamp: Date.now(),
@@ -128,6 +131,7 @@ export async function handleExplorerDelegation(
   if (!explorerTask) {
     return {
       text: '[Tool Error] delegate_explorer requires a non-empty "task" string.',
+      originBranch,
     };
   }
   ctx.appendRunEvent(chatId, {
@@ -235,6 +239,7 @@ export async function handleExplorerDelegation(
         outcome: explorerOutcome,
       }),
       delegationOutcome: explorerOutcome,
+      originBranch,
     };
 
     if (explorerMemoryScope && explorerOutcome.status === 'complete') {
@@ -295,6 +300,7 @@ export async function handleExplorerDelegation(
           outcome: abortOutcome,
         }),
         delegationOutcome: abortOutcome,
+        originBranch,
       };
     }
     const msg = err instanceof Error ? err.message : String(err);
@@ -304,6 +310,6 @@ export async function handleExplorerDelegation(
       agent: 'explorer',
       error: summarizeToolResultPreview(msg),
     });
-    return { text: `[Tool Error] Explorer failed: ${msg}` };
+    return { text: `[Tool Error] Explorer failed: ${msg}`, originBranch };
   }
 }

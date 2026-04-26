@@ -213,6 +213,11 @@ export interface CoderAuditorInput {
   verificationCommandsById: Map<string, string>;
   harnessSettings: HarnessProfileSettings;
   currentSandboxId: string;
+  /** Foreground branch captured at delegation dispatch. Forwarded to the
+   *  result envelope by the hook so the result message stamps the launch
+   *  branch even if the foreground has since forked. See R11 in the slice
+   *  2 design doc. */
+  originBranch: string | undefined;
 }
 
 /**
@@ -286,6 +291,12 @@ export async function handleCoderDelegation(
 
   const executionId = createId();
   const coderStartMs = Date.now();
+  // Capture the foreground branch at dispatch. Bound to this delegation
+  // for its lifetime — the result envelope carries it so the result
+  // message stamps the launch branch, not whatever the foreground
+  // happens to be on at completion time. See R11 in the slice 2 design
+  // doc.
+  const originBranch = ctx.branchInfoRef.current?.currentBranch;
 
   ctx.emitRunEngineEvent({
     type: 'DELEGATION_STARTED',
@@ -309,6 +320,7 @@ export async function handleCoderDelegation(
       status: 'tool-error',
       toolExecResult: {
         text: '[Tool Error] Failed to start sandbox automatically. Try again.',
+        originBranch,
       },
     };
   }
@@ -331,6 +343,7 @@ export async function handleCoderDelegation(
         status: 'tool-error',
         toolExecResult: {
           text: '[Tool Error] delegate_coder requires "task" or non-empty "tasks" array.',
+          originBranch,
         },
       };
     }
@@ -635,6 +648,7 @@ export async function handleCoderDelegation(
         verificationCommandsById,
         harnessSettings,
         currentSandboxId,
+        originBranch,
       },
     };
   } catch (err) {
@@ -673,6 +687,7 @@ export async function handleCoderDelegation(
             outcome: abortOutcome,
           }),
           delegationOutcome: abortOutcome,
+          originBranch,
         },
       };
     }
@@ -686,7 +701,7 @@ export async function handleCoderDelegation(
     return {
       status: 'failed',
       executionId,
-      toolExecResult: { text: `[Tool Error] Coder failed: ${msg}` },
+      toolExecResult: { text: `[Tool Error] Coder failed: ${msg}`, originBranch },
     };
   }
 }

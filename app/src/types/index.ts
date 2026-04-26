@@ -534,6 +534,13 @@ export interface ToolExecutionResult {
   branchSwitch?: BranchSwitchPayload;
   /** Structured delegation outcome — present when this result came from a delegated agent. */
   delegationOutcome?: DelegationOutcome;
+  /** Foreground branch active when the delegated run was dispatched. Set by
+   *  delegation handlers (Coder/Explorer/task graph) and used at message
+   *  construction time to stamp `branch: originBranch` on the result message,
+   *  binding the result to its launch branch even if the foreground has
+   *  since forked. Undefined for non-delegate tool results. See R11 in the
+   *  slice 2 design doc. */
+  originBranch?: string;
   /** Post-hook policy action: inject this message after the tool result. */
   postHookInject?: ChatMessage;
   /** Post-hook policy action: halt the agent loop with this summary. */
@@ -1182,6 +1189,13 @@ export interface DelegationEnvelope extends DelegationBriefFields {
     defaultBranch: string;
     protectMain: boolean;
   };
+  /** Branch active in the foreground when this delegation was dispatched.
+   *  Bound to the delegate for the lifetime of the run; the result message
+   *  stamps `branch: originBranch` even when the foreground has since
+   *  forked away. See R11 in the slice 2 design doc. Distinct from
+   *  `branchContext.activeBranch`, which the agent reads as runtime state;
+   *  this field is provenance, not policy. */
+  originBranch?: string;
   /** Explicit provider for this delegation (not inherited from chat). */
   provider: AIProviderType;
   /** Explicit model override (not inherited from chat). */
@@ -1238,6 +1252,8 @@ export interface ExplorerDelegationEnvelope extends DelegationBriefFields {
     defaultBranch: string;
     protectMain: boolean;
   };
+  /** Foreground branch at dispatch — see {@link DelegationEnvelope.originBranch}. */
+  originBranch?: string;
   provider: AIProviderType;
   model?: string;
   projectInstructions?: string;
@@ -1296,6 +1312,8 @@ export interface ParallelDelegationEnvelope {
     defaultBranch: string;
     protectMain: boolean;
   };
+  /** Foreground branch at dispatch — see {@link DelegationEnvelope.originBranch}. */
+  originBranch?: string;
   provider: AIProviderType;
   model?: string;
   projectInstructions?: string;

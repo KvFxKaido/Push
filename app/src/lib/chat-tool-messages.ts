@@ -34,6 +34,13 @@ export interface BuildToolResultMessageOptions {
   text: string;
   toolMeta: ToolMeta;
   metaLine?: string;
+  /** Branch to stamp on the resulting message. For delegate results this is
+   *  the dispatch-time `originBranch` from the delegation envelope, NOT the
+   *  current foreground branch — the delegate did its work against the
+   *  launch branch. For non-delegate tools the caller passes the foreground
+   *  branch at completion time. Omitted callers leave the message
+   *  unstamped; the read-boundary fallback supplies `conv.branch`. */
+  branch?: string;
 }
 
 export interface MarkAssistantToolCallOptions {
@@ -138,6 +145,7 @@ export function buildToolResultMessage(options: BuildToolResultMessageOptions): 
     status: 'done',
     isToolResult: true,
     toolMeta: options.toolMeta,
+    ...(options.branch !== undefined ? { branch: options.branch } : {}),
   };
 }
 
