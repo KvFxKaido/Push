@@ -126,6 +126,30 @@ describe('handleOpenRouterChat', () => {
     expect(body.error).toContain('upstream broke');
   });
 
+  it('extracts the upstream error message from a structured 401 body', async () => {
+    // Regression for the silent-debug-tax bug: OpenRouter 401s used to surface
+    // as "OpenRouter API API error 401: {" because the proxy dumped the raw
+    // JSON body via slice(0, 200). The user-facing message must now be the
+    // actual upstream reason (e.g. "User not found.") so stale-key situations
+    // self-diagnose instead of triggering a multi-hour detective session.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'User not found.', code: 401 } }), {
+            status: 401,
+          }),
+      ),
+    );
+    const response = await handleOpenRouterChat(
+      makeChatRequest(),
+      makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
+    );
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toBe('OpenRouter 401: User not found.');
+  });
+
   it('returns 504 with the provider timeout message when fetch aborts', async () => {
     vi.stubGlobal(
       'fetch',
