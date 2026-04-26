@@ -4378,6 +4378,18 @@ describe('executeSandboxToolCall -- git guard for plain branch checkout/switch',
     expect(sandboxClient.execInSandbox).toHaveBeenCalled();
   });
 
+  it('blocks `git switch feat/foo` because switch is branch-only', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git switch feat/foo' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(result.structuredError?.message).toBe('Direct "git switch <branch>" is blocked');
+    expect(result.text).toContain('sandbox_switch_branch');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
   it('blocks plain `git checkout` even in full-auto mode (state-sync, not consent)', async () => {
     vi.mocked(getApprovalMode).mockReturnValueOnce('full-auto');
 

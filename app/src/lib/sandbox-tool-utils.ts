@@ -503,14 +503,13 @@ const GIT_MUTATION_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
  *   - a single positional argument
  *   - no flags (any `-x` token defers to the user)
  *   - not a ref expression (HEAD, `~`, `^`, `@{`)
- *   - not path-shaped (starts with `/`, `./`, `../`; contains `/` or `.`)
+ *   - for checkout only: not path-shaped (starts with `/`, `./`, `../`;
+ *     contains `/` or `.`)
  *
- * Operands containing `/` are allowed through as path-shaped (e.g.
- * `git checkout src/utils`). This means feat-branch-style names like
- * `feat/foo` also fall through — but a `feat/foo` branch is unambiguous
- * to git, so even raw `git checkout feat/foo` would either move HEAD or
- * fail; the slice 2.5 contract is best-effort guidance to the model
- * rather than a hard sandbox-state contract for cross-namespace branches.
+ * For `git checkout`, operands containing `/` are allowed through as
+ * path-shaped (e.g. `git checkout src/utils`). This means feat-branch-style
+ * names like `feat/foo` also fall through. `git switch` is branch-only by
+ * spec, so slash-shaped operands there are blocked as branch switches.
  *
  * Bare-positional false positives (e.g. `git checkout README`) are blocked
  * with guidance pointing at `sandbox_switch_branch` and the `--` escape
@@ -569,11 +568,12 @@ function detectBlockedBranchCheckout(command: string): string | null {
     // Ref expressions
     if (/^HEAD(?:[~^@].*)?$/i.test(arg)) continue;
     if (/[~^]/.test(arg) || arg.includes('@{')) continue;
-    // Path-shaped operands. Any `/` (leading or embedded) defers to the
-    // user — covers absolute/relative paths AND nested files like
-    // `src/utils`. Trade-off: feat-branch names also fall through.
-    // A `.` anywhere covers `./`, `../`, dotfiles, and file extensions.
-    if (arg.includes('/') || arg.includes('.')) continue;
+    // Path-shaped operands. For checkout, any `/` (leading or embedded)
+    // defers to the user — covers absolute/relative paths AND nested files
+    // like `src/utils`. A `.` anywhere covers `./`, `../`, dotfiles, and file
+    // extensions. For switch, there is no file-restore mode, so a single
+    // positional remains a branch-switch candidate even if it contains `/`.
+    if (subcommand === 'checkout' && (arg.includes('/') || arg.includes('.'))) continue;
     return `git ${subcommand} <branch>`;
   }
   return null;
