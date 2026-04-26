@@ -574,6 +574,12 @@ export function useChat(
       .sort((a, b) => conversations[b].lastMessageAt - conversations[a].lastMessageAt);
   }, [conversations, activeRepoFullName, currentBranch, defaultBranch]);
 
+  // Slice 2 conversation-fork migration guard. The hook owns the ref + the
+  // state-observed clear effect; the auto-switch effect below early-returns
+  // while the ref is set. Declared above the effect so the ref identity can
+  // sit in the effect's dependency array. See useBranchForkGuard for D2.
+  const skipAutoCreateRef = useBranchForkGuard(conversations, sortedChatIds);
+
   // --- Auto-switch effect ---
   useEffect(() => {
     // Slice 2: suppress auto-switch while a fork migration is in flight. Both
@@ -615,12 +621,7 @@ export function useChat(
       setActiveChatId(sortedChatIds[0]);
       saveActiveChatId(sortedChatIds[0]);
     }
-  }, [sortedChatIds, activeChatId, activeRepoFullName, updateConversations]);
-
-  // Slice 2 conversation-fork migration guard. The hook owns the ref + the
-  // state-observed clear effect; the auto-switch effect above early-returns
-  // while the ref is set. See useBranchForkGuard for D2 rationale.
-  const skipAutoCreateRef = useBranchForkGuard(conversations, sortedChatIds);
+  }, [sortedChatIds, activeChatId, activeRepoFullName, updateConversations, skipAutoCreateRef]);
 
   // --- Sandbox setters ---
   const setSandboxId = useCallback((id: string | null) => {
@@ -1313,6 +1314,7 @@ export function useChat(
       getVerificationStateForChat,
       persistRunJournal,
       updateVerificationStateForChat,
+      skipAutoCreateRef,
     ],
   );
 
@@ -1373,7 +1375,7 @@ export function useChat(
       });
       return result;
     },
-    [updateConversations],
+    [updateConversations, skipAutoCreateRef],
   );
 
   // ---------------------------------------------------------------------------
