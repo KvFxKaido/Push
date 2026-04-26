@@ -428,16 +428,36 @@ export function createWebExecutorAdapter(args: WebExecutorAdapterArgs): CoderJob
         };
       }
       if (mapping.kind === 'git_blocked') {
+        // Route the guidance to the right tool now that slice 2.5 detects
+        // branch-targeting checkouts and slice 3 makes sandbox_create_branch
+        // available in background jobs:
+        //   - `git checkout -b` / `git switch -c` → sandbox_create_branch
+        //     (now wired for background; allowDirectGit fallback removed
+        //     for branch-create since the proper tool exists).
+        //   - `git checkout <branch>` / `git switch <branch>` → no path
+        //     forward (sandbox_switch_branch is foreground-only). Tell the
+        //     model to stop trying and continue on the current branch.
+        //   - everything else (commit/push/merge/rebase) → existing audited
+        //     flow guidance.
+        const isBranchCreate = mapping.op === 'git checkout -b' || mapping.op === 'git switch -c';
+        const isBranchSwitch =
+          mapping.op === 'git checkout <branch>' || mapping.op === 'git switch <branch>';
+        const guidance = isBranchCreate
+          ? `Use sandbox_create_branch({"name": "<branch-name>"}) — it creates the branch in the sandbox and keeps Push's branch state in sync. Pass "from": "<base>" to branch from a specific ref instead of HEAD.`
+          : isBranchSwitch
+            ? `Branch switching isn't available in background Coder jobs. Stop trying it and continue work on the current branch, or use sandbox_create_branch to make a new branch from here.`
+            : `Use sandbox_prepare_commit + sandbox_push for the audited flow, or retry this call with "allowDirectGit": true if you've already decided direct git is necessary.`;
+        const messageSuffix = isBranchCreate
+          ? ' — use sandbox_create_branch'
+          : isBranchSwitch
+            ? ' — branch switching unsupported in background jobs'
+            : ' without allowDirectGit';
         return {
-          text:
-            `[Tool Blocked — sandbox_exec] Direct "${mapping.op}" is blocked in background ` +
-            `Coder jobs. Use sandbox_prepare_commit + sandbox_push for the audited flow, or ` +
-            `retry this call with "allowDirectGit": true if you've already decided direct git ` +
-            `is necessary.`,
+          text: `[Tool Blocked — sandbox_exec] Direct "${mapping.op}" is blocked in background Coder jobs. ${guidance}`,
           structuredError: {
             type: 'APPROVAL_GATE_BLOCKED',
             retryable: false,
-            message: `direct ${mapping.op} is blocked without allowDirectGit`,
+            message: `direct ${mapping.op} is blocked${messageSuffix}`,
           },
         };
       }

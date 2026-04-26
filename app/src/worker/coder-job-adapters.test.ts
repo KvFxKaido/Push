@@ -512,6 +512,62 @@ describe('createWebExecutorAdapter — sandbox_create_branch (slice 3)', () => {
     expect(result.text).toContain('Invalid from "-evil"');
     expect(handleCloudflareSandboxMock).not.toHaveBeenCalled();
   });
+
+  it('redirects `git checkout -b` in sandbox_exec to sandbox_create_branch (slice 3 guidance)', async () => {
+    // Pre-slice-3, the git_blocked branch told the model to use
+    // sandbox_prepare_commit + sandbox_push for ALL blocked git ops,
+    // which was wrong for branch creation. Now that sandbox_create_branch
+    // is wired for background jobs, the guidance points there directly.
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+
+    const result = await adapter.executeSandboxToolCall(
+      {
+        tool: 'sandbox_exec',
+        args: { command: 'git checkout -b feature/foo' },
+      } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+
+    expect(result.structuredError?.type).toBe('APPROVAL_GATE_BLOCKED');
+    expect(result.structuredError?.message).toContain('use sandbox_create_branch');
+    expect(result.text).toContain('sandbox_create_branch');
+    expect(result.text).not.toContain('sandbox_prepare_commit');
+    expect(handleCloudflareSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it('explains `git checkout <branch>` is unsupported in background jobs (no sandbox_switch_branch fallback)', async () => {
+    // Slice 2.5 detects bare branch checkouts. Slice 3 keeps
+    // sandbox_switch_branch as `unsupported` in the adapter, so the
+    // background-side guidance must NOT pretend the foreground tool
+    // exists here — it tells the model to stop trying instead.
+    const adapter = createWebExecutorAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok-1',
+      provider: 'openrouter',
+      jobId: 'job-test-1',
+    });
+
+    const result = await adapter.executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout main' } } as SandboxToolCall,
+      'sb-1',
+      { auditorProviderOverride: 'openrouter', auditorModelOverride: undefined },
+    );
+
+    expect(result.structuredError?.type).toBe('APPROVAL_GATE_BLOCKED');
+    expect(result.structuredError?.message).toContain('branch switching unsupported');
+    expect(result.text).toContain("isn't available in background Coder jobs");
+    expect(handleCloudflareSandboxMock).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
