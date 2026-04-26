@@ -73,6 +73,21 @@ export function extractProviderErrorDetailFromText(
   }
 }
 
+/**
+ * Extract a clean detail string from an upstream HTTP error body. Mirrors the
+ * HTML guard that `createStreamProxyHandler`'s default error path applies, then
+ * falls through to {@link extractProviderErrorDetailFromText} for JSON-shaped
+ * errors. Use in custom `formatUpstreamError` callbacks so HTML 5xx pages from
+ * upstream providers or fronting CDNs (Cloudflare, AI Gateway) don't leak
+ * raw markup into user-facing messages.
+ */
+export function extractProviderHttpErrorDetail(status: number, bodyText: string): string {
+  if (/<\s*html[\s>]/i.test(bodyText) || /<\s*!doctype/i.test(bodyText)) {
+    return `HTTP ${status} (the server returned an HTML error page instead of JSON)`;
+  }
+  return extractProviderErrorDetailFromText(bodyText);
+}
+
 function hasSignal(detail: string, candidates: readonly string[]): boolean {
   return candidates.some((candidate) => detail.includes(candidate));
 }

@@ -150,6 +150,32 @@ describe('handleOpenRouterChat', () => {
     expect(body.error).toBe('OpenRouter 401: User not found.');
   });
 
+  it('does not leak HTML when upstream returns a CF/AI-Gateway 5xx page', async () => {
+    // Regression for the gap Codex flagged on the structured-error fix:
+    // `formatUpstreamError` short-circuits the proxy's default HTML guard,
+    // so without the helper an AI Gateway / Cloudflare 503 challenge page
+    // would surface as `OpenRouter 503: <!doctype html>...`.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('<!doctype html><html><body>503 Service Unavailable</body></html>', {
+            status: 503,
+            headers: { 'Content-Type': 'text/html' },
+          }),
+      ),
+    );
+    const response = await handleOpenRouterChat(
+      makeChatRequest(),
+      makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
+    );
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body.error).toMatch(/^OpenRouter 503: HTTP 503 \(/);
+    expect(body.error).not.toMatch(/<\s*html/i);
+    expect(body.error).not.toMatch(/<!doctype/i);
+  });
+
   it('returns 504 with the provider timeout message when fetch aborts', async () => {
     vi.stubGlobal(
       'fetch',

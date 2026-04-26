@@ -27,7 +27,7 @@ import {
   VERTEX_MODEL_OPTIONS,
 } from '../lib/vertex-provider';
 import {
-  extractProviderErrorDetailFromText,
+  extractProviderHttpErrorDetail,
   formatExperimentalProviderHttpError,
   formatVertexProviderHttpError,
 } from '../lib/provider-error-utils';
@@ -438,9 +438,11 @@ export const handleOpenRouterChat = createStreamProxyHandler({
   // `{"error":{"message":"User not found.","code":401}}`. The default proxy
   // formatter just dumps the JSON body via `slice(0, 200)`, which surfaces as
   // an opaque truncated payload to users. Route through the shared extractor
-  // so the upstream's actual reason becomes the user-facing detail.
+  // so the upstream's actual reason becomes the user-facing detail. The
+  // helper also preserves the default proxy path's HTML guard so AI Gateway
+  // / Cloudflare 5xx HTML challenge pages don't leak markup downstream.
   formatUpstreamError: (status, bodyText) => ({
-    error: `OpenRouter ${status}: ${extractProviderErrorDetailFromText(bodyText)}`,
+    error: `OpenRouter ${status}: ${extractProviderHttpErrorDetail(status, bodyText)}`,
     code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
   }),
   // Per Cloudflare AI Gateway docs the rewritten URL is
