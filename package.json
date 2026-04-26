@@ -12,7 +12,7 @@
     "format:check": "biome format",
     "test:cli": "node --import tsx --test cli/tests/*.test.mjs",
     "test:mcp:github": "cd mcp/github-server && npm test",
-    "typecheck": "cd cli && npx tsc --noEmit",
+    "typecheck": "cd cli && npx tsgo --noEmit",
     "typecheck:mcp:github": "cd mcp/github-server && npm run typecheck",
     "typecheck:tsgo": "(cd cli && npx tsgo --noEmit -p tsconfig.json) && (cd mcp/github-server && npx tsgo --noEmit -p tsconfig.json) && (cd app && npx tsgo --noEmit -p tsconfig.app.json && npx tsgo --noEmit -p tsconfig.node.json)"
   },
