@@ -258,19 +258,23 @@ export async function executeSandboxToolCall(
         const currentApprovalMode = getApprovalMode();
         const isBranchCreate =
           blockedGitOp === 'git checkout -b' || blockedGitOp === 'git switch -c';
+        const isBranchSwitch =
+          blockedGitOp === 'git checkout <branch>' || blockedGitOp === 'git switch <branch>';
         // Full-auto skips the consent-style block (commit/push/merge/rebase)
-        // because the model has blanket permission. Branch-create variants
-        // are different: the issue is state synchronization, not consent —
-        // raw `git checkout -b` leaves Push's currentBranch out of sync with
-        // sandbox HEAD regardless of approval mode. Always route those
-        // through sandbox_create_branch.
-        const shouldBlock = isBranchCreate || currentApprovalMode !== 'full-auto';
+        // because the model has blanket permission. Branch-create / -switch
+        // variants are different: the issue is state synchronization, not
+        // consent — raw `git checkout` leaves Push's currentBranch out of
+        // sync with sandbox HEAD regardless of approval mode. Always route
+        // those through sandbox_create_branch / sandbox_switch_branch.
+        const shouldBlock = isBranchCreate || isBranchSwitch || currentApprovalMode !== 'full-auto';
         if (blockedGitOp && !call.args.allowDirectGit && shouldBlock) {
           const guardDetail = isBranchCreate
             ? 'Use sandbox_create_branch to create a branch — it keeps Push and the sandbox in sync.'
-            : currentApprovalMode === 'autonomous'
-              ? 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or retry with allowDirectGit: true.'
-              : 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.';
+            : isBranchSwitch
+              ? 'Use sandbox_switch_branch to switch branches — it keeps Push and the sandbox in sync, and routes the conversation to the matching chat.'
+              : currentApprovalMode === 'autonomous'
+                ? 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or retry with allowDirectGit: true.'
+                : 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.';
           const guardErr: StructuredToolError = {
             type: 'GIT_GUARD_BLOCKED',
             retryable: false,
@@ -279,14 +283,16 @@ export async function executeSandboxToolCall(
           };
           const guidance = isBranchCreate
             ? `Direct "${blockedGitOp}" is blocked. Use sandbox_create_branch({"name": "<branch-name>"}) — it creates the branch in the sandbox and keeps Push's branch state in sync. Pass "from": "<base>" to branch from a specific ref instead of HEAD.`
-            : currentApprovalMode === 'autonomous'
-              ? `Direct "${blockedGitOp}" is blocked. Use sandbox_prepare_commit + sandbox_push for the audited flow. If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`
-              : [
-                  `Direct "${blockedGitOp}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
-                  ``,
-                  `If the standard flow is failing, use ask_user to explain the problem and request explicit permission from the user.`,
-                  `If the user approves, retry with "allowDirectGit": true in your sandbox_exec args.`,
-                ].join('\n');
+            : isBranchSwitch
+              ? `Direct "${blockedGitOp}" is blocked. Use sandbox_switch_branch({"branch": "<branch-name>"}) — it switches the sandbox and routes the conversation to the existing chat for that branch (or auto-creates one). For branch-restore-as-file flows, pass an explicit flag (e.g. "git checkout -- <path>").`
+              : currentApprovalMode === 'autonomous'
+                ? `Direct "${blockedGitOp}" is blocked. Use sandbox_prepare_commit + sandbox_push for the audited flow. If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`
+                : [
+                    `Direct "${blockedGitOp}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
+                    ``,
+                    `If the standard flow is failing, use ask_user to explain the problem and request explicit permission from the user.`,
+                    `If the user approves, retry with "allowDirectGit": true in your sandbox_exec args.`,
+                  ].join('\n');
           return {
             text: formatStructuredError(guardErr, `[Tool Blocked — sandbox_exec]\n${guidance}`),
             structuredError: guardErr,
@@ -496,6 +502,97 @@ export async function executeSandboxToolCall(
           // release_draft) emit 'switched' because their UX expectation is
           // "branch changed but conversation stays put".
           branchSwitch: { name, kind: 'forked', source: 'sandbox_create_branch' },
+        };
+      }
+
+      case 'sandbox_switch_branch': {
+        // Strict ref validation — same shape as sandbox_create_branch since
+        // the value lands on the git command line as a ref argument.
+        const isInvalidRef = (ref: string): boolean =>
+          !/^[A-Za-z0-9._/-]+$/.test(ref) ||
+          ref.startsWith('-') ||
+          ref.startsWith('/') ||
+          ref.endsWith('/') ||
+          ref.includes('..');
+
+        const branch = call.args.branch;
+        if (isInvalidRef(branch)) {
+          const err: StructuredToolError = {
+            type: 'INVALID_ARG',
+            retryable: false,
+            message: 'Invalid branch name',
+            detail:
+              'Branch refs may contain letters, digits, ".", "_", "/", "-" and may not start with "-", may not start or end with "/", and may not contain "..".',
+          };
+          return {
+            text: formatStructuredError(
+              err,
+              `[Tool Error — sandbox_switch_branch] Invalid branch name "${branch}".`,
+            ),
+            structuredError: err,
+          };
+        }
+
+        // Capture HEAD before switching so the result can carry `previous`.
+        // `--abbrev-ref HEAD` returns the branch name, or literally "HEAD"
+        // when detached. Failures here are non-fatal: we proceed without
+        // `previous` rather than blocking the switch.
+        let previous: string | undefined;
+        const headProbe = await execInSandbox(
+          sandboxId,
+          'cd /workspace && git rev-parse --abbrev-ref HEAD',
+        );
+        if (headProbe.exitCode === 0) {
+          const head = headProbe.stdout.trim();
+          if (head && head !== 'HEAD') previous = head;
+        }
+
+        // `git switch` (not `git checkout`): branch-only by spec, so a path
+        // collision (e.g. `docs/` directory and no `docs` branch) fails fast
+        // with non-zero exit instead of silently doing a path-mode checkout
+        // that leaves HEAD where it was while we'd still emit `branchSwitch`.
+        const cmd = `cd /workspace && git switch ${shellEscape(branch)}`;
+        const result = await execInSandbox(sandboxId, cmd, undefined, {
+          markWorkspaceMutated: true,
+        });
+
+        if (result.exitCode !== 0) {
+          const reason = result.stderr || result.stdout || 'git switch failed';
+          const err = classifyError(reason, cmd);
+          return {
+            text: formatStructuredError(err, `[Tool Error — sandbox_switch_branch]\n${reason}`),
+            structuredError: err,
+          };
+        }
+
+        // Same cache/ledger invalidation as sandbox_create_branch — switching
+        // changes the entire working tree.
+        clearFileVersionCache(sandboxId);
+        clearPrefetchedEditFileCache(sandboxId);
+        const staleMarked = fileLedger.markAllStale();
+
+        const lines = [
+          `[Tool Result — sandbox_switch_branch]`,
+          previous ? `Switched from ${previous} to ${branch}.` : `Switched to ${branch}.`,
+        ];
+        if (staleMarked > 0) {
+          lines.push(
+            `\n[Context] Marked ${staleMarked} previously-read file(s) as stale after branch switch. Re-read before editing.`,
+          );
+        }
+
+        return {
+          text: lines.join('\n'),
+          // 'switched' (not 'forked') — the foreground dispatcher routes the
+          // conversation to the existing chat for `branch` via useChat's
+          // per-branch filter, or auto-creates a fresh chat if none exists.
+          // Conversation does NOT migrate.
+          branchSwitch: {
+            name: branch,
+            kind: 'switched',
+            ...(previous ? { previous } : {}),
+            source: 'sandbox_switch_branch',
+          },
         };
       }
 

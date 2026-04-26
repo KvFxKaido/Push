@@ -4292,3 +4292,368 @@ describe('executeSandboxToolCall -- git guard for branch creation', () => {
     expect(sandboxClient.execInSandbox).toHaveBeenCalled();
   });
 });
+
+describe('executeSandboxToolCall -- git guard for plain branch checkout/switch', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('blocks `git checkout main` and points the model at sandbox_switch_branch', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout main' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(result.structuredError?.message).toBe('Direct "git checkout <branch>" is blocked');
+    expect(result.text).toContain('sandbox_switch_branch');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('blocks `git switch develop` and points the model at sandbox_switch_branch', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git switch develop' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(result.structuredError?.message).toBe('Direct "git switch <branch>" is blocked');
+    expect(result.text).toContain('sandbox_switch_branch');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('does not block `git checkout src/utils` (slash-shaped path operand)', async () => {
+    // Slash-containing operands are deferred to git: they may be a nested
+    // path (most common) or a feat-branch name. Trade-off documented in
+    // detectBlockedBranchCheckout — over-blocking legitimate file restores
+    // is a worse failure mode than letting feat/foo slip past the guard
+    // (the model is expected to call sandbox_switch_branch directly).
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout src/utils' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).not.toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalled();
+  });
+
+  it('blocks plain `git checkout` even in full-auto mode (state-sync, not consent)', async () => {
+    vi.mocked(getApprovalMode).mockReturnValueOnce('full-auto');
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout main' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('does not block `git checkout file.ts` (path-shaped operand)', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout file.ts' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).not.toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalled();
+  });
+
+  it('does not block `git checkout HEAD~1` (ref expression)', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout HEAD~1' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).not.toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalled();
+  });
+
+  it('does not block `git switch --detach` (flag, not branch)', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git switch --detach' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).not.toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalled();
+  });
+
+  it('does not block `git checkout -- foo.ts` (path-mode separator)', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout -- foo.ts' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).not.toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalled();
+  });
+
+  it('does not block `git checkout main file.ts` (file restore, multiple positionals)', async () => {
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'git checkout main file.ts' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).not.toBe('GIT_GUARD_BLOCKED');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalled();
+  });
+
+  it('blocks `git checkout` chained after another command via &&', async () => {
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_exec',
+        args: { command: 'cd /workspace && git checkout main && echo done' },
+      },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(result.structuredError?.message).toBe('Direct "git checkout <branch>" is blocked');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+});
+
+describe('validateSandboxToolCall -- sandbox_switch_branch', () => {
+  it('accepts a valid branch name', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_switch_branch',
+      args: { branch: 'feat/foo' },
+    });
+    expect(result).not.toBeNull();
+    if (result?.tool === 'sandbox_switch_branch') {
+      expect(result.args.branch).toBe('feat/foo');
+    }
+  });
+
+  it('trims whitespace around branch', () => {
+    const result = validateSandboxToolCall({
+      tool: 'sandbox_switch_branch',
+      args: { branch: '  main  ' },
+    });
+    expect(result).not.toBeNull();
+    if (result?.tool === 'sandbox_switch_branch') {
+      expect(result.args.branch).toBe('main');
+    }
+  });
+
+  it('rejects missing branch', () => {
+    expect(validateSandboxToolCall({ tool: 'sandbox_switch_branch', args: {} })).toBeNull();
+  });
+
+  it('rejects whitespace-only branch', () => {
+    expect(
+      validateSandboxToolCall({ tool: 'sandbox_switch_branch', args: { branch: '   ' } }),
+    ).toBeNull();
+  });
+});
+
+describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
+  beforeEach(() => {
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  it('captures previous via git rev-parse, runs git checkout, returns kind:switched', async () => {
+    vi.mocked(sandboxClient.execInSandbox)
+      // 1) HEAD probe
+      .mockResolvedValueOnce({
+        stdout: 'feat/old\n',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      // 2) git checkout
+      .mockResolvedValueOnce({
+        stdout: "Switched to branch 'main'",
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_switch_branch', args: { branch: 'main' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Result — sandbox_switch_branch]');
+    expect(result.text).toContain('Switched from feat/old to main');
+    expect(result.branchSwitch).toEqual({
+      name: 'main',
+      kind: 'switched',
+      previous: 'feat/old',
+      source: 'sandbox_switch_branch',
+    });
+
+    const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][1]).toContain('git rev-parse --abbrev-ref HEAD');
+    expect(calls[1][1]).toContain("git switch 'main'");
+    // Branch switch must be marked as workspace-mutating so the cache/ledger
+    // invalidation hooks fire (same as sandbox_create_branch).
+    expect(calls[1][3]?.markWorkspaceMutated).toBe(true);
+  });
+
+  it('omits previous when HEAD is detached (rev-parse returns "HEAD")', async () => {
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce({
+        stdout: 'HEAD\n',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_switch_branch', args: { branch: 'main' } },
+      'sb-1',
+    );
+
+    expect(result.branchSwitch).toEqual({
+      name: 'main',
+      kind: 'switched',
+      source: 'sandbox_switch_branch',
+    });
+    expect(result.text).toContain('Switched to main');
+    expect(result.text).not.toContain('Switched from');
+  });
+
+  it('proceeds without previous when HEAD probe fails', async () => {
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: 'fatal: not a git repository',
+        exitCode: 128,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_switch_branch', args: { branch: 'main' } },
+      'sb-1',
+    );
+
+    expect(result.branchSwitch).toEqual({
+      name: 'main',
+      kind: 'switched',
+      source: 'sandbox_switch_branch',
+    });
+  });
+
+  it('rejects invalid branch names without invoking the sandbox', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_switch_branch', args: { branch: '-evil' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('INVALID_ARG');
+    expect(result.text).toContain('Invalid branch name');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a structured error when git switch fails', async () => {
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce({
+        stdout: 'feat/old\n',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: 'fatal: invalid reference: nonexistent',
+        exitCode: 1,
+        truncated: false,
+      });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_switch_branch', args: { branch: 'nonexistent' } },
+      'sb-1',
+    );
+
+    expect(result.text).toContain('[Tool Error — sandbox_switch_branch]');
+    expect(result.text).toContain('invalid reference');
+    expect(result.branchSwitch).toBeUndefined();
+    expect(result.structuredError).toBeDefined();
+  });
+
+  it('marks previously-read files stale after a successful switch', async () => {
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: 'export const x = 1;',
+      truncated: false,
+      version: 'v1',
+    });
+    await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/x.ts' } },
+      'sb-1',
+    );
+
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce({
+        stdout: 'main\n',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_switch_branch', args: { branch: 'feat/foo' } },
+      'sb-1',
+    );
+
+    expect(result.branchSwitch?.kind).toBe('switched');
+    expect(result.text).toContain('[Context] Marked');
+    expect(result.text).toContain('previously-read file');
+  });
+});
