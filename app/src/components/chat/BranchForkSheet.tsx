@@ -23,7 +23,9 @@ interface BranchForkSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Branch the fork will spawn from. Displayed in the header so the user
-   *  knows what state they're forking. */
+   *  knows what state they're forking. Not passed to `forkBranch` — the
+   *  sandbox tool defaults to its current HEAD, which is the actual "here"
+   *  state and may differ from this UI-tracked label if HEAD has drifted. */
   fromBranch: string;
   /** Bound to `useChat.forkBranchFromUI`. Calls the sandbox_create_branch
    *  tool path; the chat hook handles conversation migration internally. */
@@ -41,7 +43,16 @@ function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchF
   const [error, setError] = useState<string | null>(null);
 
   const sanitized = sanitizeBranchName(branchName);
-  const isValid = sanitized.length >= 1 && !sanitized.includes('..') && sanitized !== fromBranch;
+  // Reject inputs that only become valid after `sanitizeBranchName` strips a
+  // leading invalid char ("-evil" → "evil"). Silent leading-char stripping is
+  // surprising — surface it as a validation error so the user sees what they
+  // typed reflected in the result.
+  const leadingInvalid = /^[-/]/.test(branchName.trim());
+  const isValid =
+    sanitized.length >= 1 &&
+    !sanitized.includes('..') &&
+    sanitized !== fromBranch &&
+    !leadingInvalid;
 
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setBranchName(e.target.value);
@@ -53,7 +64,11 @@ function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchF
     setCreating(true);
     setError(null);
     try {
-      const result = await forkBranch(sanitized, fromBranch);
+      // Don't pass `fromBranch`; let the sandbox tool default to its current
+      // HEAD. If sandbox HEAD has drifted from the UI-tracked branch label
+      // (e.g. via plain `git checkout` through `sandbox_exec`), this keeps
+      // "fork from here" anchored to the actual current state.
+      const result = await forkBranch(sanitized);
       if (!result.ok) {
         setError(result.errorMessage ?? 'Failed to create branch');
         return;
@@ -65,7 +80,7 @@ function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchF
     } finally {
       setCreating(false);
     }
-  }, [isValid, creating, sanitized, fromBranch, forkBranch, onOpenChange]);
+  }, [isValid, creating, sanitized, forkBranch, onOpenChange]);
 
   const handleCancel = useCallback(() => {
     setBranchName('');
@@ -123,14 +138,20 @@ function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchF
               autoCapitalize="off"
               spellCheck={false}
             />
+            {branchName && leadingInvalid && (
+              <p className="text-push-xs text-red-400">
+                Branch name cannot start with &quot;-&quot; or &quot;/&quot;.
+              </p>
+            )}
             {branchName &&
+              !leadingInvalid &&
               sanitized !== branchName.toLowerCase().trim() &&
               sanitized.length > 0 && (
                 <p className="text-push-xs text-push-fg-dim">
                   Will create: <span className="text-push-fg-muted font-mono">{sanitized}</span>
                 </p>
               )}
-            {branchName && sanitized.length === 0 && (
+            {branchName && !leadingInvalid && sanitized.length === 0 && (
               <p className="text-push-xs text-red-400">
                 Branch name contains only invalid characters.
               </p>

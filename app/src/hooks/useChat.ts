@@ -1373,7 +1373,7 @@ export function useChat(
       });
       return result;
     },
-    [updateConversations, skipAutoCreateRef],
+    [updateConversations],
   );
 
   // ---------------------------------------------------------------------------

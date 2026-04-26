@@ -31,13 +31,17 @@ export interface ForkBranchInWorkspaceResult {
   raw?: ToolExecutionResult;
 }
 
-/** Strip the `[Tool Error]` / `[Tool Result]` envelope prefixes that the
- *  sandbox tool layer adds to its text output. UI surfaces want clean text. */
+/** Fallback text cleaner for sandbox tool output that lacks a structured
+ *  error. Strips both the leading `[Tool Error]` / `[Tool Result]` envelope
+ *  AND the trailing `error_type:` / `retryable:` diagnostic lines that
+ *  `formatStructuredError` appends — neither belongs in a UI error pill.
+ *  Prefer `structuredError.message` when available. */
 function cleanToolText(text: string): string {
   return text
-    .replace(/^\[Tool Error\]\s*/i, '')
-    .replace(/^\[Tool Error — sandbox_create_branch\]\s*/i, '')
-    .replace(/^\[Tool Result.*?\]\s*/i, '')
+    .replace(/^\[Tool Error[^\]]*\]\s*/i, '')
+    .replace(/^\[Tool Result[^\]]*\]\s*/i, '')
+    .replace(/^\s*error_type:\s.*$/gm, '')
+    .replace(/^\s*retryable:\s.*$/gm, '')
     .trim();
 }
 
@@ -65,9 +69,18 @@ export async function forkBranchInWorkspace(
   );
 
   if (result.structuredError || !result.branchSwitch) {
+    // Prefer the structured error's human message — it's authored for users
+    // and skips the `error_type:` / `retryable:` diagnostic lines that
+    // `formatStructuredError` appends to the text envelope.
+    const struct = result.structuredError;
+    const errorMessage = struct?.message
+      ? struct.detail
+        ? `${struct.message} — ${struct.detail}`
+        : struct.message
+      : cleanToolText(result.text);
     return {
       ok: false,
-      errorMessage: cleanToolText(result.text),
+      errorMessage,
       raw: result,
     };
   }
