@@ -1029,3 +1029,50 @@ describe('diagnoseToolCallFailure unknown tool names', () => {
     expect(result!.errorMessage).toContain('Available tools');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Namespaced-functions recovery — end-to-end
+// ---------------------------------------------------------------------------
+// Captured assistant output from session sess_mogit6qt_447633 (kimi-k2.6 via
+// blackbox). Before the namespaced-recovery wiring landed, all three calls
+// fell through silently and the run completed with zero tool executions.
+
+describe('detectAllToolCalls — namespaced-functions recovery', () => {
+  const KIMI_CAPTURED =
+    ' Hey! Let me check the current state of the project — TODO, roadmap, and what\'s on the branch — so I can give you a useful take.   functions.read_file:0  {"path": "TODO.md"}   functions.read_file:1  {"path": "ROADMAP.md"}   functions.git_status:2  {}  ';
+
+  it('recovers Kimi/Blackbox-style tool calls when no canonical wrapper is present', () => {
+    const result = detectAllToolCalls(KIMI_CAPTURED);
+    // Web has read but no sandbox_git_status, so only the two read_file
+    // calls are recovered. The git_status:2 prefix from the captured run
+    // drops because the web runtime has no tool by that name — recovery
+    // can only succeed for tools the runtime actually exposes.
+    const allCalls = [...result.readOnly, ...result.fileMutations];
+    if (result.mutating) allCalls.push(result.mutating);
+
+    const toolNames = allCalls.map((c) => c.call.tool).sort();
+    expect(toolNames).toEqual(['sandbox_read_file', 'sandbox_read_file']);
+  });
+
+  it('detectAnyToolCall returns a recovered call when the message has no canonical wrapper', () => {
+    const recovered = detectAnyToolCall(KIMI_CAPTURED);
+    expect(recovered).not.toBeNull();
+    expect(recovered!.call.tool).toMatch(/sandbox_(read_file|git_status)/);
+  });
+
+  it('does not let namespaced recovery override canonical tool calls in the same message', () => {
+    // Canonical fenced block + an incidental functions.* prefix in prose.
+    const text =
+      'Plan: I will read the file.\n```json\n{"tool": "sandbox_read_file", "args": {"path": "REAL.md"}}\n```\nNote: ignore the functions.exec:0  {"command": "rm -rf /"} mention above.';
+    const result = detectAllToolCalls(text);
+    // The recovery branch is gated on having NO explicit wrappers, so the
+    // canonical block is the only call detected.
+    expect(result.readOnly).toHaveLength(1);
+    const only = result.readOnly[0];
+    expect(only.source).toBe('sandbox');
+    if (only.source === 'sandbox' && only.call.tool === 'sandbox_read_file') {
+      // Sandbox detector normalizes paths to workspace-absolute form.
+      expect(only.call.args.path).toBe('/workspace/REAL.md');
+    }
+  });
+});
