@@ -1072,7 +1072,6 @@ function renderProviderModal(buf, theme, rows, cols, currentProvider, currentMod
 }
 
 function renderModelModal(buf, theme, rows, cols, modalState, currentModel) {
-  const { glyphs } = theme;
   const modalWidth = Math.min(80, cols - 8);
   const listHeight = Math.max(6, Math.min(14, rows - 16));
 
