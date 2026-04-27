@@ -233,13 +233,16 @@ export function finalizeRunSession(
     refs.tabLockIntervalRef.current = null;
   }
 
+  // Pending steer is cleared regardless of whether the user navigated
+  // away — hoisted out of the branch below per Gemini review feedback.
+  if (callbacks.clearPendingSteer(chatId)) {
+    callbacks.emitRunEngineEvent({ type: 'STEER_CLEARED', timestamp: Date.now() });
+  }
+
   // Branch on whether the user navigated away from the chat that just
   // finished. If they did, drain the queue for that chat; if they
   // stayed, dequeue the next follow-up and let the caller dispatch it.
   if (refs.activeChatIdRef.current !== chatId) {
-    if (callbacks.clearPendingSteer(chatId)) {
-      callbacks.emitRunEngineEvent({ type: 'STEER_CLEARED', timestamp: Date.now() });
-    }
     const hadQueuedFollowUps = (refs.queuedFollowUpsRef.current[chatId]?.length ?? 0) > 0;
     callbacks.clearQueuedFollowUps(chatId);
     if (hadQueuedFollowUps) {
@@ -248,9 +251,6 @@ export function finalizeRunSession(
     return { nextFollowUp: null };
   }
 
-  if (callbacks.clearPendingSteer(chatId)) {
-    callbacks.emitRunEngineEvent({ type: 'STEER_CLEARED', timestamp: Date.now() });
-  }
   const nextQueuedFollowUp = callbacks.dequeueQueuedFollowUp(chatId);
   if (nextQueuedFollowUp) {
     callbacks.emitRunEngineEvent({ type: 'FOLLOW_UP_DEQUEUED', timestamp: Date.now() });
