@@ -997,7 +997,8 @@ describe('createJsonProxyHandler', () => {
       let capturedHeaders: Record<string, string> = {};
       vi.stubGlobal(
         'fetch',
-        vi.fn(async () => {
+        vi.fn(async (_url: string, init: RequestInit) => {
+          capturedHeaders = init.headers as Record<string, string>;
           return new Response('{}', { status: 200 });
         }),
       );
