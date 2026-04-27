@@ -201,7 +201,14 @@ export function mapSandboxErrorCode(code: string): ToolErrorType {
 
 const SANDBOX_BASE = '/api/sandbox';
 const DEFAULT_TIMEOUT_MS = 30_000; // 30s for most operations
-const EXEC_TIMEOUT_MS = 120_000; // 120s for command execution
+// 165s for command execution. Must stay above the Worker's per-exec deadline
+// (`SANDBOX_EXEC_TIMEOUT_MS = 150_000` in worker-cf-sandbox.ts) so a wedged
+// container surfaces as the Worker's structured 504 (`code: 'TIMEOUT'`)
+// instead of a client-side AbortError. The container shell `timeout` is set
+// at 140s, the Worker deadline at 150s; this client ceiling adds ~15s of
+// network + JSON round-trip slack on top so the inner deadlines reliably
+// fire first and the outer one is only ever a safety net.
+const EXEC_TIMEOUT_MS = 165_000;
 let sandboxOwnerToken: string | null = null;
 const sandboxOwnerTokensById = new Map<string, string>();
 
@@ -786,16 +793,24 @@ function sleep(ms: number): Promise<void> {
 /**
  * Determines if an error is retryable (network issues, timeouts, 5xx errors).
  * Non-retryable: 4xx client errors, configuration errors, dead sandbox errors.
+ *
+ * `endpoint` is consulted to opt `exec` out of timeout retries. A wedged
+ * sandbox container (gRPC channel stuck after a heavy FS write) doesn't
+ * recover on its own, so blindly replaying four `exec` calls with 2/4/8/16s
+ * backoff just hides the failure for ~12 minutes. Other endpoints
+ * (read/write/list/diff) are cheap and idempotent, so we keep retrying them.
  */
-function isRetryableError(err: unknown, statusCode?: number): boolean {
-  // Timeout errors are retryable (original AbortError)
+function isRetryableError(err: unknown, statusCode?: number, endpoint?: string): boolean {
+  const isExec = endpoint === 'exec';
+
+  // Timeout errors (original AbortError). Not retryable for exec — see above.
   if (err instanceof DOMException && err.name === 'AbortError') {
-    return true;
+    return !isExec;
   }
 
-  // Timeout errors converted to generic Error (check message pattern)
+  // Timeout errors converted to generic Error (check message pattern).
   if (err instanceof Error && err.message.includes('timed out')) {
-    return true;
+    return !isExec;
   }
 
   // Network errors (fetch failed entirely) are retryable
@@ -808,6 +823,12 @@ function isRetryableError(err: unknown, statusCode?: number): boolean {
   // on 500 status codes, and retrying won't bring them back.
   if (statusCode && statusCode >= 500) {
     if (err instanceof Error && err.message.includes('MODAL_NOT_FOUND')) {
+      return false;
+    }
+    // Worker's per-exec deadline fires as 504 with `code: 'TIMEOUT'`. Same
+    // reasoning as AbortError above: replaying against a wedged container
+    // is futile, so surface it to the caller immediately.
+    if (isExec && statusCode === 504) {
       return false;
     }
     return true;
@@ -850,7 +871,7 @@ async function withRetry<T>(
       }
 
       // Don't retry non-retryable errors
-      if (!isRetryableError(err, statusCode)) {
+      if (!isRetryableError(err, statusCode, endpoint)) {
         onRetries?.(attempt);
         throw lastError;
       }

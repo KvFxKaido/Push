@@ -742,3 +742,37 @@ describe('sandbox lifecycle events', () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// execInSandbox retry behavior
+// ---------------------------------------------------------------------------
+//
+// A wedged sandbox container (Cloudflare Sandbox SDK gRPC stuck after a heavy
+// FS write) doesn't recover on its own. The pre-fix client retried four times
+// with 2/4/8/16s backoff before surfacing the failure, hiding wedges for ~12
+// minutes behind a "Executing in sandbox..." spinner. These tests pin the new
+// behavior: timeout-class errors on `exec` fail immediately. Other endpoints
+// still retry — read/write/list are cheap and idempotent.
+
+describe('execInSandbox — timeout retry behavior', () => {
+  it('does not retry when the request aborts (client timeout)', async () => {
+    mockFetch.mockRejectedValue(new DOMException('aborted', 'AbortError'));
+
+    const { execInSandbox } = await import('./sandbox-client');
+    await expect(execInSandbox('sb-1', 'echo hi')).rejects.toThrow(/timed out/i);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry when the worker returns 504 TIMEOUT', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 504,
+      text: () =>
+        Promise.resolve(JSON.stringify({ error: 'sandbox exec exceeded', code: 'TIMEOUT' })),
+    });
+
+    const { execInSandbox } = await import('./sandbox-client');
+    await expect(execInSandbox('sb-1', 'echo hi')).rejects.toThrow();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
