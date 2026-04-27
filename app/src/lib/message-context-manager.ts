@@ -46,7 +46,7 @@ const _manager = createContextManager<ChatMessage>({
       footerLines: ['[/CONTEXT DIGEST]'],
     }),
   createDigestMessage: (content): ChatMessage => ({
-    id: `context-digest-${Date.now()}`,
+    id: `context-digest-${digestIdHash(content)}`,
     role: 'user',
     content,
     timestamp: 0,
@@ -55,6 +55,18 @@ const _manager = createContextManager<ChatMessage>({
   }),
   recordContextMetric,
 });
+
+// djb2 over the digest content keeps the synthetic id stable across calls so
+// `transformContextBeforeLLM` is a pure function of (messages, options). The
+// id never reaches the wire (orchestrator forwards only role+content), but
+// determinism is required for the cache-stability invariant tests.
+function digestIdHash(content: string): string {
+  let hash = 5381;
+  for (let i = 0; i < content.length; i++) {
+    hash = ((hash << 5) + hash + content.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(36);
+}
 
 export function manageContext(
   messages: ChatMessage[],
