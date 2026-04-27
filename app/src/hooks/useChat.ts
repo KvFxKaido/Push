@@ -28,12 +28,6 @@ import {
   deleteConversation as deleteConversationFromDB,
 } from '@/lib/conversation-store';
 import {
-  acquireRunTabLock,
-  clearRunCheckpoint,
-  heartbeatRunTabLock,
-  releaseRunTabLock,
-} from '@/lib/checkpoint-manager';
-import {
   loadActiveChatId,
   loadConversations,
   normalizeConversationModel,
@@ -50,6 +44,7 @@ import { useChatReplay } from './chat-replay';
 import { useChatCheckpoint } from './useChatCheckpoint';
 import { streamAssistantRound, processAssistantTurn, type SendLoopContext } from './chat-send';
 import { buildRuntimeUserMessage, prepareSendContext } from './chat-prepare-send';
+import { acquireRunSession, finalizeRunSession } from './chat-run-session';
 import { useQueuedFollowUps } from './useQueuedFollowUps';
 import { mergeRunEventStreams } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
@@ -822,58 +817,22 @@ export function useChat(
       let apiMessages = prepared.apiMessages;
       let toolCallRecoveryState = prepared.recoveryState;
 
-      // --- Initialize run ---
-      // apiMessages is the only checkpoint ref; all other state is
-      // managed by the engine via emitRunEngineEvent.
-      checkpointRefs.apiMessages.current = apiMessages;
-      emitRunEngineEvent({
-        type: 'RUN_STARTED',
-        timestamp: Date.now(),
-        runId: createId(),
-        chatId,
-        provider: lockedProviderForChat,
-        model: resolvedModelForChat || '',
-        baseMessageCount: apiMessages.length,
-      });
-
-      // Acquire multi-tab lock
-      const acquiredTabId = acquireRunTabLock(chatId);
-      if (!acquiredTabId) {
-        emitRunEngineEvent({ type: 'TAB_LOCK_DENIED', timestamp: Date.now() });
-        setIsStreaming(false);
-        updateAgentStatus({ active: false, phase: '' });
-        updateConversations((prev) => {
-          const existing = prev[chatId];
-          if (!existing) return prev;
-          const msgs = existing.messages.map((m) =>
-            m.status === 'streaming'
-              ? {
-                  ...m,
-                  content:
-                    'This chat is active in another tab. Please switch tabs or wait for the other session to finish.',
-                  status: 'done' as const,
-                }
-              : m,
-          );
-          const updated = {
-            ...prev,
-            [chatId]: { ...existing, messages: msgs, lastMessageAt: Date.now() },
-          };
-          dirtyConversationIdsRef.current.add(chatId);
-          return updated;
-        });
-        return;
-      }
-      emitRunEngineEvent({
-        type: 'TAB_LOCK_ACQUIRED',
-        timestamp: Date.now(),
-        tabLockId: acquiredTabId,
-      });
-      if (tabLockIntervalRef.current) clearInterval(tabLockIntervalRef.current);
-      tabLockIntervalRef.current = setInterval(
-        () => heartbeatRunTabLock(chatId, acquiredTabId),
-        15_000,
+      // --- Acquire run session ---
+      const { acquired } = acquireRunSession(
+        {
+          chatId,
+          lockedProvider: lockedProviderForChat,
+          resolvedModel: resolvedModelForChat,
+          apiMessages,
+        },
+        {
+          dirtyConversationIdsRef,
+          tabLockIntervalRef,
+          checkpointApiMessagesRef: checkpointRefs.apiMessages,
+        },
+        { emitRunEngineEvent, setIsStreaming, updateAgentStatus, updateConversations },
       );
+      if (!acquired) return;
 
       // --- Build loop context (constant for this call) ---
       const loopCtx: SendLoopContext = {
@@ -1127,63 +1086,30 @@ export function useChat(
         });
         throw err;
       } finally {
-        // Capture tab lock ID before the terminal event clears it.
-        const tabLockToRelease = runEngineStateRef.current.tabLockId;
-
-        const currentRunPhase = runEngineStateRef.current.phase;
-        const runAlreadyTerminal =
-          currentRunPhase === 'completed' ||
-          currentRunPhase === 'aborted' ||
-          currentRunPhase === 'failed';
-        if (!runAlreadyTerminal) {
-          emitRunEngineEvent({
-            type: loopCompletedNormally ? 'LOOP_COMPLETED' : 'LOOP_ABORTED',
-            timestamp: Date.now(),
+        const { nextFollowUp } = finalizeRunSession(
+          { chatId, loopCompletedNormally },
+          {
+            runEngineStateRef,
+            cancelStatusTimerRef,
+            abortControllerRef,
+            tabLockIntervalRef,
+            activeChatIdRef,
+            queuedFollowUpsRef,
+          },
+          {
+            emitRunEngineEvent,
+            setIsStreaming,
+            updateAgentStatus,
+            clearPendingSteer,
+            dequeueQueuedFollowUp,
+            clearQueuedFollowUps,
+          },
+        );
+        if (nextFollowUp && isMountedRef.current) {
+          queueMicrotask(() => {
+            if (!isMountedRef.current) return;
+            void sendMessage(nextFollowUp.text, nextFollowUp.attachments, nextFollowUp.options);
           });
-        }
-        setIsStreaming(false);
-        if (cancelStatusTimerRef.current === null) {
-          updateAgentStatus({ active: false, phase: '' });
-        }
-        abortControllerRef.current = null;
-
-        if (loopCompletedNormally) {
-          clearRunCheckpoint(chatId);
-        }
-
-        releaseRunTabLock(chatId, tabLockToRelease);
-        if (tabLockIntervalRef.current) {
-          clearInterval(tabLockIntervalRef.current);
-          tabLockIntervalRef.current = null;
-        }
-
-        if (activeChatIdRef.current !== chatId) {
-          if (clearPendingSteer(chatId)) {
-            emitRunEngineEvent({ type: 'STEER_CLEARED', timestamp: Date.now() });
-          }
-          const hadQueuedFollowUps = (queuedFollowUpsRef.current[chatId]?.length ?? 0) > 0;
-          clearQueuedFollowUps(chatId);
-          if (hadQueuedFollowUps) {
-            emitRunEngineEvent({ type: 'FOLLOW_UP_QUEUE_CLEARED', timestamp: Date.now() });
-          }
-        } else {
-          if (clearPendingSteer(chatId)) {
-            emitRunEngineEvent({ type: 'STEER_CLEARED', timestamp: Date.now() });
-          }
-          const nextQueuedFollowUp = dequeueQueuedFollowUp(chatId);
-          if (nextQueuedFollowUp) {
-            emitRunEngineEvent({ type: 'FOLLOW_UP_DEQUEUED', timestamp: Date.now() });
-          }
-          if (nextQueuedFollowUp && isMountedRef.current) {
-            queueMicrotask(() => {
-              if (!isMountedRef.current) return;
-              void sendMessage(
-                nextQueuedFollowUp.text,
-                nextQueuedFollowUp.attachments,
-                nextQueuedFollowUp.options,
-              );
-            });
-          }
         }
       }
     },

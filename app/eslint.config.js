@@ -64,10 +64,21 @@ export default defineConfig([
   //                                 feedback loop the 4-26 architecture
   //                                 snapshot called out and forces the next
   //                                 feature to either fit or extract.
+  //   Phase 6 (acquire+finalize):   1,349 -> 1,275 after sendMessage's run-
+  //                                 session bookends (acquireRunSession +
+  //                                 finalizeRunSession) moved to
+  //                                 chat-run-session.ts. Ceiling lowered
+  //                                 to 1,330. The remaining inline weight
+  //                                 in sendMessage is the round loop body,
+  //                                 which routes through chat-send.ts's
+  //                                 already-extracted helpers; further
+  //                                 reduction would mean pulling apart the
+  //                                 loop's control flow rather than
+  //                                 extracting more sibling functions.
   {
     files: ['src/hooks/useChat.ts'],
     rules: {
-      'max-lines': ['error', { max: 1400 }],
+      'max-lines': ['error', { max: 1330 }],
     },
   },
 ]);
