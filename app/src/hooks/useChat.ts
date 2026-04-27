@@ -27,7 +27,6 @@ import {
   saveConversation as saveConversationToDB,
   deleteConversation as deleteConversationFromDB,
 } from '@/lib/conversation-store';
-import { acquireRunTabLock, heartbeatRunTabLock } from '@/lib/checkpoint-manager';
 import {
   loadActiveChatId,
   loadConversations,
@@ -45,7 +44,7 @@ import { useChatReplay } from './chat-replay';
 import { useChatCheckpoint } from './useChatCheckpoint';
 import { streamAssistantRound, processAssistantTurn, type SendLoopContext } from './chat-send';
 import { buildRuntimeUserMessage, prepareSendContext } from './chat-prepare-send';
-import { finalizeRunSession } from './chat-run-session';
+import { acquireRunSession, finalizeRunSession } from './chat-run-session';
 import { useQueuedFollowUps } from './useQueuedFollowUps';
 import { mergeRunEventStreams } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
@@ -818,58 +817,22 @@ export function useChat(
       let apiMessages = prepared.apiMessages;
       let toolCallRecoveryState = prepared.recoveryState;
 
-      // --- Initialize run ---
-      // apiMessages is the only checkpoint ref; all other state is
-      // managed by the engine via emitRunEngineEvent.
-      checkpointRefs.apiMessages.current = apiMessages;
-      emitRunEngineEvent({
-        type: 'RUN_STARTED',
-        timestamp: Date.now(),
-        runId: createId(),
-        chatId,
-        provider: lockedProviderForChat,
-        model: resolvedModelForChat || '',
-        baseMessageCount: apiMessages.length,
-      });
-
-      // Acquire multi-tab lock
-      const acquiredTabId = acquireRunTabLock(chatId);
-      if (!acquiredTabId) {
-        emitRunEngineEvent({ type: 'TAB_LOCK_DENIED', timestamp: Date.now() });
-        setIsStreaming(false);
-        updateAgentStatus({ active: false, phase: '' });
-        updateConversations((prev) => {
-          const existing = prev[chatId];
-          if (!existing) return prev;
-          const msgs = existing.messages.map((m) =>
-            m.status === 'streaming'
-              ? {
-                  ...m,
-                  content:
-                    'This chat is active in another tab. Please switch tabs or wait for the other session to finish.',
-                  status: 'done' as const,
-                }
-              : m,
-          );
-          const updated = {
-            ...prev,
-            [chatId]: { ...existing, messages: msgs, lastMessageAt: Date.now() },
-          };
-          dirtyConversationIdsRef.current.add(chatId);
-          return updated;
-        });
-        return;
-      }
-      emitRunEngineEvent({
-        type: 'TAB_LOCK_ACQUIRED',
-        timestamp: Date.now(),
-        tabLockId: acquiredTabId,
-      });
-      if (tabLockIntervalRef.current) clearInterval(tabLockIntervalRef.current);
-      tabLockIntervalRef.current = setInterval(
-        () => heartbeatRunTabLock(chatId, acquiredTabId),
-        15_000,
+      // --- Acquire run session ---
+      const { acquired } = acquireRunSession(
+        {
+          chatId,
+          lockedProvider: lockedProviderForChat,
+          resolvedModel: resolvedModelForChat,
+          apiMessages,
+        },
+        {
+          dirtyConversationIdsRef,
+          tabLockIntervalRef,
+          checkpointApiMessagesRef: checkpointRefs.apiMessages,
+        },
+        { emitRunEngineEvent, setIsStreaming, updateAgentStatus, updateConversations },
       );
+      if (!acquired) return;
 
       // --- Build loop context (constant for this call) ---
       const loopCtx: SendLoopContext = {

@@ -31,9 +31,124 @@
  */
 
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import { clearRunCheckpoint, releaseRunTabLock } from '@/lib/checkpoint-manager';
+import {
+  acquireRunTabLock,
+  clearRunCheckpoint,
+  heartbeatRunTabLock,
+  releaseRunTabLock,
+} from '@/lib/checkpoint-manager';
+import { type ActiveProvider } from '@/lib/orchestrator';
 import { type RunEngineState, type RunEngineEvent } from '@/lib/run-engine';
-import type { AgentStatus, Conversation, QueuedFollowUp } from '@/types';
+import { createId } from './chat-persistence';
+import type { AgentStatus, ChatMessage, Conversation, QueuedFollowUp } from '@/types';
+
+// ---------------------------------------------------------------------------
+// acquireRunSession
+// ---------------------------------------------------------------------------
+
+const TAB_LOCK_HEARTBEAT_INTERVAL_MS = 15_000;
+const TAB_LOCK_DENIED_MESSAGE =
+  'This chat is active in another tab. Please switch tabs or wait for the other session to finish.';
+
+export interface AcquireRunSessionArgs {
+  chatId: string;
+  lockedProvider: ActiveProvider;
+  resolvedModel: string | null;
+  /** Seed messages for this run; pinned to the checkpoint ref so a
+   *  resume after crash sees the same starting point. */
+  apiMessages: ChatMessage[];
+}
+
+export interface AcquireRunSessionRefs {
+  dirtyConversationIdsRef: MutableRefObject<Set<string>>;
+  tabLockIntervalRef: MutableRefObject<ReturnType<typeof setInterval> | null>;
+  /** The single ref from `CheckpointRefs` we touch here. Passed
+   *  individually instead of the whole `CheckpointRefs` so this helper
+   *  doesn't need to import the checkpoint hook's internal types. */
+  checkpointApiMessagesRef: MutableRefObject<ChatMessage[]>;
+}
+
+export interface AcquireRunSessionCallbacks {
+  emitRunEngineEvent: (event: RunEngineEvent) => void;
+  setIsStreaming: Dispatch<SetStateAction<boolean>>;
+  updateAgentStatus: (status: AgentStatus, opts?: { chatId?: string }) => void;
+  updateConversations: Dispatch<SetStateAction<Record<string, Conversation>>>;
+}
+
+export interface AcquireRunSessionResult {
+  /** When false, the caller MUST `return` from `sendMessage` — the
+   *  helper has already cleared the streaming flag, marked the
+   *  in-flight assistant message as done with the tab-locked notice,
+   *  and emitted both `RUN_STARTED` and `TAB_LOCK_DENIED` so the run
+   *  engine sees a complete (denied) lifecycle. */
+  acquired: boolean;
+}
+
+/**
+ * Pre-loop session acquisition for a `sendMessage` call. Pins the
+ * checkpoint seed, emits `RUN_STARTED`, then attempts to acquire the
+ * multi-tab lock. On denial, finishes the cleanup the caller would
+ * otherwise have to duplicate inline (the early-return shape of the
+ * original was the awkward part that kept this extraction out of
+ * phase 5). On success, schedules the heartbeat interval and lets the
+ * caller proceed into the round loop.
+ */
+export function acquireRunSession(
+  args: AcquireRunSessionArgs,
+  refs: AcquireRunSessionRefs,
+  callbacks: AcquireRunSessionCallbacks,
+): AcquireRunSessionResult {
+  refs.checkpointApiMessagesRef.current = args.apiMessages;
+  callbacks.emitRunEngineEvent({
+    type: 'RUN_STARTED',
+    timestamp: Date.now(),
+    runId: createId(),
+    chatId: args.chatId,
+    provider: args.lockedProvider,
+    model: args.resolvedModel || '',
+    baseMessageCount: args.apiMessages.length,
+  });
+
+  const acquiredTabId = acquireRunTabLock(args.chatId);
+  if (!acquiredTabId) {
+    callbacks.emitRunEngineEvent({ type: 'TAB_LOCK_DENIED', timestamp: Date.now() });
+    callbacks.setIsStreaming(false);
+    callbacks.updateAgentStatus({ active: false, phase: '' });
+    callbacks.updateConversations((prev) => {
+      const existing = prev[args.chatId];
+      if (!existing) return prev;
+      const msgs = existing.messages.map((m) =>
+        m.status === 'streaming'
+          ? {
+              ...m,
+              content: TAB_LOCK_DENIED_MESSAGE,
+              status: 'done' as const,
+            }
+          : m,
+      );
+      const updated = {
+        ...prev,
+        [args.chatId]: { ...existing, messages: msgs, lastMessageAt: Date.now() },
+      };
+      refs.dirtyConversationIdsRef.current.add(args.chatId);
+      return updated;
+    });
+    return { acquired: false };
+  }
+
+  callbacks.emitRunEngineEvent({
+    type: 'TAB_LOCK_ACQUIRED',
+    timestamp: Date.now(),
+    tabLockId: acquiredTabId,
+  });
+  if (refs.tabLockIntervalRef.current) clearInterval(refs.tabLockIntervalRef.current);
+  refs.tabLockIntervalRef.current = setInterval(
+    () => heartbeatRunTabLock(args.chatId, acquiredTabId),
+    TAB_LOCK_HEARTBEAT_INTERVAL_MS,
+  );
+
+  return { acquired: true };
+}
 
 // ---------------------------------------------------------------------------
 // finalizeRunSession
