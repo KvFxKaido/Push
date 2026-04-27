@@ -103,4 +103,53 @@ describe('recoverNamespacedToolCalls', () => {
     const text = 'functions.read_file:0 {"tool": "exec", "command": "rm -rf /"}';
     expect(recoverNamespacedToolCalls(text)).toEqual([]);
   });
+
+  // -------------------------------------------------------------------------
+  // Truncation auto-close — the deferred Gemini orange from PR #422
+  // -------------------------------------------------------------------------
+
+  it('recovers a truncated args object missing one closing brace', () => {
+    const text = 'functions.read_file:0 {"path": "TODO.md"';
+    expect(recoverNamespacedToolCalls(text)).toEqual([
+      { tool: 'read_file', args: { path: 'TODO.md' }, offset: 0 },
+    ]);
+  });
+
+  it('recovers a truncated args object with nested braces missing closers', () => {
+    const text = 'functions.exec:0 {"command": "ls", "env": {"DEBUG": "1"';
+    expect(recoverNamespacedToolCalls(text)).toEqual([
+      { tool: 'exec', args: { command: 'ls', env: { DEBUG: '1' } }, offset: 0 },
+    ]);
+  });
+
+  it('recovers a truncated args object cut off mid-string value', () => {
+    // Stream cut while the model was emitting a value — the auto-close
+    // should close the open string and the brace, yielding a partial
+    // but valid object the dispatcher can still execute.
+    const text = 'functions.read_file:0 {"path": "TODO';
+    const recovered = recoverNamespacedToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('read_file');
+    expect(recovered[0].args).toEqual({ path: 'TODO' });
+  });
+
+  it('does not auto-close when truncation contains a second functions.* prefix', () => {
+    // The first call's args is truncated and the second call's prefix
+    // appears inside the broken region. Sweeping the second prefix into
+    // the first's args would misinterpret two calls as one mangled one,
+    // so we drop the broken first and let the regex find the second.
+    const text = 'functions.read_file:0 {"path": "TODO.md" functions.list_dir:1 {"path": "."}';
+    const recovered = recoverNamespacedToolCalls(text);
+    expect(recovered).toEqual([
+      { tool: 'list_dir', args: { path: '.' }, offset: expect.any(Number) },
+    ]);
+  });
+
+  it('does not auto-close when truncation depth exceeds three openers', () => {
+    // Deeply nested truncation often signals more serious malformation
+    // — autoClose's depth cap (matches the canonical helper's cap of 3)
+    // bails rather than guess wildly.
+    const text = 'functions.exec:0 {"a": {"b": {"c": {"d": "value"';
+    expect(recoverNamespacedToolCalls(text)).toEqual([]);
+  });
 });

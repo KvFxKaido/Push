@@ -91,7 +91,24 @@ export function recoverNamespacedToolCalls(text: string): RecoveredNamespacedCal
 
     if (text[cursor] === '{') {
       const objectEnd = findBalancedObjectEnd(text, cursor);
-      if (objectEnd === -1) continue;
+      if (objectEnd === -1) {
+        // Truncated args object — the stream ended (or was malformed)
+        // before the closing brace. `tryParseArgsObject` will attempt
+        // auto-close as one of its repair phases. Skip the recovery if
+        // another `functions.*` prefix appears inside the truncation
+        // tail (the model emitted a second call before finishing the
+        // first; better to drop the broken first call and let the
+        // regex pick up the second on the next iteration than to
+        // sweep the second prefix into a misshapen first object).
+        const tail = text.slice(cursor);
+        if (containsNamespacedPrefix(tail, 1)) continue;
+        const parsed = tryParseArgsObject(tail);
+        if (!parsed) continue;
+        out.push({ tool, args: parsed, offset: match.index });
+        // Truncation always extends to end-of-message, so there's
+        // nothing left for further regex iterations to find.
+        break;
+      }
       if (!hasRecoverableTrailingContext(text, objectEnd + 1)) continue;
       const candidate = text.slice(cursor, objectEnd + 1);
       const parsed = tryParseArgsObject(candidate);
@@ -185,7 +202,7 @@ function findBalancedObjectEnd(text: string, start: number): number {
 }
 
 /**
- * Parse a candidate args object. Both paths reject any object that
+ * Parse a candidate args object. All paths reject any object that
  * contains a `"tool"` key — those are ambiguous (was the model trying
  * to emit a canonical wrapper inside a namespaced trace?) and the
  * dispatcher's canonical phases would have already picked them up if
@@ -194,27 +211,35 @@ function findBalancedObjectEnd(text: string, start: number): number {
  * Repair is shape-agnostic — `applyJsonTextRepairs` handles trailing
  * commas, single quotes, unquoted keys, Python `True`/`False`/`None`,
  * and stray control characters; the newline-escape fallback handles
- * raw newlines inside string values. Both are the same primitives the
- * dispatcher's canonical paths use, just without the `"tool"`-key
- * gating that's wrong for our args-only context.
+ * raw newlines inside string values; the truncation auto-close phase
+ * handles missing closing braces (the common cut-off-stream failure
+ * mode for these models). Same primitives the canonical paths use,
+ * just without the `"tool"`-key gating that's wrong here.
  */
 function tryParseArgsObject(candidate: string): Record<string, unknown> | null {
   try {
-    const parsed = JSON.parse(candidate);
-    return acceptArgsObject(parsed);
+    return acceptArgsObject(JSON.parse(candidate));
   } catch {
-    // Fall through to repair attempt.
+    // Fall through to repair attempts.
   }
   const repairedText = applyJsonTextRepairs(candidate);
   try {
     return acceptArgsObject(JSON.parse(repairedText));
   } catch {
-    // One more pass: escape raw newlines that landed inside string values.
+    // Continue to newline-escape phase.
   }
   const newlineEscaped = escapeRawNewlinesInJsonStrings(repairedText);
-  if (newlineEscaped === repairedText) return null;
+  if (newlineEscaped !== repairedText) {
+    try {
+      return acceptArgsObject(JSON.parse(newlineEscaped));
+    } catch {
+      // Continue to auto-close phase.
+    }
+  }
+  const autoClosed = autoCloseTruncatedObject(newlineEscaped);
+  if (!autoClosed) return null;
   try {
-    return acceptArgsObject(JSON.parse(newlineEscaped));
+    return acceptArgsObject(JSON.parse(autoClosed));
   } catch {
     return null;
   }
@@ -224,4 +249,58 @@ function acceptArgsObject(parsed: unknown): Record<string, unknown> | null {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   if (typeof (parsed as Record<string, unknown>).tool !== 'undefined') return null;
   return parsed as Record<string, unknown>;
+}
+
+/**
+ * Append the missing closing braces/brackets to a truncated JSON
+ * fragment. Mirrors the `tryAutoCloseJson` helper in
+ * `lib/tool-call-parsing.ts` but without the `"tool"` key gate, since
+ * args objects don't carry one. Same depth ≤ 3 cap to avoid
+ * nonsensical recovery on deeply broken input.
+ *
+ * Returns the closed text, or `null` when the fragment is already
+ * balanced (no truncation), unbalanced past the depth cap, or doesn't
+ * start with `{`.
+ */
+function autoCloseTruncatedObject(slice: string): string | null {
+  if (!slice.startsWith('{')) return null;
+  const stack: ('{' | '[')[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of slice) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '{') stack.push('{');
+    if (ch === '[') stack.push('[');
+    if (ch === '}' && stack.length && stack[stack.length - 1] === '{') stack.pop();
+    if (ch === ']' && stack.length && stack[stack.length - 1] === '[') stack.pop();
+  }
+  if (stack.length === 0 || stack.length > 3) return null;
+  let suffix = inString ? '"' : '';
+  for (let i = stack.length - 1; i >= 0; i--) {
+    suffix += stack[i] === '{' ? '}' : ']';
+  }
+  return slice + suffix;
+}
+
+/**
+ * Returns true if the slice (starting at `from`) contains a
+ * `functions.<name>:<id>` prefix. Used to detect when a truncated
+ * args object actually wraps a second call's prefix; in that case the
+ * recovery skips truncation repair and lets the regex iteration pick
+ * up the later prefix on its own.
+ */
+function containsNamespacedPrefix(text: string, from: number): boolean {
+  return new RegExp(NAMESPACED_PREFIX.source).test(text.slice(from));
 }
