@@ -22,34 +22,29 @@
  * from what the model emitted.
  */
 
-import { repairToolJson } from './tool-call-parsing.js';
+import { applyJsonTextRepairs, escapeRawNewlinesInJsonStrings } from './tool-call-parsing.js';
 
 export interface RecoveredNamespacedCall {
   /** Tool name as written by the model after `functions.` (no normalization). */
   tool: string;
-  /** Parsed args object — `{}` if the prefix had no JSON or `null`. */
+  /** Parsed args object — `{}` when the prefix is followed by literal `null`. */
   args: Record<string, unknown>;
   /** Offset of the `functions.` prefix in the source text. Lets the
    *  dispatcher merge these candidates into its textual-order ordering. */
   offset: number;
 }
 
-// `functions.<name>:<call-id>` followed by optional whitespace, then
-// either `{...}` (object), `null`, or end-of-args. The capture groups are:
-//   1. tool name
-//   2. raw payload (object/null/empty), trimmed by the caller
-//
-// The `<call-id>` is allowed to be a positive integer or one of the
-// other sentinels OpenAI's traces sometimes use (`call_<hex>`,
-// `tool_<hex>`). We don't validate it — it's a hint for the model's
-// own bookkeeping, not for us.
-const NAMESPACED_PREFIX = /functions\.([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([a-zA-Z0-9_]+)/g;
+// Captures the tool name from `functions.<name>:<call-id>`. The call-id
+// is intentionally not captured — OpenAI's traces use it for the model's
+// own bookkeeping (positive integer or `call_<hex>` / `tool_<hex>`
+// sentinel) and we don't need its value for recovery.
+const NAMESPACED_PREFIX = /functions\.([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[a-zA-Z0-9_]+/g;
 
-// Maximum gap between the prefix and the start of its JSON args. Keeps
-// us from pairing a prefix with an args object that's actually attached
-// to a different prefix several sentences later. 64 chars covers the
-// "functions.x:0  {...}" double-space variant Kimi emits and a little
-// breathing room for whitespace/punctuation.
+// Maximum whitespace gap between the prefix and the start of its JSON
+// args. Keeps us from pairing a prefix with an args object that's
+// actually attached to a different prefix several sentences later.
+// 64 chars covers the "functions.x:0  {...}" double-space variant Kimi
+// emits with comfortable headroom.
 const MAX_PREFIX_TO_ARGS_GAP = 64;
 
 /**
@@ -58,12 +53,14 @@ const MAX_PREFIX_TO_ARGS_GAP = 64;
  * The recovery is order-preserving and does not deduplicate — that's
  * the dispatcher's job (it dedupes across all phases by canonical key).
  *
- * False-positive surface: the prefix regex requires the literal token
- * `functions.<identifier>:<identifier>`, which is uncommon enough in
- * prose that pairing it with valid trailing JSON is a strong signal.
- * We still gate on the JSON parsing succeeding, so a prose mention like
- * "the `functions.read_file:0` helper" with no following `{...}` is
- * left alone.
+ * False-positive surface: prose can incidentally contain
+ * `functions.foo:0` followed by a JSON-looking object (a documentation
+ * example, a quoted error message). To keep recovery from amplifying
+ * those into real tool executions we apply a trailing-context gate —
+ * see `hasRecoverableTrailingContext`. Briefly: a recovered call's
+ * args object must be followed by whitespace and then either another
+ * `functions.` prefix or end-of-message, matching how models actually
+ * structure their function-call output.
  */
 export function recoverNamespacedToolCalls(text: string): RecoveredNamespacedCall[] {
   const out: RecoveredNamespacedCall[] = [];
@@ -75,10 +72,10 @@ export function recoverNamespacedToolCalls(text: string): RecoveredNamespacedCal
     const prefixEnd = match.index + match[0].length;
 
     // Walk forward from the prefix end through whitespace until we hit
-    // the first non-space character. If it's `{`, try to parse a balanced
-    // JSON object. If it's `n` (and the next 4 chars are `null`), treat
-    // as empty args. Anything else: this prefix has no parseable args
-    // — skip without emitting a call.
+    // the first non-whitespace character. If it's `{`, try to parse a
+    // balanced JSON object. If it's `n` (and the next 4 chars are
+    // `null`), treat as empty args. Anything else: this prefix has no
+    // parseable args — skip without emitting a call.
     let cursor = prefixEnd;
     while (cursor < text.length && cursor - prefixEnd <= MAX_PREFIX_TO_ARGS_GAP) {
       const ch = text[cursor];
@@ -95,8 +92,9 @@ export function recoverNamespacedToolCalls(text: string): RecoveredNamespacedCal
     if (text[cursor] === '{') {
       const objectEnd = findBalancedObjectEnd(text, cursor);
       if (objectEnd === -1) continue;
+      if (!hasRecoverableTrailingContext(text, objectEnd + 1)) continue;
       const candidate = text.slice(cursor, objectEnd + 1);
-      const parsed = tryParseJsonObject(candidate);
+      const parsed = tryParseArgsObject(candidate);
       if (!parsed) continue;
       out.push({ tool, args: parsed, offset: match.index });
       regex.lastIndex = objectEnd + 1;
@@ -104,8 +102,10 @@ export function recoverNamespacedToolCalls(text: string): RecoveredNamespacedCal
     }
 
     if (text.slice(cursor, cursor + 4).toLowerCase() === 'null') {
+      const nullEnd = cursor + 4;
+      if (!hasRecoverableTrailingContext(text, nullEnd)) continue;
       out.push({ tool, args: {}, offset: match.index });
-      regex.lastIndex = cursor + 4;
+      regex.lastIndex = nullEnd;
       continue;
     }
 
@@ -113,6 +113,39 @@ export function recoverNamespacedToolCalls(text: string): RecoveredNamespacedCal
   }
 
   return out;
+}
+
+/**
+ * Codex review feedback (P1): without this gate, a single prose
+ * sentence like `Note: ignore functions.exec:0 {"command":"rm -rf /"}
+ * mention` would recover as a real `exec` call. Real model output
+ * follows its `functions.*` calls with either another `functions.*`
+ * prefix (batched calls) or trailing whitespace until end-of-message;
+ * prose mentions usually continue speaking after the JSON. Restricting
+ * recovery to those well-formed shapes preserves the recovery for the
+ * Kimi/Blackbox case while preventing prose-induced false positives.
+ *
+ * False-negative trade: a model that legitimately mixes a tool call
+ * with continuing prose afterwards will be skipped. The Push prompt
+ * already tells models not to do this (`"Do not describe tool calls in
+ * prose. Emit only JSON blocks for tool calls."`), and a missed call
+ * resolves on the next turn — a false positive that runs `rm -rf` does
+ * not.
+ */
+function hasRecoverableTrailingContext(text: string, after: number): boolean {
+  let cursor = after;
+  while (cursor < text.length) {
+    const ch = text[cursor];
+    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+      cursor++;
+      continue;
+    }
+    break;
+  }
+  if (cursor >= text.length) return true;
+  // Peek ahead just far enough to see another `functions.<identifier>`
+  // prefix start. 16 chars is well past any realistic call-id length.
+  return /^functions\.[a-zA-Z_]/.test(text.slice(cursor, cursor + 16));
 }
 
 /**
@@ -151,23 +184,44 @@ function findBalancedObjectEnd(text: string, start: number): number {
   return -1;
 }
 
-function tryParseJsonObject(candidate: string): Record<string, unknown> | null {
+/**
+ * Parse a candidate args object. Both paths reject any object that
+ * contains a `"tool"` key — those are ambiguous (was the model trying
+ * to emit a canonical wrapper inside a namespaced trace?) and the
+ * dispatcher's canonical phases would have already picked them up if
+ * they were valid invocations. Better to drop than misinterpret.
+ *
+ * Repair is shape-agnostic — `applyJsonTextRepairs` handles trailing
+ * commas, single quotes, unquoted keys, Python `True`/`False`/`None`,
+ * and stray control characters; the newline-escape fallback handles
+ * raw newlines inside string values. Both are the same primitives the
+ * dispatcher's canonical paths use, just without the `"tool"`-key
+ * gating that's wrong for our args-only context.
+ */
+function tryParseArgsObject(candidate: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(candidate);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
+    return acceptArgsObject(parsed);
   } catch {
     // Fall through to repair attempt.
   }
-  const repaired = repairToolJson(candidate);
-  if (repaired && typeof repaired === 'object' && !Array.isArray(repaired)) {
-    // repairToolJson is strict about a `tool` key — if it returned an
-    // object without one, accept the args we got. If it returned an
-    // object WITH a `tool` key we'd be misinterpreting; reject.
-    if (typeof (repaired as Record<string, unknown>).tool === 'undefined') {
-      return repaired as Record<string, unknown>;
-    }
+  const repairedText = applyJsonTextRepairs(candidate);
+  try {
+    return acceptArgsObject(JSON.parse(repairedText));
+  } catch {
+    // One more pass: escape raw newlines that landed inside string values.
   }
-  return null;
+  const newlineEscaped = escapeRawNewlinesInJsonStrings(repairedText);
+  if (newlineEscaped === repairedText) return null;
+  try {
+    return acceptArgsObject(JSON.parse(newlineEscaped));
+  } catch {
+    return null;
+  }
+}
+
+function acceptArgsObject(parsed: unknown): Record<string, unknown> | null {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  if (typeof (parsed as Record<string, unknown>).tool !== 'undefined') return null;
+  return parsed as Record<string, unknown>;
 }

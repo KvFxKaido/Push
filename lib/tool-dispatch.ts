@@ -245,7 +245,11 @@ export function createToolDispatcher<TCall>(
           candidates.push({
             kind: 'namespaced',
             offset: recovered.offset,
-            parsed: { tool: recovered.tool, args: recovered.args, raw: recovered.args },
+            parsed: {
+              tool: recovered.tool,
+              args: recovered.args,
+              raw: { tool: recovered.tool, args: recovered.args },
+            },
             sample: `functions.${recovered.tool}:* ${JSON.stringify(recovered.args)}`,
           });
         }

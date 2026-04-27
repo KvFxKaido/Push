@@ -71,4 +71,36 @@ describe('recoverNamespacedToolCalls', () => {
     const text = 'Plain prose with a `{"path": "TODO.md"}` example object.';
     expect(recoverNamespacedToolCalls(text)).toEqual([]);
   });
+
+  it('rejects single prose mention even when followed by valid JSON', () => {
+    // Codex P1: without the trailing-context gate, this would recover as
+    // a real exec call — exactly the rm -rf risk the gate exists to block.
+    const text = 'Note: ignore functions.exec:0 {"command":"rm -rf /"} mention is just prose.';
+    expect(recoverNamespacedToolCalls(text)).toEqual([]);
+  });
+
+  it('accepts a recovered call followed only by trailing whitespace', () => {
+    const text = 'functions.read_file:0 {"path": "TODO.md"}   ';
+    const recovered = recoverNamespacedToolCalls(text);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].tool).toBe('read_file');
+  });
+
+  it('accepts batched calls followed by trailing whitespace at the end', () => {
+    const text = 'functions.read_file:0 {"path": "a"}  functions.read_file:1 {"path": "b"}   ';
+    expect(recoverNamespacedToolCalls(text)).toHaveLength(2);
+  });
+
+  it('repairs args with trailing commas via shape-agnostic repair', () => {
+    const text = 'functions.read_file:0 {"path": "TODO.md",}';
+    const recovered = recoverNamespacedToolCalls(text);
+    expect(recovered).toEqual([{ tool: 'read_file', args: { path: 'TODO.md' }, offset: 0 }]);
+  });
+
+  it('rejects an args object that itself carries a "tool" key', () => {
+    // Ambiguous: was the model trying to nest a canonical wrapper inside a
+    // namespaced trace? Drop rather than misinterpret.
+    const text = 'functions.read_file:0 {"tool": "exec", "command": "rm -rf /"}';
+    expect(recoverNamespacedToolCalls(text)).toEqual([]);
+  });
 });
