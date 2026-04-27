@@ -4,12 +4,27 @@
 
 import { drawBox } from './tui-renderer.js';
 import type { Theme } from './tui-theme.js';
+import type { ParsedKey } from './tui-input.js';
 
 export interface ScreenBuffer {
   writeLine(row: number, col: number, text: string): void;
 }
 
 export type { Theme } from './tui-theme.js';
+
+/**
+ * A self-contained UI surface that owns its render output and (optionally)
+ * its key handling. Panes are positioning-aware (centered modal, fixed
+ * region, etc.) — callers hand over the buffer and terminal size, the pane
+ * decides where to draw.
+ *
+ * `handleKey` returns true when the key is consumed; the caller stops
+ * dispatching further. Render-only panes can omit it.
+ */
+export interface Pane {
+  render(buf: ScreenBuffer, rows: number, cols: number, theme: Theme): void;
+  handleKey?(key: ParsedKey): boolean;
+}
 
 export interface ModalRect {
   top: number;
