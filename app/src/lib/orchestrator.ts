@@ -18,7 +18,7 @@ import {
   buildOrchestratorBasePrompt,
 } from './orchestrator-prompt-builder';
 import { manageContext } from './message-context-manager';
-import { filterModelVisibleMessages } from './chat-message';
+import { transformContextBeforeLLM } from '@push/lib/context-transformer';
 // --- Re-exports from orchestrator-streaming (break circular dependency) ---
 export {
   parseProviderError,
@@ -297,20 +297,24 @@ export function toLLMMessages(
       : { role: 'system', content: systemContent },
   ];
 
-  // Centralized model-visibility filter (slice 2): strip messages explicitly
-  // marked `visibleToModel: false`. Applied here at the top of the prompt-
-  // pack path so transcript-only events (e.g. `branch_forked`) never reach
-  // the model regardless of which surface created them.
-  const visibleMessages = filterModelVisibleMessages(messages);
-
-  // Smart context management — summarize old messages instead of dropping
+  // Single boundary transform: visibility filter + smart context management.
+  // Both stages were previously inline here. Consolidating into one pure
+  // function keeps the prefix sent to the LLM byte-stable across turns when
+  // only new messages were appended (cache hit rate). Pipeline order is
+  // fixed inside the transformer; we cannot reorder filter vs. compaction
+  // from this call site.
   const contextBudget = getContextBudget(providerType, providerModel);
-  const windowedMessages = manageContext(
-    visibleMessages,
-    contextBudget,
-    providerType,
-    onPreCompact,
-  );
+  const transformed = transformContextBeforeLLM<ChatMessage>(messages, {
+    surface: 'web',
+    manageContext: (msgs) => {
+      const result = manageContext(msgs, contextBudget, providerType, onPreCompact);
+      // The lib short-circuits with the same array reference when no work is
+      // needed; any other reference means at least one message was rewritten
+      // or dropped, even if the count is unchanged (Phase 1 summarization).
+      return { messages: result, trimmed: result !== msgs };
+    },
+  });
+  const windowedMessages = transformed.messages;
 
   for (const msg of windowedMessages) {
     // Check for attachments (multimodal message)
