@@ -33,6 +33,7 @@ This folder contains architecture decisions, research, analysis, and shipped des
 | `Oh My OpenAgent Review.md` | Comparative review | Tier-1/2/3 quick-win list for Push. |
 | `OpenAI Agents SDK Evolution Review.md` | Reference | Comparative review of the OpenAI Agents SDK. |
 | `phase-5-tool-runtime-brief.md` | Draft, added 2026-04-12 | `ToolExecutionRuntime` interface brief for Phase 5B of the Big Four remediation. Pending review before implementation. |
+| `pi-mono Agent Loop Review.md` | Current, added 2026-04-27 | Comparative review of `badlogic/pi-mono` `packages/agent`. Top borrows: kill mid-conversation working-memory re-injection, source-order thunk pattern in parallel-reads, proxy event-stripping wire format between Worker and app. |
 | `push-runtime-v2.md` | Working design doc | Ongoing design space for the Push runtime v2, including the runtime-schema validator landed 2026-04-14. |
 | `Rerank Before Prompt Packing.md` | Draft spike, added 2026-04-14 | Optional rerank stage between deterministic retrieval and sectioned packing for delegation briefs and Auditor. |
 | `Resumable Sessions Design.md` | Historical | Shipped 2026-02-19 (Phases 1–4); useful as provenance and for journal-adjacent designs like Modal Sandbox Snapshots. |
