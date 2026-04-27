@@ -22,9 +22,10 @@ export function assertReadyForAssistantTurn(
     throw new Error(`${context}: cannot stream assistant turn — message history is empty.`);
   }
   const lastRole = messages[messages.length - 1].role;
-  if (lastRole === 'assistant') {
+  if (lastRole !== 'user') {
     throw new Error(
-      `${context}: cannot stream assistant turn — last message has role 'assistant'. ` +
+      `${context}: cannot stream assistant turn — last message has role '${lastRole}', ` +
+        `expected 'user' (tool results are encoded as role 'user'). ` +
         `Append the next user message or tool result before re-streaming.`,
     );
   }

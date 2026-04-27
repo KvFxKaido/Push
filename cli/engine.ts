@@ -712,10 +712,9 @@ export async function runAssistantLoop(
         sessionId: state.sessionId,
       };
 
-    assertReadyForAssistantTurn(trimResult.messages, 'cli/runAssistantLoop');
-
     let assistantText: string;
     try {
+      assertReadyForAssistantTurn(trimResult.messages, 'cli/runAssistantLoop');
       assistantText = await streamCompletion(
         providerConfig,
         apiKey,

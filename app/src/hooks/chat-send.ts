@@ -422,7 +422,15 @@ export async function streamAssistantRound(
   // it won't leak into non-OpenRouter requests.
   setOpenRouterSessionId(chatId);
 
-  assertReadyForAssistantTurn(apiMessages, 'web/streamAssistantRound');
+  let invariantError: Error | null = null;
+  try {
+    assertReadyForAssistantTurn(apiMessages, 'web/streamAssistantRound');
+  } catch (err) {
+    invariantError = err instanceof Error ? err : new Error(String(err));
+  }
+  if (invariantError) {
+    return { accumulated, thinkingAccumulated, error: invariantError };
+  }
 
   const error = await new Promise<Error | null>((resolve) => {
     streamChat(

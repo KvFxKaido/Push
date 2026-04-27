@@ -46,6 +46,18 @@ describe('assertReadyForAssistantTurn', () => {
     ).toThrow(/last message has role 'assistant'/);
   });
 
+  it('throws when the trailing message has any non-user role', () => {
+    expect(() =>
+      assertReadyForAssistantTurn(
+        [
+          { role: 'user', content: 'hi' },
+          { role: 'system', content: 'hidden directive' },
+        ],
+        'cli/runAssistantLoop',
+      ),
+    ).toThrow(/last message has role 'system'/);
+  });
+
   it('includes the caller context in the thrown message', () => {
     expect(() =>
       assertReadyForAssistantTurn([{ role: 'assistant', content: 'x' }], 'cli/runAssistantLoop'),
