@@ -311,10 +311,17 @@ type LineEntry = { row: number; col: number; text: string };
 type Op = { kind: 'raw'; text: string } | ({ kind: 'line' } & LineEntry);
 
 /**
- * Create a screen buffer that diffs each frame's line-positioned writes
+ * Create a screen buffer that skips unchanged line-positioned writes
  * against the previously flushed frame. On flush, only changed lines emit
- * cursor-positioning + text; unchanged lines are skipped, and lines that
- * existed in the previous frame but not the current are blanked.
+ * cursor-positioning + text; lines whose text matches the previous frame
+ * are dropped from the output.
+ *
+ * Crucially, the buffer DOES NOT delete rows that were written previously
+ * but absent this frame — callers (notably `tui.ts`'s partial-pane path)
+ * intentionally re-render only dirty panes per frame, so an unwritten row
+ * is meant to retain its previous contents. Rows that genuinely need
+ * clearing must be re-written by the caller, or the caller must trigger
+ * a full redraw (which emits `clearScreen` → forceFullFrame here).
  *
  * Raw writes (cursor positioning, SGR resets, clearScreen, theme.bg) are
  * passed through in order. A clearScreen escape forces a full re-emit
@@ -382,17 +389,16 @@ export function createScreenBuffer(): ScreenBuffer {
         newLines.set(key, entry);
         const prev = prevLines.get(key);
         if (forceFullFrame || !prev || prev.text !== op.text) {
-          out += ESC.cursorTo(op.row, op.col) + op.text;
-        }
-      }
-    }
-
-    // Blank lines that existed in the previous frame but are absent now,
-    // unless we already wiped via clearScreen.
-    if (!forceFullFrame) {
-      for (const [key, prev] of prevLines) {
-        if (!newLines.has(key)) {
-          out += ESC.cursorTo(prev.row, prev.col) + ' '.repeat(visibleWidth(prev.text));
+          // If the new text is shorter than what was at this position, pad
+          // with spaces so the previous frame's tail is overwritten. (In a
+          // forceFullFrame the terminal was already wiped, so prev is moot.)
+          let payload = op.text;
+          if (!forceFullFrame && prev) {
+            const prevW = visibleWidth(prev.text);
+            const newW = visibleWidth(op.text);
+            if (prevW > newW) payload += ' '.repeat(prevW - newW);
+          }
+          out += ESC.cursorTo(op.row, op.col) + payload;
         }
       }
     }

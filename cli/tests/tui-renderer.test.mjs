@@ -305,7 +305,12 @@ describe('createScreenBuffer (line-level diff)', () => {
     });
   });
 
-  it('blanks lines that disappear between frames', () => {
+  it('does not auto-clear rows that are absent from the next frame', () => {
+    // tui.ts has a partial-redraw path that re-emits only dirty panes;
+    // an unwritten row is meant to retain its previous contents. Auto-
+    // blanking would corrupt the panes that intentionally skipped this
+    // frame. Callers that need a row gone must rewrite it (or trigger a
+    // full redraw, which emits clearScreen → forceFullFrame).
     withCapturedStdout((take) => {
       const buf = createScreenBuffer();
       buf.writeLine(1, 1, 'hello');
@@ -314,8 +319,38 @@ describe('createScreenBuffer (line-level diff)', () => {
       take();
       buf.writeLine(1, 1, 'hello');
       buf.flush();
+      assert.equal(take(), '');
+    });
+  });
+
+  it('preserves untouched prior lines across partial re-renders', () => {
+    // Stronger regression check: when one line updates and the other is
+    // omitted, the output should be EXACTLY the changed-line emit — no
+    // trailing blanks for the untouched row.
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.writeLine(1, 1, 'first');
+      buf.writeLine(2, 1, 'second');
+      buf.flush();
+      take();
+      buf.writeLine(1, 1, 'first updated');
+      buf.flush();
+      assert.equal(take(), '\x1b[1;1Hfirst updated');
+    });
+  });
+
+  it('pads with spaces when a line shrinks at the same position', () => {
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.writeLine(1, 1, 'hello world');
+      buf.flush();
+      take();
+      buf.writeLine(1, 1, 'hi');
+      buf.flush();
       const out = take();
-      assert.match(out, /\x1b\[2;1H {5}/);
+      // Emitted text should include the new content followed by enough
+      // trailing spaces to overwrite the old tail (11 - 2 = 9 spaces).
+      assert.match(out, /hi {9}/);
     });
   });
 
