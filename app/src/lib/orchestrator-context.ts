@@ -1,4 +1,5 @@
 import type { AIProviderType, ChatMessage } from '@/types';
+import { getModelCapabilities } from './model-catalog';
 
 // Context mode config (runtime toggle from Settings)
 const CONTEXT_MODE_STORAGE_KEY = 'push_context_mode';
@@ -7,114 +8,89 @@ export type ContextMode = 'graceful' | 'none';
 // Rolling window config — token-based context management
 const DEFAULT_CONTEXT_MAX_TOKENS = 100_000; // Hard cap
 const DEFAULT_CONTEXT_TARGET_TOKENS = 88_000; // Soft target leaves room for system prompt + response
-// Gemini models (1M context window) — Google, Ollama, OpenRouter, and Zen with Gemini models
-// Keep a ~20% margin below the 1,048,576 API limit because estimateTokens (len/3.5) can
-// undercount on code-dense or CJK-heavy conversations.
-const GEMINI_CONTEXT_MAX_TOKENS = 850_000;
-const GEMINI_CONTEXT_TARGET_TOKENS = 800_000;
-// GPT-5.4 models expose a large context window, but we keep a more conservative
-// target than Grok because long prompts are materially more expensive.
-const GPT5_PRO_CONTEXT_MAX_TOKENS = 850_000;
-const GPT5_PRO_CONTEXT_TARGET_TOKENS = 725_000;
-const GPT5_PRO_CONTEXT_SUMMARIZE_TOKENS = 160_000;
-// Grok models on OpenRouter can expose ~2M context. Keep a larger margin than
-// Gemini because token estimation is rough and our tool/system prompt overhead is
-// substantial on long-running sessions.
-const GROK_CONTEXT_MAX_TOKENS = 1_500_000;
-const GROK_CONTEXT_TARGET_TOKENS = 1_350_000;
-const GROK_CONTEXT_SUMMARIZE_TOKENS = 180_000;
-// Moonshot Kimi models expose 262K context on Workers AI and OpenRouter.
-// Margin matches Gemini (~92% of the real cap) because estimateTokens
-// can undercount on code-dense or CJK-heavy conversations.
-const KIMI_CONTEXT_MAX_TOKENS = 240_000;
-const KIMI_CONTEXT_TARGET_TOKENS = 210_000;
-const KIMI_CONTEXT_SUMMARIZE_TOKENS = 160_000;
+
+// Universal budget formula. Both ratios stay below the model's real window
+// because estimateTokens (len/3.5) can undercount on code-dense or CJK-heavy
+// conversations — the 8% headroom covers that drift plus the system prompt
+// and response budget the API counts against the same window.
+const MAX_RATIO = 0.92;
+const TARGET_RATIO = 0.85;
 
 export interface ContextBudget {
   maxTokens: number;
   targetTokens: number;
-  /** Threshold at which old tool results get summarized. Decoupled from
-   *  targetTokens so large-context models (Gemini) still get lean working
-   *  context without premature message dropping. */
+  /** Threshold at which old tool results get summarized. Capped at the
+   *  default 88K so smaller-window models don't summarize past their target,
+   *  and so large-window models don't accumulate excessive tool noise before
+   *  the first summarization pass. */
   summarizeTokens: number;
 }
 
 export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   maxTokens: DEFAULT_CONTEXT_MAX_TOKENS,
   targetTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS, // same as target for non-Gemini
-};
-
-const GEMINI_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GEMINI_CONTEXT_MAX_TOKENS,
-  targetTokens: GEMINI_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS, // summarize early like other providers
-};
-
-const CLAUDE_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GEMINI_CONTEXT_MAX_TOKENS,
-  targetTokens: GEMINI_CONTEXT_TARGET_TOKENS,
   summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
 };
 
-const GPT5_PRO_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GPT5_PRO_CONTEXT_MAX_TOKENS,
-  targetTokens: GPT5_PRO_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: GPT5_PRO_CONTEXT_SUMMARIZE_TOKENS,
-};
+function budgetFromWindow(windowTokens: number): ContextBudget {
+  const maxTokens = Math.floor(windowTokens * MAX_RATIO);
+  const targetTokens = Math.floor(windowTokens * TARGET_RATIO);
+  return {
+    maxTokens,
+    targetTokens,
+    summarizeTokens: Math.min(DEFAULT_CONTEXT_TARGET_TOKENS, targetTokens),
+  };
+}
 
-const GROK_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GROK_CONTEXT_MAX_TOKENS,
-  targetTokens: GROK_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: GROK_CONTEXT_SUMMARIZE_TOKENS,
-};
+// Catalog metadata (models.dev) only loads for providers that fetch it:
+// openrouter, blackbox, nvidia, ollama, zen. Other providers (cloudflare,
+// vertex, bedrock, azure, kilocode, openadapter) hand us a model name with
+// no metadata, so we probe sibling catalogs by name and finally fall through
+// to a coarse name-pattern table that captures the major model families'
+// real context windows.
+const CATALOG_PROBE_PROVIDERS: readonly AIProviderType[] = [
+  'openrouter',
+  'zen',
+  'ollama',
+  'nvidia',
+  'blackbox',
+];
 
-const KIMI_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: KIMI_CONTEXT_MAX_TOKENS,
-  targetTokens: KIMI_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: KIMI_CONTEXT_SUMMARIZE_TOKENS,
-};
+function guessWindowFromName(model: string): number {
+  const m = model.toLowerCase();
+  // Order matters — more specific patterns first so haiku doesn't get
+  // bucketed with the larger Claude family.
+  if (m.includes('haiku')) return 200_000;
+  if (m.includes('claude')) return 1_000_000;
+  if (m.includes('gemini')) return 1_000_000;
+  if (m.includes('grok')) return 2_000_000;
+  if (m.includes('kimi') || m.includes('moonshot')) return 256_000;
+  if (m.includes('gpt-5')) return 1_000_000;
+  return 0;
+}
 
-function normalizeModelName(model?: string): string {
-  return (model || '').trim().toLowerCase();
+function lookupContextWindow(provider: AIProviderType | undefined, model: string): number {
+  if (provider) {
+    const cap = getModelCapabilities(provider, model).contextLimit;
+    if (cap > 0) return cap;
+  }
+  // Same model id often exists in another provider's catalog (e.g.,
+  // gemini-2.5-pro is in OpenRouter, Zen, and Ollama metadata). Try those
+  // before falling back to name patterns.
+  for (const probe of CATALOG_PROBE_PROVIDERS) {
+    if (probe === provider) continue;
+    const cap = getModelCapabilities(probe, model).contextLimit;
+    if (cap > 0) return cap;
+  }
+  return guessWindowFromName(model);
 }
 
 export function getContextBudget(provider?: AIProviderType, model?: string): ContextBudget {
-  const normalizedModel = normalizeModelName(model);
-  // GPT-5.4 models get a large-context profile, but with a conservative target
-  // to avoid turning long sessions into runaway expensive prompts.
-  if (normalizedModel.includes('gpt-5.4')) {
-    return GPT5_PRO_CONTEXT_BUDGET;
-  }
-
-  // Non-Haiku Claude models get the larger 1M-class profile.
-  if (normalizedModel.includes('claude') && !normalizedModel.includes('haiku')) {
-    return CLAUDE_CONTEXT_BUDGET;
-  }
-
-  // OpenRouter or other providers running a Grok model — larger long-term
-  // history, but still summarize well before the hard cap.
-  if (normalizedModel.includes('grok')) {
-    return GROK_CONTEXT_BUDGET;
-  }
-
-  // Moonshot Kimi models — 262K context on Workers AI and OpenRouter.
-  if (normalizedModel.includes('kimi') || normalizedModel.includes('moonshot')) {
-    return KIMI_CONTEXT_BUDGET;
-  }
-
-  // Ollama, OpenRouter, or Zen running a Gemini model — full 1M budget
-  if (
-    (provider === 'ollama' ||
-      provider === 'openrouter' ||
-      provider === 'zen' ||
-      provider === 'vertex') &&
-    normalizedModel.includes('gemini')
-  ) {
-    return GEMINI_CONTEXT_BUDGET;
-  }
-
-  return DEFAULT_CONTEXT_BUDGET;
+  const normalizedModel = (model || '').trim();
+  if (!normalizedModel) return DEFAULT_CONTEXT_BUDGET;
+  const windowTokens = lookupContextWindow(provider, normalizedModel);
+  if (windowTokens <= 0) return DEFAULT_CONTEXT_BUDGET;
+  return budgetFromWindow(windowTokens);
 }
 
 export function getContextMode(): ContextMode {
