@@ -506,6 +506,11 @@ export interface Layout {
  * Compute pane regions given terminal size and state.
  * Returns { header, transcript, toolPane, composer, footer } with
  * { top, left, width, height } for each.
+ *
+ * Internally builds a flex tree (header / gap / row[transcript, divider,
+ * toolPane] / gap / composer / footer) and resolves it via {@link solveFlex}.
+ * Future panes that need nested splits can extend the tree below or call
+ * {@link solveFlex} directly with their own.
  */
 export function computeLayout(
   rows: number,
@@ -522,60 +527,163 @@ export function computeLayout(
   const footerHeight = 2; // status bar + keybind hints
   const composerHeight = Math.max(3, Math.min(7, composerLines + 2)); // +2 for border
 
-  const headerTop = outerMarginRow + 1; // 1-indexed
-  const footerTop = rows - outerMarginRow - footerHeight + 1;
-  const composerTop = footerTop - composerHeight;
+  const middleRow: FlexNode = toolPaneOpen
+    ? {
+        dir: 'row',
+        size: { kind: 'flex', weight: 1 },
+        children: [
+          { id: 'transcript', size: { kind: 'flex', weight: 1 } },
+          { size: { kind: 'fixed', size: 1 } }, // divider
+          { id: 'toolPane', size: { kind: 'percent', percent: 0.37 } },
+        ],
+      }
+    : {
+        dir: 'row',
+        size: { kind: 'flex', weight: 1 },
+        children: [{ id: 'transcript', size: { kind: 'flex', weight: 1 } }],
+      };
 
-  const transcriptTop = headerTop + headerHeight + 1; // +1 gap
-  const transcriptHeight = composerTop - transcriptTop - 1; // -1 gap
+  const tree: FlexNode = {
+    dir: 'col',
+    size: { kind: 'flex', weight: 1 },
+    children: [
+      { id: 'header', size: { kind: 'fixed', size: headerHeight } },
+      { size: { kind: 'fixed', size: 1 } }, // gap
+      middleRow,
+      { size: { kind: 'fixed', size: 1 } }, // gap
+      { id: 'composer', size: { kind: 'fixed', size: composerHeight } },
+      { id: 'footer', size: { kind: 'fixed', size: footerHeight } },
+    ],
+  };
 
-  let transcriptWidth: number;
-  let toolPaneWidth: number;
-  let toolPaneLeft: number;
+  const innerRegion: PaneRegion = {
+    top: outerMarginRow + 1,
+    left: innerLeft,
+    width: innerWidth,
+    height: rows - outerMarginRow * 2,
+  };
+
+  const regions = solveFlex(tree, innerRegion);
+  const fallback: PaneRegion = { top: 1, left: innerLeft, width: innerWidth, height: 1 };
+
+  const header = regions.get('header') ?? { ...fallback, height: headerHeight };
+  const transcriptRaw = regions.get('transcript') ?? fallback;
+  const composer = regions.get('composer') ?? { ...fallback, height: composerHeight };
+  const footer = regions.get('footer') ?? { ...fallback, height: footerHeight };
+  const transcript: PaneRegion = { ...transcriptRaw, height: Math.max(1, transcriptRaw.height) };
+
+  let toolPane: PaneRegion | null = null;
   if (toolPaneOpen) {
-    toolPaneWidth = Math.floor(innerWidth * 0.37);
-    transcriptWidth = innerWidth - toolPaneWidth - 1; // -1 for divider
-    toolPaneLeft = innerLeft + transcriptWidth + 1;
-  } else {
-    transcriptWidth = innerWidth;
-    toolPaneWidth = 0;
-    toolPaneLeft = 0;
+    const tp = regions.get('toolPane');
+    toolPane = tp ? { ...tp, height: Math.max(1, tp.height) } : null;
   }
 
   return {
     innerWidth,
     innerLeft,
-    header: {
-      top: headerTop,
-      left: innerLeft,
-      width: innerWidth,
-      height: headerHeight,
-    },
-    transcript: {
-      top: transcriptTop,
-      left: innerLeft,
-      width: transcriptWidth,
-      height: Math.max(1, transcriptHeight),
-    },
-    toolPane: toolPaneOpen
-      ? {
-          top: transcriptTop,
-          left: toolPaneLeft,
-          width: toolPaneWidth,
-          height: Math.max(1, transcriptHeight),
-        }
-      : null,
-    composer: {
-      top: composerTop,
-      left: innerLeft,
-      width: innerWidth,
-      height: composerHeight,
-    },
-    footer: {
-      top: footerTop,
-      left: innerLeft,
-      width: innerWidth,
-      height: footerHeight,
-    },
+    header,
+    transcript,
+    toolPane,
+    composer,
+    footer,
   };
+}
+
+// ── Flex layout solver ──────────────────────────────────────────────
+
+export type FlexSize =
+  | { kind: 'fixed'; size: number }
+  | { kind: 'percent'; percent: number }
+  | { kind: 'flex'; weight: number };
+
+/**
+ * A node in a flex layout tree. Container nodes set `dir` and `children`;
+ * leaf nodes (those whose region the caller wants back) set `id`. A node
+ * may be both — a container can also expose its own region via `id`.
+ *
+ * Children with no `id` act as gaps/dividers — they consume space along
+ * the parent's axis but produce no entry in the result map.
+ */
+export interface FlexNode {
+  id?: string;
+  dir?: 'row' | 'col';
+  size: FlexSize;
+  children?: FlexNode[];
+}
+
+/**
+ * Resolve a flex tree to a map of `id` → region.
+ *
+ * Sizing rules per axis (width for `row`, height for `col`):
+ * - `fixed`: exact size in cells.
+ * - `percent`: `floor(parentDim * percent)`, computed from the parent's
+ *   axis dimension before flex distribution.
+ * - `flex`: shares the remaining space proportional to weight; the last
+ *   flex child absorbs any rounding remainder so totals add up exactly.
+ *
+ * The cross-axis dimension always inherits the parent's full size.
+ * Children are positioned sequentially along the parent's axis.
+ */
+export function solveFlex(
+  node: FlexNode,
+  region: PaneRegion,
+  result: Map<string, PaneRegion> = new Map(),
+): Map<string, PaneRegion> {
+  if (node.id) result.set(node.id, region);
+  if (!node.children || node.children.length === 0) return result;
+
+  const dir = node.dir ?? 'col';
+  const isRow = dir === 'row';
+  const axisDim = isRow ? region.width : region.height;
+  const crossDim = isRow ? region.height : region.width;
+  const axisStart = isRow ? region.left : region.top;
+  const crossStart = isRow ? region.top : region.left;
+
+  // Pass 1: compute fixed + percent sizes; collect flex weights.
+  const sizes: number[] = new Array(node.children.length).fill(0);
+  let consumed = 0;
+  let totalWeight = 0;
+  const flexIndices: number[] = [];
+
+  for (let i = 0; i < node.children.length; i++) {
+    const c = node.children[i];
+    if (c.size.kind === 'fixed') {
+      sizes[i] = Math.max(0, c.size.size);
+      consumed += sizes[i];
+    } else if (c.size.kind === 'percent') {
+      sizes[i] = Math.max(0, Math.floor(axisDim * c.size.percent));
+      consumed += sizes[i];
+    } else {
+      flexIndices.push(i);
+      totalWeight += Math.max(0, c.size.weight);
+    }
+  }
+
+  // Pass 2: distribute remaining space among flex children.
+  const available = Math.max(0, axisDim - consumed);
+  if (flexIndices.length > 0 && totalWeight > 0) {
+    let remaining = available;
+    for (let k = 0; k < flexIndices.length; k++) {
+      const i = flexIndices[k];
+      const c = node.children[i];
+      const weight = Math.max(0, (c.size as { kind: 'flex'; weight: number }).weight);
+      // Last flex child absorbs the rounding remainder so totals match exactly.
+      const isLast = k === flexIndices.length - 1;
+      const size = isLast ? remaining : Math.floor((available * weight) / totalWeight);
+      sizes[i] = size;
+      remaining -= size;
+    }
+  }
+
+  // Pass 3: lay children out along the axis and recurse.
+  let offset = axisStart;
+  for (let i = 0; i < node.children.length; i++) {
+    const childRegion: PaneRegion = isRow
+      ? { top: crossStart, left: offset, width: sizes[i], height: crossDim }
+      : { top: offset, left: crossStart, width: crossDim, height: sizes[i] };
+    solveFlex(node.children[i], childRegion, result);
+    offset += sizes[i];
+  }
+
+  return result;
 }

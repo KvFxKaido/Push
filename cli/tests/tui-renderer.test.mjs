@@ -14,6 +14,7 @@ import {
   charWidth,
   osc52Copy,
   ESC,
+  solveFlex,
 } from '../tui-renderer.ts';
 import { createTheme, GLYPHS_UNICODE, GLYPHS_ASCII } from '../tui-theme.ts';
 
@@ -230,6 +231,144 @@ describe('computeLayout', () => {
     const layout = computeLayout(24, 80);
     assert.ok(layout.innerLeft >= 3); // 2 col margin + 1 for 1-indexing
     assert.ok(layout.innerWidth <= 76); // 80 - 4
+  });
+});
+
+// ─── solveFlex ──────────────────────────────────────────────────
+
+describe('solveFlex', () => {
+  const region = { top: 1, left: 1, width: 100, height: 50 };
+
+  it('registers the root region under its id', () => {
+    const out = solveFlex({ id: 'root', size: { kind: 'flex', weight: 1 } }, region);
+    assert.deepEqual(out.get('root'), region);
+  });
+
+  it('lays out fixed children sequentially along col axis', () => {
+    const out = solveFlex(
+      {
+        dir: 'col',
+        size: { kind: 'flex', weight: 1 },
+        children: [
+          { id: 'a', size: { kind: 'fixed', size: 4 } },
+          { id: 'b', size: { kind: 'fixed', size: 6 } },
+        ],
+      },
+      region,
+    );
+    assert.deepEqual(out.get('a'), { top: 1, left: 1, width: 100, height: 4 });
+    assert.deepEqual(out.get('b'), { top: 5, left: 1, width: 100, height: 6 });
+  });
+
+  it('flex children share remaining space proportional to weight', () => {
+    const out = solveFlex(
+      {
+        dir: 'row',
+        size: { kind: 'flex', weight: 1 },
+        children: [
+          { id: 'left', size: { kind: 'flex', weight: 1 } },
+          { id: 'right', size: { kind: 'flex', weight: 3 } },
+        ],
+      },
+      { top: 1, left: 1, width: 80, height: 10 },
+    );
+    assert.equal(out.get('left').width, 20);
+    assert.equal(out.get('right').width, 60);
+  });
+
+  it('last flex child absorbs the rounding remainder', () => {
+    // 75 / (1+1+1) = 25 each — but check uneven: 7 / 3 → 2,2,3
+    const out = solveFlex(
+      {
+        dir: 'row',
+        size: { kind: 'flex', weight: 1 },
+        children: [
+          { id: 'a', size: { kind: 'flex', weight: 1 } },
+          { id: 'b', size: { kind: 'flex', weight: 1 } },
+          { id: 'c', size: { kind: 'flex', weight: 1 } },
+        ],
+      },
+      { top: 1, left: 1, width: 7, height: 1 },
+    );
+    assert.equal(out.get('a').width, 2);
+    assert.equal(out.get('b').width, 2);
+    assert.equal(out.get('c').width, 3); // remainder
+    // No cells lost
+    assert.equal(out.get('a').width + out.get('b').width + out.get('c').width, 7);
+  });
+
+  it('percent children consume a floor(parentDim * percent) slice before flex', () => {
+    const out = solveFlex(
+      {
+        dir: 'row',
+        size: { kind: 'flex', weight: 1 },
+        children: [
+          { id: 'fill', size: { kind: 'flex', weight: 1 } },
+          { size: { kind: 'fixed', size: 1 } }, // divider
+          { id: 'side', size: { kind: 'percent', percent: 0.37 } },
+        ],
+      },
+      { top: 1, left: 1, width: 96, height: 10 },
+    );
+    assert.equal(out.get('side').width, 35); // floor(96 * 0.37)
+    assert.equal(out.get('fill').width, 60); // 96 - 1 (divider) - 35
+  });
+
+  it('children without an id consume axis space but produce no result entry', () => {
+    const out = solveFlex(
+      {
+        dir: 'col',
+        size: { kind: 'flex', weight: 1 },
+        children: [
+          { id: 'top', size: { kind: 'fixed', size: 4 } },
+          { size: { kind: 'fixed', size: 1 } }, // gap, no id
+          { id: 'bottom', size: { kind: 'fixed', size: 5 } },
+        ],
+      },
+      region,
+    );
+    assert.equal(out.get('bottom').top, 6); // 1 + 4 + 1
+    assert.equal(out.size, 2);
+  });
+
+  it('recurses into nested splits', () => {
+    const out = solveFlex(
+      {
+        dir: 'col',
+        size: { kind: 'flex', weight: 1 },
+        children: [
+          { id: 'header', size: { kind: 'fixed', size: 2 } },
+          {
+            dir: 'row',
+            size: { kind: 'flex', weight: 1 },
+            children: [
+              { id: 'tree', size: { kind: 'fixed', size: 20 } },
+              { id: 'main', size: { kind: 'flex', weight: 1 } },
+            ],
+          },
+        ],
+      },
+      { top: 1, left: 1, width: 100, height: 50 },
+    );
+    assert.deepEqual(out.get('header'), { top: 1, left: 1, width: 100, height: 2 });
+    assert.deepEqual(out.get('tree'), { top: 3, left: 1, width: 20, height: 48 });
+    assert.deepEqual(out.get('main'), { top: 3, left: 21, width: 80, height: 48 });
+  });
+
+  it('clamps to zero when fixed sizes exceed parent dimension', () => {
+    const out = solveFlex(
+      {
+        dir: 'col',
+        size: { kind: 'flex', weight: 1 },
+        children: [
+          { id: 'a', size: { kind: 'fixed', size: 10 } },
+          { id: 'b', size: { kind: 'flex', weight: 1 } },
+        ],
+      },
+      { top: 1, left: 1, width: 10, height: 5 },
+    );
+    assert.equal(out.get('a').height, 10); // overshoots; caller decides what to do
+    assert.equal(out.get('b').height, 0); // no space left
   });
 });
 
