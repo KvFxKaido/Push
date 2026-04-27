@@ -3,7 +3,7 @@
  */
 
 import { drawBox } from './tui-renderer.js';
-import type { Theme } from './tui-theme.js';
+import type { Theme, TokenName } from './tui-theme.js';
 import type { ParsedKey } from './tui-input.js';
 
 export interface ScreenBuffer {
@@ -103,4 +103,28 @@ export function getWindowedListRange(
   let start = Math.max(0, cur - Math.floor(size / 2));
   start = Math.min(start, total - size);
   return { start, end: Math.min(total, start + size) };
+}
+
+/**
+ * Build the cursor marker for a list row: the theme's prompt glyph in the
+ * accent color when the row is active, a single space placeholder
+ * otherwise (so columns stay aligned across rows).
+ */
+export function cursorMarker(theme: Theme, isCursor: boolean): string {
+  return isCursor ? theme.style('accent.primary', theme.glyphs.prompt) : ' ';
+}
+
+/**
+ * Apply cursor-row text styling: accent color when active, otherwise the
+ * caller's base token (default `fg.secondary`). For rows with multiple
+ * non-cursor states (e.g. "current" vs "inactive"), pass the resolved
+ * base token in.
+ */
+export function cursorStyle(
+  theme: Theme,
+  isCursor: boolean,
+  text: string,
+  baseToken: TokenName = 'fg.secondary',
+): string {
+  return isCursor ? theme.style('accent.primary', text) : theme.style(baseToken, text);
 }
