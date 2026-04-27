@@ -94,7 +94,7 @@ export async function startBackgroundMainChatTurn(
     provider: lockedProvider,
     model: resolvedModel,
     branchContext: {
-      activeBranch: branchInfo?.currentBranch ?? branch,
+      activeBranch: branch,
       defaultBranch: branchInfo?.defaultBranch ?? '',
       protectMain: refs.isMainProtectedRef.current,
     },

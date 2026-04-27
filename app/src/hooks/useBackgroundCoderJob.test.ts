@@ -267,7 +267,7 @@ describe('useBackgroundCoderJob — startJob', () => {
     });
 
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string) as {
-      chatRef: { chatId: string; checkpointId?: string };
+      chatRef: { chatId: string; repoFullName: string; branch: string; checkpointId?: string };
     };
     expect(body.chatRef).toEqual({
       chatId: 'chat-1',

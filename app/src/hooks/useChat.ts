@@ -741,6 +741,8 @@ export function useChat(
       const trimmedText = text.trim();
       const hasAttachments = Boolean(attachments && attachments.length > 0);
       if (!trimmedText && !hasAttachments) return;
+      // Attachments still fall through to foreground until PR 3+ envelopes them.
+      const useBgMode = isBackgroundModeEnabled() && !hasAttachments;
 
       const bgChat = options?.chatId || activeChatIdRef.current;
       if (bgChat && hasActiveBackgroundJob(conversationsRef.current[bgChat])) return;
@@ -808,7 +810,7 @@ export function useChat(
 
       // --- Prepare context ---
       const prepared = await prepareSendContext(
-        { trimmedText, attachments, options, chatId },
+        { trimmedText, attachments, options, chatId, skipStreamingPlaceholder: useBgMode },
         {
           conversationsRef,
           dirtyConversationIdsRef,
@@ -824,8 +826,7 @@ export function useChat(
       let apiMessages = prepared.apiMessages;
       let toolCallRecoveryState = prepared.recoveryState;
 
-      // Bg branch: server-owned turn via CoderJob DO; see chat-send-background.ts.
-      if (isBackgroundModeEnabled()) {
+      if (useBgMode) {
         // biome-ignore format: keep refs inline so this branch stays under the file line cap.
         const refs = { sandboxIdRef, repoRef, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef };
         const r = await startBackgroundMainChatTurn({

@@ -170,6 +170,40 @@ describe('prepareSendContext — conversation update', () => {
     expect(result.apiMessages[0].content).toBe('first message');
   });
 
+  it('skipStreamingPlaceholder=true suppresses the placeholder + isStreaming toggle', async () => {
+    // PR #434 review fix: the bg-mode main-chat branch returns early
+    // after prepareSendContext. Without this opt-out, the streaming
+    // placeholder would shadow the JobCard the bg path inserts and
+    // isStreaming would never reset — leaving the chat stuck in a
+    // streaming state forever. The user message still gets inserted
+    // (the bg path needs it in the transcript) and the title still
+    // generates (first-message UX is the same regardless of mode).
+    const refs = makeRefs({ conversationsRef: { current: { 'chat-1': makeConversation() } } });
+    const callbacks = makeCallbacks();
+
+    await prepareSendContext(
+      {
+        trimmedText: 'first message',
+        attachments: undefined,
+        options: undefined,
+        chatId: 'chat-1',
+        skipStreamingPlaceholder: true,
+      },
+      refs,
+      callbacks,
+    );
+
+    const conv = callbacks.capturedConversations['chat-1'];
+    // User message present, no streaming-assistant placeholder.
+    expect(conv.messages).toHaveLength(1);
+    expect(conv.messages[0].role).toBe('user');
+    expect(conv.messages[0].content).toBe('first message');
+    // First-message title generation still fires.
+    expect(conv.title).toBe('Title from 1 msgs');
+    // setIsStreaming is NOT called when the bg path opts out.
+    expect(callbacks.setIsStreamingCalls).toEqual([]);
+  });
+
   it('preserves an existing conversation title (no first-message regeneration)', async () => {
     const refs = makeRefs({
       conversationsRef: {

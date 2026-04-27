@@ -304,7 +304,7 @@ describe('handleJobsRoute', () => {
     });
     const forwarded = stub.fetch.mock.calls[0]![0] as Request;
     const forwardedBody = JSON.parse(await forwarded.text()) as {
-      chatRef?: { chatId: string; checkpointId?: string };
+      chatRef?: { chatId: string; repoFullName: string; branch: string; checkpointId?: string };
     };
     expect(forwardedBody.chatRef).toEqual({
       chatId: 'chat-1',
