@@ -28,8 +28,8 @@ import {
 
 // A run that hasn't produced a server event in this long while still
 // `running` is surfaced to the user with a cancel affordance. Sized
-// generously so healthy long runs don't false-positive: Phase 1 emits
-// subagent.started and then nothing until terminal, so a 2-minute model
+// generously so healthy long runs don't false-positive: PR 1 emits
+// job.started and then nothing until terminal, so a 2-minute model
 // thinking burst is routine. At 3 minutes of silence we start nudging
 // the user, and the DO's 30-minute wall-clock alarm is still the
 // authoritative backstop.
@@ -119,7 +119,7 @@ export function JobCard({ data }: { data: CoderJobCardData }) {
   const lastEventAt = data.lastEventAt ?? data.startedAt;
   const silentFor = Math.max(0, now - lastEventAt);
   // A job that stays 'queued' past the threshold is almost always stuck
-  // client-side — the SSE stream never attached or `subagent.started`
+  // client-side — the SSE stream never attached or `job.started`
   // never arrived — and cancel is the same affordance a user would want
   // either way. `queued` is otherwise a very brief optimistic state, so
   // in practice the banner only fires here when something went wrong.

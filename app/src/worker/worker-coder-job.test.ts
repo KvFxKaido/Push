@@ -244,6 +244,53 @@ describe('handleJobsRoute', () => {
     expect(stub.fetch).not.toHaveBeenCalled();
   });
 
+  it('rejects /start when role is missing (400 MISSING_FIELDS with role)', async () => {
+    const stub = makeFakeStub();
+    const env = makeEnv({ CoderJob: makeCoderJobNamespace(stub) });
+    const { role: _omitted, ...bodyWithoutRole } = validStartBody();
+    void _omitted;
+    const response = await handleJobsRoute(
+      makeRequest('/api/jobs/start', 'POST', bodyWithoutRole),
+      env,
+      { action: 'start', jobId: null },
+    );
+    expect(response.status).toBe(400);
+    const parsed = (await response.json()) as { error: string; fields: string[] };
+    expect(parsed.error).toBe('MISSING_FIELDS');
+    expect(parsed.fields).toContain('role');
+    expect(stub.fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects /start with an unsupported role (400 UNSUPPORTED_ROLE)', async () => {
+    const stub = makeFakeStub();
+    const env = makeEnv({ CoderJob: makeCoderJobNamespace(stub) });
+    // Pin the route-layer guard against future-role envelopes that the
+    // DO can't dispatch yet. This protects against a half-persisted
+    // run for a role we haven't wired.
+    const body = { ...validStartBody(), role: 'planner' };
+    const response = await handleJobsRoute(makeRequest('/api/jobs/start', 'POST', body), env, {
+      action: 'start',
+      jobId: null,
+    });
+    expect(response.status).toBe(400);
+    const parsed = (await response.json()) as { error: string; role: string };
+    expect(parsed.error).toBe('UNSUPPORTED_ROLE');
+    expect(parsed.role).toBe('planner');
+    expect(stub.fetch).not.toHaveBeenCalled();
+  });
+
+  it('forwards role=coder through to the DO body untouched', async () => {
+    const stub = makeFakeStub(new Response('{"jobId":"stub-ok"}', { status: 202 }));
+    const env = makeEnv({ CoderJob: makeCoderJobNamespace(stub) });
+    await handleJobsRoute(makeRequest('/api/jobs/start', 'POST', validStartBody()), env, {
+      action: 'start',
+      jobId: null,
+    });
+    const forwarded = stub.fetch.mock.calls[0]![0] as Request;
+    const forwardedBody = JSON.parse(await forwarded.text()) as { role: string };
+    expect(forwardedBody.role).toBe('coder');
+  });
+
   it('forwards /events to the DO as GET and passes Last-Event-ID through', async () => {
     const stub = makeFakeStub(
       new Response(null, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
@@ -284,6 +331,7 @@ describe('handleJobsRoute', () => {
 
 function validStartBody() {
   return {
+    role: 'coder' as const,
     chatId: 'chat-1',
     repoFullName: 'acme/app',
     branch: 'main',
