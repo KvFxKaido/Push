@@ -20,7 +20,9 @@
  * background-jobs endpoints don't bypass CSRF / abuse protections.
  */
 
+import type { AgentRole } from '@push/lib/runtime-contract';
 import { getClientIp, validateOrigin, type Env } from './worker-middleware';
+import { SUPPORTED_AGENT_JOB_ROLES } from './agent-job-roles';
 import type { CoderJobStartInput } from './coder-job-do';
 
 const JOBS_PREFIX = '/api/jobs/';
@@ -121,10 +123,33 @@ async function handleStart(request: Request, env: Env): Promise<Response> {
   void _ignoredJobId;
   void _ignoredOrigin;
 
+  // Reject unknown / unsupported roles cheaply at the route layer so
+  // the DO doesn't get a half-persisted run for a role we can't
+  // dispatch. Defense-in-depth: the DO also rejects, but doing it here
+  // saves a DO round-trip and keeps the error response shape clean.
+  //
+  // Missing role is handled as a transitional default to 'coder', not
+  // a hard reject: rolling worker deploys + cached service-worker
+  // bundles mean the previous client (which didn't send role) can
+  // still be live in some browsers for a short window after this PR
+  // ships. Rejecting their /start would silently drop those jobs.
+  // Once the old client has aged out (one or two releases), this
+  // default can tighten to a MISSING_FIELDS response. The DO layer
+  // distinguishes missing from unsupported for direct callers (tests,
+  // internal code) — see handleStart in coder-job-do.ts.
+  const rawRole = (startFields as { role?: unknown }).role;
+  if (typeof rawRole === 'string' && !SUPPORTED_AGENT_JOB_ROLES.has(rawRole as AgentRole)) {
+    return json({ error: 'UNSUPPORTED_ROLE', role: rawRole }, 400);
+  }
+  // rawRole is now either undefined (old client) or a validated
+  // supported role. PR 1 only wires 'coder', so the assigned literal is
+  // safe; PR 2 will switch on rawRole here when a second role lands.
+
   const jobId = crypto.randomUUID();
   const origin = new URL(request.url).origin;
   const input: CoderJobStartInput = {
-    ...(startFields as Omit<CoderJobStartInput, 'jobId' | 'origin'>),
+    ...(startFields as Omit<CoderJobStartInput, 'jobId' | 'origin' | 'role'>),
+    role: 'coder',
     jobId,
     origin,
   };

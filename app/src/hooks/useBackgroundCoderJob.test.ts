@@ -178,6 +178,7 @@ describe('useBackgroundCoderJob — startJob', () => {
     expect(call[0]).toBe('/api/jobs/start');
     const body = JSON.parse((call[1] as RequestInit).body as string);
     expect(body).toMatchObject({
+      role: 'coder',
       chatId: 'chat-1',
       repoFullName: 'acme/web',
       branch: 'main',
@@ -266,17 +267,17 @@ describe('useBackgroundCoderJob — SSE dispatch', () => {
     const completedEvent = {
       id: 'ev-2',
       timestamp: 1234,
-      type: 'subagent.completed',
+      type: 'job.completed',
       executionId: 'job-77',
-      agent: 'coder',
+      role: 'coder',
       summary: 'Done.',
     };
     const startedEvent = {
       id: 'ev-1',
       timestamp: 1233,
-      type: 'subagent.started',
+      type: 'job.started',
       executionId: 'job-77',
-      agent: 'coder',
+      role: 'coder',
       detail: 'Fix the thing',
     };
     const sse =
@@ -326,15 +327,17 @@ describe('useBackgroundCoderJob — SSE dispatch', () => {
     // appendRunEvent should have been called for each SSE event,
     // with server id/timestamp stripped (RunEventInput shape).
     const startedCall = appendRunEvent.mock.calls.find(
-      (c) => (c[1] as { type: string }).type === 'subagent.started',
+      (c) => (c[1] as { type: string }).type === 'job.started',
     );
     expect(startedCall).toBeDefined();
     expect(startedCall?.[0]).toBe('chat-1');
     expect(startedCall?.[1]).not.toHaveProperty('id');
     expect(startedCall?.[1]).not.toHaveProperty('timestamp');
+    // Role survives the strip-id/timestamp pass and reaches the journal.
+    expect((startedCall?.[1] as { role?: string }).role).toBe('coder');
 
     const completedCall = appendRunEvent.mock.calls.find(
-      (c) => (c[1] as { type: string }).type === 'subagent.completed',
+      (c) => (c[1] as { type: string }).type === 'job.completed',
     );
     expect(completedCall).toBeDefined();
 
@@ -442,16 +445,16 @@ describe('useBackgroundCoderJob — regression guards (PR #361 review)', () => {
       {
         id: 'ev-1',
         timestamp: 1,
-        type: 'subagent.started',
+        type: 'job.started',
         executionId: 'job-guard-2',
-        agent: 'coder',
+        role: 'coder',
       },
       {
         id: 'ev-2',
         timestamp: 2,
-        type: 'subagent.completed',
+        type: 'job.completed',
         executionId: 'job-guard-2',
-        agent: 'coder',
+        role: 'coder',
         summary: 'Done.',
       },
     ];
@@ -501,6 +504,76 @@ describe('useBackgroundCoderJob — regression guards (PR #361 review)', () => {
       const type = (call[1] as { type: string }).type;
       expect(type).not.toMatch(/^DELEGATION_/);
     }
+
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('useBackgroundCoderJob — backward-compatibility shim', () => {
+  it('treats legacy subagent.* terminal events as their job.* equivalents', async () => {
+    // SSE replay for an in-flight DO that started under the pre-PR-1
+    // contract surfaces persisted `subagent.*` events. Without the
+    // backward-compat fall-through, the terminal would land in the
+    // default arm and the JobCard / persistence entry would never
+    // advance past 'running' until the user reloaded the page.
+    const subagentCompleted = {
+      id: 'ev-legacy',
+      timestamp: 9999,
+      type: 'subagent.completed',
+      executionId: 'job-legacy',
+      agent: 'coder',
+      summary: 'Legacy run finished.',
+    };
+    const sse = `id: ${subagentCompleted.id}\nevent: ${subagentCompleted.type}\ndata: ${JSON.stringify(
+      subagentCompleted,
+    )}\n\n`;
+
+    const encoder = new TextEncoder();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-legacy' }), { status: 202 }) as Response,
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(encoder.encode(sse));
+              c.close();
+            },
+          }),
+          { status: 200 },
+        ) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const convs = { 'chat-1': makeConversation('chat-1') };
+    const { hook, getConvs } = useHarness(convs);
+    await hook.startJob({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      envelope: makeEnvelope(),
+      provider: 'openrouter',
+      model: undefined,
+      userProfile: null,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const entry = getConvs()['chat-1']?.pendingJobIds?.['job-legacy'];
+    expect(entry?.status).toBe('completed');
+
+    const msgs = getConvs()['chat-1'].messages;
+    const card = msgs.flatMap((m) => m.cards ?? []).find((c) => c.type === 'coder-job') as
+      | { data: { status?: string; summary?: string } }
+      | undefined;
+    expect(card?.data.status).toBe('completed');
+    expect(card?.data.summary).toBe('Legacy run finished.');
 
     vi.unstubAllGlobals();
   });

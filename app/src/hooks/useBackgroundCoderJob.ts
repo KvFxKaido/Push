@@ -276,8 +276,23 @@ export function useBackgroundCoderJob({
       // uses lastEventAt with status='running' to detect stalled runs.
       const eventAt = Date.now();
 
-      // Card + persistence updates keyed off the event type.
+      // Card + persistence updates keyed off the event type. The DO's
+      // SSE stream emits `job.*` events (role-aware AgentJob lifecycle);
+      // the foreground delegation runtime emits `subagent.*` through a
+      // different code path and never reaches this hook.
+      //
+      // The `subagent.*` arms in the switch are a deliberate
+      // backward-compatibility shim, not a steady-state design: an
+      // in-flight DO that started under the previous (subagent.*)
+      // contract has those events persisted in its SQLite event log.
+      // After a worker bundle redeploy, SSE replay sends the historical
+      // `subagent.*` mixed with fresh `job.*`. Without these arms the
+      // legacy terminals fall into the default and the job is stuck at
+      // 'running' forever in the UI. Once any in-flight DO from the
+      // pre-PR-1 contract has finished and its events have been
+      // garbage-collected, these arms can be deleted (PR 2 cleanup).
       switch (runEvent.type) {
+        case 'job.started':
         case 'subagent.started': {
           upsertJobEntry(chatId, jobId, {
             status: 'running',
@@ -290,6 +305,7 @@ export function useBackgroundCoderJob({
           });
           break;
         }
+        case 'job.completed':
         case 'subagent.completed': {
           const finishedAt = Date.now();
           upsertJobEntry(chatId, jobId, {
@@ -320,6 +336,7 @@ export function useBackgroundCoderJob({
           );
           break;
         }
+        case 'job.failed':
         case 'subagent.failed': {
           // Server uses status=cancelled on abort — distinguish by the
           // error text only as a hint; canonical status comes from the
@@ -337,7 +354,7 @@ export function useBackgroundCoderJob({
             finishedAt,
             lastEventAt: eventAt,
           });
-          // See subagent.completed above — same reason for omitting
+          // See job.completed above — same reason for omitting
           // `emitRunEngineEvent(DELEGATION_COMPLETED)`.
           updateAgentStatus(
             {
@@ -349,10 +366,10 @@ export function useBackgroundCoderJob({
           break;
         }
         default:
-          // Phase 1 only emits the three above. Anything else is
-          // either a future event type (benign — appended to the
-          // journal already, and still counted as activity so the
-          // stall clock resets) or a drift that a future PR will want
+          // PR 1 only emits the three job.* events above. Anything
+          // else is either a future event type (benign — appended to
+          // the journal already, and still counted as activity so the
+          // stall clock resets) or drift that a future PR will want
           // to handle explicitly.
           upsertJobEntry(chatId, jobId, { lastEventId: runEvent.id });
           upsertJobCardData(chatId, jobId, { lastEventAt: eventAt });
@@ -432,8 +449,13 @@ export function useBackgroundCoderJob({
     async (input: StartBackgroundJobInput): Promise<StartBackgroundJobResult> => {
       // Send exactly the fields the server contract expects. jobId +
       // origin are deliberately not passed — server fills them to
-      // preserve the SSRF + id-guess hardening from PR #359.
+      // preserve the SSRF + id-guess hardening from PR #359. `role` is
+      // sent explicitly: today only `'coder'` is valid, and the worker
+      // route + DO both reject anything else with `UNSUPPORTED_ROLE`.
+      // The hook stays Coder-pinned in PR 1; a generalized hook surface
+      // (parameterized role) is PR 2 work.
       const body = {
+        role: 'coder' as const,
         chatId: input.chatId,
         repoFullName: input.repoFullName,
         branch: input.branch,
@@ -479,8 +501,8 @@ export function useBackgroundCoderJob({
       const { jobId } = (await resp.json()) as { jobId: string };
 
       // Persist the job and drop an initial JobCard into the transcript.
-      // Status starts at 'queued' because the DO's subagent.started
-      // event will promote it to 'running' when the stream drains.
+      // Status starts at 'queued' because the DO's job.started event
+      // will promote it to 'running' when the stream drains.
       const startedAt = Date.now();
       upsertJobEntry(input.chatId, jobId, {
         status: 'queued',

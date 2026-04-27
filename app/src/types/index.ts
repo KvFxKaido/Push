@@ -371,11 +371,11 @@ export interface CoderJobCardData {
    * threshold — lets the JobCard surface a cancel affordance before the
    * DO's 30-minute wall-clock alarm eventually fires. */
   lastEventAt?: number;
-  /** Last `subagent.started` detail or `subagent.completed` summary. */
+  /** Last `job.started` detail or `job.completed` summary. */
   latestStatusLine?: string;
   /** Populated on terminal completed/cancelled events. */
   summary?: string;
-  /** Populated on subagent.failed events. */
+  /** Populated on job.failed events. */
   error?: string;
   /** Short preview of the originating task; surfaced in the card header. */
   taskPreview?: string;

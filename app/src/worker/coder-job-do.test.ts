@@ -3,8 +3,8 @@
  * hand-rolled in-memory `DurableObjectState` stub that implements just
  * the SQL + waitUntil + storage surface the DO actually uses.
  *
- * Proves the Phase 1 PR #2 claim: the DO can drive `runCoderAgent`
- * server-side, persist `subagent.started` + `subagent.completed`
+ * Proves the AgentJob contract for `role: 'coder'`: the DO can drive
+ * `runCoderAgent` server-side, persist `job.started` + `job.completed`
  * events to its SQLite event log, and serve them back over SSE with
  * `Last-Event-ID` replay.
  */
@@ -266,6 +266,7 @@ function makeNoToolStreamFn(summary: string): PushStream<ChatMessage> {
 
 function makeStartInput(overrides: Partial<CoderJobStartInput> = {}): CoderJobStartInput {
   return {
+    role: 'coder',
     jobId: 'job-test-1',
     chatId: 'chat-1',
     repoFullName: 'acme/app',
@@ -294,7 +295,7 @@ describe('CoderJob DO — end-to-end', () => {
     vi.restoreAllMocks();
   });
 
-  it('runs the Coder kernel and emits subagent.started + subagent.completed events', async () => {
+  it('runs the Coder kernel and emits job.started + job.completed events with role=coder', async () => {
     const { ctx, storage, waitUntilPromises } = makeCtx();
     const input = makeStartInput({ jobId: 'job-run-1' });
 
@@ -316,15 +317,22 @@ describe('CoderJob DO — end-to-end', () => {
     await Promise.all(waitUntilPromises);
 
     const eventTypes = storage.events.map((e) => e.type);
-    expect(eventTypes).toEqual(['subagent.started', 'subagent.completed']);
+    expect(eventTypes).toEqual(['job.started', 'job.completed']);
+
+    const started = JSON.parse(storage.events[0]!.payload_json) as {
+      type: string;
+      role: string;
+    };
+    expect(started.type).toBe('job.started');
+    expect(started.role).toBe('coder');
 
     const completed = JSON.parse(storage.events[1]!.payload_json) as {
       type: string;
-      agent: string;
+      role: string;
       summary: string;
     };
-    expect(completed.type).toBe('subagent.completed');
-    expect(completed.agent).toBe('coder');
+    expect(completed.type).toBe('job.completed');
+    expect(completed.role).toBe('coder');
     expect(completed.summary).toContain('Task complete');
 
     const jobRow = storage.jobs.get(input.jobId)!;
@@ -332,7 +340,7 @@ describe('CoderJob DO — end-to-end', () => {
     expect(jobRow.finished_at).toBeTypeOf('number');
   });
 
-  it('persists subagent.failed when the stream errors', async () => {
+  it('persists job.failed when the stream errors', async () => {
     const { ctx, storage, waitUntilPromises } = makeCtx();
     const input = makeStartInput({ jobId: 'job-fail-1' });
 
@@ -369,10 +377,63 @@ describe('CoderJob DO — end-to-end', () => {
     await Promise.all(waitUntilPromises);
 
     const eventTypes = storage.events.map((e) => e.type);
-    expect(eventTypes).toEqual(['subagent.started', 'subagent.failed']);
+    expect(eventTypes).toEqual(['job.started', 'job.failed']);
+    const failed = JSON.parse(storage.events[1]!.payload_json) as {
+      type: string;
+      role: string;
+      error: string;
+    };
+    expect(failed.role).toBe('coder');
     const jobRow = storage.jobs.get(input.jobId)!;
     expect(jobRow.status).toBe('failed');
     expect(jobRow.error_text ?? '').toContain('provider exploded');
+  });
+
+  it('rejects /start with an unsupported role at the DO layer (defense in depth)', async () => {
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+    // Worker route normally guards against this, but the DO must
+    // reject too so direct callers (tests, future code) can't half-
+    // persist a run for a role that has no kernel wired.
+    const input = { ...makeStartInput({ jobId: 'job-bad-role' }), role: 'planner' };
+    const response = await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    expect(response.status).toBe(400);
+    const parsed = (await response.json()) as { error: string; role: string };
+    expect(parsed.error).toBe('UNSUPPORTED_ROLE');
+    expect(parsed.role).toBe('planner');
+    // No row written, no event emitted.
+    expect(storage.jobs.get('job-bad-role')).toBeUndefined();
+    expect(storage.events.length).toBe(0);
+  });
+
+  it('rejects /start with missing role at the DO layer (MISSING_FIELDS)', async () => {
+    // Mirrors the route layer's missing-vs-unsupported distinction.
+    // Direct DO callers (tests, internal code) that omit role get the
+    // same MISSING_FIELDS error vocabulary they'd get going through
+    // /api/jobs/start, instead of being lumped under UNSUPPORTED_ROLE.
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+    const { role: _omitted, ...inputWithoutRole } = makeStartInput({ jobId: 'job-no-role' });
+    void _omitted;
+    const response = await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(inputWithoutRole),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    expect(response.status).toBe(400);
+    const parsed = (await response.json()) as { error: string; fields: string[] };
+    expect(parsed.error).toBe('MISSING_FIELDS');
+    expect(parsed.fields).toContain('role');
+    expect(storage.jobs.get('job-no-role')).toBeUndefined();
+    expect(storage.events.length).toBe(0);
   });
 
   it('replays persisted events over SSE using Last-Event-ID', async () => {
@@ -408,8 +469,8 @@ describe('CoderJob DO — end-to-end', () => {
     expect(sseResponse.headers.get('content-type')).toBe('text/event-stream');
 
     const body = await sseResponse.text();
-    expect(body).not.toContain('event: subagent.started');
-    expect(body).toContain('event: subagent.completed');
+    expect(body).not.toContain('event: job.started');
+    expect(body).toContain('event: job.completed');
   });
 
   it('returns 404 for /events on unknown jobId', async () => {
@@ -458,7 +519,7 @@ describe('CoderJob DO — end-to-end', () => {
     const job = new CoderJob(ctx, makeEnv());
 
     // Seed a running job directly without going through handleStart so
-    // no `subagent.started` event is appended.
+    // no `job.started` event is appended.
     storage.jobs.set('job-noev', {
       id: 'job-noev',
       chat_id: 'c',
@@ -536,7 +597,7 @@ describe('CoderJob DO — end-to-end', () => {
     expect(storage.jobs.get(input.jobId)!.error_text).toBe('alarm won');
     const terminalEvents = storage.events
       .map((e) => e.type)
-      .filter((t) => t === 'subagent.completed' || t === 'subagent.failed');
+      .filter((t) => t === 'job.completed' || t === 'job.failed');
     // The test seeded the terminal row directly (bypassing appendEvent),
     // so there should be zero terminal events from runLoop — proving the
     // broadcast is gated on winning the mark.
@@ -621,7 +682,7 @@ describe('CoderJob DO — end-to-end', () => {
     expect(row.error_text).toMatch(/wall-clock budget/i);
     expect(row.finished_at).toBeTypeOf('number');
 
-    const failed = storage.events.find((e) => e.type === 'subagent.failed');
+    const failed = storage.events.find((e) => e.type === 'job.failed');
     expect(failed).toBeDefined();
     expect(JSON.parse(failed!.payload_json).error).toMatch(/stalled|forcibly terminated/i);
 
