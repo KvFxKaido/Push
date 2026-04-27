@@ -201,14 +201,39 @@ export function mapSandboxErrorCode(code: string): ToolErrorType {
 
 const SANDBOX_BASE = '/api/sandbox';
 const DEFAULT_TIMEOUT_MS = 30_000; // 30s for most operations
-// 165s for command execution. Must stay above the Worker's per-exec deadline
-// (`SANDBOX_EXEC_TIMEOUT_MS = 150_000` in worker-cf-sandbox.ts) so a wedged
-// container surfaces as the Worker's structured 504 (`code: 'TIMEOUT'`)
-// instead of a client-side AbortError. The container shell `timeout` is set
-// at 140s, the Worker deadline at 150s; this client ceiling adds ~15s of
-// network + JSON round-trip slack on top so the inner deadlines reliably
-// fire first and the outer one is only ever a safety net.
-const EXEC_TIMEOUT_MS = 165_000;
+// 165s for command execution in production. Must stay above the Worker's
+// per-exec deadline (`SANDBOX_EXEC_TIMEOUT_MS = 150_000` in
+// worker-cf-sandbox.ts) so a wedged container surfaces as the Worker's
+// structured 504 (`code: 'TIMEOUT'`) instead of a client-side AbortError.
+// The container shell `timeout` is set at 140s, the Worker deadline at 150s;
+// this client ceiling adds ~15s of network + JSON round-trip slack on top so
+// the inner deadlines reliably fire first and the outer one is only ever a
+// safety net.
+//
+// In local Vite dev the Worker can raise its own deadline to 300s via
+// `SANDBOX_DEV_LONG_DEADLINE` (cold-built wrangler containers routinely
+// overshoot 150s on first start). Allow the client ceiling to be raised
+// in lockstep via `VITE_SANDBOX_EXEC_TIMEOUT_MS` so cold starts surface
+// the Worker's structured response instead of a premature client abort.
+// The override is gated on `import.meta.env.DEV` and bad values fall back
+// to the production-safe default. The optional-chained access mirrors the
+// pattern in github-auth.ts: anything in the Worker dependency graph can
+// transitively hit this module, and `import.meta.env` is undefined on the
+// Worker runtime — referencing it directly would crash deploy validation.
+const EXEC_TIMEOUT_MS_FALLBACK = 165_000;
+const sandboxClientMetaEnv = (
+  import.meta as ImportMeta & {
+    env?: { DEV?: boolean; VITE_SANDBOX_EXEC_TIMEOUT_MS?: string };
+  }
+).env;
+const execTimeoutOverride =
+  sandboxClientMetaEnv?.DEV === true
+    ? Number.parseInt(sandboxClientMetaEnv.VITE_SANDBOX_EXEC_TIMEOUT_MS ?? '', 10)
+    : Number.NaN;
+const EXEC_TIMEOUT_MS =
+  Number.isFinite(execTimeoutOverride) && execTimeoutOverride > 0
+    ? execTimeoutOverride
+    : EXEC_TIMEOUT_MS_FALLBACK;
 let sandboxOwnerToken: string | null = null;
 const sandboxOwnerTokensById = new Map<string, string>();
 
