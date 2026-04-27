@@ -1,24 +1,28 @@
 /**
- * CoderJob — Durable Object running a background Coder delegation.
+ * CoderJob — Durable Object running a background AgentJob.
  *
- * Phase 1 PR #2 ships the wire-format-complete shape:
+ * The DO class name is preserved (no rename in PR 1) but its wire
+ * contract is now role-aware: a job declares `role: AgentRole` and
+ * dispatch in `runLoop` selects the role-specific kernel. Today only
+ * `role: 'coder'` is wired; non-coder roles are rejected with
+ * `UNSUPPORTED_ROLE`.
+ *
  *   POST /start    — persist input, begin runLoop under ctx.waitUntil
  *   GET  /events   — SSE stream with Last-Event-ID replay
  *   POST /cancel   — abort in-flight run, emit terminal failure event
  *   GET  /status   — snapshot
  *
- * The kernel itself (`runCoderAgent` from `lib/coder-agent.ts`) runs
- * inside `runLoop()` with DO-side services assembled by
- * `coder-job-services.ts`. Production detectors wrap the Web-side
- * implementations behind `coder-job-detector-adapter.ts`; the executor
- * and provider streamFn stubs surface clear errors until PR #3 fills
- * them. See `docs/runbooks/Background Coder Tasks Phase 1.md`.
+ * Events emitted to the SSE log: `job.started`, `job.completed`,
+ * `job.failed`, each carrying a `role` field. These are distinct from
+ * the `subagent.*` events emitted by the foreground delegation runtime
+ * — the two layers describe runs at different scopes (server-owned
+ * job vs. in-tab delegated child run).
  *
- * Events emitted to the SSE log: `subagent.started`,
- * `subagent.completed`, `subagent.failed`. Finer-grained progress
- * events are deliberately out of scope — adding a new `RunEventInput`
- * variant would trigger the schema-drift guardrail and belongs in PR
- * #4 alongside the drift-test tranche.
+ * The kernel for role='coder' (`runCoderAgent` from `lib/coder-agent.ts`)
+ * runs inside `executeCoderJob()` with DO-side services assembled by
+ * `coder-job-services.ts`. Production detectors wrap the Web-side
+ * implementations behind `coder-job-detector-adapter.ts`. See
+ * `docs/runbooks/Background Coder Tasks Phase 1.md`.
  */
 
 import type { DurableObjectState } from '@cloudflare/workers-types';
@@ -30,7 +34,12 @@ import {
   type CoderTurnContext,
 } from '@push/lib/coder-agent-bindings';
 import { CapabilityLedger, ROLE_CAPABILITIES } from '@push/lib/capabilities';
-import type { AcceptanceCriterion, RunEventInput, RunEvent } from '@push/lib/runtime-contract';
+import type {
+  AcceptanceCriterion,
+  AgentRole,
+  RunEventInput,
+  RunEvent,
+} from '@push/lib/runtime-contract';
 import type { UserProfile } from '@push/lib/user-identity';
 import type { AIProviderType, LlmMessage, PushStream } from '@push/lib/provider-contract';
 import type { VerificationPolicy } from '@push/lib/verification-policy';
@@ -46,6 +55,7 @@ import { buildCoderDelegationBrief } from '@/lib/role-context';
 import { getSandboxToolProtocol } from '@/lib/sandbox-tool-detection';
 import { WEB_SEARCH_TOOL_PROTOCOL } from '@/lib/web-search-tools';
 import type { Env } from './worker-middleware';
+import { SUPPORTED_AGENT_JOB_ROLES } from './agent-job-roles';
 import {
   createWebDetectorAdapter,
   type AnyToolCall,
@@ -62,8 +72,11 @@ import { buildCoderJobServices } from './coder-job-services';
 // Wire types
 // ---------------------------------------------------------------------------
 
-/** Body shape for POST /api/jobs/start (and the internal DO /start path). */
+/** AgentJob input shape for `role: 'coder'`. The interface name is
+ *  preserved (no rename in PR 1) but a `role` discriminator is now
+ *  required so dispatch in `runLoop` is role-aware. */
 export interface CoderJobStartInput {
+  role: 'coder';
   jobId: string;
   chatId: string;
   repoFullName: string;
@@ -81,6 +94,32 @@ export interface CoderJobStartInput {
   acceptanceCriteria?: AcceptanceCriterion[];
   projectInstructions?: string;
   instructionFilename?: string;
+}
+
+/** Discriminated union of every role-aware AgentJob input. PR 1 wires
+ *  only `'coder'`; future roles join here as their kernels are migrated
+ *  off the in-browser loop. The DO rejects unknown roles at /start with
+ *  `UNSUPPORTED_ROLE`. */
+export type AgentJobStartInput = CoderJobStartInput;
+
+// Role registry lives in its own module so the worker route layer can
+// import it without pulling the DO's transitive deps. Re-exported here
+// for backward compatibility with any external importer.
+export { SUPPORTED_AGENT_JOB_ROLES };
+
+/** Thrown by `executeJob` when dispatch hits a role with no wired
+ *  kernel. Surfaces as a `job.failed` SSE event with the message body
+ *  so clients can render a clear error rather than a generic stall. */
+export class UnsupportedRoleError extends Error {
+  // Plain field + assignment instead of a TS parameter-property because
+  // the app tsconfig sets `erasableSyntaxOnly` (no runtime-emitting TS
+  // syntax). Same pattern used by other classes in this package.
+  readonly role: string;
+  constructor(role: string) {
+    super(`AgentJob role '${role}' is not yet wired in this runtime.`);
+    this.name = 'UnsupportedRoleError';
+    this.role = role;
+  }
 }
 
 export type CoderJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -276,11 +315,16 @@ export class CoderJob {
       // Conditional mark wins the terminal write if runLoop hasn't
       // already finished. Only broadcast the failure event if we won —
       // otherwise SSE would deliver two conflicting terminals.
+      //
+      // Role on the alarm-emitted event is hardcoded to 'coder' because
+      // PR 1 only wires that role; when PR 2 lands a second role, the
+      // schema gains a `role` column (or this path parses input_json)
+      // so the alarm can recover the original role per row.
       if (this.markTerminal(row.id, 'failed', null, error)) {
         await this.appendEvent(row.id, {
-          type: 'subagent.failed',
+          type: 'job.failed',
           executionId: row.id,
-          agent: 'coder',
+          role: 'coder',
           error,
         });
       }
@@ -316,6 +360,16 @@ export class CoderJob {
   // -------------------------------------------------------------------------
 
   private async handleStart(input: CoderJobStartInput): Promise<Response> {
+    // Defense in depth: the worker route validates `role`, but tests
+    // and direct DO callers can bypass it (the `as` cast in `fetch()`
+    // hides a missing/invalid discriminator at the type layer). Reject
+    // anything other than the supported roles before touching storage
+    // so an unsupported run doesn't half-persist.
+    const role = (input as unknown as { role?: unknown }).role;
+    if (typeof role !== 'string' || !SUPPORTED_AGENT_JOB_ROLES.has(role as AgentRole)) {
+      return json({ error: 'UNSUPPORTED_ROLE', role: typeof role === 'string' ? role : null }, 400);
+    }
+
     const existing = this.ctx.storage.sql
       .exec('SELECT status FROM job WHERE id = ?', input.jobId)
       .toArray()[0];
@@ -341,9 +395,9 @@ export class CoderJob {
     );
 
     await this.appendEvent(input.jobId, {
-      type: 'subagent.started',
+      type: 'job.started',
       executionId: input.jobId,
-      agent: 'coder',
+      role: input.role,
       detail: input.envelope.task,
     });
 
@@ -361,102 +415,18 @@ export class CoderJob {
   }
 
   // -------------------------------------------------------------------------
-  // runLoop — assemble services, invoke the kernel, emit terminal event
+  // runLoop — role-agnostic: drive a job to a terminal state and emit
+  // the terminal SSE event. Role dispatch and kernel invocation live in
+  // executeJob / executeCoderJob below so adding a new role in PR 2 is
+  // a localized change, not a rewrite of the lifecycle wrapper.
   // -------------------------------------------------------------------------
 
-  private async runLoop(input: CoderJobStartInput): Promise<void> {
+  private async runLoop(input: AgentJobStartInput): Promise<void> {
     const abortController = new AbortController();
     this.abortControllers.set(input.jobId, abortController);
 
     try {
-      const overrides = SERVICE_OVERRIDES.get(input.jobId) ?? {};
-      const detectors = overrides.detectors ?? createWebDetectorAdapter();
-      const executor =
-        overrides.executor ??
-        createWebExecutorAdapter({
-          env: this.env,
-          origin: input.origin,
-          sandboxId: input.sandboxId,
-          ownerToken: input.ownerToken,
-          provider: input.provider,
-          jobId: input.jobId,
-        });
-      const stream =
-        overrides.stream ??
-        createWebStreamAdapter({
-          env: this.env,
-          origin: input.origin,
-          provider: input.provider,
-          modelId: input.model,
-          jobId: input.jobId,
-        });
-
-      const declaredCaps = input.declaredCapabilities ?? Array.from(ROLE_CAPABILITIES.coder);
-      const capabilityLedger = new CapabilityLedger(declaredCaps);
-
-      const turnCtx: CoderTurnContext = {
-        role: 'coder',
-        round: 0,
-        maxRounds: input.envelope.harnessSettings?.maxCoderRounds ?? 30,
-        sandboxId: input.sandboxId,
-        allowedRepo: input.repoFullName,
-        activeProvider: input.provider,
-        activeModel: input.model,
-        signal: abortController.signal,
-      };
-
-      const services = buildCoderJobServices({
-        detectors,
-        executor,
-        capabilityLedger,
-        turnCtx,
-        onStatus: () => {
-          // PR #2: no fine-grained progress events; the job status
-          // column + terminal event is all the UI layer gets.
-        },
-        correlation: input.correlation,
-        activeProvider: input.provider,
-        activeModel: input.model,
-        sandboxId: input.sandboxId,
-      });
-
-      let taskPreamble = buildCoderDelegationBrief({
-        ...input.envelope,
-        provider: input.provider,
-        model: input.model,
-      });
-      if (input.envelope.plannerBrief) {
-        taskPreamble += '\n\n' + input.envelope.plannerBrief;
-      }
-
-      const options: CoderAgentOptions<AnyToolCall, ChatCard> = {
-        provider: input.provider,
-        stream: stream as unknown as PushStream<LlmMessage>,
-        modelId: input.model,
-        sandboxId: input.sandboxId,
-        allowedRepo: input.repoFullName,
-        branchContext: input.envelope.branchContext,
-        projectInstructions: input.projectInstructions ?? input.envelope.projectInstructions,
-        instructionFilename: input.instructionFilename ?? input.envelope.instructionFilename,
-        userProfile: input.userProfile,
-        taskPreamble,
-        symbolSummary: null,
-        toolExec: buildCoderToolExec(services),
-        ...buildCoderDetectors(services),
-        webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
-        sandboxToolProtocol: getSandboxToolProtocol(),
-        verificationPolicyBlock: formatVerificationPolicyBlock(input.verificationPolicy),
-        approvalModeBlock: buildApprovalModeBlock('full-auto'),
-        evaluateAfterModel: buildCoderEvaluateAfterModel(services),
-        acceptanceCriteria: input.acceptanceCriteria ?? input.envelope.acceptanceCriteria,
-        harnessMaxRounds: input.envelope.harnessSettings?.maxCoderRounds,
-        harnessContextResetsEnabled: input.envelope.harnessSettings?.contextResetsEnabled,
-      };
-
-      const result = await runCoderAgentLib(options, {
-        onStatus: () => {},
-        signal: abortController.signal,
-      });
+      const result = await this.executeJob(input, abortController.signal);
 
       // Claim the terminal transition atomically. If the alarm() or
       // /cancel path already wrote 'failed'/'cancelled' for this job
@@ -466,14 +436,20 @@ export class CoderJob {
       // conflicting terminal events for the same run.
       if (this.markTerminal(input.jobId, 'completed', result.summary, null)) {
         await this.appendEvent(input.jobId, {
-          type: 'subagent.completed',
+          type: 'job.completed',
           executionId: input.jobId,
-          agent: 'coder',
+          role: input.role,
           summary: result.summary,
         });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // Role for the failure event: if the input shape itself is bad
+      // (UnsupportedRoleError thrown from executeJob), fall back to the
+      // raw role string so the SSE consumer still has something to
+      // render. Coder is the only live arm in PR 1, so the cast is safe.
+      const failureRole: AgentRole =
+        err instanceof UnsupportedRoleError ? (err.role as AgentRole) : input.role;
       if (
         this.markTerminal(
           input.jobId,
@@ -483,9 +459,9 @@ export class CoderJob {
         )
       ) {
         await this.appendEvent(input.jobId, {
-          type: 'subagent.failed',
+          type: 'job.failed',
           executionId: input.jobId,
-          agent: 'coder',
+          role: failureRole,
           error: message,
         });
       }
@@ -496,6 +472,123 @@ export class CoderJob {
       // points at the next still-running job, or it's removed entirely.
       await this.rescheduleAlarm().catch(() => {});
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // executeJob — role dispatcher. Each role has its own private
+  // executor; this method picks the right one and forwards the abort
+  // signal. Adding a new role in PR 2 is a one-line case + a new
+  // private method — no changes to runLoop's terminal-event handling.
+  // -------------------------------------------------------------------------
+
+  private async executeJob(
+    input: AgentJobStartInput,
+    signal: AbortSignal,
+  ): Promise<{ summary: string }> {
+    switch (input.role) {
+      case 'coder':
+        return this.executeCoderJob(input, signal);
+      // PR 2 adds new role arms here. The default arm is unreachable
+      // today because the union has only the 'coder' member, but the
+      // worker layer + handleStart's defense-in-depth check both reject
+      // unknown roles before they ever reach this dispatcher.
+    }
+  }
+
+  private async executeCoderJob(
+    input: CoderJobStartInput,
+    signal: AbortSignal,
+  ): Promise<{ summary: string }> {
+    const overrides = SERVICE_OVERRIDES.get(input.jobId) ?? {};
+    const detectors = overrides.detectors ?? createWebDetectorAdapter();
+    const executor =
+      overrides.executor ??
+      createWebExecutorAdapter({
+        env: this.env,
+        origin: input.origin,
+        sandboxId: input.sandboxId,
+        ownerToken: input.ownerToken,
+        provider: input.provider,
+        jobId: input.jobId,
+      });
+    const stream =
+      overrides.stream ??
+      createWebStreamAdapter({
+        env: this.env,
+        origin: input.origin,
+        provider: input.provider,
+        modelId: input.model,
+        jobId: input.jobId,
+      });
+
+    const declaredCaps = input.declaredCapabilities ?? Array.from(ROLE_CAPABILITIES.coder);
+    const capabilityLedger = new CapabilityLedger(declaredCaps);
+
+    const turnCtx: CoderTurnContext = {
+      role: 'coder',
+      round: 0,
+      maxRounds: input.envelope.harnessSettings?.maxCoderRounds ?? 30,
+      sandboxId: input.sandboxId,
+      allowedRepo: input.repoFullName,
+      activeProvider: input.provider,
+      activeModel: input.model,
+      signal,
+    };
+
+    const services = buildCoderJobServices({
+      detectors,
+      executor,
+      capabilityLedger,
+      turnCtx,
+      onStatus: () => {
+        // PR #2: no fine-grained progress events; the job status
+        // column + terminal event is all the UI layer gets.
+      },
+      correlation: input.correlation,
+      activeProvider: input.provider,
+      activeModel: input.model,
+      sandboxId: input.sandboxId,
+    });
+
+    let taskPreamble = buildCoderDelegationBrief({
+      ...input.envelope,
+      provider: input.provider,
+      model: input.model,
+    });
+    if (input.envelope.plannerBrief) {
+      taskPreamble += '\n\n' + input.envelope.plannerBrief;
+    }
+
+    const options: CoderAgentOptions<AnyToolCall, ChatCard> = {
+      provider: input.provider,
+      stream: stream as unknown as PushStream<LlmMessage>,
+      modelId: input.model,
+      sandboxId: input.sandboxId,
+      allowedRepo: input.repoFullName,
+      branchContext: input.envelope.branchContext,
+      projectInstructions: input.projectInstructions ?? input.envelope.projectInstructions,
+      instructionFilename: input.instructionFilename ?? input.envelope.instructionFilename,
+      userProfile: input.userProfile,
+      taskPreamble,
+      symbolSummary: null,
+      toolExec: buildCoderToolExec(services),
+      ...buildCoderDetectors(services),
+      webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
+      sandboxToolProtocol: getSandboxToolProtocol(),
+      verificationPolicyBlock: formatVerificationPolicyBlock(input.verificationPolicy),
+      approvalModeBlock: buildApprovalModeBlock('full-auto'),
+      evaluateAfterModel: buildCoderEvaluateAfterModel(services),
+      acceptanceCriteria: input.acceptanceCriteria ?? input.envelope.acceptanceCriteria,
+      harnessMaxRounds: input.envelope.harnessSettings?.maxCoderRounds,
+      harnessContextResetsEnabled: input.envelope.harnessSettings?.contextResetsEnabled,
+    };
+
+    const result = await runCoderAgentLib(options, {
+      onStatus: () => {},
+      signal,
+    });
+
+    return { summary: result.summary };
   }
 
   // -------------------------------------------------------------------------
@@ -766,7 +859,7 @@ function formatSseChunk(row: { id: string; type: string; payload_json: string })
 }
 
 function isTerminalEventType(type: string): boolean {
-  return type === 'subagent.completed' || type === 'subagent.failed';
+  return type === 'job.completed' || type === 'job.failed';
 }
 
 function isTerminalStatus(status: CoderJobStatus): boolean {

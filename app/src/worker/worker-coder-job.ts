@@ -20,7 +20,9 @@
  * background-jobs endpoints don't bypass CSRF / abuse protections.
  */
 
+import type { AgentRole } from '@push/lib/runtime-contract';
 import { getClientIp, validateOrigin, type Env } from './worker-middleware';
+import { SUPPORTED_AGENT_JOB_ROLES } from './agent-job-roles';
 import type { CoderJobStartInput } from './coder-job-do';
 
 const JOBS_PREFIX = '/api/jobs/';
@@ -120,6 +122,18 @@ async function handleStart(request: Request, env: Env): Promise<Response> {
   } = parsed as Partial<CoderJobStartInput>;
   void _ignoredJobId;
   void _ignoredOrigin;
+
+  // Reject unknown / unsupported roles cheaply at the route layer so
+  // the DO doesn't get a half-persisted run for a role we can't
+  // dispatch. Defense-in-depth: the DO also rejects, but doing it here
+  // saves a DO round-trip and keeps the error response shape clean.
+  const role = (startFields as { role?: unknown }).role;
+  if (typeof role !== 'string') {
+    return json({ error: 'MISSING_FIELDS', fields: ['role'] }, 400);
+  }
+  if (!SUPPORTED_AGENT_JOB_ROLES.has(role as AgentRole)) {
+    return json({ error: 'UNSUPPORTED_ROLE', role }, 400);
+  }
 
   const jobId = crypto.randomUUID();
   const origin = new URL(request.url).origin;
