@@ -36,6 +36,7 @@ import {
 } from './context-manager.js';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { summarizeToolResultPreview } from '../lib/run-events.ts';
+import { assertReadyForAssistantTurn } from '../lib/llm-message-invariants.ts';
 import {
   SystemPromptBuilder,
   diffSnapshots,
@@ -710,6 +711,8 @@ export async function runAssistantLoop(
           : undefined,
         sessionId: state.sessionId,
       };
+
+    assertReadyForAssistantTurn(trimResult.messages, 'cli/runAssistantLoop');
 
     let assistantText: string;
     try {
