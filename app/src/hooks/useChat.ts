@@ -400,8 +400,13 @@ export function useChat(
   const { runEngineStateRef, runJournalEntryRef, emitRunEngineEvent, persistRunJournal } =
     useRunEngine({ getVerificationStateForChat });
 
-  const { pendingSteersByChat, enqueuePendingSteer, dequeuePendingSteer, clearPendingSteer } =
-    usePendingSteer({ isMountedRef });
+  const {
+    pendingSteersByChat,
+    pendingSteersByChatRef,
+    enqueuePendingSteer,
+    dequeuePendingSteer,
+    clearPendingSteer,
+  } = usePendingSteer({ isMountedRef });
 
   // --- Checkpoint + resume lifecycle ---
   const {
@@ -945,7 +950,24 @@ export function useChat(
 
           const pendingSteerBeforeToolDispatch = dequeuePendingSteer(chatId);
           if (pendingSteerBeforeToolDispatch) {
-            emitRunEngineEvent({ type: 'STEER_CONSUMED', timestamp: Date.now() });
+            // FIFO drain: the engine's hasPendingSteer flag tracks "is anything
+            // queued?", not "did we just consume one?". After the dequeue we
+            // either have a new head (re-arm with STEER_SET so the preview
+            // matches) or an empty queue (STEER_CONSUMED).
+            const remainingHead = pendingSteersByChatRef.current[chatId]?.[0];
+            if (remainingHead) {
+              emitRunEngineEvent({
+                type: 'STEER_SET',
+                timestamp: Date.now(),
+                preview: summarizeQueuedInputPreview(
+                  remainingHead.text,
+                  remainingHead.attachments,
+                  remainingHead.options?.displayText,
+                ),
+              });
+            } else {
+              emitRunEngineEvent({ type: 'STEER_CONSUMED', timestamp: Date.now() });
+            }
             const steerUserMessage = buildRuntimeUserMessage(
               pendingSteerBeforeToolDispatch.text,
               pendingSteerBeforeToolDispatch.attachments,
@@ -1028,7 +1050,20 @@ export function useChat(
 
           const pendingSteerAfterTurn = dequeuePendingSteer(chatId);
           if (pendingSteerAfterTurn) {
-            emitRunEngineEvent({ type: 'STEER_CONSUMED', timestamp: Date.now() });
+            const remainingHeadAfterTurn = pendingSteersByChatRef.current[chatId]?.[0];
+            if (remainingHeadAfterTurn) {
+              emitRunEngineEvent({
+                type: 'STEER_SET',
+                timestamp: Date.now(),
+                preview: summarizeQueuedInputPreview(
+                  remainingHeadAfterTurn.text,
+                  remainingHeadAfterTurn.attachments,
+                  remainingHeadAfterTurn.options?.displayText,
+                ),
+              });
+            } else {
+              emitRunEngineEvent({ type: 'STEER_CONSUMED', timestamp: Date.now() });
+            }
             const steerUserMessage = buildRuntimeUserMessage(
               pendingSteerAfterTurn.text,
               pendingSteerAfterTurn.attachments,
@@ -1125,6 +1160,7 @@ export function useChat(
       queuedFollowUpsRef,
       runEngineStateRef,
       runJournalEntryRef,
+      pendingSteersByChatRef,
       enqueuePendingSteer,
       workspaceContextRef,
       lastCoderStateRef,
