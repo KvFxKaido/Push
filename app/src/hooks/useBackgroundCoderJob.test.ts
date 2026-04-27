@@ -233,6 +233,52 @@ describe('useBackgroundCoderJob — startJob', () => {
     vi.unstubAllGlobals();
   });
 
+  it('forwards chatRef on the wire when the caller passes it', async () => {
+    // PR 2 wire-shape: chatRef is the durable handle the DO will use
+    // (in PR 3) to load context. Until then it must be forwarded
+    // unchanged so the DO can persist it via input_json.
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-ref' }), { status: 202 }) as Response,
+      )
+      .mockResolvedValueOnce(
+        new Response(new ReadableStream({ start: (c) => c.close() }), { status: 200 }) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { hook } = useHarness({ 'chat-1': makeConversation() });
+    await hook.startJob({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      envelope: makeEnvelope(),
+      provider: 'openrouter',
+      model: undefined,
+      userProfile: null,
+      chatRef: {
+        chatId: 'chat-1',
+        repoFullName: 'acme/web',
+        branch: 'feature/x',
+        checkpointId: 'ck-42',
+      },
+    });
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string) as {
+      chatRef: { chatId: string; checkpointId?: string };
+    };
+    expect(body.chatRef).toEqual({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'feature/x',
+      checkpointId: 'ck-42',
+    });
+
+    vi.unstubAllGlobals();
+  });
+
   it('returns ok:false when the server responds non-2xx', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
       new Response(JSON.stringify({ error: 'MISSING_FIELDS', fields: ['sandboxId'] }), {
@@ -257,6 +303,110 @@ describe('useBackgroundCoderJob — startJob', () => {
     if (!result.ok) {
       expect(result.error).toContain('MISSING_FIELDS');
     }
+
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('useBackgroundCoderJob — startMainChatJob (PR 2)', () => {
+  it('appends a fresh assistant message with the JobCard (no tool-call needed)', async () => {
+    // Main-chat-on-server placement differs from delegate_coder: there's
+    // no in-progress tool-call message to attach to, so the JobCard goes
+    // onto a brand-new assistant message in the transcript. The existing
+    // appendCardsToLatestToolCall helper would no-op against a user-only
+    // conversation, which is exactly the case the bg-mode main-chat
+    // branch hits.
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-mc-1' }), { status: 202 }) as Response,
+      )
+      .mockResolvedValueOnce(
+        new Response(new ReadableStream({ start: (c) => c.close() }), { status: 200 }) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Start with a conversation whose latest message is a USER turn —
+    // the realistic state when sendMessage's bg-mode branch fires.
+    const userOnlyConv: Conversation = {
+      id: 'chat-1',
+      title: 'Test chat',
+      messages: [
+        {
+          id: 'u1',
+          role: 'user',
+          content: 'fix the thing',
+          timestamp: 1,
+        },
+      ],
+      createdAt: 1,
+      lastMessageAt: 1,
+    };
+
+    const { hook, getConvs } = useHarness({ 'chat-1': userOnlyConv });
+    const result = await hook.startMainChatJob({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      envelope: makeEnvelope(),
+      provider: 'openrouter',
+      model: undefined,
+      userProfile: null,
+      taskPreview: 'fix the thing',
+    });
+
+    expect(result).toEqual({ ok: true, jobId: 'job-mc-1' });
+
+    const msgs = getConvs()['chat-1'].messages;
+    expect(msgs).toHaveLength(2);
+    // User message untouched.
+    expect(msgs[0]).toMatchObject({ id: 'u1', role: 'user' });
+    // New assistant message carries the JobCard.
+    const assistant = msgs[1];
+    expect(assistant.role).toBe('assistant');
+    expect(assistant.content).toBe('');
+    expect(assistant.cards).toBeDefined();
+    expect(assistant.cards).toHaveLength(1);
+    expect(assistant.cards?.[0]?.type).toBe('coder-job');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('forwards chatRef on the wire for main-chat jobs too', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-mc-2' }), { status: 202 }) as Response,
+      )
+      .mockResolvedValueOnce(
+        new Response(new ReadableStream({ start: (c) => c.close() }), { status: 200 }) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { hook } = useHarness({ 'chat-1': makeConversation('chat-1') });
+    await hook.startMainChatJob({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      envelope: makeEnvelope(),
+      provider: 'openrouter',
+      model: undefined,
+      userProfile: null,
+      chatRef: { chatId: 'chat-1', repoFullName: 'acme/web', branch: 'main' },
+    });
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string) as {
+      chatRef: { chatId: string };
+    };
+    expect(body.chatRef).toEqual({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+    });
 
     vi.unstubAllGlobals();
   });

@@ -37,6 +37,7 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
+import { createId } from './chat-persistence';
 import type {
   AgentStatus,
   AgentStatusSource,
@@ -55,6 +56,7 @@ import type {
 import type { Capability } from '@/lib/capabilities';
 import type { VerificationPolicy } from '@/lib/verification-policy';
 import type { CorrelationContext } from '@push/lib/correlation-context';
+import type { ChatRef } from '@/worker/coder-job-do';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -74,6 +76,9 @@ export interface StartBackgroundJobInput {
   declaredCapabilities?: Capability[];
   correlation?: CorrelationContext;
   taskPreview?: string;
+  /** Reference to durable chat/session state. PR 2 forwards this to
+   *  the DO unchanged; PR 3 wires the loader. */
+  chatRef?: ChatRef;
 }
 
 export type StartBackgroundJobResult = { ok: true; jobId: string } | { ok: false; error: string };
@@ -89,7 +94,16 @@ export interface UseBackgroundCoderJobParams {
 }
 
 export interface UseBackgroundCoderJobResult {
+  /** Start a background Coder job for a `delegate_coder` tool call. The
+   *  JobCard is appended to the latest assistant tool-call message; the
+   *  caller is the delegation handler running inside an in-progress
+   *  assistant turn. */
   startJob: (input: StartBackgroundJobInput) => Promise<StartBackgroundJobResult>;
+  /** Start a background Coder job for a main-chat user message. The
+   *  JobCard is rendered as a fresh assistant message because main chat
+   *  has no in-progress tool-call message to attach to. PR 2 — see
+   *  docs/runbooks/Background Coder Tasks Phase 2.md. */
+  startMainChatJob: (input: StartBackgroundJobInput) => Promise<StartBackgroundJobResult>;
   cancelJob: (jobId: string) => Promise<void>;
   /** Exposed so the delegation branch point can render the placeholder
    * text with the real job id. */
@@ -230,19 +244,50 @@ export function useBackgroundCoderJob({
     [setConversations],
   );
 
-  const appendJobCard = useCallback(
+  /** Delegation placement: the JobCard attaches to the latest in-progress
+   *  tool-call message. Used by `startJob` (delegate_coder background
+   *  flow) — the caller is the delegation handler, which guarantees an
+   *  assistant tool-call message is the latest entry. Do NOT route
+   *  through `filterDelegationCardsForInlineDisplay` — that helper's
+   *  whitelist excludes `coder-job` and would drop the card silently. */
+  const appendJobCardToToolCall = useCallback(
     (chatId: string, card: ChatCard) => {
-      // Do NOT route through `filterDelegationCardsForInlineDisplay`.
-      // That helper is a whitelist for aggregated card arrays coming
-      // out of delegation handlers, and it excludes `coder-job` — so
-      // running it here would drop the JobCard silently and the user
-      // would never see queued/running/completed state. The hook
-      // builds exactly one card it wants inline; skip the filter.
       setConversations((prev) => {
         const conv = prev[chatId];
         if (!conv) return prev;
         const msgs = appendCardsToLatestToolCall(conv.messages, [card]);
         return { ...prev, [chatId]: { ...conv, messages: msgs } };
+      });
+    },
+    [setConversations],
+  );
+
+  /** Main-chat placement: the JobCard goes onto a fresh assistant
+   *  message. Used by `startMainChatJob` (PR 2's main-chat-on-server
+   *  branch) — there's no in-progress tool-call message because the
+   *  user just typed a message. The new assistant message has empty
+   *  text content and carries the card as its only payload; SSE
+   *  terminal events update the card data in place. */
+  const appendJobCardAsNewAssistantMessage = useCallback(
+    (chatId: string, card: ChatCard) => {
+      setConversations((prev) => {
+        const conv = prev[chatId];
+        if (!conv) return prev;
+        const newMessage: ChatMessage = {
+          id: createId(),
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          cards: [card],
+        };
+        return {
+          ...prev,
+          [chatId]: {
+            ...conv,
+            messages: [...conv.messages, newMessage],
+            lastMessageAt: Date.now(),
+          },
+        };
       });
     },
     [setConversations],
@@ -445,15 +490,24 @@ export function useBackgroundCoderJob({
   // Public API
   // -------------------------------------------------------------------------
 
-  const startJob = useCallback(
-    async (input: StartBackgroundJobInput): Promise<StartBackgroundJobResult> => {
+  /** Shared start path: posts to /api/jobs/start, persists the
+   *  pendingJobIds entry, places the JobCard via the supplied
+   *  `placeCard` strategy, and opens the SSE stream. The two public
+   *  start entry points (`startJob` / `startMainChatJob`) differ only
+   *  in card placement, so they thread the same input through this
+   *  core and pass different placement functions. */
+  const persistAndStart = useCallback(
+    async (
+      input: StartBackgroundJobInput,
+      placeCard: (chatId: string, card: ChatCard) => void,
+    ): Promise<StartBackgroundJobResult> => {
       // Send exactly the fields the server contract expects. jobId +
       // origin are deliberately not passed — server fills them to
       // preserve the SSRF + id-guess hardening from PR #359. `role` is
       // sent explicitly: today only `'coder'` is valid, and the worker
       // route + DO both reject anything else with `UNSUPPORTED_ROLE`.
-      // The hook stays Coder-pinned in PR 1; a generalized hook surface
-      // (parameterized role) is PR 2 work.
+      // `chatRef` is forwarded as wire-shape only in PR 2; the DO
+      // persists it but does not dereference yet (PR 3).
       const body = {
         role: 'coder' as const,
         chatId: input.chatId,
@@ -471,6 +525,7 @@ export function useBackgroundCoderJob({
         acceptanceCriteria: input.envelope.acceptanceCriteria,
         projectInstructions: input.envelope.projectInstructions,
         instructionFilename: input.envelope.instructionFilename,
+        chatRef: input.chatRef,
       };
 
       let resp: Response;
@@ -527,7 +582,7 @@ export function useBackgroundCoderJob({
           latestStatusLine: 'Queued',
         },
       };
-      appendJobCard(input.chatId, initialCard);
+      placeCard(input.chatId, initialCard);
 
       // Fire the SSE stream — don't await; the orchestrator turn ends
       // immediately and the job progresses asynchronously.
@@ -535,7 +590,17 @@ export function useBackgroundCoderJob({
 
       return { ok: true, jobId };
     },
-    [appendJobCard, openSseStream, upsertJobEntry],
+    [openSseStream, upsertJobEntry],
+  );
+
+  const startJob = useCallback(
+    (input: StartBackgroundJobInput) => persistAndStart(input, appendJobCardToToolCall),
+    [persistAndStart, appendJobCardToToolCall],
+  );
+
+  const startMainChatJob = useCallback(
+    (input: StartBackgroundJobInput) => persistAndStart(input, appendJobCardAsNewAssistantMessage),
+    [persistAndStart, appendJobCardAsNewAssistantMessage],
   );
 
   const cancelJob = useCallback(async (jobId: string): Promise<void> => {
@@ -598,7 +663,7 @@ export function useBackgroundCoderJob({
   }, []);
 
   return useMemo(
-    () => ({ startJob, cancelJob, formatPlaceholderText }),
-    [startJob, cancelJob, formatPlaceholderText],
+    () => ({ startJob, startMainChatJob, cancelJob, formatPlaceholderText }),
+    [startJob, startMainChatJob, cancelJob, formatPlaceholderText],
   );
 }

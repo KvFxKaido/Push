@@ -283,6 +283,37 @@ describe('handleJobsRoute', () => {
     expect(stub.fetch).not.toHaveBeenCalled();
   });
 
+  it('forwards chatRef on /start untouched (PR 2 wire-shape)', async () => {
+    // The route persists chatRef inside input_json without dereferencing
+    // it. PR 3 adds the loader; PR 2 just guarantees the field survives
+    // the route-layer pass-through.
+    const stub = makeFakeStub(new Response('{"jobId":"stub-ok"}', { status: 202 }));
+    const env = makeEnv({ CoderJob: makeCoderJobNamespace(stub) });
+    const body = {
+      ...validStartBody(),
+      chatRef: {
+        chatId: 'chat-1',
+        repoFullName: 'acme/app',
+        branch: 'feature/x',
+        checkpointId: 'ck-7',
+      },
+    };
+    await handleJobsRoute(makeRequest('/api/jobs/start', 'POST', body), env, {
+      action: 'start',
+      jobId: null,
+    });
+    const forwarded = stub.fetch.mock.calls[0]![0] as Request;
+    const forwardedBody = JSON.parse(await forwarded.text()) as {
+      chatRef?: { chatId: string; checkpointId?: string };
+    };
+    expect(forwardedBody.chatRef).toEqual({
+      chatId: 'chat-1',
+      repoFullName: 'acme/app',
+      branch: 'feature/x',
+      checkpointId: 'ck-7',
+    });
+  });
+
   it('forwards role=coder through to the DO body untouched', async () => {
     const stub = makeFakeStub(new Response('{"jobId":"stub-ok"}', { status: 202 }));
     const env = makeEnv({ CoderJob: makeCoderJobNamespace(stub) });
