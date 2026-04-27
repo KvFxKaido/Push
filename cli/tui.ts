@@ -46,6 +46,8 @@ import {
   moveCursorCircular,
 } from './tui-modal-input.js';
 import {
+  cursorMarker,
+  cursorStyle,
   drawModalBoxAt,
   getCenteredModalRect,
   getWindowedListRange,
@@ -1044,12 +1046,9 @@ function renderProviderModal(buf, theme, rows, cols, currentProvider, currentMod
     const hasKey = p.hasKey
       ? theme.style('state.success', glyphs.check)
       : theme.style('fg.dim', '-');
-    const marker = isCursor ? theme.style('accent.primary', glyphs.prompt) : ' ';
-    let name = theme.style('fg.secondary', p.id);
-    if (isCurrent) name = theme.style('fg.primary', p.id);
-    if (isCursor) name = theme.style('accent.primary', p.id);
+    const name = cursorStyle(theme, isCursor, p.id, isCurrent ? 'fg.primary' : 'fg.secondary');
     const currentTag = isCurrent ? theme.style('fg.dim', ' (current)') : '';
-    lines.push(`  ${marker} ${i + 1}. ${name}  ${hasKey}${currentTag}`);
+    lines.push(`  ${cursorMarker(theme, isCursor)} ${i + 1}. ${name}  ${hasKey}${currentTag}`);
   }
 
   lines.push('');
@@ -1095,15 +1094,12 @@ function renderModelModal(buf, theme, rows, cols, modalState, currentModel) {
 
     for (let i = start; i < end; i++) {
       const isCursor = i === modalState.cursor;
-      const marker = isCursor ? theme.style('accent.primary', glyphs.prompt) : ' ';
       const num = padTo(`${i + 1}.`, 4);
       const modelText = truncate(modalState.models[i], modalWidth - 14);
-      const model = isCursor
-        ? theme.style('accent.primary', modelText)
-        : theme.style('fg.secondary', modelText);
+      const model = cursorStyle(theme, isCursor, modelText);
       const currentMark =
         modalState.models[i] === currentModel ? theme.style('fg.dim', ' (current)') : '';
-      lines.push(`  ${marker} ${num} ${model}${currentMark}`);
+      lines.push(`  ${cursorMarker(theme, isCursor)} ${num} ${model}${currentMark}`);
     }
 
     if (end < count) {
@@ -1198,13 +1194,10 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
         const row = modalState.filteredRows[i].item;
         const isCursor = i === modalState.cursor;
         const isCurrent = row.sessionId === currentSessionId;
-        const marker = isCursor ? theme.style('accent.primary', glyphs.prompt) : ' ';
         const num = padTo(`${i + 1}.`, 4);
         const primaryRaw = row.sessionName || row.sessionId.slice(0, 20);
         const primaryText = truncate(primaryRaw, Math.max(12, listWidth - 30));
-        const primary = isCursor
-          ? theme.style('accent.primary', primaryText)
-          : theme.style('fg.primary', primaryText);
+        const primary = cursorStyle(theme, isCursor, primaryText, 'fg.primary');
         const currentTag = isCurrent ? theme.style('state.success', ' ●') : '';
         const deleteTag =
           modalState.confirmDeleteId === row.sessionId ? theme.style('state.warn', ' [del?]') : '';
@@ -1212,7 +1205,9 @@ function renderResumeModal(buf, theme, rows, cols, modalState, currentSessionId)
           isRenameMode && modalState.renameTargetId === row.sessionId
             ? theme.style('accent.secondary', ' [ren]')
             : '';
-        lines.push(` ${marker} ${num}${primary}${currentTag}${deleteTag}${renameTag}`);
+        lines.push(
+          ` ${cursorMarker(theme, isCursor)} ${num}${primary}${currentTag}${deleteTag}${renameTag}`,
+        );
 
         const meta = truncate(
           `${row.provider}/${row.model} · ${formatRelativeTime(row.updatedAt)}`,
@@ -1396,7 +1391,10 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const isCursor = i === modalState.cursor;
-      const marker = isCursor ? theme.style('accent.primary', '\u203A') : ' ';
+      // Use cursorMarker so the cursor glyph picks up the theme's
+      // ASCII-fallback prompt char on terminals without unicode (the
+      // prior hardcoded '\u203A' bypassed that path).
+      const marker = cursorMarker(theme, isCursor);
       const num = `${i + 1}.`;
 
       if (item.type === 'provider') {
@@ -1404,26 +1402,19 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
           ? theme.style('state.success', glyphs.check)
           : theme.style('fg.dim', '-');
         const modelStr = truncate(item.model, modalWidth - 28);
-        const name = isCursor
-          ? theme.style('accent.primary', item.id)
-          : theme.style('fg.secondary', item.id);
-        const nameCol = padTo(name, 14);
+        const nameCol = padTo(cursorStyle(theme, isCursor, item.id), 14);
         lines.push(`  ${marker} ${num} ${nameCol} ${keyIcon}  ${theme.style('fg.dim', modelStr)}`);
       } else if (item.type === 'tavily') {
         const keyIcon = item.hasKey
           ? theme.style('state.success', glyphs.check)
           : theme.style('fg.dim', '-');
-        const name = isCursor
-          ? theme.style('accent.primary', 'tavily')
-          : theme.style('fg.secondary', 'tavily');
+        const name = cursorStyle(theme, isCursor, 'tavily');
         lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${keyIcon}`);
       } else if (item.type === 'sandbox') {
         const status = item.sandboxOn
           ? theme.style('state.success', 'on')
           : theme.style('fg.dim', 'off');
-        const name = isCursor
-          ? theme.style('accent.primary', 'sandbox')
-          : theme.style('fg.secondary', 'sandbox');
+        const name = cursorStyle(theme, isCursor, 'sandbox');
         lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${status}`);
       } else if (item.type === 'execMode') {
         const modeColor =
@@ -1433,17 +1424,13 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
               ? 'state.success'
               : 'fg.secondary';
         const modeStr = theme.style(modeColor, item.execMode);
-        const name = isCursor
-          ? theme.style('accent.primary', 'execMode')
-          : theme.style('fg.secondary', 'execMode');
+        const name = cursorStyle(theme, isCursor, 'execMode');
         lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${modeStr}`);
       } else if (item.type === 'explain') {
         const status = item.explainOn
           ? theme.style('state.success', 'on')
           : theme.style('fg.dim', 'off');
-        const name = isCursor
-          ? theme.style('accent.primary', 'explain')
-          : theme.style('fg.secondary', 'explain');
+        const name = cursorStyle(theme, isCursor, 'explain');
         lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${status}`);
       }
 
@@ -1503,10 +1490,11 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
     for (let i = 0; i < EXEC_MODES.length; i++) {
       const m = EXEC_MODES[i];
       const isCursor = i === modalState.pickCursor;
-      const marker = isCursor ? theme.style('accent.primary', '\u203A') : ' ';
-      const label = isCursor
-        ? theme.style('accent.primary', m.id)
-        : theme.style('fg.secondary', m.id);
+      // Use cursorMarker so the cursor glyph picks up the theme's
+      // ASCII-fallback prompt char on terminals without unicode (the
+      // prior hardcoded '\u203A' bypassed that path).
+      const marker = cursorMarker(theme, isCursor);
+      const label = cursorStyle(theme, isCursor, m.id);
       lines.push(`  ${marker} ${padTo(label, 8)}  ${theme.style('fg.dim', m.desc)}`);
     }
     lines.push('');
