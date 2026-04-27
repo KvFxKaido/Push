@@ -307,49 +307,103 @@ export interface ScreenBuffer {
   clear: () => void;
 }
 
+type LineEntry = { row: number; col: number; text: string };
+type Op = { kind: 'raw'; text: string } | ({ kind: 'line' } & LineEntry);
+
 /**
- * Create a screen buffer that collects writes and flushes them in one batch.
- * This minimizes flicker by writing to stdout in a single call per frame.
+ * Create a screen buffer that diffs each frame's line-positioned writes
+ * against the previously flushed frame. On flush, only changed lines emit
+ * cursor-positioning + text; unchanged lines are skipped, and lines that
+ * existed in the previous frame but not the current are blanked.
+ *
+ * Raw writes (cursor positioning, SGR resets, clearScreen, theme.bg) are
+ * passed through in order. A clearScreen escape forces a full re-emit
+ * regardless of diff state, since the terminal is wiped.
+ *
+ * The public API is unchanged from the prior string-buffer implementation;
+ * `clear()` drops pending ops without invalidating the previous-frame
+ * baseline, so an aborted partial frame still produces correct diffs on
+ * the next flush.
  */
 export function createScreenBuffer(): ScreenBuffer {
-  let buf = '';
+  let ops: Op[] = [];
+  let prevLines = new Map<string, LineEntry>();
 
   function moveTo(row: number, col: number): void {
-    buf += ESC.cursorTo(row, col);
+    ops.push({ kind: 'raw', text: ESC.cursorTo(row, col) });
   }
 
   function write(text: string): void {
-    buf += text;
+    ops.push({ kind: 'raw', text });
   }
 
   function writeLine(row: number, col: number, text: string): void {
-    buf += ESC.cursorTo(row, col) + text;
+    ops.push({ kind: 'line', row, col, text });
   }
 
   /** Write text at position, clearing the rest of the line. */
   function writeFullLine(row: number, col: number, text: string, totalWidth: number): void {
     const w = visibleWidth(text);
     const pad = totalWidth - col - w + 1;
-    buf += ESC.cursorTo(row, col) + text + (pad > 0 ? ' '.repeat(pad) : '');
+    const padded = pad > 0 ? text + ' '.repeat(pad) : text;
+    ops.push({ kind: 'line', row, col, text: padded });
   }
 
   /** Clear a rectangular region (row-by-row). */
   function clearRegion(startRow: number, startCol: number, height: number, width: number): void {
     const blank = ' '.repeat(width);
     for (let r = 0; r < height; r++) {
-      buf += ESC.cursorTo(startRow + r, startCol) + blank;
+      ops.push({ kind: 'line', row: startRow + r, col: startCol, text: blank });
     }
   }
 
   function flush(): void {
-    if (buf) {
-      process.stdout.write(buf);
-      buf = '';
+    if (ops.length === 0) return;
+
+    // A clearScreen anywhere in the frame forces every line to re-emit; the
+    // terminal will be wiped, so prevLines is no longer a valid baseline.
+    let forceFullFrame = false;
+    for (const op of ops) {
+      if (op.kind === 'raw' && op.text.includes('\x1b[2J')) {
+        forceFullFrame = true;
+        break;
+      }
     }
+
+    let out = '';
+    const newLines = new Map<string, LineEntry>();
+
+    for (const op of ops) {
+      if (op.kind === 'raw') {
+        out += op.text;
+      } else {
+        const key = `${op.row}|${op.col}`;
+        const entry: LineEntry = { row: op.row, col: op.col, text: op.text };
+        newLines.set(key, entry);
+        const prev = prevLines.get(key);
+        if (forceFullFrame || !prev || prev.text !== op.text) {
+          out += ESC.cursorTo(op.row, op.col) + op.text;
+        }
+      }
+    }
+
+    // Blank lines that existed in the previous frame but are absent now,
+    // unless we already wiped via clearScreen.
+    if (!forceFullFrame) {
+      for (const [key, prev] of prevLines) {
+        if (!newLines.has(key)) {
+          out += ESC.cursorTo(prev.row, prev.col) + ' '.repeat(visibleWidth(prev.text));
+        }
+      }
+    }
+
+    if (out) process.stdout.write(out);
+    prevLines = newLines;
+    ops = [];
   }
 
   function clear(): void {
-    buf = '';
+    ops = [];
   }
 
   return { moveTo, write, writeLine, writeFullLine, clearRegion, flush, clear };
