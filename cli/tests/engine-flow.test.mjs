@@ -521,6 +521,8 @@ describe(
           assert.equal(loaded.eventSeq, 4);
           assert.deepEqual(loaded.workingMemory, state.workingMemory);
 
+          loaded.messages.push({ role: 'user', content: 'Now summarize what you found.' });
+
           const secondRun = await runAssistantLoop(loaded, providerConfig, 'mock-key', 5);
           assert.deepEqual(secondRun, {
             outcome: 'success',
@@ -535,6 +537,7 @@ describe(
             { role: 'user', content: 'Please inspect @README.md:1-2 before answering.' },
             { role: 'user', content: loaded.messages[2].content },
             { role: 'assistant', content: 'First resumed answer.' },
+            { role: 'user', content: 'Now summarize what you found.' },
             { role: 'assistant', content: 'Second resumed answer.' },
           ]);
           assert.match(loaded.messages[2].content, /\[REFERENCED_FILES\]/);

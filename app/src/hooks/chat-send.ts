@@ -12,6 +12,7 @@
 
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { streamChat } from '@/lib/orchestrator';
+import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
 import { buildTodoContext } from '@/lib/todo-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
@@ -420,6 +421,16 @@ export async function streamAssistantRound(
   // lockedProvider is something else, and the getter is consume-and-clear so
   // it won't leak into non-OpenRouter requests.
   setOpenRouterSessionId(chatId);
+
+  let invariantError: Error | null = null;
+  try {
+    assertReadyForAssistantTurn(apiMessages, 'web/streamAssistantRound');
+  } catch (err) {
+    invariantError = err instanceof Error ? err : new Error(String(err));
+  }
+  if (invariantError) {
+    return { accumulated, thinkingAccumulated, error: invariantError };
+  }
 
   const error = await new Promise<Error | null>((resolve) => {
     streamChat(
