@@ -53,10 +53,21 @@ export default defineConfig([
   //                                 target. Further reduction should target
   //                                 the auto-switch effect once slice 2.5
   //                                 lands.
+  //   Phase 5 (prepareSendContext): 1,450 -> 1,349 after sendMessage's
+  //                                 "Prepare context" block (build user
+  //                                 message, resolve provider/model lock,
+  //                                 splice user + initial assistant into
+  //                                 conversation, sandbox prewarm, abort
+  //                                 controller setup) moved to
+  //                                 chat-prepare-send.ts. Ceiling lowered
+  //                                 to 1,400 — closes the cap-ratchet
+  //                                 feedback loop the 4-26 architecture
+  //                                 snapshot called out and forces the next
+  //                                 feature to either fit or extract.
   {
     files: ['src/hooks/useChat.ts'],
     rules: {
-      'max-lines': ['error', { max: 1450 }],
+      'max-lines': ['error', { max: 1400 }],
     },
   },
 ]);

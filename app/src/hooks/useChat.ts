@@ -16,19 +16,12 @@ import type {
 import { buildAgentEventsByChat, buildQueuedFollowUpsByChat } from '@/lib/chat-runtime-state';
 import {
   getActiveProvider,
-  isProviderAvailable,
   estimateContextTokens,
   getContextBudget,
   type ActiveProvider,
 } from '@/lib/orchestrator';
 import { fileLedger } from '@/lib/file-awareness-ledger';
-import { resolveChatProviderSelection } from '@/lib/provider-selection';
-import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
-import {
-  getModelNameForProvider,
-  setLastUsedProvider,
-  type PreferredProvider,
-} from '@/lib/providers';
+import { getModelNameForProvider } from '@/lib/providers';
 import {
   migrateConversationsToIndexedDB,
   saveConversation as saveConversationToDB,
@@ -40,14 +33,11 @@ import {
   heartbeatRunTabLock,
   releaseRunTabLock,
 } from '@/lib/checkpoint-manager';
-import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import {
-  generateTitle,
   loadActiveChatId,
   loadConversations,
   normalizeConversationModel,
   saveActiveChatId,
-  shouldPrewarmSandbox,
   createId,
 } from '@/hooks/chat-persistence';
 import { useAgentDelegation } from './useAgentDelegation';
@@ -59,6 +49,7 @@ import { useChatManagement } from './chat-management';
 import { useChatReplay } from './chat-replay';
 import { useChatCheckpoint } from './useChatCheckpoint';
 import { streamAssistantRound, processAssistantTurn, type SendLoopContext } from './chat-send';
+import { buildRuntimeUserMessage, prepareSendContext } from './chat-prepare-send';
 import { useQueuedFollowUps } from './useQueuedFollowUps';
 import { mergeRunEventStreams } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
@@ -95,7 +86,7 @@ interface ChatDraftSelection {
   model: string | null;
 }
 
-type SendMessageOptions = Partial<ChatDraftSelection> &
+export type SendMessageOptions = Partial<ChatDraftSelection> &
   ChatSendOptions & {
     chatId?: string;
     baseMessages?: ChatMessage[];
@@ -135,26 +126,6 @@ function summarizeQueuedInputPreview(
     : attachmentLabel || '[no text]';
 
   return base.length <= maxLength ? base : `${base.slice(0, maxLength - 1).trimEnd()}...`;
-}
-
-function buildRuntimeUserMessage(
-  text: string,
-  attachments?: AttachmentData[],
-  displayText?: string,
-): ChatMessage {
-  const trimmedText = text.trim();
-  const trimmedDisplayText = displayText?.trim();
-
-  return {
-    id: createId(),
-    role: 'user',
-    content: trimmedText,
-    displayContent:
-      trimmedDisplayText && trimmedDisplayText !== trimmedText ? trimmedDisplayText : undefined,
-    timestamp: Date.now(),
-    status: 'done',
-    attachments: attachments && attachments.length > 0 ? attachments : undefined,
-  };
 }
 
 function toQueuedFollowUp(
@@ -834,94 +805,22 @@ export function useChat(
       }
 
       // --- Prepare context ---
-      const displayText = options?.displayText?.trim();
-      const userMessage: ChatMessage =
-        options?.existingUserMessage ??
-        buildRuntimeUserMessage(trimmedText, attachments, displayText);
-
-      const currentMessages =
-        options?.baseMessages ?? (conversationsRef.current[chatId]?.messages || []);
-      const updatedWithUser = options?.existingUserMessage
-        ? currentMessages
-        : [...currentMessages, userMessage];
-
-      const isFirstMessage = currentMessages.length === 0 && !options?.existingUserMessage;
-      const newTitle =
-        options?.titleOverride ||
-        (isFirstMessage
-          ? generateTitle(updatedWithUser)
-          : conversationsRef.current[chatId]?.title || 'New Chat');
-
-      const existingConversation = conversationsRef.current[chatId];
-      const requestedProvider = options?.provider || null;
-      const {
-        provider: lockedProviderForChat,
-        model: resolvedModelForChat,
-        shouldPersistProvider,
-        shouldPersistModel,
-      } = resolveChatProviderSelection({
-        existingProvider: existingConversation?.provider || null,
-        existingModel: existingConversation?.model || null,
-        requestedProvider,
-        requestedModel: options?.model || null,
-        fallbackProvider: getActiveProvider(),
-        isProviderAvailable,
-      });
-
-      const firstAssistant: ChatMessage = {
-        id: createId(),
-        role: 'assistant',
-        content: '',
-        timestamp: Date.now(),
-        status: 'streaming',
-      };
-
-      updateConversations((prev) => {
-        const updated = {
-          ...prev,
-          [chatId]: {
-            ...prev[chatId],
-            messages: [...updatedWithUser, firstAssistant],
-            title: newTitle,
-            lastMessageAt: Date.now(),
-            verificationPolicy: prev[chatId]?.verificationPolicy ?? getDefaultVerificationPolicy(),
-            ...(shouldPersistProvider ? { provider: lockedProviderForChat } : {}),
-            ...(shouldPersistModel && resolvedModelForChat ? { model: resolvedModelForChat } : {}),
-          },
-        };
-        dirtyConversationIdsRef.current.add(chatId);
-        return updated;
-      });
-
-      if (shouldPersistProvider && lockedProviderForChat !== 'demo') {
-        setLastUsedProvider(lockedProviderForChat as PreferredProvider);
-      }
-
-      setIsStreaming(true);
-      abortRef.current = false;
-
-      // Pre-warm sandbox if needed
-      const sandboxStartMode = getSandboxStartMode();
-      const shouldAutoStartSandbox =
-        sandboxStartMode === 'always' ||
-        (sandboxStartMode === 'smart' && shouldPrewarmSandbox(trimmedText, attachments));
-      if (!sandboxIdRef.current && ensureSandboxRef.current && shouldAutoStartSandbox) {
-        updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
-        try {
-          const prewarmedId = await ensureSandboxRef.current();
-          if (prewarmedId) sandboxIdRef.current = prewarmedId;
-        } catch {
-          // Best effort prewarm; continue chat flow without sandbox.
-        }
-      }
-
-      abortControllerRef.current = new AbortController();
-
-      let apiMessages = [...updatedWithUser];
-      let toolCallRecoveryState: ToolCallRecoveryState = {
-        diagnosisRetries: 0,
-        recoveryAttempted: false,
-      };
+      const prepared = await prepareSendContext(
+        { trimmedText, attachments, options, chatId },
+        {
+          conversationsRef,
+          dirtyConversationIdsRef,
+          sandboxIdRef,
+          ensureSandboxRef,
+          abortRef,
+          abortControllerRef,
+        },
+        { updateConversations, setIsStreaming, updateAgentStatus },
+      );
+      const lockedProviderForChat = prepared.lockedProvider;
+      const resolvedModelForChat = prepared.resolvedModel;
+      let apiMessages = prepared.apiMessages;
+      let toolCallRecoveryState = prepared.recoveryState;
 
       // --- Initialize run ---
       // apiMessages is the only checkpoint ref; all other state is
@@ -934,7 +833,7 @@ export function useChat(
         chatId,
         provider: lockedProviderForChat,
         model: resolvedModelForChat || '',
-        baseMessageCount: updatedWithUser.length,
+        baseMessageCount: apiMessages.length,
       });
 
       // Acquire multi-tab lock
@@ -980,7 +879,7 @@ export function useChat(
       const loopCtx: SendLoopContext = {
         chatId,
         lockedProvider: lockedProviderForChat,
-        resolvedModel: resolvedModelForChat,
+        resolvedModel: resolvedModelForChat ?? undefined,
         abortRef,
         abortControllerRef,
         sandboxIdRef,
