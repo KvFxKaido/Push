@@ -78,6 +78,14 @@ export interface PrepareSendArgs {
   options: SendMessageOptions | undefined;
   /** Resolved chat id — caller guarantees a conversation exists for it. */
   chatId: string;
+  /** Skip the foreground-only side effects: inserting the empty streaming
+   *  assistant placeholder and toggling `isStreaming` on. The bg-mode
+   *  main-chat path passes this `true` so its JobCard isn't shadowed by
+   *  a placeholder message and the chat doesn't get stuck in a streaming
+   *  state when sendMessage returns early. The user message, title
+   *  generation, provider/model resolution, and sandbox prewarm still
+   *  fire — the bg branch needs all of those. */
+  skipStreamingPlaceholder?: boolean;
 }
 
 export interface PrepareSendRefs {
@@ -117,7 +125,7 @@ export async function prepareSendContext(
   refs: PrepareSendRefs,
   callbacks: PrepareSendCallbacks,
 ): Promise<PrepareSendResult> {
-  const { trimmedText, attachments, options, chatId } = args;
+  const { trimmedText, attachments, options, chatId, skipStreamingPlaceholder } = args;
 
   const displayText = options?.displayText?.trim();
   const userMessage: ChatMessage =
@@ -161,11 +169,14 @@ export async function prepareSendContext(
   };
 
   callbacks.updateConversations((prev) => {
+    const messages = skipStreamingPlaceholder
+      ? updatedWithUser
+      : [...updatedWithUser, firstAssistant];
     const updated = {
       ...prev,
       [chatId]: {
         ...prev[chatId],
-        messages: [...updatedWithUser, firstAssistant],
+        messages,
         title: newTitle,
         lastMessageAt: Date.now(),
         verificationPolicy: prev[chatId]?.verificationPolicy ?? getDefaultVerificationPolicy(),
@@ -181,7 +192,7 @@ export async function prepareSendContext(
     setLastUsedProvider(lockedProviderForChat as PreferredProvider);
   }
 
-  callbacks.setIsStreaming(true);
+  if (!skipStreamingPlaceholder) callbacks.setIsStreaming(true);
   refs.abortRef.current = false;
 
   // Pre-warm sandbox if the start mode opts in. Best effort — a failed

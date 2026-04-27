@@ -37,6 +37,7 @@ import {
 import { useAgentDelegation } from './useAgentDelegation';
 import { useBackgroundCoderJob } from './useBackgroundCoderJob';
 import { isBackgroundModeEnabled } from '@/lib/background-mode-settings';
+import { hasActiveBackgroundJob, startBackgroundMainChatTurn } from './chat-send-background';
 import { useCIPoller } from './useCIPoller';
 import { useChatCardActions } from './chat-card-actions';
 import { useChatManagement } from './chat-management';
@@ -740,6 +741,11 @@ export function useChat(
       const trimmedText = text.trim();
       const hasAttachments = Boolean(attachments && attachments.length > 0);
       if (!trimmedText && !hasAttachments) return;
+      // Attachments still fall through to foreground until PR 3+ envelopes them.
+      const useBgMode = isBackgroundModeEnabled() && !hasAttachments;
+
+      const bgChat = options?.chatId || activeChatIdRef.current;
+      if (bgChat && hasActiveBackgroundJob(conversationsRef.current[bgChat])) return;
 
       if (isRunActive(runEngineStateRef.current)) {
         const runningChatId = runEngineStateRef.current.chatId;
@@ -804,7 +810,7 @@ export function useChat(
 
       // --- Prepare context ---
       const prepared = await prepareSendContext(
-        { trimmedText, attachments, options, chatId },
+        { trimmedText, attachments, options, chatId, skipStreamingPlaceholder: useBgMode },
         {
           conversationsRef,
           dirtyConversationIdsRef,
@@ -819,6 +825,21 @@ export function useChat(
       const resolvedModelForChat = prepared.resolvedModel;
       let apiMessages = prepared.apiMessages;
       let toolCallRecoveryState = prepared.recoveryState;
+
+      if (useBgMode) {
+        // biome-ignore format: keep refs inline so this branch stays under the file line cap.
+        const refs = { sandboxIdRef, repoRef, branchInfoRef, isMainProtectedRef, agentsMdRef, instructionFilenameRef };
+        const r = await startBackgroundMainChatTurn({
+          chatId,
+          trimmedText,
+          lockedProvider: lockedProviderForChat,
+          resolvedModel: resolvedModelForChat ?? undefined,
+          refs,
+          backgroundCoderJob,
+        });
+        if (!r.ok) updateAgentStatus({ active: false, phase: r.error }, { chatId, log: true });
+        return;
+      }
 
       // --- Acquire run session ---
       const { acquired } = acquireRunSession(
@@ -1173,6 +1194,7 @@ export function useChat(
       persistRunJournal,
       updateVerificationStateForChat,
       skipAutoCreateRef,
+      backgroundCoderJob,
     ],
   );
 

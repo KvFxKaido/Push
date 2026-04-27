@@ -72,6 +72,21 @@ import { buildCoderJobServices } from './coder-job-services';
 // Wire types
 // ---------------------------------------------------------------------------
 
+/** Reference to durable chat/session state that the DO can dereference
+ *  on demand. PR 2 ships the wire shape only — the field is persisted
+ *  via input_json but no kernel path reads from it yet. PR 3 builds the
+ *  context loader / resume path that uses these handles to reconstruct
+ *  prior turns server-side. Naming is deliberate ("ref", not "context")
+ *  so call sites don't drift toward inlining chat history here. */
+export interface ChatRef {
+  chatId: string;
+  repoFullName: string;
+  branch: string;
+  /** Opaque handle for a checkpoint in the chat's transcript. Format
+   *  is reserved for PR 3; today it's recorded but not interpreted. */
+  checkpointId?: string;
+}
+
 /** AgentJob input shape for `role: 'coder'`. The interface name is
  *  preserved (no rename in PR 1) but a `role` discriminator is now
  *  required so dispatch in `runLoop` is role-aware. */
@@ -94,6 +109,9 @@ export interface CoderJobStartInput {
   acceptanceCriteria?: AcceptanceCriterion[];
   projectInstructions?: string;
   instructionFilename?: string;
+  /** Reference to durable chat/session state. PR 2 persists this in
+   *  input_json without dereferencing it; PR 3 wires the loader. */
+  chatRef?: ChatRef;
 }
 
 /** Discriminated union of every role-aware AgentJob input. PR 1 wires
