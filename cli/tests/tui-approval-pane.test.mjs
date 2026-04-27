@@ -99,15 +99,17 @@ describe('createApprovalPane.handleKey', () => {
     assert.deepEqual(actions.calls, ['approve', 'deny']);
   });
 
-  it('ignores bare letter keys when meta is held', () => {
-    assert.equal(pane.handleKey(key('y', { meta: true })), false);
-    assert.equal(pane.handleKey(key('n', { meta: true })), false);
+  it('swallows bare letter keys when meta is held without firing an action', () => {
+    // Approval is hard-modal: every key returns true, but only the explicit
+    // shortcuts (handled separately) actually invoke an action.
+    assert.equal(pane.handleKey(key('y', { meta: true })), true);
+    assert.equal(pane.handleKey(key('n', { meta: true })), true);
     assert.deepEqual(actions.calls, []);
   });
 
-  it('returns false for unrelated keys', () => {
-    assert.equal(pane.handleKey(key('q')), false);
-    assert.equal(pane.handleKey(key('return')), false);
+  it('swallows unrelated keys without firing an action', () => {
+    assert.equal(pane.handleKey(key('q')), true);
+    assert.equal(pane.handleKey(key('return')), true);
     assert.deepEqual(actions.calls, []);
   });
 });

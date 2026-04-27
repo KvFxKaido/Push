@@ -4848,9 +4848,13 @@ export async function runTUI(options = {}) {
     const key = parseKey(keyBuf);
 
     // Approval modal: pane owns its key handling (bare y/a/p/n, Ctrl+Y/N, Esc).
+    // The pane is hard-modal — its handleKey returns true for every key while
+    // open — but we still honor the Pane contract here so future, non-modal
+    // panes can let unhandled keys fall through to the global keybind map.
     if (tuiState.runState === 'awaiting_approval' && tuiState.approvalPane) {
-      tuiState.approvalPane.handleKey?.(key);
-      return;
+      if (tuiState.approvalPane.handleKey?.(key)) {
+        return;
+      }
     }
 
     // Ask-user modal: captures typed text

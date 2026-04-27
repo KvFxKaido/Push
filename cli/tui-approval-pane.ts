@@ -62,6 +62,10 @@ export function createApprovalPane(payload: ApprovalPayload, actions: ApprovalAc
     },
 
     handleKey(key: ParsedKey) {
+      // Approval is a hard-modal: every key is consumed while the prompt is
+      // open so unrelated global keybinds (composer typing, cancel, exit)
+      // can't fire underneath it. Only the explicit shortcuts below trigger
+      // an action; everything else is silently swallowed.
       if (key.ctrl && key.name === 'y') {
         actions.approve();
         return true;
@@ -70,8 +74,7 @@ export function createApprovalPane(payload: ApprovalPayload, actions: ApprovalAc
         actions.deny();
         return true;
       }
-      // Bare-letter shortcuts; ignore when modifiers are held.
-      if (key.ctrl || key.meta) return false;
+      if (key.ctrl || key.meta) return true;
       switch (key.name) {
         case 'y':
           actions.approve();
@@ -87,7 +90,7 @@ export function createApprovalPane(payload: ApprovalPayload, actions: ApprovalAc
           actions.deny();
           return true;
         default:
-          return false;
+          return true;
       }
     },
   };
