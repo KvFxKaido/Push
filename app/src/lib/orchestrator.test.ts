@@ -18,9 +18,10 @@ describe('ORCHESTRATOR_SYSTEM_PROMPT', () => {
 });
 
 describe('getContextBudget', () => {
-  // The current tests assume no models.dev metadata is cached, which is the
-  // case in vitest's jsdom environment with empty localStorage. Each scenario
-  // therefore exercises the name-pattern fallback in lookupContextWindow.
+  // The current tests assume no models.dev metadata is available. In vitest's
+  // Node environment, `window` is undefined, so storage reads return null
+  // instead of using browser localStorage. Each scenario therefore exercises
+  // the name-pattern fallback in lookupContextWindow.
 
   it('keeps the default budget for unknown models with no catalog hit', () => {
     expect(getContextBudget('openrouter', 'mistralai/mistral-large-2512')).toEqual({
@@ -82,9 +83,10 @@ describe('getContextBudget', () => {
     });
   });
 
-  it('caps summarizeTokens at the target for tiny windows', () => {
-    // Synthesize a model name that misses every pattern — falls to default
-    // (100K) which has target=88K, equal to the summarize cap.
+  it('keeps summarizeTokens at or below the target for the unknown-model default fallback', () => {
+    // Synthesize a model name that misses every pattern so this exercises the
+    // default fallback budget (100K), where summarizeTokens is capped at the
+    // same 88K target rather than a truly tiny window.
     const budget = getContextBudget('openrouter', 'unknown-tiny-model');
     expect(budget.summarizeTokens).toBeLessThanOrEqual(budget.targetTokens);
   });

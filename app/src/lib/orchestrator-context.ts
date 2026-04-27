@@ -10,9 +10,9 @@ const DEFAULT_CONTEXT_MAX_TOKENS = 100_000; // Hard cap
 const DEFAULT_CONTEXT_TARGET_TOKENS = 88_000; // Soft target leaves room for system prompt + response
 
 // Universal budget formula. Both ratios stay below the model's real window
-// because estimateTokens (len/3.5) can undercount on code-dense or CJK-heavy
-// conversations — the 8% headroom covers that drift plus the system prompt
-// and response budget the API counts against the same window.
+// because the heuristic token estimator can undercount on code-dense or
+// CJK-heavy conversations — the 8% headroom covers that drift plus the
+// system prompt and response budget the API counts against the same window.
 const MAX_RATIO = 0.92;
 const TARGET_RATIO = 0.85;
 
@@ -69,9 +69,27 @@ function guessWindowFromName(model: string): number {
   return 0;
 }
 
+// OpenRouter (and similar gateways) append routing variants like ":nitro",
+// ":free", or ":beta" to the catalog's base IDs. Strip on the last colon so
+// catalog probes don't silently miss for routed selections — without this,
+// `anthropic/claude-sonnet-4.6:nitro` would skip the catalog window entirely
+// and fall through to the coarse name-pattern table.
+function stripRoutingSuffix(model: string): string {
+  const colon = model.lastIndexOf(':');
+  return colon > 0 ? model.slice(0, colon) : model;
+}
+
+function probeWindow(provider: AIProviderType, model: string): number {
+  const direct = getModelCapabilities(provider, model).contextLimit;
+  if (direct > 0) return direct;
+  const baseId = stripRoutingSuffix(model);
+  if (baseId === model) return 0;
+  return getModelCapabilities(provider, baseId).contextLimit;
+}
+
 function lookupContextWindow(provider: AIProviderType | undefined, model: string): number {
   if (provider) {
-    const cap = getModelCapabilities(provider, model).contextLimit;
+    const cap = probeWindow(provider, model);
     if (cap > 0) return cap;
   }
   // Same model id often exists in another provider's catalog (e.g.,
@@ -79,7 +97,7 @@ function lookupContextWindow(provider: AIProviderType | undefined, model: string
   // before falling back to name patterns.
   for (const probe of CATALOG_PROBE_PROVIDERS) {
     if (probe === provider) continue;
-    const cap = getModelCapabilities(probe, model).contextLimit;
+    const cap = probeWindow(probe, model);
     if (cap > 0) return cap;
   }
   return guessWindowFromName(model);
