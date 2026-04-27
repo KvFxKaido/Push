@@ -91,7 +91,29 @@ export function recoverNamespacedToolCalls(text: string): RecoveredNamespacedCal
 
     if (text[cursor] === '{') {
       const objectEnd = findBalancedObjectEnd(text, cursor);
-      if (objectEnd === -1) continue;
+      if (objectEnd === -1) {
+        // Truncated args object — the stream ended (or was malformed)
+        // before the closing brace. Auto-close gates (see
+        // `tryParseTruncatedArgs`) reject anything that ended inside
+        // an open string at EOF, which closes the false-positive
+        // surface the trailing-context check protects on the
+        // non-truncated path. (Codex review on PR #423.)
+        //
+        // Also skip when another `functions.*` prefix appears (outside
+        // string literals) inside the truncation tail: that means the
+        // model emitted a second call before finishing the first, and
+        // sweeping the second prefix into a misshapen first object
+        // would misinterpret two calls as one mangled one. Better to
+        // drop the broken first and let the regex iteration recover
+        // the clean second.
+        if (containsNamespacedPrefixOutsideStrings(text, cursor + 1)) continue;
+        const parsed = tryParseTruncatedArgs(text.slice(cursor));
+        if (!parsed) continue;
+        out.push({ tool, args: parsed, offset: match.index });
+        // Truncation always extends to end-of-message, so there's
+        // nothing left for further regex iterations to find.
+        break;
+      }
       if (!hasRecoverableTrailingContext(text, objectEnd + 1)) continue;
       const candidate = text.slice(cursor, objectEnd + 1);
       const parsed = tryParseArgsObject(candidate);
@@ -185,7 +207,7 @@ function findBalancedObjectEnd(text: string, start: number): number {
 }
 
 /**
- * Parse a candidate args object. Both paths reject any object that
+ * Parse a balanced candidate args object. Rejects any object that
  * contains a `"tool"` key — those are ambiguous (was the model trying
  * to emit a canonical wrapper inside a namespaced trace?) and the
  * dispatcher's canonical phases would have already picked them up if
@@ -194,22 +216,25 @@ function findBalancedObjectEnd(text: string, start: number): number {
  * Repair is shape-agnostic — `applyJsonTextRepairs` handles trailing
  * commas, single quotes, unquoted keys, Python `True`/`False`/`None`,
  * and stray control characters; the newline-escape fallback handles
- * raw newlines inside string values. Both are the same primitives the
- * dispatcher's canonical paths use, just without the `"tool"`-key
- * gating that's wrong for our args-only context.
+ * raw newlines inside string values. Same primitives the canonical
+ * paths use, just without the `"tool"`-key gating that's wrong here.
+ *
+ * Auto-close for truncation is handled separately in
+ * `tryParseTruncatedArgs`, not here, because the gates differ: this
+ * function only sees text that already balanced through
+ * `findBalancedObjectEnd`, so an auto-close phase here would be dead.
  */
 function tryParseArgsObject(candidate: string): Record<string, unknown> | null {
   try {
-    const parsed = JSON.parse(candidate);
-    return acceptArgsObject(parsed);
+    return acceptArgsObject(JSON.parse(candidate));
   } catch {
-    // Fall through to repair attempt.
+    // Fall through to repair attempts.
   }
   const repairedText = applyJsonTextRepairs(candidate);
   try {
     return acceptArgsObject(JSON.parse(repairedText));
   } catch {
-    // One more pass: escape raw newlines that landed inside string values.
+    // Continue to newline-escape phase.
   }
   const newlineEscaped = escapeRawNewlinesInJsonStrings(repairedText);
   if (newlineEscaped === repairedText) return null;
@@ -220,8 +245,115 @@ function tryParseArgsObject(candidate: string): Record<string, unknown> | null {
   }
 }
 
+/**
+ * Parse an unbalanced (truncated) args object that starts at the
+ * leading `{` of the slice. Walks the slice with string-awareness to
+ * count unmatched braces/brackets, then auto-closes if the depth is
+ * recoverable.
+ *
+ * Codex P1 review on PR #423: rejects any slice that ends inside an
+ * open string literal. That's the case where the model was mid-value
+ * when truncation hit (or, more dangerously, where the model emitted
+ * an unclosed string that ran into prose continuing afterwards).
+ * Auto-closing in that state would either fabricate a value or sweep
+ * arbitrary prose into an args field, both of which produce
+ * false-positive tool executions. The cost is that we drop the rare
+ * "stream cut cleanly mid-string" recovery — acceptable trade vs the
+ * rm-rf-shape risk on the other side.
+ *
+ * Depth cap of ≤ 3 unmatched openers mirrors `tryAutoCloseJson` in
+ * `lib/tool-call-parsing.ts`; deeper truncation usually means
+ * something more serious is wrong with the output.
+ */
+function tryParseTruncatedArgs(slice: string): Record<string, unknown> | null {
+  if (!slice.startsWith('{')) return null;
+  const scan = scanForBraceClosure(slice);
+  if (scan.inStringAtEnd) return null;
+  if (scan.stack.length === 0 || scan.stack.length > 3) return null;
+  let suffix = '';
+  for (let i = scan.stack.length - 1; i >= 0; i--) {
+    suffix += scan.stack[i] === '{' ? '}' : ']';
+  }
+  return tryParseArgsObject(slice + suffix);
+}
+
 function acceptArgsObject(parsed: unknown): Record<string, unknown> | null {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   if (typeof (parsed as Record<string, unknown>).tool !== 'undefined') return null;
   return parsed as Record<string, unknown>;
+}
+
+interface BraceScanResult {
+  /** Unmatched openers in nesting order. */
+  stack: ('{' | '[')[];
+  /** True when the scan ended while still inside a `"..."` string. */
+  inStringAtEnd: boolean;
+}
+
+/**
+ * Walk `text` and report unmatched JSON openers + open-string state
+ * at end-of-text. Shared by truncation auto-close and the
+ * outside-strings prefix scanner so both reason about JSON structure
+ * with identical escape/string semantics.
+ */
+function scanForBraceClosure(text: string): BraceScanResult {
+  const stack: ('{' | '[')[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '{') stack.push('{');
+    if (ch === '[') stack.push('[');
+    if (ch === '}' && stack.length && stack[stack.length - 1] === '{') stack.pop();
+    if (ch === ']' && stack.length && stack[stack.length - 1] === '[') stack.pop();
+  }
+  return { stack, inStringAtEnd: inString };
+}
+
+const NAMESPACED_PREFIX_NON_GLOBAL = new RegExp(NAMESPACED_PREFIX.source);
+
+/**
+ * Returns true if `text` contains a `functions.<name>:<id>` prefix
+ * starting at or after `from`, ignoring matches that fall inside a
+ * JSON string literal. Without the string-awareness (Copilot review
+ * on PR #423) a legitimate args object containing a literal like
+ * `"functions.foo:0"` in a string value would falsely suppress
+ * truncation recovery for an otherwise-clean call.
+ */
+function containsNamespacedPrefixOutsideStrings(text: string, from: number): boolean {
+  let inString = false;
+  let escaped = false;
+  for (let i = from; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch !== 'f') continue;
+    if (text.startsWith('functions.', i) && NAMESPACED_PREFIX_NON_GLOBAL.test(text.slice(i))) {
+      return true;
+    }
+  }
+  return false;
 }

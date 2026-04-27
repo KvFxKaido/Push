@@ -103,4 +103,82 @@ describe('recoverNamespacedToolCalls', () => {
     const text = 'functions.read_file:0 {"tool": "exec", "command": "rm -rf /"}';
     expect(recoverNamespacedToolCalls(text)).toEqual([]);
   });
+
+  // -------------------------------------------------------------------------
+  // Truncation auto-close — the deferred Gemini orange from PR #422
+  // -------------------------------------------------------------------------
+
+  it('recovers a truncated args object missing one closing brace', () => {
+    const text = 'functions.read_file:0 {"path": "TODO.md"';
+    expect(recoverNamespacedToolCalls(text)).toEqual([
+      { tool: 'read_file', args: { path: 'TODO.md' }, offset: 0 },
+    ]);
+  });
+
+  it('recovers a truncated args object with nested braces missing closers', () => {
+    const text = 'functions.exec:0 {"command": "ls", "env": {"DEBUG": "1"';
+    expect(recoverNamespacedToolCalls(text)).toEqual([
+      { tool: 'exec', args: { command: 'ls', env: { DEBUG: '1' } }, offset: 0 },
+    ]);
+  });
+
+  it('rejects truncation that ends inside an open string (false-positive guard)', () => {
+    // Codex P1 on PR #423: without the in-string gate, this could
+    // also "recover" prose like `... functions.exec:0 {"command":"rm`
+    // followed by ordinary text — auto-closing inside an open string
+    // would either fabricate a value or sweep prose into args. Both
+    // failure modes are real-tool-execution risks; we drop the
+    // ambiguous case rather than guess.
+    const text = 'functions.read_file:0 {"path": "TODO';
+    expect(recoverNamespacedToolCalls(text)).toEqual([]);
+  });
+
+  it('rejects truncation where an open string runs into prose', () => {
+    // The exact false-positive Codex flagged: brace opened, string
+    // opened, then natural-language prose continues without a closing
+    // quote. Auto-close would package the prose as a path arg.
+    const text = 'Hmm, let me think. functions.read_file:0 {"path": "TODO but I changed my mind';
+    expect(recoverNamespacedToolCalls(text)).toEqual([]);
+  });
+
+  it('does not auto-close when truncation contains a second functions.* prefix', () => {
+    // The first call's args is truncated and the second call's prefix
+    // appears inside the broken region. Sweeping the second prefix into
+    // the first's args would misinterpret two calls as one mangled one,
+    // so we drop the broken first and let the regex find the second.
+    const text = 'functions.read_file:0 {"path": "TODO.md" functions.list_dir:1 {"path": "."}';
+    const recovered = recoverNamespacedToolCalls(text);
+    expect(recovered).toEqual([
+      { tool: 'list_dir', args: { path: '.' }, offset: expect.any(Number) },
+    ]);
+  });
+
+  it('does not auto-close when truncation depth exceeds three openers', () => {
+    // Deeply nested truncation often signals more serious malformation
+    // — autoClose's depth cap (matches the canonical helper's cap of 3)
+    // bails rather than guess wildly.
+    const text = 'functions.exec:0 {"a": {"b": {"c": {"d": "value"';
+    expect(recoverNamespacedToolCalls(text)).toEqual([]);
+  });
+
+  it('treats functions.* inside a string literal as data, not as a second call', () => {
+    // Copilot review on PR #423: without string-aware scanning, the
+    // prefix inside the string value would falsely suppress the
+    // truncation recovery. The args contain a literal mention of the
+    // namespaced format (e.g., a docs example) but the call itself is
+    // a clean truncation of one read_file call.
+    const text =
+      'functions.read_file:0 {"path": "docs/examples.md", "note": "see functions.foo:1 for an example"';
+    const recovered = recoverNamespacedToolCalls(text);
+    expect(recovered).toEqual([
+      {
+        tool: 'read_file',
+        args: {
+          path: 'docs/examples.md',
+          note: 'see functions.foo:1 for an example',
+        },
+        offset: 0,
+      },
+    ]);
+  });
 });
