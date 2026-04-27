@@ -38,6 +38,7 @@ import {
   getToolSource,
   inferToolFromArgs,
 } from '@push/lib/tool-call-diagnosis';
+import { recoverNamespacedToolCalls } from '@push/lib/tool-call-namespaced-recovery';
 
 // ---------------------------------------------------------------------------
 // Re-exports — the tool-call diagnosis kernel now lives in
@@ -164,15 +165,33 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
   };
 
   const explicitToolObjects = extractBareToolJsonObjects(text);
-  if (explicitToolObjects.length === 0) return empty;
+  const allCalls: AnyToolCall[] = [];
+  const seen = new Set<string>();
+
+  // OpenAI-style namespaced fallback (`functions.<name>:<id>  <args>`).
+  // Models like Kimi-via-Blackbox emit this format with no canonical
+  // wrapper, so the existing precondition below would have dropped them
+  // silently. Only fires when there are zero explicit wrappers — once a
+  // real tool block exists, trust the model's primary intent and let
+  // the standard scan handle it.
+  if (explicitToolObjects.length === 0) {
+    for (const recovered of recoverNamespacedToolCalls(text)) {
+      const call = wrapRecoveredCallToAny(recovered.tool, recovered.args);
+      if (!call) continue;
+      const key = getCanonicalInvocationKey(call);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      allCalls.push(call);
+      if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
+    }
+    if (allCalls.length === 0) return empty;
+    return classifyDetectedCalls(allCalls, empty);
+  }
 
   // Preserve current safety behavior: only do broad bare-object scanning
   // when the response already contains at least one explicit tool wrapper.
   const parsedObjects = extractAllBareJsonObjects(text);
   if (parsedObjects.length === 0) return empty;
-
-  const allCalls: AnyToolCall[] = [];
-  const seen = new Set<string>();
 
   for (const parsed of parsedObjects) {
     const serialized = JSON.stringify(parsed);
@@ -189,7 +208,19 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
   }
 
   if (allCalls.length === 0) return empty;
+  return classifyDetectedCalls(allCalls, empty);
+}
 
+/**
+ * Run the reads → fileMutations → trailing side-effect grouping over a
+ * deduped, ordered list of tool calls. Extracted from `detectAllToolCalls`
+ * so the namespaced-recovery branch can reuse the same classification
+ * pipeline rather than duplicating it.
+ */
+function classifyDetectedCalls(
+  allCalls: AnyToolCall[],
+  empty: DetectedToolCalls,
+): DetectedToolCalls {
   // Single call — classify directly.
   if (allCalls.length === 1) {
     const only = allCalls[0];
@@ -389,6 +420,39 @@ export function detectAnyToolCall(text: string): AnyToolCall | null {
   const recovered = tryRecoverBareToolArgs(text);
   if (recovered) return recovered;
 
+  // Fallback for OpenAI-style namespaced output (`functions.<name>:<id>
+  // <args>`) — see `recoverNamespacedToolCalls` for the model behavior
+  // this addresses.
+  for (const namespaced of recoverNamespacedToolCalls(text)) {
+    const call = wrapRecoveredCallToAny(namespaced.tool, namespaced.args);
+    if (call) return call;
+  }
+
+  return null;
+}
+
+/**
+ * Wrap a recovered `{tool, args}` pair as a typed AnyToolCall.
+ *
+ * Tries the prefix-derived name first, then falls back to args-shape
+ * inference. The fallback handles the namespace collision where models
+ * emit unprefixed names like `read_file` (which the registry resolves to
+ * the GitHub variant requiring a `repo` arg) when they actually mean the
+ * sandbox tool. `inferToolFromArgs({path: "..."})` correctly returns
+ * `sandbox_read_file` in that case.
+ */
+function wrapRecoveredCallToAny(
+  toolName: string,
+  args: Record<string, unknown>,
+): AnyToolCall | null {
+  const tryName = (name: string): AnyToolCall | null => {
+    const wrapped = JSON.stringify({ tool: name, args });
+    return detectAnyToolCall(wrapped);
+  };
+  const direct = tryName(toolName);
+  if (direct) return direct;
+  const inferred = inferToolFromArgs(args);
+  if (inferred && inferred !== toolName) return tryName(inferred);
   return null;
 }
 

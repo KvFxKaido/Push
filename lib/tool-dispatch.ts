@@ -33,6 +33,7 @@ import {
   escapeRawNewlinesInJsonStrings,
   repairToolJson,
 } from './tool-call-parsing.js';
+import { recoverNamespacedToolCalls } from './tool-call-namespaced-recovery.js';
 
 /**
  * Result of scanning assistant text for tool calls.
@@ -229,6 +230,23 @@ export function createToolDispatcher<TCall>(
             offset: bare.start,
             parsed: shaped.value,
             sample: text.slice(bare.start, bare.end + 1),
+          });
+        }
+      }
+
+      // Phase 3: namespaced-functions recovery (`functions.<name>:<id>
+      // <args>`). Only fires when phases 1+2 produced nothing — this is
+      // a model-quirk fallback for outputs like Kimi-via-Blackbox that
+      // emit OpenAI-style function-call traces instead of fenced JSON.
+      // Gating on absence keeps prose that incidentally matches the
+      // pattern from amplifying real, canonical tool calls.
+      if (candidates.length === 0) {
+        for (const recovered of recoverNamespacedToolCalls(text)) {
+          candidates.push({
+            kind: 'namespaced',
+            offset: recovered.offset,
+            parsed: { tool: recovered.tool, args: recovered.args, raw: recovered.args },
+            sample: `functions.${recovered.tool}:* ${JSON.stringify(recovered.args)}`,
           });
         }
       }
@@ -502,7 +520,7 @@ function isBareBlockEligible(
 }
 
 interface DetectedCandidate {
-  kind: 'fenced' | 'bare';
+  kind: 'fenced' | 'bare' | 'namespaced';
   offset: number;
   parsed: ParsedToolObject;
   /** Truncatable sample for malformed reports. */

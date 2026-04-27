@@ -110,6 +110,41 @@ describe('detectAllToolCalls', () => {
     assert.equal(detected.calls.length, 0);
     assert.equal(detected.malformed.length, 0);
   });
+
+  it('recovers OpenAI-style namespaced calls (Kimi/Blackbox format) when no fenced block is present', () => {
+    // Captured assistant output from session sess_mogit6qt_447633 (kimi-k2.6
+    // via blackbox). Before the namespaced-recovery wiring landed, all three
+    // calls fell through silently and the run completed with zero tool
+    // executions. The CLI surface has read_file and git_status as plain
+    // names (no sandbox_ prefix), so all three should be recovered.
+    const text =
+      ' Hey! Let me check the current state of the project — TODO, roadmap, and what\'s on the branch — so I can give you a useful take.   functions.read_file:0  {"path": "TODO.md"}   functions.read_file:1  {"path": "ROADMAP.md"}   functions.git_status:2  {}  ';
+    const detected = detectAllToolCalls(text);
+    assert.equal(detected.calls.length, 3);
+    assert.equal(detected.calls[0].tool, 'read_file');
+    assert.deepEqual(detected.calls[0].args, { path: 'TODO.md' });
+    assert.equal(detected.calls[1].tool, 'read_file');
+    assert.deepEqual(detected.calls[1].args, { path: 'ROADMAP.md' });
+    assert.equal(detected.calls[2].tool, 'git_status');
+    assert.deepEqual(detected.calls[2].args, {});
+  });
+
+  it('does not run namespaced recovery when the message already contains a canonical fenced block', () => {
+    const text = [
+      'Plan: read the file first.',
+      '```json',
+      '{"tool":"read_file","args":{"path":"REAL.md"}}',
+      '```',
+      'Note the functions.exec:0  {"command": "rm -rf /"} mention is just prose.',
+    ].join('\n');
+    const detected = detectAllToolCalls(text);
+    // Only the canonical call — namespaced recovery is gated on absence of
+    // canonical candidates, so the prose mention does not amplify into a
+    // second (dangerous) tool call.
+    assert.equal(detected.calls.length, 1);
+    assert.equal(detected.calls[0].tool, 'read_file');
+    assert.deepEqual(detected.calls[0].args, { path: 'REAL.md' });
+  });
 });
 
 // ─── ensureInsideWorkspace ───────────────────────────────────────
