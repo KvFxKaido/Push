@@ -13,6 +13,7 @@ import {
   createRenderScheduler,
   charWidth,
   osc52Copy,
+  ESC,
 } from '../tui-renderer.ts';
 import { createTheme, GLYPHS_UNICODE, GLYPHS_ASCII } from '../tui-theme.ts';
 
@@ -242,6 +243,167 @@ describe('createScreenBuffer', () => {
     assert.equal(typeof buf.writeLine, 'function');
     assert.equal(typeof buf.flush, 'function');
     assert.equal(typeof buf.clear, 'function');
+  });
+});
+
+// Capture stdout writes so we can assert on emitted bytes per flush.
+function withCapturedStdout(fn) {
+  const original = process.stdout.write.bind(process.stdout);
+  let captured = '';
+  process.stdout.write = (chunk) => {
+    captured += typeof chunk === 'string' ? chunk : chunk.toString();
+    return true;
+  };
+  try {
+    return fn(() => {
+      const out = captured;
+      captured = '';
+      return out;
+    });
+  } finally {
+    process.stdout.write = original;
+  }
+}
+
+describe('createScreenBuffer (line-level diff)', () => {
+  it('emits line writes on the first flush', () => {
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.writeLine(1, 1, 'hello');
+      buf.flush();
+      const out = take();
+      assert.match(out, /hello/);
+      assert.match(out, /\x1b\[1;1H/);
+    });
+  });
+
+  it('skips unchanged line writes on subsequent flushes', () => {
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.writeLine(1, 1, 'hello');
+      buf.flush();
+      take();
+      buf.writeLine(1, 1, 'hello');
+      buf.flush();
+      assert.equal(take(), '');
+    });
+  });
+
+  it('emits only the changed line when one row of two changes', () => {
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.writeLine(1, 1, 'hello');
+      buf.writeLine(2, 1, 'world');
+      buf.flush();
+      take();
+      buf.writeLine(1, 1, 'hello');
+      buf.writeLine(2, 1, 'updated');
+      buf.flush();
+      const out = take();
+      assert.match(out, /updated/);
+      assert.doesNotMatch(out, /hello/);
+    });
+  });
+
+  it('does not auto-clear rows that are absent from the next frame', () => {
+    // tui.ts has a partial-redraw path that re-emits only dirty panes;
+    // an unwritten row is meant to retain its previous contents. Auto-
+    // blanking would corrupt the panes that intentionally skipped this
+    // frame. Callers that need a row gone must rewrite it (or trigger a
+    // full redraw, which emits clearScreen → forceFullFrame).
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.writeLine(1, 1, 'hello');
+      buf.writeLine(2, 1, 'world');
+      buf.flush();
+      take();
+      buf.writeLine(1, 1, 'hello');
+      buf.flush();
+      assert.equal(take(), '');
+    });
+  });
+
+  it('preserves untouched prior lines across partial re-renders', () => {
+    // Stronger regression check: when one line updates and the other is
+    // omitted, the output should be EXACTLY the changed-line emit — no
+    // trailing blanks for the untouched row.
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.writeLine(1, 1, 'first');
+      buf.writeLine(2, 1, 'second');
+      buf.flush();
+      take();
+      buf.writeLine(1, 1, 'first updated');
+      buf.flush();
+      assert.equal(take(), '\x1b[1;1Hfirst updated');
+    });
+  });
+
+  it('pads with spaces when a line shrinks at the same position', () => {
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.writeLine(1, 1, 'hello world');
+      buf.flush();
+      take();
+      buf.writeLine(1, 1, 'hi');
+      buf.flush();
+      const out = take();
+      // Emitted text should include the new content followed by enough
+      // trailing spaces to overwrite the old tail (11 - 2 = 9 spaces).
+      assert.match(out, /hi {9}/);
+    });
+  });
+
+  it('forces a full re-emit when clearScreen appears in the frame', () => {
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.writeLine(1, 1, 'hello');
+      buf.flush();
+      take();
+      buf.write(ESC.clearScreen);
+      buf.writeLine(1, 1, 'hello');
+      buf.flush();
+      const out = take();
+      assert.match(out, /\x1b\[2J/);
+      assert.match(out, /hello/);
+    });
+  });
+
+  it('clear() drops pending ops without invalidating the previous frame', () => {
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.writeLine(1, 1, 'hello');
+      buf.flush();
+      take();
+      buf.writeLine(1, 1, 'CHANGED');
+      buf.clear();
+      buf.writeLine(1, 1, 'hello');
+      buf.flush();
+      assert.equal(take(), '');
+    });
+  });
+
+  it('passes through raw write() escapes verbatim', () => {
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.write('\x1b[?25h');
+      buf.flush();
+      assert.equal(take(), '\x1b[?25h');
+    });
+  });
+
+  it('treats different cols on the same row as separate diff entries', () => {
+    withCapturedStdout((take) => {
+      const buf = createScreenBuffer();
+      buf.writeLine(1, 1, 'AAA');
+      buf.writeLine(1, 10, 'BBB');
+      buf.flush();
+      take();
+      buf.writeLine(1, 1, 'AAA');
+      buf.writeLine(1, 10, 'BBB');
+      buf.flush();
+      assert.equal(take(), '');
+    });
   });
 });
 
