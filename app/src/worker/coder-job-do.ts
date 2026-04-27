@@ -362,12 +362,16 @@ export class CoderJob {
   private async handleStart(input: CoderJobStartInput): Promise<Response> {
     // Defense in depth: the worker route validates `role`, but tests
     // and direct DO callers can bypass it (the `as` cast in `fetch()`
-    // hides a missing/invalid discriminator at the type layer). Reject
-    // anything other than the supported roles before touching storage
-    // so an unsupported run doesn't half-persist.
+    // hides a missing/invalid discriminator at the type layer). The
+    // missing-vs-unsupported distinction mirrors the route layer so
+    // direct callers see the same error vocabulary they'd see if they
+    // went through `/api/jobs/start`.
     const role = (input as unknown as { role?: unknown }).role;
-    if (typeof role !== 'string' || !SUPPORTED_AGENT_JOB_ROLES.has(role as AgentRole)) {
-      return json({ error: 'UNSUPPORTED_ROLE', role: typeof role === 'string' ? role : null }, 400);
+    if (typeof role !== 'string') {
+      return json({ error: 'MISSING_FIELDS', fields: ['role'] }, 400);
+    }
+    if (!SUPPORTED_AGENT_JOB_ROLES.has(role as AgentRole)) {
+      return json({ error: 'UNSUPPORTED_ROLE', role }, 400);
     }
 
     const existing = this.ctx.storage.sql
@@ -488,11 +492,18 @@ export class CoderJob {
     switch (input.role) {
       case 'coder':
         return this.executeCoderJob(input, signal);
-      // PR 2 adds new role arms here. The default arm is unreachable
-      // today because the union has only the 'coder' member, but the
-      // worker layer + handleStart's defense-in-depth check both reject
-      // unknown roles before they ever reach this dispatcher.
+      // PR 2 adds new role arms here.
     }
+    // The post-switch throw is the dispatcher's exhaustiveness backstop.
+    // TypeScript narrows `input` to `never` here today (the union has
+    // only the 'coder' member); when PR 2 expands the union without
+    // expanding the switch, `(input as { role: string }).role` keeps
+    // the throw working at runtime and the `never` narrowing surfaces
+    // the gap as a compile error. At runtime this also covers the path
+    // where a malformed input slips past both the worker validator and
+    // handleStart's defense-in-depth check — far better than the
+    // silent `undefined.summary` that runLoop would otherwise await.
+    throw new UnsupportedRoleError((input as { role: string }).role);
   }
 
   private async executeCoderJob(

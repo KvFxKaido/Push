@@ -280,8 +280,20 @@ export function useBackgroundCoderJob({
       // SSE stream emits `job.*` events (role-aware AgentJob lifecycle);
       // the foreground delegation runtime emits `subagent.*` through a
       // different code path and never reaches this hook.
+      //
+      // The `subagent.*` arms in the switch are a deliberate
+      // backward-compatibility shim, not a steady-state design: an
+      // in-flight DO that started under the previous (subagent.*)
+      // contract has those events persisted in its SQLite event log.
+      // After a worker bundle redeploy, SSE replay sends the historical
+      // `subagent.*` mixed with fresh `job.*`. Without these arms the
+      // legacy terminals fall into the default and the job is stuck at
+      // 'running' forever in the UI. Once any in-flight DO from the
+      // pre-PR-1 contract has finished and its events have been
+      // garbage-collected, these arms can be deleted (PR 2 cleanup).
       switch (runEvent.type) {
-        case 'job.started': {
+        case 'job.started':
+        case 'subagent.started': {
           upsertJobEntry(chatId, jobId, {
             status: 'running',
             lastEventId: runEvent.id,
@@ -293,7 +305,8 @@ export function useBackgroundCoderJob({
           });
           break;
         }
-        case 'job.completed': {
+        case 'job.completed':
+        case 'subagent.completed': {
           const finishedAt = Date.now();
           upsertJobEntry(chatId, jobId, {
             status: 'completed',
@@ -323,7 +336,8 @@ export function useBackgroundCoderJob({
           );
           break;
         }
-        case 'job.failed': {
+        case 'job.failed':
+        case 'subagent.failed': {
           // Server uses status=cancelled on abort — distinguish by the
           // error text only as a hint; canonical status comes from the
           // /status snapshot path when we add it.

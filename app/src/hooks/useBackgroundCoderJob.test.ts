@@ -509,6 +509,76 @@ describe('useBackgroundCoderJob — regression guards (PR #361 review)', () => {
   });
 });
 
+describe('useBackgroundCoderJob — backward-compatibility shim', () => {
+  it('treats legacy subagent.* terminal events as their job.* equivalents', async () => {
+    // SSE replay for an in-flight DO that started under the pre-PR-1
+    // contract surfaces persisted `subagent.*` events. Without the
+    // backward-compat fall-through, the terminal would land in the
+    // default arm and the JobCard / persistence entry would never
+    // advance past 'running' until the user reloaded the page.
+    const subagentCompleted = {
+      id: 'ev-legacy',
+      timestamp: 9999,
+      type: 'subagent.completed',
+      executionId: 'job-legacy',
+      agent: 'coder',
+      summary: 'Legacy run finished.',
+    };
+    const sse = `id: ${subagentCompleted.id}\nevent: ${subagentCompleted.type}\ndata: ${JSON.stringify(
+      subagentCompleted,
+    )}\n\n`;
+
+    const encoder = new TextEncoder();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-legacy' }), { status: 202 }) as Response,
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(encoder.encode(sse));
+              c.close();
+            },
+          }),
+          { status: 200 },
+        ) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const convs = { 'chat-1': makeConversation('chat-1') };
+    const { hook, getConvs } = useHarness(convs);
+    await hook.startJob({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      envelope: makeEnvelope(),
+      provider: 'openrouter',
+      model: undefined,
+      userProfile: null,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const entry = getConvs()['chat-1']?.pendingJobIds?.['job-legacy'];
+    expect(entry?.status).toBe('completed');
+
+    const msgs = getConvs()['chat-1'].messages;
+    const card = msgs.flatMap((m) => m.cards ?? []).find((c) => c.type === 'coder-job') as
+      | { data: { status?: string; summary?: string } }
+      | undefined;
+    expect(card?.data.status).toBe('completed');
+    expect(card?.data.summary).toBe('Legacy run finished.');
+
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('useBackgroundCoderJob — placeholder text contract', () => {
   it('never claims the job "started" or "completed" — only "accepted and queued"', () => {
     const { hook } = useHarness({});

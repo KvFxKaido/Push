@@ -244,8 +244,13 @@ describe('handleJobsRoute', () => {
     expect(stub.fetch).not.toHaveBeenCalled();
   });
 
-  it('rejects /start when role is missing (400 MISSING_FIELDS with role)', async () => {
-    const stub = makeFakeStub();
+  it('defaults missing role to coder and forwards (rolling-deploy compat)', async () => {
+    // Old clients (cached service-worker bundles, in-flight tabs across
+    // a deploy) post bodies without a role field. Strict reject would
+    // silently drop those jobs; the route-layer default keeps them
+    // working until the legacy client ages out. PR 2 can tighten this
+    // to MISSING_FIELDS once the contract is universally deployed.
+    const stub = makeFakeStub(new Response('{"jobId":"stub-ok"}', { status: 202 }));
     const env = makeEnv({ CoderJob: makeCoderJobNamespace(stub) });
     const { role: _omitted, ...bodyWithoutRole } = validStartBody();
     void _omitted;
@@ -254,11 +259,10 @@ describe('handleJobsRoute', () => {
       env,
       { action: 'start', jobId: null },
     );
-    expect(response.status).toBe(400);
-    const parsed = (await response.json()) as { error: string; fields: string[] };
-    expect(parsed.error).toBe('MISSING_FIELDS');
-    expect(parsed.fields).toContain('role');
-    expect(stub.fetch).not.toHaveBeenCalled();
+    expect(response.status).toBe(202);
+    const forwarded = stub.fetch.mock.calls[0]![0] as Request;
+    const forwardedBody = JSON.parse(await forwarded.text()) as { role: string };
+    expect(forwardedBody.role).toBe('coder');
   });
 
   it('rejects /start with an unsupported role (400 UNSUPPORTED_ROLE)', async () => {

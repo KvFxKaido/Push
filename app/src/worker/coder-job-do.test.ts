@@ -412,6 +412,30 @@ describe('CoderJob DO — end-to-end', () => {
     expect(storage.events.length).toBe(0);
   });
 
+  it('rejects /start with missing role at the DO layer (MISSING_FIELDS)', async () => {
+    // Mirrors the route layer's missing-vs-unsupported distinction.
+    // Direct DO callers (tests, internal code) that omit role get the
+    // same MISSING_FIELDS error vocabulary they'd get going through
+    // /api/jobs/start, instead of being lumped under UNSUPPORTED_ROLE.
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+    const { role: _omitted, ...inputWithoutRole } = makeStartInput({ jobId: 'job-no-role' });
+    void _omitted;
+    const response = await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(inputWithoutRole),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    expect(response.status).toBe(400);
+    const parsed = (await response.json()) as { error: string; fields: string[] };
+    expect(parsed.error).toBe('MISSING_FIELDS');
+    expect(parsed.fields).toContain('role');
+    expect(storage.jobs.get('job-no-role')).toBeUndefined();
+    expect(storage.events.length).toBe(0);
+  });
+
   it('replays persisted events over SSE using Last-Event-ID', async () => {
     const { ctx, storage, waitUntilPromises } = makeCtx();
     const input = makeStartInput({ jobId: 'job-replay-1' });
