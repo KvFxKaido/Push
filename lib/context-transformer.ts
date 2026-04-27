@@ -33,7 +33,9 @@ export interface TransformableMessage {
 
 export interface ManageContextResult<M extends TransformableMessage> {
   messages: M[];
-  trimmed: boolean;
+  /** True if the compaction step actually rewrote or dropped messages.
+   *  Filter-induced drops are tracked separately at the top level. */
+  compactionApplied: boolean;
 }
 
 export interface TransformContextOptions<M extends TransformableMessage> {
@@ -53,8 +55,10 @@ export interface TransformedContext<M extends TransformableMessage> {
   cacheBreakpointIndex: number;
   /** True if the compaction stage actually rewrote/dropped messages. When
    *  this fires the cache breakpoint may move backward — invariants that
-   *  assume monotonicity should gate on this flag. */
-  trimmingApplied: boolean;
+   *  assume monotonicity should gate on this flag. Filter-induced drops do
+   *  not flip this flag because filtering is consistent across turns and
+   *  does not by itself break breakpoint monotonicity. */
+  compactionApplied: boolean;
   metrics: {
     inputCount: number;
     outputCount: number;
@@ -77,7 +81,7 @@ function filterVisibleStage<M extends TransformableMessage>(): Stage<M> {
     isEnabled: (o) => o.enableFilterVisible !== false,
     run: (messages) => ({
       messages: messages.filter((m) => m.visibleToModel !== false),
-      trimmed: false,
+      compactionApplied: false,
     }),
   };
 }
@@ -87,7 +91,7 @@ function manageContextStage<M extends TransformableMessage>(): Stage<M> {
     name: 'manageContext',
     isEnabled: (o) => o.enableManageContext !== false && Boolean(o.manageContext),
     run: (messages, options) => {
-      if (!options.manageContext) return { messages, trimmed: false };
+      if (!options.manageContext) return { messages, compactionApplied: false };
       return options.manageContext(messages);
     },
   };
@@ -108,19 +112,19 @@ export function transformContextBeforeLLM<M extends TransformableMessage>(
 ): TransformedContext<M> {
   const inputCount = messages.length;
   let working: M[] = [...messages];
-  let trimmingApplied = false;
+  let compactionApplied = false;
 
   for (const stage of buildPipeline<M>()) {
     if (!stage.isEnabled(options)) continue;
     const result = stage.run(working, options);
     working = result.messages;
-    if (result.trimmed) trimmingApplied = true;
+    if (result.compactionApplied) compactionApplied = true;
   }
 
   return {
     messages: working,
     cacheBreakpointIndex: findLastUserIndex(working),
-    trimmingApplied,
+    compactionApplied,
     metrics: { inputCount, outputCount: working.length },
   };
 }

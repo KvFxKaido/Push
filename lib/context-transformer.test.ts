@@ -78,7 +78,7 @@ describe('transformContextBeforeLLM — append-stability', () => {
     const baseOut = transformContextBeforeLLM(base, baseOptions);
     const extOut = transformContextBeforeLLM(extended, baseOptions);
 
-    if (!baseOut.trimmingApplied && !extOut.trimmingApplied) {
+    if (!baseOut.compactionApplied && !extOut.compactionApplied) {
       expect(extOut.cacheBreakpointIndex).toBeGreaterThanOrEqual(baseOut.cacheBreakpointIndex);
     }
   });
@@ -142,11 +142,11 @@ describe('transformContextBeforeLLM — manageContext stage', () => {
   it('does not run when manageContext is not provided', () => {
     const messages: FakeMsg[] = [sample({ role: 'user', content: 'hello' })];
     const out = transformContextBeforeLLM(messages, baseOptions);
-    expect(out.trimmingApplied).toBe(false);
+    expect(out.compactionApplied).toBe(false);
     expect(out.messages).toEqual(messages);
   });
 
-  it('records trimmingApplied when the bound manageContext reports a trim', () => {
+  it('records compactionApplied when the bound manageContext reports compaction', () => {
     const messages: FakeMsg[] = [
       sample({ role: 'user', content: 'big' }),
       sample({ role: 'assistant', content: 'reply' }),
@@ -155,10 +155,10 @@ describe('transformContextBeforeLLM — manageContext stage', () => {
       ...baseOptions,
       manageContext: (msgs) => ({
         messages: [sample({ role: 'user', content: '[digest]' }), ...msgs.slice(-1)],
-        trimmed: true,
+        compactionApplied: true,
       }),
     });
-    expect(out.trimmingApplied).toBe(true);
+    expect(out.compactionApplied).toBe(true);
     expect(out.messages[0].content).toBe('[digest]');
   });
 
@@ -170,7 +170,7 @@ describe('transformContextBeforeLLM — manageContext stage', () => {
       enableManageContext: false,
       manageContext: (msgs) => {
         called = true;
-        return { messages: msgs, trimmed: false };
+        return { messages: msgs, compactionApplied: false };
       },
     });
     expect(called).toBe(false);
@@ -187,7 +187,7 @@ describe('transformContextBeforeLLM — manageContext stage', () => {
       ...baseOptions,
       manageContext: (msgs) => {
         mgrSawCount = msgs.length;
-        return { messages: msgs, trimmed: false };
+        return { messages: msgs, compactionApplied: false };
       },
     });
     expect(mgrSawCount).toBe(2);
@@ -255,11 +255,12 @@ describe('transformContextBeforeLLM — snapshots', () => {
     expect({
       messages: out.messages,
       cacheBreakpointIndex: out.cacheBreakpointIndex,
-      trimmingApplied: out.trimmingApplied,
+      compactionApplied: out.compactionApplied,
       metrics: out.metrics,
     }).toMatchInlineSnapshot(`
       {
         "cacheBreakpointIndex": 4,
+        "compactionApplied": false,
         "messages": [
           {
             "content": "You are a helpful assistant.",
@@ -287,7 +288,6 @@ describe('transformContextBeforeLLM — snapshots', () => {
           "inputCount": 6,
           "outputCount": 5,
         },
-        "trimmingApplied": false,
       }
     `);
   });

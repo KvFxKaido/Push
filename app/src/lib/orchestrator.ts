@@ -308,10 +308,13 @@ export function toLLMMessages(
     surface: 'web',
     manageContext: (msgs) => {
       const result = manageContext(msgs, contextBudget, providerType, onPreCompact);
-      // The lib short-circuits with the same array reference when no work is
-      // needed; any other reference means at least one message was rewritten
-      // or dropped, even if the count is unchanged (Phase 1 summarization).
-      return { messages: result, trimmed: result !== msgs };
+      // Don't infer compaction from array identity — manageContext may return
+      // a fresh array (`[...messages]`) without rewriting any element, e.g.
+      // when every message is already under the compaction threshold.
+      // Detect actual structural change.
+      const compactionApplied =
+        result.length !== msgs.length || result.some((m, i) => m !== msgs[i]);
+      return { messages: result, compactionApplied };
     },
   });
   const windowedMessages = transformed.messages;
