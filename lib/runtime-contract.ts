@@ -309,6 +309,36 @@ export type RunEventInput =
       error: string;
     }
   | {
+      // Background AgentJob lifecycle — emitted by the AgentJob DO over its
+      // SSE stream. Distinct from `subagent.*`, which is emitted by the
+      // foreground delegation runtime in the browser tab. The two coexist
+      // because they describe runs at different layers: `subagent.*` is a
+      // delegated child run inside a parent agent's loop; `job.*` is a
+      // server-owned run that survives client disconnect. Carries `role`
+      // (not `agent`) to keep the event vocabulary role-aware as more
+      // roles get migrated to AgentJob.
+      type: 'job.started';
+      executionId: string;
+      role: AgentRole;
+      detail?: string;
+    }
+  | {
+      type: 'job.completed';
+      executionId: string;
+      role: AgentRole;
+      summary: string;
+      /** Structured delegation outcome — present for coder/explorer jobs
+       * driven by a delegation envelope. Absent for future role
+       * variants that aren't shaped as delegations. */
+      delegationOutcome?: DelegationOutcome;
+    }
+  | {
+      type: 'job.failed';
+      executionId: string;
+      role: AgentRole;
+      error: string;
+    }
+  | {
       type: 'task_graph.task_ready';
       executionId: string;
       taskId: string;

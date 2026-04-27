@@ -14,6 +14,7 @@ export function shouldPersistRunEvent(event: RunEventInput): boolean {
     case 'assistant.turn_start':
     case 'tool.execution_start':
     case 'subagent.started':
+    case 'job.started':
     case 'task_graph.task_ready':
     case 'task_graph.task_started':
     case 'user.follow_up_queued':
