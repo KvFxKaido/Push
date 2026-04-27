@@ -51,6 +51,7 @@ import {
   getWindowedListRange,
   renderCenteredModalBox,
 } from './tui-widgets.js';
+import { createApprovalPane } from './tui-approval-pane.js';
 import {
   parseKey,
   splitRawInputChunk,
@@ -195,6 +196,9 @@ function createTUIState() {
     toolFeed: [],
     // Approval prompt (when awaiting_approval)
     approval: null, // { kind, summary, details }
+    // Pane wrapper for the approval modal — owns its render + key handling.
+    // Set together with `approval` via openApprovalPane / cleared via closeApprovalPane.
+    approvalPane: null,
     // User question prompt (when awaiting_user_question)
     userQuestion: null, // { question: string, choices?: string[] }
     // UI toggles
@@ -954,42 +958,6 @@ function renderComposer(buf, layout, theme, composer, tuiState, tabState) {
       buf.writeLine(contentTop + r, left, ' '.repeat(width));
     }
   }
-}
-
-function renderApprovalModal(buf, theme, rows, cols, approval) {
-  if (!approval) return;
-
-  // Modal dimensions
-  const modalWidth = Math.min(60, cols - 8);
-  const lines = [
-    theme.bold(theme.style('state.warn', '  Approval Required')),
-    '',
-    `  ${theme.style('fg.secondary', 'kind:')} ${theme.style('fg.primary', approval.kind || 'exec')}`,
-    `  ${theme.style('fg.secondary', 'detail:')}`,
-  ];
-
-  // Wrap the summary into the modal
-  const summaryLines = wordWrap(approval.summary || '', modalWidth - 6);
-  for (const sl of summaryLines) {
-    lines.push(`    ${theme.style('fg.primary', sl)}`);
-  }
-
-  if (approval.suggestedPrefix) {
-    lines.push('');
-    lines.push(
-      `  ${theme.style('fg.secondary', 'prefix:')} ${theme.style('fg.primary', approval.suggestedPrefix)}`,
-    );
-  }
-
-  lines.push('');
-  lines.push(
-    `  ${theme.style('accent.link', 'Ctrl+Y / y')} approve  ` +
-      `${theme.style('accent.link', 'a')} always  ` +
-      `${theme.style('accent.link', 'p')} save-prefix  ` +
-      `${theme.style('accent.link', 'Ctrl+N / n')} deny  ` +
-      `${theme.style('accent.link', 'Esc')} close`,
-  );
-  renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
 }
 
 function renderQuestionModal(buf, theme, rows, cols, userQuestion, inputBuf) {
@@ -2064,7 +2032,7 @@ export async function runTUI(options = {}) {
     // Overlays (approval/question are run-state overlays; others are UI overlays)
     switch (overlayKind) {
       case 'approval':
-        renderApprovalModal(screenBuf, theme, rows, cols, tuiState.approval);
+        tuiState.approvalPane?.render(screenBuf, rows, cols, theme);
         break;
       case 'question':
         renderQuestionModal(screenBuf, theme, rows, cols, tuiState.userQuestion, questionInputBuf);
@@ -2313,13 +2281,13 @@ export async function runTUI(options = {}) {
         if (daemonClient?.connected && event.payload?.approvalId) {
           const approvalId = event.payload.approvalId;
           tuiState.runState = 'awaiting_approval';
-          tuiState.approval = {
+          openApprovalPane({
             kind: event.payload.kind || 'action',
             summary: event.payload.summary || event.payload.title,
             patternIndex: -1,
             suggestedPrefix: null,
             daemonApprovalId: approvalId,
-          };
+          });
           approvalResolve = (approved) => {
             daemonClient
               ?.request(
@@ -2342,7 +2310,7 @@ export async function runTUI(options = {}) {
         // Daemon mode: approval was processed, resume display
         if (tuiState.runState === 'awaiting_approval') {
           tuiState.runState = 'running';
-          tuiState.approval = null;
+          closeApprovalPane();
           approvalResolve = null;
           tuiState.dirty.add('all');
           scheduler.schedule();
@@ -2515,7 +2483,7 @@ export async function runTUI(options = {}) {
 
       return new Promise((resolve) => {
         tuiState.runState = 'awaiting_approval';
-        tuiState.approval = { kind: tool, summary: detail, patternIndex, suggestedPrefix };
+        openApprovalPane({ kind: tool, summary: detail, patternIndex, suggestedPrefix });
         approvalResolve = resolve;
         tuiState.dirty.add('all');
         scheduler.flush();
@@ -2774,7 +2742,7 @@ export async function runTUI(options = {}) {
   function resetTUIViewForSessionChange() {
     tuiState.runState = 'idle';
     tuiState.streamBuf = '';
-    tuiState.approval = null;
+    closeApprovalPane();
     approvalResolve = null;
     setActiveOverlayModal(null);
     tuiState.payloadCursorId = null;
@@ -4131,6 +4099,25 @@ export async function runTUI(options = {}) {
     }
   }
 
+  // Open / close the approval Pane in lockstep with `tuiState.approval`.
+  // Hoisted as a function declaration so the set sites earlier in runTUI
+  // can reference it; the action callbacks below are likewise hoisted.
+  function openApprovalPane(payload) {
+    tuiState.approval = payload;
+    tuiState.approvalPane = createApprovalPane(payload, {
+      approve: approveAction,
+      alwaysApprove: alwaysApproveAction,
+      persistPrefix: () =>
+        runAsync(() => persistPrefixApprovalAction(), 'failed to persist trusted prefix'),
+      deny: denyAction,
+    });
+  }
+
+  function closeApprovalPane() {
+    tuiState.approval = null;
+    tuiState.approvalPane = null;
+  }
+
   function approveAction() {
     if (approvalResolve) {
       if (tuiState.approval) {
@@ -4144,7 +4131,7 @@ export async function runTUI(options = {}) {
       }
       approvalResolve(true);
       approvalResolve = null;
-      tuiState.approval = null;
+      closeApprovalPane();
       tuiState.runState = 'running';
       tuiState.dirty.add('all');
       scheduler.schedule();
@@ -4169,7 +4156,7 @@ export async function runTUI(options = {}) {
       }
       approvalResolve(true);
       approvalResolve = null;
-      tuiState.approval = null;
+      closeApprovalPane();
       tuiState.runState = 'running';
       tuiState.dirty.add('all');
       scheduler.schedule();
@@ -4218,7 +4205,7 @@ export async function runTUI(options = {}) {
 
     approvalResolve(true);
     approvalResolve = null;
-    tuiState.approval = null;
+    closeApprovalPane();
     tuiState.runState = 'running';
     tuiState.dirty.add('all');
     scheduler.schedule();
@@ -4237,43 +4224,10 @@ export async function runTUI(options = {}) {
       }
       approvalResolve(false);
       approvalResolve = null;
-      tuiState.approval = null;
+      closeApprovalPane();
       tuiState.runState = 'running';
       tuiState.dirty.add('all');
       scheduler.schedule();
-    }
-  }
-
-  /** Dedicated input handler for the approval modal — bare keys, no keybind map. */
-  function handleApprovalModalInput(key) {
-    if (key.name === 'y' && !key.ctrl && !key.meta) {
-      approveAction();
-      return;
-    }
-    if (key.name === 'a' && !key.ctrl && !key.meta) {
-      alwaysApproveAction();
-      return;
-    }
-    if (key.name === 'p' && !key.ctrl && !key.meta) {
-      runAsync(() => persistPrefixApprovalAction(), 'failed to persist trusted prefix');
-      return;
-    }
-    if (key.name === 'n' && !key.ctrl && !key.meta) {
-      denyAction();
-      return;
-    }
-    if (key.name === 'escape') {
-      denyAction();
-      return;
-    }
-    // Ctrl+Y and Ctrl+N still work (from keybind map fallthrough)
-    if (key.ctrl && key.name === 'y') {
-      approveAction();
-      return;
-    }
-    if (key.ctrl && key.name === 'n') {
-      denyAction();
-      return;
     }
   }
 
@@ -4893,9 +4847,9 @@ export async function runTUI(options = {}) {
     const keyBuf = Buffer.from(str);
     const key = parseKey(keyBuf);
 
-    // Approval modal: dedicated handler with bare y/a/n keys
-    if (tuiState.runState === 'awaiting_approval' && tuiState.approval) {
-      handleApprovalModalInput(key);
+    // Approval modal: pane owns its key handling (bare y/a/p/n, Ctrl+Y/N, Esc).
+    if (tuiState.runState === 'awaiting_approval' && tuiState.approvalPane) {
+      tuiState.approvalPane.handleKey?.(key);
       return;
     }
 
