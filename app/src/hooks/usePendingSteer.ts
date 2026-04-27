@@ -1,6 +1,12 @@
 import type React from 'react';
 import { useCallback, useRef, useState } from 'react';
 import type { AttachmentData, QueuedFollowUpOptions } from '@/types';
+import {
+  appendQueuedItem,
+  clearQueuedItems,
+  shiftQueuedItem,
+  type QueuedItemsByChat,
+} from './chat-queue';
 
 export interface PendingSteerRequest {
   text: string;
@@ -9,7 +15,7 @@ export interface PendingSteerRequest {
   requestedAt: number;
 }
 
-export type PendingSteersByChat = Record<string, PendingSteerRequest>;
+export type PendingSteersByChat = QueuedItemsByChat<PendingSteerRequest>;
 
 export interface UsePendingSteerParams {
   isMountedRef: React.MutableRefObject<boolean>;
@@ -18,21 +24,22 @@ export interface UsePendingSteerParams {
 export interface UsePendingSteerResult {
   pendingSteersByChat: PendingSteersByChat;
   pendingSteersByChatRef: React.MutableRefObject<PendingSteersByChat>;
-  setPendingSteer: (chatId: string, steer: PendingSteerRequest) => void;
-  consumePendingSteer: (chatId: string) => PendingSteerRequest | null;
+  enqueuePendingSteer: (chatId: string, steer: PendingSteerRequest) => void;
+  dequeuePendingSteer: (chatId: string) => PendingSteerRequest | null;
   clearPendingSteer: (chatId: string) => boolean;
 }
 
-// Single-slot per-chat pending-steer state. Unlike the FIFO shape of
-// useQueuedFollowUps, this is Record<string, PendingSteerRequest> --
-// one steer per chat, "latest wins" on set, and consume *deletes* the
-// slot rather than shifting. The cardinality difference is why these
-// two per-chat maps stay in separate hooks despite their superficially
-// similar shape (audit Open Question #2 resolved in Phase 4).
+// Per-chat FIFO queue of pending steer requests. Replaces the prior
+// single-slot "latest wins" shape so two steers typed in quick
+// succession both land at consecutive drain boundaries instead of
+// silently dropping the first one. Drain semantics are head-only
+// ("one-at-a-time"): each steer-drain boundary in `useChat.ts`
+// dequeues exactly one entry and restarts the loop with it.
 //
 // `replacePendingSteers` is deliberately private: every public mutator
-// routes through it, preserving the "ref updated before setState" contract
-// that Phases 1-3 also protect by not exposing their internal replacers.
+// routes through it, preserving the "ref updated before setState"
+// contract so callbacks reading the ref immediately after a mutator
+// see the latest queue.
 export function usePendingSteer({ isMountedRef }: UsePendingSteerParams): UsePendingSteerResult {
   const [pendingSteersByChat, setPendingSteersByChat] = useState<PendingSteersByChat>({});
   const pendingSteersByChatRef = useRef<PendingSteersByChat>({});
@@ -47,34 +54,28 @@ export function usePendingSteer({ isMountedRef }: UsePendingSteerParams): UsePen
     [isMountedRef],
   );
 
-  const setPendingSteer = useCallback(
+  const enqueuePendingSteer = useCallback(
     (chatId: string, steer: PendingSteerRequest) => {
-      replacePendingSteers({
-        ...pendingSteersByChatRef.current,
-        [chatId]: steer,
-      });
+      replacePendingSteers(appendQueuedItem(pendingSteersByChatRef.current, chatId, steer));
     },
     [replacePendingSteers],
   );
 
-  const consumePendingSteer = useCallback(
+  const dequeuePendingSteer = useCallback(
     (chatId: string): PendingSteerRequest | null => {
-      const current = pendingSteersByChatRef.current[chatId];
-      if (!current) return null;
-      const next = { ...pendingSteersByChatRef.current };
-      delete next[chatId];
+      const { next, item } = shiftQueuedItem(pendingSteersByChatRef.current, chatId);
+      if (!item) return null;
       replacePendingSteers(next);
-      return current;
+      return item;
     },
     [replacePendingSteers],
   );
 
   const clearPendingSteer = useCallback(
     (chatId: string): boolean => {
-      if (!pendingSteersByChatRef.current[chatId]) return false;
-      const next = { ...pendingSteersByChatRef.current };
-      delete next[chatId];
-      replacePendingSteers(next);
+      const current = pendingSteersByChatRef.current[chatId];
+      if (!current || current.length === 0) return false;
+      replacePendingSteers(clearQueuedItems(pendingSteersByChatRef.current, chatId));
       return true;
     },
     [replacePendingSteers],
@@ -83,8 +84,8 @@ export function usePendingSteer({ isMountedRef }: UsePendingSteerParams): UsePen
   return {
     pendingSteersByChat,
     pendingSteersByChatRef,
-    setPendingSteer,
-    consumePendingSteer,
+    enqueuePendingSteer,
+    dequeuePendingSteer,
     clearPendingSteer,
   };
 }
