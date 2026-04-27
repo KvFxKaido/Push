@@ -18,7 +18,12 @@ describe('ORCHESTRATOR_SYSTEM_PROMPT', () => {
 });
 
 describe('getContextBudget', () => {
-  it('keeps the default budget for regular OpenRouter models', () => {
+  // The current tests assume no models.dev metadata is available. In vitest's
+  // Node environment, `window` is undefined, so storage reads return null
+  // instead of using browser localStorage. Each scenario therefore exercises
+  // the name-pattern fallback in lookupContextWindow.
+
+  it('keeps the default budget for unknown models with no catalog hit', () => {
     expect(getContextBudget('openrouter', 'mistralai/mistral-large-2512')).toEqual({
       maxTokens: 100_000,
       targetTokens: 88_000,
@@ -26,59 +31,63 @@ describe('getContextBudget', () => {
     });
   });
 
-  it('uses the large Gemini budget for Gemini models', () => {
-    expect(getContextBudget('openrouter', 'google/gemini-3.1-pro-preview:nitro')).toEqual({
-      maxTokens: 850_000,
-      targetTokens: 800_000,
+  it('derives a 1M-class budget for Gemini regardless of provider', () => {
+    const expected = {
+      maxTokens: Math.floor(1_000_000 * 0.92),
+      targetTokens: Math.floor(1_000_000 * 0.85),
       summarizeTokens: 88_000,
-    });
+    };
+    expect(getContextBudget('openrouter', 'google/gemini-3.1-pro-preview:nitro')).toEqual(expected);
+    expect(getContextBudget('vertex', 'google/gemini-2.5-pro')).toEqual(expected);
   });
 
-  it('uses the large Gemini budget for Vertex Gemini models too', () => {
-    expect(getContextBudget('vertex', 'google/gemini-2.5-pro')).toEqual({
-      maxTokens: 850_000,
-      targetTokens: 800_000,
-      summarizeTokens: 88_000,
-    });
-  });
-
-  it('uses the large-context budget for non-Haiku Claude models', () => {
+  it('derives a 1M-class budget for non-Haiku Claude models', () => {
     expect(getContextBudget('openrouter', 'anthropic/claude-sonnet-4.6:nitro')).toEqual({
-      maxTokens: 850_000,
-      targetTokens: 800_000,
+      maxTokens: Math.floor(1_000_000 * 0.92),
+      targetTokens: Math.floor(1_000_000 * 0.85),
       summarizeTokens: 88_000,
     });
   });
 
-  it('keeps Haiku models on the default budget', () => {
+  it('derives a 200K budget for Haiku models (matches their real window)', () => {
     expect(getContextBudget('openrouter', 'anthropic/claude-3.5-haiku:nitro')).toEqual({
-      maxTokens: 100_000,
-      targetTokens: 88_000,
+      maxTokens: Math.floor(200_000 * 0.92),
+      targetTokens: Math.floor(200_000 * 0.85),
       summarizeTokens: 88_000,
     });
   });
 
-  it('uses the conservative large-context budget for gpt-5.4-pro', () => {
-    expect(getContextBudget('openrouter', 'openai/gpt-5.4-pro')).toEqual({
-      maxTokens: 850_000,
-      targetTokens: 725_000,
-      summarizeTokens: 160_000,
-    });
+  it('derives a 1M-class budget for GPT-5 models', () => {
+    const expected = {
+      maxTokens: Math.floor(1_000_000 * 0.92),
+      targetTokens: Math.floor(1_000_000 * 0.85),
+      summarizeTokens: 88_000,
+    };
+    expect(getContextBudget('openrouter', 'openai/gpt-5.4-pro')).toEqual(expected);
+    expect(getContextBudget('openrouter', 'openai/gpt-5.4')).toEqual(expected);
   });
 
-  it('uses the same large-context budget for regular gpt-5.4', () => {
-    expect(getContextBudget('openrouter', 'openai/gpt-5.4')).toEqual({
-      maxTokens: 850_000,
-      targetTokens: 725_000,
-      summarizeTokens: 160_000,
-    });
-  });
-
-  it('uses the Grok budget for Grok models', () => {
+  it('derives a 2M-class budget for Grok models', () => {
     expect(getContextBudget('openrouter', 'x-ai/grok-4.1-fast')).toEqual({
-      maxTokens: 1_500_000,
-      targetTokens: 1_350_000,
-      summarizeTokens: 180_000,
+      maxTokens: Math.floor(2_000_000 * 0.92),
+      targetTokens: Math.floor(2_000_000 * 0.85),
+      summarizeTokens: 88_000,
     });
+  });
+
+  it('derives a 256K budget for Kimi/Moonshot models', () => {
+    expect(getContextBudget('cloudflare', '@cf/moonshotai/kimi-k2-instruct')).toEqual({
+      maxTokens: Math.floor(256_000 * 0.92),
+      targetTokens: Math.floor(256_000 * 0.85),
+      summarizeTokens: 88_000,
+    });
+  });
+
+  it('keeps summarizeTokens at or below the target for the unknown-model default fallback', () => {
+    // Synthesize a model name that misses every pattern so this exercises the
+    // default fallback budget (100K), where summarizeTokens is capped at the
+    // same 88K target rather than a truly tiny window.
+    const budget = getContextBudget('openrouter', 'unknown-tiny-model');
+    expect(budget.summarizeTokens).toBeLessThanOrEqual(budget.targetTokens);
   });
 });
