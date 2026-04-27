@@ -403,7 +403,6 @@ export const handleOllamaModels = createJsonProxyHandler({
     'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama Cloud model list timed out after 30 seconds',
 });
-
 export const handleOllamaChat = createStreamProxyHandler({
   name: 'Ollama Cloud API',
   logTag: 'api/ollama/chat',
@@ -415,8 +414,6 @@ export const handleOllamaChat = createStreamProxyHandler({
     'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama Cloud request timed out after 180 seconds',
 });
-
-// --- Mistral ---
 
 // --- OpenRouter ---
 

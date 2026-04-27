@@ -726,6 +726,8 @@ export interface JsonProxyConfig {
   needsBody?: boolean;
   extraFetchHeaders?: Record<string, string>;
   formatUpstreamError?: (status: number, bodyText: string) => { error: string; code?: string };
+  /** Opt-in Cloudflare AI Gateway routing. No-op when gateway env vars are unset. */
+  gateway?: AiGatewayBinding;
 }
 
 export function createJsonProxyHandler(
@@ -759,6 +761,13 @@ export function createJsonProxyHandler(
       ...(needsBody ? { bytes: bodyText.length } : {}),
     });
 
+    const gatewayUrl = config.gateway ? buildAiGatewayUrl(env, config.gateway) : null;
+    const upstreamUrl = gatewayUrl ?? config.upstreamUrl;
+    const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
+    const gatewayHeaders: Record<string, string> = aigAuth
+      ? { 'cf-aig-authorization': aigAuth }
+      : {};
+
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
@@ -773,17 +782,22 @@ export function createJsonProxyHandler(
             traceparent: buildTraceparent(upstreamCtx),
             ...(needsBody ? { 'Content-Type': 'application/json' } : {}),
             ...(config.extraFetchHeaders ?? {}),
+            ...gatewayHeaders,
           },
           signal: controller.signal,
         };
         if (needsBody) fetchInit.body = bodyText;
-        upstream = await fetch(config.upstreamUrl, fetchInit);
+        upstream = await fetch(upstreamUrl, fetchInit);
       } finally {
         clearTimeout(timeoutId);
       }
 
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
+        const isHtml = /<html/i.test(errBody.slice(0, 200));
+        const safeBody = isHtml
+          ? `${config.name} responded with status ${upstream.status} (content type not JSON)`
+          : errBody.slice(0, 200);
         wlog('error', 'upstream_error', {
           requestId,
           route: config.logTag,
@@ -796,7 +810,7 @@ export function createJsonProxyHandler(
           return Response.json(formatted, { status: upstream.status });
         }
         return Response.json(
-          { error: `${config.name} error ${upstream.status}: ${errBody.slice(0, 200)}` },
+          { error: `${config.name} error ${upstream.status}: ${safeBody}` },
           { status: upstream.status },
         );
       }
