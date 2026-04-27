@@ -122,15 +122,23 @@ describe('recoverNamespacedToolCalls', () => {
     ]);
   });
 
-  it('recovers a truncated args object cut off mid-string value', () => {
-    // Stream cut while the model was emitting a value — the auto-close
-    // should close the open string and the brace, yielding a partial
-    // but valid object the dispatcher can still execute.
+  it('rejects truncation that ends inside an open string (false-positive guard)', () => {
+    // Codex P1 on PR #423: without the in-string gate, this could
+    // also "recover" prose like `... functions.exec:0 {"command":"rm`
+    // followed by ordinary text — auto-closing inside an open string
+    // would either fabricate a value or sweep prose into args. Both
+    // failure modes are real-tool-execution risks; we drop the
+    // ambiguous case rather than guess.
     const text = 'functions.read_file:0 {"path": "TODO';
-    const recovered = recoverNamespacedToolCalls(text);
-    expect(recovered).toHaveLength(1);
-    expect(recovered[0].tool).toBe('read_file');
-    expect(recovered[0].args).toEqual({ path: 'TODO' });
+    expect(recoverNamespacedToolCalls(text)).toEqual([]);
+  });
+
+  it('rejects truncation where an open string runs into prose', () => {
+    // The exact false-positive Codex flagged: brace opened, string
+    // opened, then natural-language prose continues without a closing
+    // quote. Auto-close would package the prose as a path arg.
+    const text = 'Hmm, let me think. functions.read_file:0 {"path": "TODO but I changed my mind';
+    expect(recoverNamespacedToolCalls(text)).toEqual([]);
   });
 
   it('does not auto-close when truncation contains a second functions.* prefix', () => {
@@ -151,5 +159,26 @@ describe('recoverNamespacedToolCalls', () => {
     // bails rather than guess wildly.
     const text = 'functions.exec:0 {"a": {"b": {"c": {"d": "value"';
     expect(recoverNamespacedToolCalls(text)).toEqual([]);
+  });
+
+  it('treats functions.* inside a string literal as data, not as a second call', () => {
+    // Copilot review on PR #423: without string-aware scanning, the
+    // prefix inside the string value would falsely suppress the
+    // truncation recovery. The args contain a literal mention of the
+    // namespaced format (e.g., a docs example) but the call itself is
+    // a clean truncation of one read_file call.
+    const text =
+      'functions.read_file:0 {"path": "docs/examples.md", "note": "see functions.foo:1 for an example"';
+    const recovered = recoverNamespacedToolCalls(text);
+    expect(recovered).toEqual([
+      {
+        tool: 'read_file',
+        args: {
+          path: 'docs/examples.md',
+          note: 'see functions.foo:1 for an example',
+        },
+        offset: 0,
+      },
+    ]);
   });
 });
