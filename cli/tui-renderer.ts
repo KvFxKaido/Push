@@ -510,7 +510,7 @@ export interface Layout {
  * Internally builds a flex tree (header / gap / row[transcript, divider,
  * toolPane] / gap / composer / footer) and resolves it via {@link solveFlex}.
  * Future panes that need nested splits can extend the tree below or call
- * {@link solveFlex} directly with their own.
+ * {@link solveFlex} directly with their own flex tree.
  */
 export function computeLayout(
   rows: number,
@@ -568,9 +568,21 @@ export function computeLayout(
 
   const header = regions.get('header') ?? { ...fallback, height: headerHeight };
   const transcriptRaw = regions.get('transcript') ?? fallback;
-  const composer = regions.get('composer') ?? { ...fallback, height: composerHeight };
-  const footer = regions.get('footer') ?? { ...fallback, height: footerHeight };
+  const composerRaw = regions.get('composer') ?? { ...fallback, height: composerHeight };
+  const footerRaw = regions.get('footer') ?? { ...fallback, height: footerHeight };
   const transcript: PaneRegion = { ...transcriptRaw, height: Math.max(1, transcriptRaw.height) };
+
+  // The footer is anchored to the terminal bottom and the composer abuts
+  // it. solveFlex's natural top-down stacking would push them off-screen
+  // when fixed children overflow available height (e.g. tiny terminals);
+  // pinning here preserves the prior bottom-anchored behavior. For tall
+  // terminals these positions match what the solver already produced.
+  const footerAnchoredTop = rows - outerMarginRow - footerHeight + 1;
+  const footer: PaneRegion = { ...footerRaw, top: footerAnchoredTop };
+  const composer: PaneRegion = {
+    ...composerRaw,
+    top: footerAnchoredTop - composerRaw.height,
+  };
 
   let toolPane: PaneRegion | null = null;
   if (toolPaneOpen) {

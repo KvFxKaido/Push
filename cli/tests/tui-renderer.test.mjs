@@ -227,6 +227,19 @@ describe('computeLayout', () => {
     assert.ok(layout.header.width > 0);
   });
 
+  it('keeps footer + composer anchored within the viewport on tiny terminals', () => {
+    // Regression: with a top-down flex stack, fixed children whose total
+    // exceeded available height would push the footer past row N. The
+    // footer is anchored to the terminal bottom; composer abuts it.
+    const rows = 10;
+    const layout = computeLayout(rows, 40);
+    assert.ok(
+      layout.footer.top + layout.footer.height - 1 <= rows,
+      `footer (top ${layout.footer.top}, height ${layout.footer.height}) overflows ${rows}-row terminal`,
+    );
+    assert.equal(layout.composer.top + layout.composer.height, layout.footer.top);
+  });
+
   it('respects outer margins', () => {
     const layout = computeLayout(24, 80);
     assert.ok(layout.innerLeft >= 3); // 2 col margin + 1 for 1-indexing
@@ -355,7 +368,7 @@ describe('solveFlex', () => {
     assert.deepEqual(out.get('main'), { top: 3, left: 21, width: 80, height: 48 });
   });
 
-  it('clamps to zero when fixed sizes exceed parent dimension', () => {
+  it('clamps flex children to zero when fixed sizes consume the axis', () => {
     const out = solveFlex(
       {
         dir: 'col',
