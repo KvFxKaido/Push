@@ -10,6 +10,35 @@
 
 import { formatToolResultEnvelope } from './tool-call-recovery.js';
 
+
+/** Mutation failure tracker — detects repeated failures on same tool+args */
+export interface MutationFailureTracker {
+  recordFailure(key: string): void;
+  isRepeatedFailure(key: string, limit: number): boolean;
+  clear(): void;
+}
+
+export function createMutationFailureTracker(): MutationFailureTracker {
+  const failures = new Map<string, number>();
+  return {
+    recordFailure(key: string) {
+      failures.set(key, (failures.get(key) ?? 0) + 1);
+    },
+    isRepeatedFailure(key: string, limit: number) {
+      return (failures.get(key) ?? 0) >= limit;
+    },
+    clear() {
+      failures.clear();
+    },
+  };
+}
+
+/** Canonical key for failure tracking. For file mutations, we key on tool:path. */
+export function getToolInvocationKey(toolName: string, args: unknown): string {
+  const argsStr = typeof args === 'object' && args !== null ? JSON.stringify(args) : String(args);
+  return `${toolName}:${argsStr}`;
+}
+
 /** Max size before agent tool results get truncated (matches Web's limit). */
 export const MAX_TOOL_RESULT_SIZE = 8_000;
 

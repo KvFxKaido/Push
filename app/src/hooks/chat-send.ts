@@ -26,6 +26,9 @@ import {
   getToolStatusLabel,
   getToolStatusDetail,
   markLastAssistantToolCall,
+  createMutationFailureTracker,
+  getToolInvocationKey,
+  type MutationFailureTracker,
 } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import {
@@ -580,6 +583,7 @@ export async function processAssistantTurn(
   apiMessages: ChatMessage[],
   ctx: SendLoopContext,
   recoveryState: ToolCallRecoveryState,
+  tracker: MutationFailureTracker,
 ): Promise<AssistantTurnResult> {
   const {
     chatId,
@@ -657,6 +661,25 @@ export async function processAssistantTurn(
   // --- Check for multiple independent read-only tool calls in one turn ---
   const detected = detectAllToolCalls(accumulated);
   const parallelToolCalls = detected.readOnly;
+
+  // --- Circuit breaker: detect runaway tool-call loops ---
+  const MAX_REPEATED_TOOL_CALLS = 3;
+  const allIncomingCalls = [...detected.readOnly, ...detected.fileMutations, ...(detected.mutating ? [detected.mutating] : [])];
+
+  for (const call of allIncomingCalls) {
+    const key = getToolInvocationKey(getToolName(call), call.call.args);
+    if (tracker.isRepeatedFailure(key, MAX_REPEATED_TOOL_CALLS)) {
+      console.warn(`[Push] Turn ${round}: loop circuit breaker tripped for ${getToolName(call)}. Breaking loop.`);
+      return {
+        nextApiMessages: apiMessages,
+        nextRecoveryState: recoveryState,
+        loopAction: 'break',
+        loopCompletedNormally: false,
+      };
+    }
+    tracker.recordFailure(key);
+  }
+
 
   if (detected.extraMutations.length > 0) {
     const errorAction = handleMultipleMutationsError(
