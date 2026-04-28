@@ -207,6 +207,7 @@ export function useBackgroundCoderJob({
           startedAt: patch.startedAt ?? existing?.startedAt ?? Date.now(),
           updatedAt: Date.now(),
           taskPreview: patch.taskPreview ?? existing?.taskPreview,
+          source: patch.source ?? existing?.source,
         };
         return {
           ...prev,
@@ -494,12 +495,16 @@ export function useBackgroundCoderJob({
    *  pendingJobIds entry, places the JobCard via the supplied
    *  `placeCard` strategy, and opens the SSE stream. The two public
    *  start entry points (`startJob` / `startMainChatJob`) differ only
-   *  in card placement, so they thread the same input through this
-   *  core and pass different placement functions. */
+   *  in card placement and source tag, so they thread the same input
+   *  through this core and pass different placement + source values.
+   *  The source tag distinguishes main-chat turns from `delegate_coder`
+   *  background delegations in `pendingJobIds` so PR 3's auto-fill
+   *  scan only picks main-chat candidates as chatRef.checkpointId. */
   const persistAndStart = useCallback(
     async (
       input: StartBackgroundJobInput,
       placeCard: (chatId: string, card: ChatCard) => void,
+      source: 'main-chat' | 'delegation',
     ): Promise<StartBackgroundJobResult> => {
       // Send exactly the fields the server contract expects. jobId +
       // origin are deliberately not passed — server fills them to
@@ -564,6 +569,7 @@ export function useBackgroundCoderJob({
         lastEventId: null,
         startedAt,
         taskPreview: input.taskPreview,
+        source,
       });
 
       const initialCard: ChatCard = {
@@ -594,13 +600,58 @@ export function useBackgroundCoderJob({
   );
 
   const startJob = useCallback(
-    (input: StartBackgroundJobInput) => persistAndStart(input, appendJobCardToToolCall),
+    (input: StartBackgroundJobInput) =>
+      persistAndStart(input, appendJobCardToToolCall, 'delegation'),
     [persistAndStart, appendJobCardToToolCall],
   );
 
+  /** Resolves the latest completed *main-chat* background-job id for a
+   *  chat. Used to auto-fill chatRef.checkpointId when the caller
+   *  didn't supply one. Filters strictly to source === 'main-chat':
+   *  delegate_coder background delegations also live in pendingJobIds
+   *  and would otherwise get picked here, sending the new turn into a
+   *  chain walk against an envelope that has no chatRef and ends after
+   *  one hop with unrelated context. Entries without a source field
+   *  (pre-PR-3-review) are conservatively skipped — losing one turn
+   *  of continuity is cheaper than leaking delegation state into the
+   *  preamble. Returns null for fresh chats. */
+  const resolveLatestCompletedJobId = useCallback(
+    (chatId: string): string | null => {
+      const conv = conversationsRef.current[chatId];
+      const pending = conv?.pendingJobIds;
+      if (!pending) return null;
+      let latest: { jobId: string; updatedAt: number } | null = null;
+      for (const entry of Object.values(pending)) {
+        if (entry.status !== 'completed') continue;
+        if (entry.source !== 'main-chat') continue;
+        if (!latest || entry.updatedAt > latest.updatedAt) {
+          latest = { jobId: entry.jobId, updatedAt: entry.updatedAt };
+        }
+      }
+      return latest?.jobId ?? null;
+    },
+    [conversationsRef],
+  );
+
   const startMainChatJob = useCallback(
-    (input: StartBackgroundJobInput) => persistAndStart(input, appendJobCardAsNewAssistantMessage),
-    [persistAndStart, appendJobCardAsNewAssistantMessage],
+    (input: StartBackgroundJobInput) => {
+      // PR 3: auto-fill chatRef.checkpointId from the latest completed
+      // bg job for this chat unless the caller already set one. Caller
+      // can pass an explicit checkpointId to fork from a specific turn,
+      // or pass `chatRef: undefined` to opt out of continuity entirely
+      // (rare; typically only relevant for tests).
+      let chatRef = input.chatRef;
+      if (chatRef && chatRef.checkpointId === undefined) {
+        const latest = resolveLatestCompletedJobId(input.chatId);
+        if (latest) chatRef = { ...chatRef, checkpointId: latest };
+      }
+      return persistAndStart(
+        { ...input, chatRef },
+        appendJobCardAsNewAssistantMessage,
+        'main-chat',
+      );
+    },
+    [persistAndStart, appendJobCardAsNewAssistantMessage, resolveLatestCompletedJobId],
   );
 
   const cancelJob = useCallback(async (jobId: string): Promise<void> => {

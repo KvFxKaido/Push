@@ -392,6 +392,13 @@ export interface BackgroundJobPersistenceEntry {
   startedAt: number;
   updatedAt: number;
   taskPreview?: string;
+  /** Distinguishes main-chat bg turns from `delegate_coder` background
+   *  delegations. Both go through the same hook plumbing but have
+   *  different semantics: only main-chat entries are valid prior-turn
+   *  candidates for chatRef.checkpointId auto-fill (PR 3). Undefined
+   *  on entries written before the field was introduced — those are
+   *  treated as ineligible by the auto-fill scan. */
+  source?: 'main-chat' | 'delegation';
 }
 
 // --- Coder working memory ---
