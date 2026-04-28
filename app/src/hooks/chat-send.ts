@@ -24,6 +24,7 @@ import {
   buildToolResultMessage,
   getToolName,
   getToolStatusLabel,
+  getToolStatusDetail,
   markLastAssistantToolCall,
 } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
@@ -1058,7 +1059,15 @@ export async function processAssistantTurn(
       const mutCall = detected.mutating;
       const mutExecutionId = createId();
       console.log(`[Push] Trailing mutation after parallel reads:`, mutCall);
-      updateAgentStatus({ active: true, phase: getToolStatusLabel(mutCall) }, { chatId });
+      updateAgentStatus(
+        {
+          active: true,
+          phase: getToolStatusLabel(mutCall),
+          detail: getToolStatusDetail(mutCall),
+          startedAt: Date.now(),
+        },
+        { chatId },
+      );
       appendRunEvent(chatId, {
         type: 'tool.execution_start',
         round,
@@ -1378,7 +1387,15 @@ export async function processAssistantTurn(
   let toolExecDurationMs = 0;
   let singleRawResult: ToolExecRawResult | null = null;
   const statusLabel = getToolStatusLabel(toolCall);
-  updateAgentStatus({ active: true, phase: statusLabel }, { chatId });
+  updateAgentStatus(
+    {
+      active: true,
+      phase: statusLabel,
+      detail: getToolStatusDetail(toolCall),
+      startedAt: toolExecStart,
+    },
+    { chatId },
+  );
   appendRunEvent(chatId, {
     type: 'tool.execution_start',
     round,

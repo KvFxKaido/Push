@@ -769,6 +769,13 @@ export interface AgentStatus {
   active: boolean;
   phase: string;
   detail?: string;
+  /** Wall-clock timestamp of when the current activity started. When
+   *  set, the AgentStatusBar renders an elapsed-time suffix that ticks
+   *  every second. Used by long-running tool executions (sandbox exec,
+   *  delegations) so the user has a sense of progress beyond a generic
+   *  "Executing in sandbox" + spinner. Omit for fast phases like
+   *  "Thinking..." where the timer would be noise. */
+  startedAt?: number;
 }
 
 export type AgentStatusSource = 'orchestrator' | 'coder' | 'explorer' | 'auditor' | 'system';

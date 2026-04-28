@@ -58,6 +58,62 @@ export function getToolName(toolCall: AnyToolCall): string {
   return getToolPublicName(toolCall.call.tool) || 'unknown';
 }
 
+/** Tool-specific detail string for the AgentStatusBar — turns a generic
+ *  "Executing in sandbox..." into "Executing in sandbox... `npm install`".
+ *  Returns undefined when there's nothing useful to show; the banner
+ *  hides the detail span in that case.
+ *
+ *  Detail is bounded to keep the status line scannable on mobile —
+ *  60 chars for paths/commands, 50 for prose. Truncation appends an
+ *  ellipsis so the user sees that the value was cut. */
+export function getToolStatusDetail(toolCall: AnyToolCall): string | undefined {
+  const tool = toolCall.call.tool;
+  // Type-guard via `'args' in` instead of a cast — `AnyToolCall` is a
+  // discriminated union and some future variants may legitimately lack
+  // `args`. The guard narrows to members that have it, and the
+  // `typeof === 'object'` check defends against malformed runtime input.
+  const args =
+    'args' in toolCall.call && toolCall.call.args && typeof toolCall.call.args === 'object'
+      ? (toolCall.call.args as Record<string, unknown>)
+      : {};
+
+  // Sandbox exec — show the command (the most common slow operation).
+  if (tool === 'sandbox_exec' || tool === 'exec') {
+    return truncateDetail(asNonEmptyString(args.command), 60);
+  }
+
+  // File-targeted tools — show the path. Covers read_file, write_file,
+  // edit_range, search_replace, apply_patchset, etc.
+  if (typeof args.path === 'string') {
+    return truncateDetail(asNonEmptyString(args.path), 60);
+  }
+
+  // Delegations — show the task summary so the user knows what's
+  // delegated.
+  if (tool === 'delegate_coder' || tool === 'delegate_explorer') {
+    return truncateDetail(asNonEmptyString(args.task), 50);
+  }
+
+  // Web search — show the query.
+  if (tool === 'web_search') {
+    return truncateDetail(asNonEmptyString(args.query), 50);
+  }
+
+  return undefined;
+}
+
+function asNonEmptyString(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined;
+  const trimmed = v.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function truncateDetail(s: string | undefined, max: number): string | undefined {
+  if (!s) return undefined;
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1).trimEnd() + '…';
+}
+
 export function buildToolResultMetaLine(
   round: number,
   apiMessages: readonly Pick<ChatMessage, 'content'>[],
