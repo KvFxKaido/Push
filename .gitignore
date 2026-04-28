@@ -54,7 +54,14 @@ __pycache__/
 
 # development
 android/
-android-wrapper/
+
+# firebase
+.firebase/
+
+# android signing (preventative — survives if android/ is ever un-ignored)
+*.jks
+*.keystore
+keystore.properties
 
 # Personal
 personal/
