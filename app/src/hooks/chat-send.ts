@@ -26,10 +26,12 @@ import {
   getToolStatusLabel,
   getToolStatusDetail,
   markLastAssistantToolCall,
+} from '@/lib/chat-tool-messages';
+import {
   createMutationFailureTracker,
   getToolInvocationKey,
   type MutationFailureTracker,
-} from '@/lib/chat-tool-messages';
+} from '@push/lib/agent-loop-utils';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import {
   executeTool,
