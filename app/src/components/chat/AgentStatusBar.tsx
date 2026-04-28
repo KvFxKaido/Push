@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AgentStatus } from '@/types';
-import { formatStatusElapsed } from '@/lib/chat-tool-messages';
+import { formatElapsedTime } from '@/lib/utils';
 
 interface AgentStatusBarProps {
   status: AgentStatus;
@@ -25,7 +25,9 @@ export function AgentStatusBar({ status }: AgentStatusBarProps) {
 
   if (!status.active) return null;
 
-  const elapsedLabel = status.startedAt ? formatStatusElapsed(now - status.startedAt) : null;
+  const elapsedLabel = status.startedAt
+    ? formatElapsedTime(Math.max(0, now - status.startedAt))
+    : null;
 
   return (
     <div className="flex items-center gap-2.5 px-5 py-2.5 animate-fade-in">

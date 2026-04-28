@@ -68,7 +68,14 @@ export function getToolName(toolCall: AnyToolCall): string {
  *  ellipsis so the user sees that the value was cut. */
 export function getToolStatusDetail(toolCall: AnyToolCall): string | undefined {
   const tool = toolCall.call.tool;
-  const args = (toolCall.call as { args?: Record<string, unknown> }).args ?? {};
+  // Type-guard via `'args' in` instead of a cast — `AnyToolCall` is a
+  // discriminated union and some future variants may legitimately lack
+  // `args`. The guard narrows to members that have it, and the
+  // `typeof === 'object'` check defends against malformed runtime input.
+  const args =
+    'args' in toolCall.call && toolCall.call.args && typeof toolCall.call.args === 'object'
+      ? (toolCall.call.args as Record<string, unknown>)
+      : {};
 
   // Sandbox exec — show the command (the most common slow operation).
   if (tool === 'sandbox_exec' || tool === 'exec') {
@@ -105,16 +112,6 @@ function truncateDetail(s: string | undefined, max: number): string | undefined 
   if (!s) return undefined;
   if (s.length <= max) return s;
   return s.slice(0, max - 1).trimEnd() + '…';
-}
-
-/** Pure helper for AgentStatusBar's elapsed-time suffix. Exported so
- *  tests can pin the formatting without driving a React component. */
-export function formatStatusElapsed(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remSeconds = seconds % 60;
-  return remSeconds === 0 ? `${minutes}m` : `${minutes}m ${remSeconds}s`;
 }
 
 export function buildToolResultMetaLine(

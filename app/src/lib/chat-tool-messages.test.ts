@@ -34,7 +34,6 @@ import {
   buildToolMeta,
   buildToolResultMessage,
   buildToolResultMetaLine,
-  formatStatusElapsed,
   getToolName,
   getToolStatusDetail,
   getToolStatusLabel,
@@ -147,25 +146,6 @@ describe('chat-tool-messages', () => {
       call: { tool: 'sandbox_status', args: {} },
     } as AnyToolCall;
     expect(getToolStatusDetail(sandboxStatus)).toBeUndefined();
-  });
-
-  it('formats elapsed time for the status banner', () => {
-    // Sub-minute: bare seconds.
-    expect(formatStatusElapsed(0)).toBe('0s');
-    expect(formatStatusElapsed(7_500)).toBe('7s');
-    expect(formatStatusElapsed(59_999)).toBe('59s');
-
-    // Whole minutes: drop the seconds suffix to keep the line tight.
-    expect(formatStatusElapsed(60_000)).toBe('1m');
-    expect(formatStatusElapsed(120_000)).toBe('2m');
-
-    // Mixed: minutes + remaining seconds.
-    expect(formatStatusElapsed(75_000)).toBe('1m 15s');
-    expect(formatStatusElapsed(125_999)).toBe('2m 5s');
-
-    // Negative input clamps to 0s — defensive, in case clock skew or a
-    // stale startedAt produces a negative diff.
-    expect(formatStatusElapsed(-5_000)).toBe('0s');
   });
 
   it('extracts tool names for provenance tracking', () => {
