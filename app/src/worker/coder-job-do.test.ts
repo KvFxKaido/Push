@@ -171,6 +171,30 @@ function createMockStorage() {
       return row ? [row as unknown as Record<string, unknown>] : [];
     }
 
+    if (/^SELECT id, status, input_json, finished_at FROM job WHERE id = \?/i.test(sql)) {
+      const row = jobs.get(params[0] as string);
+      return row
+        ? [
+            {
+              id: row.id,
+              status: row.status,
+              input_json: row.input_json,
+              finished_at: row.finished_at,
+            },
+          ]
+        : [];
+    }
+
+    if (
+      /^SELECT payload_json FROM event WHERE job_id = \? AND type = 'job\.completed'/i.test(sql)
+    ) {
+      const job_id = params[0] as string;
+      const matching = events
+        .filter((e) => e.job_id === job_id && e.type === 'job.completed')
+        .sort((a, b) => b.seq - a.seq);
+      return matching.length > 0 ? [{ payload_json: matching[0]!.payload_json }] : [];
+    }
+
     if (/^SELECT id, started_at FROM job\s+WHERE status = 'running'/i.test(sql)) {
       return [...jobs.values()]
         .filter((j) => j.status === 'running' && j.started_at != null)
@@ -718,5 +742,97 @@ describe('CoderJob DO — end-to-end', () => {
     expect(storage.events.length).toBe(0);
     // Alarm rescheduled to this job's deadline.
     expect(alarms.at(-1)).toBe(startedRecently + MAX_JOB_WALL_CLOCK_MS);
+  });
+
+  // ---------------------------------------------------------------------------
+  // /turn-summary route — internal endpoint walked by ContextLoader (PR 3)
+  // ---------------------------------------------------------------------------
+
+  it('/turn-summary returns task + summary + priorCheckpointId for a completed job', async () => {
+    const { ctx, storage, waitUntilPromises } = makeCtx();
+    const input = makeStartInput({
+      jobId: 'job-ts-1',
+      // Pin the chatRef so the loader can walk back from this job.
+      chatRef: {
+        chatId: 'chat-1',
+        repoFullName: 'acme/app',
+        branch: 'main',
+        checkpointId: 'job-prior',
+      },
+    });
+    __setCoderJobServiceOverrides(input.jobId, {
+      detectors: stubDetectors,
+      executor: stubExecutor,
+      stream: makeNoToolStreamFn('outcome text'),
+    });
+
+    const job = new CoderJob(ctx, makeEnv());
+    await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await Promise.all(waitUntilPromises);
+    expect(storage.jobs.get(input.jobId)!.status).toBe('completed');
+
+    const resp = await job.fetch(
+      new Request(`https://do/turn-summary?jobId=${input.jobId}`, { method: 'GET' }),
+    );
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as {
+      jobId: string;
+      status: string;
+      task: string;
+      summary: string | null;
+      finishedAt: number | null;
+      priorCheckpointId: string | null;
+    };
+    expect(body.jobId).toBe(input.jobId);
+    expect(body.status).toBe('completed');
+    expect(body.task).toBe('write hello world');
+    expect(body.summary).toContain('outcome text');
+    expect(typeof body.finishedAt).toBe('number');
+    expect(body.priorCheckpointId).toBe('job-prior');
+  });
+
+  it('/turn-summary returns null summary for a non-completed job (loader stops here)', async () => {
+    const { ctx, storage } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+    // Seed a job row that's still running — no terminal event yet.
+    storage.jobs.set('job-running', {
+      id: 'job-running',
+      chat_id: 'c',
+      repo: 'a/b',
+      branch: 'main',
+      sandbox_id: 'sb',
+      owner_token: 't',
+      origin: 'https://push.example.test',
+      status: 'running',
+      input_json: JSON.stringify(makeStartInput({ jobId: 'job-running' })),
+      result_json: null,
+      error_text: null,
+      created_at: Date.now(),
+      started_at: Date.now(),
+      finished_at: null,
+    });
+
+    const resp = await job.fetch(
+      new Request('https://do/turn-summary?jobId=job-running', { method: 'GET' }),
+    );
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { status: string; summary: string | null };
+    expect(body.status).toBe('running');
+    expect(body.summary).toBeNull();
+  });
+
+  it('/turn-summary returns 404 for unknown jobId', async () => {
+    const { ctx } = makeCtx();
+    const job = new CoderJob(ctx, makeEnv());
+    const resp = await job.fetch(
+      new Request('https://do/turn-summary?jobId=nope', { method: 'GET' }),
+    );
+    expect(resp.status).toBe(404);
   });
 });

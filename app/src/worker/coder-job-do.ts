@@ -67,6 +67,13 @@ import {
 } from './coder-job-executor-adapter';
 import { createWebStreamAdapter } from './coder-job-stream-adapter';
 import { buildCoderJobServices } from './coder-job-services';
+import {
+  createWebContextLoader,
+  formatPriorTurnsPreamble,
+  NULL_CONTEXT_LOADER,
+  type ContextLoader,
+  type TurnSummaryResponse,
+} from './agent-job-context-loader';
 
 // ---------------------------------------------------------------------------
 // Wire types
@@ -166,6 +173,10 @@ export interface CoderJobServiceOverrides {
   detectors?: CoderJobDetectorAdapter;
   executor?: CoderJobExecutorAdapter;
   stream?: PushStream<ChatMessage>;
+  /** Loads prior-turn summaries for chatRef chain-walks (PR 3). Default
+   *  is a Web loader that fetches sibling DOs via env.CoderJob; tests
+   *  inject a stub. */
+  contextLoader?: ContextLoader;
 }
 
 const SERVICE_OVERRIDES = new Map<string, CoderJobServiceOverrides>();
@@ -286,6 +297,8 @@ export class CoderJob {
           return await this.handleCancel(url.searchParams.get('jobId') ?? '');
         case 'status':
           return this.handleStatus(url.searchParams.get('jobId') ?? '');
+        case 'turn-summary':
+          return this.handleTurnSummary(url.searchParams.get('jobId') ?? '');
         default:
           return json({ error: 'UNKNOWN_ACTION', action }, 404);
       }
@@ -549,6 +562,19 @@ export class CoderJob {
         modelId: input.model,
         jobId: input.jobId,
       });
+    // PR 3: Resolve prior-turn context via the chatRef chain. The default
+    // Web loader walks env.CoderJob hop-by-hop; tests inject a stub via
+    // overrides. NULL_CONTEXT_LOADER fallback covers the case where the
+    // CoderJob binding is missing (NOT_CONFIGURED-shaped environments).
+    const contextLoader: ContextLoader =
+      overrides.contextLoader ??
+      (this.env.CoderJob
+        ? createWebContextLoader({
+            env: this.env as unknown as Parameters<typeof createWebContextLoader>[0]['env'],
+          })
+        : NULL_CONTEXT_LOADER);
+    const priorTurns = await contextLoader.loadPriorTurns({ chatRef: input.chatRef });
+    const priorTurnsBlock = formatPriorTurnsPreamble(priorTurns);
 
     const declaredCaps = input.declaredCapabilities ?? Array.from(ROLE_CAPABILITIES.coder);
     const capabilityLedger = new CapabilityLedger(declaredCaps);
@@ -586,6 +612,13 @@ export class CoderJob {
     });
     if (input.envelope.plannerBrief) {
       taskPreamble += '\n\n' + input.envelope.plannerBrief;
+    }
+    // PR 3: prepend prior-turn summaries so the Coder kernel sees
+    // multi-turn context without inlining full chat history. The block
+    // is empty when no chain was found — fresh-chat behavior is
+    // unchanged.
+    if (priorTurnsBlock) {
+      taskPreamble = priorTurnsBlock + '\n' + taskPreamble;
     }
 
     const options: CoderAgentOptions<AnyToolCall, ChatCard> = {
@@ -804,6 +837,68 @@ export class CoderJob {
       error: row.error_text ?? undefined,
     };
     return json(snapshot);
+  }
+
+  // -------------------------------------------------------------------------
+  // /turn-summary — internal route the ContextLoader walks across DOs.
+  // Returns intent (input.envelope.task) + outcome (job.completed
+  // summary) + the prior job in the chain (input.chatRef.checkpointId).
+  // Not exposed at the public route layer — `worker-coder-job.ts` does
+  // not include this action; it's reachable only via DO-to-DO fetch.
+  // -------------------------------------------------------------------------
+
+  private handleTurnSummary(jobId: string): Response {
+    if (!jobId) return json({ error: 'MISSING_JOB_ID' }, 400);
+    const row = this.ctx.storage.sql
+      .exec(`SELECT id, status, input_json, finished_at FROM job WHERE id = ?`, jobId)
+      .toArray()[0] as
+      | {
+          id: string;
+          status: string;
+          input_json: string;
+          finished_at: number | null;
+        }
+      | undefined;
+    if (!row) return json({ error: 'JOB_NOT_FOUND' }, 404);
+
+    let task = '';
+    let priorCheckpointId: string | null = null;
+    try {
+      const input = JSON.parse(row.input_json) as CoderJobStartInput;
+      task = input.envelope?.task ?? '';
+      priorCheckpointId = input.chatRef?.checkpointId ?? null;
+    } catch {
+      // Malformed input_json — leave defaults, the loader will skip.
+    }
+
+    let summary: string | null = null;
+    if (row.status === 'completed') {
+      const completedRow = this.ctx.storage.sql
+        .exec(
+          `SELECT payload_json FROM event WHERE job_id = ? AND type = 'job.completed'
+           ORDER BY seq DESC LIMIT 1`,
+          jobId,
+        )
+        .toArray()[0] as { payload_json?: string } | undefined;
+      if (completedRow?.payload_json) {
+        try {
+          const payload = JSON.parse(completedRow.payload_json) as { summary?: string };
+          summary = payload.summary ?? null;
+        } catch {
+          // Leave summary null; loader will stop the chain walk here.
+        }
+      }
+    }
+
+    const response: TurnSummaryResponse = {
+      jobId: row.id,
+      status: row.status as CoderJobStatus,
+      task,
+      summary,
+      finishedAt: row.finished_at,
+      priorCheckpointId,
+    };
+    return json(response);
   }
 
   // -------------------------------------------------------------------------
