@@ -1261,10 +1261,6 @@ export function useChat(
     [updateConversations, skipAutoCreateRef],
   );
 
-  // ---------------------------------------------------------------------------
-  // Return
-  // ---------------------------------------------------------------------------
-
   return {
     // Active chat
     messages,

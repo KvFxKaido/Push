@@ -666,12 +666,18 @@ export async function processAssistantTurn(
 
   // --- Circuit breaker: detect runaway tool-call loops ---
   const MAX_REPEATED_TOOL_CALLS = 3;
-  const allIncomingCalls = [...detected.readOnly, ...detected.fileMutations, ...(detected.mutating ? [detected.mutating] : [])];
+  const allIncomingCalls = [
+    ...detected.readOnly,
+    ...detected.fileMutations,
+    ...(detected.mutating ? [detected.mutating] : []),
+  ];
 
   for (const call of allIncomingCalls) {
     const key = getToolInvocationKey(getToolName(call), call.call.args);
     if (tracker.isRepeatedFailure(key, MAX_REPEATED_TOOL_CALLS)) {
-      console.warn(`[Push] Turn ${round}: loop circuit breaker tripped for ${getToolName(call)}. Breaking loop.`);
+      console.warn(
+        `[Push] Turn ${round}: loop circuit breaker tripped for ${getToolName(call)}. Breaking loop.`,
+      );
       return {
         nextApiMessages: apiMessages,
         nextRecoveryState: recoveryState,
@@ -681,7 +687,6 @@ export async function processAssistantTurn(
     }
     tracker.recordFailure(key);
   }
-
 
   if (detected.extraMutations.length > 0) {
     const errorAction = handleMultipleMutationsError(

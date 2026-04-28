@@ -10,7 +10,6 @@
 
 import { formatToolResultEnvelope } from './tool-call-recovery.js';
 
-
 /** Mutation failure tracker — detects repeated failures on same tool+args */
 export interface MutationFailureTracker {
   recordFailure(key: string): void;
