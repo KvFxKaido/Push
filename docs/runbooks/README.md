@@ -15,7 +15,9 @@ This folder contains active plans, draft spikes, and deferred designs. Shipped p
 
 | Document | Status | Notes |
 |---|---|---|
-| `Background Coder Tasks Plan.md` | Deferred reference | Intentionally deferred while Push remains a PWA; keep for native-app or daemon-first revisits. |
+| `AgentJob Foundation.md` | Shipped 2026-04-27 (PRs #433, #434, #435) | Role-aware contract, main-chat bg branch, chatRef context-loader. Carries the bundled + standalone follow-ups. |
+| `Background Coder Tasks Plan.md` | Partially superseded by `AgentJob Foundation.md` | Original multi-phase reference; main-chat migration arc shipped via the AgentJob Foundation. Phases 2–4 (retry/backoff, push notifications, job history, multi-role background jobs) still deferred. |
+| `Background Coder Tasks Phase 1.md` | Shipped 2026-04-21 (PRs #358–#361) | Original `delegate_coder` background flow. Predates `AgentJob Foundation.md`. |
 | `Canonical SOP Playbooks Spike.md` | Draft spike, added 2026-04-14 | Named playbooks that compile to task graphs on top of the existing `plan_tasks` runtime. No code yet. |
 | `Chat Surface Evolution Plan.md` | Mostly shipped 2026-03-31 | Tracks A, B, D, E, F landed; Track C (explicit context escalation) remains open. |
 | `Hashline Effectiveness Metric.md` | Draft plan | Fixture-based measurement of hashline edit-success delta. Initial 3-fixture run logged in `../decisions/Hashline System Review.md`; full corpus not yet executed. |
