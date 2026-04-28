@@ -32,9 +32,17 @@ export function createMutationFailureTracker(): MutationFailureTracker {
   };
 }
 
-/** Canonical key for failure tracking. For file mutations, we key on tool:path. */
+/** Canonical key for tool invocation tracking. Keys on tool name and stringified arguments. */
 export function getToolInvocationKey(toolName: string, args: unknown): string {
-  const argsStr = typeof args === 'object' && args !== null ? JSON.stringify(args) : String(args);
+  const argsStr = (() => {
+    if (typeof args !== 'object' || args === null) return String(args);
+    try {
+      return JSON.stringify(args);
+    } catch {
+      // Circular references or non-serializable values — fall back to a stable-ish marker.
+      return String(args);
+    }
+  })();
   return `${toolName}:${argsStr}`;
 }
 
