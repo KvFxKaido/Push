@@ -140,11 +140,13 @@ describe('chat-tool-messages', () => {
     } as AnyToolCall;
     expect(getToolStatusDetail(emptyExec)).toBeUndefined();
 
-    // Tool we don't have a detail extractor for.
-    const sandboxStatus: AnyToolCall = {
+    // Tool we don't have a detail extractor for. `sandbox_status` is not a
+    // declared SandboxToolCall variant — that's the point of the test, so
+    // we double-cast to bypass the union check.
+    const sandboxStatus = {
       source: 'sandbox',
       call: { tool: 'sandbox_status', args: {} },
-    } as AnyToolCall;
+    } as unknown as AnyToolCall;
     expect(getToolStatusDetail(sandboxStatus)).toBeUndefined();
   });
 
