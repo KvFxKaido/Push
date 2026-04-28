@@ -399,6 +399,7 @@ describe('useBackgroundCoderJob — startMainChatJob (PR 2)', () => {
           lastEventId: null,
           startedAt: 100,
           updatedAt: 100,
+          source: 'main-chat',
         },
         'job-mid-failed': {
           jobId: 'job-mid-failed',
@@ -406,6 +407,7 @@ describe('useBackgroundCoderJob — startMainChatJob (PR 2)', () => {
           lastEventId: null,
           startedAt: 200,
           updatedAt: 200,
+          source: 'main-chat',
         },
         'job-newest-completed': {
           jobId: 'job-newest-completed',
@@ -413,6 +415,7 @@ describe('useBackgroundCoderJob — startMainChatJob (PR 2)', () => {
           lastEventId: null,
           startedAt: 300,
           updatedAt: 300,
+          source: 'main-chat',
         },
       },
     };
@@ -461,6 +464,7 @@ describe('useBackgroundCoderJob — startMainChatJob (PR 2)', () => {
           lastEventId: null,
           startedAt: 300,
           updatedAt: 300,
+          source: 'main-chat',
         },
       },
     };
@@ -487,6 +491,116 @@ describe('useBackgroundCoderJob — startMainChatJob (PR 2)', () => {
       chatRef: { checkpointId?: string };
     };
     expect(body.chatRef.checkpointId).toBe('job-explicitly-chosen');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('skips delegation-source entries when auto-filling checkpointId (Codex P2 fix)', async () => {
+    // pendingJobIds is shared between main-chat bg turns and
+    // delegate_coder background delegations. Without the source filter
+    // the auto-fill could pick a delegation jobId and chain into a
+    // run with no chatRef, leaking unrelated context. The most recent
+    // entry here is a delegation; the loader must skip it and fall
+    // back to the main-chat predecessor.
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-mc-6' }), { status: 202 }) as Response,
+      )
+      .mockResolvedValueOnce(
+        new Response(new ReadableStream({ start: (c) => c.close() }), { status: 200 }) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const conv: Conversation = {
+      ...makeConversation('chat-1'),
+      pendingJobIds: {
+        'job-main': {
+          jobId: 'job-main',
+          status: 'completed',
+          lastEventId: null,
+          startedAt: 100,
+          updatedAt: 100,
+          source: 'main-chat',
+        },
+        'job-newest-delegation': {
+          jobId: 'job-newest-delegation',
+          status: 'completed',
+          lastEventId: null,
+          startedAt: 200,
+          updatedAt: 200,
+          source: 'delegation',
+        },
+      },
+    };
+    const { hook } = useHarness({ 'chat-1': conv });
+    await hook.startMainChatJob({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      envelope: makeEnvelope(),
+      provider: 'openrouter',
+      model: undefined,
+      userProfile: null,
+      chatRef: { chatId: 'chat-1', repoFullName: 'acme/web', branch: 'main' },
+    });
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string) as {
+      chatRef: { checkpointId?: string };
+    };
+    expect(body.chatRef.checkpointId).toBe('job-main');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('skips entries with no source (pre-PR-3-review fallback)', async () => {
+    // Conservative migration behavior: entries written before the
+    // source field was added are treated as ineligible. Losing one
+    // turn of continuity for users mid-deploy is cheaper than risking
+    // a delegation entry sneaking through.
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-mc-7' }), { status: 202 }) as Response,
+      )
+      .mockResolvedValueOnce(
+        new Response(new ReadableStream({ start: (c) => c.close() }), { status: 200 }) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const conv: Conversation = {
+      ...makeConversation('chat-1'),
+      pendingJobIds: {
+        'job-no-source': {
+          jobId: 'job-no-source',
+          status: 'completed',
+          lastEventId: null,
+          startedAt: 200,
+          updatedAt: 200,
+          // source omitted on purpose
+        },
+      },
+    };
+    const { hook } = useHarness({ 'chat-1': conv });
+    await hook.startMainChatJob({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      envelope: makeEnvelope(),
+      provider: 'openrouter',
+      model: undefined,
+      userProfile: null,
+      chatRef: { chatId: 'chat-1', repoFullName: 'acme/web', branch: 'main' },
+    });
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string) as {
+      chatRef: { checkpointId?: string };
+    };
+    expect(body.chatRef.checkpointId).toBeUndefined();
 
     vi.unstubAllGlobals();
   });

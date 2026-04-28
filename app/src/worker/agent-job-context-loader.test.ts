@@ -47,9 +47,11 @@ function completedSnapshot(
   jobId: string,
   priorCheckpointId: string | null = null,
   finishedAt = 1,
+  chatId = 'c',
 ): TurnSummaryResponse {
   return {
     jobId,
+    chatId,
     status: 'completed',
     task: `task-${jobId}`,
     summary: `summary-${jobId}`,
@@ -149,6 +151,7 @@ describe('createWebContextLoader — walking the chain', () => {
       'j-3': completedSnapshot('j-3', 'j-2'),
       'j-2': {
         jobId: 'j-2',
+        chatId: 'c',
         status: 'failed',
         task: 'task-j-2',
         summary: null,
@@ -192,6 +195,29 @@ describe('createWebContextLoader — walking the chain', () => {
     });
     expect(out.map((t) => t.jobId)).toEqual(['j-2']);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/failed to fetch/i));
+  });
+
+  it('rejects prior summaries with a mismatched chatId (forgery defense)', async () => {
+    // Copilot review fix: a forged or malformed checkpointId could
+    // point at a completed job in a different chat. Without this check
+    // the loader would happily prepend that turn's summary into the
+    // current run's preamble, leaking unrelated context. The walk
+    // stops at the first mismatch — once we've crossed into another
+    // chat's space, we can't trust further hops either.
+    const log = vi.fn();
+    const env = makeEnv({
+      // j-2 belongs to a DIFFERENT chat. The walker should drop it and
+      // stop — even though j-1 is still in our chat space, we don't
+      // resume past a forged hop.
+      'j-2': completedSnapshot('j-2', 'j-1', 200, 'OTHER-CHAT'),
+      'j-1': completedSnapshot('j-1', null, 100, 'c'),
+    });
+    const loader = createWebContextLoader({ env, log });
+    const out = await loader.loadPriorTurns({
+      chatRef: { chatId: 'c', repoFullName: 'r', branch: 'b', checkpointId: 'j-2' },
+    });
+    expect(out).toEqual([]);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/chatid mismatch/i));
   });
 
   it('degrades gracefully on missing prior job (404)', async () => {

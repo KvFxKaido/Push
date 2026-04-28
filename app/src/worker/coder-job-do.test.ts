@@ -171,12 +171,13 @@ function createMockStorage() {
       return row ? [row as unknown as Record<string, unknown>] : [];
     }
 
-    if (/^SELECT id, status, input_json, finished_at FROM job WHERE id = \?/i.test(sql)) {
+    if (/^SELECT id, chat_id, status, input_json, finished_at FROM job WHERE id = \?/i.test(sql)) {
       const row = jobs.get(params[0] as string);
       return row
         ? [
             {
               id: row.id,
+              chat_id: row.chat_id,
               status: row.status,
               input_json: row.input_json,
               finished_at: row.finished_at,
@@ -783,6 +784,7 @@ describe('CoderJob DO — end-to-end', () => {
     expect(resp.status).toBe(200);
     const body = (await resp.json()) as {
       jobId: string;
+      chatId: string | null;
       status: string;
       task: string;
       summary: string | null;
@@ -790,6 +792,9 @@ describe('CoderJob DO — end-to-end', () => {
       priorCheckpointId: string | null;
     };
     expect(body.jobId).toBe(input.jobId);
+    // chatId is included so the loader can enforce same-chat continuity
+    // — defense against forged checkpointIds (Copilot review fix).
+    expect(body.chatId).toBe('chat-1');
     expect(body.status).toBe('completed');
     expect(body.task).toBe('write hello world');
     expect(body.summary).toContain('outcome text');

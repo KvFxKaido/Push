@@ -58,9 +58,13 @@ export const NULL_CONTEXT_LOADER: ContextLoader = {
 /** Response body of GET /turn-summary?jobId=X on a CoderJob DO.
  *  status='completed' is the only state that produces a usable
  *  summary; any other state surfaces as `summary: null` and the
- *  loader stops chain-walking there. */
+ *  loader stops chain-walking there. `chatId` is included so the
+ *  loader can verify the prior turn belongs to the same chat as the
+ *  current run — without it a forged or malformed checkpointId could
+ *  pull summaries from unrelated jobs into the new task preamble. */
 export interface TurnSummaryResponse {
   jobId: string;
+  chatId: string | null;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   task: string;
   summary: string | null;
@@ -104,6 +108,7 @@ export function createWebContextLoader(args: CreateWebContextLoaderArgs): Contex
       const summaries: PriorTurnSummary[] = [];
       const visited = new Set<string>();
       let nextId: string | null = chatRef.checkpointId;
+      const expectedChatId = chatRef.chatId;
 
       while (nextId && summaries.length < maxTurns) {
         if (visited.has(nextId)) {
@@ -126,6 +131,17 @@ export function createWebContextLoader(args: CreateWebContextLoaderArgs): Contex
         if (snapshot.status !== 'completed' || snapshot.summary == null) {
           // Only completed turns contribute context; non-terminal or
           // failed prior runs are skipped and stop the walk.
+          break;
+        }
+        // Provenance check: a forged or malformed checkpointId could
+        // point at a completed job in a *different* chat. Drop those
+        // before they leak into the new turn's preamble. The chain
+        // walk stops at a mismatch — once we've crossed into another
+        // chat's space, we can't trust further hops either.
+        if (snapshot.chatId !== expectedChatId) {
+          log(
+            `chatId mismatch at ${nextId} (expected '${expectedChatId}', got '${snapshot.chatId ?? 'null'}'); stopping chain walk`,
+          );
           break;
         }
 

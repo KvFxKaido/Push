@@ -850,10 +850,11 @@ export class CoderJob {
   private handleTurnSummary(jobId: string): Response {
     if (!jobId) return json({ error: 'MISSING_JOB_ID' }, 400);
     const row = this.ctx.storage.sql
-      .exec(`SELECT id, status, input_json, finished_at FROM job WHERE id = ?`, jobId)
+      .exec(`SELECT id, chat_id, status, input_json, finished_at FROM job WHERE id = ?`, jobId)
       .toArray()[0] as
       | {
           id: string;
+          chat_id: string;
           status: string;
           input_json: string;
           finished_at: number | null;
@@ -892,6 +893,7 @@ export class CoderJob {
 
     const response: TurnSummaryResponse = {
       jobId: row.id,
+      chatId: row.chat_id ?? null,
       status: row.status as CoderJobStatus,
       task,
       summary,
