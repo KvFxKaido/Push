@@ -676,7 +676,11 @@ export async function processAssistantTurn(
   ];
 
   for (const call of allIncomingCalls) {
-    const key = getToolInvocationKey(getToolName(call), call.call.args);
+    // Some AnyToolCall variants (scratchpad, todo) carry their payload
+    // inline rather than under `args`. Pass the whole `call` so the key
+    // is well-defined for every variant; the tool name is already part
+    // of it, which is harmless redundancy for keying.
+    const key = getToolInvocationKey(getToolName(call), call.call);
     if (tracker.isRepeatedFailure(key, MAX_REPEATED_TOOL_CALLS)) {
       console.warn(
         `[Push] Turn ${round}: loop circuit breaker tripped for ${getToolName(call)}. Breaking loop.`,
@@ -692,7 +696,7 @@ export async function processAssistantTurn(
 
   const recordToolFailure = (call: AnyToolCall, isError: boolean) => {
     if (!isError) return;
-    tracker.recordFailure(getToolInvocationKey(getToolName(call), call.call.args));
+    tracker.recordFailure(getToolInvocationKey(getToolName(call), call.call));
   };
 
   if (detected.extraMutations.length > 0) {

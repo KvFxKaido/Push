@@ -923,7 +923,7 @@ describe('createJsonProxyHandler', () => {
       name: 'Test JSON Provider',
       logTag: 'api/test/models',
       upstreamUrl: 'https://upstream.test/v1/models',
-      method: 'GET',
+      method: 'GET' as const,
       timeoutMs: 30_000,
       buildAuth: standardAuth('OLLAMA_API_KEY'),
       keyMissingError: 'missing key',

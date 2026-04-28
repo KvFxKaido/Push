@@ -78,7 +78,7 @@ export function getToolStatusDetail(toolCall: AnyToolCall): string | undefined {
       : {};
 
   // Sandbox exec — show the command (the most common slow operation).
-  if (tool === 'sandbox_exec' || tool === 'exec') {
+  if (tool === 'sandbox_exec') {
     return truncateDetail(asNonEmptyString(args.command), 60);
   }
 
