@@ -598,9 +598,43 @@ export function useBackgroundCoderJob({
     [persistAndStart, appendJobCardToToolCall],
   );
 
+  /** Resolves the latest completed background-job id for a chat. Used
+   *  to auto-fill chatRef.checkpointId when the caller didn't supply
+   *  one — keeps multi-turn continuity working without forcing every
+   *  call site to know about pendingJobIds bookkeeping. Returns null
+   *  for fresh chats. */
+  const resolveLatestCompletedJobId = useCallback(
+    (chatId: string): string | null => {
+      const conv = conversationsRef.current[chatId];
+      const pending = conv?.pendingJobIds;
+      if (!pending) return null;
+      let latest: { jobId: string; updatedAt: number } | null = null;
+      for (const entry of Object.values(pending)) {
+        if (entry.status !== 'completed') continue;
+        if (!latest || entry.updatedAt > latest.updatedAt) {
+          latest = { jobId: entry.jobId, updatedAt: entry.updatedAt };
+        }
+      }
+      return latest?.jobId ?? null;
+    },
+    [conversationsRef],
+  );
+
   const startMainChatJob = useCallback(
-    (input: StartBackgroundJobInput) => persistAndStart(input, appendJobCardAsNewAssistantMessage),
-    [persistAndStart, appendJobCardAsNewAssistantMessage],
+    (input: StartBackgroundJobInput) => {
+      // PR 3: auto-fill chatRef.checkpointId from the latest completed
+      // bg job for this chat unless the caller already set one. Caller
+      // can pass an explicit checkpointId to fork from a specific turn,
+      // or pass `chatRef: undefined` to opt out of continuity entirely
+      // (rare; typically only relevant for tests).
+      let chatRef = input.chatRef;
+      if (chatRef && chatRef.checkpointId === undefined) {
+        const latest = resolveLatestCompletedJobId(input.chatId);
+        if (latest) chatRef = { ...chatRef, checkpointId: latest };
+      }
+      return persistAndStart({ ...input, chatRef }, appendJobCardAsNewAssistantMessage);
+    },
+    [persistAndStart, appendJobCardAsNewAssistantMessage, resolveLatestCompletedJobId],
   );
 
   const cancelJob = useCallback(async (jobId: string): Promise<void> => {
