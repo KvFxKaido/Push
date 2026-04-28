@@ -34,7 +34,9 @@ import {
   buildToolMeta,
   buildToolResultMessage,
   buildToolResultMetaLine,
+  formatStatusElapsed,
   getToolName,
+  getToolStatusDetail,
   getToolStatusLabel,
   markLastAssistantToolCall,
 } from './chat-tool-messages';
@@ -81,6 +83,89 @@ describe('chat-tool-messages', () => {
 
     expect(getToolStatusLabel(sandboxExec)).toBe('Executing in sandbox...');
     expect(getToolStatusLabel(delegateExplorer)).toBe('Delegating to Explorer...');
+  });
+
+  it('extracts tool-specific detail for the status banner', () => {
+    // Sandbox exec — show the command. The user's complaint that
+    // motivated this surface: "all I see is 'executing in sandbox' with
+    // a blinking light" — the detail tells them *which* command is
+    // running.
+    const sandboxExec: AnyToolCall = {
+      source: 'sandbox',
+      call: { tool: 'sandbox_exec', args: { command: 'npm install && npm run test' } },
+    } as AnyToolCall;
+    expect(getToolStatusDetail(sandboxExec)).toBe('npm install && npm run test');
+
+    // File-targeted tools — show the path.
+    const readFile: AnyToolCall = {
+      source: 'sandbox',
+      call: { tool: 'sandbox_read_file', args: { path: 'src/lib/foo.ts' } },
+    } as AnyToolCall;
+    expect(getToolStatusDetail(readFile)).toBe('src/lib/foo.ts');
+
+    // Delegations — show the task summary.
+    const delegateCoder: AnyToolCall = {
+      source: 'delegate',
+      call: { tool: 'delegate_coder', args: { task: 'Fix the failing test in foo.ts' } },
+    };
+    expect(getToolStatusDetail(delegateCoder)).toBe('Fix the failing test in foo.ts');
+
+    // Web search — show the query.
+    const webSearch: AnyToolCall = {
+      source: 'web-search',
+      call: { tool: 'web_search', args: { query: 'latest React 19 changes' } },
+    };
+    expect(getToolStatusDetail(webSearch)).toBe('latest React 19 changes');
+  });
+
+  it('truncates overly long detail strings with an ellipsis', () => {
+    // 70-char command — truncated to 60 with an ellipsis suffix so the
+    // user sees the value was cut. Keeps the status line scannable on
+    // mobile.
+    const longCommand = 'a'.repeat(70);
+    const sandboxExec: AnyToolCall = {
+      source: 'sandbox',
+      call: { tool: 'sandbox_exec', args: { command: longCommand } },
+    } as AnyToolCall;
+    const detail = getToolStatusDetail(sandboxExec);
+    expect(detail).toBeDefined();
+    expect(detail!.length).toBeLessThanOrEqual(60);
+    expect(detail).toMatch(/…$/);
+  });
+
+  it('returns undefined when the tool has no useful detail or args are empty', () => {
+    // Empty command — nothing to show.
+    const emptyExec: AnyToolCall = {
+      source: 'sandbox',
+      call: { tool: 'sandbox_exec', args: { command: '   ' } },
+    } as AnyToolCall;
+    expect(getToolStatusDetail(emptyExec)).toBeUndefined();
+
+    // Tool we don't have a detail extractor for.
+    const sandboxStatus: AnyToolCall = {
+      source: 'sandbox',
+      call: { tool: 'sandbox_status', args: {} },
+    } as AnyToolCall;
+    expect(getToolStatusDetail(sandboxStatus)).toBeUndefined();
+  });
+
+  it('formats elapsed time for the status banner', () => {
+    // Sub-minute: bare seconds.
+    expect(formatStatusElapsed(0)).toBe('0s');
+    expect(formatStatusElapsed(7_500)).toBe('7s');
+    expect(formatStatusElapsed(59_999)).toBe('59s');
+
+    // Whole minutes: drop the seconds suffix to keep the line tight.
+    expect(formatStatusElapsed(60_000)).toBe('1m');
+    expect(formatStatusElapsed(120_000)).toBe('2m');
+
+    // Mixed: minutes + remaining seconds.
+    expect(formatStatusElapsed(75_000)).toBe('1m 15s');
+    expect(formatStatusElapsed(125_999)).toBe('2m 5s');
+
+    // Negative input clamps to 0s — defensive, in case clock skew or a
+    // stale startedAt produces a negative diff.
+    expect(formatStatusElapsed(-5_000)).toBe('0s');
   });
 
   it('extracts tool names for provenance tracking', () => {
