@@ -14,8 +14,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prepare": "cd .. && husky app/.husky",
-    "cap:sync": "npm run build && npx cap sync",
-    "android:open": "npx cap open android"
+    "cap:sync": "npm run build && cap sync",
+    "android:setup": "node scripts/ensure-capacitor-android.mjs",
+    "android:sync": "npm run build && npm run android:setup && cap sync android",
+    "android:open": "npm run android:sync && cap open android"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.1",
