@@ -44,6 +44,7 @@ import { useChatManagement } from './chat-management';
 import { useChatReplay } from './chat-replay';
 import { useChatCheckpoint } from './useChatCheckpoint';
 import { streamAssistantRound, processAssistantTurn, type SendLoopContext } from './chat-send';
+import { createMutationFailureTracker } from '@push/lib/agent-loop-utils';
 import { buildRuntimeUserMessage, prepareSendContext } from './chat-prepare-send';
 import { acquireRunSession, finalizeRunSession } from './chat-run-session';
 import { useQueuedFollowUps } from './useQueuedFollowUps';
@@ -896,6 +897,7 @@ export function useChat(
         conversationsRef,
       };
 
+      const tracker = createMutationFailureTracker();
       let loopCompletedNormally = false;
       try {
         for (let round = 0; ; round++) {
@@ -1063,6 +1065,7 @@ export function useChat(
             apiMessages,
             loopCtx,
             toolCallRecoveryState,
+            tracker,
           );
 
           apiMessages = turnResult.nextApiMessages;
@@ -1257,10 +1260,6 @@ export function useChat(
     },
     [updateConversations, skipAutoCreateRef],
   );
-
-  // ---------------------------------------------------------------------------
-  // Return
-  // ---------------------------------------------------------------------------
 
   return {
     // Active chat

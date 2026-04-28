@@ -27,6 +27,7 @@ import {
   getToolStatusDetail,
   markLastAssistantToolCall,
 } from '@/lib/chat-tool-messages';
+import { getToolInvocationKey, type MutationFailureTracker } from '@push/lib/agent-loop-utils';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import {
   executeTool,
@@ -580,6 +581,11 @@ export async function processAssistantTurn(
   apiMessages: ChatMessage[],
   ctx: SendLoopContext,
   recoveryState: ToolCallRecoveryState,
+  tracker: MutationFailureTracker = {
+    recordFailure: () => {},
+    isRepeatedFailure: () => false,
+    clear: () => {},
+  },
 ): Promise<AssistantTurnResult> {
   const {
     chatId,
@@ -657,6 +663,37 @@ export async function processAssistantTurn(
   // --- Check for multiple independent read-only tool calls in one turn ---
   const detected = detectAllToolCalls(accumulated);
   const parallelToolCalls = detected.readOnly;
+
+  // --- Circuit breaker: short-circuit if any incoming call has already
+  // failed repeatedly with identical arguments. We only record failures
+  // after execution (see recordToolFailure below), so legitimate repeated
+  // operations (re-reading a file, incremental edits) are not affected.
+  const MAX_REPEATED_TOOL_CALLS = 3;
+  const allIncomingCalls = [
+    ...detected.readOnly,
+    ...detected.fileMutations,
+    ...(detected.mutating ? [detected.mutating] : []),
+  ];
+
+  for (const call of allIncomingCalls) {
+    const key = getToolInvocationKey(getToolName(call), call.call.args);
+    if (tracker.isRepeatedFailure(key, MAX_REPEATED_TOOL_CALLS)) {
+      console.warn(
+        `[Push] Turn ${round}: loop circuit breaker tripped for ${getToolName(call)}. Breaking loop.`,
+      );
+      return {
+        nextApiMessages: apiMessages,
+        nextRecoveryState: recoveryState,
+        loopAction: 'break',
+        loopCompletedNormally: false,
+      };
+    }
+  }
+
+  const recordToolFailure = (call: AnyToolCall, isError: boolean) => {
+    if (!isError) return;
+    tracker.recordFailure(getToolInvocationKey(getToolName(call), call.call.args));
+  };
 
   if (detected.extraMutations.length > 0) {
     const errorAction = handleMultipleMutationsError(
@@ -872,6 +909,8 @@ export async function processAssistantTurn(
       (r) => buildToolOutcome(r, parallelMetaLine, lockedProvider).resultMessage,
     );
     parallelRawResults.forEach((result, index) => {
+      const isError = result.raw.text.includes('[Tool Error]');
+      recordToolFailure(result.call, isError);
       appendRunEvent(chatId, {
         type: 'tool.execution_complete',
         round,
@@ -879,7 +918,7 @@ export async function processAssistantTurn(
         toolName: getToolName(result.call),
         toolSource: result.call.source,
         durationMs: result.durationMs,
-        isError: result.raw.text.includes('[Tool Error]'),
+        isError,
         preview: summarizeToolResultPreview(result.raw.text),
       });
     });
@@ -979,6 +1018,7 @@ export async function processAssistantTurn(
         );
         const batchOutcome = buildToolOutcome(batchRawResult, batchMetaLine, lockedProvider);
         const isBatchError = batchOutcome.raw.text.includes('[Tool Error]');
+        recordToolFailure(batchCall, isBatchError);
         appendRunEvent(chatId, {
           type: 'tool.execution_complete',
           round,
@@ -1138,6 +1178,8 @@ export async function processAssistantTurn(
         { includePulse: true, pulseReason: 'mutation' },
       );
       const mutOutcome = buildToolOutcome(mutRawResult, mutMetaLine, lockedProvider);
+      const isMutError = mutOutcome.raw.text.includes('[Tool Error]');
+      recordToolFailure(mutCall, isMutError);
       appendRunEvent(chatId, {
         type: 'tool.execution_complete',
         round,
@@ -1145,7 +1187,7 @@ export async function processAssistantTurn(
         toolName: getToolName(mutCall),
         toolSource: mutCall.source,
         durationMs: mutRawResult.durationMs,
-        isError: mutOutcome.raw.text.includes('[Tool Error]'),
+        isError: isMutError,
         preview: summarizeToolResultPreview(mutOutcome.raw.text),
       });
 
@@ -1605,6 +1647,8 @@ export async function processAssistantTurn(
     const outcome = buildToolOutcome(singleRawResult, metaLine, lockedProvider);
     toolResultMsg = outcome.resultMessage;
     cardsToAttach = outcome.cards;
+    const isError = outcome.raw.text.includes('[Tool Error]');
+    recordToolFailure(toolCall, isError);
     appendRunEvent(chatId, {
       type: 'tool.execution_complete',
       round,
@@ -1612,10 +1656,12 @@ export async function processAssistantTurn(
       toolName: getToolName(toolCall),
       toolSource: toolCall.source,
       durationMs: singleRawResult.durationMs,
-      isError: outcome.raw.text.includes('[Tool Error]'),
+      isError,
       preview: summarizeToolResultPreview(outcome.raw.text),
     });
   } else {
+    const isError = toolExecResult.text.includes('[Tool Error]');
+    recordToolFailure(toolCall, isError);
     toolResultMsg = buildToolResultMessage({
       id: createId(),
       timestamp: Date.now(),
@@ -1626,7 +1672,7 @@ export async function processAssistantTurn(
         source: toolCall.source,
         provider: lockedProvider,
         durationMs: toolExecDurationMs,
-        isError: toolExecResult.text.includes('[Tool Error]'),
+        isError,
       }),
     });
     cardsToAttach =
@@ -1640,7 +1686,7 @@ export async function processAssistantTurn(
       toolName: getToolName(toolCall),
       toolSource: toolCall.source,
       durationMs: toolExecDurationMs,
-      isError: toolExecResult.text.includes('[Tool Error]'),
+      isError,
       preview: summarizeToolResultPreview(toolExecResult.text),
     });
   }
