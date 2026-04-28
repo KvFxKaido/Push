@@ -48,7 +48,7 @@ jobs:
         run: docker run --rm -v "${GITHUB_WORKSPACE}:/repo" -w /repo rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
 
   app:
-    name: Lint, Test, Build (app)
+    name: Lint, Typecheck, Test, Build (app)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -70,6 +70,9 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Test
         run: npm test
