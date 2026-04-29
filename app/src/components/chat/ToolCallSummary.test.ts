@@ -20,7 +20,12 @@ function toolCallMsg(id: string): ChatMessage {
     timestamp: Date.now(),
     status: 'done',
     isToolCall: true,
-    toolMeta: { toolName: 'sandbox_exec', source: 'assistant', durationMs: 120 },
+    toolMeta: {
+      toolName: 'sandbox_exec',
+      source: 'assistant',
+      durationMs: 120,
+      triggeredBy: 'assistant',
+    },
   };
 }
 
@@ -32,7 +37,12 @@ function toolResultMsg(id: string, toolName = 'sandbox_exec'): ChatMessage {
     timestamp: Date.now(),
     status: 'done',
     isToolResult: true,
-    toolMeta: { toolName, source: 'assistant', durationMs: 120 },
+    toolMeta: {
+      toolName,
+      source: 'assistant',
+      durationMs: 120,
+      triggeredBy: 'assistant',
+    },
   };
 }
 

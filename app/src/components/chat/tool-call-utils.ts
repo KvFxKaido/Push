@@ -1,5 +1,5 @@
 import type { ChatMessage } from '@/types';
-import { ChevronRight, Terminal, FileText, Search, Globe, Hammer, Wrench } from 'lucide-react';
+import { Terminal, FileText, Search, Globe, Hammer, Wrench } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
 /*  ToolCallPair                                                      */
