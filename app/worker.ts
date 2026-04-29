@@ -153,7 +153,15 @@ export default {
         env,
       );
     } catch (err) {
-      return handleUncaughtFetchError(err, request, requestId);
+      // Wrap so the 500 carries CORS headers — without them a route-handler
+      // crash surfaces to the browser as an opaque CORS error instead of the
+      // structured 500 + request_id, swallowing diagnostics on mobile.
+      return withRequestIdOnResponse(
+        handleUncaughtFetchError(err, request, requestId),
+        requestId,
+        request,
+        env,
+      );
     }
   },
 
