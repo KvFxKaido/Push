@@ -1,7 +1,7 @@
 # Provider Observability via Analytics Engine
 
-Date: 2026-04-28
-Status: Spec — not yet implemented. v1 covers all OpenAI-compatible chat handlers (gateway-routed and direct).
+Date: 2026-04-29
+Status: v1 — shipped. See app/src/worker/worker-stats.ts for the final SQL templates.
 
 ## Context
 
