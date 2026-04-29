@@ -26,10 +26,30 @@ if [ -z "$WORKSPACE" ] || [ -z "$DURABLE" ] || [ -z "$SESSION_KEY" ]; then
   exit 2
 fi
 
+case "$SESSION_KEY" in
+  /*|*..*|*$'\n'*|*$'\t'*|'')
+    echo "invalid session key: $SESSION_KEY" >&2
+    exit 2
+    ;;
+esac
+
 [ -d "$WORKSPACE/.git" ] || { echo "not a git workspace: $WORKSPACE" >&2; exit 1; }
 
 SESSION_DIR="$DURABLE/sessions/$SESSION_KEY"
 DEPS_DIR="$DURABLE/deps"
+
+# Refuse to extract any archive whose entries escape the workspace. Defends
+# against corrupt/tampered tars writing outside CWD via absolute paths or
+# `..` components. Returns 0 if safe, 1 if any unsafe entry is present.
+safe_tar() {
+  local archive="$1"
+  if tar -tzf "$archive" \
+       | LC_ALL=C grep -qE '^(/|.*(^|/)\.\.($|/))'; then
+    echo "refusing to extract archive with unsafe paths: $archive" >&2
+    return 1
+  fi
+  return 0
+}
 
 cd "$WORKSPACE"
 
@@ -47,9 +67,17 @@ if [ ! -d node_modules ] && [ -f package-lock.json ]; then
   if [ -f "$IMAGE_CACHE/package-lock.json" ] \
      && cmp -s package-lock.json "$IMAGE_CACHE/package-lock.json" \
      && [ -d "$IMAGE_CACHE/node_modules" ]; then
-    cp -al "$IMAGE_CACHE/node_modules" node_modules
-    RESTORED="image-cache"
-  elif [ -f "$DEPS_DIR/$LOCK_HASH.tar.gz" ]; then
+    # Hardlink fails with EXDEV across filesystems; treat as cache miss and
+    # fall through to the deps tar / npm ci path rather than aborting.
+    if cp -al "$IMAGE_CACHE/node_modules" node_modules 2>/dev/null; then
+      RESTORED="image-cache"
+    else
+      rm -rf node_modules
+      echo "warn: image-cache hardlink failed (likely cross-fs); trying deps cache" >&2
+    fi
+  fi
+  if [ -z "$RESTORED" ] && [ -f "$DEPS_DIR/$LOCK_HASH.tar.gz" ]; then
+    safe_tar "$DEPS_DIR/$LOCK_HASH.tar.gz"
     tar -xzf "$DEPS_DIR/$LOCK_HASH.tar.gz"
     RESTORED="deps-cache"
   fi
@@ -61,15 +89,24 @@ if [ ! -d node_modules ] && [ -f package-lock.json ]; then
 fi
 
 if [ -f "$SESSION_DIR/state.bundle" ] && [ -f "$SESSION_DIR/stash.sha" ]; then
-  git fetch --quiet "$SESSION_DIR/state.bundle" \
-    'refs/push-snapshot/state:refs/push-snapshot/state'
   STASH_SHA=$(cat "$SESSION_DIR/stash.sha")
+  # `+` forces ref update if a previous run left it behind. Trap ensures we
+  # always clean up the temporary ref, even if `git stash apply` exits
+  # non-zero (e.g. on conflict against a non-clean working tree).
+  cleanup_snapshot_ref() {
+    git update-ref -d refs/push-snapshot/state 2>/dev/null || true
+  }
+  trap cleanup_snapshot_ref EXIT
+  git fetch --quiet "$SESSION_DIR/state.bundle" \
+    '+refs/push-snapshot/state:refs/push-snapshot/state'
   git stash apply --index "$STASH_SHA"
-  git update-ref -d refs/push-snapshot/state
+  cleanup_snapshot_ref
+  trap - EXIT
   echo "applied staged+unstaged from $STASH_SHA"
 fi
 
 if [ -f "$SESSION_DIR/untracked.tar.gz" ]; then
+  safe_tar "$SESSION_DIR/untracked.tar.gz"
   tar -xzf "$SESSION_DIR/untracked.tar.gz"
   echo "applied untracked overlay"
 fi

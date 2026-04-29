@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Push sandbox snapshot — v1 prototype.
 #
-# Captures a workspace into <durable>/sessions/<key>/ with three artifacts:
+# Captures a workspace into <durable>/sessions/<key>/ with up to five
+# artifacts:
 #   head.sha          HEAD commit at snapshot time (sanity check on restore)
 #   state.bundle      git bundle holding a stash-structured commit that
 #                     encodes both staged and unstaged regions; absent if
@@ -31,6 +32,13 @@ if [ -z "$WORKSPACE" ] || [ -z "$DURABLE" ] || [ -z "$SESSION_KEY" ]; then
   exit 2
 fi
 
+case "$SESSION_KEY" in
+  /*|*..*|*$'\n'*|*$'\t'*|'')
+    echo "invalid session key: $SESSION_KEY" >&2
+    exit 2
+    ;;
+esac
+
 [ -d "$WORKSPACE/.git" ] || { echo "not a git workspace: $WORKSPACE" >&2; exit 1; }
 
 SESSION_DIR="$DURABLE/sessions/$SESSION_KEY"
@@ -46,20 +54,34 @@ STASH_SHA=$(git stash create 2>/dev/null || true)
 if [ -n "$STASH_SHA" ]; then
   # Advertise under a refname so `git fetch` from the bundle on restore can
   # pull the ref through cleanly. The ref is local-only and removed below.
+  # Write to .tmp first then mv so a crash mid-write can't leave a truncated
+  # bundle that restore would treat as valid.
+  STATE_BUNDLE_TMP="$SESSION_DIR/state.bundle.tmp"
+  STASH_SHA_TMP="$SESSION_DIR/stash.sha.tmp"
+  rm -f "$STATE_BUNDLE_TMP" "$STASH_SHA_TMP"
   git update-ref refs/push-snapshot/state "$STASH_SHA"
-  git bundle create "$SESSION_DIR/state.bundle" \
+  git bundle create "$STATE_BUNDLE_TMP" \
     refs/push-snapshot/state --not "$HEAD_SHA" >/dev/null
   git update-ref -d refs/push-snapshot/state
-  echo "$STASH_SHA" > "$SESSION_DIR/stash.sha"
+  printf '%s\n' "$STASH_SHA" > "$STASH_SHA_TMP"
+  mv "$STATE_BUNDLE_TMP" "$SESSION_DIR/state.bundle"
+  mv "$STASH_SHA_TMP" "$SESSION_DIR/stash.sha"
 else
   rm -f "$SESSION_DIR/state.bundle" "$SESSION_DIR/stash.sha"
 fi
 
 UNTRACKED_LIST=$(mktemp)
-trap 'rm -f "$UNTRACKED_LIST"' EXIT
+UNTRACKED_TAR_TMP=""
+trap 'rm -f "$UNTRACKED_LIST" "${UNTRACKED_TAR_TMP:-}"' EXIT
 git ls-files --others --exclude-standard -z > "$UNTRACKED_LIST"
 if [ -s "$UNTRACKED_LIST" ]; then
-  tar --null -T "$UNTRACKED_LIST" -czf "$SESSION_DIR/untracked.tar.gz"
+  UNTRACKED_TAR_TMP=$(mktemp "$SESSION_DIR/untracked.tar.gz.tmp.XXXXXX")
+  # --verbatim-files-from prevents tar from interpreting filenames starting
+  # with `-` as options when read from -T (GNU tar 1.32+).
+  tar --null --verbatim-files-from -T "$UNTRACKED_LIST" \
+    -czf "$UNTRACKED_TAR_TMP"
+  mv "$UNTRACKED_TAR_TMP" "$SESSION_DIR/untracked.tar.gz"
+  UNTRACKED_TAR_TMP=""
 else
   rm -f "$SESSION_DIR/untracked.tar.gz"
 fi
@@ -72,6 +94,8 @@ if [ -f package-lock.json ] && [ -d node_modules ]; then
     mv "$DEPS_TAR.tmp" "$DEPS_TAR"
   fi
   echo "$LOCK_HASH" > "$SESSION_DIR/deps.lockhash"
+else
+  rm -f "$SESSION_DIR/deps.lockhash"
 fi
 
 echo "snapshot ok: $SESSION_DIR"

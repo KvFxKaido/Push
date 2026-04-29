@@ -37,7 +37,7 @@ git add staged.txt
 echo "gamma v2"         > unstaged.txt
 echo "delta untracked"  > untracked.txt
 
-ORIG_STATUS=$(git status --porcelain=v1 | sort)
+ORIG_STATUS=$(git status --porcelain=v1 | LC_ALL=C sort)
 ORIG_STAGED=$(git diff --cached)
 ORIG_UNSTAGED=$(git diff)
 ORIG_UNTRACKED_CONTENT=$(cat untracked.txt)
@@ -53,7 +53,7 @@ git config commit.gpgsign false  # synthetic fixture; not a real commit
 
 "$HERE/restore.sh" "$WORK_B" "$DURABLE" "$SESSION_KEY"
 
-NEW_STATUS=$(git status --porcelain=v1 | sort)
+NEW_STATUS=$(git status --porcelain=v1 | LC_ALL=C sort)
 NEW_STAGED=$(git diff --cached)
 NEW_UNSTAGED=$(git diff)
 NEW_UNTRACKED_CONTENT=$(cat untracked.txt)
