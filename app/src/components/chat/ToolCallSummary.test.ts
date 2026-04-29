@@ -1,11 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ChatMessage } from '@/types';
-import { groupChatMessages } from './ChatContainer';
-import { buildSummaryLine } from './ToolCallSummary';
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                           */
-/* ------------------------------------------------------------------ */
+import { groupChatMessages, buildSummaryLine, type ToolCallPair } from './tool-call-utils';
 
 function textMsg(id: string, content: string): ChatMessage {
   return {
@@ -59,7 +54,7 @@ describe('groupChatMessages', () => {
     const out = groupChatMessages(msgs);
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ type: 'toolGroup' });
-    const group = out[0] as { type: 'toolGroup'; items: any[] };
+    const group = out[0] as { type: 'toolGroup'; items: ToolCallPair[] };
     expect(group.items).toHaveLength(1);
     expect(group.items[0].callMsg.id).toBe('tc1');
     expect(group.items[0].resultMsg.id).toBe('tr1');
@@ -74,7 +69,7 @@ describe('groupChatMessages', () => {
     ];
     const out = groupChatMessages(msgs);
     expect(out).toHaveLength(1);
-    const group = out[0] as { type: 'toolGroup'; items: any[] };
+    const group = out[0] as { type: 'toolGroup'; items: ToolCallPair[] };
     expect(group.items).toHaveLength(2);
   });
 
@@ -106,12 +101,14 @@ describe('groupChatMessages', () => {
 
 describe('buildSummaryLine', () => {
   it('summarises a single command as "Ran a command"', () => {
-    const items = [{ callMsg: toolCallMsg('1'), resultMsg: toolResultMsg('1', 'sandbox_exec') }];
+    const items: ToolCallPair[] = [
+      { callMsg: toolCallMsg('1'), resultMsg: toolResultMsg('1', 'sandbox_exec') },
+    ];
     expect(buildSummaryLine(items)).toBe('Ran a command');
   });
 
   it('summarises 3 files as "Read 3 files"', () => {
-    const items = Array.from({ length: 3 }, (_, i) => ({
+    const items: ToolCallPair[] = Array.from({ length: 3 }, (_, i) => ({
       callMsg: toolCallMsg(`c${i}`),
       resultMsg: toolResultMsg(`r${i}`, 'read_file'),
     }));
@@ -119,7 +116,7 @@ describe('buildSummaryLine', () => {
   });
 
   it('summarises mixed tools', () => {
-    const items = [
+    const items: ToolCallPair[] = [
       { callMsg: toolCallMsg('1'), resultMsg: toolResultMsg('1', 'sandbox_exec') },
       { callMsg: toolCallMsg('2'), resultMsg: toolResultMsg('2', 'read_file') },
       { callMsg: toolCallMsg('3'), resultMsg: toolResultMsg('3', 'read_file') },

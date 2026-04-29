@@ -11,7 +11,8 @@ import type {
   QuickPrompt,
 } from '@/types';
 import { MessageBubble } from './MessageBubble';
-import { ToolCallSummary, type ToolCallPair } from './ToolCallSummary';
+import { ToolCallSummary } from './ToolCallSummary';
+import { groupChatMessages } from './tool-call-utils';
 import { AgentStatusBar } from './AgentStatusBar';
 import { CIStatusBanner } from './CIStatusBanner';
 import { getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
@@ -191,39 +192,6 @@ const GroupedMessageList = memo(
     return true;
   },
 );
-
-export function groupChatMessages(
-  messages: readonly ChatMessage[],
-): ({ type: 'text'; message: ChatMessage } | { type: 'toolGroup'; items: ToolCallPair[] })[] {
-  const segments: ReturnType<typeof groupChatMessages> = [];
-  let i = 0;
-  while (i < messages.length) {
-    const msg = messages[i];
-    if (msg.role === 'assistant' && msg.isToolCall) {
-      const pairs: ToolCallPair[] = [];
-      while (i < messages.length) {
-        const callMsg = messages[i];
-        if (!(callMsg.role === 'assistant' && callMsg.isToolCall)) break;
-        const resultMsg = messages[i + 1];
-        if (!resultMsg || !(resultMsg.role === 'user' && resultMsg.isToolResult)) break;
-        pairs.push({ callMsg, resultMsg });
-        i += 2;
-      }
-      if (pairs.length > 0) {
-        segments.push({ type: 'toolGroup', items: pairs });
-        continue;
-      }
-    }
-    // Orphan tool results (not immediately after their call) are dropped from surface
-    if (msg.role === 'user' && msg.isToolResult) {
-      i++;
-      continue;
-    }
-    segments.push({ type: 'text', message: msg });
-    i++;
-  }
-  return segments;
-}
 
 const AUTO_SCROLL_THRESHOLD_PX = 150;
 const AT_BOTTOM_THRESHOLD_PX = 48;
