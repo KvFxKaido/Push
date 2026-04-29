@@ -37,6 +37,7 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
+import { resolveApiUrl } from '@/lib/api-url';
 import { createId } from './chat-persistence';
 import type {
   AgentStatus,
@@ -441,7 +442,7 @@ export function useBackgroundCoderJob({
       if (lastEventId) headers['Last-Event-ID'] = lastEventId;
 
       try {
-        const resp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/events`, {
+        const resp = await fetch(resolveApiUrl(`/api/jobs/${encodeURIComponent(jobId)}/events`), {
           method: 'GET',
           headers,
           signal: controller.signal,
@@ -535,7 +536,7 @@ export function useBackgroundCoderJob({
 
       let resp: Response;
       try {
-        resp = await fetch('/api/jobs/start', {
+        resp = await fetch(resolveApiUrl('/api/jobs/start'), {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body),
@@ -656,7 +657,9 @@ export function useBackgroundCoderJob({
 
   const cancelJob = useCallback(async (jobId: string): Promise<void> => {
     try {
-      await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+      await fetch(resolveApiUrl(`/api/jobs/${encodeURIComponent(jobId)}/cancel`), {
+        method: 'POST',
+      });
     } catch (err) {
       console.warn(`[useBackgroundCoderJob] Failed to cancel ${jobId}`, err);
     }

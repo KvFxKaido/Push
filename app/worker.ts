@@ -12,6 +12,7 @@
 
 import type { ExecutionContext, ScheduledEvent } from '@cloudflare/workers-types';
 import type { Env } from './src/worker/worker-middleware';
+import { corsHeadersFor } from './src/worker/worker-middleware';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from './src/lib/request-id';
 
 import {
@@ -77,9 +78,30 @@ export default {
     try {
       const requestWithId = withRequestIdOnRequest(request, requestId);
       const url = new URL(requestWithId.url);
+
+      // CORS preflight for any /api/* route. The actual route registry is
+      // method-keyed (GET/POST), so OPTIONS requests would otherwise fall
+      // through to the SPA fallback (which doesn't handle them and 500s).
+      if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
+        const headers = corsHeadersFor(requestWithId, env);
+        return withRequestIdOnResponse(
+          headers
+            ? new Response(null, { status: 204, headers })
+            : new Response(null, { status: 403 }),
+          requestId,
+          requestWithId,
+          env,
+        );
+      }
+
       const exactRoute = matchExactApiRoute(url.pathname, request.method);
       if (exactRoute) {
-        return withRequestIdOnResponse(await exactRoute.handler(requestWithId, env), requestId);
+        return withRequestIdOnResponse(
+          await exactRoute.handler(requestWithId, env),
+          requestId,
+          requestWithId,
+          env,
+        );
       }
 
       // API route: sandbox proxy. PUSH_SANDBOX_PROVIDER (via wrangler vars)
@@ -94,6 +116,8 @@ export default {
         return withRequestIdOnResponse(
           await handler(requestWithId, env, url, route, ctx),
           requestId,
+          requestWithId,
+          env,
         );
       }
 
@@ -103,6 +127,8 @@ export default {
         return withRequestIdOnResponse(
           await handleJobsRoute(requestWithId, env, jobsMatch),
           requestId,
+          requestWithId,
+          env,
         );
       }
 
@@ -113,6 +139,8 @@ export default {
         return withRequestIdOnResponse(
           await handleCloudflareSandbox(requestWithId, env, url, route, ctx),
           requestId,
+          requestWithId,
+          env,
         );
       }
 
@@ -121,6 +149,8 @@ export default {
       return withRequestIdOnResponse(
         await env.ASSETS.fetch(new Request(new URL('/index.html', requestWithId.url))),
         requestId,
+        requestWithId,
+        env,
       );
     } catch (err) {
       return handleUncaughtFetchError(err, request, requestId);
@@ -223,9 +253,22 @@ function withRequestIdOnRequest(request: Request, requestId: string): Request {
   return new Request(request, { headers });
 }
 
-function withRequestIdOnResponse(response: Response, requestId: string): Response {
+function withRequestIdOnResponse(
+  response: Response,
+  requestId: string,
+  request?: Request,
+  env?: Env,
+): Response {
   const headers = new Headers(response.headers);
   headers.set(REQUEST_ID_HEADER, requestId);
+  if (request && env) {
+    const cors = corsHeadersFor(request, env);
+    if (cors) {
+      for (const [key, value] of Object.entries(cors)) {
+        headers.set(key, value);
+      }
+    }
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GitHubUser } from '../types';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { isNetworkFetchError, validateGitHubToken as validateToken } from '@/lib/utils';
+import { resolveApiUrl } from '@/lib/api-url';
 
 const INSTALLATION_ID_KEY = 'github_app_installation_id';
 const TOKEN_KEY = 'github_app_token';
@@ -105,7 +106,7 @@ function parseStoredUser(raw: string | null): GitHubUser | null {
 async function fetchAppToken(installationId: string): Promise<TokenResponse> {
   let res: Response;
   try {
-    res = await fetch('/api/github/app-token', {
+    res = await fetch(resolveApiUrl('/api/github/app-token'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ installation_id: installationId }),
@@ -140,7 +141,7 @@ async function fetchAppToken(installationId: string): Promise<TokenResponse> {
 async function fetchAppOAuth(code: string): Promise<TokenResponse & { installation_id: string }> {
   let res: Response;
   try {
-    res = await fetch('/api/github/app-oauth', {
+    res = await fetch(resolveApiUrl('/api/github/app-oauth'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code }),

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  CAPACITOR_ANDROID_ORIGIN,
   MAX_BODY_SIZE_BYTES,
   buildVertexPreambleAuth,
+  corsHeadersFor,
   createJsonProxyHandler,
   createStreamProxyHandler,
   getAllowedOrigins,
@@ -92,6 +94,50 @@ describe('getAllowedOrigins', () => {
     );
     expect(allowed.has('https://ok.test')).toBe(true);
     expect(Array.from(allowed).every((o) => o.startsWith('http'))).toBe(true);
+  });
+
+  it('always includes the Capacitor Android origin so the mobile app works without env config', () => {
+    const allowed = getAllowedOrigins(requestUrl, makeEnv());
+    expect(allowed.has(CAPACITOR_ANDROID_ORIGIN)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// corsHeadersFor
+// ---------------------------------------------------------------------------
+
+describe('corsHeadersFor', () => {
+  const requestUrl = 'https://push.example.test/api/foo';
+
+  it('returns CORS headers when the request Origin is allowed', () => {
+    const request = makeRequest(requestUrl, {
+      headers: { Origin: CAPACITOR_ANDROID_ORIGIN },
+    });
+    const headers = corsHeadersFor(request, makeEnv());
+    expect(headers).not.toBeNull();
+    expect(headers!['Access-Control-Allow-Origin']).toBe(CAPACITOR_ANDROID_ORIGIN);
+    expect(headers!['Vary']).toBe('Origin');
+  });
+
+  it('echoes Access-Control-Request-Headers from the preflight when present', () => {
+    const request = makeRequest(requestUrl, {
+      headers: {
+        Origin: CAPACITOR_ANDROID_ORIGIN,
+        'Access-Control-Request-Headers': 'Content-Type, X-GitHub-Token',
+      },
+    });
+    const headers = corsHeadersFor(request, makeEnv());
+    expect(headers!['Access-Control-Allow-Headers']).toBe('Content-Type, X-GitHub-Token');
+  });
+
+  it('returns null when the Origin is not on the allow-list', () => {
+    const request = makeRequest(requestUrl, { headers: { Origin: 'https://evil.test' } });
+    expect(corsHeadersFor(request, makeEnv())).toBeNull();
+  });
+
+  it('returns null when the request has no Origin header (same-origin)', () => {
+    const request = makeRequest(requestUrl);
+    expect(corsHeadersFor(request, makeEnv())).toBeNull();
   });
 });
 

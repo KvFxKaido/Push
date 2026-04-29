@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { BackgroundJobStatus, CoderJobCardData } from '@/types';
+import { resolveApiUrl } from '@/lib/api-url';
 import {
   CARD_BADGE_ERROR,
   CARD_BADGE_INFO,
@@ -75,7 +76,9 @@ const STATUS_ICONS: Record<BackgroundJobStatus, LucideIcon> = {
 
 async function postCancel(jobId: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+    const res = await fetch(resolveApiUrl(`/api/jobs/${encodeURIComponent(jobId)}/cancel`), {
+      method: 'POST',
+    });
     // fetch() only rejects on network-level failure; a 4xx/5xx response
     // still resolves. Without the res.ok check a rejected cancel would
     // look like a success and leave the button stuck in "Cancelling…".

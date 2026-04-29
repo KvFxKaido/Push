@@ -20,6 +20,7 @@ import {
   type PreferredProvider,
 } from '@/lib/providers';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
+import { resolveApiUrl } from '@/lib/api-url';
 import {
   fetchCloudflareModels,
   fetchOllamaModels,
@@ -266,7 +267,7 @@ export function useModelCatalog(): ModelCatalog {
     setCloudflareStatusLoading(true);
     setCloudflareStatusError(null);
     try {
-      const response = await fetch('/api/health', { cache: 'no-store' });
+      const response = await fetch(resolveApiUrl('/api/health'), { cache: 'no-store' });
       // Parse the payload regardless of HTTP status: /api/health can return
       // structured JSON with services.cloudflare.configured even on a 503,
       // and we still want that signal so stale-configured state gets cleared

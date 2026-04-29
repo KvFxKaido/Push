@@ -236,8 +236,12 @@ export function normalizeOrigin(value: string | null): string | null {
   }
 }
 
+// Capacitor Android WebView origin (set by `androidScheme: 'https'`).
+// Hard-coded so the mobile app works without operator-side env config.
+export const CAPACITOR_ANDROID_ORIGIN = 'https://localhost';
+
 export function getAllowedOrigins(requestUrl: URL, env: Env): Set<string> {
-  const allowed = new Set<string>([requestUrl.origin]);
+  const allowed = new Set<string>([requestUrl.origin, CAPACITOR_ANDROID_ORIGIN]);
   const raw = env.ALLOWED_ORIGINS;
   if (raw) {
     for (const entry of raw.split(',')) {
@@ -248,6 +252,25 @@ export function getAllowedOrigins(requestUrl: URL, env: Env): Set<string> {
     }
   }
   return allowed;
+}
+
+// Build CORS response headers for the request's Origin if allowed.
+// Returns null when no Origin is present or it isn't on the allow-list — the
+// caller should then either skip CORS (same-origin) or return 403.
+export function corsHeadersFor(request: Request, env: Env): Record<string, string> | null {
+  const origin = normalizeOrigin(request.headers.get('Origin'));
+  if (!origin) return null;
+  const allowed = getAllowedOrigins(new URL(request.url), env);
+  if (!allowed.has(origin)) return null;
+
+  const requestedHeaders = request.headers.get('Access-Control-Request-Headers');
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': requestedHeaders ?? 'Content-Type, X-Push-Request-Id',
+    'Access-Control-Max-Age': '86400',
+    Vary: 'Origin',
+  };
 }
 
 export function validateOrigin(

@@ -1,5 +1,6 @@
 import type { BranchListCardData, ToolExecutionResult } from '@/types';
 import { getGitHubAuthHeaders } from './github-auth';
+import { resolveApiUrl } from './api-url';
 import type { GitHubCoreToolCall } from '@push/lib/github-tool-core';
 
 export type GitHubToolBackend = 'legacy' | 'worker';
@@ -47,7 +48,7 @@ export function supportsWorkerGitHubTool(name: string): name is WorkerGitHubTool
 async function postGitHubToolRequest(
   payload: WorkerGitHubToolCall & { allowedRepo: string },
 ): Promise<WorkerGitHubToolResponse> {
-  const response = await fetch('/api/github/tools', {
+  const response = await fetch(resolveApiUrl('/api/github/tools'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
