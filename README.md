@@ -32,13 +32,14 @@ It gives you a chat-first workflow anchored to a real repo, real branch state, r
 ## Quick orientation
 
 - **Web app** — mobile-first repo chat, reviews, sandbox runs, and branch workflows
+- **Android app (experimental)** — Capacitor wrapper around the web app for native Android testing and sideloaded debug builds
 - **CLI** — local terminal use with interactive and headless task execution
 - **Sandbox execution** — ephemeral Linux workspaces backed by Cloudflare Sandbox (default) or Modal, selected per-deploy via `PUSH_SANDBOX_PROVIDER`
 - **GitHub-backed repo mode** plus **scratch workspace mode** when you don't need auth
 
 ## Repo map
 
-- `app/` — web app, Cloudflare Worker, UI, hooks, and app logic (Cloudflare Sandbox handler lives in `app/src/worker/worker-cf-sandbox.ts`)
+- `app/` — web app, experimental Capacitor Android app, Cloudflare Worker, UI, hooks, and app logic (Cloudflare Sandbox handler lives in `app/src/worker/worker-cf-sandbox.ts`)
 - `cli/` — local terminal agent, sessions, daemon, and terminal interface
 - `sandbox/` — Modal sandbox backend (Python)
 - `lib/` — shared logic used across app and CLI
@@ -62,6 +63,20 @@ npx wrangler dev --port 8787
 
 See [app/README.md](app/README.md) for environment variables, OAuth setup, Worker secrets, and sandbox deployment.
 
+### Android app (experimental)
+
+The Android app is currently a Capacitor shell for the production web bundle. It is useful for native WebView testing, OAuth checks, and sideloaded debug builds, but it is not yet treated as a release channel.
+
+```bash
+cd app
+npm install
+npm run android:sync
+cd android
+./gradlew installDebug
+```
+
+On Windows, run the Gradle wrapper as `.\gradlew installDebug` from `app\android`.
+
 ### CLI
 
 ```bash
@@ -79,11 +94,11 @@ npm install
 - [CLAUDE.md](CLAUDE.md) — quick start and entry points
 - [docs/architecture.md](docs/architecture.md) — tech stack, agent roles, and key systems
 - [cli/README.md](cli/README.md) — terminal workflows, config, and provider details
-- [app/README.md](app/README.md) — frontend environment and Worker setup
+- [app/README.md](app/README.md) — frontend, Worker, and experimental Android setup
 
 ## Current direction
 
-Push is actively improving CLI ergonomics — transcript-first navigation, attach/resume behavior, and TUI improvements. See [ROADMAP.md](ROADMAP.md) for what's next.
+Push is actively improving CLI ergonomics and hardening the experimental Android app path. See [ROADMAP.md](ROADMAP.md) for what's next.
 
 ## License
 

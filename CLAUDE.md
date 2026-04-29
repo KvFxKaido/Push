@@ -16,6 +16,17 @@ Run the Worker from the repo root in a second terminal:
 npx wrangler dev --port 8787
 ```
 
+### Android app (experimental)
+
+The Android app is a Capacitor wrapper around the web bundle. It is currently for native testing and debug APKs, not a formal release channel.
+
+```bash
+cd app
+npm run android:sync
+cd android
+./gradlew installDebug
+```
+
 ### CLI
 
 ```bash
