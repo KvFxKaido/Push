@@ -47,7 +47,10 @@ interface CommitPushState {
   commitMessage: string;
 }
 
-const RECOVERY_PATCH_PATH = '/tmp/push-recovery.patch';
+// Inside /workspace because the sandbox backend rejects writes outside it
+// (`Path outside /workspace is not allowed`). The .git/ subpath keeps the
+// patch out of `git add -A`, so we don't accidentally commit it.
+const RECOVERY_PATCH_PATH = '/workspace/.git/push-recovery.patch';
 
 type AttemptResult =
   | { status: 'success' }

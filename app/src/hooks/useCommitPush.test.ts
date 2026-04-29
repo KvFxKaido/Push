@@ -362,7 +362,7 @@ describe('useCommitPush.commitAndPush — sandbox-expiry recovery', () => {
     expect(onSandboxExpired).toHaveBeenCalledOnce();
     expect(sandboxClient.writeToSandbox).toHaveBeenCalledWith(
       'sbx-2',
-      '/tmp/push-recovery.patch',
+      '/workspace/.git/push-recovery.patch',
       'diff --git a/x b/x',
     );
     const calls = sandboxClient.execInSandbox.mock.calls;
