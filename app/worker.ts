@@ -56,6 +56,7 @@ import { sanitizeUrlForLogging } from './src/worker/worker-log-utils';
 import { summarizeSnapshotIndex } from './src/worker/snapshot-index';
 import { handleAdminSnapshots } from './src/worker/admin-routes';
 import { handleJobsRoute, matchJobsRoute } from './src/worker/worker-coder-job';
+import { handleStats } from './src/worker/worker-stats';
 
 // Re-export the Sandbox Durable Object class so wrangler can bind to it.
 // The Cloudflare Sandbox SDK ships the DO implementation; we only need to
@@ -243,6 +244,7 @@ type ExactApiRoute = {
 };
 
 const EXACT_API_ROUTES: ExactApiRoute[] = [
+  { path: '/api/_stats', method: 'GET', handler: handleStats },
   {
     path: '/api/health',
     method: 'GET',

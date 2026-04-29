@@ -88,6 +88,12 @@ export interface Env {
   CF_AI_GATEWAY_ACCOUNT_ID?: string;
   CF_AI_GATEWAY_SLUG?: string;
   CF_AI_GATEWAY_TOKEN?: string;
+  // Workers Analytics Engine for provider observability
+  PROVIDER_STATS?: {
+    writeDataPoint(data: { blobs?: string[]; doubles?: number[]; indexes?: string[] }): void;
+  };
+  // Admin token for /api/_stats
+  STATS_ADMIN_TOKEN?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -533,6 +539,56 @@ export function getAiGatewayAuthHeader(env: Env): string | null {
 // ---------------------------------------------------------------------------
 // Stream proxy factory — for SSE chat endpoints
 // ---------------------------------------------------------------------------
+// Provider Stats Telemetry — Workers Analytics Engine
+// ---------------------------------------------------------------------------
+
+export interface ProviderStatFields {
+  provider: string;
+  model: string;
+  routeClass: 'gateway-cf' | 'gateway-lite' | 'direct';
+  errorCode: string;
+  ttfbMs: number;
+  durationMs: number;
+  upstreamStatus: number;
+  bytesIn: number;
+  bytesOut: number;
+  tokensIn: number;
+  tokensOut: number;
+  cacheHit: number;
+  success: number;
+}
+
+/**
+ * Write a single provider request datapoint to Cloudflare Workers Analytics Engine.
+ * Schema version "1" matches docs/decisions/Provider Observability via Analytics Engine.md
+ */
+export function writeProviderStat(env: Env, fields: ProviderStatFields): void {
+  if (!env.PROVIDER_STATS) return;
+
+  env.PROVIDER_STATS.writeDataPoint({
+    blobs: [
+      '1', // schema_version
+      fields.provider,
+      fields.model,
+      fields.routeClass,
+      fields.errorCode,
+    ],
+    doubles: [
+      fields.ttfbMs,
+      fields.durationMs,
+      fields.upstreamStatus,
+      fields.bytesIn,
+      fields.bytesOut,
+      fields.tokensIn,
+      fields.tokensOut,
+      fields.cacheHit,
+      fields.success,
+    ],
+    indexes: [fields.provider],
+  });
+}
+
+// ---------------------------------------------------------------------------
 
 export interface StreamProxyConfig {
   name: string;
@@ -580,21 +636,45 @@ export function createStreamProxyHandler(
       });
     }
 
-    wlog('info', 'request', {
-      requestId,
-      route: config.logTag,
-      bytes: normalizedRequest.value.bodyText.length,
-      model: normalizedRequest.value.parsed.model,
-    });
+    const model = (normalizedRequest.value.parsed.model as string) || 'unknown';
+    const startTime = Date.now();
+    let ttfbMs = -1;
+    let upstreamStatus = 0;
+    let bytesOut = 0;
 
     const directUrl =
       typeof config.upstreamUrl === 'function' ? config.upstreamUrl(request) : config.upstreamUrl;
     const gatewayUrl = config.gateway ? buildAiGatewayUrl(env, config.gateway) : null;
     const upstreamUrl = gatewayUrl ?? directUrl;
 
-    // Only attach cf-aig-authorization when actually routing through the
-    // gateway — an orphan token without account/slug must not leak to the
-    // direct provider.
+    const writeStat = (fields: Partial<ProviderStatFields>) => {
+      writeProviderStat(env, {
+        provider: config.logTag.split('/').pop() || 'unknown',
+        model,
+        routeClass: gatewayUrl ? 'gateway-cf' : 'gateway-lite',
+        errorCode: fields.errorCode || '',
+        ttfbMs,
+        durationMs: Date.now() - startTime,
+        upstreamStatus: upstreamStatus || fields.upstreamStatus || 0,
+        bytesIn: bodyText.length,
+        bytesOut,
+        tokensIn: -1,
+        tokensOut: -1,
+        cacheHit: -1,
+        success:
+          (fields.success ?? (upstreamStatus > 0 && upstreamStatus < 400 && !fields.errorCode))
+            ? 1
+            : 0,
+      });
+    };
+
+    wlog('info', 'request', {
+      requestId,
+      route: config.logTag,
+      bytes: normalizedRequest.value.bodyText.length,
+      model,
+    });
+
     const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
     const gatewayHeaders: Record<string, string> = aigAuth
       ? { 'cf-aig-authorization': aigAuth }
@@ -605,13 +685,11 @@ export function createStreamProxyHandler(
         ? config.extraFetchHeaders(request)
         : (config.extraFetchHeaders ?? {});
 
-    // Trace context headers for response correlation
     const traceResponseHeaders: Record<string, string> = {
       'X-Push-Trace-Id': spanCtx.traceId,
       'X-Push-Span-Id': spanCtx.spanId,
     };
 
-    // Create child context for upstream propagation
     const upstreamCtx = createChildContext(spanCtx);
 
     try {
@@ -633,6 +711,8 @@ export function createStreamProxyHandler(
           body: normalizedRequest.value.bodyText,
           signal: controller.signal,
         });
+        ttfbMs = Date.now() - startTime;
+        upstreamStatus = upstream.status;
       } finally {
         clearTimeout(timeoutId);
       }
@@ -646,17 +726,21 @@ export function createStreamProxyHandler(
 
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
+        bytesOut = errBody.length;
+        writeStat({ errorCode: 'UPSTREAM_ERROR' });
+
         wlog('error', 'upstream_error', {
           requestId,
           route: config.logTag,
           status: upstream.status,
           body: errBody.slice(0, 500),
         });
+
         if (config.formatUpstreamError) {
           const formatted = config.formatUpstreamError(upstream.status, errBody);
           return Response.json(formatted, { status: upstream.status });
         }
-        // Strip HTML error pages (e.g. Cloudflare 403/503 pages) — return a clean message
+
         const isHtml = /<\s*html[\s>]/i.test(errBody) || /<\s*!doctype/i.test(errBody);
         const errDetail = isHtml
           ? `HTTP ${upstream.status} (the server returned an HTML error page instead of JSON)`
@@ -667,41 +751,47 @@ export function createStreamProxyHandler(
         );
       }
 
+      const responseHeaders: Record<string, string> = {
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        [REQUEST_ID_HEADER]: requestId,
+        'X-Accel-Buffering': 'no',
+        ...traceResponseHeaders,
+      };
+
       if (config.preserveUpstreamHeaders) {
-        return new Response(upstream.body, {
-          status: upstream.status,
-          headers: {
-            'Content-Type':
-              upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
-            'Cache-Control': 'no-cache, no-transform',
-            Connection: 'keep-alive',
-            [REQUEST_ID_HEADER]: requestId,
-            'X-Accel-Buffering': 'no',
-            ...traceResponseHeaders,
-          },
-        });
+        responseHeaders['Content-Type'] =
+          upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8';
+      } else {
+        responseHeaders['Content-Type'] = 'text/event-stream';
       }
 
-      // Standard SSE streaming
       if (upstream.body) {
-        return new Response(upstream.body, {
-          status: 200,
-          headers: {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            Connection: 'keep-alive',
-            [REQUEST_ID_HEADER]: requestId,
-            ...traceResponseHeaders,
+        const transform = new TransformStream({
+          transform(chunk, controller) {
+            bytesOut += chunk.byteLength;
+            controller.enqueue(chunk);
           },
+          flush() {
+            writeStat({ success: 1 });
+          },
+        });
+
+        return new Response(upstream.body.pipeThrough(transform), {
+          status: upstream.status,
+          headers: responseHeaders,
         });
       }
 
-      // Non-streaming fallback
-      const data: unknown = await upstream.json();
-      return Response.json(data);
+      const data = await upstream.json();
+      const jsonText = JSON.stringify(data);
+      bytesOut = jsonText.length;
+      writeStat({ success: 1 });
+      return Response.json(data, { headers: responseHeaders });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       const isTimeout = err instanceof Error && err.name === 'AbortError';
+      writeStat({ errorCode: isTimeout ? 'TIMEOUT' : 'FETCH_ERROR' });
+      const message = err instanceof Error ? err.message : String(err);
       const status = isTimeout ? 504 : 502;
       const error = isTimeout ? config.timeoutError : message;
       wlog('error', 'unhandled', { requestId, route: config.logTag, message, timeout: isTimeout });
@@ -729,7 +819,6 @@ export interface JsonProxyConfig {
   /** Opt-in Cloudflare AI Gateway routing. No-op when gateway env vars are unset. */
   gateway?: AiGatewayBinding;
 }
-
 export function createJsonProxyHandler(
   config: JsonProxyConfig,
 ): (request: Request, env: Env) => Promise<Response> {
@@ -745,13 +834,40 @@ export function createJsonProxyHandler(
     if (preamble instanceof Response) return preamble;
     const { authHeader, bodyText, requestId, spanCtx } = preamble;
 
-    // Trace context headers for response correlation
+    const startTime = Date.now();
+    let ttfbMs = -1;
+    let upstreamStatus = 0;
+    let bytesOut = 0;
+
+    const gatewayUrl = config.gateway ? buildAiGatewayUrl(env, config.gateway) : null;
+    const upstreamUrl = gatewayUrl ?? config.upstreamUrl;
+
+    const writeStat = (fields: Partial<ProviderStatFields>) => {
+      writeProviderStat(env, {
+        provider: config.logTag.split('/').pop() || 'unknown',
+        model: 'unknown',
+        routeClass: gatewayUrl ? 'gateway-cf' : 'gateway-lite',
+        errorCode: fields.errorCode || '',
+        ttfbMs,
+        durationMs: Date.now() - startTime,
+        upstreamStatus: upstreamStatus || fields.upstreamStatus || 0,
+        bytesIn: needsBody ? bodyText.length : 0,
+        bytesOut,
+        tokensIn: -1,
+        tokensOut: -1,
+        cacheHit: -1,
+        success:
+          (fields.success ?? (upstreamStatus > 0 && upstreamStatus < 400 && !fields.errorCode))
+            ? 1
+            : 0,
+      });
+    };
+
     const traceResponseHeaders: Record<string, string> = {
       'X-Push-Trace-Id': spanCtx.traceId,
       'X-Push-Span-Id': spanCtx.spanId,
     };
 
-    // Create child context for upstream propagation
     const upstreamCtx = createChildContext(spanCtx);
 
     wlog('info', 'request', {
@@ -761,8 +877,6 @@ export function createJsonProxyHandler(
       ...(needsBody ? { bytes: bodyText.length } : {}),
     });
 
-    const gatewayUrl = config.gateway ? buildAiGatewayUrl(env, config.gateway) : null;
-    const upstreamUrl = gatewayUrl ?? config.upstreamUrl;
     const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
     const gatewayHeaders: Record<string, string> = aigAuth
       ? { 'cf-aig-authorization': aigAuth }
@@ -788,16 +902,22 @@ export function createJsonProxyHandler(
         };
         if (needsBody) fetchInit.body = bodyText;
         upstream = await fetch(upstreamUrl, fetchInit);
+        ttfbMs = Date.now() - startTime;
+        upstreamStatus = upstream.status;
       } finally {
         clearTimeout(timeoutId);
       }
 
       if (!upstream.ok) {
         const errBody = await upstream.text().catch(() => '');
+        bytesOut = errBody.length;
+        writeStat({ errorCode: 'UPSTREAM_ERROR' });
+
         const isHtml = /<html/i.test(errBody.slice(0, 200));
         const safeBody = isHtml
           ? `${config.name} responded with status ${upstream.status} (content type not JSON)`
           : errBody.slice(0, 200);
+
         wlog('error', 'upstream_error', {
           requestId,
           route: config.logTag,
@@ -805,6 +925,7 @@ export function createJsonProxyHandler(
           body: errBody.slice(0, 500),
           trace_id: spanCtx.traceId,
         });
+
         if (config.formatUpstreamError) {
           const formatted = config.formatUpstreamError(upstream.status, errBody);
           return Response.json(formatted, { status: upstream.status });
@@ -815,13 +936,18 @@ export function createJsonProxyHandler(
         );
       }
 
-      const data: unknown = await upstream.json();
+      const data = await upstream.json();
+      const jsonText = JSON.stringify(data);
+      bytesOut = jsonText.length;
+      writeStat({ success: 1 });
+
       return Response.json(data, {
         headers: { [REQUEST_ID_HEADER]: requestId, ...traceResponseHeaders },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       const isTimeout = err instanceof Error && err.name === 'AbortError';
+      writeStat({ errorCode: isTimeout ? 'TIMEOUT' : 'FETCH_ERROR' });
+      const message = err instanceof Error ? err.message : String(err);
       const status = isTimeout ? 504 : 500;
       const error = isTimeout ? config.timeoutError : message;
       wlog('error', 'unhandled', { requestId, route: config.logTag, message, timeout: isTimeout });
