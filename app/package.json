@@ -17,7 +17,8 @@
     "cap:sync": "npm run build && cap sync",
     "android:setup": "node scripts/ensure-capacitor-android.mjs",
     "android:sync": "npm run build && npm run android:setup && cap sync android",
-    "android:open": "npm run android:sync && cap open android"
+    "android:open": "npm run android:sync && cap open android",
+    "android:icons": "capacitor-assets generate --android"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.1",
@@ -92,6 +93,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.4",
+    "@capacitor/assets": "^3.0.5",
     "@cloudflare/workers-types": "^4.20260131.0",
     "@commitlint/cli": "^20.4.1",
     "@commitlint/config-conventional": "^20.4.1",
