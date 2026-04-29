@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, useCallback } from 'react';
+import { memo, useMemo, useState, useCallback } from "react";
 import {
   ChevronRight,
   FileCode,
@@ -8,16 +8,19 @@ import {
   Pin,
   Pencil,
   RefreshCw,
-} from 'lucide-react';
-import type { ChatMessage, CardAction, AttachmentData } from '@/types';
-import { CardRenderer } from '@/components/cards/CardRenderer';
-import { BranchWaveIcon, PushMarkIcon } from '@/components/icons/push-custom-icons';
+} from "lucide-react";
+import type { ChatMessage, CardAction, AttachmentData } from "@/types";
+import { CardRenderer } from "@/components/cards/CardRenderer";
+import {
+  BranchWaveIcon,
+  PushMarkIcon,
+} from "@/components/icons/push-custom-icons";
 import {
   looksLikeToolCall,
   ONLY_BRACKETS_RE,
   stripToolCallPayload,
   stripToolResultEnvelopes,
-} from './message-content';
+} from "./message-content";
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -29,15 +32,15 @@ interface MessageBubbleProps {
 }
 
 function isToolCallObject(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
+  if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
-  return typeof record.tool === 'string';
+  return typeof record.tool === "string";
 }
 
 function isToolCallJson(code: string): boolean {
   try {
     const trimmed = code.trim();
-    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return false;
+    if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return false;
     const parsed = JSON.parse(trimmed);
     return isToolCallObject(parsed);
   } catch {
@@ -49,7 +52,7 @@ function formatContent(content: string): React.ReactNode[] {
   if (!content) return [];
 
   const parts: React.ReactNode[] = [];
-  const lines = content.split('\n');
+  const lines = content.split("\n");
   let inCodeBlock = false;
   let codeLines: string[] = [];
   let codeKey = 0;
@@ -58,9 +61,9 @@ function formatContent(content: string): React.ReactNode[] {
     const line = lines[i];
 
     // --- Fenced code blocks ---
-    if (line.startsWith('```')) {
+    if (line.startsWith("```")) {
       if (inCodeBlock) {
-        const fullCode = codeLines.join('\n');
+        const fullCode = codeLines.join("\n");
         // Hide raw JSON tool call blocks from chat
         if (!isToolCallJson(fullCode)) {
           parts.push(
@@ -89,7 +92,12 @@ function formatContent(content: string): React.ReactNode[] {
 
     // --- Horizontal rule (---, ***, ___) ---
     if (/^(\s*[-*_]\s*){3,}$/.test(line) && line.trim().length >= 3) {
-      parts.push(<hr key={`hr-${i}`} className="my-3 border-0 border-t border-push-edge" />);
+      parts.push(
+        <hr
+          key={`hr-${i}`}
+          className="my-3 border-0 border-t border-push-edge"
+        />,
+      );
       continue;
     }
 
@@ -99,10 +107,10 @@ function formatContent(content: string): React.ReactNode[] {
       const level = headingMatch[1].length;
       const headingText = headingMatch[2];
       const styles: Record<number, string> = {
-        1: 'text-[18px] font-semibold text-push-fg mt-4 mb-1.5',
-        2: 'text-[16px] font-semibold text-push-fg mt-3 mb-1',
-        3: 'text-push-lg font-medium text-[#e2e8f0] mt-2.5 mb-0.5',
-        4: 'text-[14px] font-medium text-[#8891a1] mt-2 mb-0.5 uppercase tracking-wide',
+        1: "text-[18px] font-semibold text-push-fg mt-4 mb-1.5",
+        2: "text-[16px] font-semibold text-push-fg mt-3 mb-1",
+        3: "text-push-lg font-medium text-[#e2e8f0] mt-2.5 mb-0.5",
+        4: "text-[14px] font-medium text-[#8891a1] mt-2 mb-0.5 uppercase tracking-wide",
       };
       parts.push(
         <div key={`heading-${i}`} className={styles[level]}>
@@ -113,14 +121,14 @@ function formatContent(content: string): React.ReactNode[] {
     }
 
     // --- Blockquote ---
-    if (line.startsWith('> ') || line === '>') {
-      const quoteText = line.startsWith('> ') ? line.slice(2) : '';
+    if (line.startsWith("> ") || line === ">") {
+      const quoteText = line.startsWith("> ") ? line.slice(2) : "";
       parts.push(
         <div
           key={`bq-${i}`}
           className="border-l-2 border-push-edge pl-3 my-1 text-[#8891a1] italic"
         >
-          {quoteText ? formatInline(quoteText) : '\u00A0'}
+          {quoteText ? formatInline(quoteText) : "\u00A0"}
         </div>,
       );
       continue;
@@ -166,7 +174,7 @@ function formatContent(content: string): React.ReactNode[] {
     }
 
     // --- Empty line ---
-    if (line.trim() === '') {
+    if (line.trim() === "") {
       parts.push(<div key={`empty-${i}`} className="h-2" />);
       continue;
     }
@@ -177,7 +185,7 @@ function formatContent(content: string): React.ReactNode[] {
 
   // Handle unclosed code blocks (streaming)
   if (inCodeBlock && codeLines.length > 0) {
-    const fullCode = codeLines.join('\n');
+    const fullCode = codeLines.join("\n");
     if (!isToolCallJson(fullCode)) {
       parts.push(
         <pre
@@ -251,11 +259,20 @@ function formatInline(text: string): React.ReactNode[] {
   return result;
 }
 
-function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreaming: boolean }) {
+function ThinkingBlock({
+  thinking,
+  isStreaming,
+}: {
+  thinking: string;
+  isStreaming: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   // Truncate preview to ~80 chars from the end of thinking
-  const preview = thinking.length > 80 ? '\u2026' + thinking.slice(-80).trim() : thinking.trim();
+  const preview =
+    thinking.length > 80
+      ? "\u2026" + thinking.slice(-80).trim()
+      : thinking.trim();
 
   return (
     <div className="mb-2">
@@ -264,9 +281,11 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
         className="flex items-center gap-1 text-push-xs text-push-fg-dim hover:text-[#8891a1] transition-colors duration-150 group"
       >
         <ChevronRight
-          className={`h-3 w-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+          className={`h-3 w-3 transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
         />
-        <span className="font-medium">{isStreaming ? 'Reasoning' : 'Thought process'}</span>
+        <span className="font-medium">
+          {isStreaming ? "Reasoning" : "Thought process"}
+        </span>
         {isStreaming && (
           <span className="inline-block w-1 h-1 rounded-full bg-push-fg-dim animate-pulse ml-0.5" />
         )}
@@ -300,7 +319,7 @@ function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreamin
 function AttachmentBadge({ attachment }: { attachment: AttachmentData }) {
   const [expanded, setExpanded] = useState(false);
 
-  if (attachment.type === 'image') {
+  if (attachment.type === "image") {
     return (
       <>
         <button
@@ -329,7 +348,7 @@ function AttachmentBadge({ attachment }: { attachment: AttachmentData }) {
     );
   }
 
-  const Icon = attachment.type === 'code' ? FileCode : FileText;
+  const Icon = attachment.type === "code" ? FileCode : FileText;
   return (
     <div className="flex items-center gap-1.5 rounded-lg bg-push-surface/50 border border-push-edge px-2 py-1">
       <Icon className="h-3.5 w-3.5 text-push-fg-muted" />
@@ -349,13 +368,13 @@ function CopyButton({ text }: { text: string }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      const textarea = document.createElement('textarea');
+      const textarea = document.createElement("textarea");
       textarea.value = text;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
       document.body.appendChild(textarea);
       textarea.select();
-      document.execCommand('copy');
+      document.execCommand("copy");
       document.body.removeChild(textarea);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -366,7 +385,7 @@ function CopyButton({ text }: { text: string }) {
     <button
       onClick={handleCopy}
       className="rounded-md p-1.5 text-push-fg-dim transition-colors duration-150 hover:bg-push-surface-active hover:text-[#d1d8e6]"
-      title={copied ? 'Copied!' : 'Copy to clipboard'}
+      title={copied ? "Copied!" : "Copy to clipboard"}
     >
       {copied ? (
         <Check className="h-3.5 w-3.5 text-push-status-success" />
@@ -385,9 +404,9 @@ export const MessageBubble = memo(function MessageBubble({
   onRegenerate,
   canRegenerate = false,
 }: MessageBubbleProps) {
-  const isUser = message.role === 'user';
-  const isError = message.status === 'error';
-  const isStreaming = message.status === 'streaming';
+  const isUser = message.role === "user";
+  const isError = message.status === "error";
+  const isStreaming = message.status === "streaming";
   const hasThinking = Boolean(message.thinking);
   const displayContentText = useMemo(() => {
     if (isUser) {
@@ -410,33 +429,49 @@ export const MessageBubble = memo(function MessageBubble({
     // its intent (e.g. "Let me check..." or a delegation task brief). Force-clear
     // so only the tool result / cards are visible — not internal machinery.
     if (message.isToolCall) {
-      text = '';
+      text = "";
     }
     // Malformed messages are failed tool calls — any leftover text is garbage
     // (e.g. orphaned shell command fragments). Force-clear so the bubble hides.
     if (message.isMalformed) {
-      text = '';
+      text = "";
     }
     // Strip bracket-only artifacts, but only when we believe the content
     // originated from a tool call / tool JSON, to avoid erasing legitimate
     // minimal JSON-like replies such as "[]" or "{}".
-    if ((message.isToolCall || looksLikeToolCall(text)) && ONLY_BRACKETS_RE.test(text)) {
-      text = '';
+    if (
+      (message.isToolCall || looksLikeToolCall(text)) &&
+      ONLY_BRACKETS_RE.test(text)
+    ) {
+      text = "";
     }
     return text;
-  }, [isUser, message.content, message.displayContent, message.isToolCall, message.isMalformed]);
+  }, [
+    isUser,
+    message.content,
+    message.displayContent,
+    message.isToolCall,
+    message.isMalformed,
+  ]);
   const hasContent = Boolean(displayContentText.trim());
 
   const visibleCards = useMemo(
-    () => (message.cards || []).filter((card) => card.type !== 'sandbox-state'),
+    () => (message.cards || []).filter((card) => card.type !== "sandbox-state"),
     [message.cards],
   );
 
-  const content = useMemo(() => formatContent(displayContentText), [displayContentText]);
+  const content = useMemo(
+    () => formatContent(displayContentText),
+    [displayContentText],
+  );
 
   // Hide tool call / malformed messages only when they have no cards.
   // If the model included user-facing text before the JSON call, keep it visible.
-  if ((message.isToolCall || message.isMalformed) && !hasContent && visibleCards.length === 0) {
+  if (
+    (message.isToolCall || message.isMalformed) &&
+    !hasContent &&
+    visibleCards.length === 0
+  ) {
     return null;
   }
 
@@ -445,14 +480,15 @@ export const MessageBubble = memo(function MessageBubble({
   // (transcript metadata, visibleToModel: false), so without this special
   // case MessageBubble would draw an empty assistant row with avatar +
   // spacing — visible UX bug flagged in PR #412 review (Copilot + Codex).
-  if (message.kind === 'branch_forked' && message.branchForkedMeta) {
+  if (message.kind === "branch_forked" && message.branchForkedMeta) {
     const { from, to } = message.branchForkedMeta;
     return (
       <div className="my-3 flex items-center justify-center px-4">
         <div className="flex items-center gap-2 rounded-full border border-push-border bg-push-surface px-3 py-1 text-push-2xs text-push-fg-dim">
           <BranchWaveIcon className="h-3 w-3" />
           <span>
-            Forked <span className="font-mono text-push-fg-secondary">{from}</span>
+            Forked{" "}
+            <span className="font-mono text-push-fg-secondary">{from}</span>
             <span className="mx-1">→</span>
             <span className="font-mono text-push-fg-secondary">{to}</span>
           </span>
@@ -463,12 +499,17 @@ export const MessageBubble = memo(function MessageBubble({
 
   // Hide tool call / malformed messages only when they have no cards.
   // If the model included user-facing text before the JSON call, keep it visible.
-  if ((message.isToolCall || message.isMalformed) && !hasContent && visibleCards.length === 0) {
+  if (
+    (message.isToolCall || message.isMalformed) &&
+    !hasContent &&
+    visibleCards.length === 0
+  ) {
     return null;
   }
 
   if (isUser) {
-    const hasAttachments = message.attachments && message.attachments.length > 0;
+    const hasAttachments =
+      message.attachments && message.attachments.length > 0;
 
     return (
       <div className="flex justify-end px-4 py-1.5 group/user animate-fade-in-up">
@@ -509,12 +550,15 @@ export const MessageBubble = memo(function MessageBubble({
       </div>
       <div className="min-w-0 max-w-[85%]">
         {hasThinking && (
-          <ThinkingBlock thinking={message.thinking!} isStreaming={isStreaming && !hasContent} />
+          <ThinkingBlock
+            thinking={message.thinking!}
+            isStreaming={isStreaming && !hasContent}
+          />
         )}
         {hasContent && (
           <div
             className={`text-push-lg leading-relaxed break-words ${
-              isError ? 'text-red-400' : 'text-[#d1d8e6]'
+              isError ? "text-red-400" : "text-[#d1d8e6]"
             }`}
           >
             {content}

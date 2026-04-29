@@ -1,5 +1,5 @@
-import { useRef, useEffect, useMemo, useState, useCallback, memo } from 'react';
-import { ArrowDown, RotateCcw, X } from 'lucide-react';
+import { useRef, useEffect, useMemo, useState, useCallback, memo } from "react";
+import { ArrowDown, RotateCcw, X } from "lucide-react";
 import type {
   ChatMessage,
   AgentStatus,
@@ -9,40 +9,40 @@ import type {
   LoopPhase,
   CIStatus,
   QuickPrompt,
-} from '@/types';
-import { MessageBubble } from './MessageBubble';
-import { ToolCallSummary, type ToolCallPair } from './ToolCallSummary';
-import { AgentStatusBar } from './AgentStatusBar';
-import { CIStatusBanner } from './CIStatusBanner';
-import { getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
-import { PushMarkIcon } from '@/components/icons/push-custom-icons';
+} from "@/types";
+import { MessageBubble } from "./MessageBubble";
+import { ToolCallSummary, type ToolCallPair } from "./ToolCallSummary";
+import { AgentStatusBar } from "./AgentStatusBar";
+import { CIStatusBanner } from "./CIStatusBanner";
+import { getEmptyStateQuickPrompts } from "@/lib/quick-prompts";
+import { PushMarkIcon } from "@/components/icons/push-custom-icons";
 import {
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_TOP_BANNER_STRIP_CLASS,
   HubControlGlow,
-} from '@/components/chat/hub-styles';
+} from "@/components/chat/hub-styles";
 
 // --- Resume Banner (Resumable Sessions Phase 2) ---
 
 function phaseLabel(phase: LoopPhase): string {
   switch (phase) {
-    case 'streaming_llm':
-      return 'mid-response';
-    case 'executing_tools':
-      return 'mid-tool-execution';
-    case 'delegating_coder':
-      return 'during Coder delegation';
-    case 'delegating_explorer':
-      return 'during Explorer delegation';
-    case 'executing_task_graph':
-      return 'during task graph execution';
+    case "streaming_llm":
+      return "mid-response";
+    case "executing_tools":
+      return "mid-tool-execution";
+    case "delegating_coder":
+      return "during Coder delegation";
+    case "delegating_explorer":
+      return "during Explorer delegation";
+    case "executing_task_graph":
+      return "during task graph execution";
   }
 }
 
 function formatCheckpointAge(savedAt: number): string {
   const ageMs = Date.now() - savedAt;
   const ageMin = Math.floor(ageMs / 60_000);
-  return ageMin < 1 ? 'just now' : `${ageMin}m ago`;
+  return ageMin < 1 ? "just now" : `${ageMin}m ago`;
 }
 
 function ResumeBanner({
@@ -54,14 +54,20 @@ function ResumeBanner({
   onResume: () => void;
   onDismiss: () => void;
 }) {
-  const [ageLabel, setAgeLabel] = useState('just now');
+  const [ageLabel, setAgeLabel] = useState("just now");
 
   useEffect(() => {
     // Use setInterval for both initial and periodic updates — avoids synchronous
     // setState in effect body which trips the react-hooks/set-state-in-effect rule.
-    const timer = setInterval(() => setAgeLabel(formatCheckpointAge(checkpoint.savedAt)), 30_000);
+    const timer = setInterval(
+      () => setAgeLabel(formatCheckpointAge(checkpoint.savedAt)),
+      30_000,
+    );
     // Fire the first update asynchronously via setTimeout(0)
-    const initial = setTimeout(() => setAgeLabel(formatCheckpointAge(checkpoint.savedAt)), 0);
+    const initial = setTimeout(
+      () => setAgeLabel(formatCheckpointAge(checkpoint.savedAt)),
+      0,
+    );
     return () => {
       clearInterval(timer);
       clearTimeout(initial);
@@ -78,7 +84,7 @@ function ResumeBanner({
         </p>
         <p className="text-push-xs text-amber-200/60 mt-0.5">
           Round {checkpoint.round + 1} &middot; {ageLabel}
-          {checkpoint.coderDelegationActive ? ' &middot; Coder was active' : ''}
+          {checkpoint.coderDelegationActive ? " &middot; Coder was active" : ""}
         </p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
@@ -144,27 +150,33 @@ const GroupedMessageList = memo(
     return (
       <>
         {groupChatMessages(messages).map((segment, idx) =>
-          segment.type === 'text' ? (
+          segment.type === "text" ? (
             <MessageBubble
-              key={segment.message.id + '-' + idx}
+              key={segment.message.id + "-" + idx}
               message={segment.message}
               onCardAction={onCardAction}
               onPin={onPin}
               onEdit={
-                segment.message.role === 'user' && !segment.message.isToolResult ? onEditUserMessage : undefined
+                segment.message.role === "user" && !segment.message.isToolResult
+                  ? onEditUserMessage
+                  : undefined
               }
-              canRegenerate={segment.message.id === regeneratableAssistantMessageId}
+              canRegenerate={
+                segment.message.id === regeneratableAssistantMessageId
+              }
               onRegenerate={
-                segment.message.id === regeneratableAssistantMessageId ? onRegenerateLastResponse : undefined
+                segment.message.id === regeneratableAssistantMessageId
+                  ? onRegenerateLastResponse
+                  : undefined
               }
             />
           ) : (
             <ToolCallSummary
-              key={'tool-group-' + idx}
+              key={"tool-group-" + idx}
               items={segment.items}
               onCardAction={onCardAction}
             />
-          )
+          ),
         )}
       </>
     );
@@ -173,10 +185,17 @@ const GroupedMessageList = memo(
     if (prevProps.messages.length !== nextProps.messages.length) return false;
     if (prevProps.onCardAction !== nextProps.onCardAction) return false;
     if (prevProps.onPin !== nextProps.onPin) return false;
-    if (prevProps.onEditUserMessage !== nextProps.onEditUserMessage) return false;
-    if (prevProps.regeneratableAssistantMessageId !== nextProps.regeneratableAssistantMessageId)
+    if (prevProps.onEditUserMessage !== nextProps.onEditUserMessage)
       return false;
-    if (prevProps.onRegenerateLastResponse !== nextProps.onRegenerateLastResponse) return false;
+    if (
+      prevProps.regeneratableAssistantMessageId !==
+      nextProps.regeneratableAssistantMessageId
+    )
+      return false;
+    if (
+      prevProps.onRegenerateLastResponse !== nextProps.onRegenerateLastResponse
+    )
+      return false;
 
     for (let index = 0; index < prevProps.messages.length; index++) {
       if (prevProps.messages[index] !== nextProps.messages[index]) {
@@ -188,34 +207,41 @@ const GroupedMessageList = memo(
   },
 );
 
-
-
-function groupChatMessages(messages: readonly ChatMessage[]): ({ type: 'text'; message: ChatMessage } | { type: 'toolGroup'; items: ToolCallPair[] })[] {
+function groupChatMessages(
+  messages: readonly ChatMessage[],
+): (
+  | { type: "text"; message: ChatMessage }
+  | { type: "toolGroup"; items: ToolCallPair[] }
+)[] {
   const segments: ReturnType<typeof groupChatMessages> = [];
   let i = 0;
   while (i < messages.length) {
     const msg = messages[i];
-    if (msg.role === 'assistant' && msg.isToolCall) {
+    if (msg.role === "assistant" && msg.isToolCall) {
       const pairs: ToolCallPair[] = [];
       while (i < messages.length) {
         const callMsg = messages[i];
-        if (!(callMsg.role === 'assistant' && callMsg.isToolCall)) break;
+        if (!(callMsg.role === "assistant" && callMsg.isToolCall)) break;
         const resultMsg = messages[i + 1];
-        if (!resultMsg || !(resultMsg.role === 'user' && resultMsg.isToolResult)) break;
+        if (
+          !resultMsg ||
+          !(resultMsg.role === "user" && resultMsg.isToolResult)
+        )
+          break;
         pairs.push({ callMsg, resultMsg });
         i += 2;
       }
       if (pairs.length > 0) {
-        segments.push({ type: 'toolGroup', items: pairs });
+        segments.push({ type: "toolGroup", items: pairs });
         continue;
       }
     }
     // Orphan tool results (not immediately after their call) are dropped from surface
-    if (msg.role === 'user' && msg.isToolResult) {
+    if (msg.role === "user" && msg.isToolResult) {
       i++;
       continue;
     }
-    segments.push({ type: 'text', message: msg });
+    segments.push({ type: "text", message: msg });
     i++;
   }
   return segments;
@@ -259,29 +285,31 @@ function EmptyState({
               className="mx-auto mb-5 flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl border border-[#1e2634] bg-push-grad-icon shadow-[0_12px_30px_rgba(0,0,0,0.55)] active:scale-95 transition-transform"
             >
               <PushMarkIcon
-                className={`text-push-accent transition-colors ${hexTap ? 'hex-tap' : ''}`}
-                pathClassName={`transition-all duration-300 ${hexTap ? 'fill-[#0070f3]/20' : 'fill-transparent'}`}
+                className={`text-push-accent transition-colors ${hexTap ? "hex-tap" : ""}`}
+                pathClassName={`transition-all duration-300 ${hexTap ? "fill-[#0070f3]/20" : "fill-transparent"}`}
                 height={22}
                 onAnimationEnd={() => setHexTap(false)}
                 width={22}
               />
             </button>
             <h2 className="mb-2.5 text-lg font-semibold text-[#fafafa]">
-              {activeRepo ? activeRepo.name : hasSandbox ? 'Workspace' : 'Push'}
+              {activeRepo ? activeRepo.name : hasSandbox ? "Workspace" : "Push"}
             </h2>
           </>
         )}
         {isChat && (
-          <h2 className="mb-3 text-lg font-semibold text-[#fafafa]">Start a conversation</h2>
+          <h2 className="mb-3 text-lg font-semibold text-[#fafafa]">
+            Start a conversation
+          </h2>
         )}
         <p className="text-sm leading-relaxed text-push-fg-secondary">
           {isChat
-            ? 'Think through ideas, ask questions, or plan your next move.'
+            ? "Think through ideas, ask questions, or plan your next move."
             : activeRepo
               ? `Focused on ${activeRepo.full_name}. Ask about PRs, recent changes, or the codebase.`
               : hasSandbox
-                ? 'Ephemeral workspace — write code, run commands, and prototype ideas from scratch.'
-                : 'AI coding agent with direct repo access. Review PRs, explore codebases, and ship changes — all from here.'}
+                ? "Ephemeral workspace — write code, run commands, and prototype ideas from scratch."
+                : "AI coding agent with direct repo access. Review PRs, explore codebases, and ship changes — all from here."}
         </p>
         {suggestions.length > 0 && (
           <div className="mt-6 flex flex-col gap-2.5 stagger-in">
@@ -322,7 +350,8 @@ export function ChatContainer({
   const containerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const lastMessageRef = useRef<ChatMessage | null>(null);
-  const lastMessageContent = messages.length > 0 ? messages[messages.length - 1]?.content : '';
+  const lastMessageContent =
+    messages.length > 0 ? messages[messages.length - 1]?.content : "";
 
   const updateBottomState = useCallback((container: HTMLDivElement) => {
     const distanceFromBottom =
@@ -341,10 +370,10 @@ export function ChatContainer({
       updateBottomState(container);
     };
 
-    container.addEventListener('scroll', handleScroll, { passive: true });
+    container.addEventListener("scroll", handleScroll, { passive: true });
 
     return () => {
-      container.removeEventListener('scroll', handleScroll);
+      container.removeEventListener("scroll", handleScroll);
     };
   }, [updateBottomState]);
 
@@ -355,22 +384,24 @@ export function ChatContainer({
     const container = containerRef.current;
     if (!container) return;
 
-    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+    const lastMessage =
+      messages.length > 0 ? messages[messages.length - 1] : null;
     const previousLastMessage = lastMessageRef.current;
 
     // Check if this is a new message (not just content update)
     const isNewMessage =
-      lastMessage && (!previousLastMessage || lastMessage.id !== previousLastMessage.id);
+      lastMessage &&
+      (!previousLastMessage || lastMessage.id !== previousLastMessage.id);
 
     // Always scroll to bottom when user sends a new message
-    if (isNewMessage && lastMessage.role === 'user') {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isNewMessage && lastMessage.role === "user") {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     } else {
       // For assistant messages (streaming), only scroll if user is near bottom
       const distanceFromBottom =
         container.scrollHeight - container.scrollTop - container.clientHeight;
       if (distanceFromBottom < AUTO_SCROLL_THRESHOLD_PX) {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
       }
     }
 
@@ -379,7 +410,7 @@ export function ChatContainer({
   }, [messages, lastMessageContent]);
 
   const scrollToBottom = () => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     setIsAtBottom(true);
   };
 
@@ -388,7 +419,7 @@ export function ChatContainer({
   // can create a fresh settled array without forcing re-renders when the
   // underlying settled message objects are unchanged.
   const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
-  const isLastStreaming = lastMsg?.status === 'streaming';
+  const isLastStreaming = lastMsg?.status === "streaming";
   const settledMessages = useMemo(
     () => (isLastStreaming ? messages.slice(0, -1) : messages),
     [isLastStreaming, messages],
@@ -399,8 +430,9 @@ export function ChatContainer({
   const regeneratableAssistantMessageId = useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index--) {
       const message = messages[index];
-      if (message.role !== 'assistant') continue;
-      if (message.status === 'streaming' || message.status === 'error') continue;
+      if (message.role !== "assistant") continue;
+      if (message.status === "streaming" || message.status === "error")
+        continue;
       if (message.isToolCall || message.isMalformed) continue;
       return message.id;
     }
@@ -417,7 +449,9 @@ export function ChatContainer({
             onDismiss={onDismissResume}
           />
         )}
-        {ciStatus && onDiagnoseCI && <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />}
+        {ciStatus && onDiagnoseCI && (
+          <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />
+        )}
 
         <EmptyState
           activeRepo={activeRepo}
@@ -438,9 +472,14 @@ export function ChatContainer({
           onDismiss={onDismissResume}
         />
       )}
-      {ciStatus && onDiagnoseCI && <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />}
+      {ciStatus && onDiagnoseCI && (
+        <CIStatusBanner status={ciStatus} onDiagnose={onDiagnoseCI} />
+      )}
 
-      <div ref={containerRef} className="flex-1 overflow-y-auto overscroll-contain">
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-y-auto overscroll-contain"
+      >
         <div className="flex-1" />
         <div className="py-4 space-y-1.5">
           {settledMessages.length > 0 && (
@@ -460,11 +499,13 @@ export function ChatContainer({
               onCardAction={onCardAction}
               onPin={onPin}
               onEdit={
-                activeMessage.role === 'user' && !activeMessage.isToolResult
+                activeMessage.role === "user" && !activeMessage.isToolResult
                   ? onEditUserMessage
                   : undefined
               }
-              canRegenerate={activeMessage.id === regeneratableAssistantMessageId}
+              canRegenerate={
+                activeMessage.id === regeneratableAssistantMessageId
+              }
               onRegenerate={
                 activeMessage.id === regeneratableAssistantMessageId
                   ? onRegenerateLastResponse
@@ -493,7 +534,7 @@ export function ChatContainer({
           transition-all duration-300 ease-out
           hover:border-push-edge-hover hover:text-[#f0f4ff] hover:shadow-push-xl
           spring-press
-          ${showScrollButton ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-3 pointer-events-none'}
+          ${showScrollButton ? "opacity-100 translate-y-0 pointer-events-auto" : "opacity-0 translate-y-3 pointer-events-none"}
         `}
         aria-label="Scroll to bottom"
       >
