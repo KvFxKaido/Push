@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { ChevronsUpDown, Loader2, Lock, RefreshCw, Square } from 'lucide-react';
 import { AttachmentPreview } from './AttachmentPreview';
 import { ContextMeter } from './ContextMeter';
@@ -11,60 +11,12 @@ import type { StagedAttachment } from '@/lib/file-processing';
 import { getVisionCapabilityNotice } from '@/lib/model-capabilities';
 import {
   getModelCapabilities,
-  formatModelCapabilityHints,
   getReasoningEffort,
   cycleReasoningEffort,
   REASONING_EFFORT_LABELS,
   type ReasoningEffort,
 } from '@/lib/model-catalog';
 import type { AIProviderType, AttachmentData, ChatSendOptions } from '@/types';
-import {
-  formatModelDisplayName,
-  getModelDisplayGroupKey,
-  getModelDisplayGroupLabel,
-  getModelDisplayLeafName,
-} from '@/lib/providers';
-
-/** Group model IDs by provider prefix and render as optgroups with capability hints. */
-function renderGroupedModelOptions(models: string[], provider: AIProviderType) {
-  const groups = new Map<string, { label: string | null; models: string[] }>();
-
-  for (const model of models) {
-    const groupKey = getModelDisplayGroupKey(provider, model);
-    const mapKey = groupKey || '__ungrouped__';
-    const existing = groups.get(mapKey);
-    if (existing) {
-      existing.models.push(model);
-      continue;
-    }
-    groups.set(mapKey, {
-      label: groupKey ? getModelDisplayGroupLabel(groupKey) : null,
-      models: [model],
-    });
-  }
-
-  return Array.from(groups.entries()).flatMap(([groupKey, group]) => {
-    const options = group.models.map((model) => {
-      const displayName = group.label
-        ? getModelDisplayLeafName(provider, model)
-        : formatModelDisplayName(provider, model);
-      const hints = formatModelCapabilityHints(getModelCapabilities(provider, model));
-      return (
-        <option key={model} value={model}>
-          {hints ? `${displayName}  ·  ${hints}` : displayName}
-        </option>
-      );
-    });
-
-    if (!group.label) return options;
-
-    return (
-      <optgroup key={groupKey} label={group.label}>
-        {options}
-      </optgroup>
-    );
-  });
-}
 import type { PreferredProvider } from '@/lib/providers';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
@@ -220,7 +172,6 @@ const COMPOSER_CONTROL_SURFACE_CLASS =
   'relative overflow-hidden rounded-full border border-push-edge-subtle bg-push-grad-input shadow-[0_12px_34px_rgba(0,0,0,0.5),0_3px_10px_rgba(0,0,0,0.28)] backdrop-blur-xl';
 const COMPOSER_CONTROL_INTERACTIVE_CLASS =
   'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 spring-press';
-const EMPTY_MODEL_OPTIONS: string[] = [];
 
 function composerDraftStorageKey(draftKey: string): string {
   return `${COMPOSER_DRAFT_KEY_PREFIX}${draftKey}`;
@@ -504,50 +455,6 @@ export function ChatInput({
     if (selectedProvider === 'kilocode') providerControls.refreshKilocodeModels();
     if (selectedProvider === 'openadapter') providerControls.refreshOpenAdapterModels();
   };
-  const cloudflareModelList = providerControls?.cloudflareModelOptions ?? EMPTY_MODEL_OPTIONS;
-  const blackboxModelList = providerControls?.blackboxModelOptions ?? EMPTY_MODEL_OPTIONS;
-  const blackboxFallbackModel = providerControls?.blackboxModel ?? '';
-  const kilocodeModelList = providerControls?.kilocodeModelOptions ?? EMPTY_MODEL_OPTIONS;
-
-  const kilocodeFallbackModel = providerControls?.kilocodeModel ?? '';
-  const openAdapterModelList = providerControls?.openadapterModelOptions ?? EMPTY_MODEL_OPTIONS;
-  const openAdapterFallbackModel = providerControls?.openadapterModel ?? '';
-
-  const cloudflareModelOptions = useMemo(
-    () => renderGroupedModelOptions(cloudflareModelList, 'cloudflare'),
-    [cloudflareModelList],
-  );
-
-  const blackboxModelOptions = useMemo(() => {
-    const models =
-      blackboxModelList.length > 0
-        ? blackboxModelList
-        : blackboxFallbackModel
-          ? [blackboxFallbackModel]
-          : [];
-    return renderGroupedModelOptions(models, 'blackbox');
-  }, [blackboxFallbackModel, blackboxModelList]);
-
-  const kilocodeModelOptions = useMemo(() => {
-    const models =
-      kilocodeModelList.length > 0
-        ? kilocodeModelList
-        : kilocodeFallbackModel
-          ? [kilocodeFallbackModel]
-          : [];
-    return renderGroupedModelOptions(models, 'kilocode');
-  }, [kilocodeFallbackModel, kilocodeModelList]);
-
-  const openAdapterModelOptions = useMemo(() => {
-    const models =
-      openAdapterModelList.length > 0
-        ? openAdapterModelList
-        : openAdapterFallbackModel
-          ? [openAdapterFallbackModel]
-          : [];
-    return renderGroupedModelOptions(models, 'openadapter');
-  }, [openAdapterFallbackModel, openAdapterModelList]);
-
   // Reasoning effort (per-provider, only for models that support it)
   const modelCaps = getModelCapabilities(selectedProvider, selectedModel);
   const [reasoningEffort, setReasoningEffortState] = useState<ReasoningEffort>(() =>
@@ -879,34 +786,14 @@ export function ChatInput({
 
                       {selectedProvider === 'ollama' && (
                         <>
-                          <select
+                          <ModelPicker
+                            provider="ollama"
                             value={providerControls.ollamaModel}
-                            disabled={
-                              !canChangeModel ||
-                              providerControls.ollamaModelsLoading ||
-                              providerControls.ollamaModelOptions.length === 0
-                            }
-                            onChange={(e) => providerControls.onSelectOllamaModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
-                          >
-                            {(providerControls.ollamaModelOptions.length > 0
-                              ? providerControls.ollamaModelOptions
-                              : [providerControls.ollamaModel]
-                            ).map((model) => {
-                              const hints = model
-                                ? formatModelCapabilityHints(getModelCapabilities('ollama', model))
-                                : '';
-                              return (
-                                <option key={model || '__default'} value={model}>
-                                  {model
-                                    ? hints
-                                      ? `${formatModelDisplayName('ollama', model)}  ·  ${hints}`
-                                      : formatModelDisplayName('ollama', model)
-                                    : '(default)'}
-                                </option>
-                              );
-                            })}
-                          </select>
+                            options={providerControls.ollamaModelOptions}
+                            onChange={providerControls.onSelectOllamaModel}
+                            disabled={!canChangeModel || providerControls.ollamaModelsLoading}
+                            ariaLabel="Select Ollama model"
+                          />
                           {providerControls.ollamaModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">
                               Loading Ollama models...
@@ -967,20 +854,14 @@ export function ChatInput({
 
                       {selectedProvider === 'cloudflare' && (
                         <>
-                          <select
+                          <ModelPicker
+                            provider="cloudflare"
                             value={providerControls.cloudflareModel}
-                            disabled={
-                              !canChangeModel ||
-                              providerControls.cloudflareModelsLoading ||
-                              providerControls.cloudflareModelOptions.length === 0
-                            }
-                            onChange={(e) =>
-                              providerControls.onSelectCloudflareModel(e.target.value)
-                            }
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
-                          >
-                            {cloudflareModelOptions}
-                          </select>
+                            options={providerControls.cloudflareModelOptions}
+                            onChange={providerControls.onSelectCloudflareModel}
+                            disabled={!canChangeModel || providerControls.cloudflareModelsLoading}
+                            ariaLabel="Select Cloudflare Workers AI model"
+                          />
                           {providerControls.cloudflareModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">
                               Loading Cloudflare Workers AI models...
@@ -1016,32 +897,14 @@ export function ChatInput({
 
                       {selectedProvider === 'zen' && (
                         <>
-                          <select
+                          <ModelPicker
+                            provider="zen"
                             value={providerControls.zenModel}
-                            disabled={
-                              !canChangeModel || providerControls.zenModelOptions.length === 0
-                            }
-                            onChange={(e) => providerControls.onSelectZenModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
-                          >
-                            {(providerControls.zenModelOptions.length > 0
-                              ? providerControls.zenModelOptions
-                              : [providerControls.zenModel]
-                            ).map((model) => {
-                              const hints = model
-                                ? formatModelCapabilityHints(getModelCapabilities('zen', model))
-                                : '';
-                              return (
-                                <option key={model || '__default'} value={model}>
-                                  {model
-                                    ? hints
-                                      ? `${formatModelDisplayName('zen', model)}  ·  ${hints}`
-                                      : formatModelDisplayName('zen', model)
-                                    : '(default)'}
-                                </option>
-                              );
-                            })}
-                          </select>
+                            options={providerControls.zenModelOptions}
+                            onChange={providerControls.onSelectZenModel}
+                            disabled={!canChangeModel || providerControls.zenModelsLoading}
+                            ariaLabel="Select OpenCode Zen model"
+                          />
                           {providerControls.zenModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">
                               Loading OpenCode Zen models...
@@ -1074,34 +937,14 @@ export function ChatInput({
 
                       {selectedProvider === 'nvidia' && (
                         <>
-                          <select
+                          <ModelPicker
+                            provider="nvidia"
                             value={providerControls.nvidiaModel}
-                            disabled={
-                              !canChangeModel ||
-                              providerControls.nvidiaModelsLoading ||
-                              providerControls.nvidiaModelOptions.length === 0
-                            }
-                            onChange={(e) => providerControls.onSelectNvidiaModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
-                          >
-                            {(providerControls.nvidiaModelOptions.length > 0
-                              ? providerControls.nvidiaModelOptions
-                              : [providerControls.nvidiaModel]
-                            ).map((model) => {
-                              const hints = model
-                                ? formatModelCapabilityHints(getModelCapabilities('nvidia', model))
-                                : '';
-                              return (
-                                <option key={model || '__default'} value={model}>
-                                  {model
-                                    ? hints
-                                      ? `${formatModelDisplayName('nvidia', model)}  ·  ${hints}`
-                                      : formatModelDisplayName('nvidia', model)
-                                    : '(default)'}
-                                </option>
-                              );
-                            })}
-                          </select>
+                            options={providerControls.nvidiaModelOptions}
+                            onChange={providerControls.onSelectNvidiaModel}
+                            disabled={!canChangeModel || providerControls.nvidiaModelsLoading}
+                            ariaLabel="Select Nvidia NIM model"
+                          />
                           {providerControls.nvidiaModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">
                               Loading Nvidia NIM models...
@@ -1134,18 +977,14 @@ export function ChatInput({
 
                       {selectedProvider === 'blackbox' && (
                         <>
-                          <select
+                          <ModelPicker
+                            provider="blackbox"
                             value={providerControls.blackboxModel}
-                            disabled={
-                              !canChangeModel ||
-                              providerControls.blackboxModelsLoading ||
-                              providerControls.blackboxModelOptions.length === 0
-                            }
-                            onChange={(e) => providerControls.onSelectBlackboxModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
-                          >
-                            {blackboxModelOptions}
-                          </select>
+                            options={providerControls.blackboxModelOptions}
+                            onChange={providerControls.onSelectBlackboxModel}
+                            disabled={!canChangeModel || providerControls.blackboxModelsLoading}
+                            ariaLabel="Select Blackbox AI model"
+                          />
                           {providerControls.blackboxModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">
                               Loading Blackbox AI models...
@@ -1178,18 +1017,14 @@ export function ChatInput({
 
                       {selectedProvider === 'kilocode' && (
                         <>
-                          <select
+                          <ModelPicker
+                            provider="kilocode"
                             value={providerControls.kilocodeModel}
-                            disabled={
-                              !canChangeModel ||
-                              providerControls.kilocodeModelsLoading ||
-                              providerControls.kilocodeModelOptions.length === 0
-                            }
-                            onChange={(e) => providerControls.onSelectKilocodeModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
-                          >
-                            {kilocodeModelOptions}
-                          </select>
+                            options={providerControls.kilocodeModelOptions}
+                            onChange={providerControls.onSelectKilocodeModel}
+                            disabled={!canChangeModel || providerControls.kilocodeModelsLoading}
+                            ariaLabel="Select Kilo Code model"
+                          />
                           {providerControls.kilocodeModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">
                               Loading Kilo Code models...
@@ -1222,20 +1057,14 @@ export function ChatInput({
 
                       {selectedProvider === 'openadapter' && (
                         <>
-                          <select
+                          <ModelPicker
+                            provider="openadapter"
                             value={providerControls.openadapterModel}
-                            disabled={
-                              !canChangeModel ||
-                              providerControls.openadapterModelsLoading ||
-                              providerControls.openadapterModelOptions.length === 0
-                            }
-                            onChange={(e) =>
-                              providerControls.onSelectOpenAdapterModel(e.target.value)
-                            }
-                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
-                          >
-                            {openAdapterModelOptions}
-                          </select>
+                            options={providerControls.openadapterModelOptions}
+                            onChange={providerControls.onSelectOpenAdapterModel}
+                            disabled={!canChangeModel || providerControls.openadapterModelsLoading}
+                            ariaLabel="Select OpenAdapter model"
+                          />
                           {providerControls.openadapterModelsLoading && (
                             <p className="px-1 text-push-2xs text-[#7c879b]">
                               Loading OpenAdapter models...

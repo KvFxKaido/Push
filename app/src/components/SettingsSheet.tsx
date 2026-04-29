@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Trash2, RefreshCw, Loader2, Check, Plus, ChevronDown } from 'lucide-react';
+import { Trash2, Check, Plus, ChevronDown } from 'lucide-react';
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
+import { ModelPicker } from '@/components/ui/model-picker';
 import { SettingsSectionContent } from '@/components/SettingsSectionContent';
 import type { AIProviderType, SandboxStateCardData } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
@@ -257,7 +258,6 @@ interface ProviderKeySectionProps {
     options: string[];
     isLocked: boolean;
     lockedModel: string | null;
-    labelTransform?: (model: string) => string;
   };
   refresh?: {
     trigger: () => void;
@@ -384,40 +384,17 @@ export function ProviderKeySection({
         {model && (
           <div className="flex items-center gap-2 rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2">
             <span className="shrink-0 text-xs text-push-fg-muted">Use for new chats</span>
-            <select
+            <ModelPicker
+              provider={backendId}
               value={model.value}
-              onChange={(e) => model.set(e.target.value)}
-              disabled={model.options.length === 0 || (refresh?.loading ?? false)}
-              className={`flex-1 rounded-md px-2 py-1 text-xs font-mono disabled:opacity-50 ${SETTINGS_SELECT_CLASS}`}
-            >
-              {model.options.length === 0 ? (
-                <option value={model.value}>
-                  {model.labelTransform ? model.labelTransform(model.value) : model.value}
-                </option>
-              ) : (
-                model.options.map((m) => (
-                  <option key={m} value={m}>
-                    {model.labelTransform ? model.labelTransform(m) : m}
-                  </option>
-                ))
-              )}
-            </select>
-            {refresh && (
-              <button
-                type="button"
-                onClick={refresh.trigger}
-                disabled={refresh.loading}
-                className="rounded-md border border-push-edge bg-push-surface p-1.5 text-push-fg-secondary hover:text-push-fg disabled:opacity-50"
-                aria-label={`Refresh ${label} models`}
-                title={`Refresh ${label} models`}
-              >
-                {refresh.loading ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3.5 w-3.5" />
-                )}
-              </button>
-            )}
+              options={model.options}
+              onChange={model.set}
+              disabled={refresh?.loading ?? false}
+              onRefresh={refresh?.trigger}
+              isRefreshing={refresh?.loading}
+              refreshAriaLabel={`Refresh ${label} models`}
+              ariaLabel={`Select ${label} model`}
+            />
           </div>
         )}
         {refresh?.error && <p className="text-xs text-amber-400">{refresh.error}</p>}
