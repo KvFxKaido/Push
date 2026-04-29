@@ -152,7 +152,5 @@
   "triggers": {
     "crons": ["0 3 * * *"]
   },
-  "analytics_engine_datasets": [
-    { "binding": "PROVIDER_STATS", "dataset": "push_provider_stats" }
-  ]
+  "analytics_engine_datasets": [{ "binding": "PROVIDER_STATS", "dataset": "push_provider_stats" }]
 }
