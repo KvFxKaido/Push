@@ -192,7 +192,7 @@ const GroupedMessageList = memo(
   },
 );
 
-function groupChatMessages(
+export function groupChatMessages(
   messages: readonly ChatMessage[],
 ): ({ type: 'text'; message: ChatMessage } | { type: 'toolGroup'; items: ToolCallPair[] })[] {
   const segments: ReturnType<typeof groupChatMessages> = [];

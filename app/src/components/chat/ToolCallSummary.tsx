@@ -53,7 +53,7 @@ function getLabel(toolName: string): ToolLabel {
 /*  Summary-line builder                                               */
 /* ------------------------------------------------------------------ */
 
-function buildSummaryLine(items: ToolCallPair[]): string {
+export function buildSummaryLine(items: ToolCallPair[]): string {
   const counts = new Map<string, number>();
   for (const item of items) {
     const name = item.resultMsg.toolMeta?.toolName ?? item.callMsg.toolMeta?.toolName ?? 'unknown';
