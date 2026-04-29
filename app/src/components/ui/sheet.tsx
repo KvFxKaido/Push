@@ -67,15 +67,21 @@ function SheetContent({
         data-slot="sheet-content"
         forceMount={forceMount ? true : undefined}
         className={cn(
+          // Capacitor Android renders edge-to-edge; using env(safe-area-inset-*)
+          // for the anchored edges keeps the sheet between the status and nav
+          // bars without overlapping the system UI. Values are 0 on web and on
+          // iOS without a notch, so this is a no-op there. h-full is dropped
+          // for left/right because top + bottom already imply the height —
+          // keeping h-full would override `bottom` and re-extend past the nav.
           "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out fixed z-50 flex flex-col gap-4 shadow-lg transition ease-in-out data-[state=closed]:duration-300 data-[state=open]:duration-500",
           side === "right" &&
-            "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm",
+            "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right top-[env(safe-area-inset-top)] bottom-[env(safe-area-inset-bottom)] right-0 w-3/4 border-l sm:max-w-sm",
           side === "left" &&
-            "data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm",
+            "data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left top-[env(safe-area-inset-top)] bottom-[env(safe-area-inset-bottom)] left-0 w-3/4 border-r sm:max-w-sm",
           side === "top" &&
-            "data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top inset-x-0 top-0 h-auto border-b",
+            "data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top inset-x-0 top-[env(safe-area-inset-top)] h-auto border-b",
           side === "bottom" &&
-            "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom inset-x-0 bottom-0 h-auto border-t",
+            "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom inset-x-0 bottom-[env(safe-area-inset-bottom)] h-auto border-t",
           className
         )}
         {...props}
