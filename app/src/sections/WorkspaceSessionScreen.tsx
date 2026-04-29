@@ -368,6 +368,13 @@ export function WorkspaceSessionScreen({
     [onSelectRepo],
   );
 
+  const handleCommitSandboxExpired = useCallback(async (): Promise<string | null> => {
+    if (!workspaceRepo?.full_name) return null;
+    const branch = workspaceRepo.current_branch || workspaceRepo.default_branch || 'main';
+    await sandbox.stop();
+    return sandbox.start(workspaceRepo.full_name, branch);
+  }, [sandbox, workspaceRepo]);
+
   if (showFileBrowser && sandbox.sandboxId) {
     return (
       <div className="flex h-dvh flex-col bg-[#000] safe-area-top safe-area-bottom">
@@ -386,6 +393,7 @@ export function WorkspaceSessionScreen({
             onBack={() => setShowFileBrowser(false)}
             lockedProvider={lockedProvider}
             lockedModel={lockedModel}
+            onSandboxExpired={handleCommitSandboxExpired}
           />
         </Suspense>
         <Toaster position="bottom-center" />

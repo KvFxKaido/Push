@@ -30,6 +30,12 @@ interface CommitPushSheetProps {
   onSuccess?: () => void;
   lockedProvider?: AIProviderType | null;
   lockedModel?: string | null;
+  /**
+   * Called when the sandbox dies mid-commit/push. Should mint a fresh sandbox
+   * for the same repo+branch and return its id, or null if recovery isn't
+   * possible. Without this, sandbox death surfaces as a hard error.
+   */
+  onSandboxExpired?: () => Promise<string | null>;
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -37,6 +43,7 @@ const PHASE_LABELS: Record<string, string> = {
   auditing: 'Auditor reviewing…',
   committing: 'Committing…',
   pushing: 'Pushing to remote…',
+  recovering: 'Recovering on new sandbox…',
 };
 
 /**
@@ -161,6 +168,7 @@ export function CommitPushSheet({
   onSuccess,
   lockedProvider,
   lockedModel,
+  onSandboxExpired,
 }: CommitPushSheetProps) {
   const {
     phase,
@@ -172,7 +180,7 @@ export function CommitPushSheet({
     fetchDiff,
     commitAndPush,
     reset,
-  } = useCommitPush(sandboxId, lockedProvider, lockedModel);
+  } = useCommitPush(sandboxId, lockedProvider, lockedModel, onSandboxExpired);
 
   const keyboardHeight = useKeyboardHeight();
 
@@ -233,7 +241,8 @@ export function CommitPushSheet({
     phase === 'fetching-diff' ||
     phase === 'auditing' ||
     phase === 'committing' ||
-    phase === 'pushing';
+    phase === 'pushing' ||
+    phase === 'recovering';
 
   // Dynamic padding to account for keyboard
   const bottomPadding = Math.max(keyboardHeight, 0);

@@ -41,6 +41,7 @@ import {
   loadSandboxSession,
   saveSandboxSession,
 } from '@/lib/sandbox-session';
+import { isDefinitivelyGoneMessage, isDefinitivelyGoneError } from '@/lib/sandbox-error-utils';
 
 export type SandboxStatus = 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
 
@@ -74,46 +75,6 @@ function clearTrackedSession(sessionStorageKey?: string | null, sandboxId?: stri
     setSandboxOwnerToken(null, sandboxId);
   }
   setSandboxOwnerToken(null);
-}
-
-/**
- * True only when the message proves the container is gone (expired,
- * terminated, or the Modal app isn't deployed at all). Transient signals —
- * timeouts, cold starts, network blips, rate limits, unauthorized-token
- * races, generic container errors — must NOT tear down the tracked
- * session: the sandbox is probably still alive, and wiping it forces a
- * fresh clone that loses all in-flight writes and resets the agent's view
- * of the workspace back to HEAD.
- *
- * This is especially important because the sandbox backend's exec endpoint
- * reuses `exit_code: -1` for several non-terminal failures (unauthorized
- * owner token, command timeout, generic container error) in addition to
- * the actual "sandbox not found / expired" case. So an exit_code === -1
- * *alone* is NOT proof the container is gone — we have to inspect the
- * accompanying error text, which is what this helper matches against.
- */
-function isDefinitivelyGoneMessage(rawMessage: string | null | undefined): boolean {
-  if (!rawMessage) return false;
-  // All checks run on the lowercased message so a future casing change in
-  // the Worker's error formatter doesn't silently defeat the guard.
-  const lower = rawMessage.toLowerCase();
-  // Error codes bubbled up from the Worker / sandbox-client. sandboxFetch
-  // formats these as "... (CODE)" in the message.
-  if (lower.includes('modal_not_found')) return true;
-  // Phrases emitted directly by the sandbox backend / _load_sandbox /
-  // _format_sandbox_lookup_error when modal.Sandbox.from_id() fails with a
-  // terminal error. NOTE: do NOT match on generic phrases like
-  // "unauthorized" or "timed out" — the backend also returns exit_code -1
-  // for those, and they're transient, not gone.
-  if (lower.includes('sandbox not found')) return true;
-  if (lower.includes('sandbox is no longer running')) return true;
-  if (lower.includes('sandbox has been terminated')) return true;
-  return false;
-}
-
-function isDefinitivelyGoneError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return isDefinitivelyGoneMessage(err.message);
 }
 
 export function useSandbox(activeRepoFullName?: string | null, activeBranch?: string | null) {

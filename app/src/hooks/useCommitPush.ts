@@ -1,18 +1,31 @@
 /**
  * useCommitPush — encapsulates the commit + push pipeline for the file browser.
  *
- * No LLM involvement. Directly calls sandbox client functions
- * and the Auditor agent. Phase-driven state machine:
+ * No LLM involvement beyond the Auditor. Phase-driven state machine:
  *
- *   idle → fetching-diff → reviewing → auditing → committing → pushing → success | error
+ *   idle → fetching-diff → reviewing → auditing → committing → pushing → success
+ *                                              ↘ recovering ↗
+ *
+ * Cold-resume on sandbox death: if `git commit` or `git push` fails because
+ * the underlying sandbox is gone, we mint a fresh one via the caller-supplied
+ * `onSandboxExpired` callback, replay the captured diff via `git apply`, and
+ * re-run commit + push from scratch. The dead container's commit history
+ * doesn't survive, so recovery always starts from the diff.
  */
 
-import { useState, useCallback } from 'react';
-import { getSandboxDiff, execInSandbox, readFromSandbox } from '@/lib/sandbox-client';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import {
+  getSandboxDiff,
+  execInSandbox,
+  readFromSandbox,
+  writeToSandbox,
+  type ExecResult,
+} from '@/lib/sandbox-client';
 import { runAuditor } from '@/lib/auditor-agent';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { parseDiffStats } from '@/lib/diff-utils';
+import { isDefinitivelyGoneMessage } from '@/lib/sandbox-error-utils';
 import type { DiffPreviewCardData, AuditVerdictCardData } from '@/types';
 
 export type CommitPushPhase =
@@ -22,6 +35,7 @@ export type CommitPushPhase =
   | 'auditing'
   | 'committing'
   | 'pushing'
+  | 'recovering'
   | 'success'
   | 'error';
 
@@ -33,10 +47,26 @@ interface CommitPushState {
   commitMessage: string;
 }
 
+const RECOVERY_PATCH_PATH = '/tmp/push-recovery.patch';
+
+type AttemptResult =
+  | { status: 'success' }
+  | { status: 'expired' }
+  | { status: 'failed'; error: string };
+
+function isExecResultGone(result: ExecResult): boolean {
+  // exit_code === -1 alone is not proof; isDefinitivelyGoneMessage matches on
+  // the specific phrases that prove the container is gone, not transient
+  // failures.
+  const combined = `${result.error || ''} ${result.stderr || ''} ${result.stdout || ''}`;
+  return isDefinitivelyGoneMessage(combined);
+}
+
 export function useCommitPush(
   sandboxId: string,
   providerOverride?: ActiveProvider | null,
   modelOverride?: string | null,
+  onSandboxExpired?: () => Promise<string | null>,
 ) {
   const [state, setState] = useState<CommitPushState>({
     phase: 'idle',
@@ -45,6 +75,13 @@ export function useCommitPush(
     error: null,
     commitMessage: '',
   });
+
+  // Recovery may swap the sandbox mid-pipeline; the ref is the source of
+  // truth for in-flight calls so they don't keep targeting the dead one.
+  const sandboxIdRef = useRef(sandboxId);
+  useEffect(() => {
+    sandboxIdRef.current = sandboxId;
+  }, [sandboxId]);
 
   const setCommitMessage = useCallback((msg: string) => {
     setState((s) => ({ ...s, commitMessage: msg }));
@@ -70,7 +107,7 @@ export function useCommitPush(
     }));
 
     try {
-      const result = await getSandboxDiff(sandboxId);
+      const result = await getSandboxDiff(sandboxIdRef.current);
 
       if (!result.diff) {
         setState((s) => ({
@@ -95,7 +132,7 @@ export function useCommitPush(
       const msg = err instanceof Error ? err.message : String(err);
       setState((s) => ({ ...s, phase: 'error', error: msg }));
     }
-  }, [sandboxId]);
+  }, []);
 
   const commitAndPush = useCallback(async () => {
     const message = state.commitMessage.replace(/[\r\n]+/g, ' ').trim();
@@ -108,7 +145,6 @@ export function useCommitPush(
     const effectiveAuditorProvider = providerOverride || getActiveProvider();
     const effectiveAuditorModel = modelOverride?.trim() || undefined;
 
-    // Require an active AI provider — runAuditor handles its own fail-safe
     if (effectiveAuditorProvider === 'demo') {
       setState((s) => ({
         ...s,
@@ -118,7 +154,6 @@ export function useCommitPush(
       return;
     }
 
-    // Phase: Auditing
     setState((s) => ({ ...s, phase: 'auditing', auditVerdict: null }));
 
     try {
@@ -133,7 +168,7 @@ export function useCommitPush(
       try {
         const filePaths = parseDiffStats(diffText).fileNames;
         fileContexts = await fetchAuditorFileContexts(filePaths, async (path) => {
-          const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
+          const result = await readFromSandbox(sandboxIdRef.current, `/workspace/${path}`);
           if (result.error) return null;
           return { content: result.content, truncated: result.truncated };
         });
@@ -167,54 +202,118 @@ export function useCommitPush(
         return;
       }
 
-      // Phase: Committing
-      setState((s) => ({ ...s, phase: 'committing' }));
+      const attemptCommitAndPush = async (
+        targetSandbox: string,
+        applyPatchFirst: boolean,
+      ): Promise<AttemptResult> => {
+        if (applyPatchFirst) {
+          const writeResult = await writeToSandbox(targetSandbox, RECOVERY_PATCH_PATH, diffText);
+          if (!writeResult.ok) {
+            const errMsg = writeResult.error || 'unknown write failure';
+            if (isDefinitivelyGoneMessage(errMsg)) return { status: 'expired' };
+            return {
+              status: 'failed',
+              error: `Failed to stage diff in recovered sandbox: ${errMsg}`,
+            };
+          }
 
-      const commitResult = await execInSandbox(
-        sandboxId,
-        `cd /workspace && git add -A && git commit -m '${safeCommitMessage}'`,
-        undefined,
-        { markWorkspaceMutated: true },
-      );
+          const applyResult = await execInSandbox(
+            targetSandbox,
+            `cd /workspace && git apply --whitespace=nowarn ${RECOVERY_PATCH_PATH}`,
+            undefined,
+            { markWorkspaceMutated: true },
+          );
+          if (applyResult.exitCode !== 0) {
+            if (isExecResultGone(applyResult)) return { status: 'expired' };
+            const detail =
+              applyResult.stderr || applyResult.stdout || applyResult.error || 'Unknown error';
+            return {
+              status: 'failed',
+              error: `Failed to apply diff to recovered sandbox: ${detail}`,
+            };
+          }
+        }
 
-      if (commitResult.exitCode !== 0) {
-        // Git may write errors to stdout (e.g., "nothing to commit") or stderr
-        const errorDetail = commitResult.stderr || commitResult.stdout || 'Unknown error';
+        setState((s) => ({ ...s, phase: 'committing' }));
+        const commitResult = await execInSandbox(
+          targetSandbox,
+          `cd /workspace && git add -A && git commit -m '${safeCommitMessage}'`,
+          undefined,
+          { markWorkspaceMutated: true },
+        );
+        if (commitResult.exitCode !== 0) {
+          if (isExecResultGone(commitResult)) return { status: 'expired' };
+          const detail =
+            commitResult.stderr || commitResult.stdout || commitResult.error || 'Unknown error';
+          return { status: 'failed', error: `Commit failed: ${detail}` };
+        }
+
+        setState((s) => ({ ...s, phase: 'pushing' }));
+        const pushResult = await execInSandbox(
+          targetSandbox,
+          'cd /workspace && git push origin HEAD',
+          undefined,
+          { markWorkspaceMutated: true },
+        );
+        if (pushResult.exitCode !== 0) {
+          if (isExecResultGone(pushResult)) return { status: 'expired' };
+          const detail =
+            pushResult.stderr || pushResult.stdout || pushResult.error || 'Unknown error';
+          return { status: 'failed', error: `Push failed: ${detail}` };
+        }
+
+        return { status: 'success' };
+      };
+
+      const runWithExpiryCatch = async (
+        targetSandbox: string,
+        applyPatchFirst: boolean,
+      ): Promise<AttemptResult> => {
+        try {
+          return await attemptCommitAndPush(targetSandbox, applyPatchFirst);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (isDefinitivelyGoneMessage(msg)) return { status: 'expired' };
+          return { status: 'failed', error: msg };
+        }
+      };
+
+      let result = await runWithExpiryCatch(sandboxIdRef.current, false);
+
+      if (result.status === 'expired' && onSandboxExpired) {
+        setState((s) => ({ ...s, phase: 'recovering' }));
+        const newId = await onSandboxExpired();
+        if (!newId) {
+          setState((s) => ({
+            ...s,
+            phase: 'error',
+            error: 'Sandbox expired during commit/push and could not be recovered.',
+          }));
+          return;
+        }
+        sandboxIdRef.current = newId;
+        result = await runWithExpiryCatch(newId, true);
+      }
+
+      if (result.status === 'expired') {
         setState((s) => ({
           ...s,
           phase: 'error',
-          error: `Commit failed: ${errorDetail}`,
+          error: 'Sandbox expired during commit/push.',
         }));
         return;
       }
-
-      // Phase: Pushing
-      setState((s) => ({ ...s, phase: 'pushing' }));
-
-      const pushResult = await execInSandbox(
-        sandboxId,
-        'cd /workspace && git push origin HEAD',
-        undefined,
-        { markWorkspaceMutated: true },
-      );
-
-      if (pushResult.exitCode !== 0) {
-        const errorDetail = pushResult.stderr || pushResult.stdout || 'Unknown error';
-        setState((s) => ({
-          ...s,
-          phase: 'error',
-          error: `Push failed: ${errorDetail}`,
-        }));
+      if (result.status === 'failed') {
+        setState((s) => ({ ...s, phase: 'error', error: result.error }));
         return;
       }
 
-      // Success
       setState((s) => ({ ...s, phase: 'success' }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setState((s) => ({ ...s, phase: 'error', error: msg }));
     }
-  }, [sandboxId, state.commitMessage, state.diff, providerOverride, modelOverride]);
+  }, [state.commitMessage, state.diff, providerOverride, modelOverride, onSandboxExpired]);
 
   return {
     phase: state.phase,
