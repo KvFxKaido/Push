@@ -1,4 +1,4 @@
-import { Env } from './worker-middleware';
+import type { Env } from './worker-middleware';
 
 /**
  * GET /api/_stats handler — Analytics Engine SQL gateway.
