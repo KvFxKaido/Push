@@ -47,6 +47,8 @@ interface FileBrowserProps {
   onBack: () => void;
   lockedProvider?: AIProviderType | null;
   lockedModel?: string | null;
+  /** Recovery callback for the commit/push pipeline when the sandbox dies. */
+  onSandboxExpired?: () => Promise<string | null>;
 }
 
 export function FileBrowser({
@@ -57,6 +59,7 @@ export function FileBrowser({
   onBack,
   lockedProvider,
   lockedModel,
+  onSandboxExpired,
 }: FileBrowserProps) {
   const {
     currentPath,
@@ -394,6 +397,7 @@ export function FileBrowser({
           onOpenChange={setCommitSheetOpen}
           lockedProvider={lockedProvider}
           lockedModel={lockedModel}
+          onSandboxExpired={onSandboxExpired}
           onSuccess={() => {
             toast.success('Committed and pushed!');
             loadDirectory(currentPath);

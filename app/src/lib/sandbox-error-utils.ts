@@ -1,3 +1,32 @@
+/**
+ * True only when the message proves the container is gone (expired,
+ * terminated, or the Modal app isn't deployed at all). Transient signals —
+ * timeouts, cold starts, network blips, rate limits, unauthorized-token
+ * races, generic container errors — must NOT trigger sandbox replacement:
+ * the sandbox is probably still alive, and recreating it forces a fresh
+ * clone that loses all in-flight writes.
+ *
+ * The sandbox backend's exec endpoint reuses `exit_code: -1` for several
+ * non-terminal failures (unauthorized owner token, command timeout, generic
+ * container error) in addition to the actual "sandbox not found / expired"
+ * case. So an exit_code === -1 alone is NOT proof the container is gone —
+ * inspect the accompanying error text via this helper.
+ */
+export function isDefinitivelyGoneMessage(rawMessage: string | null | undefined): boolean {
+  if (!rawMessage) return false;
+  const lower = rawMessage.toLowerCase();
+  if (lower.includes('modal_not_found')) return true;
+  if (lower.includes('sandbox not found')) return true;
+  if (lower.includes('sandbox is no longer running')) return true;
+  if (lower.includes('sandbox has been terminated')) return true;
+  return false;
+}
+
+export function isDefinitivelyGoneError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return isDefinitivelyGoneMessage(err.message);
+}
+
 export function categorizeSandboxError(raw: string): { title: string; detail: string } {
   const lower = raw.toLowerCase();
   if (lower.includes('clone') || lower.includes('git clone')) {
