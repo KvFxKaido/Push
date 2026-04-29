@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { Check, ChevronsUpDown, Pencil } from 'lucide-react';
+import { Check, ChevronsUpDown, Loader2, Pencil, RefreshCw } from 'lucide-react';
 import {
   Command,
   CommandEmpty,
@@ -70,6 +70,12 @@ export interface ModelPickerProps {
   searchPlaceholder?: string;
   /** Empty state copy. */
   emptyLabel?: string;
+  /** When provided, renders a sibling refresh icon button next to the trigger. */
+  onRefresh?: () => void;
+  /** Spinner state for the refresh button; also disables it. */
+  isRefreshing?: boolean;
+  /** aria-label / title on the refresh button. */
+  refreshAriaLabel?: string;
   className?: string;
   triggerClassName?: string;
   popoverClassName?: string;
@@ -89,6 +95,9 @@ export function ModelPicker({
   customPlaceholder,
   searchPlaceholder = 'Search models...',
   emptyLabel = 'No models found.',
+  onRefresh,
+  isRefreshing = false,
+  refreshAriaLabel = 'Refresh models',
   className,
   triggerClassName,
   popoverClassName,
@@ -100,6 +109,23 @@ export function ModelPicker({
 
   const fallbackLabel = value ? formatModelDisplayName(provider, value) : 'Select model';
   const renderedLabel = triggerLabel ?? fallbackLabel;
+
+  const refreshButton = onRefresh ? (
+    <button
+      type="button"
+      onClick={onRefresh}
+      disabled={disabled || isRefreshing}
+      aria-label={refreshAriaLabel}
+      title={refreshAriaLabel}
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#2a3447] bg-[#070a10] text-[#8e99ad] transition-colors hover:text-[#d7deeb] disabled:opacity-60"
+    >
+      {isRefreshing ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <RefreshCw className="h-3.5 w-3.5" />
+      )}
+    </button>
+  ) : null;
 
   if (allowCustom && customMode) {
     const inputValue = customInputValue ?? value;
@@ -126,90 +152,93 @@ export function ModelPicker({
         >
           <ChevronsUpDown className="h-4 w-4" />
         </button>
+        {refreshButton}
       </div>
     );
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          role="combobox"
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          aria-label={ariaLabel}
-          disabled={disabled || (options.length === 0 && !allowCustom)}
+    <div className={cn('flex w-full min-w-0 items-center gap-1.5', className)}>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            role="combobox"
+            aria-haspopup="listbox"
+            aria-expanded={open}
+            aria-label={ariaLabel}
+            disabled={disabled || (options.length === 0 && !allowCustom)}
+            className={cn(
+              'flex h-8 min-w-0 flex-1 items-center justify-between rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60',
+              triggerClassName,
+            )}
+          >
+            <span className="flex items-center gap-2 truncate">
+              {renderedLabel}
+              {triggerTrailing}
+            </span>
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
           className={cn(
-            'flex h-8 w-full items-center justify-between rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60',
-            triggerClassName,
-            className,
+            'w-[320px] border-[#2a3447] bg-[#0d1117] p-0 text-[#d7deeb] shadow-md',
+            popoverClassName,
           )}
+          align="start"
         >
-          <span className="flex items-center gap-2 truncate">
-            {renderedLabel}
-            {triggerTrailing}
-          </span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        className={cn(
-          'w-[320px] border-[#2a3447] bg-[#0d1117] p-0 text-[#d7deeb] shadow-md',
-          popoverClassName,
-        )}
-        align="start"
-      >
-        <Command className="bg-transparent">
-          <CommandInput placeholder={searchPlaceholder} className="border-0 text-[#d7deeb]" />
-          <CommandList>
-            <CommandEmpty>{emptyLabel}</CommandEmpty>
-            {groups.map((group) => (
-              <CommandGroup
-                key={group.key}
-                heading={group.label || undefined}
-                className="text-[#7c879b]"
-              >
-                {group.models.map((model) => (
+          <Command className="bg-transparent">
+            <CommandInput placeholder={searchPlaceholder} className="border-0 text-[#d7deeb]" />
+            <CommandList>
+              <CommandEmpty>{emptyLabel}</CommandEmpty>
+              {groups.map((group) => (
+                <CommandGroup
+                  key={group.key}
+                  heading={group.label || undefined}
+                  className="text-[#7c879b]"
+                >
+                  {group.models.map((model) => (
+                    <CommandItem
+                      key={model.id}
+                      value={model.id}
+                      onSelect={() => {
+                        if (model.id !== value) onChange(model.id);
+                        setOpen(false);
+                      }}
+                      className="text-[#d7deeb] data-[selected=true]:bg-[#1a2332]"
+                    >
+                      <span className="flex-1 truncate">{model.display}</span>
+                      {model.hints && (
+                        <span className="ml-2 shrink-0 text-[#7c879b]">{model.hints}</span>
+                      )}
+                      {model.id === value && (
+                        <Check className="ml-2 h-4 w-4 shrink-0 text-[#d7deeb]" />
+                      )}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              ))}
+              {allowCustom && (
+                <CommandGroup className="text-[#7c879b]">
                   <CommandItem
-                    key={model.id}
-                    value={model.id}
+                    value={CUSTOM_MODEL_VALUE}
+                    keywords={['custom', 'custom model', 'manual']}
                     onSelect={() => {
-                      if (model.id !== value) onChange(model.id);
+                      setCustomMode(true);
                       setOpen(false);
                     }}
                     className="text-[#d7deeb] data-[selected=true]:bg-[#1a2332]"
                   >
-                    <span className="flex-1 truncate">{model.display}</span>
-                    {model.hints && (
-                      <span className="ml-2 shrink-0 text-[#7c879b]">{model.hints}</span>
-                    )}
-                    {model.id === value && (
-                      <Check className="ml-2 h-4 w-4 shrink-0 text-[#d7deeb]" />
-                    )}
+                    <Pencil className="mr-2 h-3.5 w-3.5 shrink-0" />
+                    <span className="flex-1 truncate">Custom model…</span>
                   </CommandItem>
-                ))}
-              </CommandGroup>
-            ))}
-            {allowCustom && (
-              <CommandGroup className="text-[#7c879b]">
-                <CommandItem
-                  value={CUSTOM_MODEL_VALUE}
-                  keywords={['custom', 'custom model', 'manual']}
-                  onSelect={() => {
-                    setCustomMode(true);
-                    setOpen(false);
-                  }}
-                  className="text-[#d7deeb] data-[selected=true]:bg-[#1a2332]"
-                >
-                  <Pencil className="mr-2 h-3.5 w-3.5 shrink-0" />
-                  <span className="flex-1 truncate">Custom model…</span>
-                </CommandItem>
-              </CommandGroup>
-            )}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+                </CommandGroup>
+              )}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+      {refreshButton}
+    </div>
   );
 }

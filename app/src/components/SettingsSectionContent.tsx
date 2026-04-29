@@ -5,6 +5,7 @@ import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
 import { getContextMetrics } from '@/lib/context-metrics';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { ProviderIcon } from '@/components/ui/provider-icon';
+import { ModelPicker } from '@/components/ui/model-picker';
 import { Button } from '@/components/ui/button';
 import {
   BUILT_IN_SETTINGS_PROVIDER_META,
@@ -1068,7 +1069,6 @@ export function SettingsSectionContent({
                           options: provider.modelOptions,
                           isLocked: provider.isModelLocked,
                           lockedModel: ai.lockedModel,
-                          labelTransform: meta.labelTransform,
                         }}
                         refresh={{
                           trigger: provider.refreshModels,
@@ -1122,38 +1122,22 @@ export function SettingsSectionContent({
               </div>
 
               <div className="rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <label className="text-xs font-medium text-push-fg-secondary">
-                    Worker-bound model
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => ai.cloudflareProvider.refreshModels()}
+                <label className="text-xs font-medium text-push-fg-secondary">
+                  Worker-bound model
+                </label>
+                <div className="mt-2">
+                  <ModelPicker
+                    provider="cloudflare"
+                    value={ai.cloudflareProvider.model}
+                    options={ai.cloudflareProvider.modelOptions}
+                    onChange={ai.cloudflareProvider.setModel}
                     disabled={ai.cloudflareProvider.modelsLoading}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-push-edge-subtle bg-push-surface text-push-fg-dim transition-colors hover:text-push-fg-secondary disabled:opacity-50"
-                    aria-label="Refresh Cloudflare models"
-                    title="Refresh Cloudflare models"
-                  >
-                    {ai.cloudflareProvider.modelsLoading ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    )}
-                  </button>
+                    onRefresh={() => ai.cloudflareProvider.refreshModels()}
+                    isRefreshing={ai.cloudflareProvider.modelsLoading}
+                    refreshAriaLabel="Refresh Cloudflare models"
+                    ariaLabel="Select Cloudflare Workers AI model"
+                  />
                 </div>
-
-                <select
-                  value={ai.cloudflareProvider.model}
-                  onChange={(e) => ai.cloudflareProvider.setModel(e.target.value)}
-                  className="mt-2 h-9 w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 text-xs text-push-fg outline-none transition-all focus:border-push-sky/50"
-                  disabled={ai.cloudflareProvider.modelOptions.length === 0}
-                >
-                  {ai.cloudflareProvider.modelOptions.map((model) => (
-                    <option key={model} value={model}>
-                      {formatModelDisplayName('cloudflare', model)}
-                    </option>
-                  ))}
-                </select>
 
                 <p className="mt-2 text-push-xs text-push-fg-dim">
                   Uses the deployed Worker binding via `env.AI`. No local API key needed.

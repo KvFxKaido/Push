@@ -168,8 +168,9 @@ describe('ProviderKeySection', () => {
     );
 
     expect(html).toContain('Connected');
-    expect(html).toContain('anthropic/claude-sonnet');
-    expect(html).toContain('openai/gpt-5');
+    // Picker trigger includes the formatted display name of the current value and its accessible label.
+    expect(html).toContain('Anthropic / claude-sonnet');
+    expect(html).toContain('Select OpenRouter model');
   });
 
   it('renders the locked-model warning when the current chat pins a model', () => {
