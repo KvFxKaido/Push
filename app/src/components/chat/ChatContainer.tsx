@@ -11,6 +11,7 @@ import type {
   QuickPrompt,
 } from '@/types';
 import { MessageBubble } from './MessageBubble';
+import { ToolCallSummary, type ToolCallPair } from './ToolCallSummary';
 import { AgentStatusBar } from './AgentStatusBar';
 import { CIStatusBanner } from './CIStatusBanner';
 import { getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
@@ -124,8 +125,8 @@ interface ChatContainerProps {
  * it is actively streaming). This avoids re-running the map/callback
  * computation for every streaming chunk when only the final message changes.
  */
-const SettledMessageList = memo(
-  function SettledMessageList({
+const GroupedMessageList = memo(
+  function GroupedMessageList({
     messages,
     onCardAction,
     onPin,
@@ -142,19 +143,29 @@ const SettledMessageList = memo(
   }) {
     return (
       <>
-        {messages.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            onCardAction={onCardAction}
-            onPin={onPin}
-            onEdit={msg.role === 'user' && !msg.isToolResult ? onEditUserMessage : undefined}
-            canRegenerate={msg.id === regeneratableAssistantMessageId}
-            onRegenerate={
-              msg.id === regeneratableAssistantMessageId ? onRegenerateLastResponse : undefined
-            }
-          />
-        ))}
+        {groupChatMessages(messages).map((segment, idx) =>
+          segment.type === 'text' ? (
+            <MessageBubble
+              key={segment.message.id + '-' + idx}
+              message={segment.message}
+              onCardAction={onCardAction}
+              onPin={onPin}
+              onEdit={
+                segment.message.role === 'user' && !segment.message.isToolResult ? onEditUserMessage : undefined
+              }
+              canRegenerate={segment.message.id === regeneratableAssistantMessageId}
+              onRegenerate={
+                segment.message.id === regeneratableAssistantMessageId ? onRegenerateLastResponse : undefined
+              }
+            />
+          ) : (
+            <ToolCallSummary
+              key={'tool-group-' + idx}
+              items={segment.items}
+              onCardAction={onCardAction}
+            />
+          )
+        )}
       </>
     );
   },
@@ -176,6 +187,39 @@ const SettledMessageList = memo(
     return true;
   },
 );
+
+
+
+function groupChatMessages(messages: readonly ChatMessage[]): ({ type: 'text'; message: ChatMessage } | { type: 'toolGroup'; items: ToolCallPair[] })[] {
+  const segments: ReturnType<typeof groupChatMessages> = [];
+  let i = 0;
+  while (i < messages.length) {
+    const msg = messages[i];
+    if (msg.role === 'assistant' && msg.isToolCall) {
+      const pairs: ToolCallPair[] = [];
+      while (i < messages.length) {
+        const callMsg = messages[i];
+        if (!(callMsg.role === 'assistant' && callMsg.isToolCall)) break;
+        const resultMsg = messages[i + 1];
+        if (!resultMsg || !(resultMsg.role === 'user' && resultMsg.isToolResult)) break;
+        pairs.push({ callMsg, resultMsg });
+        i += 2;
+      }
+      if (pairs.length > 0) {
+        segments.push({ type: 'toolGroup', items: pairs });
+        continue;
+      }
+    }
+    // Orphan tool results (not immediately after their call) are dropped from surface
+    if (msg.role === 'user' && msg.isToolResult) {
+      i++;
+      continue;
+    }
+    segments.push({ type: 'text', message: msg });
+    i++;
+  }
+  return segments;
+}
 
 const AUTO_SCROLL_THRESHOLD_PX = 150;
 const AT_BOTTOM_THRESHOLD_PX = 48;
@@ -400,7 +444,7 @@ export function ChatContainer({
         <div className="flex-1" />
         <div className="py-4 space-y-1.5">
           {settledMessages.length > 0 && (
-            <SettledMessageList
+            <GroupedMessageList
               messages={settledMessages}
               onCardAction={onCardAction}
               onPin={onPin}

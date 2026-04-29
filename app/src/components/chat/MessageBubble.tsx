@@ -434,8 +434,9 @@ export const MessageBubble = memo(function MessageBubble({
 
   const content = useMemo(() => formatContent(displayContentText), [displayContentText]);
 
-  // Hide tool result messages — they now live in the Console drawer
-  if (message.isToolResult || (message.role as string) === 'tool') {
+  // Hide tool call / malformed messages only when they have no cards.
+  // If the model included user-facing text before the JSON call, keep it visible.
+  if ((message.isToolCall || message.isMalformed) && !hasContent && visibleCards.length === 0) {
     return null;
   }
 
