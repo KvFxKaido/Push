@@ -91,7 +91,10 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
       );
     }
 
-    const result: any = await response.json();
+    interface AnalyticsResult {
+      data: Array<Record<string, string | number>>;
+    }
+    const result = (await response.json()) as AnalyticsResult;
 
     // Map raw blobs back to readable keys
     const blobMap: Record<string, string> = {
@@ -100,17 +103,17 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
       blob4: 'route_class',
     };
 
-    const groups_data = result.data.map((row: any) => {
-      const mapped: any = {};
-      groups.forEach((b) => {
+    const groups_data = result.data.map((row) => {
+      const mapped: Record<string, string | number> = {};
+      for (const b of groups) {
         mapped[blobMap[b] || b] = row[b];
-      });
+      }
       return {
         ...mapped,
         requests: row.requests,
-        success_rate: Math.round(row.success_rate * 100) / 100,
-        p50_ms: Math.round(row.p50_ms),
-        p95_ms: Math.round(row.p95_ms),
+        success_rate: Math.round((row.success_rate as number) * 100) / 100,
+        p50_ms: Math.round(row.p50_ms as number),
+        p95_ms: Math.round(row.p95_ms as number),
         tokens_in: row.tokens_in,
         tokens_out: row.tokens_out,
       };
