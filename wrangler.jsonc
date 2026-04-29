@@ -151,5 +151,6 @@
   // per-user LRU eviction policy once user identity lands in the keys.
   "triggers": {
     "crons": ["0 3 * * *"]
-  }
+  },
+  "analytics_engine_datasets": [{ "binding": "PROVIDER_STATS", "dataset": "push_provider_stats" }]
 }
