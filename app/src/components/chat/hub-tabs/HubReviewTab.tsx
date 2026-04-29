@@ -35,11 +35,10 @@ import {
   OPENADAPTER_DEFAULT_MODEL,
   getModelForRole,
   type PreferredProvider,
-  formatModelDisplayName,
 } from '@/lib/providers';
+import { ModelPicker } from '@/components/ui/model-picker';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import {
-  HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
   HUB_PANEL_SUBTLE_SURFACE_CLASS,
   HUB_TAG_CLASS,
@@ -542,7 +541,7 @@ export function HubReviewTab({
   const selectedDefaultModel = selectedProvider ? REVIEW_DEFAULT_MODELS[selectedProvider] : '';
   const selectedReviewModelInput = selectedProvider ? (selectedModels[selectedProvider] ?? '') : '';
   const selectedReviewModel = selectedProvider
-    ? selectedModels[selectedProvider]?.trim() || selectedDefaultModel
+    ? selectedReviewModelInput.trim() || selectedDefaultModel
     : '';
 
   const modelOptionsForProvider = useMemo(() => {
@@ -553,12 +552,6 @@ export function HubReviewTab({
     if (!active || options.includes(active)) return options;
     return [active, ...options];
   }, [selectedProvider, providerModelOptions, selectedModels]);
-
-  const [useCustomModel, setUseCustomModel] = useState(false);
-
-  useEffect(() => {
-    setUseCustomModel(false);
-  }, [selectedProvider]);
   const isCurrentReviewSaved = Boolean(
     result && savedReview && savedReview.result.reviewedAt === result.reviewedAt,
   );
@@ -970,47 +963,22 @@ export function HubReviewTab({
 
             {/* Model selector */}
             <div className="flex items-center gap-2">
-              {modelOptionsForProvider.length > 0 && !useCustomModel ? (
-                <select
+              <div className="min-w-0 flex-1">
+                <ModelPicker
+                  key={selectedProvider ?? 'none'}
+                  provider={selectedProvider ?? 'ollama'}
                   value={selectedReviewModel}
-                  onChange={(e) => {
-                    if (e.target.value === '__custom__') {
-                      setUseCustomModel(true);
-                    } else {
-                      handleModelChange(e.target.value);
-                    }
-                  }}
-                  disabled={running}
-                  className={`${HUB_MATERIAL_INPUT_CLASS} min-w-0 flex-1 px-2.5 py-1.5`}
-                >
-                  {modelOptionsForProvider.map((m) => (
-                    <option key={m} value={m}>
-                      {formatModelDisplayName(selectedProvider ?? 'ollama', m)}
-                    </option>
-                  ))}
-                  <option value="__custom__">Custom model…</option>
-                </select>
-              ) : (
-                <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                  <input
-                    type="text"
-                    value={selectedReviewModelInput}
-                    onChange={(e) => handleModelChange(e.target.value)}
-                    placeholder={
-                      selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Review model'
-                    }
-                    className={`${HUB_MATERIAL_INPUT_CLASS} min-w-0 flex-1 px-2.5 py-1.5`}
-                  />
-                  {modelOptionsForProvider.length > 0 && (
-                    <button
-                      onClick={() => setUseCustomModel(false)}
-                      className="flex-shrink-0 rounded border border-push-edge px-1.5 py-1 text-push-fg-dim hover:border-push-edge-hover hover:text-push-fg-secondary"
-                    >
-                      <ChevronDown className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-              )}
+                  customInputValue={selectedReviewModelInput}
+                  options={modelOptionsForProvider}
+                  onChange={handleModelChange}
+                  disabled={running || !selectedProvider}
+                  allowCustom
+                  customPlaceholder={
+                    selectedDefaultModel ? `Default: ${selectedDefaultModel}` : 'Review model'
+                  }
+                  ariaLabel="Select review model"
+                />
+              </div>
               <button
                 onClick={() => void handleRunReview()}
                 disabled={!canRunReview}
