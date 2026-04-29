@@ -46,11 +46,12 @@ import type {
   SnapshotHandle,
 } from '@push/lib/sandbox-provider';
 import { SandboxError } from '@push/lib/sandbox-provider';
+import { resolveApiUrl } from './api-url';
 
 const BASE = '/api/sandbox-cf';
 
 async function call<T>(route: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${BASE}/${route}`, {
+  const res = await fetch(resolveApiUrl(`${BASE}/${route}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

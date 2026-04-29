@@ -14,6 +14,7 @@
  */
 
 import type { ToolExecutionResult, WebSearchResult, WebSearchCardData } from '@/types';
+import { resolveApiUrl } from './api-url';
 import { detectToolFromText } from './utils';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getTavilyKey } from '@/hooks/useTavilyConfig';
@@ -95,15 +96,17 @@ function isWebSearchTool(obj: unknown): obj is { tool: 'web_search'; args: { que
 // Execution — shared core
 // ---------------------------------------------------------------------------
 
-const OLLAMA_SEARCH_URL = import.meta.env.DEV ? '/ollama/api/web_search' : '/api/ollama/search';
+const OLLAMA_SEARCH_URL = import.meta.env.DEV
+  ? '/ollama/api/web_search'
+  : resolveApiUrl('/api/ollama/search');
 
 // In both dev and prod, /api routes go through the Worker (or Vite proxy → Worker).
-const FREE_SEARCH_URL = '/api/search';
+const FREE_SEARCH_URL = resolveApiUrl('/api/search');
 
 // Tavily API key is kept client-side (same as AI provider keys) and sent to
 // the Worker in an Authorization header. Not required — DuckDuckGo works fine
 // as the default. Add a Tavily key in Settings for higher-quality results.
-const TAVILY_SEARCH_URL = '/api/search/tavily';
+const TAVILY_SEARCH_URL = resolveApiUrl('/api/search/tavily');
 
 const MAX_RESULT_SNIPPET_LENGTH = 500;
 const MAX_RESULTS = 5;

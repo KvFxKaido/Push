@@ -1,6 +1,7 @@
 import type { AIProviderType, AIProviderConfig, AIModel, AgentRole } from '@/types';
 import { getAzureModelName, getBedrockModelName } from '@/hooks/useExperimentalProviderConfig';
 import { getVertexModelName } from '@/hooks/useVertexConfig';
+import { resolveApiUrl } from './api-url';
 import { getModelCapabilities } from './model-capabilities';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 import { VERTEX_DEFAULT_MODEL as SHARED_VERTEX_DEFAULT_MODEL } from './vertex-provider';
@@ -37,9 +38,11 @@ import {
 // Provider URL registry — single source of truth for dev/prod endpoints
 // ---------------------------------------------------------------------------
 
-/** Resolve a provider endpoint: dev uses Vite proxy paths, prod uses Worker paths. */
+/** Resolve a provider endpoint: dev uses Vite proxy paths, prod goes through
+ *  resolveApiUrl so the Capacitor WebView gets an absolute Worker URL while
+ *  the same-origin web build keeps relative paths. */
 function providerUrl(devPath: string, prodPath: string): string {
-  return import.meta.env.DEV ? devPath : prodPath;
+  return import.meta.env.DEV ? devPath : resolveApiUrl(prodPath);
 }
 
 export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: string }> = {

@@ -12,6 +12,7 @@ import {
   setWorkspaceRevisionByKey,
   setSandboxWorkspaceRevision,
 } from './sandbox-file-version-cache';
+import { resolveApiUrl } from './api-url';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import {
   getPushTracer,
@@ -956,7 +957,7 @@ async function sandboxFetch<T>(
                 [REQUEST_ID_HEADER]: requestId,
               });
 
-              const res = await fetch(`${SANDBOX_BASE}/${endpoint}`, {
+              const res = await fetch(resolveApiUrl(`${SANDBOX_BASE}/${endpoint}`), {
                 method: 'POST',
                 headers,
                 body: JSON.stringify(body),
