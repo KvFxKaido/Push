@@ -14,7 +14,7 @@ const COMMIT_IDENTITY_KEY = 'github_app_commit_identity';
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 // GitHub App name for installation URL
-const GITHUB_APP_NAME = 'push-auth';
+const GITHUB_APP_NAME = 'push-agent';
 
 // GitHub App OAuth Client ID (public value — safe to hardcode, like GITHUB_APP_NAME)
 const GITHUB_APP_CLIENT_ID = 'Iv23liJZx2boQUWBDb3T';

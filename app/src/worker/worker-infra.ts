@@ -19,6 +19,8 @@ import {
   type WorkerSpan,
 } from './worker-tracing';
 
+const GITHUB_APP_SLUG = 'push-agent';
+
 export async function handleSandbox(
   request: Request,
   env: Env,
@@ -580,8 +582,8 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
         {
           error: 'No installation found',
           details:
-            'You have not installed the Push Auth GitHub App. Please install it first, then try connecting again.',
-          install_url: `https://github.com/apps/push-auth/installations/new`,
+            'You have not installed the Push Agent GitHub App. Please install it first, then try connecting again.',
+          install_url: `https://github.com/apps/${GITHUB_APP_SLUG}/installations/new`,
         },
         { status: 404 },
       );

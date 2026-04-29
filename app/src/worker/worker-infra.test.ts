@@ -416,7 +416,7 @@ describe('handleGitHubAppOAuth error paths', () => {
     );
     expect(response.status).toBe(404);
     const body = await response.json();
-    expect(body.install_url).toMatch(/apps\/push-auth/);
+    expect(body.install_url).toMatch(/apps\/push-agent/);
   });
 
   it('returns 403 when the installation is not in the allowlist', async () => {
