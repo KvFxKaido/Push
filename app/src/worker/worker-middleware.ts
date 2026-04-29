@@ -94,6 +94,8 @@ export interface Env {
   };
   // Admin token for /api/_stats
   STATS_ADMIN_TOKEN?: string;
+  // Cloudflare API token with Analytics Engine: Read permission (distinct from CF_AI_GATEWAY_TOKEN which is gateway-scoped)
+  CF_ANALYTICS_TOKEN?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -649,14 +651,14 @@ export function createStreamProxyHandler(
 
     const writeStat = (fields: Partial<ProviderStatFields>) => {
       writeProviderStat(env, {
-        provider: config.logTag.split('/').pop() || 'unknown',
+        provider: config.logTag.split('/')[1] || 'unknown',
         model,
-        routeClass: gatewayUrl ? 'gateway-cf' : 'gateway-lite',
+        routeClass: gatewayUrl ? 'gateway-cf' : 'direct',
         errorCode: fields.errorCode || '',
         ttfbMs,
         durationMs: Date.now() - startTime,
         upstreamStatus: upstreamStatus || fields.upstreamStatus || 0,
-        bytesIn: bodyText.length,
+        bytesIn: normalizedRequest.value.bodyText.length,
         bytesOut,
         tokensIn: -1,
         tokensOut: -1,
@@ -767,17 +769,25 @@ export function createStreamProxyHandler(
       }
 
       if (upstream.body) {
-        const transform = new TransformStream({
+        let statWritten = false;
+        const { readable, writable } = new TransformStream({
           transform(chunk, controller) {
             bytesOut += chunk.byteLength;
             controller.enqueue(chunk);
           },
           flush() {
+            statWritten = true;
             writeStat({ success: 1 });
           },
         });
 
-        return new Response(upstream.body.pipeThrough(transform), {
+        // pipeTo catches client disconnects and aborts that pipeThrough silently drops.
+        // If the stream is cancelled before flush() runs, we still emit a failure stat.
+        upstream.body.pipeTo(writable).catch(() => {
+          if (!statWritten) writeStat({ errorCode: 'STREAM_ABORTED' });
+        });
+
+        return new Response(readable, {
           status: upstream.status,
           headers: responseHeaders,
         });
@@ -844,9 +854,9 @@ export function createJsonProxyHandler(
 
     const writeStat = (fields: Partial<ProviderStatFields>) => {
       writeProviderStat(env, {
-        provider: config.logTag.split('/').pop() || 'unknown',
+        provider: config.logTag.split('/')[1] || 'unknown',
         model: 'unknown',
-        routeClass: gatewayUrl ? 'gateway-cf' : 'gateway-lite',
+        routeClass: gatewayUrl ? 'gateway-cf' : 'direct',
         errorCode: fields.errorCode || '',
         ttfbMs,
         durationMs: Date.now() - startTime,

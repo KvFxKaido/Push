@@ -2,7 +2,18 @@ import type { Env } from './worker-middleware';
 
 /**
  * GET /api/_stats handler — Analytics Engine SQL gateway.
- * Implementation of docs/decisions/Provider Observability via Analytics Engine.md
+ *
+ * Returns a subset of the schema defined in
+ * docs/decisions/Provider Observability via Analytics Engine.md:
+ * requests, success_rate, latency percentiles (p50/p95), and token sums.
+ * Fields `totals` and `errors_by_code` are not yet implemented.
+ *
+ * Requires:
+ *   - STATS_ADMIN_TOKEN — Bearer token for this endpoint
+ *   - CF_AI_GATEWAY_ACCOUNT_ID — Cloudflare account ID
+ *   - CF_ANALYTICS_TOKEN — Cloudflare API token with `Analytics Engine: Read` permission
+ *     (this is NOT the AI Gateway token; gateway tokens are scoped to gateway.ai.cloudflare.com
+ *     and do not have Analytics:Read access to the SQL API at api.cloudflare.com)
  */
 export async function handleStats(request: Request, env: Env): Promise<Response> {
   const authHeader = request.headers.get('Authorization');
@@ -36,14 +47,18 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
   const groups = validGroups[groupBy] || ['blob2'];
   const groupSelect = groups.join(', ');
 
-  // Analytics Engine SQL API requires Account ID and a Cloudflare API Token (not the admin token).
-  // We check for CF_AI_GATEWAY_ACCOUNT_ID as a reasonable fallback for the account ID.
+  // Analytics Engine SQL API requires Account ID and a Cloudflare API token with
+  // Analytics Engine: Read permission. CF_ANALYTICS_TOKEN is a dedicated env var
+  // for this — do NOT reuse CF_AI_GATEWAY_TOKEN which is gateway-scoped only.
   const accountId = env.CF_AI_GATEWAY_ACCOUNT_ID;
-  const apiToken = env.CF_AI_GATEWAY_TOKEN; // Reusing gateway token for API access if possible, or following spec
+  const apiToken = env.CF_ANALYTICS_TOKEN;
 
   if (!accountId || !apiToken) {
     return new Response(
-      JSON.stringify({ error: 'Worker not configured with Cloudflare API credentials for stats.' }),
+      JSON.stringify({
+        error:
+          'Worker not configured for stats. Set CF_AI_GATEWAY_ACCOUNT_ID and CF_ANALYTICS_TOKEN (an API token with Analytics Engine: Read permission).',
+      }),
       {
         status: 503,
         headers: { 'Content-Type': 'application/json' },
@@ -51,16 +66,19 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
     );
   }
 
-  // Template the query
+  // Template the query.
+  // Sentinel filtering:
+  //   - double1 (ttfbMs) uses -1 for failed requests — exclude from latency percentiles
+  //   - double6 (tokensIn) and double7 (tokensOut) use -1 for unknown — exclude from sums
   const query = `
     SELECT
       ${groupSelect},
       count() as requests,
       avg(double9) as success_rate,
-      quantile(0.5)(double1) as p50_ms,
-      quantile(0.95)(double1) as p95_ms,
-      sum(double6) as tokens_in,
-      sum(double7) as tokens_out
+      quantileIf(0.5)(double1, double1 > 0) as p50_ms,
+      quantileIf(0.95)(double1, double1 > 0) as p95_ms,
+      sum(if(double6 > 0, double6, 0)) as tokens_in,
+      sum(if(double7 > 0, double7, 0)) as tokens_out
     FROM push_provider_stats
     WHERE timestamp > now() - INTERVAL '${interval}'
       AND blob1 = '1'
@@ -95,6 +113,13 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
       data: Array<Record<string, string | number>>;
     }
     const result = (await response.json()) as AnalyticsResult;
+
+    if (!result.data || !Array.isArray(result.data)) {
+      return new Response(
+        JSON.stringify({ error: 'Unexpected Analytics Engine response structure' }),
+        { status: 502, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
 
     // Map raw blobs back to readable keys
     const blobMap: Record<string, string> = {
