@@ -539,8 +539,9 @@ export function HubReviewTab({
   );
 
   const selectedDefaultModel = selectedProvider ? REVIEW_DEFAULT_MODELS[selectedProvider] : '';
+  const selectedReviewModelInput = selectedProvider ? (selectedModels[selectedProvider] ?? '') : '';
   const selectedReviewModel = selectedProvider
-    ? selectedModels[selectedProvider]?.trim() || selectedDefaultModel
+    ? selectedReviewModelInput.trim() || selectedDefaultModel
     : '';
 
   const modelOptionsForProvider = useMemo(() => {
@@ -967,6 +968,7 @@ export function HubReviewTab({
                   key={selectedProvider ?? 'none'}
                   provider={selectedProvider ?? 'ollama'}
                   value={selectedReviewModel}
+                  customInputValue={selectedReviewModelInput}
                   options={modelOptionsForProvider}
                   onChange={handleModelChange}
                   disabled={running || !selectedProvider}

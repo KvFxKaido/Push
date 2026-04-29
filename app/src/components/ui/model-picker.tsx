@@ -54,6 +54,12 @@ export interface ModelPickerProps {
   disabled?: boolean;
   /** Show a "Custom model…" entry that swaps the trigger to a freeform input. */
   allowCustom?: boolean;
+  /**
+   * Raw text shown in the custom-mode input. Defaults to `value`. Pass this when
+   * `value` is a resolved/defaulted string and the input should track the
+   * unresolved user-edited value (so clearing the field doesn't snap back).
+   */
+  customInputValue?: string;
   /** Override the trigger label (defaults to formatted display name of `value`). */
   triggerLabel?: ReactNode;
   /** Trailing slot rendered next to the trigger label (e.g., reasoning effort). */
@@ -77,6 +83,7 @@ export function ModelPicker({
   onChange,
   disabled,
   allowCustom = false,
+  customInputValue,
   triggerLabel,
   triggerTrailing,
   customPlaceholder,
@@ -95,15 +102,16 @@ export function ModelPicker({
   const renderedLabel = triggerLabel ?? fallbackLabel;
 
   if (allowCustom && customMode) {
+    const inputValue = customInputValue ?? value;
     return (
       <div className={cn('flex w-full min-w-0 items-center gap-1.5', className)}>
         <input
           type="text"
-          value={value}
+          value={inputValue}
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
           placeholder={customPlaceholder ?? 'Enter model ID'}
-          aria-label={ariaLabel}
+          aria-label="Custom model ID"
           className={cn(
             'h-8 min-w-0 flex-1 rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60',
             triggerClassName,
@@ -187,6 +195,7 @@ export function ModelPicker({
               <CommandGroup className="text-[#7c879b]">
                 <CommandItem
                   value={CUSTOM_MODEL_VALUE}
+                  keywords={['custom', 'custom model', 'manual']}
                   onSelect={() => {
                     setCustomMode(true);
                     setOpen(false);
