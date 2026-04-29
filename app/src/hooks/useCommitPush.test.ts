@@ -476,6 +476,81 @@ describe('useCommitPush.commitAndPush — sandbox-expiry recovery', () => {
     expect((reactState.cells[0].value as { phase: string; error: string }).phase).toBe('error');
   });
 
+  it('refuses recovery when the captured diff was truncated', async () => {
+    reactState.cells[0] = {
+      value: {
+        phase: 'reviewing',
+        diff: {
+          diff: 'diff --git a/x b/x',
+          filesChanged: 1,
+          additions: 1,
+          deletions: 0,
+          truncated: true,
+        },
+        auditVerdict: null,
+        error: null,
+        commitMessage: 'fix thing',
+      },
+    };
+    diffUtils.parseDiffStats.mockReturnValue({ fileNames: [] });
+    auditor.runAuditor.mockResolvedValue({ verdict: 'safe', card: { summary: '' } });
+
+    sandboxClient.execInSandbox.mockResolvedValueOnce({
+      exitCode: -1,
+      stdout: '',
+      stderr: '',
+      error: 'Sandbox not found or expired',
+    });
+
+    const onSandboxExpired = vi.fn().mockResolvedValue('sbx-2');
+    const hook = render('sbx-1', 'openrouter', undefined, onSandboxExpired);
+    await hook.commitAndPush();
+
+    expect(onSandboxExpired).not.toHaveBeenCalled();
+    expect(sandboxClient.writeToSandbox).not.toHaveBeenCalled();
+    expect((reactState.cells[0].value as { phase: string; error: string }).phase).toBe('error');
+    expect((reactState.cells[0].value as { phase: string; error: string }).error).toContain(
+      'truncated',
+    );
+  });
+
+  it('refuses recovery when the captured diff contains binary changes', async () => {
+    reactState.cells[0] = {
+      value: {
+        phase: 'reviewing',
+        diff: {
+          diff: 'diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n',
+          filesChanged: 1,
+          additions: 0,
+          deletions: 0,
+          truncated: false,
+        },
+        auditVerdict: null,
+        error: null,
+        commitMessage: 'add image',
+      },
+    };
+    diffUtils.parseDiffStats.mockReturnValue({ fileNames: [] });
+    auditor.runAuditor.mockResolvedValue({ verdict: 'safe', card: { summary: '' } });
+
+    sandboxClient.execInSandbox.mockResolvedValueOnce({
+      exitCode: -1,
+      stdout: '',
+      stderr: '',
+      error: 'Sandbox not found or expired',
+    });
+
+    const onSandboxExpired = vi.fn().mockResolvedValue('sbx-2');
+    const hook = render('sbx-1', 'openrouter', undefined, onSandboxExpired);
+    await hook.commitAndPush();
+
+    expect(onSandboxExpired).not.toHaveBeenCalled();
+    expect((reactState.cells[0].value as { phase: string; error: string }).phase).toBe('error');
+    expect((reactState.cells[0].value as { phase: string; error: string }).error).toContain(
+      'binary',
+    );
+  });
+
   it('surfaces git apply failure when the saved diff cannot be replayed', async () => {
     seedReviewingState();
     diffUtils.parseDiffStats.mockReturnValue({ fileNames: [] });

@@ -52,6 +52,27 @@ interface CommitPushState {
 // patch out of `git add -A`, so we don't accidentally commit it.
 const RECOVERY_PATCH_PATH = '/workspace/.git/push-recovery.patch';
 
+/**
+ * Recovery replays the captured diff via `git apply`. That only works if the
+ * diff is faithful — but `getSandboxDiff` truncates large diffs (20KB on
+ * Modal, 1MB on CF) and does not pass `--binary`, so binary changes surface
+ * as the placeholder `Binary files a/X and b/Y differ`. Both cases produce a
+ * patch that `git apply` cannot replay. We refuse cold-resume in that case
+ * rather than silently dropping changes.
+ *
+ * The original commit on the live sandbox is still faithful — `git add -A`
+ * picks up the real working tree regardless. Only the recovery path is
+ * affected. A follow-up could add a `--binary` non-truncated diff endpoint
+ * to extend recovery to those cases.
+ */
+function unreplayableDiffReason(diff: string, truncated: boolean): string | null {
+  if (truncated) return 'the captured diff was truncated';
+  if (diff.includes('\nBinary files ')) {
+    return 'the captured diff contains binary changes that cannot be replayed';
+  }
+  return null;
+}
+
 type AttemptResult =
   | { status: 'success' }
   | { status: 'expired' }
@@ -284,6 +305,15 @@ export function useCommitPush(
       let result = await runWithExpiryCatch(sandboxIdRef.current, false);
 
       if (result.status === 'expired' && onSandboxExpired) {
+        const blockedReason = unreplayableDiffReason(diffText, state.diff?.truncated ?? false);
+        if (blockedReason) {
+          setState((s) => ({
+            ...s,
+            phase: 'error',
+            error: `Sandbox expired during commit/push and cannot be recovered automatically because ${blockedReason}. Try again on a fresh sandbox.`,
+          }));
+          return;
+        }
         setState((s) => ({ ...s, phase: 'recovering' }));
         const newId = await onSandboxExpired();
         if (!newId) {
