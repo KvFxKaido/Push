@@ -208,7 +208,11 @@ describe('handleWriteFile', () => {
 
   it('allows new-file creation when guard blocks and auto-read reports file missing', async () => {
     const ctx = makeContext({
-      writeAllowedVerdict: { allowed: false, reason: 'Unread file /workspace/src/new.ts' },
+      writeAllowedVerdict: {
+        allowed: false,
+        code: 'READ_REQUIRED',
+        reason: 'Unread file /workspace/src/new.ts',
+      },
       readResults: [
         { content: '', truncated: false, error: 'ENOENT: no such file' } as FileReadResult,
       ],
