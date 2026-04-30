@@ -14,7 +14,7 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 import os from 'node:os';
 
-import { parseGitRemoteUrl, resolveWorkspaceIdentity } from '../workspace-identity.ts';
+import { parseGitRemoteUrl, resolveWorkspaceIdentity } from '../../lib/workspace-identity.js';
 
 const execFileAsync = promisify(execFile);
 

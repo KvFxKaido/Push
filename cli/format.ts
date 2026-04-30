@@ -4,6 +4,7 @@
  */
 
 import process from 'node:process';
+import { formatRelativeTime } from '../lib/time-utils.ts';
 
 const hasColor =
   !process.env.NO_COLOR && (!!process.env.FORCE_COLOR || (process.stdout?.isTTY ?? false));
@@ -56,34 +57,7 @@ export function createFormatter(colorEnabled: boolean): Formatter {
 /** Default formatter based on environment detection. */
 export const fmt = createFormatter(hasColor);
 
-/**
- * Render a past timestamp as a short relative-time phrase ("3m ago",
- * "yesterday", "2w ago"). Used by the resume pickers so operators can
- * eyeball session freshness without decoding an ISO string.
- *
- * `now` is injectable for deterministic tests. Future timestamps (clock
- * skew) fall back to "future" rather than printing a negative delta.
- */
-export function formatRelativeTime(ms: number, now = Date.now()): string {
-  const delta = now - ms;
-  if (delta < 0) return 'future';
-  if (delta < 60_000) return 'just now';
-  const minutes = Math.floor(delta / 60_000);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return 'yesterday';
-  if (days < 7) return `${days}d ago`;
-  // Day-count cutoffs so band boundaries are unambiguous. Earlier bands
-  // used weeks<5 / months<12 thresholds, which collapsed days 360-364
-  // into `0y ago` (months=12 skipped the months branch, years=0 from
-  // floor(360/365) hit the years branch). Using the same unit the
-  // boundary is stated in prevents that class of bug.
-  if (days < 30) return `${Math.floor(days / 7)}w ago`;
-  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-  return `${Math.floor(days / 365)}y ago`;
-}
+export { formatRelativeTime };
 
 /**
  * Braille spinner for tool-execution feedback.

@@ -58,7 +58,8 @@ export async function getCompactGitStatus(cwd: string): Promise<CompactGitStatus
   const info = await getGitInfo(cwd);
   if (!info) return null;
 
-  const dirtyCount = info.dirtyFiles?.length || 0;
+  const dirtyCount =
+    info.modified.length + info.added.length + info.deleted.length + info.untracked.length || 0;
 
   return {
     branch: info.branch,

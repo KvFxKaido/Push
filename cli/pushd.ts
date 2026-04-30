@@ -76,7 +76,7 @@ import {
 } from '../lib/capabilities.ts';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.ts';
 import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.ts';
-import { resolveWorkspaceIdentity } from './workspace-identity.ts';
+import { resolveWorkspaceIdentity } from '../lib/workspace-identity.js';
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.ts';
 
 const VERSION = '0.3.0';

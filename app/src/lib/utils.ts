@@ -23,37 +23,15 @@ export function cn(...inputs: ClassValue[]) {
 // Relative time formatting (previously duplicated across 7 files)
 // ---------------------------------------------------------------------------
 
-/**
- * Format an ISO date string as a relative time label.
- * Includes "just now", minutes, hours, days, months, and falls back to locale date.
- */
+import { formatRelativeTime } from '@push/lib/time-utils';
+
 export function timeAgo(dateStr: string): string {
   if (!dateStr) return '';
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
+  return formatRelativeTime(dateStr);
 }
 
-/**
- * Compact variant for timestamps (epoch ms).
- * Omits "ago" suffix — used by chat/history UI.
- */
 export function timeAgoCompact(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d`;
-  return `${Math.floor(days / 30)}mo`;
+  return formatRelativeTime(timestamp, { compact: true });
 }
 
 // ---------------------------------------------------------------------------
