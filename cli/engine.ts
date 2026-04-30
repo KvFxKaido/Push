@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import nodePath from 'node:path';
 import {
   detectAllToolCalls,
+  ensureInsideWorkspace,
   executeToolCall,
   isFileMutationToolCall,
   isReadOnlyToolCall,
@@ -229,16 +230,20 @@ function checkAwarenessVerdict(
  * proceed. Surfaces verdict codes through the structured-error channel so the
  * model can recover programmatically if auto-recovery itself fails.
  *
- * Auto-recovery: when the initial verdict blocks, the harness reads the file
- * itself, refreshes the ledger, and retries the verdict before returning a
- * block. This mirrors the web app's `sandbox-write-handlers` flow, where most
- * "you didn't read this" blocks resolve invisibly to the model.
+ * Auto-recovery: when the initial verdict blocks, the harness validates the
+ * path is inside the workspace and confirms it exists on disk, then refreshes
+ * the ledger to fully_read and retries the verdict before returning a block.
+ * Mirrors the web app's `sandbox-write-handlers` flow.
  *
- * Special-case: when auto-recovery's read fails with ENOENT, write_file is
- * allowed through (creation), edit_file remains blocked (hashline edits need
- * existing content). All other auto-recovery errors propagate the original
- * verdict — the downstream tool will hit the same I/O error and surface a
- * more informative message than a guard block would.
+ * Security: path validation goes through `ensureInsideWorkspace` so `..`
+ * traversal, absolute paths outside the root, and symlink escapes fail
+ * closed (verdict propagates without any I/O on the out-of-scope target).
+ *
+ * Special-case: when auto-recovery's existence check fails with ENOENT,
+ * write_file is allowed through (creation), edit_file remains blocked
+ * (hashline edits need existing content). Other errors propagate the
+ * original verdict — the downstream tool will hit the same I/O error and
+ * surface a more informative message than a guard block would.
  *
  * Symbolic precision: edit_file uses `checkSymbolicEditAllowed`, which
  * compares symbols declared in the edit content against symbols the model has
@@ -258,15 +263,47 @@ export async function awarenessGuardForCall(
   const verdict = checkAwarenessVerdict(call, key, ledger);
   if (verdict.allowed) return null;
 
-  // Auto-recovery: read the file from disk, refresh the ledger, retry.
-  const absolute = nodePath.isAbsolute(rawPath)
-    ? rawPath
-    : nodePath.resolve(workspaceRoot, rawPath);
+  // Auto-recovery: validate path stays inside the workspace, confirm the
+  // target exists, refresh the ledger to fully_read, retry.
+  let absolute: string;
   try {
-    const content = await fs.readFile(absolute, 'utf8');
-    const lineCount = content.split('\n').length;
-    // No start/end/truncated → recordRead marks the file fully_read.
-    ledger.recordRead(key, { totalLines: lineCount });
+    absolute = await ensureInsideWorkspace(workspaceRoot, rawPath);
+  } catch {
+    // Path escapes workspace (`..` traversal, absolute outside root, symlink
+    // escape). Fail closed — propagate the original guard verdict without
+    // touching the filesystem on the out-of-scope target. The downstream
+    // tool's own ensureInsideWorkspace call will surface the path error.
+    return {
+      ok: false,
+      text: `[Awareness guard — ${call.tool}] ${verdict.reason}`,
+      structuredError: {
+        code: verdict.code,
+        message: verdict.reason,
+        retryable: true,
+      },
+    };
+  }
+
+  try {
+    // Existence + regular-file check. recordRead with no start/end/truncated
+    // already marks the entry fully_read regardless of totalLines, so loading
+    // the file content here would be wasted I/O (and unbounded for large
+    // files). Non-regular-file targets (directories, devices) cannot be
+    // edited and are treated as "auto-recovery can't help" — propagate the
+    // original verdict so the downstream tool's own error surfaces.
+    const stat = await fs.stat(absolute);
+    if (!stat.isFile()) {
+      return {
+        ok: false,
+        text: `[Awareness guard — ${call.tool}] ${verdict.reason}`,
+        structuredError: {
+          code: verdict.code,
+          message: verdict.reason,
+          retryable: true,
+        },
+      };
+    }
+    ledger.recordRead(key);
 
     const retryVerdict = checkAwarenessVerdict(call, key, ledger);
     if (retryVerdict.allowed) return null;

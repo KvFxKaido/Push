@@ -199,17 +199,16 @@ describe('awarenessGuardForCall — verdict already allows', () => {
   });
 });
 
-describe('awarenessGuardForCall — symbolic precision on edit_file', () => {
-  it('blocks edit_file when the edit declares a symbol the model never read', async () => {
+describe('awarenessGuardForCall — symbolic precision wired through auto-recovery', () => {
+  it('allows edit_file declaring a new symbol because auto-recovery upgrades to fully_read', async () => {
     const root = await makeWorkspace();
-    // File contains function `existing`. Set up a partial read that records
-    // `existing` as the only known symbol, then attempt an edit_file whose
-    // synthesized content declares a different symbol `unrelated` — the
-    // symbolic check should flag UNREAD_SYMBOL.
-    //
-    // Auto-recovery would normally rescue this by upgrading to fully_read,
-    // but since the symbol `unrelated` doesn't exist in the file, even after
-    // a full read the edit's symbol won't be in the read-symbols set.
+    // File contains function `existing`; model has no prior reads. Edit
+    // synthesizes content declaring a different symbol `unrelated` — the
+    // canonical's `checkSymbolicEditAllowed` is wired in for edit_file (vs.
+    // `checkWriteAllowed`), but auto-recovery upgrades the file to
+    // fully_read first, and `checkSymbolicEditAllowed` short-circuits on
+    // fully_read. Net effect: allowed. Documents the (intentional)
+    // dominance of auto-recovery over the symbolic check.
     await fs.writeFile(
       nodePath.join(root, 'src', 'foo.ts'),
       'export function existing() { return 1; }\n',
@@ -233,10 +232,38 @@ describe('awarenessGuardForCall — symbolic precision on edit_file', () => {
       ledger,
       root,
     );
-    // After auto-recovery the file is fully_read and the canonical's
-    // checkSymbolicEditAllowed allows fully_read regardless of edit content.
-    // So this case is allowed — confirming auto-recovery's broad effect.
     assert.equal(blocked, null);
+  });
+});
+
+describe('awarenessGuardForCall — workspace boundary enforcement', () => {
+  it('rejects write_file with a `..` traversal without touching the filesystem', async () => {
+    const root = await makeWorkspace();
+    const ledger = cliLedger();
+    const blocked = await awarenessGuardForCall(
+      {
+        tool: 'write_file',
+        args: { path: '../escape.ts', content: 'export const pwned = true;' },
+      },
+      ledger,
+      root,
+    );
+    // ensureInsideWorkspace rejects the path; auto-recovery falls through
+    // to the original verdict instead of reading or stat'ing out-of-scope.
+    assert.ok(blocked, 'expected guard to block path-escape attempts');
+    assert.equal(blocked.structuredError?.code, 'READ_REQUIRED');
+  });
+
+  it('rejects edit_file with an absolute path outside the workspace', async () => {
+    const root = await makeWorkspace();
+    const ledger = cliLedger();
+    const blocked = await awarenessGuardForCall(
+      { tool: 'edit_file', args: { path: '/etc/passwd', edits: [] } },
+      ledger,
+      root,
+    );
+    assert.ok(blocked, 'expected guard to block absolute-path escape attempts');
+    assert.equal(blocked.structuredError?.code, 'READ_REQUIRED');
   });
 });
 
