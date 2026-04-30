@@ -1,16 +1,62 @@
 import type { RepoWithActivity, ActiveRepo, WorkspaceContext } from '@/types';
 import { getSandboxEnvironment, getSandboxLifecycleEvents } from './sandbox-client';
+import { parseGitStatus, MANIFEST_PARSERS, type GitInfo } from '@push/lib/repo-awareness';
+import { listDirectory, readFromSandbox, execInSandbox } from './sandbox-client';
 
 export { sanitizeProjectInstructions } from '@push/lib/project-instructions';
 
-/**
- * Builds a compact workspace summary for injection into the system prompt.
- * Gives the LLM awareness of the user's GitHub repos without consuming
- * much of the context window (~1-2KB for a typical user).
- *
- * When activeRepo is set, it gets detailed treatment while others
- * are listed as compact one-liners.
- */
+export interface SandboxWorkspaceContext {
+  cwd: string;
+  git?: GitInfo;
+  project?: string;
+  files: string[];
+}
+
+// ─── Pure parsing logic (web-friendly) ───
+
+async function getGitSnapshot(sandboxId: string): Promise<GitInfo | null> {
+  try {
+    const { stdout } = await execInSandbox(sandboxId, 'git status --porcelain -b');
+    return parseGitStatus(stdout);
+  } catch {
+    return null;
+  }
+}
+
+async function getProjectSummary(sandboxId: string): Promise<string | null> {
+  const entries = await listDirectory(sandboxId, '/workspace');
+  const files = entries.map((e) => e.name);
+  for (const [filename, parser] of Object.entries(MANIFEST_PARSERS)) {
+    if (files.includes(filename)) {
+      try {
+        const { content } = await readFromSandbox(sandboxId, `/workspace/${filename}`);
+        const summary = parser(content);
+        if (summary) return summary;
+      } catch {
+        // Skip
+      }
+    }
+  }
+  return null;
+}
+
+export async function getWorkspaceContext(sandboxId: string): Promise<SandboxWorkspaceContext> {
+  const entries = await listDirectory(sandboxId, '/workspace');
+  const files = entries.map((e) => e.name);
+  const [git, project] = await Promise.all([
+    getGitSnapshot(sandboxId),
+    getProjectSummary(sandboxId),
+  ]);
+
+  return {
+    cwd: '/workspace',
+    git: git || undefined,
+    project: project || undefined,
+    files: files.filter((f) => !f.startsWith('.')),
+  };
+}
+
+// ─── Original prompt-building logic ───
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -53,6 +99,16 @@ function formatRepoFull(repo: RepoWithActivity): string {
   return parts.join('\n');
 }
 
+function formatActiveRepo(active: ActiveRepo, repos: RepoWithActivity[]): string {
+  const match = repos.find((r) => r.id === active.id);
+  if (match) return formatRepoFull(match);
+  // Fallback: render from ActiveRepo fields only (no activity stats available).
+  let line = `• ${active.full_name}`;
+  if (active.private) line += ' [private]';
+  return `${line}
+  (${active.default_branch})`;
+}
+
 export function buildWorkspaceContext(
   repos: RepoWithActivity[],
   activeRepo?: ActiveRepo | null,
@@ -63,26 +119,18 @@ export function buildWorkspaceContext(
 
   const sections: string[] = [];
 
-  // When an active repo is set, ONLY include that repo — no others
   if (activeRepo) {
-    const focused = repos.find((r) => r.id === activeRepo.id);
+    sections.push('WORKSPACE — Active Repository:\n');
+    sections.push(formatActiveRepo(activeRepo, repos));
 
-    sections.push(`REPO — ${activeRepo.full_name}:\n`);
-
-    // Show branch context
-    const branchContext = activeRepo.current_branch || activeRepo.default_branch;
-    const branchIndicator = activeRepo.current_branch
-      ? ' (current: ' + activeRepo.current_branch + ')'
-      : ' (default: ' + activeRepo.default_branch + ')';
-    sections.push('Branch: ' + branchContext + branchIndicator + '\n');
-
-    if (focused) {
-      sections.push(formatRepoFull(focused));
-    } else {
-      sections.push(`• ${activeRepo.full_name} (${activeRepo.default_branch})`);
+    const otherActive = repos
+      .filter((r) => r.activity.has_new_activity && r.id !== activeRepo.id)
+      .slice(0, 5);
+    if (otherActive.length > 0) {
+      sections.push('\nOther active repos:');
+      sections.push(otherActive.map((r) => `• ${r.full_name}`).join('\n'));
     }
   } else {
-    // No active repo — list all with full detail for active ones
     const active = repos.filter((r) => r.activity.has_new_activity).slice(0, 10);
     const recent = repos.filter((r) => !r.activity.has_new_activity).slice(0, 5);
 
@@ -98,11 +146,6 @@ export function buildWorkspaceContext(
       sections.push('RECENT:');
       sections.push(recent.map(formatRepoFull).join('\n'));
     }
-
-    if (active.length === 0 && recent.length === 0) {
-      sections.push('REPOS:');
-      sections.push(repos.slice(0, 10).map(formatRepoFull).join('\n'));
-    }
   }
 
   sections.push('\nUse the tools below to get PR details, commits, or file contents.');
@@ -110,12 +153,12 @@ export function buildWorkspaceContext(
   return sections.join('\n');
 }
 
+// ─── Session Diagnostics/Capabilities ───
+
 function parseDurationToMs(raw: string | null | undefined): number | null {
   if (!raw) return null;
-
   const matches = [...raw.matchAll(/(\d+)\s*([smhd])/gi)];
   if (matches.length === 0) return null;
-
   const normalized = raw.replace(/\s+/g, '').toLowerCase();
   const consumed = matches.map((match) => match[0].replace(/\s+/g, '').toLowerCase()).join('');
   if (normalized !== consumed) return null;
@@ -129,7 +172,6 @@ function parseDurationToMs(raw: string | null | undefined): number | null {
     else if (unit.toLowerCase() === 'h') total += value * 3_600_000;
     else if (unit.toLowerCase() === 'd') total += value * 86_400_000;
   }
-
   return total > 0 ? total : null;
 }
 
@@ -183,6 +225,7 @@ export function buildSessionCapabilityBlock(
     '[/SESSION_CAPABILITIES]',
   ].join('\n');
 }
+
 export function buildSandboxEnvironmentBlock(hasSandbox?: boolean): string {
   if (!hasSandbox) return '';
   const env = getSandboxEnvironment();
