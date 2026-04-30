@@ -68,9 +68,9 @@ vi.mock('./tracing', () => {
   };
 });
 
-// `chat-tool-execution.ts` lives in `app/src/hooks/` and imports
+// `chat-tool-execution.ts` lives in `app/src/lib/` and imports
 // `@/lib/tracing` via the `@` alias — mock that path too so the mock
-// above applies to the hook's import as well.
+// above applies to the module's import as well.
 vi.mock('@/lib/tracing', () => {
   const fakeSpan = {
     setAttribute: vi.fn(),
@@ -110,7 +110,7 @@ vi.mock('@/lib/tool-dispatch', async () => {
 // Imports — after the mocks are set up
 // ---------------------------------------------------------------------------
 
-import { executeTool, type ToolExecRunContext } from '@/hooks/chat-tool-execution';
+import { executeTool, type ToolExecRunContext } from './chat-tool-execution';
 import { executeReadOnlyTool } from './agent-loop-utils';
 import type { AnyToolCall } from './tool-dispatch';
 import type { ToolHookRegistry } from './tool-hooks';

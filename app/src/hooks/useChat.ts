@@ -27,12 +27,12 @@ import {
   saveConversation as saveConversationToDB,
   deleteConversation as deleteConversationFromDB,
 } from '@/lib/conversation-store';
+import { createId } from '@push/lib/id-utils';
 import {
   loadActiveChatId,
   loadConversations,
   normalizeConversationModel,
   saveActiveChatId,
-  createId,
 } from '@/hooks/chat-persistence';
 import { useAgentDelegation } from './useAgentDelegation';
 import { useBackgroundCoderJob } from './useBackgroundCoderJob';

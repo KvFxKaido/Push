@@ -38,12 +38,12 @@ import {
   handleMultipleMutationsError,
   type ToolExecRunContext,
   type ToolExecRawResult,
-} from '@/hooks/chat-tool-execution';
+} from '@/lib/chat-tool-execution';
 import { execInSandbox } from '@/lib/sandbox-client';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { executeTodoToolCall, type TodoItem } from '@/lib/todo-tools';
 import { resolveToolCallRecovery, type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
-import { createId } from '@/hooks/chat-persistence';
+import { createId } from '@push/lib/id-utils';
 import { type MigrationGuard } from '@/lib/chat-message';
 import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
