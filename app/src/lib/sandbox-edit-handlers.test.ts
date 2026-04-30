@@ -119,7 +119,11 @@ function makeContext(opts: MakeContextOpts = {}): MockedContext {
 describe('handleEditFile', () => {
   it('blocks when the symbolic guard denies and auto-read fails', async () => {
     const ctx = makeContext({
-      symbolicVerdict: { allowed: false, reason: 'Unread file /workspace/src/app.ts' },
+      symbolicVerdict: {
+        allowed: false,
+        code: 'UNREAD_SYMBOL',
+        reason: 'Unread file /workspace/src/app.ts',
+      },
       readResults: [{ content: '', truncated: false, error: 'ENOENT' } as FileReadResult],
     });
 

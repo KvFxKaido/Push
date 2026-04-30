@@ -1,4 +1,6 @@
 import process from 'node:process';
+import { promises as fs } from 'node:fs';
+import nodePath from 'node:path';
 import {
   detectAllToolCalls,
   executeToolCall,
@@ -19,6 +21,7 @@ import {
   updateFileLedger,
   resetTurnBudget,
 } from './file-ledger.js';
+import { FileAwarenessLedger } from '../lib/file-awareness-ledger.js';
 import { recordMalformedToolCall } from './tool-call-metrics.js';
 import { recordWriteFile } from './edit-metrics.js';
 import { recordContextTrim } from './context-metrics.js';
@@ -165,6 +168,120 @@ export function shouldDistillMidSession(
   if (!workingMemory?.plan?.trim().length) return false;
   const budget = getContextBudget(providerId, model);
   return estimateContextTokens(messages) > budget.targetTokens / 2;
+}
+
+/**
+ * Canonicalize a file path for awareness-ledger lookup. The CLI tool executor
+ * sets `result.meta.path` to an absolute resolved path (via
+ * `ensureInsideWorkspace`), while the model passes `call.args.path` as a
+ * relative path. Without canonicalization the guard and recorder use
+ * different keys and a successfully-read file looks unread to the next write.
+ *
+ * Stable key: workspace-relative POSIX path with forward slashes.
+ */
+export function canonicalizeAwarenessPath(rawPath: string, workspaceRoot: string): string {
+  const absolute = nodePath.isAbsolute(rawPath)
+    ? rawPath
+    : nodePath.resolve(workspaceRoot, rawPath);
+  const relative = nodePath.relative(workspaceRoot, absolute);
+  // Force POSIX separators so Windows and POSIX paths resolve to the same key.
+  return relative.split(nodePath.sep).join('/');
+}
+
+/**
+ * Pre-execution awareness guard for write/edit tools. Returns a synthetic
+ * blocked tool result when the canonical FileAwarenessLedger denies the call;
+ * returns null otherwise. Surfaces verdict codes through the structured-error
+ * channel so the model can recover programmatically (read the file, retry).
+ *
+ * Special-case: `write_file` to a file that does not exist on disk is allowed
+ * to proceed (READ_REQUIRED is downgraded to a creation). Without this, brand-
+ * new files cannot be created — `read_file` returns `ok:false` on ENOENT, the
+ * recorder ignores failed reads, and the model gets stuck.
+ *
+ * v1: uses checkWriteAllowed for both write_file and edit_file. Symbolic
+ * precision (matching read symbols against edited symbols) is a follow-up.
+ */
+export async function awarenessGuardForCall(
+  call: ToolCall,
+  ledger: FileAwarenessLedger,
+  workspaceRoot: string,
+): Promise<ToolResult | null> {
+  if (call.tool !== 'write_file' && call.tool !== 'edit_file') return null;
+  const rawPath = typeof call.args?.path === 'string' ? call.args.path : null;
+  if (!rawPath) return null;
+
+  const key = canonicalizeAwarenessPath(rawPath, workspaceRoot);
+  const verdict = ledger.checkWriteAllowed(key);
+  if (verdict.allowed) return null;
+
+  // write_file creates files when the target doesn't exist. The READ_REQUIRED
+  // verdict is the right call for *overwrites* but the wrong call for fresh
+  // creation. Probe the filesystem and allow through if the file is missing.
+  // edit_file is intentionally not granted this exception: it requires existing
+  // content to apply hashline edits against.
+  if (call.tool === 'write_file' && verdict.code === 'READ_REQUIRED') {
+    const absolute = nodePath.isAbsolute(rawPath)
+      ? rawPath
+      : nodePath.resolve(workspaceRoot, rawPath);
+    try {
+      await fs.access(absolute);
+      // File exists — the guard's verdict stands; this would be an overwrite
+      // without prior read.
+    } catch {
+      return null;
+    }
+  }
+
+  return {
+    ok: false,
+    text: `[Awareness guard — ${call.tool}] ${verdict.reason}`,
+    structuredError: {
+      code: verdict.code,
+      message: verdict.reason,
+      retryable: true,
+    },
+  };
+}
+
+/**
+ * Update the awareness ledger from a successful tool result. Reads grow
+ * coverage; successful writes/edits become model_authored so an immediate
+ * follow-up edit doesn't deadlock. The ledger only mutates on `result.ok`,
+ * so guard-blocked synthetic results (which are `ok:false`) are skipped.
+ *
+ * Paths are canonicalized to the same workspace-relative key the guard uses.
+ */
+export function recordAwarenessFromCall(
+  call: ToolCall,
+  result: ToolResult,
+  ledger: FileAwarenessLedger,
+  workspaceRoot: string,
+): void {
+  if (!result.ok) return;
+  const meta = result.meta;
+  if (!meta || typeof meta.path !== 'string') return;
+  const key = canonicalizeAwarenessPath(meta.path, workspaceRoot);
+
+  if (call.tool === 'read_file' || call.tool === 'read_symbol') {
+    ledger.recordRead(key, {
+      startLine: typeof meta.start_line === 'number' ? meta.start_line : undefined,
+      endLine: typeof meta.end_line === 'number' ? meta.end_line : undefined,
+      truncated: typeof meta.truncated === 'boolean' ? meta.truncated : undefined,
+      totalLines: typeof meta.total_lines === 'number' ? meta.total_lines : undefined,
+    });
+    return;
+  }
+
+  if (call.tool === 'write_file' || call.tool === 'edit_file') {
+    // Treat post-write/edit content as model_authored. v1 limitation: edit_file
+    // only modifies a portion of the file, so this is slightly permissive on
+    // subsequent edits to unread regions of the same file. The conservative
+    // alternative (leave prior partial_read state in place) deadlocks immediate
+    // follow-up edits. Auto re-read after edits is a follow-up (the web app
+    // does it via its sandbox handlers).
+    ledger.recordCreation(key);
+  }
 }
 
 function applyWorkingMemoryUpdateToState(
@@ -425,7 +542,18 @@ export async function runAssistantLoop(
   let finalAssistantText: string = '';
   const repeatedCalls: Map<string, number> = new Map();
   const toolsUsed: Set<string> = new Set();
-  const fileLedger: FileLedger = createFileLedger();
+  // The CLI runs two complementary ledgers per turn:
+  //   - promptLedger (cli/file-ledger.ts): owns prompt budgeting, search-hit
+  //     relevance, read/write counters. Surfaced in the metaEnvelope so the
+  //     model sees its own read budget and recently-touched files.
+  //   - awarenessLedger (lib/file-awareness-ledger.ts): owns edit safety —
+  //     line-range coverage, read/edit verdicts, model-authored state. Used
+  //     to block blind writes/edits on files the model never read.
+  const promptLedger: FileLedger = createFileLedger();
+  const awarenessLedger = new FileAwarenessLedger({
+    readToolName: 'read_file',
+    writeToolName: 'write_file',
+  });
   let toolExecutionCounter = 0;
 
   // Lazily enrich system prompt with workspace context (git status,
@@ -527,17 +655,25 @@ export async function runAssistantLoop(
       args: call.args,
     });
 
-    const rawResult = await executeToolCall(call, state.cwd, {
-      approvalFn,
-      askUserFn,
-      signal,
-      allowExec,
-      safeExecPatterns,
-      execMode,
-      providerId: providerConfig?.id,
-      providerApiKey: apiKey,
-    });
+    // Awareness guard: block write_file / edit_file before they hit the
+    // filesystem if the model hasn't read the target. The synthetic blocked
+    // result short-circuits the dispatcher and surfaces the verdict code so
+    // the model can recover by reading the file and retrying.
+    const awarenessBlock = await awarenessGuardForCall(call, awarenessLedger, state.cwd);
+    const rawResult = awarenessBlock
+      ? awarenessBlock
+      : await executeToolCall(call, state.cwd, {
+          approvalFn,
+          askUserFn,
+          signal,
+          allowExec,
+          safeExecPatterns,
+          execMode,
+          providerId: providerConfig?.id,
+          providerApiKey: apiKey,
+        });
     const result: ToolResult = rawResult ?? { ok: false, text: 'Tool returned no result' };
+    recordAwarenessFromCall(call, result, awarenessLedger, state.cwd);
     const durationMs: number = Date.now() - toolStart;
     const preview = summarizeToolResultPreview(result.text);
 
@@ -566,7 +702,7 @@ export async function runAssistantLoop(
       });
     }
 
-    updateFileLedger(fileLedger, call, result);
+    updateFileLedger(promptLedger, call, result);
 
     dispatchEvent('tool.execution_complete', {
       round: turnIndex,
@@ -587,7 +723,7 @@ export async function runAssistantLoop(
       contextChars,
       trimmed: lastTrimResult?.trimmed || false,
       estimatedTokens: lastTrimResult?.afterTokens || 0,
-      ledger: getLedgerSummary(fileLedger),
+      ledger: getLedgerSummary(promptLedger),
       ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
     };
 
@@ -604,7 +740,8 @@ export async function runAssistantLoop(
 
   for (let round = 1; round <= maxRounds; round++) {
     const turnIndex = Math.max(0, round - 1);
-    resetTurnBudget(fileLedger);
+    resetTurnBudget(promptLedger);
+    awarenessLedger.advanceRound();
     workingMemoryInjectedThisRound = false;
     contextChars = (state.messages as Message[]).reduce(
       (sum: number, m: Message) => sum + (typeof m.content === 'string' ? m.content.length : 0),
@@ -898,7 +1035,7 @@ export async function runAssistantLoop(
             contextChars,
             trimmed: false,
             estimatedTokens: 0,
-            ledger: getLedgerSummary(fileLedger),
+            ledger: getLedgerSummary(promptLedger),
             ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
           },
         ),
@@ -1225,7 +1362,7 @@ export async function runAssistantLoop(
             contextChars,
             trimmed: false,
             estimatedTokens: 0,
-            ledger: getLedgerSummary(fileLedger),
+            ledger: getLedgerSummary(promptLedger),
             ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
           }),
         });
@@ -1337,7 +1474,7 @@ export async function runAssistantLoop(
             contextChars,
             trimmed: false,
             estimatedTokens: 0,
-            ledger: getLedgerSummary(fileLedger),
+            ledger: getLedgerSummary(promptLedger),
             ...(injectedWorkingMemory ? { workingMemory: injectedWorkingMemory } : {}),
           }),
         });

@@ -58,7 +58,31 @@ export interface MutationProvenance {
   modifiedAtRound: number;
 }
 
-export type EditGuardVerdict = { allowed: true } | { allowed: false; reason: string };
+/**
+ * Machine-readable verdict codes. Surfaced through structured tool errors so
+ * model harnesses (CLI, Worker) can react programmatically without parsing
+ * verdict reason strings.
+ *
+ * - `READ_REQUIRED`: file has never been read.
+ * - `STALE_AWARENESS`: file was read but has since been marked stale.
+ * - `PARTIAL_READ`: file was only partially read; full read or specific
+ *   ranges are required for the attempted operation.
+ * - `UNREAD_SYMBOL`: edit touches a symbol the model never read.
+ * - `UNREAD_LINES`: edit targets line numbers outside the model's read coverage.
+ * - `UNHANDLED_AWARENESS_STATE`: defensive fallback for an internal state kind
+ *   not covered by the explicit handlers. Should not fire in practice.
+ */
+export type EditGuardVerdictCode =
+  | 'READ_REQUIRED'
+  | 'STALE_AWARENESS'
+  | 'PARTIAL_READ'
+  | 'UNREAD_SYMBOL'
+  | 'UNREAD_LINES'
+  | 'UNHANDLED_AWARENESS_STATE';
+
+export type EditGuardVerdict =
+  | { allowed: true }
+  | { allowed: false; reason: string; code: EditGuardVerdictCode };
 
 // ---------------------------------------------------------------------------
 // Metrics
@@ -241,13 +265,40 @@ function deduplicateSymbols(symbols: SymbolRead[]): SymbolRead[] {
 // Ledger class
 // ---------------------------------------------------------------------------
 
+/**
+ * Constructor options for {@link FileAwarenessLedger}. The shared module
+ * defaults to sandbox-flavored tool names because the web app and Worker —
+ * which the ledger has historically served — drive `sandbox_read_file` /
+ * `sandbox_write_file` tool surfaces. Other harnesses (CLI, future runners)
+ * pass their own tool names so verdict messages tell the model how to recover
+ * in the harness's own vocabulary.
+ */
+export interface FileAwarenessLedgerOptions {
+  /** Tool name surfaced in verdict reasons telling the model how to read. Default: `sandbox_read_file`. */
+  readToolName?: string;
+  /** Tool name surfaced in verdict reasons describing the blocked write operation. Default: `sandbox_write_file`. */
+  writeToolName?: string;
+}
+
 export class FileAwarenessLedger {
   private entries = new Map<string, FileState>();
   private provenance = new Map<string, MutationProvenance>();
   private currentRound = 0;
   private _metrics: EditGuardMetrics = emptyMetrics();
+  private readonly readToolName: string;
+  private readonly writeToolName: string;
 
-  /** Normalize paths for consistent lookup (strip leading /workspace/). */
+  constructor(options: FileAwarenessLedgerOptions = {}) {
+    this.readToolName = options.readToolName ?? 'sandbox_read_file';
+    this.writeToolName = options.writeToolName ?? 'sandbox_write_file';
+  }
+
+  /** Inspect configured tool names (useful for harness wiring + tests). */
+  get configuredTools(): Readonly<{ read: string; write: string }> {
+    return { read: this.readToolName, write: this.writeToolName };
+  }
+
+  /** Normalize paths for consistent lookup (strip leading /workspace/ when present). */
   private normalizePath(path: string): string {
     return path.replace(/^\/workspace\//, '');
   }
@@ -424,9 +475,9 @@ export class FileAwarenessLedger {
   // -----------------------------------------------------------------------
 
   /**
-   * Check whether the model has sufficient read coverage to edit a file.
-   * For sandbox_write_file (which replaces the entire file), we check
-   * whether the model has read the file at all.
+   * Check whether the model has sufficient read coverage to write/replace
+   * an entire file. Used by full-file write tools (`sandbox_write_file` in
+   * the web/Worker, `write_file` in the CLI).
    */
   checkWriteAllowed(path: string): EditGuardVerdict {
     this._metrics.checksTotal++;
@@ -438,7 +489,8 @@ export class FileAwarenessLedger {
       this._metrics.blockedByNeverRead++;
       return {
         allowed: false,
-        reason: `File "${path}" has not been read yet. Use sandbox_read_file to read it before writing.`,
+        code: 'READ_REQUIRED',
+        reason: `File "${path}" has not been read yet. Use ${this.readToolName} to read it before writing.`,
       };
     }
 
@@ -447,7 +499,8 @@ export class FileAwarenessLedger {
       this._metrics.blockedByStale++;
       return {
         allowed: false,
-        reason: `File "${path}" may have changed since your last read. Re-read it with sandbox_read_file before writing.`,
+        code: 'STALE_AWARENESS',
+        reason: `File "${path}" may have changed since your last read. Re-read it with ${this.readToolName} before writing.`,
       };
     }
 
@@ -464,7 +517,8 @@ export class FileAwarenessLedger {
         this._metrics.blockedByPartialRead++;
         return {
           allowed: false,
-          reason: `File "${path}" was only partially read. Read the full file (or the remaining ranges) with sandbox_read_file before writing.`,
+          code: 'PARTIAL_READ',
+          reason: `File "${path}" was only partially read. Read the full file (or the remaining ranges) with ${this.readToolName} before writing.`,
         };
 
       default:
@@ -586,7 +640,8 @@ export class FileAwarenessLedger {
       this._metrics.symbolBlocks++;
       return {
         allowed: false,
-        reason: `Read symbol '${unknownSymbols[0]}' before editing. Use sandbox_read_file to read the file first.`,
+        code: 'UNREAD_SYMBOL',
+        reason: `Read symbol '${unknownSymbols[0]}' before editing. Use ${this.readToolName} to read the file first.`,
       };
     }
 
@@ -615,20 +670,22 @@ export class FileAwarenessLedger {
       this._metrics.blockedByNeverRead++;
       return {
         allowed: false,
-        reason: `File "${path}" has not been read yet. Use sandbox_read_file to read it before editing.`,
+        code: 'READ_REQUIRED',
+        reason: `File "${path}" has not been read yet. Use ${this.readToolName} to read it before editing.`,
       };
     }
 
     // Stale files are blocked — consistent with checkWriteAllowed(). The caller
-    // (sandbox_edit_file / sandbox_apply_patchset) should have freshened the
-    // ledger via auto-expand before reaching this point. If the file went stale
-    // between the read and here, blocking is the correct behavior.
+    // (e.g. sandbox_edit_file / sandbox_apply_patchset) should have freshened
+    // the ledger via auto-expand before reaching this point. If the file went
+    // stale between the read and here, blocking is the correct behavior.
     if (entry.kind === 'stale') {
       this._metrics.blockedTotal++;
       this._metrics.blockedByStale++;
       return {
         allowed: false,
-        reason: `File "${path}" may have changed since your last read. Re-read it with sandbox_read_file before editing.`,
+        code: 'STALE_AWARENESS',
+        reason: `File "${path}" may have changed since your last read. Re-read it with ${this.readToolName} before editing.`,
       };
     }
 
@@ -673,7 +730,8 @@ export class FileAwarenessLedger {
       this._metrics.blockedByPartialRead++;
       return {
         allowed: false,
-        reason: `Edit targets line(s) ${rangeStrs.join(', ')} which were not read. Read those ranges with sandbox_read_file first.`,
+        code: 'UNREAD_LINES',
+        reason: `Edit targets line(s) ${rangeStrs.join(', ')} which were not read. Read those ranges with ${this.readToolName} first.`,
       };
     }
 
@@ -681,7 +739,8 @@ export class FileAwarenessLedger {
     this._metrics.blockedTotal++;
     return {
       allowed: false,
-      reason: `Cannot edit file "${path}": unhandled awareness state kind (${(entry as { kind: string }).kind}).`,
+      code: 'UNHANDLED_AWARENESS_STATE',
+      reason: `Editing "${path}" is blocked due to an unhandled awareness state kind (${(entry as { kind: string }).kind}). Re-read it with ${this.readToolName} and retry.`,
     };
   }
 
