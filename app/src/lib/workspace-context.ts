@@ -1,7 +1,7 @@
 import type { RepoWithActivity, ActiveRepo } from '@/types';
 import { getSandboxEnvironment, getSandboxLifecycleEvents } from './sandbox-client';
-import { GitInfo, parseGitStatus, MANIFEST_PARSERS } from '../../../../lib/repo-awareness.js';
-import { listFiles, readFile, exec } from './sandbox';
+import { parseGitStatus, MANIFEST_PARSERS, type GitInfo } from '@push/lib/repo-awareness';
+import { listDirectory, readFromSandbox, execInSandbox } from './sandbox-client';
 
 export { sanitizeProjectInstructions } from '@push/lib/project-instructions';
 
@@ -14,21 +14,22 @@ export interface WorkspaceContext {
 
 // ─── Pure parsing logic (web-friendly) ───
 
-async function getGitSnapshot(): Promise<GitInfo | null> {
+async function getGitSnapshot(sandboxId: string): Promise<GitInfo | null> {
   try {
-    const { stdout } = await exec('git status --porcelain -b');
+    const { stdout } = await execInSandbox(sandboxId, 'git status --porcelain -b');
     return parseGitStatus(stdout);
   } catch {
     return null;
   }
 }
 
-async function getProjectSummary(): Promise<string | null> {
-  const files = await listFiles('/');
+async function getProjectSummary(sandboxId: string): Promise<string | null> {
+  const entries = await listDirectory(sandboxId, '/');
+  const files = entries.map((e) => e.name);
   for (const [filename, parser] of Object.entries(MANIFEST_PARSERS)) {
     if (files.includes(filename)) {
       try {
-        const content = await readFile(filename);
+        const { content } = await readFromSandbox(sandboxId, filename);
         const summary = parser(content);
         if (summary) return summary;
       } catch {
@@ -39,9 +40,13 @@ async function getProjectSummary(): Promise<string | null> {
   return null;
 }
 
-export async function getWorkspaceContext(): Promise<WorkspaceContext> {
-  const files = await listFiles('/');
-  const [git, project] = await Promise.all([getGitSnapshot(), getProjectSummary()]);
+export async function getWorkspaceContext(sandboxId: string): Promise<WorkspaceContext> {
+  const entries = await listDirectory(sandboxId, '/');
+  const files = entries.map((e) => e.name);
+  const [git, project] = await Promise.all([
+    getGitSnapshot(sandboxId),
+    getProjectSummary(sandboxId),
+  ]);
 
   return {
     cwd: '/',

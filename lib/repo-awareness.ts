@@ -93,11 +93,11 @@ export const summarizeGoMod: ManifestSummarizer = (content) => {
   return `go.mod — ${modMatch[1].trim()}`;
 };
 
-export const summarizeGemfile: ManifestSummarizer = (content) => {
+export const summarizeGemfile: ManifestSummarizer = () => {
   return 'Gemfile — Ruby project';
 };
 
-export const summarizePomXml: ManifestSummarizer = (content) => {
+export const summarizePomXml: ManifestSummarizer = () => {
   return 'pom.xml — Maven project';
 };
 
