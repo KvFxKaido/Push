@@ -7,9 +7,6 @@ const ACTIVE_CHAT_KEY = 'diff_active_chat';
 const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
 
-export function createId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
 
 function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
   const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');

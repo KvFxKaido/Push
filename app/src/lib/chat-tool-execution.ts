@@ -22,7 +22,7 @@ import {
   type ToolResultMetaSnapshot,
 } from '@/lib/chat-tool-messages';
 import type { ActiveProvider } from '@/lib/orchestrator';
-import { createId } from '@/hooks/chat-persistence';
+import { createId } from '@push/lib/id-utils';
 import {
   buildToolCallParseErrorBlock,
   formatToolResultEnvelope,
