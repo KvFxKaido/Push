@@ -32,9 +32,9 @@ describe('canonicalizeAwarenessPath', () => {
   });
 
   it('produces matching keys for the relative call.args.path and the absolute meta.path', () => {
-    // The bug Codex/Copilot caught: tools return absolute paths in meta.path
-    // (via ensureInsideWorkspace) but the model passes relative paths in
-    // call.args.path. Both must canonicalize to the same key.
+    // The bug Codex/Copilot caught in #454: tools return absolute paths in
+    // meta.path (via ensureInsideWorkspace) but the model passes relative
+    // paths in call.args.path. Both must canonicalize to the same key.
     const root = '/tmp/workspace';
     const fromArgs = canonicalizeAwarenessPath('src/foo.ts', root);
     const fromMeta = canonicalizeAwarenessPath('/tmp/workspace/src/foo.ts', root);
@@ -42,7 +42,7 @@ describe('canonicalizeAwarenessPath', () => {
   });
 });
 
-describe('awarenessGuardForCall', () => {
+describe('awarenessGuardForCall — pass-through cases', () => {
   it('passes through non-write/non-edit calls', async () => {
     const ledger = cliLedger();
     const blocked = await awarenessGuardForCall(
@@ -62,55 +62,30 @@ describe('awarenessGuardForCall', () => {
     );
     assert.equal(blocked, null);
   });
+});
 
-  it('allows write_file to a brand-new file (does not exist on disk)', async () => {
+describe('awarenessGuardForCall — auto-recovery succeeds', () => {
+  it('allows write_file on a previously-unread existing file (auto-recovery reads it)', async () => {
     const root = await makeWorkspace();
+    await fs.writeFile(nodePath.join(root, 'src', 'existing.ts'), 'existing content', 'utf8');
     const ledger = cliLedger();
-    // No prior read, file does not exist — the guard should let the write
-    // through so write_file's create-file behavior is preserved.
+    // No prior recordRead; pre-#454 the guard would have blocked READ_REQUIRED.
+    // With auto-recovery the harness reads the file, marks fully_read, retries.
     const blocked = await awarenessGuardForCall(
-      { tool: 'write_file', args: { path: 'src/new.ts', content: 'export const x = 1;' } },
+      { tool: 'write_file', args: { path: 'src/existing.ts', content: 'x' } },
       ledger,
       root,
     );
     assert.equal(blocked, null);
   });
 
-  it('blocks write_file with READ_REQUIRED on an unread file that exists on disk', async () => {
+  it('allows edit_file on a previously partially-read file (auto-recovery upgrades to fully_read)', async () => {
     const root = await makeWorkspace();
-    await fs.writeFile(nodePath.join(root, 'src', 'existing.ts'), 'existing content', 'utf8');
+    await fs.writeFile(nodePath.join(root, 'src', 'foo.ts'), 'function existing() {}\n', 'utf8');
     const ledger = cliLedger();
-    const blocked = await awarenessGuardForCall(
-      { tool: 'write_file', args: { path: 'src/existing.ts', content: 'x' } },
-      ledger,
-      root,
-    );
-    assert.ok(blocked, 'expected guard to block overwrite of unread existing file');
-    assert.equal(blocked.structuredError?.code, 'READ_REQUIRED');
-    assert.equal(blocked.structuredError?.retryable, true);
-    assert.match(blocked.structuredError?.message ?? '', /read_file/);
-    assert.match(blocked.text, /Awareness guard — write_file/);
-  });
-
-  it('blocks edit_file with READ_REQUIRED even when the file does not exist (no creation exception)', async () => {
-    const root = await makeWorkspace();
-    const ledger = cliLedger();
-    const blocked = await awarenessGuardForCall(
-      { tool: 'edit_file', args: { path: 'src/missing.ts', edits: [] } },
-      ledger,
-      root,
-    );
-    // edit_file requires existing content to apply hashline edits; the
-    // creation exception is intentionally write_file-only.
-    assert.ok(blocked, 'expected edit_file to be blocked even on missing files');
-    assert.equal(blocked.structuredError?.code, 'READ_REQUIRED');
-  });
-
-  it('blocks edit_file with PARTIAL_READ on a file that has only been partially read', async () => {
-    const root = await makeWorkspace();
-    await fs.writeFile(nodePath.join(root, 'src', 'foo.ts'), '', 'utf8');
-    const ledger = cliLedger();
-    // Tool meta.path is absolute (mirrors what the real executor returns).
+    // Simulate a prior partial read that didn't cover the whole file. Pre-PR
+    // the guard would PARTIAL_READ-block; auto-recovery reads the rest and
+    // upgrades to fully_read, so the symbolic check then allows the edit.
     recordAwarenessFromCall(
       { tool: 'read_file', args: { path: 'src/foo.ts' } },
       {
@@ -119,8 +94,8 @@ describe('awarenessGuardForCall', () => {
         meta: {
           path: nodePath.join(root, 'src', 'foo.ts'),
           start_line: 1,
-          end_line: 5,
-          total_lines: 100,
+          end_line: 1,
+          total_lines: 1,
         },
       },
       ledger,
@@ -131,11 +106,59 @@ describe('awarenessGuardForCall', () => {
       ledger,
       root,
     );
-    assert.ok(blocked);
-    assert.equal(blocked.structuredError?.code, 'PARTIAL_READ');
+    assert.equal(blocked, null);
   });
 
-  it('allows write_file after a full read — guard accepts even though args.path is relative and meta.path was absolute', async () => {
+  it('allows write_file to a brand-new file (does not exist on disk)', async () => {
+    const root = await makeWorkspace();
+    const ledger = cliLedger();
+    // Auto-recovery's read fails with ENOENT; the ENOENT branch allows
+    // write_file through (creation), preserving its create-file behavior.
+    const blocked = await awarenessGuardForCall(
+      { tool: 'write_file', args: { path: 'src/new.ts', content: 'export const x = 1;' } },
+      ledger,
+      root,
+    );
+    assert.equal(blocked, null);
+  });
+});
+
+describe('awarenessGuardForCall — auto-recovery cannot help', () => {
+  it('blocks edit_file with READ_REQUIRED on a missing file (no creation exception)', async () => {
+    const root = await makeWorkspace();
+    const ledger = cliLedger();
+    // Auto-recovery's read fails ENOENT; edit_file is intentionally NOT given
+    // the ENOENT pass — hashline edits require existing content to apply.
+    const blocked = await awarenessGuardForCall(
+      { tool: 'edit_file', args: { path: 'src/missing.ts', edits: [] } },
+      ledger,
+      root,
+    );
+    assert.ok(blocked, 'expected edit_file to be blocked even on missing files');
+    assert.equal(blocked.structuredError?.code, 'READ_REQUIRED');
+    assert.equal(blocked.structuredError?.retryable, true);
+    assert.match(blocked.structuredError?.message ?? '', /read_file/);
+    assert.match(blocked.text, /Awareness guard — edit_file/);
+  });
+
+  it('propagates the original verdict when auto-recovery hits a non-ENOENT error (e.g. EISDIR)', async () => {
+    const root = await makeWorkspace();
+    // A directory at the path: fs.readFile throws EISDIR. Auto-recovery's
+    // catch surfaces the original verdict rather than an opaque crash.
+    await fs.mkdir(nodePath.join(root, 'src', 'is-a-dir'));
+    const ledger = cliLedger();
+    const blocked = await awarenessGuardForCall(
+      { tool: 'write_file', args: { path: 'src/is-a-dir', content: 'x' } },
+      ledger,
+      root,
+    );
+    assert.ok(blocked, 'expected guard to block when auto-recovery cannot read');
+    assert.equal(blocked.structuredError?.code, 'READ_REQUIRED');
+  });
+});
+
+describe('awarenessGuardForCall — verdict already allows', () => {
+  it('allows write_file after a full read — args.path relative, recorded meta.path absolute', async () => {
     const root = await makeWorkspace();
     await fs.writeFile(nodePath.join(root, 'src', 'foo.ts'), 'content', 'utf8');
     const ledger = cliLedger();
@@ -143,11 +166,7 @@ describe('awarenessGuardForCall', () => {
     // resolved path returned by ensureInsideWorkspace.
     recordAwarenessFromCall(
       { tool: 'read_file', args: { path: 'src/foo.ts' } },
-      {
-        ok: true,
-        text: '',
-        meta: { path: nodePath.join(root, 'src', 'foo.ts') },
-      },
+      { ok: true, text: '', meta: { path: nodePath.join(root, 'src', 'foo.ts') } },
       ledger,
       root,
     );
@@ -164,14 +183,12 @@ describe('awarenessGuardForCall', () => {
   it('allows immediate follow-up edit_file after a successful write_file (no deadlock)', async () => {
     const root = await makeWorkspace();
     const ledger = cliLedger();
-    // Simulate the recorder's view of a successful write_file (absolute meta.path).
     recordAwarenessFromCall(
       { tool: 'write_file', args: { path: 'src/new.ts', content: 'x' } },
       { ok: true, text: '', meta: { path: nodePath.join(root, 'src', 'new.ts') } },
       ledger,
       root,
     );
-    // Need the file to exist so the no-creation path applies for edit_file.
     await fs.writeFile(nodePath.join(root, 'src', 'new.ts'), 'x', 'utf8');
     const blocked = await awarenessGuardForCall(
       { tool: 'edit_file', args: { path: 'src/new.ts', edits: [] } },
@@ -182,10 +199,77 @@ describe('awarenessGuardForCall', () => {
   });
 });
 
+describe('awarenessGuardForCall — symbolic precision wired through auto-recovery', () => {
+  it('allows edit_file declaring a new symbol because auto-recovery upgrades to fully_read', async () => {
+    const root = await makeWorkspace();
+    // File contains function `existing`; model has no prior reads. Edit
+    // synthesizes content declaring a different symbol `unrelated` — the
+    // canonical's `checkSymbolicEditAllowed` is wired in for edit_file (vs.
+    // `checkWriteAllowed`), but auto-recovery upgrades the file to
+    // fully_read first, and `checkSymbolicEditAllowed` short-circuits on
+    // fully_read. Net effect: allowed. Documents the (intentional)
+    // dominance of auto-recovery over the symbolic check.
+    await fs.writeFile(
+      nodePath.join(root, 'src', 'foo.ts'),
+      'export function existing() { return 1; }\n',
+      'utf8',
+    );
+    const ledger = cliLedger();
+    const blocked = await awarenessGuardForCall(
+      {
+        tool: 'edit_file',
+        args: {
+          path: 'src/foo.ts',
+          edits: [
+            {
+              op: 'insert_after',
+              ref: 'existing',
+              content: 'export function unrelated() { return 2; }',
+            },
+          ],
+        },
+      },
+      ledger,
+      root,
+    );
+    assert.equal(blocked, null);
+  });
+});
+
+describe('awarenessGuardForCall — workspace boundary enforcement', () => {
+  it('rejects write_file with a `..` traversal without touching the filesystem', async () => {
+    const root = await makeWorkspace();
+    const ledger = cliLedger();
+    const blocked = await awarenessGuardForCall(
+      {
+        tool: 'write_file',
+        args: { path: '../escape.ts', content: 'export const pwned = true;' },
+      },
+      ledger,
+      root,
+    );
+    // ensureInsideWorkspace rejects the path; auto-recovery falls through
+    // to the original verdict instead of reading or stat'ing out-of-scope.
+    assert.ok(blocked, 'expected guard to block path-escape attempts');
+    assert.equal(blocked.structuredError?.code, 'READ_REQUIRED');
+  });
+
+  it('rejects edit_file with an absolute path outside the workspace', async () => {
+    const root = await makeWorkspace();
+    const ledger = cliLedger();
+    const blocked = await awarenessGuardForCall(
+      { tool: 'edit_file', args: { path: '/etc/passwd', edits: [] } },
+      ledger,
+      root,
+    );
+    assert.ok(blocked, 'expected guard to block absolute-path escape attempts');
+    assert.equal(blocked.structuredError?.code, 'READ_REQUIRED');
+  });
+});
+
 describe('recordAwarenessFromCall', () => {
   it('does nothing when the result is not ok', async () => {
     const root = await makeWorkspace();
-    await fs.writeFile(nodePath.join(root, 'src', 'foo.ts'), 'x', 'utf8');
     const ledger = cliLedger();
     recordAwarenessFromCall(
       { tool: 'read_file', args: { path: 'src/foo.ts' } },
@@ -193,10 +277,11 @@ describe('recordAwarenessFromCall', () => {
       ledger,
       root,
     );
-    // Nothing recorded — a follow-up write of the existing file should still
-    // be blocked as never_read.
+    // No prior recordRead call recorded coverage. No file at the path either,
+    // so auto-recovery hits ENOENT — write_file gets through (creation),
+    // but edit_file remains blocked.
     const blocked = await awarenessGuardForCall(
-      { tool: 'write_file', args: { path: 'src/foo.ts', content: 'x' } },
+      { tool: 'edit_file', args: { path: 'src/foo.ts', edits: [] } },
       ledger,
       root,
     );
@@ -205,7 +290,6 @@ describe('recordAwarenessFromCall', () => {
 
   it('does nothing when meta.path is missing', async () => {
     const root = await makeWorkspace();
-    await fs.writeFile(nodePath.join(root, 'src', 'foo.ts'), 'x', 'utf8');
     const ledger = cliLedger();
     recordAwarenessFromCall(
       { tool: 'read_file', args: { path: 'src/foo.ts' } },
@@ -213,8 +297,10 @@ describe('recordAwarenessFromCall', () => {
       ledger,
       root,
     );
+    // Same shape: no recorded coverage, no file at the path → edit_file
+    // blocked because hashline edits need existing content.
     const blocked = await awarenessGuardForCall(
-      { tool: 'write_file', args: { path: 'src/foo.ts', content: 'x' } },
+      { tool: 'edit_file', args: { path: 'src/foo.ts', edits: [] } },
       ledger,
       root,
     );
@@ -223,7 +309,7 @@ describe('recordAwarenessFromCall', () => {
 
   it('records read_symbol with the symbol body line range', async () => {
     const root = await makeWorkspace();
-    await fs.writeFile(nodePath.join(root, 'src', 'foo.ts'), 'x', 'utf8');
+    await fs.writeFile(nodePath.join(root, 'src', 'foo.ts'), 'export function foo() {}\n', 'utf8');
     const ledger = cliLedger();
     recordAwarenessFromCall(
       { tool: 'read_symbol', args: { path: 'src/foo.ts', symbol: 'foo' } },
@@ -233,20 +319,21 @@ describe('recordAwarenessFromCall', () => {
         meta: {
           path: nodePath.join(root, 'src', 'foo.ts'),
           symbol: 'foo',
-          start_line: 12,
-          end_line: 30,
+          start_line: 1,
+          end_line: 1,
         },
       },
       ledger,
       root,
     );
-    // Partial read inside the symbol body — write should still be blocked
-    // as PARTIAL_READ until a full read covers the rest.
+    // After read_symbol the entry is partial_read covering lines 1-1.
+    // A subsequent write_file would have been PARTIAL_READ-blocked pre-PR;
+    // with auto-recovery the harness reads the rest of the file and allows.
     const blocked = await awarenessGuardForCall(
       { tool: 'write_file', args: { path: 'src/foo.ts', content: 'x' } },
       ledger,
       root,
     );
-    assert.equal(blocked?.structuredError?.code, 'PARTIAL_READ');
+    assert.equal(blocked, null);
   });
 });
