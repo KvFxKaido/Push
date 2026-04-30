@@ -126,11 +126,11 @@ function mergeRanges(ranges: LineRange[]): LineRange[] {
 
 /** Language-agnostic regex patterns for structural signatures. */
 const SIGNATURE_PATTERNS: RegExp[] = [
-  /^[ \t]*(?:export\s+)?(?:async\s+)?function\s+(\w+)/gm, // JS/TS functions
-  /^[ \t]*(?:export\s+)?class\s+(\w+)/gm, // JS/TS classes
-  /^[ \t]*(?:export\s+)?interface\s+(\w+)/gm, // TS interfaces
+  /^[ \t]*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(\w+)/gm, // JS/TS functions
+  /^[ \t]*(?:export\s+(?:default\s+)?)?class\s+(\w+)/gm, // JS/TS classes
+  /^[ \t]*(?:export\s+(?:default\s+)?)?interface\s+(\w+)/gm, // TS interfaces
   /^[ \t]*(?:export\s+)?type\s+(\w+)\s*=/gm, // TS type aliases
-  /^[ \t]*export\s+default\s+(?:function\s+)?(\w+)?/gm, // default exports
+  /^[ \t]*export\s+default\s+(?:function\s+|class\s+|interface\s+)?(\w+)/gm, // default exports
   /^[ \t]*def\s+(\w+)/gm, // Python functions
   /^[ \t]*class\s+(\w+)\s*[:(]/gm, // Python classes
 ];
@@ -177,11 +177,20 @@ export function extractSignaturesWithLines(
 
   // Pattern definitions with their kind and regex (allow leading whitespace like SIGNATURE_PATTERNS)
   const patternDefs = [
-    { kind: 'function' as SymbolKind, regex: /^[ \t]*(?:export\s+)?(?:async\s+)?function\s+(\w+)/ },
-    { kind: 'class' as SymbolKind, regex: /^[ \t]*(?:export\s+)?class\s+(\w+)/ },
-    { kind: 'interface' as SymbolKind, regex: /^[ \t]*(?:export\s+)?interface\s+(\w+)/ },
+    {
+      kind: 'function' as SymbolKind,
+      regex: /^[ \t]*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(\w+)/,
+    },
+    { kind: 'class' as SymbolKind, regex: /^[ \t]*(?:export\s+(?:default\s+)?)?class\s+(\w+)/ },
+    {
+      kind: 'interface' as SymbolKind,
+      regex: /^[ \t]*(?:export\s+(?:default\s+)?)?interface\s+(\w+)/,
+    },
     { kind: 'type' as SymbolKind, regex: /^[ \t]*(?:export\s+)?type\s+(\w+)\s*=/ },
-    { kind: 'export' as SymbolKind, regex: /^[ \t]*export\s+default\s+(?:function\s+)?(\w+)/ },
+    {
+      kind: 'export' as SymbolKind,
+      regex: /^[ \t]*export\s+default\s+(?:function\s+|class\s+|interface\s+)?(\w+)/,
+    },
     { kind: 'function' as SymbolKind, regex: /^[ \t]*def\s+(\w+)/ },
     { kind: 'class' as SymbolKind, regex: /^[ \t]*class\s+(\w+)\s*[:(]/ },
   ];
@@ -471,13 +480,25 @@ export class FileAwarenessLedger {
     const seen = new Set<string>();
 
     const editPatterns = [
-      { kind: 'function' as SymbolKind, regex: /(?:export\s+)?(?:async\s+)?function\s+(\w+)/g },
-      { kind: 'class' as SymbolKind, regex: /(?:export\s+)?class\s+(\w+)/g },
-      { kind: 'interface' as SymbolKind, regex: /(?:export\s+)?interface\s+(\w+)/g },
-      { kind: 'type' as SymbolKind, regex: /(?:export\s+)?type\s+(\w+)\s*=/g },
-      { kind: 'export' as SymbolKind, regex: /export\s+default\s+(?:function\s+)?(\w+)/g },
-      { kind: 'function' as SymbolKind, regex: /def\s+(\w+)/g },
-      { kind: 'class' as SymbolKind, regex: /class\s+(\w+)\s*[:(]/g },
+      {
+        kind: 'function' as SymbolKind,
+        regex: /^[ \t]*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(\w+)/gm,
+      },
+      {
+        kind: 'class' as SymbolKind,
+        regex: /^[ \t]*(?:export\s+(?:default\s+)?)?class\s+(\w+)/gm,
+      },
+      {
+        kind: 'interface' as SymbolKind,
+        regex: /^[ \t]*(?:export\s+(?:default\s+)?)?interface\s+(\w+)/gm,
+      },
+      { kind: 'type' as SymbolKind, regex: /^[ \t]*(?:export\s+)?type\s+(\w+)\s*=/gm },
+      {
+        kind: 'export' as SymbolKind,
+        regex: /^[ \t]*export\s+default\s+(?:function\s+|class\s+|interface\s+)?(\w+)/gm,
+      },
+      { kind: 'function' as SymbolKind, regex: /^[ \t]*def\s+(\w+)/gm },
+      { kind: 'class' as SymbolKind, regex: /^[ \t]*class\s+(\w+)\s*[:(]/gm },
     ];
 
     for (const { kind, regex } of editPatterns) {

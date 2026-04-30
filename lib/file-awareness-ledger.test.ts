@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { FileAwarenessLedger } from './file-awareness-ledger.js';
+import {
+  FileAwarenessLedger,
+  extractSignatures,
+  extractSignaturesWithLines,
+} from './file-awareness-ledger.js';
 
 describe('FileAwarenessLedger.checkLinesCovered', () => {
   let ledger: FileAwarenessLedger;
@@ -84,5 +88,56 @@ describe('FileAwarenessLedger.checkLinesCovered', () => {
     if (!result.allowed) {
       expect(result.reason).toContain('may have changed');
     }
+  });
+});
+
+describe('extractSignatures — export default handling', () => {
+  it('captures the class name on `export default class Foo`, not the `class` keyword', () => {
+    const summary = extractSignatures('export default class Foo {}\n');
+    expect(summary).not.toBeNull();
+    expect(summary).toContain('export default class Foo');
+    expect(summary).not.toContain('export default class,');
+  });
+
+  it('captures default-exported functions and bare identifiers', () => {
+    const summary = extractSignatures(
+      ['export default function bar() {}', 'export default someValue;'].join('\n'),
+    );
+    expect(summary).not.toBeNull();
+    expect(summary).toContain('export default function bar');
+    expect(summary).toContain('export default someValue');
+  });
+});
+
+describe('extractSignaturesWithLines — export default handling', () => {
+  it('records `export default class Foo` as the symbol `Foo`, not `class`', () => {
+    const symbols = extractSignaturesWithLines('export default class Foo {}\n');
+    const names = symbols.map((s) => s.name);
+    expect(names).toContain('Foo');
+    expect(names).not.toContain('class');
+  });
+
+  it('records `export default function bar` under both `function` and `export` kinds', () => {
+    const symbols = extractSignaturesWithLines('export default function bar() {}\n');
+    const named = symbols.filter((s) => s.name === 'bar');
+    const kinds = named.map((s) => s.kind).sort();
+    expect(kinds).toEqual(['export', 'function']);
+  });
+});
+
+describe('FileAwarenessLedger.checkSymbolicEditAllowed — line anchoring', () => {
+  it('does not treat `function` keywords inside string literals as edited symbols', () => {
+    const ledger = new FileAwarenessLedger();
+    // Read a file fully so symbol-aware editing kicks in (no symbols recorded).
+    ledger.recordRead('foo.ts', {
+      symbols: [{ name: 'real', kind: 'function', lineRange: { start: 1, end: 1 } }],
+    });
+
+    // Edit content contains `function` only inside a string literal — not a real declaration.
+    const editContent = 'const x = "function fake";';
+    const verdict = ledger.checkSymbolicEditAllowed('foo.ts', editContent);
+
+    // No symbols should be detected; the edit falls back to line-based checking and is allowed.
+    expect(verdict.allowed).toBe(true);
   });
 });
