@@ -21,7 +21,7 @@ import {
   updateFileLedger,
   resetTurnBudget,
 } from './file-ledger.js';
-import { FileAwarenessLedger } from '../lib/file-awareness-ledger.js';
+import { FileAwarenessLedger, type EditGuardVerdict } from '../lib/file-awareness-ledger.js';
 import { recordMalformedToolCall } from './tool-call-metrics.js';
 import { recordWriteFile } from './edit-metrics.js';
 import { recordContextTrim } from './context-metrics.js';
@@ -189,18 +189,61 @@ export function canonicalizeAwarenessPath(rawPath: string, workspaceRoot: string
 }
 
 /**
+ * Synthesize a "what the model is writing" content blob from an edit_file
+ * call's hashline edits. Used by the symbolic edit check to detect whether
+ * the edit declares/redeclares symbols (e.g. renaming a function), which
+ * triggers a deeper coverage check than the plain `checkWriteAllowed`.
+ *
+ * Body-internal edits without symbol declarations produce empty content here,
+ * which the canonical `checkSymbolicEditAllowed` falls back to a line-based
+ * check for. That fallback is what auto-recovery handles.
+ */
+function synthesizeEditContent(call: ToolCall): string {
+  const edits = Array.isArray(call.args?.edits) ? call.args.edits : [];
+  const parts: string[] = [];
+  for (const edit of edits) {
+    if (edit && typeof edit === 'object') {
+      const content = (edit as Record<string, unknown>).content;
+      if (typeof content === 'string') parts.push(content);
+    }
+  }
+  return parts.join('\n');
+}
+
+/** Run the appropriate verdict check for the given tool call. */
+function checkAwarenessVerdict(
+  call: ToolCall,
+  key: string,
+  ledger: FileAwarenessLedger,
+): EditGuardVerdict {
+  if (call.tool === 'edit_file') {
+    return ledger.checkSymbolicEditAllowed(key, synthesizeEditContent(call));
+  }
+  return ledger.checkWriteAllowed(key);
+}
+
+/**
  * Pre-execution awareness guard for write/edit tools. Returns a synthetic
- * blocked tool result when the canonical FileAwarenessLedger denies the call;
- * returns null otherwise. Surfaces verdict codes through the structured-error
- * channel so the model can recover programmatically (read the file, retry).
+ * blocked tool result when the canonical FileAwarenessLedger denies the call,
+ * after attempting transparent auto-recovery. Returns null when the call may
+ * proceed. Surfaces verdict codes through the structured-error channel so the
+ * model can recover programmatically if auto-recovery itself fails.
  *
- * Special-case: `write_file` to a file that does not exist on disk is allowed
- * to proceed (READ_REQUIRED is downgraded to a creation). Without this, brand-
- * new files cannot be created — `read_file` returns `ok:false` on ENOENT, the
- * recorder ignores failed reads, and the model gets stuck.
+ * Auto-recovery: when the initial verdict blocks, the harness reads the file
+ * itself, refreshes the ledger, and retries the verdict before returning a
+ * block. This mirrors the web app's `sandbox-write-handlers` flow, where most
+ * "you didn't read this" blocks resolve invisibly to the model.
  *
- * v1: uses checkWriteAllowed for both write_file and edit_file. Symbolic
- * precision (matching read symbols against edited symbols) is a follow-up.
+ * Special-case: when auto-recovery's read fails with ENOENT, write_file is
+ * allowed through (creation), edit_file remains blocked (hashline edits need
+ * existing content). All other auto-recovery errors propagate the original
+ * verdict — the downstream tool will hit the same I/O error and surface a
+ * more informative message than a guard block would.
+ *
+ * Symbolic precision: edit_file uses `checkSymbolicEditAllowed`, which
+ * compares symbols declared in the edit content against symbols the model has
+ * read. When the edit content has no symbol declarations, the canonical falls
+ * back to `checkWriteAllowed` — which auto-recovery then handles.
  */
 export async function awarenessGuardForCall(
   call: ToolCall,
@@ -212,36 +255,51 @@ export async function awarenessGuardForCall(
   if (!rawPath) return null;
 
   const key = canonicalizeAwarenessPath(rawPath, workspaceRoot);
-  const verdict = ledger.checkWriteAllowed(key);
+  const verdict = checkAwarenessVerdict(call, key, ledger);
   if (verdict.allowed) return null;
 
-  // write_file creates files when the target doesn't exist. The READ_REQUIRED
-  // verdict is the right call for *overwrites* but the wrong call for fresh
-  // creation. Probe the filesystem and allow through if the file is missing.
-  // edit_file is intentionally not granted this exception: it requires existing
-  // content to apply hashline edits against.
-  if (call.tool === 'write_file' && verdict.code === 'READ_REQUIRED') {
-    const absolute = nodePath.isAbsolute(rawPath)
-      ? rawPath
-      : nodePath.resolve(workspaceRoot, rawPath);
-    try {
-      await fs.access(absolute);
-      // File exists — the guard's verdict stands; this would be an overwrite
-      // without prior read.
-    } catch {
+  // Auto-recovery: read the file from disk, refresh the ledger, retry.
+  const absolute = nodePath.isAbsolute(rawPath)
+    ? rawPath
+    : nodePath.resolve(workspaceRoot, rawPath);
+  try {
+    const content = await fs.readFile(absolute, 'utf8');
+    const lineCount = content.split('\n').length;
+    // No start/end/truncated → recordRead marks the file fully_read.
+    ledger.recordRead(key, { totalLines: lineCount });
+
+    const retryVerdict = checkAwarenessVerdict(call, key, ledger);
+    if (retryVerdict.allowed) return null;
+
+    return {
+      ok: false,
+      text: `[Awareness guard — ${call.tool}] ${retryVerdict.reason}`,
+      structuredError: {
+        code: retryVerdict.code,
+        message: retryVerdict.reason,
+        retryable: true,
+      },
+    };
+  } catch (err) {
+    const errno = (err as NodeJS.ErrnoException | null)?.code;
+    if (errno === 'ENOENT' && call.tool === 'write_file') {
+      // File doesn't exist — write_file creates it. edit_file is intentionally
+      // not granted this exception: hashline edits require existing content.
       return null;
     }
+    // Other auto-recovery errors (EACCES, EPERM, etc.) surface the original
+    // guard verdict. The actual write/edit will hit the same I/O error and
+    // surface a more informative message than the guard block.
+    return {
+      ok: false,
+      text: `[Awareness guard — ${call.tool}] ${verdict.reason}`,
+      structuredError: {
+        code: verdict.code,
+        message: verdict.reason,
+        retryable: true,
+      },
+    };
   }
-
-  return {
-    ok: false,
-    text: `[Awareness guard — ${call.tool}] ${verdict.reason}`,
-    structuredError: {
-      code: verdict.code,
-      message: verdict.reason,
-      retryable: true,
-    },
-  };
 }
 
 /**
