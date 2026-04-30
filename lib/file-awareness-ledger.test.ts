@@ -126,18 +126,55 @@ describe('extractSignaturesWithLines — export default handling', () => {
 });
 
 describe('FileAwarenessLedger.checkSymbolicEditAllowed — line anchoring', () => {
-  it('does not treat `function` keywords inside string literals as edited symbols', () => {
+  it('does not treat a `function` keyword inside a string literal as an edited declaration', () => {
     const ledger = new FileAwarenessLedger();
-    // Read a file fully so symbol-aware editing kicks in (no symbols recorded).
+    // partial_read forces checkSymbolicEditAllowed to actually run extractSymbolsFromEdit;
+    // a fully_read entry would short-circuit and leave the regex anchoring untested.
     ledger.recordRead('foo.ts', {
+      startLine: 1,
+      endLine: 1,
       symbols: [{ name: 'real', kind: 'function', lineRange: { start: 1, end: 1 } }],
     });
 
-    // Edit content contains `function` only inside a string literal — not a real declaration.
-    const editContent = 'const x = "function fake";';
+    // Pre-fix: the unanchored regex matches `function fake` inside the string and treats
+    // `fake` as an edited declaration, blocking the write. With the line-start anchor it
+    // only sees `function real` at column 0, which the model has read.
+    const editContent = 'function real() { const x = "function fake"; }';
     const verdict = ledger.checkSymbolicEditAllowed('foo.ts', editContent);
 
-    // No symbols should be detected; the edit falls back to line-based checking and is allowed.
     expect(verdict.allowed).toBe(true);
+  });
+});
+
+describe('signature regexes — async/abstract modifiers on default exports', () => {
+  it('captures the function name on `export default async function foo`, not `async`', () => {
+    const summary = extractSignatures('export default async function foo() {}\n');
+    expect(summary).not.toBeNull();
+    const items = summary!.replace(/^contains: /, '').split(', ');
+    expect(items).toContain('export default async function foo');
+    expect(items).not.toContain('export default async');
+  });
+
+  it('records `export default async function foo` under both `function` and `export` kinds with name=foo', () => {
+    const symbols = extractSignaturesWithLines('export default async function foo() {}\n');
+    const namesByKind = new Map<string, string[]>();
+    for (const s of symbols) {
+      const list = namesByKind.get(s.kind) ?? [];
+      list.push(s.name);
+      namesByKind.set(s.kind, list);
+    }
+    expect(namesByKind.get('function')).toEqual(['foo']);
+    expect(namesByKind.get('export')).toEqual(['foo']);
+    // No bogus `async` symbol from the export-default catch-all.
+    const allNames = symbols.map((s) => s.name);
+    expect(allNames).not.toContain('async');
+  });
+
+  it('captures the class name on `export default abstract class Foo`, not `abstract`', () => {
+    const symbols = extractSignaturesWithLines('export default abstract class Foo {}\n');
+    const exported = symbols.filter((s) => s.kind === 'export');
+    expect(exported.map((s) => s.name)).toEqual(['Foo']);
+    const allNames = symbols.map((s) => s.name);
+    expect(allNames).not.toContain('abstract');
   });
 });

@@ -130,7 +130,7 @@ const SIGNATURE_PATTERNS: RegExp[] = [
   /^[ \t]*(?:export\s+(?:default\s+)?)?class\s+(\w+)/gm, // JS/TS classes
   /^[ \t]*(?:export\s+(?:default\s+)?)?interface\s+(\w+)/gm, // TS interfaces
   /^[ \t]*(?:export\s+)?type\s+(\w+)\s*=/gm, // TS type aliases
-  /^[ \t]*export\s+default\s+(?:function\s+|class\s+|interface\s+)?(\w+)/gm, // default exports
+  /^[ \t]*export\s+default\s+(?:(?:async\s+)?function\s+|(?:abstract\s+)?class\s+|interface\s+)?(\w+)/gm, // default exports
   /^[ \t]*def\s+(\w+)/gm, // Python functions
   /^[ \t]*class\s+(\w+)\s*[:(]/gm, // Python classes
 ];
@@ -189,7 +189,8 @@ export function extractSignaturesWithLines(
     { kind: 'type' as SymbolKind, regex: /^[ \t]*(?:export\s+)?type\s+(\w+)\s*=/ },
     {
       kind: 'export' as SymbolKind,
-      regex: /^[ \t]*export\s+default\s+(?:function\s+|class\s+|interface\s+)?(\w+)/,
+      regex:
+        /^[ \t]*export\s+default\s+(?:(?:async\s+)?function\s+|(?:abstract\s+)?class\s+|interface\s+)?(\w+)/,
     },
     { kind: 'function' as SymbolKind, regex: /^[ \t]*def\s+(\w+)/ },
     { kind: 'class' as SymbolKind, regex: /^[ \t]*class\s+(\w+)\s*[:(]/ },
@@ -495,7 +496,8 @@ export class FileAwarenessLedger {
       { kind: 'type' as SymbolKind, regex: /^[ \t]*(?:export\s+)?type\s+(\w+)\s*=/gm },
       {
         kind: 'export' as SymbolKind,
-        regex: /^[ \t]*export\s+default\s+(?:function\s+|class\s+|interface\s+)?(\w+)/gm,
+        regex:
+          /^[ \t]*export\s+default\s+(?:(?:async\s+)?function\s+|(?:abstract\s+)?class\s+|interface\s+)?(\w+)/gm,
       },
       { kind: 'function' as SymbolKind, regex: /^[ \t]*def\s+(\w+)/gm },
       { kind: 'class' as SymbolKind, regex: /^[ \t]*class\s+(\w+)\s*[:(]/gm },
