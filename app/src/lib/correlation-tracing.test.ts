@@ -110,7 +110,7 @@ vi.mock('@/lib/tool-dispatch', async () => {
 // Imports — after the mocks are set up
 // ---------------------------------------------------------------------------
 
-import { executeTool, type ToolExecRunContext } from '@/hooks/chat-tool-execution';
+import { executeTool, type ToolExecRunContext } from './chat-tool-execution';
 import { executeReadOnlyTool } from './agent-loop-utils';
 import type { AnyToolCall } from './tool-dispatch';
 import type { ToolHookRegistry } from './tool-hooks';

@@ -7,7 +7,6 @@ const ACTIVE_CHAT_KEY = 'diff_active_chat';
 const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
 
-
 function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
   const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
   const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
@@ -23,6 +22,10 @@ function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
 
   if (!message.cards) return message;
   return { ...message, cards };
+}
+
+export function createId(): string {
+  return Math.random().toString(36).substring(2, 11);
 }
 
 export function generateTitle(messages: ChatMessage[]): string {
