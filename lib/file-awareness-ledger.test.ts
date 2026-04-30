@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { FileAwarenessLedger } from './file-awareness-ledger';
+import { FileAwarenessLedger } from './file-awareness-ledger.js';
 
 describe('FileAwarenessLedger.checkLinesCovered', () => {
   let ledger: FileAwarenessLedger;
