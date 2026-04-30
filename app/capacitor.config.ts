@@ -7,6 +7,7 @@ const config: CapacitorConfig = {
   bundledWebRuntime: false,
   server: {
     androidScheme: 'https',
+    url: 'https://push.ishawnd.workers.dev',
   },
 };
 
