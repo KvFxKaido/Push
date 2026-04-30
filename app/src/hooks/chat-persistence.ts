@@ -24,9 +24,7 @@ function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
   return { ...message, cards };
 }
 
-export function createId(): string {
-  return Math.random().toString(36).substring(2, 11);
-}
+export { createId } from '@push/lib/id-utils';
 
 export function generateTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((m) => m.role === 'user');
