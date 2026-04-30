@@ -8,8 +8,9 @@
  */
 export function formatRelativeTime(
   ms: number | string | Date,
-  options: { now?: number; compact?: boolean } = {},
+  optionsOrNow: { now?: number; compact?: boolean } | number = {},
 ): string {
+  const options = typeof optionsOrNow === 'number' ? { now: optionsOrNow } : optionsOrNow;
   const { now = Date.now(), compact = false } = options;
   const then = typeof ms === 'number' ? ms : new Date(ms).getTime();
   const delta = now - then;

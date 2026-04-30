@@ -56,7 +56,7 @@ import { appendSessionEvent, makeRunId, saveSessionState } from './session-store
 import { buildHeadlessTaskBrief } from './task-brief.js';
 import { fmt } from './format.js';
 import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.js';
-import { resolveWorkspaceIdentity } from './workspace-identity.js';
+import { resolveWorkspaceIdentity } from '../lib/workspace-identity.js';
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.js';
 import { randomBytes } from 'node:crypto';
 
