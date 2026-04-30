@@ -71,7 +71,7 @@ The web app and CLI still duplicate too much runtime logic. Shared root `lib/` m
 
 **Reverse parity (Track E):** Persistent memory, skills, explain mode from CLI → web is a separate effort, not part of core convergence.
 
-**Private connectors:** Azure/Bedrock/Vertex in CLI is deferred indefinitely. Enterprise users can proxy through LiteLLM locally.
+**Private connectors:** Azure/Bedrock/Vertex in CLI is deferred indefinitely. Enterprise users have to bring their own gateway. We do not recommend LiteLLM after the April 2026 breach (CVE-2026-42208, pre-auth SQL injection in 1.81.16–1.83.7); see `docs/decisions/Provider Observability via Analytics Engine.md` for context.
 
 **GitHub auth in CLI:** No GitHub API integration needed for MVP. Local git operations are sufficient.
 

@@ -1,4 +1,5 @@
-import type { Env } from './worker-middleware';
+import { wlog, type Env } from './worker-middleware';
+import { REQUEST_ID_HEADER } from '../lib/request-id';
 
 /**
  * GET /api/_stats handler — Analytics Engine SQL gateway.
@@ -18,6 +19,7 @@ import type { Env } from './worker-middleware';
 export async function handleStats(request: Request, env: Env): Promise<Response> {
   const authHeader = request.headers.get('Authorization');
   const token = env.STATS_ADMIN_TOKEN?.trim();
+  const requestId = request.headers.get(REQUEST_ID_HEADER) ?? undefined;
 
   if (!token || authHeader !== `Bearer ${token}`) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -99,9 +101,14 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
     );
 
     if (!response.ok) {
-      const error = await response.text();
+      const upstreamBody = await response.text().catch(() => '');
+      wlog('error', 'stats_ae_query_failed', {
+        requestId,
+        status: response.status,
+        body: upstreamBody.slice(0, 500),
+      });
       return new Response(
-        JSON.stringify({ error: 'Analytics Engine query failed', detail: error }),
+        JSON.stringify({ error: 'Analytics Engine query failed', status: response.status }),
         {
           status: 502,
           headers: { 'Content-Type': 'application/json' },
@@ -150,7 +157,8 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({ error: 'Internal stats error', message }), {
+    wlog('error', 'stats_internal_error', { requestId, message });
+    return new Response(JSON.stringify({ error: 'Internal stats error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
