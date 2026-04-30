@@ -42,6 +42,34 @@ export interface VerificationPolicy {
   rules: VerificationRule[];
 }
 
+// --- Runtime state ---
+
+export type VerificationRequirementStatus =
+  | 'pending'
+  | 'passed'
+  | 'failed'
+  | 'inconclusive'
+  | 'not_applicable';
+
+export interface VerificationRequirementState {
+  id: string;
+  label: string;
+  scope: 'always' | 'backend' | 'commit';
+  kind: 'command' | 'evidence' | 'gate';
+  command?: string;
+  gate?: string;
+  status: VerificationRequirementStatus;
+  detail?: string;
+  updatedAt: number;
+}
+
+export interface VerificationRuntimeState {
+  policyName: string;
+  backendTouched: boolean;
+  requirements: VerificationRequirementState[];
+  lastUpdatedAt: number;
+}
+
 // --- Presets ---
 
 export const VERIFICATION_PRESET_STANDARD: VerificationPolicy = {

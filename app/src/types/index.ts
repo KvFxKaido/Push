@@ -801,31 +801,16 @@ export interface QueuedFollowUp {
   queuedAt: number;
 }
 
-export type VerificationRequirementStatus =
-  | 'pending'
-  | 'passed'
-  | 'failed'
-  | 'inconclusive'
-  | 'not_applicable';
-
-export interface VerificationRequirementState {
-  id: string;
-  label: string;
-  scope: 'always' | 'backend' | 'commit';
-  kind: 'command' | 'evidence' | 'gate';
-  command?: string;
-  gate?: string;
-  status: VerificationRequirementStatus;
-  detail?: string;
-  updatedAt: number;
-}
-
-export interface VerificationRuntimeState {
-  policyName: string;
-  backendTouched: boolean;
-  requirements: VerificationRequirementState[];
-  lastUpdatedAt: number;
-}
+import type {
+  VerificationRequirementStatus,
+  VerificationRequirementState,
+  VerificationRuntimeState,
+} from '@push/lib/verification-policy';
+export type {
+  VerificationRequirementStatus,
+  VerificationRequirementState,
+  VerificationRuntimeState,
+};
 
 export interface ConversationRunState {
   agentEvents?: AgentStatusEvent[];

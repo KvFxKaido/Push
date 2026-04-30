@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { VERIFICATION_PRESET_STANDARD, VERIFICATION_PRESET_STRICT } from './verification-policy';
+import { VERIFICATION_PRESET_STANDARD, VERIFICATION_PRESET_STRICT } from './verification-policy.js';
 import {
   activateVerificationGate,
   evaluateVerificationState,
@@ -8,7 +8,7 @@ import {
   recordVerificationCommandResult,
   recordVerificationGateResult,
   recordVerificationMutation,
-} from './verification-runtime';
+} from './verification-runtime.js';
 
 describe('verification-runtime', () => {
   it('hydrates rules with backend commands inactive and gates not applicable by default', () => {
