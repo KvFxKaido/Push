@@ -26,9 +26,6 @@ function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
   if (!message.cards) return message;
   return { ...message, cards };
 }
-
-export { createId } from '@push/lib/id-utils';
-
 export function generateTitle(messages: ChatMessage[]): string {
   const firstUser = messages.find((m) => m.role === 'user');
   if (!firstUser) return 'New Chat';
