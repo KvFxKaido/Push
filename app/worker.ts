@@ -12,7 +12,7 @@
 
 import type { ExecutionContext, ScheduledEvent } from '@cloudflare/workers-types';
 import type { Env } from './src/worker/worker-middleware';
-import { corsHeadersFor } from './src/worker/worker-middleware';
+import { applySecurityHeaders, corsHeadersFor } from './src/worker/worker-middleware';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from './src/lib/request-id';
 
 import {
@@ -277,6 +277,7 @@ function withRequestIdOnResponse(
       }
     }
   }
+  applySecurityHeaders(headers);
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
