@@ -210,6 +210,14 @@ describe('FileAwarenessLedger — verdict codes and tool-name parameterization',
       expect(partialVerdict.reason).toContain('sandbox_read_file');
     }
   });
+
+  it('exposes configured tool names via configuredTools getter', () => {
+    const ledger = new FileAwarenessLedger({
+      readToolName: 'read_file',
+      writeToolName: 'write_file',
+    });
+    expect(ledger.configuredTools).toEqual({ read: 'read_file', write: 'write_file' });
+  });
 });
 
 describe('FileAwarenessLedger — recovery loop with CLI tool names', () => {

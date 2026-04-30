@@ -69,13 +69,16 @@ export interface MutationProvenance {
  *   ranges are required for the attempted operation.
  * - `UNREAD_SYMBOL`: edit touches a symbol the model never read.
  * - `UNREAD_LINES`: edit targets line numbers outside the model's read coverage.
+ * - `UNHANDLED_AWARENESS_STATE`: defensive fallback for an internal state kind
+ *   not covered by the explicit handlers. Should not fire in practice.
  */
 export type EditGuardVerdictCode =
   | 'READ_REQUIRED'
   | 'STALE_AWARENESS'
   | 'PARTIAL_READ'
   | 'UNREAD_SYMBOL'
-  | 'UNREAD_LINES';
+  | 'UNREAD_LINES'
+  | 'UNHANDLED_AWARENESS_STATE';
 
 export type EditGuardVerdict =
   | { allowed: true }
@@ -273,7 +276,7 @@ function deduplicateSymbols(symbols: SymbolRead[]): SymbolRead[] {
 export interface FileAwarenessLedgerOptions {
   /** Tool name surfaced in verdict reasons telling the model how to read. Default: `sandbox_read_file`. */
   readToolName?: string;
-  /** Tool name reserved for future use in error contexts. Default: `sandbox_write_file`. */
+  /** Tool name surfaced in verdict reasons describing the blocked write operation. Default: `sandbox_write_file`. */
   writeToolName?: string;
 }
 
@@ -288,6 +291,11 @@ export class FileAwarenessLedger {
   constructor(options: FileAwarenessLedgerOptions = {}) {
     this.readToolName = options.readToolName ?? 'sandbox_read_file';
     this.writeToolName = options.writeToolName ?? 'sandbox_write_file';
+  }
+
+  /** Inspect configured tool names (useful for harness wiring + tests). */
+  get configuredTools(): Readonly<{ read: string; write: string }> {
+    return { read: this.readToolName, write: this.writeToolName };
   }
 
   /** Normalize paths for consistent lookup (strip leading /workspace/ when present). */
@@ -731,8 +739,8 @@ export class FileAwarenessLedger {
     this._metrics.blockedTotal++;
     return {
       allowed: false,
-      code: 'STALE_AWARENESS',
-      reason: `${this.writeToolName} blocked on "${path}": unhandled awareness state kind (${(entry as { kind: string }).kind}). Re-read with ${this.readToolName} and retry.`,
+      code: 'UNHANDLED_AWARENESS_STATE',
+      reason: `Editing "${path}" is blocked due to an unhandled awareness state kind (${(entry as { kind: string }).kind}). Re-read it with ${this.readToolName} and retry.`,
     };
   }
 

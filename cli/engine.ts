@@ -1,4 +1,6 @@
 import process from 'node:process';
+import { promises as fs } from 'node:fs';
+import nodePath from 'node:path';
 import {
   detectAllToolCalls,
   executeToolCall,
@@ -169,24 +171,67 @@ export function shouldDistillMidSession(
 }
 
 /**
+ * Canonicalize a file path for awareness-ledger lookup. The CLI tool executor
+ * sets `result.meta.path` to an absolute resolved path (via
+ * `ensureInsideWorkspace`), while the model passes `call.args.path` as a
+ * relative path. Without canonicalization the guard and recorder use
+ * different keys and a successfully-read file looks unread to the next write.
+ *
+ * Stable key: workspace-relative POSIX path with forward slashes.
+ */
+export function canonicalizeAwarenessPath(rawPath: string, workspaceRoot: string): string {
+  const absolute = nodePath.isAbsolute(rawPath)
+    ? rawPath
+    : nodePath.resolve(workspaceRoot, rawPath);
+  const relative = nodePath.relative(workspaceRoot, absolute);
+  // Force POSIX separators so Windows and POSIX paths resolve to the same key.
+  return relative.split(nodePath.sep).join('/');
+}
+
+/**
  * Pre-execution awareness guard for write/edit tools. Returns a synthetic
  * blocked tool result when the canonical FileAwarenessLedger denies the call;
  * returns null otherwise. Surfaces verdict codes through the structured-error
  * channel so the model can recover programmatically (read the file, retry).
  *
+ * Special-case: `write_file` to a file that does not exist on disk is allowed
+ * to proceed (READ_REQUIRED is downgraded to a creation). Without this, brand-
+ * new files cannot be created — `read_file` returns `ok:false` on ENOENT, the
+ * recorder ignores failed reads, and the model gets stuck.
+ *
  * v1: uses checkWriteAllowed for both write_file and edit_file. Symbolic
  * precision (matching read symbols against edited symbols) is a follow-up.
  */
-export function awarenessGuardForCall(
+export async function awarenessGuardForCall(
   call: ToolCall,
   ledger: FileAwarenessLedger,
-): ToolResult | null {
+  workspaceRoot: string,
+): Promise<ToolResult | null> {
   if (call.tool !== 'write_file' && call.tool !== 'edit_file') return null;
-  const path = typeof call.args?.path === 'string' ? call.args.path : null;
-  if (!path) return null;
+  const rawPath = typeof call.args?.path === 'string' ? call.args.path : null;
+  if (!rawPath) return null;
 
-  const verdict = ledger.checkWriteAllowed(path);
+  const key = canonicalizeAwarenessPath(rawPath, workspaceRoot);
+  const verdict = ledger.checkWriteAllowed(key);
   if (verdict.allowed) return null;
+
+  // write_file creates files when the target doesn't exist. The READ_REQUIRED
+  // verdict is the right call for *overwrites* but the wrong call for fresh
+  // creation. Probe the filesystem and allow through if the file is missing.
+  // edit_file is intentionally not granted this exception: it requires existing
+  // content to apply hashline edits against.
+  if (call.tool === 'write_file' && verdict.code === 'READ_REQUIRED') {
+    const absolute = nodePath.isAbsolute(rawPath)
+      ? rawPath
+      : nodePath.resolve(workspaceRoot, rawPath);
+    try {
+      await fs.access(absolute);
+      // File exists — the guard's verdict stands; this would be an overwrite
+      // without prior read.
+    } catch {
+      return null;
+    }
+  }
 
   return {
     ok: false,
@@ -204,19 +249,22 @@ export function awarenessGuardForCall(
  * coverage; successful writes/edits become model_authored so an immediate
  * follow-up edit doesn't deadlock. The ledger only mutates on `result.ok`,
  * so guard-blocked synthetic results (which are `ok:false`) are skipped.
+ *
+ * Paths are canonicalized to the same workspace-relative key the guard uses.
  */
 export function recordAwarenessFromCall(
   call: ToolCall,
   result: ToolResult,
   ledger: FileAwarenessLedger,
+  workspaceRoot: string,
 ): void {
   if (!result.ok) return;
   const meta = result.meta;
   if (!meta || typeof meta.path !== 'string') return;
-  const path = meta.path;
+  const key = canonicalizeAwarenessPath(meta.path, workspaceRoot);
 
   if (call.tool === 'read_file' || call.tool === 'read_symbol') {
-    ledger.recordRead(path, {
+    ledger.recordRead(key, {
       startLine: typeof meta.start_line === 'number' ? meta.start_line : undefined,
       endLine: typeof meta.end_line === 'number' ? meta.end_line : undefined,
       truncated: typeof meta.truncated === 'boolean' ? meta.truncated : undefined,
@@ -232,7 +280,7 @@ export function recordAwarenessFromCall(
     // alternative (leave prior partial_read state in place) deadlocks immediate
     // follow-up edits. Auto re-read after edits is a follow-up (the web app
     // does it via its sandbox handlers).
-    ledger.recordCreation(path);
+    ledger.recordCreation(key);
   }
 }
 
@@ -611,7 +659,7 @@ export async function runAssistantLoop(
     // filesystem if the model hasn't read the target. The synthetic blocked
     // result short-circuits the dispatcher and surfaces the verdict code so
     // the model can recover by reading the file and retrying.
-    const awarenessBlock = awarenessGuardForCall(call, awarenessLedger);
+    const awarenessBlock = await awarenessGuardForCall(call, awarenessLedger, state.cwd);
     const rawResult = awarenessBlock
       ? awarenessBlock
       : await executeToolCall(call, state.cwd, {
@@ -625,7 +673,7 @@ export async function runAssistantLoop(
           providerApiKey: apiKey,
         });
     const result: ToolResult = rawResult ?? { ok: false, text: 'Tool returned no result' };
-    recordAwarenessFromCall(call, result, awarenessLedger);
+    recordAwarenessFromCall(call, result, awarenessLedger, state.cwd);
     const durationMs: number = Date.now() - toolStart;
     const preview = summarizeToolResultPreview(result.text);
 
