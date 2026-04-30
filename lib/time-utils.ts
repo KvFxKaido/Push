@@ -19,7 +19,7 @@ export function formatRelativeTime(
 
   const ago = compact ? '' : ' ago';
 
-  if (delta < 60_000) return compact ? 'now' : 'just now';
+  if (delta < 60_000) return 'just now';
 
   const minutes = Math.floor(delta / 60_000);
   if (minutes < 60) return `${minutes}m${ago}`;

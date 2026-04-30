@@ -1,11 +1,11 @@
-import type { RepoWithActivity, ActiveRepo } from '@/types';
+import type { RepoWithActivity, ActiveRepo, WorkspaceContext } from '@/types';
 import { getSandboxEnvironment, getSandboxLifecycleEvents } from './sandbox-client';
 import { parseGitStatus, MANIFEST_PARSERS, type GitInfo } from '@push/lib/repo-awareness';
 import { listDirectory, readFromSandbox, execInSandbox } from './sandbox-client';
 
 export { sanitizeProjectInstructions } from '@push/lib/project-instructions';
 
-export interface WorkspaceContext {
+export interface SandboxWorkspaceContext {
   cwd: string;
   git?: GitInfo;
   project?: string;
@@ -24,12 +24,12 @@ async function getGitSnapshot(sandboxId: string): Promise<GitInfo | null> {
 }
 
 async function getProjectSummary(sandboxId: string): Promise<string | null> {
-  const entries = await listDirectory(sandboxId, '/');
+  const entries = await listDirectory(sandboxId, '/workspace');
   const files = entries.map((e) => e.name);
   for (const [filename, parser] of Object.entries(MANIFEST_PARSERS)) {
     if (files.includes(filename)) {
       try {
-        const { content } = await readFromSandbox(sandboxId, filename);
+        const { content } = await readFromSandbox(sandboxId, `/workspace/${filename}`);
         const summary = parser(content);
         if (summary) return summary;
       } catch {
@@ -40,8 +40,8 @@ async function getProjectSummary(sandboxId: string): Promise<string | null> {
   return null;
 }
 
-export async function getWorkspaceContext(sandboxId: string): Promise<WorkspaceContext> {
-  const entries = await listDirectory(sandboxId, '/');
+export async function getWorkspaceContext(sandboxId: string): Promise<SandboxWorkspaceContext> {
+  const entries = await listDirectory(sandboxId, '/workspace');
   const files = entries.map((e) => e.name);
   const [git, project] = await Promise.all([
     getGitSnapshot(sandboxId),
@@ -49,7 +49,7 @@ export async function getWorkspaceContext(sandboxId: string): Promise<WorkspaceC
   ]);
 
   return {
-    cwd: '/',
+    cwd: '/workspace',
     git: git || undefined,
     project: project || undefined,
     files: files.filter((f) => !f.startsWith('.')),
@@ -99,6 +99,16 @@ function formatRepoFull(repo: RepoWithActivity): string {
   return parts.join('\n');
 }
 
+function formatActiveRepo(active: ActiveRepo, repos: RepoWithActivity[]): string {
+  const match = repos.find((r) => r.id === active.id);
+  if (match) return formatRepoFull(match);
+  // Fallback: render from ActiveRepo fields only (no activity stats available).
+  let line = `• ${active.full_name}`;
+  if (active.private) line += ' [private]';
+  return `${line}
+  (${active.default_branch})`;
+}
+
 export function buildWorkspaceContext(
   repos: RepoWithActivity[],
   activeRepo?: ActiveRepo | null,
@@ -111,7 +121,7 @@ export function buildWorkspaceContext(
 
   if (activeRepo) {
     sections.push('WORKSPACE — Active Repository:\n');
-    sections.push(formatRepoFull(activeRepo as unknown as RepoWithActivity));
+    sections.push(formatActiveRepo(activeRepo, repos));
 
     const otherActive = repos
       .filter((r) => r.activity.has_new_activity && r.id !== activeRepo.id)
@@ -166,7 +176,7 @@ function parseDurationToMs(raw: string | null | undefined): number | null {
 }
 
 export function buildSessionCapabilityBlock(
-  workspaceContext: { mode: string; includeGitHubTools: boolean },
+  workspaceContext: Pick<WorkspaceContext, 'mode' | 'includeGitHubTools'>,
   hasSandbox?: boolean,
 ): string {
   const sandboxEnv = hasSandbox ? getSandboxEnvironment() : null;

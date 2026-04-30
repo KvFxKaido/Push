@@ -4,7 +4,7 @@
  */
 
 import process from 'node:process';
-import { formatRelativeTime } from '../lib/time-utils.ts';
+import { formatRelativeTime } from '../lib/time-utils.js';
 
 const hasColor =
   !process.env.NO_COLOR && (!!process.env.FORCE_COLOR || (process.stdout?.isTTY ?? false));

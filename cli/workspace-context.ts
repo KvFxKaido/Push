@@ -12,6 +12,7 @@ const IGNORED_ENTRIES = new Set([
   '.push',
   '__pycache__',
   '.next',
+  'dist',
   'build',
   '.cache',
 ]);
@@ -107,6 +108,9 @@ export async function buildWorkspaceSnapshot(cwd: string): Promise<string> {
         ...gitInfo.added,
         ...gitInfo.deleted,
         ...gitInfo.untracked,
+        ...gitInfo.renamed,
+        ...gitInfo.copied,
+        ...gitInfo.conflicted,
       ];
       const dirtyCount = dirtyFiles.length;
       const branchLine: string =
