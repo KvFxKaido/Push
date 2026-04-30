@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CAPACITOR_ANDROID_ORIGIN,
@@ -85,6 +87,15 @@ describe('applySecurityHeaders', () => {
     const maxAge = Number(/max-age=(\d+)/.exec(hsts)?.[1] ?? 0);
     expect(maxAge).toBeGreaterThanOrEqual(15552000);
     expect(hsts).toMatch(/includeSubDomains/);
+  });
+
+  // Drift guard: the [assets] layer can serve /index.html directly without
+  // hitting the Worker fetch handler, so app/public/_headers has to carry the
+  // same CSP. Without this test the two can quietly fall out of sync —
+  // exactly the failure mode flagged in the PR review.
+  it('keeps app/public/_headers CSP in sync with CONTENT_SECURITY_POLICY', () => {
+    const headersFile = readFileSync(resolve(__dirname, '../../public/_headers'), 'utf8');
+    expect(headersFile).toContain(`Content-Security-Policy: ${CONTENT_SECURITY_POLICY}`);
   });
 });
 

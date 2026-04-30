@@ -43,7 +43,8 @@ perfMark('app:render-scheduled');
 
 // Service-worker registration. Lives here (not as an inline <script> in
 // index.html) so the page can ship a strict `script-src 'self'` CSP without
-// `'unsafe-inline'`. Bundled by Vite, served same-origin, hash-suffixed.
+// `'unsafe-inline'`. Bundled by Vite, served same-origin from a stable
+// /sw.js path so the browser can detect updates on each load.
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {
