@@ -1,6 +1,9 @@
 import type { AIProviderType, AttachmentData, ChatMessage, Conversation } from '@/types';
 import { normalizeKilocodeModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { createId } from '@push/lib/id-utils';
+
+export { createId };
 
 const CONVERSATIONS_KEY = 'diff_conversations';
 const ACTIVE_CHAT_KEY = 'diff_active_chat';
