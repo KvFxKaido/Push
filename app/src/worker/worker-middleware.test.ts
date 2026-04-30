@@ -1,7 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CAPACITOR_ANDROID_ORIGIN,
+  CONTENT_SECURITY_POLICY,
   MAX_BODY_SIZE_BYTES,
+  SECURITY_HEADERS,
+  applySecurityHeaders,
   buildVertexPreambleAuth,
   corsHeadersFor,
   createJsonProxyHandler,
@@ -38,6 +43,61 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
 function makeRequest(url: string, init: RequestInit = {}): Request {
   return new Request(url, init);
 }
+
+// ---------------------------------------------------------------------------
+// applySecurityHeaders / SECURITY_HEADERS
+// ---------------------------------------------------------------------------
+
+describe('applySecurityHeaders', () => {
+  it('adds the full SECURITY_HEADERS baseline to a fresh Headers instance', () => {
+    const headers = new Headers();
+    applySecurityHeaders(headers);
+    for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+      expect(headers.get(key)).toBe(value);
+    }
+  });
+
+  it('does not overwrite headers a handler already set', () => {
+    const headers = new Headers({ 'X-Frame-Options': 'SAMEORIGIN' });
+    applySecurityHeaders(headers);
+    expect(headers.get('X-Frame-Options')).toBe('SAMEORIGIN');
+    // Other baseline headers still applied.
+    expect(headers.get('X-Content-Type-Options')).toBe('nosniff');
+  });
+
+  it('emits a CSP that locks down clickjacking, mixed content, and base/object/form vectors', () => {
+    expect(CONTENT_SECURITY_POLICY).toMatch(/frame-ancestors 'none'/);
+    expect(CONTENT_SECURITY_POLICY).toMatch(/object-src 'none'/);
+    expect(CONTENT_SECURITY_POLICY).toMatch(/base-uri 'self'/);
+    expect(CONTENT_SECURITY_POLICY).toMatch(/form-action 'self'/);
+    expect(CONTENT_SECURITY_POLICY).toMatch(/upgrade-insecure-requests/);
+  });
+
+  it("emits a strict script-src that does not allow 'unsafe-inline' or 'unsafe-eval'", () => {
+    const directive =
+      CONTENT_SECURITY_POLICY.split(';')
+        .map((d) => d.trim())
+        .find((d) => d.startsWith('script-src')) ?? '';
+    expect(directive).not.toMatch(/'unsafe-inline'/);
+    expect(directive).not.toMatch(/'unsafe-eval'/);
+  });
+
+  it('keeps HSTS at the OWASP-recommended floor with includeSubDomains', () => {
+    const hsts = SECURITY_HEADERS['Strict-Transport-Security'];
+    const maxAge = Number(/max-age=(\d+)/.exec(hsts)?.[1] ?? 0);
+    expect(maxAge).toBeGreaterThanOrEqual(15552000);
+    expect(hsts).toMatch(/includeSubDomains/);
+  });
+
+  // Drift guard: the [assets] layer can serve /index.html directly without
+  // hitting the Worker fetch handler, so app/public/_headers has to carry the
+  // same CSP. Without this test the two can quietly fall out of sync —
+  // exactly the failure mode flagged in the PR review.
+  it('keeps app/public/_headers CSP in sync with CONTENT_SECURITY_POLICY', () => {
+    const headersFile = readFileSync(resolve(__dirname, '../../public/_headers'), 'utf8');
+    expect(headersFile).toContain(`Content-Security-Policy: ${CONTENT_SECURITY_POLICY}`);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // normalizeOrigin

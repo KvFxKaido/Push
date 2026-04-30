@@ -108,6 +108,73 @@ export const GOOGLE_OAUTH_SCOPE = 'https://www.googleapis.com/auth/cloud-platfor
 export const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 
 // ---------------------------------------------------------------------------
+// Security response headers
+// ---------------------------------------------------------------------------
+//
+// Applied to every Worker response (API + SPA shell) via
+// withRequestIdOnResponse in worker.ts. Static assets that never reach the
+// Worker fetch handler (JS/CSS/images served directly from the [assets]
+// layer) get the same baseline via app/public/_headers.
+//
+// CSP design notes:
+//   - script-src 'self'             — strict; the inline SW-registration
+//                                     script was moved into main.tsx so we
+//                                     can avoid 'unsafe-inline' for scripts.
+//   - style-src 'unsafe-inline'     — unavoidable for Tailwind/Radix runtime
+//                                     styles and the critical-CSS <style>
+//                                     block in index.html.
+//   - connect-src https: wss:       — the client talks directly to many
+//                                     upstreams (api.github.com, OTLP
+//                                     endpoints, BYO provider base URLs).
+//   - img-src https: data: blob:    — provider favicons + GitHub avatars.
+//   - frame-ancestors 'none'        — clickjacking defense; X-Frame-Options
+//                                     DENY is set as a legacy companion.
+//
+// The CSP intentionally permits any HTTPS host for connect-src / img-src
+// because the agent platform supports user-supplied upstream URLs. Tighten
+// this further if you operate a closed deployment with a fixed provider set.
+
+export const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' https://fonts.gstatic.com",
+  "connect-src 'self' https: wss:",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  'upgrade-insecure-requests',
+].join('; ');
+
+export const SECURITY_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+});
+
+/**
+ * Apply the SECURITY_HEADERS baseline to a Headers instance in place. Existing
+ * values are preserved — handlers that intentionally set their own
+ * Cache-Control or CORS headers (or a route-specific CSP) keep precedence.
+ */
+export function applySecurityHeaders(headers: Headers): void {
+  for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+    if (!headers.has(key)) {
+      headers.set(key, value);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Google JWT / token utilities
 // ---------------------------------------------------------------------------
 
