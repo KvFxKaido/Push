@@ -798,7 +798,17 @@ export async function handleGitHubAppLogout(request: Request, env: Env): Promise
   }
   // Hard cap so a malformed client can't make us stream megabytes upstream.
   if (token.length > 256) {
-    return Response.json({ error: 'token too long' }, { status: 400 });
+    return Response.json({ error: 'Token too long' }, { status: 400 });
+  }
+  // Reject anything outside printable ASCII (0x21-0x7E) before it reaches
+  // fetch() — header construction throws on whitespace/control chars
+  // (\r, \n, NUL, DEL, ...), which would otherwise surface as a misleading
+  // generic 500 from the catch block.
+  for (let i = 0; i < token.length; i += 1) {
+    const code = token.charCodeAt(i);
+    if (code < 0x21 || code > 0x7e) {
+      return Response.json({ error: 'Invalid token' }, { status: 400 });
+    }
   }
 
   try {

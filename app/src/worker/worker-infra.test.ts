@@ -789,6 +789,31 @@ describe('handleGitHubAppLogout', () => {
     expect(response.status).toBe(400);
   });
 
+  it.each([
+    ['newline', 'ghs_x\nbad'],
+    ['carriage return', 'ghs_x\rbad'],
+    ['tab', 'ghs_x\tbad'],
+    ['space', 'ghs_x bad'],
+    ['null byte', 'ghs_x\x00bad'],
+    ['DEL', 'ghs_x\x7fbad'],
+    ['non-ASCII', 'ghs_xé'],
+  ])('returns 400 with Invalid token when the token contains %s', async (_label, badToken) => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleGitHubAppLogout(
+      makeRequest('https://push.example.test/api/github/app-logout', {
+        body: JSON.stringify({ token: badToken }),
+      }),
+      makeEnv(),
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe('Invalid token');
+    // We must reject before touching fetch; otherwise header construction
+    // would throw and surface as a misleading 500.
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('returns 204 and forwards the token to GitHub when revocation succeeds', async () => {
     const calls: Array<{ url: string; method: string; auth: string | null }> = [];
     vi.stubGlobal(
