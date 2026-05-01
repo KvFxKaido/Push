@@ -636,6 +636,24 @@ export function WorkspaceHubSheet({
             setCommitError('New-branch flow is not available in this surface.');
             return;
           }
+          // Preflight existence check before the fork migrates the
+          // conversation. sandbox_create_branch (via forkBranchFromUI) catches
+          // local collisions on its own, but a remote-only collision would
+          // let us create the branch locally + migrate the chat, then either
+          // silently fast-forward into someone else's branch or reject at
+          // push after the user is already committed. Fail fast with a clear
+          // message instead. ls-remote network failures fall through (the
+          // `>/dev/null 2>&1` wrap turns transport errors into "not present"
+          // — same as the prior implementation).
+          const preflight = await execInSandbox(
+            sandboxId,
+            `cd /workspace && if git show-ref --verify --quiet refs/heads/${target.branchName}; then echo "__PUSH_BRANCH_EXISTS_LOCAL__"; exit 10; fi && if git ls-remote --exit-code --heads origin ${target.branchName} >/dev/null 2>&1; then echo "__PUSH_BRANCH_EXISTS_REMOTE__"; exit 11; fi`,
+          );
+          if (preflight.exitCode === 10 || preflight.exitCode === 11) {
+            setCommitPhase('error');
+            setCommitError(`Branch "${target.branchName}" already exists.`);
+            return;
+          }
           // Route through the slice 2 fork path (sandbox_create_branch +
           // applyBranchSwitchPayload with kind: 'forked'). This atomically
           // backfills the active conversation's existing messages with the
