@@ -25,11 +25,10 @@
  */
 
 import { detectAllToolCalls, detectAnyToolCall } from '@/lib/tool-dispatch';
-import { getToolName } from '@/lib/chat-tool-messages';
+import { getToolName, markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { handleMultipleMutationsError } from '@/lib/chat-tool-execution';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
-import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { getToolInvocationKey, type MutationFailureTracker } from '@push/lib/agent-loop-utils';
 import type { ChatMessage } from '@/types';
 import { createTurnRunContext } from './chat-send-helpers';

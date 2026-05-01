@@ -34,7 +34,7 @@ import {
 } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { createId } from '@push/lib/id-utils';
-import type { detectAllToolCalls } from '@/lib/tool-dispatch';
+import type { DetectedToolCalls } from '@/lib/tool-dispatch';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage } from '@/types';
 import {
@@ -45,8 +45,6 @@ import {
   type TurnRunContext,
 } from './chat-send-helpers';
 import type { AssistantTurnResult, SendLoopContext } from './chat-send-types';
-
-type DetectedToolCalls = ReturnType<typeof detectAllToolCalls>;
 
 export async function executeBatchedToolCalls(
   detected: DetectedToolCalls,
@@ -359,7 +357,12 @@ export async function executeBatchedToolCalls(
 
   // Execute trailing side-effect after the batch, unless the batch
   // hard-failed above (in which case we return to the model for a fix).
-  if (detected.mutating && abortRef.current) {
+  // Abort check is unconditional: an aborted turn must `break` regardless
+  // of whether a trailing mutation was queued (pre-extraction code gated
+  // this on `detected.mutating`, which let an abort-without-mutation case
+  // fall through to `continue` instead of breaking — flagged in PR #467
+  // review).
+  if (abortRef.current) {
     return {
       nextApiMessages,
       nextRecoveryState: recoveryState,

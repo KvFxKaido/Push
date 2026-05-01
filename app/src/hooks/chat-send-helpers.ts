@@ -318,8 +318,12 @@ export function createTurnRunContext(
 
   const getRoundSandboxStatus = async (): Promise<RoundSandboxStatus | null> => {
     if (cacheFetched) return cachedStatus;
-    cacheFetched = true;
-    if (!sandboxIdRef.current) return null;
+    if (!sandboxIdRef.current) {
+      // Stable state — no sandbox to fetch from. Cache so callers don't
+      // re-evaluate on every getRoundSandboxStatus() within the same turn.
+      cacheFetched = true;
+      return null;
+    }
     try {
       const statusResult = await execInSandbox(
         sandboxIdRef.current,
@@ -367,8 +371,10 @@ export function createTurnRunContext(
           .filter((value): value is string => Boolean(value))
           .slice(0, 6),
       };
+      cacheFetched = true;
     } catch {
-      // Best-effort — don't block tool execution
+      // Best-effort — leave cacheFetched=false so the next call retries
+      // rather than locking the rest of the turn into a stale empty status.
     }
     return cachedStatus;
   };
