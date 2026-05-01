@@ -8,8 +8,6 @@ import type {
   ChatMessage,
   ChatSendOptions,
   Conversation,
-  QueuedFollowUp,
-  QueuedFollowUpOptions,
   RunEvent,
   VerificationRuntimeState,
 } from '@/types';
@@ -55,7 +53,7 @@ import { updateJournalVerificationState, markJournalCheckpoint } from '@/lib/run
 import { useRunEventStream } from './useRunEventStream';
 import { useRunEngine } from './useRunEngine';
 import { useVerificationState } from './useVerificationState';
-import { usePendingSteer, type PendingSteerRequest } from './usePendingSteer';
+import { usePendingSteer } from './usePendingSteer';
 import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
 import { getMigrationMarker } from '@/lib/branch-migration-marker';
 import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
@@ -64,6 +62,11 @@ import {
   type ForkBranchInWorkspaceResult,
 } from '@/lib/fork-branch-in-workspace';
 import { useBranchForkGuard } from './useBranchForkGuard';
+import {
+  summarizeQueuedInputPreview,
+  toPendingSteerRequest,
+  toQueuedFollowUp,
+} from '@/lib/queued-follow-up-utils';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
@@ -94,62 +97,6 @@ export type SendMessageOptions = Partial<ChatDraftSelection> &
 type AbortStreamOptions = {
   clearQueuedFollowUps?: boolean;
 };
-
-function getQueuedFollowUpOptions(options?: SendMessageOptions): QueuedFollowUpOptions | undefined {
-  const queuedOptions = {
-    provider: options?.provider ?? undefined,
-    model: options?.model ?? undefined,
-    displayText: options?.displayText?.trim() || undefined,
-  };
-
-  return Object.values(queuedOptions).some(Boolean) ? queuedOptions : undefined;
-}
-
-function summarizeQueuedInputPreview(
-  text: string,
-  attachments?: AttachmentData[],
-  displayText?: string,
-  maxLength = 96,
-): string {
-  const candidate = displayText?.trim() || text.trim();
-  const attachmentCount = attachments?.length ?? 0;
-  const attachmentLabel =
-    attachmentCount > 0 ? `${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}` : '';
-
-  const base = candidate
-    ? attachmentLabel
-      ? `${candidate} (+${attachmentLabel})`
-      : candidate
-    : attachmentLabel || '[no text]';
-
-  return base.length <= maxLength ? base : `${base.slice(0, maxLength - 1).trimEnd()}...`;
-}
-
-function toQueuedFollowUp(
-  text: string,
-  attachments?: AttachmentData[],
-  options?: SendMessageOptions,
-): QueuedFollowUp {
-  return {
-    text,
-    attachments,
-    options: getQueuedFollowUpOptions(options),
-    queuedAt: Date.now(),
-  };
-}
-
-function toPendingSteerRequest(
-  text: string,
-  attachments?: AttachmentData[],
-  options?: SendMessageOptions,
-): PendingSteerRequest {
-  return {
-    text,
-    attachments,
-    options: getQueuedFollowUpOptions(options),
-    requestedAt: Date.now(),
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Hook

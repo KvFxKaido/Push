@@ -78,10 +78,16 @@ export default defineConfig([
   //                                 reduction would mean pulling apart the
   //                                 loop's control flow rather than
   //                                 extracting more sibling functions.
+  //   Phase 7 (queued-follow-up):   1,329 -> 1,276 after the four pure
+  //                                 helpers (getQueuedFollowUpOptions,
+  //                                 summarizeQueuedInputPreview,
+  //                                 toQueuedFollowUp, toPendingSteerRequest)
+  //                                 moved to lib/queued-follow-up-utils.ts.
+  //                                 Ceiling lowered to 1,290.
   {
     files: ['src/hooks/useChat.ts'],
     rules: {
-      'max-lines': ['error', { max: 1330 }],
+      'max-lines': ['error', { max: 1290 }],
     },
   },
 ]);
