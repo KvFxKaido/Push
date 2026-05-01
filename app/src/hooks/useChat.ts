@@ -39,12 +39,12 @@ import { useChatReplay } from './chat-replay';
 import { useChatCheckpoint } from './useChatCheckpoint';
 import { type SendLoopContext } from './chat-send';
 import { runRoundLoop } from './chat-round-loop';
+import { routeActiveRunInput } from './chat-active-run-router';
 import { prepareSendContext } from './chat-prepare-send';
 import { acquireRunSession, finalizeRunSession } from './chat-run-session';
 import { useQueuedFollowUps } from './useQueuedFollowUps';
 import { mergeRunEventStreams } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
-import { isRunActive } from '@/lib/run-engine';
 import { updateJournalVerificationState } from '@/lib/run-journal';
 import { useRunEventStream } from './useRunEventStream';
 import { useRunEngine } from './useRunEngine';
@@ -58,11 +58,6 @@ import {
   type ForkBranchInWorkspaceResult,
 } from '@/lib/fork-branch-in-workspace';
 import { useBranchForkGuard } from './useBranchForkGuard';
-import {
-  summarizeQueuedInputPreview,
-  toPendingSteerRequest,
-  toQueuedFollowUp,
-} from '@/lib/queued-follow-up-utils';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
@@ -630,60 +625,19 @@ export function useChat(
       const bgChat = options?.chatId || activeChatIdRef.current;
       if (bgChat && hasActiveBackgroundJob(conversationsRef.current[bgChat])) return;
 
-      if (isRunActive(runEngineStateRef.current)) {
-        const runningChatId = runEngineStateRef.current.chatId;
-        const targetChatId = options?.chatId || activeChatIdRef.current || runningChatId;
-        if (!runningChatId || (targetChatId && targetChatId !== runningChatId)) return;
-
-        const inputPreview = summarizeQueuedInputPreview(
-          trimmedText,
-          hasAttachments ? attachments : undefined,
-          options?.displayText,
-        );
-        const round = runEngineStateRef.current.round;
-        if (options?.streamingBehavior === 'steer') {
-          enqueuePendingSteer(
-            runningChatId,
-            toPendingSteerRequest(trimmedText, hasAttachments ? attachments : undefined, options),
-          );
-          emitRunEngineEvent({
-            type: 'STEER_SET',
-            timestamp: Date.now(),
-            preview: inputPreview,
-          });
-          // `replacedPending` is retained on the event surface for backward
-          // compatibility with downstream consumers (HubConsoleTab, run
-          // journal, tests). FIFO semantics mean steers never replace —
-          // they're always appended — so the field is now always false.
-          appendRunEvent(runningChatId, {
-            type: 'user.follow_up_steered',
-            round,
-            preview: inputPreview,
-            replacedPending: false,
-          });
-          return;
-        }
-
-        const queuePosition = (queuedFollowUpsRef.current[runningChatId]?.length ?? 0) + 1;
-        const queuedFollowUp = toQueuedFollowUp(
-          trimmedText,
-          hasAttachments ? attachments : undefined,
-          options,
-        );
-        enqueueQueuedFollowUp(runningChatId, queuedFollowUp);
-        emitRunEngineEvent({
-          type: 'FOLLOW_UP_ENQUEUED',
-          timestamp: Date.now(),
-          followUp: queuedFollowUp,
-        });
-        appendRunEvent(runningChatId, {
-          type: 'user.follow_up_queued',
-          round,
-          position: queuePosition,
-          preview: inputPreview,
-        });
-        return;
-      }
+      const routed = routeActiveRunInput(
+        { trimmedText, attachments, hasAttachments, options },
+        {
+          runEngineStateRef,
+          activeChatIdRef,
+          queuedFollowUpsRef,
+          enqueuePendingSteer,
+          enqueueQueuedFollowUp,
+          emitRunEngineEvent,
+          appendRunEvent,
+        },
+      );
+      if (routed.handled) return;
 
       let chatId = options?.chatId || activeChatIdRef.current;
       const conversationsSnapshot = conversationsRef.current;
