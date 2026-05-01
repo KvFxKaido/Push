@@ -91,7 +91,6 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     validatedUser,
     snapshots,
     ensureSandbox,
-    onSandboxBranchSwitch,
     setCurrentBranch,
   } = props;
 
@@ -363,7 +362,6 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
               onShowMergeFlow: () => {},
               onDeleteBranch: async () => false,
             }}
-            onSandboxBranchSwitch={onSandboxBranchSwitch}
             onFixReviewFinding={handleFixReviewFinding}
             pinnedArtifacts={pinnedArtifacts.artifacts}
             onUnpinArtifact={pinnedArtifacts.unpin}

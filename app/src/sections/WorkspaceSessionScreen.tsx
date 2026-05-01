@@ -420,7 +420,6 @@ export function WorkspaceSessionScreen({
     handleSandboxDownload,
     sandboxDownloading,
     setCurrentBranch,
-    onSandboxBranchSwitch: handleSandboxBranchSwitch,
     sandboxState,
     sandboxStateLoading,
     fetchSandboxState,

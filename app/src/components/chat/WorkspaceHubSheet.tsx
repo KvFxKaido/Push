@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/sheet';
 import { runAuditor } from '@/lib/auditor-agent';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
+import type { ForkBranchInWorkspaceResult } from '@/lib/fork-branch-in-workspace';
 import {
   execInSandbox,
   getSandboxDiff,
@@ -211,7 +212,13 @@ interface WorkspaceHubSheetProps {
   onTodoClear: () => void;
   // Branch management
   branchProps: HubBranchProps;
-  onSandboxBranchSwitch: (branch: string) => void;
+  /** Slice 2.1 fork path. When the "Push to a new branch" flow creates a
+   *  branch, route through this so the active conversation migrates onto the
+   *  new branch instead of getting dropped (per-branch chat filter would
+   *  otherwise route the user to a different chat). Optional because the
+   *  chat-only surface gates `canCommitAndPush` off and never reaches the
+   *  new-branch path. */
+  forkBranchFromUI?: (name: string, from?: string) => Promise<ForkBranchInWorkspaceResult>;
   onFixReviewFinding: (prompt: string) => void;
   // Pinned artifacts (Kept)
   pinnedArtifacts: PinnedArtifact[];
@@ -392,7 +399,7 @@ export function WorkspaceHubSheet({
   todos,
   onTodoClear,
   branchProps,
-  onSandboxBranchSwitch,
+  forkBranchFromUI,
   onFixReviewFinding,
   pinnedArtifacts,
   onUnpinArtifact,
@@ -624,31 +631,42 @@ export function WorkspaceHubSheet({
       try {
         if (target.mode === 'new' && target.branchName) {
           setCommitPhase('branching');
-          const switchResult = await execInSandbox(
-            sandboxId,
-            `cd /workspace && if git show-ref --verify --quiet refs/heads/${target.branchName}; then echo "__PUSH_BRANCH_EXISTS_LOCAL__"; exit 10; fi && if git ls-remote --exit-code --heads origin ${target.branchName} >/dev/null 2>&1; then echo "__PUSH_BRANCH_EXISTS_REMOTE__"; exit 11; fi && git switch -c ${target.branchName}`,
-            undefined,
-            { markWorkspaceMutated: true },
-          );
-
-          if (switchResult.exitCode !== 0) {
-            const output = `${switchResult.stdout}\n${switchResult.stderr}`;
-            if (
-              output.includes('__PUSH_BRANCH_EXISTS_LOCAL__') ||
-              output.includes('__PUSH_BRANCH_EXISTS_REMOTE__')
-            ) {
-              setCommitPhase('error');
-              setCommitError(`Branch "${target.branchName}" already exists.`);
-              return;
-            }
-
-            const detail = switchResult.stderr || switchResult.stdout || 'Unknown git error';
+          if (!forkBranchFromUI) {
             setCommitPhase('error');
-            setCommitError(`Branch switch failed: ${detail}`);
+            setCommitError('New-branch flow is not available in this surface.');
             return;
           }
-
-          onSandboxBranchSwitch(target.branchName);
+          // Preflight existence check before the fork migrates the
+          // conversation. sandbox_create_branch (via forkBranchFromUI) catches
+          // local collisions on its own, but a remote-only collision would
+          // let us create the branch locally + migrate the chat, then either
+          // silently fast-forward into someone else's branch or reject at
+          // push after the user is already committed. Fail fast with a clear
+          // message instead. ls-remote network failures fall through (the
+          // `>/dev/null 2>&1` wrap turns transport errors into "not present"
+          // — same as the prior implementation).
+          const preflight = await execInSandbox(
+            sandboxId,
+            `cd /workspace && if git show-ref --verify --quiet refs/heads/${target.branchName}; then echo "__PUSH_BRANCH_EXISTS_LOCAL__"; exit 10; fi && if git ls-remote --exit-code --heads origin ${target.branchName} >/dev/null 2>&1; then echo "__PUSH_BRANCH_EXISTS_REMOTE__"; exit 11; fi`,
+          );
+          if (preflight.exitCode === 10 || preflight.exitCode === 11) {
+            setCommitPhase('error');
+            setCommitError(`Branch "${target.branchName}" already exists.`);
+            return;
+          }
+          // Route through the slice 2 fork path (sandbox_create_branch +
+          // applyBranchSwitchPayload with kind: 'forked'). This atomically
+          // backfills the active conversation's existing messages with the
+          // OLD branch, sets conv.branch to the new branch, and inserts a
+          // branch_forked event — so the user stays in the same session and
+          // their chat follows onto the new branch instead of the per-branch
+          // filter routing them to a different chat.
+          const forkResult = await forkBranchFromUI(target.branchName);
+          if (!forkResult.ok) {
+            setCommitPhase('error');
+            setCommitError(forkResult.errorMessage ?? 'Branch switch failed.');
+            return;
+          }
         }
 
         // Phase: Fetching diff
@@ -776,7 +794,7 @@ export function WorkspaceHubSheet({
       currentBranchName,
       lockedModel,
       lockedProvider,
-      onSandboxBranchSwitch,
+      forkBranchFromUI,
       projectInstructions,
       repoFullName,
     ],
