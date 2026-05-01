@@ -1,21 +1,25 @@
 /**
  * chat-send.ts
  *
- * Phase 4 round helpers extracted from useChat.ts sendMessage.
+ * Phase 4 round helpers extracted from useChat.ts sendMessage. The dispatcher
+ * `processAssistantTurn` lives here; siblings carry the support code:
+ *
+ *   chat-send-types.ts    — SendLoopContext, StreamRoundResult, AssistantTurnResult
+ *                           and the four handler interfaces (Scratchpad/Todo/Usage/Runtime)
+ *   chat-send-helpers.ts  — pure helpers: pulse, delegate predicates, chat-hook
+ *                           executor, status-line parser, verification-command
+ *                           inference, post-tool policy collector
+ *   chat-stream-round.ts  — streamAssistantRound (LLM streaming + UI accumulation)
  *
  * sendMessage stays as the loop orchestrator (round counter, abort checks, tab
- * lock, finally block). These two functions handle the per-round work:
+ * lock, finally block). `processAssistantTurn` handles post-stream work:
+ * tool detection, dispatch, recovery, batched + single-call execution paths.
  *
- *   streamAssistantRound   — wraps streamChat, accumulates tokens, updates UI
- *   processAssistantTurn   — post-stream: tool detection, dispatch, recovery
+ * Re-exports from the sibling modules below preserve the public import surface
+ * for `useChat.ts`, `chat-round-loop.ts`, tests, and `branch-fork-migration.ts`,
+ * which all import from this module.
  */
 
-import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import { streamChat } from '@/lib/orchestrator';
-import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
-import { buildTodoContext } from '@/lib/todo-tools';
-import type { ActiveProvider } from '@/lib/orchestrator';
-import { setOpenRouterSessionId } from '@/lib/openrouter-session';
 import { detectAnyToolCall, detectAllToolCalls, isReadOnlyToolCall } from '@/lib/tool-dispatch';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import {
@@ -40,18 +44,14 @@ import {
   type ToolExecRawResult,
 } from '@/lib/chat-tool-execution';
 import { execInSandbox } from '@/lib/sandbox-client';
-import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
-import { executeTodoToolCall, type TodoItem } from '@/lib/todo-tools';
 import { resolveToolCallRecovery, type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { createId } from '@push/lib/id-utils';
-import { type MigrationGuard } from '@/lib/chat-message';
 import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
 import {
   createOrchestratorPolicy,
   responseClaimsCompletion,
 } from '@/lib/turn-policies/orchestrator-policy';
-import type { RunEngineEvent } from '@/lib/run-engine';
 import {
   evaluateVerificationState,
   formatVerificationBlock,
@@ -59,513 +59,40 @@ import {
   recordVerificationCommandResult,
   recordVerificationMutation,
 } from '@/lib/verification-runtime';
-import type {
-  ActiveRepo,
-  AgentStatus,
-  AgentStatusSource,
-  ChatCard,
-  ChatMessage,
-  Conversation,
-  CoderWorkingMemory,
-  RunEventInput,
-  ToolExecutionResult,
-  VerificationRuntimeState,
-  WorkspaceContext,
-} from '@/types';
-import type { CheckpointRefs } from './useChatCheckpoint';
+import type { ChatCard, ChatMessage, ToolExecutionResult } from '@/types';
+import {
+  shouldEmitPeriodicPulse,
+  delegateCallNeedsSandbox,
+  getDelegateCompletionAgent,
+  executeChatHookToolCall,
+  executeToolWithChatHooks,
+  extractChangedPathFromStatusLine,
+  inferVerificationCommandResult,
+  collectPostToolPolicyEffects,
+} from './chat-send-helpers';
+import type { AssistantTurnResult, SendLoopContext } from './chat-send-types';
 
 // ---------------------------------------------------------------------------
-// Interface definitions (exported so useChat.ts can re-export them)
+// Re-exports — preserve the public import surface so consumers
+// (useChat.ts, chat-round-loop.ts, tests, branch-fork-migration.ts) keep
+// importing from './chat-send' without churn.
 // ---------------------------------------------------------------------------
 
-export interface ScratchpadHandlers {
-  content: string;
-  replace: (text: string) => void;
-  append: (text: string) => void;
-}
+export type {
+  AssistantTurnResult,
+  ChatRuntimeHandlers,
+  ScratchpadHandlers,
+  SendLoopContext,
+  StreamRoundResult,
+  TodoHandlers,
+  UsageHandler,
+} from './chat-send-types';
 
-export interface TodoHandlers {
-  todos: readonly TodoItem[];
-  replace: (todos: TodoItem[]) => void;
-  clear: () => void;
-}
-
-export interface UsageHandler {
-  trackUsage: (model: string, inputTokens: number, outputTokens: number) => void;
-}
-
-export interface ChatRuntimeHandlers {
-  onSandboxPromoted?: (repo: ActiveRepo) => void;
-  bindSandboxSessionToRepo?: (repoFullName: string, branch?: string) => void;
-  /** Called when a sandbox tool switches branches internally. */
-  onBranchSwitch?: (branch: string) => void;
-  /** Called when a tool result indicates the sandbox is unreachable. */
-  onSandboxUnreachable?: (reason: string) => void;
-}
-
-const TOOL_RESULT_PULSE_INTERVAL = 3;
-
-function shouldEmitPeriodicPulse(round: number): boolean {
-  return (round + 1) % TOOL_RESULT_PULSE_INTERVAL === 0;
-}
-
-function delegateCallNeedsSandbox(call: AnyToolCall): boolean {
-  if (call.source !== 'delegate') return false;
-  if (call.call.tool === 'delegate_coder') return true;
-  if (call.call.tool !== 'plan_tasks') return false;
-  return call.call.args.tasks.some((task) => task.agent === 'coder');
-}
-
-function getDelegateCompletionAgent(call: AnyToolCall): 'explorer' | 'coder' | 'task_graph' {
-  if (call.source !== 'delegate') return 'coder';
-  if (call.call.tool === 'delegate_explorer') return 'explorer';
-  if (call.call.tool === 'plan_tasks') return 'task_graph';
-  return 'coder';
-}
-
-/** Chat-hook-managed sources — executed against refs in this hook, not the
- * generic tool-execution runtime which can only see server-owned state. */
-function isChatHookSource(source: AnyToolCall['source']): boolean {
-  return source === 'scratchpad' || source === 'todo';
-}
-
-/**
- * Wrap `executeTool` so chat-hook sources (scratchpad + todo) are routed
- * through the local chat-hook executor rather than the runtime, which
- * would reject them with "must be handled by the chat hook". Used in both
- * the parallel-reads path and the trailing-mutation path so batched turns
- * don't deterministically fail when they mix a chat-hook call with a
- * regular read/mutation.
- */
-async function executeToolWithChatHooks(
-  call: AnyToolCall,
-  ctx: ToolExecRunContext,
-  refs: {
-    scratchpadRef: MutableRefObject<ScratchpadHandlers | undefined>;
-    todoRef: MutableRefObject<TodoHandlers | undefined>;
-  },
-): Promise<ToolExecRawResult> {
-  if (isChatHookSource(call.source)) {
-    const start = Date.now();
-    const result =
-      executeChatHookToolCall(call, refs) ??
-      ({ text: '[Tool Error] Chat-hook tool dispatch failed.' } as ToolExecutionResult);
-    return { call, raw: result, cards: [], durationMs: Date.now() - start };
-  }
-  return executeTool(call, ctx);
-}
-
-/**
- * Execute a chat-hook-handled tool call (scratchpad or todo) against the
- * local refs. Returns the result if the source is handled here, or null if
- * the caller should fall through to the runtime.
- *
- * These tools live in the chat hook because they mutate React state the
- * runtime can't see. Routed from both the single-call dispatch and the
- * batched (parallel reads / trailing mutation) paths so a model that
- * interleaves a todo_write with a read_file in one turn doesn't land on
- * "[Tool Error] Todo must be handled by the chat hook."
- */
-function executeChatHookToolCall(
-  call: AnyToolCall,
-  refs: {
-    scratchpadRef: MutableRefObject<ScratchpadHandlers | undefined>;
-    todoRef: MutableRefObject<TodoHandlers | undefined>;
-  },
-): ToolExecutionResult | null {
-  if (call.source === 'scratchpad') {
-    const sp = refs.scratchpadRef.current;
-    if (!sp) {
-      return {
-        text: '[Tool Error] Scratchpad not available. The scratchpad may not be initialized — try again after the UI loads.',
-      };
-    }
-    const result = executeScratchpadToolCall(call.call, sp.content, sp.replace, sp.append);
-    if (result.ok) {
-      if (call.call.tool === 'set_scratchpad') {
-        refs.scratchpadRef.current = { ...sp, content: call.call.content };
-      } else if (call.call.tool === 'append_scratchpad') {
-        const prev = sp.content.trim();
-        refs.scratchpadRef.current = {
-          ...sp,
-          content: prev ? `${prev}\n\n${call.call.content}` : call.call.content,
-        };
-      }
-    }
-    return { text: result.text };
-  }
-
-  if (call.source === 'todo') {
-    const todo = refs.todoRef.current;
-    if (!todo) {
-      return {
-        text: '[Tool Error] Todo list not available. It may not be initialized — try again after the UI loads.',
-      };
-    }
-    const result = executeTodoToolCall(call.call, todo.todos, {
-      replace: todo.replace,
-      clear: todo.clear,
-    });
-    if (result.ok && result.nextTodos) {
-      refs.todoRef.current = { ...todo, todos: result.nextTodos };
-    }
-    return { text: result.text };
-  }
-
-  return null;
-}
-
-function extractChangedPathFromStatusLine(line: string): string | null {
-  const trimmed = line.trim();
-  if (!trimmed) return null;
-  const candidate = trimmed.slice(3).trim();
-  if (!candidate) return null;
-  if (candidate.includes(' -> ')) {
-    return candidate.split(' -> ').pop()?.trim() || null;
-  }
-  return candidate;
-}
-
-function inferVerificationCommandResult(result: ToolExecutionResult): {
-  command: string;
-  exitCode: number;
-  detail: string;
-} | null {
-  const card = result.card;
-  if (!card) return null;
-
-  if (card.type === 'sandbox') {
-    return {
-      command: card.data.command,
-      exitCode: card.data.exitCode,
-      detail: `Command "${card.data.command}" exited with code ${card.data.exitCode}.`,
-    };
-  }
-
-  if (card.type === 'type-check') {
-    const command =
-      card.data.tool === 'tsc'
-        ? 'npx tsc --noEmit'
-        : card.data.tool === 'pyright'
-          ? 'pyright'
-          : card.data.tool === 'mypy'
-            ? 'mypy'
-            : null;
-    if (!command) return null;
-    return {
-      command,
-      exitCode: card.data.exitCode,
-      detail: `${card.data.tool} exited with code ${card.data.exitCode}.`,
-    };
-  }
-
-  if (card.type === 'test-results') {
-    const command =
-      card.data.framework === 'npm'
-        ? 'npm test'
-        : card.data.framework === 'pytest'
-          ? 'pytest -v'
-          : card.data.framework === 'cargo'
-            ? 'cargo test'
-            : card.data.framework === 'go'
-              ? 'go test ./...'
-              : null;
-    if (!command) return null;
-    return {
-      command,
-      exitCode: card.data.exitCode,
-      detail: `${command} exited with code ${card.data.exitCode}.`,
-    };
-  }
-
-  return null;
-}
-
-interface PostToolPolicyEffects {
-  messages: ChatMessage[];
-  halted: boolean;
-  haltDetail?: string;
-}
-
-function collectPostToolPolicyEffects(
-  results: readonly ToolExecutionResult[],
-): PostToolPolicyEffects {
-  const messages: ChatMessage[] = [];
-  let haltDetail: string | undefined;
-
-  for (const result of results) {
-    if (result.postHookInject) {
-      messages.push(result.postHookInject);
-    }
-    if (!haltDetail && result.postHookHalt) {
-      haltDetail = result.postHookHalt;
-      messages.push({
-        id: createId(),
-        role: 'user',
-        content: result.postHookHalt,
-        timestamp: Date.now(),
-      });
-    }
-  }
-
-  return {
-    messages,
-    halted: Boolean(haltDetail),
-    haltDetail,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Shared run context — stays constant for the duration of one sendMessage call
-// ---------------------------------------------------------------------------
-
-export interface SendLoopContext {
-  chatId: string;
-  lockedProvider: ActiveProvider;
-  resolvedModel: string | undefined;
-  // Refs
-  abortRef: MutableRefObject<boolean>;
-  abortControllerRef: MutableRefObject<AbortController | null>;
-  sandboxIdRef: MutableRefObject<string | null>;
-  ensureSandboxRef: MutableRefObject<(() => Promise<string | null>) | null>;
-  scratchpadRef: MutableRefObject<ScratchpadHandlers | undefined>;
-  todoRef: MutableRefObject<TodoHandlers | undefined>;
-  usageHandlerRef: MutableRefObject<UsageHandler | undefined>;
-  workspaceContextRef: MutableRefObject<WorkspaceContext | null>;
-  runtimeHandlersRef: MutableRefObject<ChatRuntimeHandlers | undefined>;
-  repoRef: MutableRefObject<string | null>;
-  isMainProtectedRef: MutableRefObject<boolean>;
-  branchInfoRef: MutableRefObject<{ currentBranch?: string; defaultBranch?: string } | undefined>;
-  checkpointRefs: CheckpointRefs;
-  processedContentRef: MutableRefObject<Set<string>>;
-  lastCoderStateRef: MutableRefObject<CoderWorkingMemory | null>;
-  // Slice 2 conversation-fork migration. Set by chat-send when a 'forked'
-  // branchSwitch arrives; cleared by useChat's state-observed effect once the
-  // migration is observable. While set, useChat's auto-switch effect early-
-  // returns to suppress both auto-create AND chat-id-steal.
-  skipAutoCreateRef: MutableRefObject<MigrationGuard | null>;
-  // For stale-capture avoidance: read activeChatId at migration time, not at
-  // closure-capture time, so a chat switch between dispatch and resolution
-  // doesn't migrate the wrong conversation.
-  activeChatIdRef: MutableRefObject<string | null>;
-  // Used by applyBranchSwitchPayload to verify the target conversation
-  // exists BEFORE setting guards — see Codex P1 review feedback.
-  conversationsRef: MutableRefObject<Record<string, Conversation>>;
-  // State mutation
-  setConversations: Dispatch<SetStateAction<Record<string, Conversation>>>;
-  dirtyConversationIdsRef: MutableRefObject<Set<string>>;
-  // Callbacks
-  updateAgentStatus: (
-    status: AgentStatus,
-    options?: { chatId?: string; source?: AgentStatusSource; log?: boolean },
-  ) => void;
-  appendRunEvent: (chatId: string, event: RunEventInput) => void;
-  emitRunEngineEvent: (event: RunEngineEvent) => void;
-  flushCheckpoint: () => void;
-  getVerificationState: (chatId: string) => VerificationRuntimeState;
-  updateVerificationState: (
-    chatId: string,
-    updater: (state: VerificationRuntimeState) => VerificationRuntimeState,
-  ) => VerificationRuntimeState;
-  executeDelegateCall: (
-    chatId: string,
-    toolCall: AnyToolCall,
-    apiMessages: ChatMessage[],
-    provider: ActiveProvider,
-    resolvedModel?: string,
-  ) => Promise<ToolExecutionResult>;
-}
-
-// ---------------------------------------------------------------------------
-// streamAssistantRound
-// ---------------------------------------------------------------------------
-
-export interface StreamRoundResult {
-  accumulated: string;
-  thinkingAccumulated: string;
-  error: Error | null;
-}
-
-/**
- * Stream one LLM round, accumulate tokens, and update the UI in real time.
- * Updates checkpointRefs synchronously so a visibility-change flush sees
- * the latest accumulated state without waiting for React to re-render.
- */
-export async function streamAssistantRound(
-  round: number,
-  apiMessages: ChatMessage[],
-  ctx: SendLoopContext,
-): Promise<StreamRoundResult> {
-  const {
-    chatId,
-    lockedProvider,
-    resolvedModel,
-    abortRef,
-    processedContentRef,
-    scratchpadRef,
-    todoRef,
-    usageHandlerRef,
-    workspaceContextRef,
-    abortControllerRef,
-    sandboxIdRef,
-    setConversations,
-    updateAgentStatus,
-    emitRunEngineEvent,
-  } = ctx;
-
-  processedContentRef.current.clear();
-  let accumulated = '';
-  let thinkingAccumulated = '';
-  const hasSandboxThisRound = Boolean(sandboxIdRef.current);
-
-  // Set OpenRouter session_id so all requests in this conversation are grouped.
-  // Set unconditionally: the orchestrator may resolve to OpenRouter even when
-  // lockedProvider is something else, and the getter is consume-and-clear so
-  // it won't leak into non-OpenRouter requests.
-  setOpenRouterSessionId(chatId);
-
-  let invariantError: Error | null = null;
-  try {
-    assertReadyForAssistantTurn(apiMessages, 'web/streamAssistantRound');
-  } catch (err) {
-    invariantError = err instanceof Error ? err : new Error(String(err));
-  }
-  if (invariantError) {
-    return { accumulated, thinkingAccumulated, error: invariantError };
-  }
-
-  const error = await new Promise<Error | null>((resolve) => {
-    streamChat(
-      apiMessages,
-      (token) => {
-        if (abortRef.current) return;
-        const contentKey = `${round}:${accumulated.length}:${token}`;
-        if (processedContentRef.current.has(contentKey)) return;
-        processedContentRef.current.add(contentKey);
-        accumulated += token;
-        emitRunEngineEvent({
-          type: 'ACCUMULATED_UPDATED',
-          timestamp: Date.now(),
-          text: accumulated,
-          thinking: thinkingAccumulated,
-        });
-        updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
-        setConversations((prev) => {
-          const conv = prev[chatId];
-          if (!conv) return prev;
-          const msgs = [...conv.messages];
-          const lastIdx = msgs.length - 1;
-          if (msgs[lastIdx]?.role === 'assistant') {
-            msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, status: 'streaming' };
-          }
-          return { ...prev, [chatId]: { ...conv, messages: msgs } };
-        });
-      },
-      (usage) => {
-        if (usage && usageHandlerRef.current) {
-          usageHandlerRef.current.trackUsage('k2p5', usage.inputTokens, usage.outputTokens);
-        }
-        resolve(null);
-      },
-      (err) => resolve(err),
-      (thinkingToken) => {
-        if (abortRef.current) return;
-        if (thinkingToken === null) {
-          updateAgentStatus({ active: true, phase: 'Responding...' }, { chatId, log: false });
-          return;
-        }
-        const thinkingKey = `think:${round}:${thinkingAccumulated.length}:${thinkingToken}`;
-        if (processedContentRef.current.has(thinkingKey)) return;
-        processedContentRef.current.add(thinkingKey);
-        thinkingAccumulated += thinkingToken;
-        emitRunEngineEvent({
-          type: 'ACCUMULATED_UPDATED',
-          timestamp: Date.now(),
-          text: accumulated,
-          thinking: thinkingAccumulated,
-        });
-        updateAgentStatus({ active: true, phase: 'Reasoning...' }, { chatId, log: false });
-        setConversations((prev) => {
-          const conv = prev[chatId];
-          if (!conv) return prev;
-          const msgs = [...conv.messages];
-          const lastIdx = msgs.length - 1;
-          if (msgs[lastIdx]?.role === 'assistant') {
-            msgs[lastIdx] = {
-              ...msgs[lastIdx],
-              thinking: thinkingAccumulated,
-              status: 'streaming',
-            };
-          }
-          return { ...prev, [chatId]: { ...conv, messages: msgs } };
-        });
-      },
-      workspaceContextRef.current ?? undefined,
-      hasSandboxThisRound,
-      scratchpadRef.current?.content,
-      abortControllerRef.current?.signal,
-      lockedProvider,
-      resolvedModel,
-      undefined,
-      todoRef.current ? buildTodoContext(todoRef.current.todos) : undefined,
-    );
-  });
-
-  // Safety net: some providers (observed on Workers AI / GLM-4.7-flash) emit a
-  // round's entire output on the reasoning channel — either via native
-  // `reasoning_content` deltas or an unclosed `<think>` block that
-  // `normalizeReasoning` flushes as `reasoning_delta` at stream end. The user
-  // sees the final answer trapped inside a "Thought process" block and no
-  // visible reply. If the stream completed without error, wasn't cancelled by
-  // the user, emitted no content, and produced no native tool call (those
-  // flush through the content parser via `flushNativeToolCalls`), promote the
-  // reasoning tail to content. Skipping the promotion on abort is load-bearing:
-  // `streamAssistantRound` resolves with `error === null` on user cancel, so
-  // without the guard a cancelled turn with only reasoning tokens would
-  // surface that partial reasoning as if it were the model's final answer.
-  if (!error && !abortRef.current && !accumulated && thinkingAccumulated) {
-    console.warn(
-      `[Push] Round ${round}: no content emitted, promoting reasoning tail (${thinkingAccumulated.length} chars) to content.`,
-    );
-    accumulated = thinkingAccumulated;
-    thinkingAccumulated = '';
-    setConversations((prev) => {
-      const conv = prev[chatId];
-      if (!conv) return prev;
-      const msgs = [...conv.messages];
-      const lastIdx = msgs.length - 1;
-      if (msgs[lastIdx]?.role === 'assistant') {
-        msgs[lastIdx] = {
-          ...msgs[lastIdx],
-          content: accumulated,
-          thinking: undefined,
-          status: 'streaming',
-        };
-      }
-      return { ...prev, [chatId]: { ...conv, messages: msgs } };
-    });
-    emitRunEngineEvent({
-      type: 'ACCUMULATED_UPDATED',
-      timestamp: Date.now(),
-      text: accumulated,
-      thinking: '',
-    });
-  }
-
-  return { accumulated, thinkingAccumulated, error };
-}
+export { streamAssistantRound } from './chat-stream-round';
 
 // ---------------------------------------------------------------------------
 // processAssistantTurn — post-stream decision and dispatch
 // ---------------------------------------------------------------------------
-
-export interface AssistantTurnResult {
-  nextApiMessages: ChatMessage[];
-  nextRecoveryState: ToolCallRecoveryState;
-  /** What the sendMessage loop should do after this turn. */
-  loopAction: 'break' | 'continue';
-  loopCompletedNormally: boolean;
-}
 
 /**
  * Decide what to do with the accumulated LLM response:
