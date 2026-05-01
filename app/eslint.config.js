@@ -99,10 +99,25 @@ export default defineConfig([
   //                                 nextFollowUp scheduling, which depends
   //                                 on `sendMessage` itself). Ceiling
   //                                 lowered to 1,060.
+  //   Phase 9 (three-pack):         1,045 -> 892 across three extractions
+  //                                 on 2026-05-01: (a) the dirty/deleted
+  //                                 ID sets + retry-with-cap-at-3 flush
+  //                                 lifecycle moved to
+  //                                 useConversationPersistence; (b) the
+  //                                 active-run queue/steer/short-circuit
+  //                                 branch in sendMessage moved to
+  //                                 chat-active-run-router as a pure
+  //                                 routeActiveRunInput function; (c) the
+  //                                 auto-create-or-switch effect moved to
+  //                                 useChatAutoSwitch with a pure
+  //                                 decideAutoSwitchAction state machine
+  //                                 inside. ~30 new test cases pin
+  //                                 previously-uncovered behavior. Ceiling
+  //                                 lowered to 950.
   {
     files: ['src/hooks/useChat.ts'],
     rules: {
-      'max-lines': ['error', { max: 1060 }],
+      'max-lines': ['error', { max: 950 }],
     },
   },
 ]);
