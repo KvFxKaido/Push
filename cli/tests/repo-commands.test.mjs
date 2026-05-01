@@ -472,6 +472,28 @@ describe('ensureRepoCommandsSeeded', () => {
     // object — but discovery should not throw.
     assert.ok(state.workingMemory.validationCommands);
   });
+
+  it('initializes workingMemory when missing', async (t) => {
+    const root = await makeFixture(t, {
+      'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }),
+    });
+    const state = { cwd: root };
+    await ensureRepoCommandsSeeded(state);
+    assert.ok(state.workingMemory);
+    assert.equal(state.workingMemory.validationCommands?.test?.command, 'npm run test');
+  });
+
+  it('initializes workingMemory when non-object', async (t) => {
+    const root = await makeFixture(t, {
+      'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }),
+    });
+    // Resumed sessions can have workingMemory typed as unknown — null/array
+    // shapes shouldn't crash the seeder.
+    const state = { cwd: root, workingMemory: null };
+    await ensureRepoCommandsSeeded(state);
+    assert.ok(state.workingMemory && typeof state.workingMemory === 'object');
+    assert.equal(state.workingMemory.validationCommands?.test?.command, 'npm run test');
+  });
 });
 
 // ---------------------------------------------------------------------------

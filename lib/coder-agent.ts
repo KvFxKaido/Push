@@ -115,13 +115,6 @@ export interface CoderLoopMessage extends LlmMessage {
 // folding that one in is its own follow-up.
 // ---------------------------------------------------------------------------
 
-export type {
-  CoderObservation,
-  CoderWorkingMemory,
-  CoderObservationUpdate,
-  CoderWorkingMemoryUpdate,
-} from './working-memory.js';
-
 import type {
   CoderObservation,
   CoderWorkingMemory,
@@ -129,6 +122,13 @@ import type {
   CoderWorkingMemoryUpdate,
 } from './working-memory.js';
 import { formatRepoCommands } from './repo-commands.js';
+
+export type {
+  CoderObservation,
+  CoderWorkingMemory,
+  CoderObservationUpdate,
+  CoderWorkingMemoryUpdate,
+};
 
 // ---------------------------------------------------------------------------
 // Mutation failure tracker — detects repeated failures on same tool+file

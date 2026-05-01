@@ -159,23 +159,42 @@ export function resetRepoCommandsMemo(): void {
  * Discovery failures are swallowed — agents simply run without a populated
  * Validation line, which matches the pre-seeding behavior. We do not block
  * session start on this.
+ *
+ * Tolerates a missing or non-object `workingMemory` on the state (the
+ * session-store schema types it as `unknown`, and pre-existing on-disk
+ * sessions may not have it set). In that case we install a fresh empty
+ * working-memory object before seeding.
  */
 const _seedMap = new WeakMap<object, Promise<void>>();
 
 interface SeedTarget {
   cwd: string;
-  workingMemory: CoderWorkingMemory;
+  workingMemory?: unknown;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function ensureWorkingMemoryShape(state: SeedTarget): CoderWorkingMemory {
+  if (!isPlainObject(state.workingMemory)) {
+    state.workingMemory = {} as CoderWorkingMemory;
+  }
+  return state.workingMemory as CoderWorkingMemory;
 }
 
 export function ensureRepoCommandsSeeded(state: SeedTarget): Promise<void> {
-  if (state.workingMemory.validationCommands) return Promise.resolve();
+  const workingMemory = ensureWorkingMemoryShape(state);
+  if (workingMemory.validationCommands) return Promise.resolve();
   const cached = _seedMap.get(state);
   if (cached) return cached;
   const promise = loadRepoCommands(state.cwd)
     .then((commands) => {
-      // Only install if no other path seeded it in the meantime.
-      if (!state.workingMemory.validationCommands) {
-        state.workingMemory.validationCommands = commands;
+      // Re-fetch the working-memory reference: the state object is the same,
+      // but a concurrent mutation could have replaced .workingMemory entirely.
+      const current = ensureWorkingMemoryShape(state);
+      if (!current.validationCommands) {
+        current.validationCommands = commands;
       }
     })
     .catch(() => {

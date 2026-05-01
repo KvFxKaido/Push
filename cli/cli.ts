@@ -1155,7 +1155,12 @@ async function runInteractive(
 async function initSession(sessionId, provider, model, cwd) {
   if (sessionId) {
     try {
-      return await loadSessionState(sessionId);
+      const resumed = await loadSessionState(sessionId);
+      // Seed validation commands on resumed sessions too — covers users who
+      // upgrade the CLI after starting a session that pre-dates the field.
+      // ensureRepoCommandsSeeded is defensive about a missing workingMemory.
+      ensureRepoCommandsSeeded(resumed);
+      return resumed;
     } catch (err) {
       if (err.code === 'ENOENT' || (err.message && err.message.includes('ENOENT'))) {
         throw new Error(
