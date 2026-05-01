@@ -102,42 +102,33 @@ export interface CoderLoopMessage extends LlmMessage {
 }
 
 // ---------------------------------------------------------------------------
-// Working memory types — identical to Web's `CoderObservation` / `CoderWorkingMemory`.
-// The Web shim re-exports these so existing call sites keep importing from
-// `./coder-agent` unchanged.
+// Working memory types — single source in `./working-memory.ts`.
+//
+// We re-export rather than redefine so the shape stays canonical across
+// surfaces (lib/auditor-agent.ts, the engine, and the cli session state all
+// converge on one definition). The function bodies in this file still
+// differ from working-memory.ts (notably `shouldInjectCoderStateOnToolResult`
+// uses CLI-internal constants), so full function consolidation is a future
+// refactor — but a shared type prevents field drift.
+//
+// `app/src/types/index.ts` keeps a parallel copy for the web bundle today;
+// folding that one in is its own follow-up.
 // ---------------------------------------------------------------------------
 
-export interface CoderObservation {
-  id: string;
-  text: string;
-  dependsOn?: string[];
-  stale?: boolean;
-  staleReason?: string;
-  addedAtRound?: number;
-  staleAtRound?: number;
-}
+export type {
+  CoderObservation,
+  CoderWorkingMemory,
+  CoderObservationUpdate,
+  CoderWorkingMemoryUpdate,
+} from './working-memory.js';
 
-export interface CoderWorkingMemory {
-  plan?: string;
-  openTasks?: string[];
-  filesTouched?: string[];
-  assumptions?: string[];
-  errorsEncountered?: string[];
-  currentPhase?: string;
-  completedPhases?: string[];
-  observations?: CoderObservation[];
-}
-
-export type CoderObservationUpdate = {
-  id: string;
-  text?: string;
-  dependsOn?: string[];
-  remove?: boolean;
-};
-
-export type CoderWorkingMemoryUpdate = Omit<Partial<CoderWorkingMemory>, 'observations'> & {
-  observations?: CoderObservationUpdate[];
-};
+import type {
+  CoderObservation,
+  CoderWorkingMemory,
+  CoderObservationUpdate,
+  CoderWorkingMemoryUpdate,
+} from './working-memory.js';
+import { formatRepoCommands } from './repo-commands.js';
 
 // ---------------------------------------------------------------------------
 // Mutation failure tracker — detects repeated failures on same tool+file
@@ -304,7 +295,8 @@ function hasCoderState(mem: CoderWorkingMemory, currentRound: number): boolean {
       mem.errorsEncountered?.length ||
       mem.currentPhase ||
       mem.completedPhases?.length ||
-      getVisibleObservations(mem.observations, currentRound).length,
+      getVisibleObservations(mem.observations, currentRound).length ||
+      (mem.validationCommands && formatRepoCommands(mem.validationCommands).length > 0),
   );
 }
 
@@ -336,6 +328,15 @@ function collectCoderStateDeltaLines(
   }
   if (arraysChanged(current.completedPhases, previous.completedPhases)) {
     diffs.push(`Completed: ${current.completedPhases?.join(', ') || '(none)'}`);
+  }
+  const currentValidation = current.validationCommands
+    ? formatRepoCommands(current.validationCommands)
+    : '';
+  const previousValidation = previous.validationCommands
+    ? formatRepoCommands(previous.validationCommands)
+    : '';
+  if (currentValidation !== previousValidation && currentValidation) {
+    diffs.push(`Validation: ${currentValidation}`);
   }
 
   const currentObservations = getVisibleObservations(current.observations, currentRound);
@@ -520,6 +521,10 @@ export function formatCoderState(mem: CoderWorkingMemory, currentRound = 0): str
   if (mem.errorsEncountered?.length) lines.push(`Errors: ${mem.errorsEncountered.join('; ')}`);
   if (mem.currentPhase) lines.push(`Phase: ${mem.currentPhase}`);
   if (mem.completedPhases?.length) lines.push(`Completed: ${mem.completedPhases.join(', ')}`);
+  if (mem.validationCommands) {
+    const rendered = formatRepoCommands(mem.validationCommands);
+    if (rendered) lines.push(`Validation: ${rendered}`);
+  }
   for (const observation of getVisibleObservations(mem.observations, currentRound)) {
     lines.push(formatObservationLine(observation));
   }

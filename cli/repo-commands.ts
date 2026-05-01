@@ -18,6 +18,7 @@ import {
   type RepoCommands,
   type RepoCommandsSnapshot,
 } from '../lib/repo-commands.ts';
+import type { CoderWorkingMemory } from '../lib/working-memory.ts';
 
 /**
  * AGENTS.md is the required entry doc per the repo's startup contract, so
@@ -144,4 +145,45 @@ export async function loadRepoCommands(cwd: string): Promise<RepoCommands> {
 /** Clear the per-process memo. Exposed for tests. */
 export function resetRepoCommandsMemo(): void {
   memo.clear();
+}
+
+/**
+ * Seed `validationCommands` onto a session's working memory if not already
+ * present. Mirrors the dedupe pattern of `ensureSystemPromptReady` in
+ * `cli/engine.ts` so calling this multiple times for the same state is safe.
+ *
+ * The seeded field is system-managed: not parsed from `coder_update_state`
+ * tool calls and not touched by `applyWorkingMemoryUpdate`, so models can
+ * read it but cannot overwrite it.
+ *
+ * Discovery failures are swallowed — agents simply run without a populated
+ * Validation line, which matches the pre-seeding behavior. We do not block
+ * session start on this.
+ */
+const _seedMap = new WeakMap<object, Promise<void>>();
+
+interface SeedTarget {
+  cwd: string;
+  workingMemory: CoderWorkingMemory;
+}
+
+export function ensureRepoCommandsSeeded(state: SeedTarget): Promise<void> {
+  if (state.workingMemory.validationCommands) return Promise.resolve();
+  const cached = _seedMap.get(state);
+  if (cached) return cached;
+  const promise = loadRepoCommands(state.cwd)
+    .then((commands) => {
+      // Only install if no other path seeded it in the meantime.
+      if (!state.workingMemory.validationCommands) {
+        state.workingMemory.validationCommands = commands;
+      }
+    })
+    .catch(() => {
+      // Discovery is best-effort; never break the session.
+    })
+    .finally(() => {
+      _seedMap.delete(state);
+    });
+  _seedMap.set(state, promise);
+  return promise;
 }

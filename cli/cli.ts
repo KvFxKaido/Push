@@ -41,6 +41,7 @@ import { compactContext } from './context-manager.js';
 import { buildHeadlessTaskBrief } from './task-brief.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { runCommandInResolvedShell } from './shell.js';
+import { ensureRepoCommandsSeeded } from './repo-commands.js';
 import {
   readClientAttachState,
   writeClientAttachState,
@@ -1191,6 +1192,9 @@ async function initSession(sessionId, provider, model, cwd) {
   // Start enriching the system prompt in the background — will be
   // awaited before the first LLM call in runAssistantLoop.
   ensureSystemPromptReady(state);
+  // Seed repo validation commands (test/lint/typecheck/...) into working
+  // memory in the background. Best-effort: failures don't block the session.
+  ensureRepoCommandsSeeded(state);
   // Disk writes are deferred to first user message (lazy session creation).
   // The caller is responsible for calling appendSessionEvent('session_started') + saveSessionState
   // before the first user_message event.
