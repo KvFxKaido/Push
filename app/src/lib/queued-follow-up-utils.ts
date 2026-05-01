@@ -3,8 +3,12 @@
 // loop can reuse them without dragging hook dependencies, and so the
 // truncation/attachment-label rules are unit-testable in isolation.
 
-import type { AttachmentData, QueuedFollowUp, QueuedFollowUpOptions } from '@/types';
-import type { PendingSteerRequest } from '@/hooks/usePendingSteer';
+import type {
+  AttachmentData,
+  PendingSteerRequest,
+  QueuedFollowUp,
+  QueuedFollowUpOptions,
+} from '@/types';
 
 export function getQueuedFollowUpOptions(
   options?: Partial<QueuedFollowUpOptions>,
@@ -35,7 +39,13 @@ export function summarizeQueuedInputPreview(
       : candidate
     : attachmentLabel || '[no text]';
 
-  return base.length <= maxLength ? base : `${base.slice(0, maxLength - 1).trimEnd()}...`;
+  if (base.length <= maxLength) return base;
+  const ellipsis = '...';
+  // Defensive: if the cap is too small to fit the ellipsis itself, truncate
+  // hard. Practical callers all use the 96 default, but the fallback keeps
+  // the contract `result.length <= maxLength` honest.
+  if (maxLength <= ellipsis.length) return base.slice(0, maxLength);
+  return `${base.slice(0, maxLength - ellipsis.length).trimEnd()}${ellipsis}`;
 }
 
 export function toQueuedFollowUp(

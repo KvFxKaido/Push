@@ -84,17 +84,29 @@ describe('summarizeQueuedInputPreview', () => {
     );
   });
 
-  it('truncates long previews with an ellipsis past the configured cap', () => {
+  it('truncates long previews so the result fits within the configured cap', () => {
     const text = 'a'.repeat(200);
     const result = summarizeQueuedInputPreview(text, undefined, undefined, 10);
+    expect(result.length).toBeLessThanOrEqual(10);
     expect(result.endsWith('...')).toBe(true);
-    expect(result).toBe(`${'a'.repeat(9)}...`);
+    expect(result).toBe(`${'a'.repeat(7)}...`);
   });
 
   it('drops trailing whitespace before the ellipsis', () => {
-    const result = summarizeQueuedInputPreview(`hello  ${'x'.repeat(40)}`, undefined, undefined, 8);
+    const result = summarizeQueuedInputPreview(
+      `hello   ${'x'.repeat(40)}`,
+      undefined,
+      undefined,
+      8,
+    );
+    expect(result.length).toBeLessThanOrEqual(8);
     expect(result.endsWith('...')).toBe(true);
     expect(result).toBe('hello...');
+  });
+
+  it('hard-truncates when the cap is smaller than the ellipsis', () => {
+    const result = summarizeQueuedInputPreview('overflow', undefined, undefined, 2);
+    expect(result).toBe('ov');
   });
 
   it('does not truncate when the preview already fits', () => {
