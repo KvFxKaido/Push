@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateKeyPairSync } from 'node:crypto';
 import {
   generateGitHubAppJWT,
+  handleGitHubAppLogout,
   handleGitHubAppOAuth,
   handleGitHubAppToken,
   handleHealthCheck,
@@ -724,6 +725,144 @@ describe('handleGitHubAppToken happy path', () => {
       login: 'push-auth[bot]',
       avatar_url: 'https://avatar/bot',
     });
+  });
+});
+
+// ===========================================================================
+// handleGitHubAppLogout
+// ===========================================================================
+
+describe('handleGitHubAppLogout', () => {
+  it('rejects a disallowed origin with 403', async () => {
+    const response = await handleGitHubAppLogout(
+      makeRequest(
+        'https://push.example.test/api/github/app-logout',
+        { body: JSON.stringify({ token: 'ghs_x' }) },
+        { Origin: 'https://evil.test' },
+      ),
+      makeEnv(),
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('returns 429 with Retry-After when rate limit is exceeded', async () => {
+    const env = makeEnv({
+      RATE_LIMITER: {
+        limit: vi.fn(async () => ({ success: false })),
+      } as unknown as Env['RATE_LIMITER'],
+    });
+    const response = await handleGitHubAppLogout(
+      makeRequest('https://push.example.test/api/github/app-logout', {
+        body: JSON.stringify({ token: 'ghs_x' }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('60');
+  });
+
+  it('returns 400 for invalid JSON', async () => {
+    const response = await handleGitHubAppLogout(
+      makeRequest('https://push.example.test/api/github/app-logout', { body: '{not json' }),
+      makeEnv(),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 when token is missing', async () => {
+    const response = await handleGitHubAppLogout(
+      makeRequest('https://push.example.test/api/github/app-logout', {
+        body: JSON.stringify({}),
+      }),
+      makeEnv(),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 when token exceeds the size cap', async () => {
+    const response = await handleGitHubAppLogout(
+      makeRequest('https://push.example.test/api/github/app-logout', {
+        body: JSON.stringify({ token: 'a'.repeat(257) }),
+      }),
+      makeEnv(),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 204 and forwards the token to GitHub when revocation succeeds', async () => {
+    const calls: Array<{ url: string; method: string; auth: string | null }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        const headers = new Headers(init?.headers);
+        calls.push({
+          url,
+          method: init?.method ?? 'GET',
+          auth: headers.get('Authorization'),
+        });
+        return new Response(null, { status: 204 });
+      }),
+    );
+    const response = await handleGitHubAppLogout(
+      makeRequest('https://push.example.test/api/github/app-logout', {
+        body: JSON.stringify({ token: 'ghs_secret' }),
+      }),
+      makeEnv(),
+    );
+    expect(response.status).toBe(204);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://api.github.com/installation/token');
+    expect(calls[0].method).toBe('DELETE');
+    expect(calls[0].auth).toBe('Bearer ghs_secret');
+  });
+
+  it('returns 204 (idempotent) when GitHub reports the token already invalid', async () => {
+    for (const status of [401, 404]) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('', { status })),
+      );
+      const response = await handleGitHubAppLogout(
+        makeRequest('https://push.example.test/api/github/app-logout', {
+          body: JSON.stringify({ token: 'ghs_x' }),
+        }),
+        makeEnv(),
+      );
+      expect(response.status).toBe(204);
+    }
+  });
+
+  it('returns 502 when GitHub responds with an unexpected error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('boom', { status: 500 })),
+    );
+    const response = await handleGitHubAppLogout(
+      makeRequest('https://push.example.test/api/github/app-logout', {
+        body: JSON.stringify({ token: 'ghs_x' }),
+      }),
+      makeEnv(),
+    );
+    expect(response.status).toBe(502);
+  });
+
+  it('returns 500 when fetch itself throws', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('network down');
+      }),
+    );
+    const response = await handleGitHubAppLogout(
+      makeRequest('https://push.example.test/api/github/app-logout', {
+        body: JSON.stringify({ token: 'ghs_x' }),
+      }),
+      makeEnv(),
+    );
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).not.toContain('network down');
   });
 });
 

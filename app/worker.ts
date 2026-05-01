@@ -50,6 +50,7 @@ import {
   handleHealthCheck,
   handleGitHubAppOAuth,
   handleGitHubAppToken,
+  handleGitHubAppLogout,
 } from './src/worker/worker-infra';
 import { handleCloudflareSandbox } from './src/worker/worker-cf-sandbox';
 import { handleGitHubTools } from './src/worker/worker-github-tools';
@@ -304,6 +305,7 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   },
   { path: '/api/github/app-token', method: 'POST', handler: handleGitHubAppToken },
   { path: '/api/github/app-oauth', method: 'POST', handler: handleGitHubAppOAuth },
+  { path: '/api/github/app-logout', method: 'POST', handler: handleGitHubAppLogout },
   { path: '/api/github/tools', method: 'POST', handler: handleGitHubTools },
   { path: '/api/ollama/chat', method: 'POST', handler: handleOllamaChat },
   { path: '/api/ollama/models', method: 'GET', handler: handleOllamaModels },
