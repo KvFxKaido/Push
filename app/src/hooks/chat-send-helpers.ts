@@ -14,6 +14,10 @@
  *   - extractChangedPathFromStatusLine  — git status --porcelain parser
  *   - inferVerificationCommandResult    — pulls a verification command result out of a tool card
  *   - collectPostToolPolicyEffects      — drains postHookInject / postHookHalt across tool results
+ *   - createTurnRunContext              — Phase 2: per-turn closure factory
+ *                                          (post-tool policy effects, tool-failure
+ *                                          recording, round sandbox status cache)
+ *                                          shared by the three branch handlers.
  */
 
 import type { MutableRefObject } from 'react';
@@ -23,11 +27,20 @@ import {
   type ToolExecRunContext,
   type ToolExecRawResult,
 } from '@/lib/chat-tool-execution';
+import { execInSandbox } from '@/lib/sandbox-client';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { executeTodoToolCall } from '@/lib/todo-tools';
+import { getToolName } from '@/lib/chat-tool-messages';
+import { getToolInvocationKey, type MutationFailureTracker } from '@push/lib/agent-loop-utils';
 import { createId } from '@push/lib/id-utils';
+import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage, ToolExecutionResult } from '@/types';
-import type { ScratchpadHandlers, TodoHandlers } from './chat-send-types';
+import type {
+  AssistantTurnResult,
+  ScratchpadHandlers,
+  SendLoopContext,
+  TodoHandlers,
+} from './chat-send-types';
 
 const TOOL_RESULT_PULSE_INTERVAL = 3;
 
@@ -238,5 +251,182 @@ export function collectPostToolPolicyEffects(
     messages,
     halted: Boolean(haltDetail),
     haltDetail,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Per-turn run context — Phase 2 split.
+//
+// The three branch handlers (`executeBatchedToolCalls`, `processNoToolPath`,
+// `executeSingleToolCall`) extracted out of `processAssistantTurn` share three
+// stateful pieces of work:
+//
+//   1. `applyPostToolPolicyEffects(msgs, results)` — drains postHookInject /
+//      postHookHalt across one or more tool results, mutates conversation
+//      state, writes the checkpoint, and returns an `AssistantTurnResult` if
+//      any effects fired (or null to fall through).
+//   2. `recordToolFailure(call, isError)` — feeds the circuit-breaker tracker
+//      after a tool execution.
+//   3. `getRoundSandboxStatus()` / `invalidateSandboxStatus()` — per-turn
+//      `git status` cache so a sequence of tool executions only pays the
+//      sandbox round-trip once between mutations.
+//
+// `createTurnRunContext` builds these once per `processAssistantTurn` call,
+// closing over `ctx`, `recoveryState`, and `tracker`. Each branch handler
+// receives the resulting `TurnRunContext` and uses it through stable method
+// names — keeps call sites identical to the pre-extraction inline code.
+// ---------------------------------------------------------------------------
+
+export type RoundSandboxStatus = {
+  dirty: boolean;
+  files: number;
+  branch?: string;
+  head?: string;
+  changedFiles?: string[];
+};
+
+export interface TurnRunContext {
+  applyPostToolPolicyEffects: (
+    currentApiMessages: ChatMessage[],
+    results: readonly ToolExecutionResult[],
+  ) => AssistantTurnResult | null;
+  recordToolFailure: (call: AnyToolCall, isError: boolean) => void;
+  getRoundSandboxStatus: () => Promise<RoundSandboxStatus | null>;
+  invalidateSandboxStatus: () => void;
+}
+
+export function createTurnRunContext(
+  ctx: SendLoopContext,
+  recoveryState: ToolCallRecoveryState,
+  tracker: MutationFailureTracker,
+): TurnRunContext {
+  const {
+    chatId,
+    sandboxIdRef,
+    checkpointRefs,
+    setConversations,
+    dirtyConversationIdsRef,
+    updateAgentStatus,
+    flushCheckpoint,
+  } = ctx;
+
+  // Per-round sandbox status cache — fetched lazily after the first tool
+  // executes; invalidated by the branch handlers each time a tool runs so
+  // subsequent reads observe post-mutation state.
+  let cachedStatus: RoundSandboxStatus | null = null;
+  let cacheFetched = false;
+
+  const getRoundSandboxStatus = async (): Promise<RoundSandboxStatus | null> => {
+    if (cacheFetched) return cachedStatus;
+    cacheFetched = true;
+    if (!sandboxIdRef.current) return null;
+    try {
+      const statusResult = await execInSandbox(
+        sandboxIdRef.current,
+        [
+          'cd /workspace || exit 1',
+          'echo "---BRANCH---"',
+          'git branch --show-current 2>/dev/null',
+          'echo "---HEAD---"',
+          'git rev-parse --short HEAD 2>/dev/null',
+          'echo "---STATUS---"',
+          'git status --porcelain 2>/dev/null | head -20',
+        ].join('\n'),
+      );
+      const sections: Record<string, string[]> = {};
+      let currentSection: string | null = null;
+      for (const line of statusResult.stdout.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed === '---BRANCH---') {
+          currentSection = 'branch';
+          sections[currentSection] = [];
+          continue;
+        }
+        if (trimmed === '---HEAD---') {
+          currentSection = 'head';
+          sections[currentSection] = [];
+          continue;
+        }
+        if (trimmed === '---STATUS---') {
+          currentSection = 'status';
+          sections[currentSection] = [];
+          continue;
+        }
+        if (currentSection) {
+          sections[currentSection].push(line);
+        }
+      }
+      const statusLines = (sections.status || []).map((line) => line.trimEnd()).filter(Boolean);
+      cachedStatus = {
+        dirty: statusLines.length > 0,
+        files: statusLines.length,
+        branch: sections.branch?.map((line) => line.trim()).find(Boolean),
+        head: sections.head?.map((line) => line.trim()).find(Boolean),
+        changedFiles: statusLines
+          .map(extractChangedPathFromStatusLine)
+          .filter((value): value is string => Boolean(value))
+          .slice(0, 6),
+      };
+    } catch {
+      // Best-effort — don't block tool execution
+    }
+    return cachedStatus;
+  };
+
+  const invalidateSandboxStatus = () => {
+    cacheFetched = false;
+  };
+
+  const applyPostToolPolicyEffects = (
+    currentApiMessages: ChatMessage[],
+    results: readonly ToolExecutionResult[],
+  ): AssistantTurnResult | null => {
+    const effects = collectPostToolPolicyEffects(results);
+    if (effects.messages.length === 0) return null;
+
+    setConversations((prev) => {
+      const conv = prev[chatId];
+      if (!conv) return prev;
+      const updated = {
+        ...prev,
+        [chatId]: {
+          ...conv,
+          messages: [...conv.messages, ...effects.messages],
+          lastMessageAt: Date.now(),
+        },
+      };
+      dirtyConversationIdsRef.current.add(chatId);
+      return updated;
+    });
+
+    const nextApiMessages = [...currentApiMessages, ...effects.messages];
+    checkpointRefs.apiMessages.current = nextApiMessages;
+    flushCheckpoint();
+
+    if (effects.halted) {
+      updateAgentStatus(
+        { active: true, phase: 'Policy halt', detail: effects.haltDetail },
+        { chatId },
+      );
+    }
+
+    return {
+      nextApiMessages,
+      nextRecoveryState: recoveryState,
+      loopAction: 'continue',
+      loopCompletedNormally: false,
+    };
+  };
+
+  const recordToolFailure = (call: AnyToolCall, isError: boolean) => {
+    if (!isError) return;
+    tracker.recordFailure(getToolInvocationKey(getToolName(call), call.call));
+  };
+
+  return {
+    applyPostToolPolicyEffects,
+    recordToolFailure,
+    getRoundSandboxStatus,
+    invalidateSandboxStatus,
   };
 }
