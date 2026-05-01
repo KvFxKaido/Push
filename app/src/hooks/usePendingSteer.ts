@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useCallback, useRef, useState } from 'react';
-import type { AttachmentData, QueuedFollowUpOptions } from '@/types';
+import type { PendingSteerRequest } from '@/types';
 import {
   appendQueuedItem,
   clearQueuedItems,
@@ -8,12 +8,7 @@ import {
   type QueuedItemsByChat,
 } from './chat-queue';
 
-export interface PendingSteerRequest {
-  text: string;
-  attachments?: AttachmentData[];
-  options?: QueuedFollowUpOptions;
-  requestedAt: number;
-}
+export type { PendingSteerRequest } from '@/types';
 
 export type PendingSteersByChat = QueuedItemsByChat<PendingSteerRequest>;
 

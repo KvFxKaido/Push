@@ -801,6 +801,13 @@ export interface QueuedFollowUp {
   queuedAt: number;
 }
 
+export interface PendingSteerRequest {
+  text: string;
+  attachments?: AttachmentData[];
+  options?: QueuedFollowUpOptions;
+  requestedAt: number;
+}
+
 import type {
   VerificationRequirementStatus,
   VerificationRequirementState,
