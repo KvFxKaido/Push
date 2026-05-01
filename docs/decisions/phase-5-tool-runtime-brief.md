@@ -1,7 +1,7 @@
 # Phase 5B — ToolExecutionRuntime Interface Brief
 
 Date: 2026-04-12
-Status: **Draft** — pending review before Phase 5B implementation
+Status: **Historical** — shipped 2026-04-12 in commit `6fecefcc` (`refactor(tools): implement Phase 5B ToolExecutionRuntime interface`). Implementation lives at `lib/tool-execution-runtime.ts` (interface) and `app/src/lib/web-tool-execution-runtime.ts` (Web adapter). `app/src/lib/tool-dispatch.ts:executeAnyToolCall` is now the thin shim the brief specified. All acceptance criteria below are satisfied. Phase 5C (deep-reviewer) and Phase 5D (Explorer, Coder) shipped subsequently — see `push-runtime-v2.md` for the full delivery record. Brief preserved unchanged below for design rationale.
 Owner: ishaw
 Related: [push-runtime-v2.md](push-runtime-v2.md), Phase 4 approval seam (`bbd282e`), Phase 5A leaf moves (`8a96fb2`, `ff68c06`, `020d347`, `60d1722`)
 
