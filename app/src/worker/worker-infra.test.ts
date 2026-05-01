@@ -320,6 +320,25 @@ describe('handleGitHubAppOAuth error paths', () => {
     expect(response.status).toBe(403);
   });
 
+  it('returns 429 with Retry-After when rate limit is exceeded', async () => {
+    const env = makeEnv({
+      ...appEnv,
+      RATE_LIMITER: {
+        limit: vi.fn(async () => ({ success: false })),
+      } as unknown as Env['RATE_LIMITER'],
+    });
+    const response = await handleGitHubAppOAuth(
+      makeRequest('https://push.example.test/api/auth/github-app/oauth', {
+        body: JSON.stringify({ code: 'x' }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('60');
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/rate limit/i);
+  });
+
   it('returns 500 when OAuth client credentials are missing', async () => {
     const response = await handleGitHubAppOAuth(
       makeRequest('https://push.example.test/api/auth/github-app/oauth', {
@@ -576,6 +595,25 @@ describe('handleGitHubAppToken error paths', () => {
       makeEnv(appEnv),
     );
     expect(response.status).toBe(403);
+  });
+
+  it('returns 429 with Retry-After when rate limit is exceeded', async () => {
+    const env = makeEnv({
+      ...appEnv,
+      RATE_LIMITER: {
+        limit: vi.fn(async () => ({ success: false })),
+      } as unknown as Env['RATE_LIMITER'],
+    });
+    const response = await handleGitHubAppToken(
+      makeRequest('https://push.example.test/api/auth/github-app/token', {
+        body: JSON.stringify({ installation_id: '1' }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('60');
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/rate limit/i);
   });
 
   it('returns 500 when the GitHub App is not configured', async () => {
