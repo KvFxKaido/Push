@@ -19,11 +19,7 @@ import {
   type ActiveProvider,
 } from '@/lib/orchestrator';
 import { getModelNameForProvider } from '@/lib/providers';
-import {
-  migrateConversationsToIndexedDB,
-  saveConversation as saveConversationToDB,
-  deleteConversation as deleteConversationFromDB,
-} from '@/lib/conversation-store';
+import { migrateConversationsToIndexedDB } from '@/lib/conversation-store';
 import { createId } from '@push/lib/id-utils';
 import {
   loadActiveChatId,
@@ -31,6 +27,7 @@ import {
   normalizeConversationModel,
   saveActiveChatId,
 } from '@/hooks/chat-persistence';
+import { useConversationPersistence } from './useConversationPersistence';
 import { useAgentDelegation } from './useAgentDelegation';
 import { useBackgroundCoderJob } from './useBackgroundCoderJob';
 import { isBackgroundModeEnabled } from '@/lib/background-mode-settings';
@@ -136,13 +133,15 @@ export function useChat(
   const [agentEventsByChat, setAgentEventsByChat] =
     useState<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
 
-  // --- Persistence refs ---
-  const dirtyConversationIdsRef = useRef(new Set<string>());
-  const deletedConversationIdsRef = useRef(new Set<string>());
-  const saveRetryCountsRef = useRef<Map<string, number>>(new Map());
-
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
+
+  // --- Conversation persistence (dirty/deleted sets + flush lifecycle) ---
+  const { dirtyConversationIdsRef, deletedConversationIdsRef } = useConversationPersistence({
+    conversationsLoaded,
+    conversationsRef,
+  });
+
   const agentEventsByChatRef = useRef<Record<string, AgentStatusEvent[]>>(initialAgentEventsByChat);
   agentEventsByChatRef.current = agentEventsByChat;
   const activeChatIdRef = useRef(activeChatId);
@@ -252,76 +251,6 @@ export function useChat(
       setAgentEventsByChat(next);
     }
   }, []);
-
-  const flushDirty = useCallback(async () => {
-    if (!conversationsLoaded) return;
-    const dirty = dirtyConversationIdsRef.current;
-    const deleted = deletedConversationIdsRef.current;
-    if (dirty.size === 0 && deleted.size === 0) return;
-
-    const dirtyIds = [...dirty];
-    const deletedIds = [...deleted];
-    dirty.clear();
-    deleted.clear();
-
-    const currentConvs = conversationsRef.current;
-    for (const id of dirtyIds) {
-      const conv = currentConvs[id];
-      if (conv) {
-        try {
-          await saveConversationToDB(conv);
-          saveRetryCountsRef.current.delete(id);
-        } catch (err) {
-          const count = saveRetryCountsRef.current.get(id) || 0;
-          if (count < 3) {
-            saveRetryCountsRef.current.set(id, count + 1);
-            dirty.add(id);
-          } else {
-            console.warn(
-              `Failed to save conversation ${id} after 3 retries. Dropping update.`,
-              err,
-            );
-            saveRetryCountsRef.current.delete(id);
-          }
-        }
-      }
-    }
-    for (const id of deletedIds) {
-      try {
-        await deleteConversationFromDB(id);
-        saveRetryCountsRef.current.delete(id);
-      } catch (err) {
-        const count = saveRetryCountsRef.current.get(id) || 0;
-        if (count < 3) {
-          saveRetryCountsRef.current.set(id, count + 1);
-          deleted.add(id);
-        } else {
-          console.warn(
-            `Failed to delete conversation ${id} after 3 retries. Dropping deletion.`,
-            err,
-          );
-          saveRetryCountsRef.current.delete(id);
-        }
-      }
-    }
-  }, [conversationsLoaded]);
-
-  // Periodic flush
-  useEffect(() => {
-    const interval = setInterval(flushDirty, 3000);
-    return () => clearInterval(interval);
-  }, [flushDirty]);
-
-  // Emergency save on visibility change (mobile app-switch/lock)
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        void flushDirty();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [flushDirty]);
 
   useEffect(() => {
     return () => {
@@ -535,7 +464,14 @@ export function useChat(
       setActiveChatId(sortedChatIds[0]);
       saveActiveChatId(sortedChatIds[0]);
     }
-  }, [sortedChatIds, activeChatId, activeRepoFullName, updateConversations, skipAutoCreateRef]);
+  }, [
+    sortedChatIds,
+    activeChatId,
+    activeRepoFullName,
+    updateConversations,
+    skipAutoCreateRef,
+    dirtyConversationIdsRef,
+  ]);
 
   // --- Sandbox setters ---
   const setSandboxId = useCallback((id: string | null) => {
@@ -974,7 +910,7 @@ export function useChat(
       });
       return result;
     },
-    [updateConversations, skipAutoCreateRef],
+    [updateConversations, skipAutoCreateRef, dirtyConversationIdsRef],
   );
 
   return {
