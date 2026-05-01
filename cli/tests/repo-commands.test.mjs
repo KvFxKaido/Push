@@ -11,9 +11,12 @@ import {
 } from '../../lib/repo-commands.ts';
 import {
   buildRepoCommandsSnapshot,
+  ensureRepoCommandsSeeded,
   loadRepoCommands,
   resetRepoCommandsMemo,
 } from '../repo-commands.ts';
+import { formatCoderState as formatCoderStateFromWorkingMemory } from '../../lib/working-memory.ts';
+import { formatCoderState as formatCoderStateFromCoderAgent } from '../../lib/coder-agent.ts';
 
 // ---------------------------------------------------------------------------
 // Pure derivation
@@ -427,5 +430,105 @@ describe('loadRepoCommands', () => {
     const second = await loadRepoCommands(root);
     assert.notEqual(first, second);
     assert.equal(second.test?.command, 'npm run test:unit');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ensureRepoCommandsSeeded
+// ---------------------------------------------------------------------------
+
+describe('ensureRepoCommandsSeeded', () => {
+  beforeEach(() => resetRepoCommandsMemo());
+
+  it('seeds validationCommands onto the working memory', async (t) => {
+    const root = await makeFixture(t, {
+      'package.json': JSON.stringify({
+        scripts: { test: 'vitest run', typecheck: 'tsc --noEmit' },
+      }),
+    });
+    const state = { cwd: root, workingMemory: {} };
+    await ensureRepoCommandsSeeded(state);
+    assert.equal(state.workingMemory.validationCommands?.test?.command, 'npm run test');
+    assert.equal(state.workingMemory.validationCommands?.typecheck?.command, 'npm run typecheck');
+  });
+
+  it('is a no-op when validationCommands is already set', async (t) => {
+    const root = await makeFixture(t, {
+      'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }),
+    });
+    const preset = {
+      test: { command: 'npm run preset', source: 'agents-md', confidence: 'explicit' },
+    };
+    const state = { cwd: root, workingMemory: { validationCommands: preset } };
+    await ensureRepoCommandsSeeded(state);
+    assert.equal(state.workingMemory.validationCommands, preset);
+  });
+
+  it('swallows discovery failures silently', async (t) => {
+    const root = await makeFixture(t, { 'package.json': '{ not json' });
+    const state = { cwd: root, workingMemory: {} };
+    await ensureRepoCommandsSeeded(state);
+    // No package scripts and no AGENTS hints means an empty RepoCommands
+    // object — but discovery should not throw.
+    assert.ok(state.workingMemory.validationCommands);
+  });
+
+  it('initializes workingMemory when missing', async (t) => {
+    const root = await makeFixture(t, {
+      'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }),
+    });
+    const state = { cwd: root };
+    await ensureRepoCommandsSeeded(state);
+    assert.ok(state.workingMemory);
+    assert.equal(state.workingMemory.validationCommands?.test?.command, 'npm run test');
+  });
+
+  it('initializes workingMemory when non-object', async (t) => {
+    const root = await makeFixture(t, {
+      'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }),
+    });
+    // Resumed sessions can have workingMemory typed as unknown — null/array
+    // shapes shouldn't crash the seeder.
+    const state = { cwd: root, workingMemory: null };
+    await ensureRepoCommandsSeeded(state);
+    assert.ok(state.workingMemory && typeof state.workingMemory === 'object');
+    assert.equal(state.workingMemory.validationCommands?.test?.command, 'npm run test');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Renderer parity — pin both formatCoderState implementations to the same
+// output for a given input. If `validationCommands` is added to one but not
+// the other, this test fails CI. Transitional debt until the duplicate
+// rendering in lib/coder-agent.ts is folded into lib/working-memory.ts.
+// ---------------------------------------------------------------------------
+
+describe('formatCoderState renderer parity', () => {
+  it('emits the Validation line identically across both modules', () => {
+    const memory = {
+      plan: 'Ship it',
+      validationCommands: {
+        test: { command: 'npm run test:cli', source: 'agents-md', confidence: 'explicit' },
+        lint: { command: 'npx biome check .', source: 'config-file', confidence: 'heuristic' },
+        typecheck: {
+          command: 'npm run typecheck',
+          source: 'package-script',
+          confidence: 'explicit',
+        },
+      },
+    };
+    const fromWorkingMemory = formatCoderStateFromWorkingMemory(memory, 0);
+    const fromCoderAgent = formatCoderStateFromCoderAgent(memory, 0);
+    assert.equal(fromWorkingMemory, fromCoderAgent);
+    assert.match(fromWorkingMemory, /Validation: test=npm run test:cli \[agents-md\]/);
+    assert.match(fromWorkingMemory, /lint=npx biome check \. \[config-file\]/);
+  });
+
+  it('omits the Validation line when validationCommands is absent', () => {
+    const memory = { plan: 'Ship it' };
+    const fromWorkingMemory = formatCoderStateFromWorkingMemory(memory, 0);
+    const fromCoderAgent = formatCoderStateFromCoderAgent(memory, 0);
+    assert.equal(fromWorkingMemory, fromCoderAgent);
+    assert.ok(!fromWorkingMemory.includes('Validation:'));
   });
 });

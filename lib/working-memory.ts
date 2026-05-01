@@ -9,6 +9,7 @@
  */
 
 import { detectToolFromText, asRecord } from './tool-protocol.js';
+import { formatRepoCommands, type RepoCommands } from './repo-commands.js';
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -33,6 +34,13 @@ export interface CoderWorkingMemory {
   currentPhase?: string;
   completedPhases?: string[];
   observations?: CoderObservation[];
+  /**
+   * Repo validation contract (test/lint/typecheck/format/build/check) seeded
+   * at session start by the CLI boot path. System-managed: not parsed from
+   * model `coder_update_state` calls and not mutated by `applyWorkingMemoryUpdate`,
+   * so models can read it but cannot overwrite it.
+   */
+  validationCommands?: RepoCommands;
 }
 
 export type CoderObservationUpdate = {
@@ -269,6 +277,15 @@ function collectCoderStateDeltaLines(
   if (arraysChanged(current.completedPhases, previous.completedPhases)) {
     diffs.push(`Completed: ${current.completedPhases?.join(', ') || '(none)'}`);
   }
+  const currentValidation = current.validationCommands
+    ? formatRepoCommands(current.validationCommands)
+    : '';
+  const previousValidation = previous.validationCommands
+    ? formatRepoCommands(previous.validationCommands)
+    : '';
+  if (currentValidation !== previousValidation && currentValidation) {
+    diffs.push(`Validation: ${currentValidation}`);
+  }
 
   const currentObservations = getVisibleObservations(current.observations, currentRound);
   const previousObservations = getVisibleObservations(previous.observations, currentRound);
@@ -293,7 +310,8 @@ export function hasCoderState(mem: CoderWorkingMemory, currentRound: number): bo
       mem.errorsEncountered?.length ||
       mem.currentPhase ||
       mem.completedPhases?.length ||
-      getVisibleObservations(mem.observations, currentRound).length,
+      getVisibleObservations(mem.observations, currentRound).length ||
+      (mem.validationCommands && formatRepoCommands(mem.validationCommands).length > 0),
   );
 }
 
@@ -310,6 +328,10 @@ export function formatCoderState(mem: CoderWorkingMemory, currentRound = 0): str
   if (mem.errorsEncountered?.length) lines.push(`Errors: ${mem.errorsEncountered.join('; ')}`);
   if (mem.currentPhase) lines.push(`Phase: ${mem.currentPhase}`);
   if (mem.completedPhases?.length) lines.push(`Completed: ${mem.completedPhases.join(', ')}`);
+  if (mem.validationCommands) {
+    const rendered = formatRepoCommands(mem.validationCommands);
+    if (rendered) lines.push(`Validation: ${rendered}`);
+  }
   for (const observation of getVisibleObservations(mem.observations, currentRound)) {
     lines.push(formatObservationLine(observation));
   }

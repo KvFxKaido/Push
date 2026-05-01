@@ -58,7 +58,9 @@ For this repo:
 
 ```bash
 # test:
-npm run test:cli
+npm run test:cli && npm run test:mcp:github
+# typecheck:
+npm run typecheck:tsgo
 # check:
 npm run typecheck:tsgo
 ```

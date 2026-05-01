@@ -94,6 +94,7 @@ import {
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.js';
 import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.js';
 import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
+import { ensureRepoCommandsSeeded } from './repo-commands.js';
 import { createTabCompleter } from './tui-completer.js';
 import { createFileLedger, updateFileLedger, getLedgerSummary } from './file-ledger.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
@@ -1561,6 +1562,9 @@ export async function runTUI(options = {}) {
     // Start enriching the system prompt in the background — will be
     // awaited before the first LLM call in runAssistantLoop.
     ensureSystemPromptReady(nextState);
+    // Seed repo validation commands (test/lint/typecheck/...) into working
+    // memory in the background. Best-effort: failures don't block the session.
+    ensureRepoCommandsSeeded(nextState);
     // Disk writes are deferred to first user message (lazy session creation).
     return nextState;
   }
@@ -1612,6 +1616,10 @@ export async function runTUI(options = {}) {
     const requestedModel = options.model || providerConfig.defaultModel;
     state = await createFreshSessionState(providerName, requestedModel, cwd);
   }
+
+  // Seed validation commands on resumed sessions too — covers users who
+  // upgrade the CLI after starting a session that pre-dates the field.
+  ensureRepoCommandsSeeded(state);
 
   const activeProviderConfig = PROVIDER_CONFIGS[state.provider];
   if (!activeProviderConfig) throw new Error(`Unknown provider in session: ${state.provider}`);
