@@ -50,6 +50,10 @@ Prompts and docs describe behavior; they do not create it.
 - Legitimate prompt/doc updates: teaching models about hard runtime boundaries that already exist in code (e.g. PR #378 documenting that the tool-call parser only scans `content`, not reasoning tokens), clarifying role contracts, or surfacing quirks models can't infer.
 - When in doubt: ask whether a non-cooperating model could break the system. If yes, the fix belongs in code.
 
+## Decision-doc discipline
+
+When you ship something specified in a `docs/decisions/` doc, flip that doc's `Status:` field in the same PR. Spec docs that drift from reality become silently misleading: `phase-5-tool-runtime-brief.md` sat at "Draft — pending review" for three weeks while the implementation (`lib/tool-execution-runtime.ts`) had landed in commit `6fecefcc` within hours of the brief itself being written. The status flip is part of the ship checklist, not a follow-up. See `docs/decisions/README.md` for the available status labels (Current / Historical / Draft / Reference / Superseded by `<doc>` / Merged into `<doc>`).
+
 ## Validation commands
 
 Push derives a repo's validation contract (test, lint, typecheck, format, build, check) from `package.json` scripts and recognized config files. To override a derived command for a specific kind, add a fenced `bash`/`sh`/`shell` block to `AGENTS.md` (or `CLAUDE.md`) with a leading `# kind:` directive on the line before the command. AGENTS.md beats CLAUDE.md, and overrides are per-kind: defining `test` here still leaves `lint`/`typecheck`/etc. to fall through to package scripts and config files. The umbrella `check` is always additive — it never replaces the targeted commands.
