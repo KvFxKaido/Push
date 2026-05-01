@@ -120,20 +120,24 @@ export default defineConfig([
       'max-lines': ['error', { max: 950 }],
     },
   },
-  // Containment guard for chat-send.ts. The dispatcher is the largest
-  // remaining module after the useChat re-extraction. 2026-05-01 split it
-  // into four files: chat-send.ts (processAssistantTurn dispatcher),
-  // chat-send-types.ts (SendLoopContext + handler interfaces),
-  // chat-send-helpers.ts (pulse / delegate / chat-hook / verification /
-  // post-tool-policy helpers), and chat-stream-round.ts (the streaming
-  // wrapper). chat-send.ts dropped 1,740 -> 1,272. Cap is set above the
-  // current count to leave a small headroom but well under the
-  // pre-extraction state. Phase 2 (splitting processAssistantTurn along
-  // its three internal phases) would ratchet this down further.
+  // Containment guard for chat-send.ts. Two-phase split landed 2026-05-01:
+  //
+  //   Phase 1 (PR #466): chat-send.ts 1,740 -> 1,272 via three siblings
+  //                       (chat-send-types.ts, chat-send-helpers.ts,
+  //                       chat-stream-round.ts). Cap 1,300.
+  //   Phase 2 (this commit): processAssistantTurn split along its three
+  //                       internal phases — chat-batched-execution.ts,
+  //                       chat-no-tool-path.ts, chat-single-tool-execution.ts
+  //                       — with a TurnRunContext factory in chat-send-helpers
+  //                       owning the per-turn closures (sandbox-status cache,
+  //                       post-tool policy drainer, tool-failure recorder).
+  //                       chat-send.ts is now 203 lines and is structurally
+  //                       a router. Cap ratcheted to 250 so any regrowth
+  //                       trips CI.
   {
     files: ['src/hooks/chat-send.ts'],
     rules: {
-      'max-lines': ['error', { max: 1300 }],
+      'max-lines': ['error', { max: 250 }],
     },
   },
 ]);
