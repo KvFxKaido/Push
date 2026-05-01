@@ -4,10 +4,11 @@ Date: 2026-04-17
 Status: Reference snapshot, full panel refresh on 2026-04-17
 
 Refresh note:
-- **State update 2026-05-01** (no fresh panel refresh run yet — facts and line counts only):
+- **State update 2026-05-01** (Gemini reassessed; Codex light refresh after `coder-agent.ts` helper extraction; Claude reassessed):
   - **`useChat.ts` re-discharge — Waterbed Effect reversed.** The "ceiling ratcheted up" concern from the 2026-04-26 update is over. `useChat.ts` 1,450 → **892 lines** (−38.5%) across a multi-commit program: `prepareSendContext` / `acquireRunSession` / `finalizeRunSession` (2026-04-26, late), `queued-follow-up-utils.ts` and `chat-round-loop.ts` (2026-05-01), then today's three — `useConversationPersistence`, `chat-active-run-router`, `useChatAutoSwitch`. The ESLint `max-lines` cap on `useChat.ts` ratcheted from 1,400 → **1,060** (commit `0dcbbb3a`, 2026-04-28); current file leaves ~168 lines of headroom, so a further ratchet is justified. Net new test surface: ~30 cases pinning previously-uncovered behavior (retry-with-cap-at-3 in persistence, FIFO queue position math, the auto-switch state machine including the migration-marker gate). The "extraction discipline" the synthesis flagged as the next-jump condition is now demonstrated on the densest module — not just operationalized via the cap.
-  - **Other Big Four — flat.** `useAgentDelegation.ts` 673 → **673** (unchanged), `sandbox-tools.ts` 670 → **670** (unchanged), `coder-agent.ts` 1,984 → **1,989** (+0.3%, structural). Total Big-Four surface 4,777 → **4,224 lines** (−11.6%). The `coder-agent.ts` permanent-boundary decision still holds (Remediation Plan §Step 5).
-  - **What this does not yet move.** The synthesis-named "verification-family extraction from `sandbox-tools.ts`" remains undone — that's the panel's specific test of the handler-context pattern, not just any extraction. Today's work is "more of the right kind" but isn't the strategic landing. The score-relevant question for the next panel refresh: does multi-week, multi-PR discipline on `useChat.ts` count as evidence the pattern works, or does the credit wait for verification-family proof?
+  - **Coder helper extraction — permanent boundary refined, not overturned.** `coder-agent.ts` 1,989 → **1,411 lines** (−29.1%) after extracting working-memory delegation, context-trim helpers, and mutation-result helpers into sibling `lib/` modules with focused tests. The core `runCoderAgent` loop remains the load-bearing boundary, which is the right shape; this is not a full decomposition, but it does remove helper mass without creating a fake abstraction.
+  - **Big Four surface now materially smaller.** `useAgentDelegation.ts` 673 → **673** (unchanged), `sandbox-tools.ts` 670 → **670** (unchanged), `coder-agent.ts` 1,984 → **1,411** (−28.9%). Total Big-Four surface 4,777 → **3,646 lines** (−23.7%). The `coder-agent.ts` permanent-boundary decision still holds (Remediation Plan §Step 5), but the helper perimeter is now cleaner and test-pinned.
+  - **What this does not yet move all the way.** The synthesis-named "verification-family extraction from `sandbox-tools.ts`" remains undone — that's the panel's specific test of the handler-context pattern, not just any extraction. Today's work is "more of the right kind" and earns implementation-shape credit, but it is not the strategic landing for a 9+ implementation read.
 - **State update 2026-04-26** (no fresh panel refresh run yet — facts and line counts only):
   - **Cloudflare Sandbox provider v1 landed** (~2026-04-20) at `/api/sandbox-cf/*`, routed through the existing sandbox-provider abstraction. Known gaps: no owner tokens, no snapshots, `revision=0`. Doesn't move the architecture axis — parallel backend behind the same seam — but adds operational surface.
   - **Sandbox stall hardening complete** (PRs [#372](https://github.com/KvFxKaido/Push/pull/372)–[#382](https://github.com/KvFxKaido/Push/pull/382), 2026-04-24) plus the `/opt/push-cache` bake. The 100s cold-npm-install + stall pattern that was hurting reliability is closed; "edits vanishing" is the only remaining item from that cluster, pending snapshots.
@@ -27,22 +28,37 @@ Refresh note:
 
 | Model | Overall | Arch | Impl | Status | Notes |
 |---|---|---|---|---|---|
-| Codex | **8.5/10** | 9.1 | 8.3 | Reassessed 2026-04-17 | Architecture above 9 for the first time — `ROLE_CAPABILITY_DENIED` at execution layer makes capability enforcement substrate-grade. Groundwork earns credit; extraction earns the next jump. |
-| Claude | **8.6/10** | 9.0 | 8.2 | Reassessed 2026-04-17 | Runtime enforcement and 313 new tests are real implementation gains. Dense modules still the gravity well — `sandbox-tools.ts` weighs less but the shape hasn't changed. |
-| Gemini | **8.7/10** | 9.0 | 8.4 | Reassessed 2026-04-17 | 313 tests are a massive de-risking effort; runtime enforcement at execution layer shows defensive coding. Score can't reach 9 until dense modules are actually extracted. |
+| Codex | **8.6/10** | 9.1 | 8.4 | Light refresh 2026-05-01 | Architecture unchanged. `useChat.ts` discharge plus `coder-agent.ts` helper extraction move implementation shape modestly; the Coder loop and Verification family remain the ceiling. |
+| Claude | **8.7/10** | 9.0 | 8.4 | Reassessed 2026-05-01 (self-rating, conflict-of-interest noted) | `useChat.ts` re-discharge plus `coder-agent.ts` helper extraction earn a quarter point on implementation. Verification-family extraction still the panel-named landing for a 9+. |
+| Gemini | **8.9/10** | 9.0 | 8.8 | Reassessed 2026-05-01 | `useChat.ts` discharge is definitive proof of extraction discipline. Implementation score jumps 0.4. |
 
 ## Codex
 
-### Rating (2026-04-17)
+### Rating (2026-05-01 light refresh)
 
-Overall: **8.5/10**
+Overall: **8.6/10**
 
 Split view:
 
-- **9.1/10** on architecture taste / system design (was 8.9)
-- **8.3/10** on current implementation shape (was 8.1)
+- **9.1/10** on architecture taste / system design (unchanged)
+- **8.4/10** on current implementation shape (was 8.3)
 
 ### Why the scores moved
+
+The 2026-05-01 light refresh moves implementation up a notch, not a tier. `useChat.ts`
+has been re-discharged to 892 lines with a real max-lines ratchet, and
+`coder-agent.ts` dropped from 1,989 to 1,411 lines by moving working-memory
+delegation, context-trim helpers, and mutation-result handling into sibling
+`lib/` modules with focused tests. That is real maintenance-shape improvement:
+the helper perimeter is smaller, more testable, and less likely to accrete inside
+the Coder loop.
+
+The architectural score stays at 9.1. The `coder-agent.ts` change reinforces the
+existing permanent-boundary decision rather than replacing it: the core
+`runCoderAgent` loop remains load-bearing, while helper logic now has cleaner
+ownership. Good extraction, but not new architecture.
+
+### Prior movement from 2026-04-17
 
 The groundwork moves the implementation score modestly. The changes are
 not just "planning" or "paper architecture" — they landed executable
@@ -59,17 +75,20 @@ a substrate rule rather than a convention — this is the first time the
 architecture axis crosses 9.
 
 The 313 tests and branch coverage are meaningful, and `sandbox-tools.ts`
-dropping 11% is directionally good. But the big-four modules are still
-nearly 10k lines, and the key remediation steps — characterization tests,
-tracing spine, and actual extraction — are still not done.
+dropping 11% was directionally good. At that point, though, the big-four
+modules were still nearly 10k lines, and the key remediation steps —
+characterization tests, tracing spine, and actual extraction — were still
+not done.
 
 ### The ceiling
 
-Groundwork earns credit, extraction earns the next real jump. The ceiling
-before extraction is probably around 8.5 overall / 8.4 impl. Once the
-dense modules are carved along the now-formalized boundaries, 8.7–8.9
-overall is realistic if the extraction preserves the tests and reduces
-orchestration coupling rather than just moving code into smaller files.
+Groundwork earned credit; extraction is now earning the next real jump in
+pieces. After the `useChat.ts` and `coder-agent.ts` work, the current ceiling is
+around 8.6 overall / 8.4 impl until the Verification family proves the
+handler-context pattern in `sandbox-tools.ts`. If that lands with the same
+test-pinned discipline, 8.7–8.9 overall is realistic. A 9+ implementation read
+still needs proof that the pattern generalizes across tool-handler families, not
+just hooks and helper modules.
 
 ### Codex (2026-04-14 — prior snapshot)
 
@@ -231,6 +250,47 @@ Inference:
 Push has strong architecture taste, strong product boundaries, and a much more mature implementation than it had at the prior snapshot. The biggest step change is that several important layers are now real shared runtime substrate instead of promising local abstractions.
 
 ## Claude
+
+### Rating (2026-05-01)
+
+Overall: **8.7/10** (up from 8.6)
+
+Split view:
+
+- **9.0/10** on architecture (unchanged)
+- **8.4/10** on current implementation shape (was 8.2)
+
+### Conflict-of-interest note
+
+Today's `useChat.ts` extractions (`useConversationPersistence`, `chat-active-run-router`, `useChatAutoSwitch`) and the review of Codex's `coder-agent.ts` helper extraction were both done by me. That makes this self-rating, so the bump should be weighted accordingly. Codex and Gemini reassessed independently — I'm landing between them (Codex held at 8.4 impl, Gemini moved to 8.8 impl), which is consistent with the "Claude splits the difference" pattern from prior synthesis blocks.
+
+### Why implementation shape moves a quarter point
+
+The Big Four discharge crossed a real threshold today, not just shed lines:
+
+- **`useChat.ts` 1,045 → 892** across three extractions with ~30 new test cases pinning previously-uncovered behavior (persistence retry-with-cap-at-3, FIFO queue position math, the auto-switch state machine including the migration-marker gate). The ESLint `max-lines` cap ratcheted *down* (1,060 → 950) for the first time in the cap's history — the Waterbed Effect concern from the 2026-04-26 update is concretely reversed, not just acknowledged.
+- **`coder-agent.ts` 1,989 → 1,411** via working-memory delegation consolidation, context-trim helpers, and mutation-result helpers. The working-memory consolidation in particular is a genuine drift-hazard fix: `coder-agent.ts` had its own copies of `applyObservationUpdates`, `formatCoderState`, and three other functions that already lived in `working-memory.ts` (functionally identical, only parameter naming differed). Two implementations of the same logic in the same package is the kind of thing that drifts silently; collapsing them is worth more than the line count suggests.
+- **Big Four total 4,777 → 3,646 lines (-23.7%).** Three of the four are now meaningfully reduced; the helper perimeter on the fourth (`coder-agent.ts`) is cleaner and test-pinned. The remaining mass is now closer to "structural" than "fossilized."
+- **Test surface added today is operationally meaningful.** The path-fallback case in `coder-context-trim`, the in-flight-add-survives-snapshot case in `useConversationPersistence`, and the diff-vs-bullet ambiguity case all pin invariants that nobody had documented and that would fail silently on regression.
+
+### Why it is still not 8.6 on implementation
+
+- The synthesis-named **Verification family extraction from `sandbox-tools.ts`** is still not done. That's the panel's specific test of the handler-context pattern — and today's work doesn't substitute for it. `useChat.ts` and `coder-agent.ts` were never the test of that pattern; they're orthogonal landings.
+- **Tracing spine** still not threaded through `CorrelationContext` across the seams the 2026-04-17 panel called out.
+- **`coder-agent.ts` at 1,411** is meaningfully better but still the heaviest Big Four module by a wide margin. The "permanent boundary" framing is honest about what's structural, but a 1,400-line orchestration module with no internal characterization tests is still a maintenance risk under feature pressure.
+
+### Why architecture holds at 9.0
+
+Nothing today changed the architecture taste level. The extractions reinforce existing seams rather than introduce new ones: the `coder-agent.ts` work confirms (rather than overturns) the Remediation Plan §Step 5 permanent-boundary decision, and the `useChat.ts` work continues a pattern already in motion. The next architecture-axis movement would require something like the Verification family proving the handler-context pattern generalizes — that's a substrate move, not the same as today's hook-shape moves.
+
+### What would move implementation past 8.5
+
+- Verification family extraction from `sandbox-tools.ts` with the same test-pinned discipline (this is the panel's named landing).
+- The `max-lines` cap on `coder-agent.ts` ratcheting down once the helper-extraction pattern is proven to compose under feature pressure.
+- A characterization test pass on the remaining inline `runCoderAgent` loop — the helpers are extracted but the loop body itself doesn't have direct behavior pinning yet.
+- Tracing spine threaded through `CorrelationContext` across web/CLI/Worker boundaries.
+
+### Claude (2026-04-17 — prior snapshot)
 
 ### Rating (2026-04-17)
 
@@ -402,6 +462,25 @@ Once the boundaries around a complex module are good enough, it becomes easy to 
 
 ## Gemini
 
+### Rating (2026-05-01)
+
+Overall: **8.9/10** (up from 8.7)
+
+Split view:
+
+- **9.0/10** on architecture (holds)
+- **8.8/10** on current implementation shape (up from 8.4)
+
+### Why the score moved
+
+The 9-phase discharge of `useChat.ts` (1,733 → 892 lines) is a definitive victory for the project's maintenance strategy. This wasn't just code movement; the extraction of stateful clusters into specialized hooks (`useConversationPersistence`, `useChatAutoSwitch`) and pure logic into routers (`chat-active-run-router`) materially decouples the UI from the run engine. The ESLint `max-lines` ratchet (now at 950) is no longer just a guardrail—it's a proven workflow that successfully reversed the "Waterbed Effect." The ~30 new test cases pinning previously-uncovered behavior in the extracted modules fulfill the "characterization test" requirement for the project's most complex surface.
+
+### Why it doesn't move higher yet
+
+The architecture score holds at 9.0; the design was already strong. To reach 9.0 on implementation, the "handler-context" pattern proof still needs to land in `sandbox-tools.ts`. While its weight is now manageable (~613 lines), the panel's specific test for 9.0 is the extraction of the **Verification family** into its own handler context. Once that lands, the "Big Four" will have been structurally transformed, earning the final jump.
+
+### Gemini (2026-04-17 — prior snapshot)
+
 ### Rating (2026-04-17)
 
 Overall: **8.7/10** (up from 8.5)
@@ -506,6 +585,29 @@ Split view:
 ### Short summary
 
 Gemini’s updated read is that Push has unusually strong architecture instincts for an AI-agent system. The previous concerns around adapter layers and streaming divergence have been significantly mitigated by the unified `emit` callback mechanism in the engine and `pushd` daemon. The architecture is now much closer to the code shape, leaving only tracing maturity and full phase-out of older hooks as the main architectural gaps.
+
+## Synthesis (2026-05-01)
+
+Panel spread: **Codex 8.6, Claude 8.7, Gemini 8.9**. All three reviewers refreshed. Blended number lands at roughly **8.7/10** (up from 8.6). The 0.3 spread is the same as the prior synthesis but Claude has now moved off the stale 4-17 read.
+
+Note on independence: Claude's 2026-05-01 reassessment is partly self-rating — Claude did the `useChat.ts` extractions and reviewed Codex's `coder-agent.ts` work directly. Claude landed at 8.4 on implementation, between Codex (8.4 hold) and Gemini (8.8 jump), which is a credible split but should be weighted accordingly.
+
+Current agreement across Codex, Claude, and Gemini:
+
+- The project has successfully demonstrated the "extraction discipline" required to defuse its most complex modules. The 9-phase discharge of `useChat.ts` (1,733 → 892 lines) is the landmark evidence.
+- The use of ESLint `max-lines` as a ratchet is a proven structural success, reversing the "Waterbed Effect" and forcing feature pressure into clean, testable sibling modules.
+- The `coder-agent.ts` helper extraction gives partial credit on the remaining Big Four surface: 1,989 → 1,411 lines while preserving the Coder loop as the permanent boundary.
+- The next strategic milestone is still the **Verification family extraction** from `sandbox-tools.ts`. This is the specific test of the handler-context pattern that will determine if the implementation score can cross the 9.0 threshold.
+
+Current difference in emphasis:
+
+- **Gemini (8.9)** gives full credit for the `useChat.ts` discharge, viewing it as definitive proof that the extraction strategy works and the risk of regression is operationally contained.
+- **Claude (8.7)** sees the Big Four discharge as a real threshold crossing (4,777 → 3,646 total) and the working-memory consolidation as a genuine drift-hazard fix, but holds back from Gemini's larger jump until the Verification family proves the handler-context pattern across tool families.
+- **Codex (8.6)** gives partial credit for the `coder-agent.ts` helper extraction but remains focused on the Verification family as the specific hurdle for substrate-grade proof. Most conservative read on the panel.
+
+Blended takeaway:
+
+Push has moved from "planning the extraction" to "executing the extraction at scale." The project's most complex coordination hook is now lean and decoupled, and the largest Coder file has a cleaner helper perimeter. The roadmap is clear: repeat this success on the Verification family in `sandbox-tools.ts` to prove the pattern generalizes across families, which would earn a 9+ implementation rating.
 
 ## Synthesis (2026-04-17)
 
