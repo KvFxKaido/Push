@@ -9,6 +9,8 @@ This folder contains architecture decisions, research, analysis, and shipped des
 - Prefer the docs marked **Current** when choosing new work.
 - Treat **Historical** docs as context and provenance, not open task lists.
 - Treat **Draft** docs as design-in-motion; implementation commitments still require a `ROADMAP.md` entry.
+- Treat **Superseded by `<doc>`** as historical-with-pointer: the file stays for audit trail, but the canonical version lives at the named doc. Do not edit superseded docs; edit the successor.
+- Treat **Merged into `<doc>`** the same way as Superseded, but signals the older doc's content was folded into the newer one rather than rewritten from scratch. Same rule: edit the successor, not the source.
 - If a doc conflicts with the code, prefer the code and refresh the doc.
 
 ## Document Status
