@@ -441,6 +441,24 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
     return Response.json({ error: originCheck.error }, { status: 403 });
   }
 
+  const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'worker');
+  const clientIp = getClientIp(request);
+
+  // Throttle code-exchange attempts so a leaked or guessed origin can't be
+  // used to brute-force OAuth codes / installation enumeration.
+  const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: clientIp });
+  if (!rateLimitOk) {
+    wlog('warn', 'rate_limited', {
+      requestId,
+      ip: clientIp,
+      path: requestUrl.pathname,
+    });
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      { status: 429, headers: { 'Retry-After': '60' } },
+    );
+  }
+
   if (!env.GITHUB_APP_CLIENT_ID || !env.GITHUB_APP_CLIENT_SECRET) {
     return Response.json({ error: 'GitHub App OAuth not configured' }, { status: 500 });
   }
@@ -487,6 +505,7 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
     if (!tokenRes.ok) {
       const errBody = await tokenRes.text().catch(() => '');
       wlog('error', 'github_oauth_error', {
+        requestId,
         step: 'token_exchange',
         status: tokenRes.status,
         body: errBody.slice(0, 300),
@@ -504,6 +523,7 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
     };
     if (tokenData.error || !tokenData.access_token) {
       wlog('error', 'github_oauth_error', {
+        requestId,
         step: 'token_parse',
         error: tokenData.error,
         description: tokenData.error_description,
@@ -553,6 +573,7 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
     if (!installRes.ok) {
       const errBody = await installRes.text().catch(() => '');
       wlog('error', 'github_oauth_error', {
+        requestId,
         step: 'installations',
         status: installRes.status,
         body: errBody.slice(0, 300),
@@ -625,8 +646,14 @@ export async function handleGitHubAppOAuth(request: Request, env: Env): Promise<
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    wlog('error', 'github_oauth_error', { step: 'unknown', message });
-    return Response.json({ error: `GitHub App OAuth failed: ${message}` }, { status: 500 });
+    const stack = err instanceof Error ? err.stack : undefined;
+    wlog('error', 'github_oauth_error', {
+      requestId,
+      step: 'unknown',
+      message,
+      ...(stack ? { stack } : {}),
+    });
+    return Response.json({ error: 'GitHub App OAuth failed' }, { status: 500 });
   }
 }
 
@@ -637,6 +664,22 @@ export async function handleGitHubAppToken(request: Request, env: Env): Promise<
   const originCheck = validateOrigin(request, requestUrl, env);
   if (!originCheck.ok) {
     return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'worker');
+  const clientIp = getClientIp(request);
+
+  const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: clientIp });
+  if (!rateLimitOk) {
+    wlog('warn', 'rate_limited', {
+      requestId,
+      ip: clientIp,
+      path: requestUrl.pathname,
+    });
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      { status: 429, headers: { 'Retry-After': '60' } },
+    );
   }
 
   if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {
@@ -690,11 +733,13 @@ export async function handleGitHubAppToken(request: Request, env: Env): Promise<
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    wlog('error', 'github_token_error', { message });
-    return Response.json(
-      { error: `GitHub App authentication failed: ${message}` },
-      { status: 500 },
-    );
+    const stack = err instanceof Error ? err.stack : undefined;
+    wlog('error', 'github_token_error', {
+      requestId,
+      message,
+      ...(stack ? { stack } : {}),
+    });
+    return Response.json({ error: 'GitHub App authentication failed' }, { status: 500 });
   }
 }
 
