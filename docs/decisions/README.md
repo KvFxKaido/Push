@@ -38,6 +38,7 @@ This folder contains architecture decisions, research, analysis, and shipped des
 | `Rerank Before Prompt Packing.md` | Draft spike, added 2026-04-14 | Optional rerank stage between deterministic retrieval and sectioned packing for delegation briefs and Auditor. |
 | `Resumable Sessions Design.md` | Historical | Shipped 2026-02-19 (Phases 1–4); useful as provenance and for journal-adjacent designs like Modal Sandbox Snapshots. |
 | `Sectioned System Prompts.md` | Shipped design reference | Sectioned system prompt builder refactor. |
+| `Streaming UI Deltas.md` | Draft, added 2026-05-01 | Proposal to ship typed `tool_use_delta` SSE events so card scaffolding (icon, subtitle, approval affordance) renders mid-tool-execution instead of post-hoc. Borrowed shape only from the third-party Claudio APK reverse-engineer; sourcing caveat documented in-doc. |
 | `Tool-Call Parser Convergence Gap.md` | CLI side resolved 2026-04-15, Web side pending | `lib/tool-dispatch.ts` now owns the CLI detection kernel; Web dispatcher migration deferred until the phase-grouping state machine can be unified. |
 | `Vercel Open Agents Review.md` | Current, added 2026-04-14 | Adoption target is sandbox snapshots; secondary targets are sandbox port exposure, read-only share links, and server-side durable runs on Cloudflare. |
 | `Web and CLI Runtime Contract.md` | Current, refreshed 2026-04-05 | Architecture rule for Push shells: share agent-runtime semantics across web and CLI, allow divergence in transport and UX shell. |
