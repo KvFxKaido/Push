@@ -84,10 +84,25 @@ export default defineConfig([
   //                                 toQueuedFollowUp, toPendingSteerRequest)
   //                                 moved to lib/queued-follow-up-utils.ts.
   //                                 Ceiling lowered to 1,290.
+  //   Phase 8 (round-loop body):    1,276 -> 1,045 after the for-loop body
+  //                                 inside sendMessage (round counter +
+  //                                 streaming + steer drain + tool dispatch
+  //                                 + turn outcome) moved to
+  //                                 chat-round-loop.ts as runRoundLoop.
+  //                                 The duplicated pending-steer drain
+  //                                 (formerly two ~80-line blocks for
+  //                                 before-tools and after-turn) collapsed
+  //                                 into a single helper inside the new
+  //                                 module. useChat now holds only the
+  //                                 try/catch/finally bookend (LOOP_FAILED
+  //                                 emission + finalizeRunSession +
+  //                                 nextFollowUp scheduling, which depends
+  //                                 on `sendMessage` itself). Ceiling
+  //                                 lowered to 1,060.
   {
     files: ['src/hooks/useChat.ts'],
     rules: {
-      'max-lines': ['error', { max: 1290 }],
+      'max-lines': ['error', { max: 1060 }],
     },
   },
 ]);

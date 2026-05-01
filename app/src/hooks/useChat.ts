@@ -18,7 +18,6 @@ import {
   getContextBudget,
   type ActiveProvider,
 } from '@/lib/orchestrator';
-import { fileLedger } from '@/lib/file-awareness-ledger';
 import { getModelNameForProvider } from '@/lib/providers';
 import {
   migrateConversationsToIndexedDB,
@@ -41,15 +40,15 @@ import { useChatCardActions } from './chat-card-actions';
 import { useChatManagement } from './chat-management';
 import { useChatReplay } from './chat-replay';
 import { useChatCheckpoint } from './useChatCheckpoint';
-import { streamAssistantRound, processAssistantTurn, type SendLoopContext } from './chat-send';
-import { createMutationFailureTracker } from '@push/lib/agent-loop-utils';
-import { buildRuntimeUserMessage, prepareSendContext } from './chat-prepare-send';
+import { type SendLoopContext } from './chat-send';
+import { runRoundLoop } from './chat-round-loop';
+import { prepareSendContext } from './chat-prepare-send';
 import { acquireRunSession, finalizeRunSession } from './chat-run-session';
 import { useQueuedFollowUps } from './useQueuedFollowUps';
 import { mergeRunEventStreams } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
 import { isRunActive } from '@/lib/run-engine';
-import { updateJournalVerificationState, markJournalCheckpoint } from '@/lib/run-journal';
+import { updateJournalVerificationState } from '@/lib/run-journal';
 import { useRunEventStream } from './useRunEventStream';
 import { useRunEngine } from './useRunEngine';
 import { useVerificationState } from './useVerificationState';
@@ -771,8 +770,8 @@ export function useChat(
       );
       const lockedProviderForChat = prepared.lockedProvider;
       const resolvedModelForChat = prepared.resolvedModel;
-      let apiMessages = prepared.apiMessages;
-      let toolCallRecoveryState = prepared.recoveryState;
+      const apiMessages = prepared.apiMessages;
+      const toolCallRecoveryState = prepared.recoveryState;
 
       if (useBgMode) {
         // biome-ignore format: keep refs inline so this branch stays under the file line cap.
@@ -844,244 +843,14 @@ export function useChat(
         conversationsRef,
       };
 
-      const tracker = createMutationFailureTracker();
       let loopCompletedNormally = false;
       try {
-        for (let round = 0; ; round++) {
-          if (abortRef.current) break;
-          fileLedger.advanceRound();
-
-          emitRunEngineEvent({ type: 'ROUND_STARTED', timestamp: Date.now(), round });
-          appendRunEvent(chatId, { type: 'assistant.turn_start', round });
-
-          if (round > 0) {
-            const newAssistant: ChatMessage = {
-              id: createId(),
-              role: 'assistant',
-              content: '',
-              timestamp: Date.now(),
-              status: 'streaming',
-            };
-            updateConversations((prev) => {
-              const conv = prev[chatId];
-              if (!conv) return prev;
-              return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, newAssistant] } };
-            });
-          }
-
-          updateAgentStatus(
-            { active: true, phase: round === 0 ? 'Thinking...' : 'Responding...' },
-            { chatId },
-          );
-
-          // --- Stream ---
-          const { accumulated, thinkingAccumulated, error } = await streamAssistantRound(
-            round,
-            apiMessages,
-            loopCtx,
-          );
-
-          if (abortRef.current) {
-            appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'aborted' });
-            break;
-          }
-
-          if (error) {
-            emitRunEngineEvent({
-              type: 'LOOP_FAILED',
-              timestamp: Date.now(),
-              reason: error.message,
-            });
-            appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'error' });
-            updateConversations((prev) => {
-              const conv = prev[chatId];
-              if (!conv) return prev;
-              const msgs = [...conv.messages];
-              const lastIdx = msgs.length - 1;
-              if (msgs[lastIdx]?.role === 'assistant') {
-                msgs[lastIdx] = {
-                  ...msgs[lastIdx],
-                  content: `Something went wrong: ${error.message}`,
-                  status: 'error',
-                };
-              }
-              const updated = { ...prev, [chatId]: { ...conv, messages: msgs } };
-              dirtyConversationIdsRef.current.add(chatId);
-              return updated;
-            });
-            break;
-          }
-          emitRunEngineEvent({
-            type: 'STREAMING_COMPLETED',
-            timestamp: Date.now(),
-            accumulated,
-            thinking: thinkingAccumulated,
-          });
-
-          const pendingSteerBeforeToolDispatch = dequeuePendingSteer(chatId);
-          if (pendingSteerBeforeToolDispatch) {
-            // FIFO drain: the engine's hasPendingSteer flag tracks "is anything
-            // queued?", not "did we just consume one?". After the dequeue we
-            // either have a new head (re-arm with STEER_SET so the preview
-            // matches) or an empty queue (STEER_CONSUMED).
-            const remainingHead = pendingSteersByChatRef.current[chatId]?.[0];
-            if (remainingHead) {
-              emitRunEngineEvent({
-                type: 'STEER_SET',
-                timestamp: Date.now(),
-                preview: summarizeQueuedInputPreview(
-                  remainingHead.text,
-                  remainingHead.attachments,
-                  remainingHead.options?.displayText,
-                ),
-              });
-            } else {
-              emitRunEngineEvent({ type: 'STEER_CONSUMED', timestamp: Date.now() });
-            }
-            const steerUserMessage = buildRuntimeUserMessage(
-              pendingSteerBeforeToolDispatch.text,
-              pendingSteerBeforeToolDispatch.attachments,
-              pendingSteerBeforeToolDispatch.options?.displayText,
-            );
-            const shouldKeepAssistantDraft = accumulated.trim().length > 0;
-
-            updateConversations((prev) => {
-              const conv = prev[chatId];
-              if (!conv) return prev;
-              const msgs = [...conv.messages];
-              const lastIdx = msgs.length - 1;
-              if (msgs[lastIdx]?.role === 'assistant') {
-                if (shouldKeepAssistantDraft) {
-                  msgs[lastIdx] = {
-                    ...msgs[lastIdx],
-                    content: accumulated,
-                    thinking: thinkingAccumulated || undefined,
-                    status: 'done',
-                  };
-                } else {
-                  msgs.pop();
-                }
-              }
-              const updated = {
-                ...prev,
-                [chatId]: {
-                  ...conv,
-                  messages: [...msgs, steerUserMessage],
-                  lastMessageAt: Date.now(),
-                },
-              };
-              dirtyConversationIdsRef.current.add(chatId);
-              return updated;
-            });
-
-            apiMessages = [
-              ...apiMessages,
-              ...(shouldKeepAssistantDraft
-                ? [
-                    {
-                      id: createId(),
-                      role: 'assistant' as const,
-                      content: accumulated,
-                      timestamp: Date.now(),
-                      status: 'done' as const,
-                    },
-                  ]
-                : []),
-              steerUserMessage,
-            ];
-            checkpointRefs.apiMessages.current = apiMessages;
-            flushCheckpoint();
-            emitRunEngineEvent({ type: 'TURN_STEERED', timestamp: Date.now() });
-            appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'steered' });
-            continue;
-          }
-
-          // Checkpoint after streaming, before tool dispatch
-          emitRunEngineEvent({ type: 'TOOLS_STARTED', timestamp: Date.now() });
-          flushCheckpoint();
-          if (runJournalEntryRef.current) {
-            runJournalEntryRef.current = markJournalCheckpoint(runJournalEntryRef.current, true);
-            persistRunJournal(runJournalEntryRef.current);
-          }
-
-          // --- Process the assistant's response ---
-          const turnResult = await processAssistantTurn(
-            round,
-            accumulated,
-            thinkingAccumulated,
-            apiMessages,
-            loopCtx,
-            toolCallRecoveryState,
-            tracker,
-          );
-
-          apiMessages = turnResult.nextApiMessages;
-          toolCallRecoveryState = turnResult.nextRecoveryState;
-          checkpointRefs.apiMessages.current = apiMessages;
-
-          const pendingSteerAfterTurn = dequeuePendingSteer(chatId);
-          if (pendingSteerAfterTurn) {
-            const remainingHeadAfterTurn = pendingSteersByChatRef.current[chatId]?.[0];
-            if (remainingHeadAfterTurn) {
-              emitRunEngineEvent({
-                type: 'STEER_SET',
-                timestamp: Date.now(),
-                preview: summarizeQueuedInputPreview(
-                  remainingHeadAfterTurn.text,
-                  remainingHeadAfterTurn.attachments,
-                  remainingHeadAfterTurn.options?.displayText,
-                ),
-              });
-            } else {
-              emitRunEngineEvent({ type: 'STEER_CONSUMED', timestamp: Date.now() });
-            }
-            const steerUserMessage = buildRuntimeUserMessage(
-              pendingSteerAfterTurn.text,
-              pendingSteerAfterTurn.attachments,
-              pendingSteerAfterTurn.options?.displayText,
-            );
-            updateConversations((prev) => {
-              const conv = prev[chatId];
-              if (!conv) return prev;
-              const updated = {
-                ...prev,
-                [chatId]: {
-                  ...conv,
-                  messages: [...conv.messages, steerUserMessage],
-                  lastMessageAt: Date.now(),
-                },
-              };
-              dirtyConversationIdsRef.current.add(chatId);
-              return updated;
-            });
-            apiMessages = [...apiMessages, steerUserMessage];
-            checkpointRefs.apiMessages.current = apiMessages;
-            flushCheckpoint();
-            emitRunEngineEvent({ type: 'TURN_STEERED', timestamp: Date.now() });
-            appendRunEvent(chatId, {
-              type: 'assistant.turn_end',
-              round,
-              outcome: 'steered',
-            });
-            continue;
-          }
-
-          const turnOutcome =
-            turnResult.loopAction === 'continue'
-              ? 'continued'
-              : turnResult.loopCompletedNormally
-                ? 'completed'
-                : 'aborted';
-          if (turnResult.loopCompletedNormally) loopCompletedNormally = true;
-          appendRunEvent(chatId, {
-            type: 'assistant.turn_end',
-            round,
-            outcome: turnOutcome,
-          });
-          if (turnResult.loopAction === 'break') break;
-          emitRunEngineEvent({ type: 'TURN_CONTINUED', timestamp: Date.now() });
-          // 'continue' → next round
-        }
+        const result = await runRoundLoop(
+          loopCtx,
+          { apiMessages, recoveryState: toolCallRecoveryState },
+          { runJournalEntryRef, persistRunJournal, dequeuePendingSteer, pendingSteersByChatRef },
+        );
+        loopCompletedNormally = result.loopCompletedNormally;
       } catch (err) {
         emitRunEngineEvent({
           type: 'LOOP_FAILED',
