@@ -743,6 +743,111 @@ export async function handleGitHubAppToken(request: Request, env: Env): Promise<
   }
 }
 
+// --- GitHub App logout ---
+
+/**
+ * Revoke a user's installation access token via GitHub's
+ * `DELETE /installation/token` endpoint, which authenticates with the token
+ * itself. Routing this through the Worker (instead of letting the client
+ * call GitHub directly) gives Push a single chokepoint to log/audit logout
+ * events and aligns with the "logout invalidates server-side state" rule.
+ *
+ * GitHub returns 204 on success. 401/404 mean the token was already invalid
+ * (revoked elsewhere or expired); we treat those as success too so logout
+ * is idempotent — the desired end state is "this token doesn't work", and
+ * it doesn't.
+ */
+export async function handleGitHubAppLogout(request: Request, env: Env): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return Response.json({ error: originCheck.error }, { status: 403 });
+  }
+
+  const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'worker');
+  const clientIp = getClientIp(request);
+
+  const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: clientIp });
+  if (!rateLimitOk) {
+    wlog('warn', 'rate_limited', {
+      requestId,
+      ip: clientIp,
+      path: requestUrl.pathname,
+    });
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      { status: 429, headers: { 'Retry-After': '60' } },
+    );
+  }
+
+  const bodyResult = await readBodyText(request, 4096);
+  if ('error' in bodyResult) {
+    return Response.json({ error: bodyResult.error }, { status: bodyResult.status });
+  }
+
+  let payload: { token?: string };
+  try {
+    payload = JSON.parse(bodyResult.text);
+  } catch {
+    return Response.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+
+  const token = payload.token;
+  if (!token || typeof token !== 'string') {
+    return Response.json({ error: 'Missing token' }, { status: 400 });
+  }
+  // Hard cap so a malformed client can't make us stream megabytes upstream.
+  if (token.length > 256) {
+    return Response.json({ error: 'Token too long' }, { status: 400 });
+  }
+  // Reject anything outside printable ASCII (0x21-0x7E) before it reaches
+  // fetch() — header construction throws on whitespace/control chars
+  // (\r, \n, NUL, DEL, ...), which would otherwise surface as a misleading
+  // generic 500 from the catch block.
+  for (let i = 0; i < token.length; i += 1) {
+    const code = token.charCodeAt(i);
+    if (code < 0x21 || code > 0x7e) {
+      return Response.json({ error: 'Invalid token' }, { status: 400 });
+    }
+  }
+
+  try {
+    const ghRes = await fetch('https://api.github.com/installation/token', {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'Push-App/1.0.0',
+      },
+    });
+
+    if (ghRes.ok || ghRes.status === 401 || ghRes.status === 404) {
+      return new Response(null, { status: 204 });
+    }
+
+    const errBody = await ghRes.text().catch(() => '');
+    wlog('error', 'github_logout_error', {
+      requestId,
+      status: ghRes.status,
+      body: errBody.slice(0, 300),
+    });
+    return Response.json(
+      { error: `GitHub token revocation failed (${ghRes.status})` },
+      { status: 502 },
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    const stack = err instanceof Error ? err.stack : undefined;
+    wlog('error', 'github_logout_error', {
+      requestId,
+      message,
+      ...(stack ? { stack } : {}),
+    });
+    return Response.json({ error: 'GitHub App logout failed' }, { status: 500 });
+  }
+}
+
 // --- GitHub App JWT and helpers ---
 
 export async function generateGitHubAppJWT(appId: string, privateKeyPEM: string): Promise<string> {

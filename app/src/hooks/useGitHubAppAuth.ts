@@ -445,6 +445,23 @@ export function useGitHubAppAuth(): UseGitHubAppAuth {
     if (refreshTimeoutRef.current) {
       clearTimeout(refreshTimeoutRef.current);
     }
+
+    // Best-effort server-side revocation. Capture the token before clearing
+    // local state, fire the request without awaiting, and ignore failures —
+    // a stale client token is still cleared either way, and we'd rather
+    // complete logout than block on a network hiccup.
+    const tokenToRevoke = safeStorageGet(TOKEN_KEY);
+    if (tokenToRevoke) {
+      void fetch(resolveApiUrl('/api/github/app-logout'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: tokenToRevoke }),
+        keepalive: true,
+      }).catch(() => {
+        // Swallow — logout proceeds regardless.
+      });
+    }
+
     safeStorageRemove(INSTALLATION_ID_KEY);
     safeStorageRemove(TOKEN_KEY);
     safeStorageRemove(TOKEN_EXPIRY_KEY);

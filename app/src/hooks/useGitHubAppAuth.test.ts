@@ -210,6 +210,7 @@ describe('useGitHubAppAuth.disconnect', () => {
       if (key === 'github_app_token') return 'gha_stored';
       return null;
     });
+    fetchMock.mockResolvedValue(makeResponse({ ok: true, status: 204 }));
     const auth = render();
     auth.disconnect();
     // All five keys are cleared
@@ -226,5 +227,37 @@ describe('useGitHubAppAuth.disconnect', () => {
     // Token + installationId cells are reset
     expect(reactState.cells[0].value).toBe('');
     expect(reactState.cells[1].value).toBe('');
+  });
+
+  it('posts the stored token to /api/github/app-logout for server-side revocation', () => {
+    storage.get.mockImplementation((key) => (key === 'github_app_token' ? 'gha_stored' : null));
+    fetchMock.mockResolvedValue(makeResponse({ ok: true, status: 204 }));
+    const auth = render();
+    auth.disconnect();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/github/app-logout');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ token: 'gha_stored' });
+  });
+
+  it('skips the revocation call when no token is stored', () => {
+    storage.get.mockReturnValue(null);
+    const auth = render();
+    auth.disconnect();
+    expect(fetchMock).not.toHaveBeenCalled();
+    // Local state should still be cleared.
+    expect(reactState.cells[0].value).toBe('');
+  });
+
+  it('still clears local state when the revocation fetch rejects', () => {
+    storage.get.mockImplementation((key) => (key === 'github_app_token' ? 'gha_stored' : null));
+    fetchMock.mockRejectedValue(new Error('network down'));
+    const auth = render();
+    expect(() => auth.disconnect()).not.toThrow();
+    const removedKeys = storage.remove.mock.calls.map((c) => c[0]);
+    expect(removedKeys).toEqual(expect.arrayContaining(['github_app_token']));
+    expect(reactState.cells[0].value).toBe('');
   });
 });
