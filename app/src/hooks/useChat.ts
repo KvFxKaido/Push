@@ -20,12 +20,10 @@ import {
 } from '@/lib/orchestrator';
 import { getModelNameForProvider } from '@/lib/providers';
 import { migrateConversationsToIndexedDB } from '@/lib/conversation-store';
-import { createId } from '@push/lib/id-utils';
 import {
   loadActiveChatId,
   loadConversations,
   normalizeConversationModel,
-  saveActiveChatId,
 } from '@/hooks/chat-persistence';
 import { useConversationPersistence } from './useConversationPersistence';
 import { useAgentDelegation } from './useAgentDelegation';
@@ -50,14 +48,13 @@ import { useRunEventStream } from './useRunEventStream';
 import { useRunEngine } from './useRunEngine';
 import { useVerificationState } from './useVerificationState';
 import { usePendingSteer } from './usePendingSteer';
-import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
-import { getMigrationMarker } from '@/lib/branch-migration-marker';
 import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import {
   forkBranchInWorkspace,
   type ForkBranchInWorkspaceResult,
 } from '@/lib/fork-branch-in-workspace';
 import { useBranchForkGuard } from './useBranchForkGuard';
+import { useChatAutoSwitch } from './useChatAutoSwitch';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
@@ -150,7 +147,6 @@ export function useChat(
   const sandboxIdRef = useRef<string | null>(null);
   const workspaceSessionIdRef = useRef<string | null>(null);
   const isMainProtectedRef = useRef(false);
-  const autoCreateRef = useRef(false);
   const ensureSandboxRef = useRef<(() => Promise<string | null>) | null>(null);
 
   // --- Prop mirror refs (always up-to-date in callbacks) ---
@@ -418,55 +414,16 @@ export function useChat(
   // sit in the effect's dependency array. See useBranchForkGuard for D2.
   const skipAutoCreateRef = useBranchForkGuard(conversations, sortedChatIds);
 
-  // --- Auto-switch effect ---
-  useEffect(() => {
-    // Slice 2: suppress auto-switch while a fork migration is in flight. Both
-    // branches below (auto-create AND chat-id reassignment) would otherwise
-    // disrupt the active chat during the transition. The in-tab `skipAutoCreateRef`
-    // covers the migrating tab; `getMigrationMarker()` (cross-tab localStorage)
-    // covers other tabs that observe the persisted state changes mid-migration.
-    if (skipAutoCreateRef.current) return;
-    if (getMigrationMarker()) return;
-
-    if (sortedChatIds.length === 0 && activeRepoFullName) {
-      if (!autoCreateRef.current) {
-        autoCreateRef.current = true;
-        const id = createId();
-        const bi = branchInfoRef.current;
-        const branch = bi?.currentBranch || bi?.defaultBranch || 'main';
-        const newConv: Conversation = {
-          id,
-          title: 'New Chat',
-          messages: [],
-          createdAt: Date.now(),
-          lastMessageAt: Date.now(),
-          repoFullName: activeRepoFullName,
-          branch,
-          verificationPolicy: getDefaultVerificationPolicy(),
-        };
-        updateConversations((prev) => {
-          const updated = { ...prev, [id]: newConv };
-          dirtyConversationIdsRef.current.add(id);
-          return updated;
-        });
-        setActiveChatId(id);
-        saveActiveChatId(id);
-        setTimeout(() => {
-          autoCreateRef.current = false;
-        }, 0);
-      }
-    } else if (sortedChatIds.length > 0 && !sortedChatIds.includes(activeChatId)) {
-      setActiveChatId(sortedChatIds[0]);
-      saveActiveChatId(sortedChatIds[0]);
-    }
-  }, [
+  useChatAutoSwitch({
     sortedChatIds,
     activeChatId,
     activeRepoFullName,
-    updateConversations,
+    branchInfoRef,
     skipAutoCreateRef,
+    updateConversations,
     dirtyConversationIdsRef,
-  ]);
+    setActiveChatId,
+  });
 
   // --- Sandbox setters ---
   const setSandboxId = useCallback((id: string | null) => {
