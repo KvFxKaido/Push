@@ -69,6 +69,17 @@ describe('deriveRepoCommands — package scripts', () => {
     assert.equal(out.test?.confidence, 'explicit');
   });
 
+  it('prefers `format:check` over the mutating `format` script', () => {
+    const out = deriveRepoCommands({
+      packageScripts: {
+        format: 'biome format --write',
+        'format:check': 'biome format',
+      },
+    });
+    assert.equal(out.format?.command, 'npm run format:check');
+    assert.equal(out.format?.confidence, 'heuristic');
+  });
+
   it('keeps `check` additive — does not displace test/lint/typecheck', () => {
     const out = deriveRepoCommands({
       packageScripts: {
@@ -232,8 +243,12 @@ describe('formatRepoCommands', () => {
 // CLI adapter
 // ---------------------------------------------------------------------------
 
-async function makeFixture(files) {
+async function makeFixture(t, files) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-repo-commands-'));
+  // Test-scoped cleanup so we don't leak temp dirs across runs.
+  t.after(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
   for (const [rel, content] of Object.entries(files)) {
     const abs = path.join(root, rel);
     await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -245,8 +260,8 @@ async function makeFixture(files) {
 describe('buildRepoCommandsSnapshot', () => {
   beforeEach(() => resetRepoCommandsMemo());
 
-  it('reads scripts, config files, and AGENTS hints from disk', async () => {
-    const root = await makeFixture({
+  it('reads scripts, config files, and AGENTS hints from disk', async (t) => {
+    const root = await makeFixture(t, {
       'package.json': JSON.stringify({
         name: 'fixture',
         scripts: {
@@ -271,8 +286,8 @@ describe('buildRepoCommandsSnapshot', () => {
     assert.deepEqual(snapshot.agentsMdHints, [{ kind: 'test', command: 'npm run test:ci' }]);
   });
 
-  it('AGENTS.md hints win over CLAUDE.md hints for the same kind', async () => {
-    const root = await makeFixture({
+  it('AGENTS.md hints win over CLAUDE.md hints for the same kind', async (t) => {
+    const root = await makeFixture(t, {
       'AGENTS.md': '```bash\n# test:\nFROM_AGENTS\n```\n',
       'CLAUDE.md': '```bash\n# test:\nFROM_CLAUDE\n# lint:\nFROM_CLAUDE_LINT\n```\n',
     });
@@ -283,26 +298,82 @@ describe('buildRepoCommandsSnapshot', () => {
     ]);
   });
 
-  it('handles a missing package.json gracefully', async () => {
-    const root = await makeFixture({ 'biome.json': '{}' });
+  it('handles a missing package.json gracefully', async (t) => {
+    const root = await makeFixture(t, { 'biome.json': '{}' });
     const snapshot = await buildRepoCommandsSnapshot(root);
     assert.equal(snapshot.packageScripts, undefined);
     assert.deepEqual(snapshot.configFiles, ['biome.json']);
     assert.deepEqual(snapshot.agentsMdHints, []);
   });
 
-  it('ignores invalid package.json without throwing', async () => {
-    const root = await makeFixture({ 'package.json': '{ not json' });
+  it('ignores invalid package.json without throwing', async (t) => {
+    const root = await makeFixture(t, { 'package.json': '{ not json' });
     const snapshot = await buildRepoCommandsSnapshot(root);
     assert.equal(snapshot.packageScripts, undefined);
+  });
+});
+
+describe('listConfigFiles directory rejection', () => {
+  beforeEach(() => resetRepoCommandsMemo());
+
+  it('skips directories that share a config-file name', async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-repo-commands-'));
+    t.after(async () => {
+      await fs.rm(root, { recursive: true, force: true });
+    });
+    // `biome.json` exists as a directory, not a file. It must not be picked
+    // up as a config-file signal.
+    await fs.mkdir(path.join(root, 'biome.json'), { recursive: true });
+    await fs.writeFile(path.join(root, 'tsconfig.json'), '{}', 'utf8');
+
+    const snapshot = await buildRepoCommandsSnapshot(root);
+    assert.ok(!snapshot.configFiles?.includes('biome.json'));
+    assert.ok(snapshot.configFiles?.includes('tsconfig.json'));
+  });
+
+  it('returns config files in KNOWN_CONFIG_FILES order', async (t) => {
+    const root = await makeFixture(t, {
+      'tsconfig.json': '{}',
+      'biome.json': '{}',
+      'jest.config.js': 'module.exports = {};',
+      'vitest.config.ts': 'export default {};',
+    });
+    const snapshot = await buildRepoCommandsSnapshot(root);
+    // KNOWN_CONFIG_FILES has vitest before jest before biome before tsconfig.
+    const found = snapshot.configFiles ?? [];
+    const idx = (n) => found.indexOf(n);
+    assert.ok(idx('vitest.config.ts') < idx('jest.config.js'));
+    assert.ok(idx('jest.config.js') < idx('biome.json'));
+    assert.ok(idx('biome.json') < idx('tsconfig.json'));
   });
 });
 
 describe('loadRepoCommands', () => {
   beforeEach(() => resetRepoCommandsMemo());
 
-  it('returns derived commands end-to-end', async () => {
-    const root = await makeFixture({
+  it('walks up from a subdirectory to the actual repo root', async (t) => {
+    const root = await makeFixture(t, {
+      'package.json': JSON.stringify({
+        name: 'fixture',
+        scripts: { test: 'vitest run', typecheck: 'tsc --noEmit' },
+      }),
+      'AGENTS.md': '```bash\n# test:\nnpm run test:ci\n```\n',
+      // Create a `.git` marker so resolveRepoRoot anchors here.
+      '.git/HEAD': 'ref: refs/heads/main\n',
+      // A nested subdirectory the CLI might be launched from.
+      'app/src/.gitkeep': '',
+    });
+    const subdir = path.join(root, 'app', 'src');
+
+    const commands = await loadRepoCommands(subdir);
+    // Resolution should have walked up to `root` and read the root files.
+    assert.equal(commands.test?.command, 'npm run test:ci');
+    assert.equal(commands.test?.source, 'agents-md');
+    assert.equal(commands.typecheck?.command, 'npm run typecheck');
+  });
+
+  it('returns derived commands end-to-end', async (t) => {
+    const root = await makeFixture(t, {
       'package.json': JSON.stringify({
         name: 'fixture',
         scripts: {
@@ -326,8 +397,8 @@ describe('loadRepoCommands', () => {
     assert.equal(commands.check?.command, 'npm run check');
   });
 
-  it('memoizes per cwd within a process', async () => {
-    const root = await makeFixture({
+  it('memoizes per cwd within a process', async (t) => {
+    const root = await makeFixture(t, {
       'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }),
     });
     const first = await loadRepoCommands(root);
@@ -342,8 +413,8 @@ describe('loadRepoCommands', () => {
     assert.equal(first, second);
   });
 
-  it('resetRepoCommandsMemo forces recompute', async () => {
-    const root = await makeFixture({
+  it('resetRepoCommandsMemo forces recompute', async (t) => {
+    const root = await makeFixture(t, {
       'package.json': JSON.stringify({ scripts: { test: 'vitest run' } }),
     });
     const first = await loadRepoCommands(root);

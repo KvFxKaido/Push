@@ -52,7 +52,7 @@ Prompts and docs describe behavior; they do not create it.
 
 ## Validation commands
 
-Push discovers a repo's validation contract (test, lint, typecheck, format, build, check) at boot from `package.json` scripts and recognized config files. To override the discovered command for a specific kind, add a fenced `bash`/`sh`/`shell` block to `AGENTS.md` (or `CLAUDE.md`) with a leading `# kind:` directive on the line before the command. AGENTS.md beats CLAUDE.md, and overrides are per-kind: defining `test` here still leaves `lint`/`typecheck`/etc. to fall through to package scripts and config files. The umbrella `check` is always additive — it never replaces the targeted commands.
+Push derives a repo's validation contract (test, lint, typecheck, format, build, check) from `package.json` scripts and recognized config files. To override a derived command for a specific kind, add a fenced `bash`/`sh`/`shell` block to `AGENTS.md` (or `CLAUDE.md`) with a leading `# kind:` directive on the line before the command. AGENTS.md beats CLAUDE.md, and overrides are per-kind: defining `test` here still leaves `lint`/`typecheck`/etc. to fall through to package scripts and config files. The umbrella `check` is always additive — it never replaces the targeted commands.
 
 For this repo:
 

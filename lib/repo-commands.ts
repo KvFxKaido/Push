@@ -80,7 +80,10 @@ const SCRIPT_PREFERENCES: Record<RepoCommandKind, readonly string[]> = {
   test: ['test', 'test:unit', 'test:ci', 'tests'],
   lint: ['lint', 'lint:check'],
   typecheck: ['typecheck', 'type-check', 'tsc', 'check:types'],
-  format: ['format', 'format:check', 'fmt'],
+  // Validation is non-mutating, so prefer the check variant. `format` (the
+  // write script in most setups, including this repo) is only used when no
+  // dedicated check script exists.
+  format: ['format:check', 'format', 'fmt'],
   build: ['build'],
   check: ['check', 'validate', 'verify', 'ci'],
 };
@@ -241,7 +244,7 @@ const HINT_DIRECTIVE = /^#\s*(test|lint|typecheck|format|build|check)\s*:\s*$/i;
  */
 export function parseAgentsMdHints(markdown: string): AgentsMdHint[] {
   if (!markdown) return [];
-  const fenceRegex = /```(?:bash|sh|shell)\b[^\n]*\n([\s\S]*?)\n```/gi;
+  const fenceRegex = /```(?:bash|sh|shell)\b[^\n]*\n([\s\S]*?)\n?```/gi;
   const hints: AgentsMdHint[] = [];
   const seen = new Set<RepoCommandKind>();
 

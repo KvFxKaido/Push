@@ -43,18 +43,21 @@ async function readPackageScripts(repoRoot: string): Promise<Record<string, stri
 }
 
 async function listConfigFiles(repoRoot: string): Promise<string[]> {
-  const present: string[] = [];
-  await Promise.all(
+  // Use map+filter instead of `push` inside Promise.all so the result order
+  // is deterministic (matches KNOWN_CONFIG_FILES) regardless of stat timing.
+  // Also stat for `isFile` — `fs.access` succeeds on directories too, which
+  // would misclassify e.g. a `biome.json/` directory as a config file.
+  const results = await Promise.all(
     KNOWN_CONFIG_FILES.map(async (name) => {
       try {
-        await fs.access(path.join(repoRoot, name));
-        present.push(name);
+        const stat = await fs.stat(path.join(repoRoot, name));
+        return stat.isFile() ? name : null;
       } catch {
-        // Not present.
+        return null;
       }
     }),
   );
-  return present;
+  return results.filter((name): name is string => name !== null);
 }
 
 async function collectAgentsMdHints(repoRoot: string): Promise<AgentsMdHint[]> {
@@ -93,6 +96,30 @@ export async function buildRepoCommandsSnapshot(repoRoot: string): Promise<RepoC
 }
 
 /**
+ * Walk up from `start` looking for a `.git` entry (directory or file — the
+ * latter handles git worktrees). Returns the first ancestor that has one,
+ * or `start` itself if no `.git` is found anywhere on the path.
+ *
+ * This makes `loadRepoCommands` robust to the CLI being launched from a
+ * subdirectory: we still read package.json / AGENTS.md / config files from
+ * the actual repo root rather than the subdir.
+ */
+async function resolveRepoRoot(start: string): Promise<string> {
+  let current = path.resolve(start);
+  while (true) {
+    try {
+      await fs.access(path.join(current, '.git'));
+      return current;
+    } catch {
+      // Keep walking up.
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return path.resolve(start);
+    current = parent;
+  }
+}
+
+/**
  * Per-process memo. Callers that hold a stable cwd for the session (CLI
  * boot, a single web Worker request) can rely on this; recomputation on a
  * fresh process is intentional for v1 — disk caching adds an invalidation
@@ -101,7 +128,7 @@ export async function buildRepoCommandsSnapshot(repoRoot: string): Promise<RepoC
 const memo = new Map<string, Promise<RepoCommands>>();
 
 export async function loadRepoCommands(cwd: string): Promise<RepoCommands> {
-  const repoRoot = path.resolve(cwd);
+  const repoRoot = await resolveRepoRoot(cwd);
   const cached = memo.get(repoRoot);
   if (cached) return cached;
   const promise = buildRepoCommandsSnapshot(repoRoot).then(deriveRepoCommands);
