@@ -99,10 +99,19 @@ export default defineConfig([
   //                                 nextFollowUp scheduling, which depends
   //                                 on `sendMessage` itself). Ceiling
   //                                 lowered to 1,060.
+  //   Phase 9 (dirty-conv flush):   1,045 -> 978 after the persist-on-tick
+  //                                 contract (flushDirty, the 3s periodic
+  //                                 interval, and the visibilitychange→
+  //                                 hidden emergency flush) moved to
+  //                                 useDirtyConversationFlush. The hook
+  //                                 owns the retry-cap-of-3 + drop-on-
+  //                                 exhaustion behavior, which now has
+  //                                 dedicated unit coverage. Ceiling
+  //                                 lowered to 990.
   {
     files: ['src/hooks/useChat.ts'],
     rules: {
-      'max-lines': ['error', { max: 1060 }],
+      'max-lines': ['error', { max: 990 }],
     },
   },
 ]);
