@@ -46,19 +46,21 @@ hints).
 ## Proposal
 
 Add a `tool_use_delta` SSE event that ships **display metadata** on tool-call
-start, before the tool result is available. The client renders a card skeleton
-from the delta and fills in the result payload when the matching
-`tool_use_result` event arrives.
+start, before the tool result is available. The client renders a single
+generic **`pending-tool` placeholder card** populated from the delta, then
+swaps it for the real, fully-typed `ChatCard` when the matching tool result
+arrives.
 
 ### Delta Envelope
 
 Borrowing the shape verified in the decompiled APK
-(`ToolUseBlockUpdateDelta.kt`):
+(`ToolUseBlockUpdateDelta.kt`), with one deliberate omission (see Scoping
+Notes for why `cardType` is dropped):
 
 ```typescript
 interface ToolUseDelta {
   toolUseId: string;          // correlates with later result event
-  cardType: ChatCard['type']; // which CardRenderer component to scaffold
+  toolName: string;           // e.g. "sandbox_exec", "fetch_pr"
   displayContent?: string;    // human-readable subtitle (e.g., file path, URL)
   iconName?: string;          // mapped to an existing icon set
   approvalKey?: string;       // if present, scaffold the approval affordance
@@ -67,18 +69,21 @@ interface ToolUseDelta {
 }
 ```
 
-All fields except `toolUseId` and `cardType` are optional — a tool that has
+All fields except `toolUseId` and `toolName` are optional. A tool that has
 nothing meaningful to scaffold simply doesn't emit a delta and falls back to
 today's post-hoc rendering.
 
 ### Wire Format
 
 Reuse the existing SSE channel in
-`app/src/worker/coder-job-do.ts`. Add one event type:
+`app/src/worker/coder-job-do.ts` (events flow through `appendEvent` at
+`coder-job-do.ts:910-931` and serialize via `formatSseChunk` at
+`coder-job-do.ts:983-985`). Add one new event type to `RunEventInput` in
+`@push/lib/runtime-contract`:
 
 ```
 event: tool_use_delta
-data: {"toolUseId":"...","cardType":"diff-preview","displayContent":"app/src/foo.ts","iconName":"file-diff"}
+data: {"toolUseId":"...","toolName":"sandbox_exec","displayContent":"npm test","iconName":"terminal","approvalKey":"sandbox.exec"}
 ```
 
 Followed later (potentially seconds later, after the tool returns) by the
@@ -86,37 +91,43 @@ existing tool-result-bearing event that `parseSseBlock` already handles.
 
 ### Client Consumption
 
-In `useBackgroundCoderJob.ts`, extend the parser to handle `tool_use_delta`:
+In `useBackgroundCoderJob.ts`, extend `dispatchServerEvent` (lines 305-427)
+with a new case for `tool_use_delta`:
 
-1. On delta, insert a placeholder `ChatCard` keyed by `toolUseId` with a
-   `pending: true` flag and the delta's display fields.
-2. `CardRenderer` renders the card component normally, but the component
-   reads `pending` and renders its skeleton state with the supplied icon /
-   subtitle / approval affordance visible.
-3. On the matching tool result, replace the placeholder's `data` with the
-   real payload and clear `pending`. The component re-renders with full
-   content. No remount.
+1. On delta, append a new `pending-tool` `ChatCard` to the message's `cards`
+   array. Store the `toolUseId` on the card so the later result can find it.
+2. `CardRenderer` renders the dedicated `PendingToolCard` component, which
+   shows the icon, tool name, subtitle, and (if `approvalKey` is set) the
+   approval affordance from the first frame.
+3. On the matching tool result, **replace the entire card object** in the
+   array with the real, typed `ChatCard` for that tool. Do not mutate
+   `card.data` in place — `CardRenderer` keys off card identity, not data
+   identity, so an in-place mutation will not re-render (`CardRenderer.tsx`
+   lines 244-275). Use a new sibling helper to `upsertJobCardData`
+   (`useBackgroundCoderJob.ts:225-247`) that performs the swap.
 
-Each card component decides what its skeleton looks like — most already have
-some loading state; this just gives them metadata to populate it with from the
-first frame.
+The existing 24+ card components are unchanged. They never see a `pending`
+state — the placeholder is a separate, dedicated component.
 
 ### Approval Affordance
 
-If `approvalKey` is present in the delta, render the approval row immediately.
-This is the highest-value part of the change: today the user sees nothing,
-then suddenly an approval modal/card appears once the tool has done enough
-work to produce one. With deltas, the card declares "this will need approval"
-from the moment it streams.
+If `approvalKey` is present in the delta, the placeholder renders the
+approval row immediately. This is the highest-value part of the change:
+today the user sees nothing, then suddenly an approval modal/card appears
+once the tool has done enough work to produce one. With deltas, the
+placeholder declares "this will need approval" from the moment it streams.
 
-The actual approval handler stays where it is in
-`app/src/lib/approval-gates.ts` — the delta is purely a UI signal.
+The delta's `approvalKey` is **purely a UI signal** — it does not pre-decide
+the approval outcome. The actual gate evaluation still happens in
+`app/src/lib/approval-gates.ts` during tool execution; the delta only
+declares that approval *may* be needed so the affordance can render early.
 
 ## What's Out of Scope
 
 - **Re-architecting the card layer.** The 24+ `ChatCard` types and
-  `CardRenderer` lazy-load model are working well. Don't touch them beyond
-  letting components read a `pending` flag.
+  `CardRenderer` lazy-load model are working well. The only addition is one
+  new `pending-tool` variant + its renderer; existing card components are
+  unchanged.
 - **Generic block-level streaming for prose.** Assistant text and `ThinkingBlock`
   already stream fine. This proposal is specifically about *tool-call* UI.
 - **Mobile-only delivery.** Web and CLI both consume the same SSE; CLI can
@@ -128,32 +139,79 @@ The actual approval handler stays where it is in
   bundle. The Okio-based parsing in the decompiled APK is a native-Android
   concern with no equivalent benefit here.
 
+## Scoping Notes
+
+A scoping pass against the current code surfaced three constraints that
+shaped the design above. Recording them here so a future implementer doesn't
+re-derive them from scratch.
+
+1. **`cardType` is not knowable at dispatch time.** The original draft of
+   this doc shipped `cardType: ChatCard['type']` in the delta. In practice,
+   tools decide which card variant to emit *based on their output shape* —
+   e.g. `sandbox_exec` doesn't know whether it'll produce a `sandbox` card
+   vs. something else until after it runs (`app/src/lib/sandbox-tools.ts`
+   around line 383; same pattern for `diff-preview` in
+   `sandbox-git-release-handlers.ts`). Asking each tool to pre-declare a
+   speculative `cardType` would either lie when execution disagrees, or
+   require a contract change across every tool. The placeholder approach
+   sidesteps this: the delta describes *what's about to run*, not *what the
+   result will look like*.
+
+2. **No single tool-dispatch chokepoint in the worker.** Tool invocation is
+   not a `coder-job-do.ts`-local `await tool(...)` site. Dispatch lives
+   inside `@push/lib/coder-agent-bindings`, called from
+   `coder-job-do.ts:648` via `runCoderAgentLib` after `buildCoderToolExec`
+   constructs the executor (line 636). Emitting the delta requires
+   plumbing through the binding layer — either by wrapping the executor
+   before it's passed to the agent, or by adding a `before-tool-call` hook
+   to the executor contract. This is a cross-package change, not a
+   localized worker edit.
+
+3. **`CardRenderer` does not re-render on `card.data` mutation.** The
+   renderer (`app/src/components/cards/CardRenderer.tsx:244-275`) keys off
+   the `card` object identity, not its `data` field. The existing
+   `upsertJobCardData` helper (`useBackgroundCoderJob.ts:225-247`) mutates
+   `data` in place, which works for `CoderJobCardData` only because that
+   path also reassigns the card. The placeholder→real swap must replace
+   the whole card object in the array, not patch `card.data`.
+
 ## Open Questions
 
-1. **Tool coverage.** Which tools are worth emitting deltas for first? The
-   highest-leverage candidates are the slow ones with predictable display
-   metadata: `sandbox_exec` (command + cwd), `fetch_pr` (owner/repo/number),
-   `read_file` (path), audit verdicts (target). Internal/fast tools probably
-   skip deltas.
-2. **Backpressure.** If a delta and result land in the same SSE flush, the
+1. **Backpressure.** If a delta and result land in the same SSE flush, the
    placeholder/replace dance is wasted work. Worth measuring before deciding
    whether to skip the delta when the tool returns synchronously.
-3. **Failure modes.** If a delta arrives but no matching result ever does
+2. **Failure modes.** If a delta arrives but no matching result ever does
    (worker crash, stream cut), the placeholder needs a TTL or a job-level
    cleanup hook so it doesn't sit pending forever.
+3. **Tool coverage.** First-wave candidates are the slow tools with
+   predictable display metadata: `sandbox_exec` (command + cwd), `fetch_pr`
+   (owner/repo/number), audit verdicts (target). Fast/internal tools
+   probably skip deltas to avoid the backpressure issue above.
 
 ## Migration Sketch
 
-1. Add the `ToolUseDelta` type and SSE event constant alongside existing
-   stream event types.
-2. Worker: emit `tool_use_delta` from the tool-dispatch entry point, before
-   `await`ing tool execution. One tool wired first (likely `sandbox_exec`)
-   to validate the round-trip end-to-end.
-3. Client: extend `parseSseBlock` consumer to insert/replace placeholder
-   cards by `toolUseId`.
-4. Update one card component (e.g., `SandboxStateCard` or a new generic
-   `PendingToolCard`) to render the skeleton from delta metadata.
-5. Roll out to remaining slow tools incrementally.
+1. Add `ToolUseDelta` to `@push/lib/runtime-contract` as a new variant of
+   `RunEventInput`. ~40 lines.
+2. Add a `pending-tool` variant to the `ChatCard` discriminated union
+   (`app/src/types/index.ts:324-349`) carrying `toolUseId`, `toolName`,
+   and the optional display fields. Build a `PendingToolCard` component
+   and register it with `CardRenderer`. ~80 lines incl. component.
+3. Plumb a `beforeToolCall(meta) → emit delta` hook through
+   `@push/lib/coder-agent-bindings` so the worker can fire the delta
+   without each tool needing to know about SSE. ~30-50 lines, plus
+   contract change in the bindings package.
+4. Worker: wire the hook in `coder-job-do.ts` to call `appendEvent` with
+   the new variant. ~15-20 lines.
+5. Client: add a `tool_use_delta` case to `dispatchServerEvent`
+   (`useBackgroundCoderJob.ts:305-427`) that appends a `pending-tool`
+   card; add a sibling helper to `upsertJobCardData` that replaces the
+   whole card object on tool result. ~80-120 lines.
+6. Wire up one tool first (`sandbox_exec`) end-to-end to validate. Roll
+   out to remaining slow tools incrementally.
+
+Estimated total: half day to full day of focused work, dominated by the
+binding-layer plumbing in step 3 and the placeholder/replace state
+management in step 5. Not a single-session change.
 
 No wire-format breaking changes — clients on older builds ignore the unknown
 event and fall back to today's post-hoc behavior.
