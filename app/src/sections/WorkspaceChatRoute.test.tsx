@@ -269,7 +269,6 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
     sandboxStateLoading: false,
     fetchSandboxState: vi.fn(),
     setCurrentBranch: vi.fn(),
-    onSandboxBranchSwitch: vi.fn(),
     ensureSandbox: vi.fn(async () => null),
     ...overrides,
   };

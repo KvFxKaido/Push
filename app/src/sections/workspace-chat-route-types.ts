@@ -66,7 +66,6 @@ export interface ChatRouteWorkspaceProps {
   handleSandboxDownload: () => Promise<void>;
   sandboxDownloading: boolean;
   setCurrentBranch: (branch: string) => void;
-  onSandboxBranchSwitch: (branch: string) => void;
   /** Slice 2.1: UI-initiated fork. Calls sandbox_create_branch tool path
    *  then dispatches the resulting payload through applyBranchSwitchPayload
    *  so conversation migration fires the same way as model-initiated forks. */

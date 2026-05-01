@@ -127,7 +127,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleSelectVertexModelFromChat,
     handleSelectRepoFromDrawer,
     setCurrentBranch,
-    onSandboxBranchSwitch,
     ensureSandbox,
     approvalMode,
     updateApprovalMode,
@@ -684,7 +683,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             todos={todo.todos}
             onTodoClear={todo.clear}
             branchProps={branchProps}
-            onSandboxBranchSwitch={onSandboxBranchSwitch}
+            forkBranchFromUI={props.forkBranchFromUI}
             onFixReviewFinding={handleFixReviewFinding}
             pinnedArtifacts={pinnedArtifacts.artifacts}
             onUnpinArtifact={pinnedArtifacts.unpin}
