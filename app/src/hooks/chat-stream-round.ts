@@ -5,9 +5,11 @@
  * time. Extracted from chat-send.ts so the dispatcher (`processAssistantTurn`)
  * stays focused on post-stream tool routing.
  *
- * Updates `checkpointRefs` synchronously through `setConversations` so a
- * visibility-change flush sees the latest accumulated state without
- * waiting for React to re-render.
+ * On each delta this writes the latest accumulated content/thinking into
+ * conversation state via `setConversations` and emits an
+ * `ACCUMULATED_UPDATED` engine event. The function does NOT touch
+ * `checkpointRefs` — `processAssistantTurn` writes apiMessages to the
+ * checkpoint after the round resolves.
  */
 
 import { streamChat } from '@/lib/orchestrator';

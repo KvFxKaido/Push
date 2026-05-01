@@ -12,6 +12,7 @@ import type { AnyToolCall } from '@/lib/tool-dispatch';
 import type { TodoItem } from '@/lib/todo-tools';
 import type { MigrationGuard } from '@/lib/chat-message';
 import type { RunEngineEvent } from '@/lib/run-engine';
+import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type {
   ActiveRepo,
   AgentStatus,
@@ -120,7 +121,7 @@ export interface StreamRoundResult {
 
 export interface AssistantTurnResult {
   nextApiMessages: ChatMessage[];
-  nextRecoveryState: import('@/lib/tool-call-recovery').ToolCallRecoveryState;
+  nextRecoveryState: ToolCallRecoveryState;
   /** What the sendMessage loop should do after this turn. */
   loopAction: 'break' | 'continue';
   loopCompletedNormally: boolean;
