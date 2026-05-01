@@ -62,6 +62,14 @@ import {
 } from './system-prompt-sections.js';
 import { getToolPublicName } from './tool-registry.js';
 import type { DetectedToolCalls } from './deep-reviewer-agent.js';
+import { buildContextSummaryBlock, normalizeTrimmedRoleAlternation } from './coder-context-trim.js';
+import {
+  clearMutationFailure,
+  extractMutatedPaths,
+  formatMutationHardFailure,
+  recordMutationFailure,
+  type MutationFailureEntry,
+} from './coder-mutation-results.js';
 
 // Re-export the structural detector shape so the Web shim only needs one
 // import path. Same canonical definition as deep-reviewer / explorer.
@@ -121,7 +129,15 @@ import type {
   CoderObservationUpdate,
   CoderWorkingMemoryUpdate,
 } from './working-memory.js';
-import { formatRepoCommands } from './repo-commands.js';
+import {
+  applyObservationUpdates,
+  detectUpdateStateCall,
+  formatCoderState,
+  formatCoderStateDiff,
+  hasCoderState,
+  invalidateObservationDependencies,
+  shouldInjectCoderStateOnToolResult as shouldInjectCoderStateFromWorkingMemory,
+} from './working-memory.js';
 
 export type {
   CoderObservation,
@@ -130,20 +146,20 @@ export type {
   CoderWorkingMemoryUpdate,
 };
 
-// ---------------------------------------------------------------------------
-// Mutation failure tracker — detects repeated failures on same tool+file
-// ---------------------------------------------------------------------------
-
-interface MutationFailureEntry {
-  tool: string;
-  file: string;
-  errorType: string;
-  count: number;
-}
-
-function makeMutationKey(tool: string, file: string): string {
-  return `${tool}::${file}`;
-}
+// Backward-compat re-exports. These functions used to live inline in this
+// file; callers that imported them from `coder-agent` should keep working
+// after the consolidation into `working-memory.ts` and `coder-context-trim.ts`.
+// TODO: migrate call sites to import directly from the canonical modules,
+// then remove this block. Two import paths for the same function is a smell
+// that's only safe while it's explicitly transitional.
+export {
+  applyObservationUpdates,
+  detectUpdateStateCall,
+  formatCoderState,
+  formatCoderStateDiff,
+  invalidateObservationDependencies,
+  normalizeTrimmedRoleAlternation,
+};
 
 /** Truncate content with a marker if it exceeds max length. */
 function truncateContent(content: string, maxLen: number, label = 'content'): string {
@@ -155,61 +171,6 @@ function truncateContent(content: string, maxLen: number, label = 'content'): st
 /** Estimate total size of messages array (rough character count). */
 function estimateMessagesSize(messages: CoderLoopMessage[]): number {
   return messages.reduce((sum, m) => sum + m.content.length, 0);
-}
-
-/**
- * Restore role alternation after context trimming without appending large
- * payloads into the seed task message (messages[0]).
- *
- * Rules:
- * - Consecutive user tool-results are dropped (already summarized elsewhere)
- * - A non-tool user message immediately after messages[0] gets an assistant
- *   bridge inserted so the message stays intact without growing messages[0]
- * - Remaining consecutive non-tool user messages are merged into the previous
- *   non-seed user message
- */
-export function normalizeTrimmedRoleAlternation(
-  messages: CoderLoopMessage[],
-  round: number,
-  now: () => number = Date.now,
-): void {
-  let bridgeCount = 0;
-
-  for (let i = 1; i < messages.length; ) {
-    const prev = messages[i - 1];
-    const curr = messages[i];
-
-    if (prev.role !== 'user' || curr.role !== 'user') {
-      i++;
-      continue;
-    }
-
-    // Tool results are safe to drop here — we already keep a trim summary.
-    if (curr.isToolResult) {
-      messages.splice(i, 1);
-      continue;
-    }
-
-    // Never merge into the immortal seed task message.
-    if (i - 1 === 0) {
-      messages.splice(i, 0, {
-        id: `coder-context-bridge-${round}-${bridgeCount++}`,
-        role: 'assistant',
-        content: '[Context bridge]\nUse the next user message as the latest guidance.',
-        timestamp: now(),
-      });
-      i += 2;
-      continue;
-    }
-
-    // Keep alternation by folding additional non-tool user context into the
-    // previous non-seed user message.
-    messages[i - 1] = {
-      ...prev,
-      content: `${prev.content}\n\n${curr.content}`,
-    };
-    messages.splice(i, 1);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -248,316 +209,6 @@ function detectCheckpointCall(text: string): CoderCheckpointCall | null {
 // Working memory helpers
 // ---------------------------------------------------------------------------
 
-function arraysChanged(a?: string[], b?: string[]): boolean {
-  if (!a?.length && !b?.length) return false;
-  if (a?.length !== b?.length) return true;
-  return a!.some((value, index) => value !== b![index]);
-}
-
-function formatObservationLine(observation: CoderObservation): string {
-  if (observation.stale) {
-    const reason = observation.staleReason || 'dependency modified';
-    return `[STALE — ${reason}] ${observation.id}: ${observation.text}`;
-  }
-  return `${observation.id}: ${observation.text}`;
-}
-
-function getVisibleObservations(
-  observations: CoderObservation[] | undefined,
-  currentRound: number,
-): CoderObservation[] {
-  return (observations || []).filter((observation) => {
-    if (!observation.stale) return true;
-    // Expire stale observations 5 rounds after they became stale (not when added)
-    const staleRound = observation.staleAtRound ?? observation.addedAtRound;
-    if (typeof staleRound !== 'number') return true;
-    return currentRound - staleRound <= 5;
-  });
-}
-
-function observationsChanged(
-  current: CoderObservation[] | undefined,
-  previous: CoderObservation[] | undefined,
-): boolean {
-  if (!current?.length && !previous?.length) return false;
-  if (current?.length !== previous?.length) return true;
-  return current!.some(
-    (observation, index) => JSON.stringify(observation) !== JSON.stringify(previous![index]),
-  );
-}
-
-function hasCoderState(mem: CoderWorkingMemory, currentRound: number): boolean {
-  return Boolean(
-    mem.plan ||
-      mem.openTasks?.length ||
-      mem.filesTouched?.length ||
-      mem.assumptions?.length ||
-      mem.errorsEncountered?.length ||
-      mem.currentPhase ||
-      mem.completedPhases?.length ||
-      getVisibleObservations(mem.observations, currentRound).length ||
-      (mem.validationCommands && formatRepoCommands(mem.validationCommands).length > 0),
-  );
-}
-
-function collectCoderStateDeltaLines(
-  current: CoderWorkingMemory,
-  previous: CoderWorkingMemory,
-  currentRound: number,
-): string[] {
-  const diffs: string[] = [];
-
-  if (current.plan && current.plan !== previous.plan) {
-    diffs.push(`Plan: ${current.plan}`);
-  }
-  if (current.currentPhase && current.currentPhase !== previous.currentPhase) {
-    diffs.push(`Phase: ${current.currentPhase}`);
-  }
-
-  if (arraysChanged(current.openTasks, previous.openTasks)) {
-    diffs.push(`Open tasks: ${current.openTasks?.join('; ') || '(none)'}`);
-  }
-  if (arraysChanged(current.filesTouched, previous.filesTouched)) {
-    diffs.push(`Files touched: ${current.filesTouched?.join(', ') || '(none)'}`);
-  }
-  if (arraysChanged(current.assumptions, previous.assumptions)) {
-    diffs.push(`Assumptions: ${current.assumptions?.join('; ') || '(none)'}`);
-  }
-  if (arraysChanged(current.errorsEncountered, previous.errorsEncountered)) {
-    diffs.push(`Errors: ${current.errorsEncountered?.join('; ') || '(none)'}`);
-  }
-  if (arraysChanged(current.completedPhases, previous.completedPhases)) {
-    diffs.push(`Completed: ${current.completedPhases?.join(', ') || '(none)'}`);
-  }
-  const currentValidation = current.validationCommands
-    ? formatRepoCommands(current.validationCommands)
-    : '';
-  const previousValidation = previous.validationCommands
-    ? formatRepoCommands(previous.validationCommands)
-    : '';
-  if (currentValidation !== previousValidation && currentValidation) {
-    diffs.push(`Validation: ${currentValidation}`);
-  }
-
-  const currentObservations = getVisibleObservations(current.observations, currentRound);
-  const previousObservations = getVisibleObservations(previous.observations, currentRound);
-  if (observationsChanged(currentObservations, previousObservations)) {
-    if (currentObservations.length) {
-      diffs.push(...currentObservations.map(formatObservationLine));
-    } else {
-      diffs.push('Observations: (none)');
-    }
-  }
-
-  return diffs;
-}
-
-export function applyObservationUpdates(
-  existing: CoderObservation[] | undefined,
-  updates: CoderObservationUpdate[] | undefined,
-  round: number,
-): CoderObservation[] | undefined {
-  if (!updates?.length) return existing;
-
-  const next = [...(existing || [])];
-
-  for (const update of updates) {
-    const id = update.id.trim();
-    const index = next.findIndex((observation) => observation.id === id);
-
-    if (update.remove) {
-      if (index !== -1) next.splice(index, 1);
-      continue;
-    }
-
-    if (typeof update.text !== 'string') continue;
-
-    const dependsOn = update.dependsOn?.length ? [...new Set(update.dependsOn)] : undefined;
-    const updatedObservation: CoderObservation = {
-      id,
-      text: update.text,
-      dependsOn,
-      addedAtRound: index === -1 ? round : next[index].addedAtRound,
-    };
-
-    if (index === -1) {
-      next.push(updatedObservation);
-    } else {
-      next[index] = updatedObservation;
-    }
-  }
-
-  return next.length ? next : undefined;
-}
-
-/** Extract all file paths that a tool call may have mutated. */
-function extractMutatedPaths(
-  tool: string,
-  args: Record<string, unknown>,
-  primaryPath: string,
-): string[] {
-  // patchset: paths live in args.edits[].path
-  if (tool === 'sandbox_apply_patchset' && Array.isArray(args.edits)) {
-    const paths: string[] = [];
-    for (const edit of args.edits) {
-      const rec = edit as Record<string, unknown> | null;
-      if (rec && typeof rec.path === 'string') paths.push(rec.path);
-    }
-    return paths;
-  }
-  // Single-file mutations
-  if (primaryPath) return [primaryPath];
-  return [];
-}
-
-/** Strip /workspace/ prefix for consistent path comparison with agent-authored dependsOn values. */
-function normalizeObservationPath(p: string): string {
-  return p.replace(/^\/workspace\//, '').replace(/^\.\//, '');
-}
-
-export function invalidateObservationDependencies(
-  observations: CoderObservation[] | undefined,
-  filePaths: string | string[],
-  round: number,
-): CoderObservation[] | undefined {
-  if (!observations?.length) return observations;
-
-  const paths = Array.isArray(filePaths) ? filePaths : [filePaths];
-  if (paths.length === 0) return observations;
-  const normalizedPaths = new Set(paths.filter(Boolean).map(normalizeObservationPath));
-  if (normalizedPaths.size === 0) return observations;
-
-  let changed = false;
-  const next = observations.map((observation) => {
-    if (!observation.dependsOn?.length) return observation;
-    // Match if any dependency overlaps with any mutated path (both normalized)
-    const hit = observation.dependsOn.some((dep) =>
-      normalizedPaths.has(normalizeObservationPath(dep)),
-    );
-    if (!hit) return observation;
-    // Already stale for this exact reason — skip
-    if (observation.stale && observation.staleAtRound === round) return observation;
-    changed = true;
-    const matchedPath =
-      paths.find((p) =>
-        observation.dependsOn!.some(
-          (dep) => normalizeObservationPath(dep) === normalizeObservationPath(p),
-        ),
-      ) || paths[0];
-    return {
-      ...observation,
-      stale: true,
-      staleReason: `${matchedPath} was modified at round ${round}`,
-      staleAtRound: round,
-    };
-  });
-
-  return changed ? next : observations;
-}
-
-export function detectUpdateStateCall(text: string): CoderWorkingMemoryUpdate | null {
-  return detectToolFromText<CoderWorkingMemoryUpdate>(text, (parsed) => {
-    const obj = asRecord(parsed);
-    if (obj?.tool === 'coder_update_state') {
-      const args = asRecord(obj.args) || obj;
-      const state: CoderWorkingMemoryUpdate = {};
-      if (typeof args.plan === 'string') state.plan = args.plan;
-      if (Array.isArray(args.openTasks))
-        state.openTasks = args.openTasks.filter((v): v is string => typeof v === 'string');
-      if (Array.isArray(args.filesTouched))
-        state.filesTouched = args.filesTouched.filter((v): v is string => typeof v === 'string');
-      if (Array.isArray(args.assumptions))
-        state.assumptions = args.assumptions.filter((v): v is string => typeof v === 'string');
-      if (Array.isArray(args.errorsEncountered))
-        state.errorsEncountered = args.errorsEncountered.filter(
-          (v): v is string => typeof v === 'string',
-        );
-      if (typeof args.currentPhase === 'string') state.currentPhase = args.currentPhase;
-      if (Array.isArray(args.completedPhases))
-        state.completedPhases = args.completedPhases.filter(
-          (v): v is string => typeof v === 'string',
-        );
-      if (Array.isArray(args.observations)) {
-        const observations: CoderObservationUpdate[] = [];
-        for (const entry of args.observations) {
-          const obs = asRecord(entry);
-          if (!obs) continue;
-          const id = typeof obs.id === 'string' ? obs.id.trim() : '';
-          if (!id) continue;
-          if (obs.remove === true) {
-            observations.push({ id, remove: true });
-            continue;
-          }
-          if (typeof obs.text !== 'string') continue;
-          const dependsOn = Array.isArray(obs.dependsOn)
-            ? (obs.dependsOn as unknown[]).filter(
-                (value): value is string => typeof value === 'string',
-              )
-            : undefined;
-          observations.push({
-            id,
-            text: obs.text,
-            dependsOn,
-          });
-        }
-        if (observations.length) state.observations = observations;
-      }
-      if (Object.keys(state).length === 0) return null;
-      return state;
-    }
-    return null;
-  });
-}
-
-/**
- * Format the working memory into a [CODER_STATE] block for injection.
- */
-export function formatCoderState(mem: CoderWorkingMemory, currentRound = 0): string {
-  const lines: string[] = ['[CODER_STATE]'];
-  if (mem.plan) lines.push(`Plan: ${mem.plan}`);
-  if (mem.openTasks?.length) lines.push(`Open tasks: ${mem.openTasks.join('; ')}`);
-  if (mem.filesTouched?.length) lines.push(`Files touched: ${mem.filesTouched.join(', ')}`);
-  if (mem.assumptions?.length) lines.push(`Assumptions: ${mem.assumptions.join('; ')}`);
-  if (mem.errorsEncountered?.length) lines.push(`Errors: ${mem.errorsEncountered.join('; ')}`);
-  if (mem.currentPhase) lines.push(`Phase: ${mem.currentPhase}`);
-  if (mem.completedPhases?.length) lines.push(`Completed: ${mem.completedPhases.join(', ')}`);
-  if (mem.validationCommands) {
-    const rendered = formatRepoCommands(mem.validationCommands);
-    if (rendered) lines.push(`Validation: ${rendered}`);
-  }
-  for (const observation of getVisibleObservations(mem.observations, currentRound)) {
-    lines.push(formatObservationLine(observation));
-  }
-  lines.push('[/CODER_STATE]');
-  return lines.join('\n');
-}
-
-/**
- * Format a compact diff of working memory — only fields that changed since
- * the last injection.  Falls back to a full dump on the first call or when
- * all fields differ.
- */
-export function formatCoderStateDiff(
-  current: CoderWorkingMemory,
-  previous: CoderWorkingMemory | null,
-  currentRound = 0,
-): string {
-  // First injection — emit full state
-  if (!previous) {
-    return formatCoderState(current, currentRound);
-  }
-
-  const diffs = collectCoderStateDeltaLines(current, previous, currentRound);
-
-  // Nothing changed — inject a minimal anchor so the model knows state is stable
-  if (diffs.length === 0) {
-    return `[CODER_STATE] (unchanged — phase: ${current.currentPhase || 'n/a'})[/CODER_STATE]`;
-  }
-
-  // Partial diff — cheaper than full dump
-  return ['[CODER_STATE delta]', ...diffs, '[/CODER_STATE]'].join('\n');
-}
-
 export function shouldInjectCoderStateOnToolResult(
   current: CoderWorkingMemory,
   previous: CoderWorkingMemory | null,
@@ -565,18 +216,16 @@ export function shouldInjectCoderStateOnToolResult(
   contextChars: number,
   lastInjectionRound: number | null,
 ): boolean {
-  if (!hasCoderState(current, currentRound)) return false;
-  if (!previous) return true;
-  if (collectCoderStateDeltaLines(current, previous, currentRound).length > 0) return true;
-
-  const pressurePct =
-    MAX_TOTAL_CONTEXT_SIZE > 0
-      ? Math.max(0, Math.round((contextChars / MAX_TOTAL_CONTEXT_SIZE) * 100))
-      : 0;
-  if (pressurePct >= CODER_STATE_REINJECTION_PRESSURE_PCT) return true;
-  if (lastInjectionRound === null) return true;
-
-  return currentRound - lastInjectionRound >= CODER_STATE_REINJECTION_CADENCE_ROUNDS;
+  return shouldInjectCoderStateFromWorkingMemory(
+    current,
+    previous,
+    currentRound,
+    contextChars,
+    MAX_TOTAL_CONTEXT_SIZE,
+    lastInjectionRound,
+    CODER_STATE_REINJECTION_PRESSURE_PCT,
+    CODER_STATE_REINJECTION_CADENCE_ROUNDS,
+  );
 }
 
 export function summarizeCoderStateForHandoff(mem: CoderWorkingMemory | null | undefined): string {
@@ -708,216 +357,6 @@ If the answer is genuinely uncertain, say so plainly in Decision and give the sa
   // Truncate checkpoint answers like tool results to prevent context bloat
   const MAX_CHECKPOINT_ANSWER_SIZE = 4000;
   return truncateContent(accumulated.trim(), MAX_CHECKPOINT_ANSWER_SIZE, 'checkpoint answer');
-}
-
-// ---------------------------------------------------------------------------
-// Context trim summary — minimal semantic summarizer used during trimming.
-// Inlined from Web's `context-compaction.ts` because the helper is pure text
-// manipulation and a full move is out of scope for Phase 5D step 2. When the
-// full compaction module lands in lib in a future phase this can be replaced
-// with a direct import.
-// ---------------------------------------------------------------------------
-
-const TOOL_RESULT_HEADER_RE = /^\[Tool Result\b/i;
-const TOOL_RESULT_NAME_RE = /\[Tool Result(?:\s*[—-]\s*|\s+)([^\]\n]+)\]/i;
-const TOOL_CALL_NAME_RE = /"tool"\s*:\s*"([^"]+)"/i;
-const CODE_FENCE_RE = /^```/;
-const META_LINE_RE = /^\[meta\]/i;
-const BULLET_RE = /^(?:[-*]|\d+\.)\s+/;
-const IMPORTANT_PREFIX_RE =
-  /^(?:Status|Exit code|Command|Path|Paths|File|Files|Branch|Branches|Commit|Commits|Diff|Changed|Created|Deleted|Updated|Renamed|Review|PR|Repo|Runtime|Workspace|Sandbox|Error|Warning|Reason|Result|Stdout|Stderr|Summary|Next|Current round|Plan|Open tasks|Phase|Completed|Assumptions|Errors)\s*:/i;
-
-function truncateLine(line: string, maxChars = 220): string {
-  if (line.length <= maxChars) return line;
-  return `${line.slice(0, maxChars - 3)}...`;
-}
-
-function normalizeSummaryKey(line: string): string {
-  return line.replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
-function lineHasPath(line: string): boolean {
-  return /\/workspace\/\S+|(?:^|\s)[A-Za-z0-9._/-]+\.(?:[A-Za-z0-9]{1,8})(?:$|\s)/.test(line);
-}
-
-function collectReferencedPaths(lines: string[], limit = 3): string[] {
-  const matches = new Set<string>();
-  const pathRe =
-    /\/workspace\/[^\s`'"]+|(?:^|\s)([A-Za-z0-9._/-]+\.(?:ts|tsx|js|jsx|py|md|json|yml|yaml|css|html|sh|rb|go|rs|java))(?:$|\s)/g;
-
-  for (const line of lines) {
-    let match: RegExpExecArray | null;
-    while ((match = pathRe.exec(line)) !== null) {
-      const raw = match[0].trim();
-      const path = raw.startsWith('/') ? raw : match[1] || raw;
-      if (!path) continue;
-      matches.add(path);
-      if (matches.size >= limit) return [...matches];
-    }
-  }
-
-  return [...matches];
-}
-
-function extractFirstNonEmptyLines(content: string): string[] {
-  return content
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function extractSemanticSummaryLines(
-  content: string,
-  {
-    includeHeader = false,
-    includeOmissionMarker = false,
-    maxLines = 4,
-    maxCharsPerLine = 220,
-  }: {
-    includeHeader?: boolean;
-    includeOmissionMarker?: boolean;
-    maxLines?: number;
-    maxCharsPerLine?: number;
-  } = {},
-): string[] {
-  const lines = extractFirstNonEmptyLines(content);
-  if (lines.length === 0) return [];
-
-  const summary: string[] = [];
-  const seen = new Set<string>();
-  const headerLine = lines[0];
-  const headerIncluded =
-    includeHeader && (TOOL_RESULT_HEADER_RE.test(headerLine) || headerLine.startsWith('['));
-  let hasCodeBlock = false;
-  let hasDiffContent = false;
-
-  const addLine = (line: string): boolean => {
-    const trimmed = truncateLine(line.trim(), maxCharsPerLine);
-    if (!trimmed) return false;
-    const key = normalizeSummaryKey(trimmed);
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    summary.push(trimmed);
-    return summary.length >= maxLines;
-  };
-
-  const reserveSlotForOmission = includeOmissionMarker ? 1 : 0;
-  const summaryCapacity = Math.max(1, maxLines - reserveSlotForOmission);
-
-  if (headerIncluded) {
-    addLine(headerLine);
-  }
-
-  for (const line of lines) {
-    if (CODE_FENCE_RE.test(line)) {
-      hasCodeBlock = true;
-      continue;
-    }
-    if (META_LINE_RE.test(line)) continue;
-    if (/^(?:@@|diff --git|\+\+\+ |--- |\+[^+]|-[^-])/.test(line)) {
-      hasDiffContent = true;
-      continue;
-    }
-    if (
-      summary.length < summaryCapacity &&
-      !(headerIncluded && line === headerLine) &&
-      (IMPORTANT_PREFIX_RE.test(line) || BULLET_RE.test(line))
-    ) {
-      addLine(line);
-    }
-  }
-
-  for (const line of lines) {
-    if (CODE_FENCE_RE.test(line)) {
-      hasCodeBlock = true;
-      continue;
-    }
-    if (META_LINE_RE.test(line)) continue;
-    if (/^(?:@@|diff --git|\+\+\+ |--- |\+[^+]|-[^-])/.test(line)) {
-      hasDiffContent = true;
-      continue;
-    }
-    if (IMPORTANT_PREFIX_RE.test(line) || BULLET_RE.test(line)) continue;
-    if (summary.length < summaryCapacity && !(headerIncluded && line === headerLine)) {
-      addLine(line);
-    }
-  }
-
-  if (summary.length < summaryCapacity) {
-    const paths = collectReferencedPaths(lines);
-    if (paths.length > 0 && !summary.some((line) => lineHasPath(line))) {
-      addLine(`Files referenced: ${paths.join(', ')}`);
-    }
-  }
-
-  const omittedContent =
-    hasCodeBlock || hasDiffContent || lines.length > summary.length + (includeHeader ? 1 : 0);
-  if (includeOmissionMarker && omittedContent) {
-    const marker = hasDiffContent
-      ? '[diff content summarized]'
-      : hasCodeBlock
-        ? '[code/content summarized]'
-        : '[additional content summarized]';
-    if (summary.length >= maxLines) {
-      summary[maxLines - 1] = marker;
-    } else {
-      summary.push(marker);
-    }
-  }
-
-  return summary.slice(0, maxLines);
-}
-
-function extractToolName(msg: CoderLoopMessage): string | null {
-  if (msg.isToolResult) {
-    const match = msg.content.match(TOOL_RESULT_NAME_RE);
-    return match?.[1]?.trim() || null;
-  }
-
-  if (!msg.isToolCall) return null;
-  const match = msg.content.match(TOOL_CALL_NAME_RE);
-  return match?.[1]?.trim() || null;
-}
-
-function buildContextPoint(msg: CoderLoopMessage): string | null {
-  if (msg.isToolCall) {
-    const toolName = extractToolName(msg);
-    return toolName
-      ? `- Assistant requested ${toolName}.`
-      : '- Assistant executed an earlier tool call.';
-  }
-
-  const summaryLines = extractSemanticSummaryLines(msg.content, {
-    includeHeader: Boolean(msg.isToolResult),
-    includeOmissionMarker: false,
-    maxLines: msg.isToolResult ? 2 : 1,
-    maxCharsPerLine: 200,
-  });
-  if (summaryLines.length === 0) return null;
-
-  const summary = truncateLine(summaryLines.join(' | '), 240);
-  if (msg.isToolResult) return `- ${summary}`;
-  return `- ${msg.role === 'user' ? 'User' : 'Assistant'}: ${summary}`;
-}
-
-function buildContextSummaryBlock(
-  messages: CoderLoopMessage[],
-  opts: { header: string; intro?: string; footerLines?: string[]; maxPoints?: number },
-): string {
-  const { header, intro, footerLines = [], maxPoints = 18 } = opts;
-  const points: string[] = [];
-  for (const msg of messages) {
-    if (points.length >= maxPoints) break;
-    const point = buildContextPoint(msg);
-    if (point) points.push(point);
-  }
-  const fallback = '- Earlier context trimmed for token budget.';
-  return [
-    header,
-    ...(intro ? [intro] : []),
-    ...(points.length > 0 ? points : [fallback]),
-    ...footerLines.filter(Boolean),
-  ].join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -1537,20 +976,12 @@ ${truncatedResult}
 
         // Track mutation failures in parallel path
         if (mutResult.errorType) {
-          const mutKey = makeMutationKey(mutCall.tool, mutFilePath);
-          const existing = mutationFailures.get(mutKey);
-          if (existing && existing.errorType === mutResult.errorType) {
-            existing.count++;
-          } else {
-            mutationFailures.set(mutKey, {
-              tool: mutCall.tool,
-              file: mutFilePath,
-              errorType: mutResult.errorType,
-              count: 1,
-            });
-          }
-
-          const entry = mutationFailures.get(mutKey)!;
+          const entry = recordMutationFailure(
+            mutationFailures,
+            mutCall.tool,
+            mutFilePath,
+            mutResult.errorType,
+          );
 
           // Hard Failure Threshold (parallel path)
           if (entry.count >= MAX_CONSECUTIVE_MUTATION_FAILURES) {
@@ -1561,7 +992,7 @@ ${truncatedResult}
             messages.push({
               id: `coder-hard-failure-${round}`,
               role: 'user',
-              content: `[SANDBOX_WRITE_HARD_FAILURE]\n${entry.tool} has failed ${entry.count} consecutive times on ${entry.file || 'the same target'} with error_type=${entry.errorType}.\nContainer may be unstable. Stop mutation attempts. Summarize what you accomplished and what remains.\n[/SANDBOX_WRITE_HARD_FAILURE]`,
+              content: formatMutationHardFailure(entry),
               timestamp: Date.now(),
             });
             batchHardFailed = true;
@@ -1572,7 +1003,7 @@ ${truncatedResult}
           // before we attempt the trailing side-effect or more writes.
           batchHardFailed = true;
         } else if (mutFilePath) {
-          mutationFailures.delete(makeMutationKey(mutCall.tool, mutFilePath));
+          clearMutationFailure(mutationFailures, mutCall.tool, mutFilePath);
         }
 
         // --- Policy bridge: afterToolExec — flattened via policyPost ---
@@ -1882,20 +1313,12 @@ ${truncatedResult}
 
     // --- Guardrail: Mutation Failure Tracking ---
     if (result.errorType) {
-      const mutKey = makeMutationKey(singleCall.call.tool, toolFilePath);
-      const existing = mutationFailures.get(mutKey);
-      if (existing && existing.errorType === result.errorType) {
-        existing.count++;
-      } else {
-        mutationFailures.set(mutKey, {
-          tool: singleCall.call.tool,
-          file: toolFilePath,
-          errorType: result.errorType,
-          count: 1,
-        });
-      }
-
-      const entry = mutationFailures.get(mutKey)!;
+      const entry = recordMutationFailure(
+        mutationFailures,
+        singleCall.call.tool,
+        toolFilePath,
+        result.errorType,
+      );
 
       // --- Guardrail: Hard Failure Threshold ---
       if (entry.count >= MAX_CONSECUTIVE_MUTATION_FAILURES) {
@@ -1906,7 +1329,7 @@ ${truncatedResult}
         messages.push({
           id: `coder-hard-failure-${round}`,
           role: 'user',
-          content: `[SANDBOX_WRITE_HARD_FAILURE]\n${entry.tool} has failed ${entry.count} consecutive times on ${entry.file || 'the same target'} with error_type=${entry.errorType}.\nContainer may be unstable. Stop mutation attempts. Summarize what you accomplished and what remains.\n[/SANDBOX_WRITE_HARD_FAILURE]`,
+          content: formatMutationHardFailure(entry),
           timestamp: Date.now(),
         });
         // Give the model one final round to produce a summary
@@ -1914,8 +1337,7 @@ ${truncatedResult}
       }
     } else if (toolFilePath) {
       // Successful execution — clear failure tracking for this tool+file
-      const mutKey = makeMutationKey(singleCall.call.tool, toolFilePath);
-      mutationFailures.delete(mutKey);
+      clearMutationFailure(mutationFailures, singleCall.call.tool, toolFilePath);
     }
 
     // --- Policy bridge: afterToolExec — flattened via policyPost ---
