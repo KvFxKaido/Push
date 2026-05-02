@@ -112,22 +112,6 @@ function promoteBackendRules(
   });
 }
 
-function promoteAlwaysEvidenceRules(
-  requirements: VerificationRequirementState[],
-  timestamp: number,
-): VerificationRequirementState[] {
-  return requirements.map((requirement) => {
-    if (
-      requirement.kind === 'evidence' &&
-      requirement.scope === 'always' &&
-      requirement.status === 'not_applicable'
-    ) {
-      return withTimestamp(requirement, 'pending', requirement.detail, timestamp);
-    }
-    return requirement;
-  });
-}
-
 export function isBackendRelevantPath(path: string): boolean {
   const normalized = path.replace(/^\/+/, '');
 
@@ -163,7 +147,10 @@ export function hydrateVerificationRuntimeState(
   timestamp = Date.now(),
 ): VerificationRuntimeState {
   const backendTouched = existing?.backendTouched ?? false;
-  const mutationOccurred = existing?.mutationOccurred ?? false;
+  // Backward compat: pre-flag sessions where backend was already touched
+  // imply work has occurred — fall back to that signal so newly-added
+  // evidence rules in those sessions don't initialize as not_applicable.
+  const mutationOccurred = existing?.mutationOccurred ?? existing?.backendTouched ?? false;
   const previousById = new Map(
     existing?.requirements.map((requirement) => [requirement.id, requirement]) ?? [],
   );
@@ -246,8 +233,7 @@ export function recordVerificationMutation(
 ): VerificationRuntimeState {
   const touchedPaths = options.touchedPaths ?? [];
   const backendTouched = state.backendTouched || touchedPaths.some(isBackendRelevantPath);
-  const backendPromoted = promoteBackendRules(state.requirements, backendTouched, timestamp);
-  const promotedRequirements = promoteAlwaysEvidenceRules(backendPromoted, timestamp);
+  const promotedRequirements = promoteBackendRules(state.requirements, backendTouched, timestamp);
 
   const requirements = promotedRequirements.map((requirement) => {
     if (requirement.kind === 'evidence') {
