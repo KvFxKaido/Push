@@ -28,6 +28,8 @@ import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { handleRecoveryResult } from '@/lib/chat-tool-execution';
 import {
   createOrchestratorPolicy,
+  hasArtifactInResponse,
+  hasGroundingEvidence,
   responseClaimsCompletion,
 } from '@/lib/turn-policies/orchestrator-policy';
 import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
@@ -143,7 +145,17 @@ export async function processNoToolPath(
   // Only runs when recovery decides this is a genuine natural completion
   // (not a malformed tool call needing retry). This prevents the policy
   // from intercepting responses that should go through the recovery path.
-  if (action.loopAction === 'break' && responseClaimsCompletion(accumulated)) {
+  //
+  // Skip when the response cites concrete artifacts or recent messages
+  // already include tool-result grounding — matches the orchestrator-policy
+  // gate so read-only summarization turns (e.g. "what changed?" answered
+  // from git log) don't loop on a still-pending verification rule.
+  if (
+    action.loopAction === 'break' &&
+    responseClaimsCompletion(accumulated) &&
+    !hasArtifactInResponse(accumulated) &&
+    !hasGroundingEvidence(action.apiMessages)
+  ) {
     const verificationEvaluation = evaluateVerificationState(
       getVerificationState(chatId),
       'completion',
