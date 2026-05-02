@@ -21,7 +21,6 @@ import {
   executeTool,
   buildToolOutcome,
   buildMetaLine,
-  collectSideEffects,
   type ToolExecRunContext,
   type ToolExecRawResult,
 } from '@/lib/chat-tool-execution';
@@ -38,6 +37,7 @@ import type { DetectedToolCalls } from '@/lib/tool-dispatch';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage } from '@/types';
 import {
+  applyPostExecutionSideEffects,
   delegateCallNeedsSandbox,
   executeToolWithChatHooks,
   getDelegateCompletionAgent,
@@ -65,7 +65,6 @@ export async function executeBatchedToolCalls(
     ensureSandboxRef,
     scratchpadRef,
     todoRef,
-    runtimeHandlersRef,
     repoRef,
     isMainProtectedRef,
     branchInfoRef,
@@ -157,10 +156,14 @@ export async function executeBatchedToolCalls(
     };
   }
 
-  const parallelEffects = collectSideEffects(parallelRawResults);
-  if (parallelEffects.sandboxUnreachable) {
-    runtimeHandlersRef.current?.onSandboxUnreachable?.(parallelEffects.sandboxUnreachable);
-  }
+  // Per-tool side effects for each parallel read result. This is the seam
+  // that previously dropped verification command updates emitted by
+  // `sandbox_check_types` / `sandbox_run_tests` inside a batched turn —
+  // those are read-only and land in the parallel slot, but the
+  // pre-extraction code only handled `onSandboxUnreachable` here.
+  parallelRawResults.forEach((result) => {
+    applyPostExecutionSideEffects(result.call, result.raw, ctx);
+  });
 
   const allCards = parallelRawResults.flatMap((r) => r.cards);
   if (allCards.length > 0) {
@@ -309,11 +312,12 @@ export async function executeBatchedToolCalls(
         preview: summarizeToolResultPreview(batchOutcome.raw.text),
       });
 
-      if (batchOutcome.raw.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-        runtimeHandlersRef.current?.onSandboxUnreachable?.(
-          batchOutcome.raw.structuredError.message,
-        );
-      }
+      // Per-tool side effects for this file mutation. File mutations
+      // (`edit_file`, `write_file`, `apply_patchset`, etc.) typically only
+      // trigger #1 (touched-files verification mutation) and #7
+      // (sandbox-unreachable propagation) inside the helper; the remaining
+      // checks no-op for this slot.
+      applyPostExecutionSideEffects(batchCall, batchOutcome.raw, ctx);
 
       // Single state update per batch member: apply cards (if any)
       // and append the result message in one pass so React only
@@ -475,9 +479,11 @@ export async function executeBatchedToolCalls(
       preview: summarizeToolResultPreview(mutOutcome.raw.text),
     });
 
-    if (mutOutcome.raw.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-      runtimeHandlersRef.current?.onSandboxUnreachable?.(mutOutcome.raw.structuredError.message);
-    }
+    // Per-tool side effects for the trailing mutation. This is the slot
+    // where `branchSwitch` (sandbox_create_branch / sandbox_switch_branch)
+    // and `promotion` (promote_to_github) realistically appear in a
+    // batched turn — pre-extraction those payloads were dropped here.
+    applyPostExecutionSideEffects(mutCall, mutOutcome.raw, ctx);
 
     if (mutOutcome.cards.length > 0) {
       setConversations((prev) => {

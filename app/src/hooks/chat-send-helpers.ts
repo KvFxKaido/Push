@@ -21,7 +21,7 @@
  */
 
 import type { MutableRefObject } from 'react';
-import type { AnyToolCall } from '@/lib/tool-dispatch';
+import { isReadOnlyToolCall, type AnyToolCall } from '@/lib/tool-dispatch';
 import {
   executeTool,
   type ToolExecRunContext,
@@ -31,6 +31,12 @@ import { execInSandbox } from '@/lib/sandbox-client';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { executeTodoToolCall } from '@/lib/todo-tools';
 import { getToolName } from '@/lib/chat-tool-messages';
+import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
+import {
+  recordVerificationArtifact,
+  recordVerificationCommandResult,
+  recordVerificationMutation,
+} from '@/lib/verification-runtime';
 import { getToolInvocationKey, type MutationFailureTracker } from '@push/lib/agent-loop-utils';
 import { createId } from '@push/lib/id-utils';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
@@ -435,4 +441,148 @@ export function createTurnRunContext(
     getRoundSandboxStatus,
     invalidateSandboxStatus,
   };
+}
+
+// ---------------------------------------------------------------------------
+// applyPostExecutionSideEffects
+//
+// Per-tool side-effect handling shared between the single-tool and batched
+// execution branches. Pre-2026-05-01 these effects only fired in the
+// single-tool path; the batched path silently dropped them, so a verification
+// command, branch switch, or repo promotion emitted as part of a batched turn
+// would not update the corresponding state. This helper unifies the seven
+// per-tool side effects so both branches behave identically:
+//
+//   1. Verification mutation tracking from postcondition `touchedFiles`
+//   2. Verification mutation fallback for `sandbox_exec` (best-effort)
+//   3. Verification command result + artifact (typed-check / test-results /
+//      sandbox `exec` cards)
+//   4. Verification artifact for `sandbox_diff` / `sandbox_prepare_commit` /
+//      `sandbox_push` (artifact-only commands without a typed result)
+//   5. Repo promotion (`promotion.repo` → bind sandbox, update conversation,
+//      fire onSandboxPromoted)
+//   6. Branch switch payload (forked / switched conversation migration)
+//   7. Sandbox unreachable structured-error propagation
+//
+// Helpers are idempotent at the runtime-handler layer — repeated calls during
+// a batched turn (e.g., parallel reads where multiple results carry
+// `structuredError: SANDBOX_UNREACHABLE`) re-fire the handler but do not
+// corrupt state.
+// ---------------------------------------------------------------------------
+
+export function applyPostExecutionSideEffects(
+  call: AnyToolCall,
+  result: ToolExecutionResult,
+  ctx: SendLoopContext,
+): void {
+  const {
+    chatId,
+    repoRef,
+    setConversations,
+    dirtyConversationIdsRef,
+    runtimeHandlersRef,
+    activeChatIdRef,
+    conversationsRef,
+    branchInfoRef,
+    skipAutoCreateRef,
+    updateVerificationState,
+  } = ctx;
+
+  // 1+2. Workspace mutation tracking.
+  const touchedPaths = result.postconditions?.touchedFiles.map((file) => file.path) ?? [];
+  if (touchedPaths.length > 0) {
+    updateVerificationState(chatId, (state) =>
+      recordVerificationMutation(state, {
+        source: 'tool',
+        touchedPaths,
+        detail: `${getToolName(call)} mutated the workspace.`,
+      }),
+    );
+  } else if (
+    call.source === 'sandbox' &&
+    call.call.tool === 'sandbox_exec' &&
+    !isReadOnlyToolCall(call)
+  ) {
+    updateVerificationState(chatId, (state) =>
+      recordVerificationMutation(state, {
+        source: 'tool',
+        detail: 'sandbox_exec may have mutated the workspace.',
+      }),
+    );
+  }
+
+  // 3+4. Verification command + artifact.
+  const verificationCommand = inferVerificationCommandResult(result);
+  if (verificationCommand) {
+    updateVerificationState(chatId, (state) =>
+      recordVerificationCommandResult(state, verificationCommand.command, {
+        exitCode: verificationCommand.exitCode,
+        detail: verificationCommand.detail,
+      }),
+    );
+    updateVerificationState(chatId, (state) =>
+      recordVerificationArtifact(
+        state,
+        `Verification command produced output: ${verificationCommand.command}`,
+      ),
+    );
+  } else if (
+    call.source === 'sandbox' &&
+    (call.call.tool === 'sandbox_diff' ||
+      call.call.tool === 'sandbox_prepare_commit' ||
+      call.call.tool === 'sandbox_push')
+  ) {
+    updateVerificationState(chatId, (state) =>
+      recordVerificationArtifact(state, `${call.call.tool} produced artifact evidence.`),
+    );
+  }
+
+  // 5. Repo promotion.
+  if (result.promotion?.repo) {
+    const promotedRepo = result.promotion.repo;
+    repoRef.current = promotedRepo.full_name;
+
+    setConversations((prev) => {
+      const conv = prev[chatId];
+      if (!conv) return prev;
+      const updated = {
+        ...prev,
+        [chatId]: {
+          ...conv,
+          repoFullName: promotedRepo.full_name,
+          lastMessageAt: Date.now(),
+        },
+      };
+      dirtyConversationIdsRef.current.add(chatId);
+      return updated;
+    });
+
+    runtimeHandlersRef.current?.bindSandboxSessionToRepo?.(
+      promotedRepo.full_name,
+      promotedRepo.default_branch,
+    );
+    runtimeHandlersRef.current?.onSandboxPromoted?.(promotedRepo);
+  }
+
+  // 6. Branch switch payload (Slice 2 conversation-fork migration).
+  // Migration logic lives in branch-fork-migration.ts so this helper stays
+  // small and the migration is testable in isolation. Dispatches on
+  // payload.kind: 'forked' migrates the active conversation; 'switched' or
+  // undefined falls through to the existing auto-switch behavior.
+  if (result.branchSwitch) {
+    applyBranchSwitchPayload(result.branchSwitch, {
+      activeChatIdRef,
+      conversationsRef,
+      branchInfoRef,
+      skipAutoCreateRef,
+      setConversations,
+      dirtyConversationIdsRef,
+      runtimeHandlersRef,
+    });
+  }
+
+  // 7. Sandbox unreachable.
+  if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
+    runtimeHandlersRef.current?.onSandboxUnreachable?.(result.structuredError.message);
+  }
 }
