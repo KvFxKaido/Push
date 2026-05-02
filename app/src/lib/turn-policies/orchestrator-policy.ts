@@ -15,27 +15,75 @@ import type { TurnPolicy, TurnContext } from '../turn-policy';
  * Detect whether an Orchestrator response claims task completion
  * without grounding in a delegation result or artifact.
  *
- * Heuristic: if the response says "done/completed/implemented" but
- * the recent conversation has no delegation result, diff card, or
- * commit/PR reference, it's likely a false claim.
+ * Self-claim framing only — bare keywords like "implemented" inside
+ * narrative ("PR #470 implemented X") must not qualify, because models
+ * reuse that vocabulary when summarizing history.
  */
 export function responseClaimsCompletion(response: string): boolean {
   const trimmed = response.trim();
 
-  // Must contain completion language
-  const hasCompletionClaim =
-    /\b(done|completed|finished|implemented|all\s+changes?\s+(are|have been)\s+made)\b/i.test(
-      trimmed,
-    );
-  if (!hasCompletionClaim) return false;
-
-  // Check if this is a question or conditional
+  // Question / conditional framing is never a completion claim
   const isConditional = /\b(if|would you|shall I|should I|do you want|let me know)\b/i.test(
     trimmed,
   );
   if (isConditional) return false;
 
-  return true;
+  // Standalone short completion ("Done.", "All done.", "Complete.")
+  if (/^\s*(all\s+)?(done|complete|completed|finished)[.!\s]*$/i.test(trimmed)) return true;
+
+  // First-person self-claim: "I/we have/'ve/am/are (now) done|completed|implemented|fixed|..."
+  if (
+    /\b(I|we)\s+(have|'ve|am|'m|are|'re|just)\s+(now\s+)?(done|completed|finished|implemented|shipped|fixed|made\s+the\s+changes?)\b/i.test(
+      trimmed,
+    )
+  ) {
+    return true;
+  }
+
+  // Subject-claim: "(the) task|work|change|fix|feature|everything|... (is|are|has been|have been) done|completed|implemented|..."
+  if (
+    /\b(the\s+)?(task|work|change|changes|fix|feature|implementation|migration|refactor|patch|everything)\s+(is|are|has been|have been)\s+(now\s+)?(done|complete|completed|finished|implemented|shipped|ready|in\s+place)\b/i.test(
+      trimmed,
+    )
+  ) {
+    return true;
+  }
+
+  // "All (changes|tasks|work|edits) (are|have been) (made|done|completed|...)"
+  if (
+    /\ball\s+(changes?|tasks?|work|edits?)\s+(are|is|have been|has been)\s+(made|done|complete|completed|finished|implemented)\b/i.test(
+      trimmed,
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * True when the recent conversation contains tool-result grounding
+ * (delegation results, sandbox diffs, coder/explorer completions).
+ *
+ * Both the orchestrator policy and the verification gate use this to
+ * skip completion enforcement on read-only Q&A turns where the model
+ * is summarizing tool output rather than claiming fresh work.
+ */
+export function hasGroundingEvidence(messages: readonly ChatMessage[]): boolean {
+  const recent = messages.slice(-6);
+  return recent.some(
+    (m) =>
+      m.role === 'user' &&
+      (m.content.includes('[Tool Result — delegate_coder]') ||
+        m.content.includes('[Tool Result — delegate_explorer]') ||
+        m.content.includes('[TOOL_RESULT') ||
+        m.content.includes('[Coder completed') ||
+        m.content.includes('[CODER_RESULT]') ||
+        m.content.includes('[Explorer completed') ||
+        m.content.includes('[EXPLORER_RESULT]') ||
+        m.content.includes('sandbox_diff') ||
+        m.content.includes('Acceptance Criteria]')),
+  );
 }
 
 function detectUngroundedCompletion(response: string, messages: readonly ChatMessage[]): boolean {
@@ -52,22 +100,7 @@ function detectUngroundedCompletion(response: string, messages: readonly ChatMes
     /\b(modified|created|updated|changed)\b.*\b(file|\.ts|\.js|\.py)\b/i.test(trimmed);
   if (hasArtifactInResponse) return false;
 
-  // Look for delegation results in recent messages (last 6)
-  const recent = messages.slice(-6);
-  const hasDelegationResult = recent.some(
-    (m) =>
-      m.role === 'user' &&
-      (m.content.includes('[Tool Result — delegate_coder]') ||
-        m.content.includes('[Tool Result — delegate_explorer]') ||
-        m.content.includes('[TOOL_RESULT') ||
-        m.content.includes('[Coder completed') ||
-        m.content.includes('[CODER_RESULT]') ||
-        m.content.includes('[Explorer completed') ||
-        m.content.includes('[EXPLORER_RESULT]') ||
-        m.content.includes('sandbox_diff') ||
-        m.content.includes('Acceptance Criteria]')),
-  );
-  if (hasDelegationResult) return false;
+  if (hasGroundingEvidence(messages)) return false;
 
   // Completion claim with no grounding → ungrounded
   return true;

@@ -77,4 +77,18 @@ describe('Orchestrator Policy — ungrounded completion', () => {
     const response = 'The implementation is completed.';
     expect(await guard(response, messages, ctx)).toBeNull();
   });
+
+  it('does not treat narrative summaries of git history as completion claims', async () => {
+    // Regression: models summarizing "what changed?" use words like
+    // "implemented" / "completed" inside narrative, e.g. when describing
+    // a merged PR. Without self-claim framing, this must not trigger
+    // the ungrounded-completion guard.
+    const response = 'Implemented todo item management (likely for the Workspace Hub) via PR #470.';
+    expect(await guard(response, [], ctx)).toBeNull();
+  });
+
+  it('does not flag narrative completion when subject is third-party (PR #N)', async () => {
+    const response = 'PR #470 implemented the feature and was merged last week.';
+    expect(await guard(response, [], ctx)).toBeNull();
+  });
 });
