@@ -15,8 +15,6 @@ import {
   loadRepoCommands,
   resetRepoCommandsMemo,
 } from '../repo-commands.ts';
-import { formatCoderState as formatCoderStateFromWorkingMemory } from '../../lib/working-memory.ts';
-import { formatCoderState as formatCoderStateFromCoderAgent } from '../../lib/coder-agent.ts';
 
 // ---------------------------------------------------------------------------
 // Pure derivation
@@ -493,42 +491,5 @@ describe('ensureRepoCommandsSeeded', () => {
     await ensureRepoCommandsSeeded(state);
     assert.ok(state.workingMemory && typeof state.workingMemory === 'object');
     assert.equal(state.workingMemory.validationCommands?.test?.command, 'npm run test');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Renderer parity — pin both formatCoderState implementations to the same
-// output for a given input. If `validationCommands` is added to one but not
-// the other, this test fails CI. Transitional debt until the duplicate
-// rendering in lib/coder-agent.ts is folded into lib/working-memory.ts.
-// ---------------------------------------------------------------------------
-
-describe('formatCoderState renderer parity', () => {
-  it('emits the Validation line identically across both modules', () => {
-    const memory = {
-      plan: 'Ship it',
-      validationCommands: {
-        test: { command: 'npm run test:cli', source: 'agents-md', confidence: 'explicit' },
-        lint: { command: 'npx biome check .', source: 'config-file', confidence: 'heuristic' },
-        typecheck: {
-          command: 'npm run typecheck',
-          source: 'package-script',
-          confidence: 'explicit',
-        },
-      },
-    };
-    const fromWorkingMemory = formatCoderStateFromWorkingMemory(memory, 0);
-    const fromCoderAgent = formatCoderStateFromCoderAgent(memory, 0);
-    assert.equal(fromWorkingMemory, fromCoderAgent);
-    assert.match(fromWorkingMemory, /Validation: test=npm run test:cli \[agents-md\]/);
-    assert.match(fromWorkingMemory, /lint=npx biome check \. \[config-file\]/);
-  });
-
-  it('omits the Validation line when validationCommands is absent', () => {
-    const memory = { plan: 'Ship it' };
-    const fromWorkingMemory = formatCoderStateFromWorkingMemory(memory, 0);
-    const fromCoderAgent = formatCoderStateFromCoderAgent(memory, 0);
-    assert.equal(fromWorkingMemory, fromCoderAgent);
-    assert.ok(!fromWorkingMemory.includes('Validation:'));
   });
 });
