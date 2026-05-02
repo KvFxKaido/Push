@@ -210,9 +210,14 @@ export function recordVerificationArtifact(
   detail: string,
   timestamp = Date.now(),
 ): VerificationRuntimeState {
+  // Do NOT flip mutationOccurred here. This function is called from
+  // read-only paths too — Explorer summaries, verification command
+  // output (typecheck/test runs), sandbox_diff. Treating those as
+  // mutations would defeat the read-only deferral by promoting future
+  // evidence rules to 'pending' in sessions where no real work was
+  // done. Mutation tracking lives in recordVerificationMutation only.
   return {
     ...state,
-    mutationOccurred: true,
     requirements: state.requirements.map((requirement) => {
       if (requirement.kind !== 'evidence') return requirement;
       if (requirement.scope === 'backend' && !state.backendTouched) return requirement;

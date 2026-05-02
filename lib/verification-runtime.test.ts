@@ -124,11 +124,19 @@ describe('verification-runtime', () => {
     expect(mutated.requirements.find((req) => req.id === 'diff-evidence')?.status).toBe('passed');
   });
 
-  it('flips mutationOccurred when a diff artifact is recorded', () => {
+  it('does NOT flip mutationOccurred from artifact-only paths (Explorer, verification commands)', () => {
+    // recordVerificationArtifact is called from read-only paths too:
+    // Explorer summaries, verification command output (typecheck/test
+    // runs), sandbox_diff reads. None of those are workspace mutations,
+    // so the flag must stay false — otherwise read-only sessions would
+    // be permanently marked as mutation-bearing and future evidence
+    // rules would lose their not_applicable initialization.
     const initial = hydrateVerificationRuntimeState(VERIFICATION_PRESET_STANDARD, undefined, 1000);
-    const withArtifact = recordVerificationArtifact(initial, 'sandbox_diff captured.', 1100);
+    const withArtifact = recordVerificationArtifact(initial, 'Explorer summary captured.', 1100);
 
-    expect(withArtifact.mutationOccurred).toBe(true);
+    expect(withArtifact.mutationOccurred).toBe(false);
+    // Evidence still flips to 'passed' because the artifact is real
+    // evidence; downstream gates won't loop on it.
     expect(withArtifact.requirements.find((req) => req.id === 'diff-evidence')?.status).toBe(
       'passed',
     );

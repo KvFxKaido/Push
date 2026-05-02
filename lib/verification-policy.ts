@@ -67,10 +67,15 @@ export interface VerificationRuntimeState {
   policyName: string;
   backendTouched: boolean;
   /**
-   * True once any mutation (Coder delegation, sandbox tool write, or diff
-   * artifact) has occurred in this session. Always-scoped evidence rules
-   * stay 'not_applicable' until this flips, so a read-only Q&A session
-   * doesn't carry an unsatisfiable verification obligation.
+   * True once a workspace mutation (Coder delegation or non-readonly
+   * sandbox write) has occurred in this session. Always-scoped evidence
+   * rules stay 'not_applicable' until this flips, so a read-only Q&A
+   * session doesn't carry an unsatisfiable verification obligation.
+   *
+   * Set only by `recordVerificationMutation`. Artifact-only paths
+   * (Explorer summaries, verification command output, sandbox_diff
+   * reads) intentionally leave this flag unchanged so they don't
+   * promote a read-only session into the mutation-bearing state.
    */
   mutationOccurred: boolean;
   requirements: VerificationRequirementState[];
