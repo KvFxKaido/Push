@@ -146,21 +146,6 @@ export type {
   CoderWorkingMemoryUpdate,
 };
 
-// Backward-compat re-exports. These functions used to live inline in this
-// file; callers that imported them from `coder-agent` should keep working
-// after the consolidation into `working-memory.ts` and `coder-context-trim.ts`.
-// TODO: migrate call sites to import directly from the canonical modules,
-// then remove this block. Two import paths for the same function is a smell
-// that's only safe while it's explicitly transitional.
-export {
-  applyObservationUpdates,
-  detectUpdateStateCall,
-  formatCoderState,
-  formatCoderStateDiff,
-  invalidateObservationDependencies,
-  normalizeTrimmedRoleAlternation,
-};
-
 /** Truncate content with a marker if it exceeds max length. */
 function truncateContent(content: string, maxLen: number, label = 'content'): string {
   if (content.length <= maxLen) return content;
