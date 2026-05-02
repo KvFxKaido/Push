@@ -55,7 +55,7 @@ Per-surface:
 
 Run a single CLI test with `node --import tsx --test cli/tests/<name>.test.mjs`. Run a single app test with `cd app && npx vitest run path/to/file.test.ts`.
 
-Typechecking uses `tsgo` from `@typescript/native-preview` (TypeScript 7). If `tsgo: not found` (unsupported platform, `--no-optional` install), fall back to `npx tsc --noEmit` for `cli/` and `mcp/github-server`, `npx tsc -b` for `app/`. Emit (`build:cli`, vite `build`, mcp build) still uses `tsc`.
+Typechecking uses `tsgo` from `@typescript/native-preview` (TypeScript 7). If `tsgo: not found` (unsupported platform, `--no-optional` install), fall back to `npx tsc --noEmit` for `cli/` and `mcp/github-server`, `npx tsc -b` for `app/`. Emit: `build:cli` and `mcp/github-server`'s `build` use `tsc`; `app/` uses `vite build` (esbuild/rollup), with `tsgo`/`tsc` only running for typecheck.
 
 Biome formats the entire monorepo from the root config (`biome.json`); the linter is intentionally disabled there — ESLint runs only inside `app/`. Biome ignores `app/src/components/ui/**`, `sandbox/**`, and the standard build artifacts.
 
@@ -76,7 +76,7 @@ Biome formats the entire monorepo from the root config (`biome.json`); the linte
 ### Repo / session / branch model
 
 - One **active branch** per repo session — it's the commit target, push target, diff base, and chat context.
-- Chats are **branch-scoped**. Switching branches is explicit but **preserves context**: the sandbox stays alive across the switch.
+- Chats are **branch-scoped**. Branch transitions initiated via the typed branch tools (`create_branch` / `switch_branch`) **preserve the sandbox** — `skipBranchTeardownRef` in `app/src/sections/WorkspaceSessionScreen.tsx` and `app/src/hooks/useWorkspaceSandboxController.ts` suppresses teardown so the long-running container survives. **UI-initiated branch swaps restart the sandbox** by design (the controller defaults to `stopSandbox()` on `current_branch` change) — that's the desync guard, not an oversight. Use the typed tools when the intent is to keep the sandbox.
 - A `BranchSwitchPayload` of `kind: 'forked'` migrates the current chat onto the new branch; `'switched'` routes to (or auto-creates) the chat for the target branch.
 - Branch ops are **tool-callable**: `create_branch` (forked) and `switch_branch` (switched). Long-form aliases `sandbox_create_branch` / `sandbox_switch_branch` still resolve.
 - Raw `git checkout <branch>` / `git switch <branch>` (and `-b`/`-c`) are **blocked** in `sandbox_exec` regardless of approval mode — the issue is state sync, not consent. Detection is best-effort: bare names are caught; for `git checkout`, operands containing `/` or `.` pass through so file restores like `src/utils` keep working; for `git switch`, slash-shaped names like `feat/foo` are blocked because `switch` is branch-only. Use the typed tools when you know the operand is a branch.
@@ -139,7 +139,7 @@ Three guardrails from the 2026-04 Big Four extraction; apply before adding cross
 
 ### Project instructions loading
 
-Web/repo loaders read `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md` (first found wins, capped at 8KB). The CLI also accepts `.push/instructions.md` as a higher-priority **local** override, then falls back to the same chain. CLI workspace context (`cli/workspace-context.ts`) injects this as a `[PROJECT_INSTRUCTIONS]` block alongside a workspace snapshot (git branch, dirty files, top-level tree, manifest summary).
+Loader order is `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first found wins). Caps differ per surface: the **web/repo** loader (`fetchProjectInstructions` in `app/src/lib/github-tools.ts`) fetches via GitHub REST and truncates at **5,000 chars** with a marker, then re-reads from the sandbox once it's ready (two-phase, not strictly first-found-wins end-to-end). The **CLI/shared** loader (`lib/project-instructions.ts`, `cli/workspace-context.ts`) caps at **8,000 chars**. The CLI additionally honors `.push/instructions.md` as a higher-priority local override, then falls back to the same chain. CLI workspace context injects the result as a `[PROJECT_INSTRUCTIONS]` block alongside a workspace snapshot (git branch, dirty files, top-level tree, manifest summary).
 
 ## Pointers
 
