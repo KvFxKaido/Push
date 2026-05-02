@@ -67,10 +67,90 @@ function extractFirstNonEmptyLines(content: string): string[] {
     .filter(Boolean);
 }
 
-function buildOmissionMarker(hasDiffContent: boolean, hasCodeBlock: boolean): string {
+function buildOmissionMarker(
+  hasDiffContent: boolean,
+  hasCodeBlock: boolean,
+  listMeta: ListResultMeta | null,
+  visibleItemCount: number,
+): string {
+  if (listMeta) {
+    // Tell the next model turn the right epistemic status: the visible
+    // lines are a sample, not the complete tool result. Without this,
+    // models can treat the compacted N-line excerpt as if it were the
+    // full data and either fabricate counts or hallucinate a "policy"
+    // explaining the gap between their prior reasoning and what they
+    // see now.
+    const reRun = listMeta.toolName ? ` — re-run ${listMeta.toolName} for full detail` : '';
+    if (visibleItemCount > 0 && visibleItemCount < listMeta.totalCount) {
+      const omitted = listMeta.totalCount - visibleItemCount;
+      return `[${omitted} more ${listMeta.itemNoun} omitted from original ${listMeta.totalCount}-item list; visible items are a sample, not the complete result${reRun}]`;
+    }
+    // Visible count couldn't be determined precisely (no per-noun item
+    // pattern, or item lines didn't survive compaction). Fall back to a
+    // marker that still carries the critical "sample, not complete"
+    // signal plus the original total.
+    return `[Original list had ${listMeta.totalCount} ${listMeta.itemNoun}; visible items are a sample, not the complete result${reRun}]`;
+  }
   if (hasDiffContent) return '[diff content summarized]';
   if (hasCodeBlock) return '[code/content summarized]';
   return '[additional content summarized]';
+}
+
+interface ListResultMeta {
+  totalCount: number;
+  itemNoun: string;
+  toolName: string | null;
+}
+
+// Patterns for "this line starts a new list item" — used to count how
+// many items survived compaction so the omission marker can name a
+// precise number. Keyed by the lowercased noun extracted from the
+// count line (`commits`, `branches`, etc.). Any noun without an entry
+// falls back to the conservative "Original list had N …" wording.
+const LIST_ITEM_START_PATTERNS: Record<string, RegExp> = {
+  commit: /^[a-f0-9]{7,40}\s/i,
+  commits: /^[a-f0-9]{7,40}\s/i,
+};
+
+// Match the count line that every list-style tool result writes right
+// under the `[Tool Result — …]` header. Captures the count plus the
+// noun phrase ("recent commits", "branches", "files") up to the
+// preposition or punctuation that terminates the count clause.
+const LIST_COUNT_HEADER_RE =
+  /^(?:Found\s+)?(\d+)\s+([A-Za-z][A-Za-z\s-]*?)(?=\s+(?:on|in|for|matching|changed|across)\b|[:,])/;
+const TRAILING_NOUN_RE = /([A-Za-z][A-Za-z-]+)\s*$/;
+
+function detectListResultMeta(content: string): ListResultMeta | null {
+  // Tool name is most reliably read from the `[Tool Result — toolName]`
+  // header, which the orchestrator wraps every tool reply in.
+  const toolMatch = content.match(TOOL_RESULT_NAME_RE);
+  const toolName = toolMatch?.[1]?.trim() || null;
+
+  const lines = extractFirstNonEmptyLines(content);
+  // The count line lives right under the tool-result header in every
+  // list-style executor today (`N recent commits on …`, `N branches on
+  // …`, `Found N files matching …`). Bound the scan so a stray match
+  // deeper in the body can't masquerade as the header count.
+  for (const line of lines.slice(0, 4)) {
+    const match = line.match(LIST_COUNT_HEADER_RE);
+    if (!match) continue;
+    const count = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(count) || count <= 0) continue;
+    // The captured phrase may include modifiers ("recent commits",
+    // "open PRs"). The trailing word is the actual noun we want.
+    const phrase = match[2].trim();
+    const nounMatch = phrase.match(TRAILING_NOUN_RE);
+    if (!nounMatch) continue;
+    return { totalCount: count, itemNoun: nounMatch[1].toLowerCase(), toolName };
+  }
+
+  return null;
+}
+
+function countVisibleListItems(summary: string[], itemNoun: string): number {
+  const pattern = LIST_ITEM_START_PATTERNS[itemNoun];
+  if (!pattern) return 0;
+  return summary.filter((line) => pattern.test(line)).length;
 }
 
 export function extractToolName(msg: ChatMessage): string | null {
@@ -101,6 +181,7 @@ export function extractSemanticSummaryLines(
   const headerLine = lines[0];
   const headerIncluded =
     includeHeader && (TOOL_RESULT_HEADER_RE.test(headerLine) || headerLine.startsWith('['));
+  const listMeta = detectListResultMeta(content);
   let hasCodeBlock = false;
   let hasDiffContent = false;
 
@@ -166,10 +247,12 @@ export function extractSemanticSummaryLines(
   const omittedContent =
     hasCodeBlock || hasDiffContent || lines.length > summary.length + (includeHeader ? 1 : 0);
   if (includeOmissionMarker && omittedContent) {
+    const visibleItemCount = listMeta ? countVisibleListItems(summary, listMeta.itemNoun) : 0;
+    const marker = buildOmissionMarker(hasDiffContent, hasCodeBlock, listMeta, visibleItemCount);
     if (summary.length >= maxLines) {
-      summary[maxLines - 1] = buildOmissionMarker(hasDiffContent, hasCodeBlock);
+      summary[maxLines - 1] = marker;
     } else {
-      summary.push(buildOmissionMarker(hasDiffContent, hasCodeBlock));
+      summary.push(marker);
     }
   }
 
