@@ -101,6 +101,34 @@ describe('extractSemanticSummaryLines — list-aware omission marker', () => {
     expect(marker).not.toContain('[additional content summarized]');
   });
 
+  it('preserves original noun casing in the marker (e.g. PRs, not prs)', () => {
+    // Regression (PR #475 review, Copilot): the noun used to be
+    // unconditionally lowercased before formatting, so "5 open PRs on
+    // …" produced "[Original list had 5 prs; …]". Display casing must
+    // match the tool output vocabulary; the lookup key for the
+    // per-noun item-start pattern can lowercase independently.
+    const prs = [
+      '[Tool Result — list_prs]',
+      '5 open PRs on KvFxKaido/Push:',
+      '',
+      '#475 fix(context): make compaction omission marker list-aware',
+      '#474 fix(orchestrator): defer evidence rules until a mutation occurs',
+      '#473 fix(orchestrator): stop verification loop on read-only summary turns',
+      '#472 docs: expand CLAUDE.md',
+      '#471 docs(auth): defer localStorage->httpOnly OAuth migration',
+    ].join('\n');
+
+    const summary = extractSemanticSummaryLines(prs, {
+      includeHeader: true,
+      includeOmissionMarker: true,
+      maxLines: 5,
+    });
+
+    const marker = summary[summary.length - 1];
+    expect(marker).toContain('PRs');
+    expect(marker).not.toContain(' prs');
+  });
+
   it('falls back to the explicit total when item-start pattern is unknown', () => {
     // Branches don't have a per-noun item-start regex yet, so the
     // marker should still surface the original count + sample framing
@@ -129,6 +157,35 @@ describe('extractSemanticSummaryLines — list-aware omission marker', () => {
     expect(marker).toContain('Original list had 8 branches');
     expect(marker).toContain('sample, not the complete result');
     expect(marker).toContain('re-run list_branches');
+  });
+
+  it('does not apply list-aware markers to non-tool prose with leading "N noun:" patterns', () => {
+    // Regression (PR #475 review, Codex P2): without a tool-result
+    // envelope gate, an assistant message starting with "3 options:"
+    // would get flagged as a truncated list and emit
+    // "Original list had 3 options; visible items are a sample…",
+    // mislabeling ordinary prose as truncated tool output.
+    const prose = [
+      '3 options for handling the verification loop, in priority order:',
+      '',
+      'Option A: gate the regex on self-claim framing only — narrow but brittle.',
+      'Option B: scope the verification rule to mutation-bearing sessions — cleaner.',
+      'Option C: skip the gate when grounding is already present — defense in depth.',
+      '',
+      'Each has tradeoffs around false positives and runtime invariants.',
+    ].join('\n');
+
+    const summary = extractSemanticSummaryLines(prose, {
+      includeHeader: false,
+      includeOmissionMarker: true,
+      maxLines: 4,
+    });
+
+    const marker = summary[summary.length - 1];
+    // The list-aware marker phrases must NOT appear on non-tool prose.
+    expect(marker).not.toContain('Original list had');
+    expect(marker).not.toContain('omitted from original');
+    expect(marker).not.toContain('sample, not the complete result');
   });
 
   it('leaves non-list tool results on the existing markers', () => {

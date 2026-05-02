@@ -108,8 +108,8 @@ interface ListResultMeta {
 // count line (`commits`, `branches`, etc.). Any noun without an entry
 // falls back to the conservative "Original list had N …" wording.
 const LIST_ITEM_START_PATTERNS: Record<string, RegExp> = {
-  commit: /^[a-f0-9]{7,40}\s/i,
-  commits: /^[a-f0-9]{7,40}\s/i,
+  commit: /^[a-f0-9]{7,40}[\s:]/i,
+  commits: /^[a-f0-9]{7,40}[\s:]/i,
 };
 
 // Match the count line that every list-style tool result writes right
@@ -117,16 +117,16 @@ const LIST_ITEM_START_PATTERNS: Record<string, RegExp> = {
 // noun phrase ("recent commits", "branches", "files") up to the
 // preposition or punctuation that terminates the count clause.
 const LIST_COUNT_HEADER_RE =
-  /^(?:Found\s+)?(\d+)\s+([A-Za-z][A-Za-z\s-]*?)(?=\s+(?:on|in|for|matching|changed|across)\b|[:,])/;
+  /^(?:Found\s+)?(\d+)\s+([A-Za-z][A-Za-z\s-]*?)(?=\s+(?:on|in|for|matching|changed|across|from|within)\b|[:,]|$)/;
 const TRAILING_NOUN_RE = /([A-Za-z][A-Za-z-]+)\s*$/;
 
-function detectListResultMeta(content: string): ListResultMeta | null {
+function detectListResultMeta(lines: string[]): ListResultMeta | null {
+  if (lines.length === 0) return null;
   // Tool name is most reliably read from the `[Tool Result — toolName]`
-  // header, which the orchestrator wraps every tool reply in.
-  const toolMatch = content.match(TOOL_RESULT_NAME_RE);
+  // header, which is always the first non-empty line of a tool reply.
+  const toolMatch = lines[0].match(TOOL_RESULT_NAME_RE);
   const toolName = toolMatch?.[1]?.trim() || null;
 
-  const lines = extractFirstNonEmptyLines(content);
   // The count line lives right under the tool-result header in every
   // list-style executor today (`N recent commits on …`, `N branches on
   // …`, `Found N files matching …`). Bound the scan so a stray match
@@ -141,14 +141,16 @@ function detectListResultMeta(content: string): ListResultMeta | null {
     const phrase = match[2].trim();
     const nounMatch = phrase.match(TRAILING_NOUN_RE);
     if (!nounMatch) continue;
-    return { totalCount: count, itemNoun: nounMatch[1].toLowerCase(), toolName };
+    // Preserve the original casing for display ("PRs", "Files") and
+    // let the per-noun pattern lookup do its own lowercasing.
+    return { totalCount: count, itemNoun: nounMatch[1], toolName };
   }
 
   return null;
 }
 
 function countVisibleListItems(summary: string[], itemNoun: string): number {
-  const pattern = LIST_ITEM_START_PATTERNS[itemNoun];
+  const pattern = LIST_ITEM_START_PATTERNS[itemNoun.toLowerCase()];
   if (!pattern) return 0;
   return summary.filter((line) => pattern.test(line)).length;
 }
@@ -179,9 +181,13 @@ export function extractSemanticSummaryLines(
   const summary: string[] = [];
   const seen = new Set<string>();
   const headerLine = lines[0];
-  const headerIncluded =
-    includeHeader && (TOOL_RESULT_HEADER_RE.test(headerLine) || headerLine.startsWith('['));
-  const listMeta = detectListResultMeta(content);
+  const hasToolResultHeader = TOOL_RESULT_HEADER_RE.test(headerLine);
+  const headerIncluded = includeHeader && (hasToolResultHeader || headerLine.startsWith('['));
+  // Gate list-meta detection on a real tool-result envelope. Otherwise
+  // prose that happens to start with "3 options:" or "5 reasons …"
+  // would trip the list-aware marker and mislabel ordinary text as a
+  // truncated tool output.
+  const listMeta = hasToolResultHeader ? detectListResultMeta(lines) : null;
   let hasCodeBlock = false;
   let hasDiffContent = false;
 
