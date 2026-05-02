@@ -47,6 +47,7 @@ function makeVerificationState(
   return {
     policyName: 'Test',
     backendTouched: false,
+    mutationOccurred: false,
     requirements: [],
     lastUpdatedAt: 1,
     ...overrides,
