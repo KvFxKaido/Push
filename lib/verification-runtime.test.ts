@@ -87,4 +87,70 @@ describe('verification-runtime', () => {
     expect(evaluation.missing.map((req) => req.id)).toContain('typecheck');
     expect(evaluation.missing.map((req) => req.id)).not.toContain('auditor-gate');
   });
+
+  // Track C follow-up (PR #473): read-only sessions don't carry an
+  // unsatisfiable diff-evidence obligation. Always-scoped evidence rules
+  // start 'not_applicable' and only flip to 'pending' once a mutation
+  // (Coder delegation, sandbox tool write, or artifact) actually occurs.
+  it('initializes always-scoped evidence as not_applicable until a mutation occurs', () => {
+    const state = hydrateVerificationRuntimeState(VERIFICATION_PRESET_STANDARD, undefined, 1000);
+
+    expect(state.mutationOccurred).toBe(false);
+    expect(state.requirements.find((req) => req.id === 'diff-evidence')?.status).toBe(
+      'not_applicable',
+    );
+  });
+
+  it('passes completion evaluation for a read-only session with no work claims', () => {
+    // Standard preset: diff-evidence (always/evidence) + auditor-gate (always/gate).
+    // Read-only session = mutationOccurred:false. Both rules should be
+    // not_applicable so a "what does file X do?" turn does not loop.
+    const state = hydrateVerificationRuntimeState(VERIFICATION_PRESET_STANDARD, undefined, 1000);
+    const evaluation = evaluateVerificationState(state, 'completion');
+
+    expect(evaluation.passed).toBe(true);
+    expect(evaluation.missing).toEqual([]);
+  });
+
+  it('flips mutationOccurred and promotes evidence to passed on recordVerificationMutation', () => {
+    const initial = hydrateVerificationRuntimeState(VERIFICATION_PRESET_STANDARD, undefined, 1000);
+    const mutated = recordVerificationMutation(
+      initial,
+      { source: 'coder', touchedPaths: ['app/src/lib/foo.ts'], detail: 'Edit by Coder.' },
+      1100,
+    );
+
+    expect(mutated.mutationOccurred).toBe(true);
+    expect(mutated.requirements.find((req) => req.id === 'diff-evidence')?.status).toBe('passed');
+  });
+
+  it('does NOT flip mutationOccurred from artifact-only paths (Explorer, verification commands)', () => {
+    // recordVerificationArtifact is called from read-only paths too:
+    // Explorer summaries, verification command output (typecheck/test
+    // runs), sandbox_diff reads. None of those are workspace mutations,
+    // so the flag must stay false — otherwise read-only sessions would
+    // be permanently marked as mutation-bearing and future evidence
+    // rules would lose their not_applicable initialization.
+    const initial = hydrateVerificationRuntimeState(VERIFICATION_PRESET_STANDARD, undefined, 1000);
+    const withArtifact = recordVerificationArtifact(initial, 'Explorer summary captured.', 1100);
+
+    expect(withArtifact.mutationOccurred).toBe(false);
+    // Evidence still flips to 'passed' because the artifact is real
+    // evidence; downstream gates won't loop on it.
+    expect(withArtifact.requirements.find((req) => req.id === 'diff-evidence')?.status).toBe(
+      'passed',
+    );
+  });
+
+  it('preserves mutationOccurred across hydration so completion gate stays armed', () => {
+    const initial = hydrateVerificationRuntimeState(VERIFICATION_PRESET_STANDARD, undefined, 1000);
+    const mutated = recordVerificationMutation(
+      initial,
+      { source: 'coder', touchedPaths: ['app/src/lib/foo.ts'], detail: 'Edit.' },
+      1100,
+    );
+    const rehydrated = hydrateVerificationRuntimeState(VERIFICATION_PRESET_STANDARD, mutated, 1200);
+
+    expect(rehydrated.mutationOccurred).toBe(true);
+  });
 });

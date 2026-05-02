@@ -38,9 +38,17 @@ function commandsMatch(requiredCommand: string | undefined, executedCommand: str
 function initialRuleStatus(
   rule: VerificationRule,
   backendTouched: boolean,
+  mutationOccurred: boolean,
 ): VerificationRequirementStatus {
   if (rule.kind === 'gate') return 'not_applicable';
   if (rule.scope === 'backend' && !backendTouched) return 'not_applicable';
+  // Evidence rules describe an obligation produced by mutation. Until any
+  // mutation has occurred this session, there's nothing to evidence —
+  // leave them not_applicable so read-only turns don't loop on a rule
+  // that can never be satisfied without actual work.
+  if (rule.kind === 'evidence' && rule.scope === 'always' && !mutationOccurred) {
+    return 'not_applicable';
+  }
   return 'pending';
 }
 
@@ -48,6 +56,7 @@ function toRequirementState(
   rule: VerificationRule,
   timestamp: number,
   backendTouched: boolean,
+  mutationOccurred: boolean,
 ): VerificationRequirementState {
   return {
     id: rule.id,
@@ -56,7 +65,7 @@ function toRequirementState(
     kind: rule.kind,
     command: rule.command,
     gate: rule.gate,
-    status: initialRuleStatus(rule, backendTouched),
+    status: initialRuleStatus(rule, backendTouched, mutationOccurred),
     updatedAt: timestamp,
   };
 }
@@ -68,7 +77,7 @@ function shouldApplyRuleForBoundary(
 ): boolean {
   if (boundary === 'completion' && requirement.scope === 'commit') return false;
   if (requirement.scope === 'backend' && !backendTouched) return false;
-  if (requirement.kind === 'gate' && requirement.status === 'not_applicable') return false;
+  if (requirement.status === 'not_applicable') return false;
   return true;
 }
 
@@ -138,6 +147,10 @@ export function hydrateVerificationRuntimeState(
   timestamp = Date.now(),
 ): VerificationRuntimeState {
   const backendTouched = existing?.backendTouched ?? false;
+  // Backward compat: pre-flag sessions where backend was already touched
+  // imply work has occurred — fall back to that signal so newly-added
+  // evidence rules in those sessions don't initialize as not_applicable.
+  const mutationOccurred = existing?.mutationOccurred ?? existing?.backendTouched ?? false;
   const previousById = new Map(
     existing?.requirements.map((requirement) => [requirement.id, requirement]) ?? [],
   );
@@ -151,7 +164,7 @@ export function hydrateVerificationRuntimeState(
       previous.command !== rule.command ||
       previous.gate !== rule.gate
     ) {
-      return toRequirementState(rule, timestamp, backendTouched);
+      return toRequirementState(rule, timestamp, backendTouched, mutationOccurred);
     }
 
     if (rule.scope === 'backend' && !backendTouched) {
@@ -175,6 +188,7 @@ export function hydrateVerificationRuntimeState(
   return {
     policyName: policy.name,
     backendTouched,
+    mutationOccurred,
     requirements,
     lastUpdatedAt: Math.max(existing?.lastUpdatedAt ?? 0, timestamp),
   };
@@ -196,6 +210,12 @@ export function recordVerificationArtifact(
   detail: string,
   timestamp = Date.now(),
 ): VerificationRuntimeState {
+  // Do NOT flip mutationOccurred here. This function is called from
+  // read-only paths too — Explorer summaries, verification command
+  // output (typecheck/test runs), sandbox_diff. Treating those as
+  // mutations would defeat the read-only deferral by promoting future
+  // evidence rules to 'pending' in sessions where no real work was
+  // done. Mutation tracking lives in recordVerificationMutation only.
   return {
     ...state,
     requirements: state.requirements.map((requirement) => {
@@ -254,6 +274,7 @@ export function recordVerificationMutation(
   return {
     ...state,
     backendTouched,
+    mutationOccurred: true,
     requirements,
     lastUpdatedAt: timestamp,
   };
