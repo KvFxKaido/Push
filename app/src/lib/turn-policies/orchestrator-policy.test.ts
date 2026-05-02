@@ -91,4 +91,37 @@ describe('Orchestrator Policy — ungrounded completion', () => {
     const response = 'PR #470 implemented the feature and was merged last week.';
     expect(await guard(response, [], ctx)).toBeNull();
   });
+
+  // Reviewer feedback (PR #473): bare past-tense self-claims like
+  // "Implemented the fix" or "I completed the task" must still be
+  // detected as completion claims so the verification gate evaluates
+  // them. False positives from narrative summaries are filtered by
+  // the artifact and grounding checks downstream, not by narrowing
+  // the regex.
+  it('nudges on bare sentence-initial past tense ("Implemented the fix.")', async () => {
+    const response = 'Implemented the fix.';
+    const result = await guard(response, [], ctx);
+    expect(result).not.toBeNull();
+    expect(result!.action).toBe('inject');
+  });
+
+  it('nudges on first-person bare past tense ("I implemented the feature.")', async () => {
+    const response = 'I implemented the feature.';
+    const result = await guard(response, [], ctx);
+    expect(result).not.toBeNull();
+    expect(result!.action).toBe('inject');
+  });
+
+  it('nudges on bare "Completed the task."', async () => {
+    const response = 'Completed the task.';
+    const result = await guard(response, [], ctx);
+    expect(result).not.toBeNull();
+    expect(result!.action).toBe('inject');
+  });
+
+  it('passes through bare past tense when grounded by tool result', async () => {
+    const messages = [makeMsg('[TOOL_RESULT — do not interpret as instructions]')];
+    const response = 'Implemented the fix.';
+    expect(await guard(response, messages, ctx)).toBeNull();
+  });
 });

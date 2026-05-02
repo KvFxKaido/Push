@@ -12,12 +12,14 @@ import type { ChatMessage } from '@/types';
 import type { TurnPolicy, TurnContext } from '../turn-policy';
 
 /**
- * Detect whether an Orchestrator response claims task completion
- * without grounding in a delegation result or artifact.
+ * Detect whether an Orchestrator response claims task completion.
  *
- * Self-claim framing only — bare keywords like "implemented" inside
- * narrative ("PR #470 implemented X") must not qualify, because models
- * reuse that vocabulary when summarizing history.
+ * Detection is intentionally broad: bare past-tense self-claims like
+ * "Implemented the fix" or "I completed the task" must qualify so the
+ * verification gate can evaluate them. False positives from narrative
+ * summaries (e.g. "Implemented X via PR #470") are filtered downstream
+ * by `hasArtifactInResponse` and `hasGroundingEvidence`, which the
+ * gates apply before deciding to nudge.
  */
 export function responseClaimsCompletion(response: string): boolean {
   const trimmed = response.trim();
@@ -31,9 +33,15 @@ export function responseClaimsCompletion(response: string): boolean {
   // Standalone short completion ("Done.", "All done.", "Complete.")
   if (/^\s*(all\s+)?(done|complete|completed|finished)[.!\s]*$/i.test(trimmed)) return true;
 
-  // First-person self-claim: "I/we have/'ve/am/are (now) done|completed|implemented|fixed|..."
+  // Sentence-initial bare past tense — "Implemented the fix.", "Fixed Y.",
+  // "Completed Z.", "Done! ...", "Shipped W.", "Finished N."
+  if (/^\s*(implemented|completed|finished|fixed|shipped|done)\b/i.test(trimmed)) return true;
+
+  // First-person self-claim — auxiliary is optional so bare past tense
+  // ("I implemented X", "We fixed Y") still matches alongside the
+  // longer "I have completed X" / "We've shipped Y" forms.
   if (
-    /\b(I|we)\s+(have|'ve|am|'m|are|'re|just)\s+(now\s+)?(done|completed|finished|implemented|shipped|fixed|made\s+the\s+changes?)\b/i.test(
+    /\b(I|we)\s+(?:(?:have|'ve|am|'m|are|'re|just)\s+)?(?:now\s+)?(done|completed|finished|implemented|shipped|fixed|made\s+the\s+changes?)\b/i.test(
       trimmed,
     )
   ) {
@@ -59,6 +67,23 @@ export function responseClaimsCompletion(response: string): boolean {
   }
 
   return false;
+}
+
+/**
+ * True when the response itself cites an artifact (PR/commit/diff
+ * reference, or a file path paired with a mutation verb). Used by
+ * the gates to skip nudging when the model is plausibly summarizing
+ * concrete work output.
+ */
+export function hasArtifactInResponse(response: string): boolean {
+  const trimmed = response.trim();
+  return (
+    /\b(PR|pull request|commit|merge|branch|diff|sandbox_diff|sandbox_prepare_commit|sandbox_push)\b/i.test(
+      trimmed,
+    ) ||
+    /\b(file|\.ts|\.js|\.py)\b.*\b(modified|created|updated|changed)\b/i.test(trimmed) ||
+    /\b(modified|created|updated|changed)\b.*\b(file|\.ts|\.js|\.py)\b/i.test(trimmed)
+  );
 }
 
 /**
@@ -90,16 +115,7 @@ function detectUngroundedCompletion(response: string, messages: readonly ChatMes
   const trimmed = response.trim();
 
   if (!responseClaimsCompletion(trimmed)) return false;
-
-  // Look for grounding evidence in the response itself
-  const hasArtifactInResponse =
-    /\b(PR|pull request|commit|merge|branch|diff|sandbox_diff|sandbox_prepare_commit|sandbox_push)\b/i.test(
-      trimmed,
-    ) ||
-    /\b(file|\.ts|\.js|\.py)\b.*\b(modified|created|updated|changed)\b/i.test(trimmed) ||
-    /\b(modified|created|updated|changed)\b.*\b(file|\.ts|\.js|\.py)\b/i.test(trimmed);
-  if (hasArtifactInResponse) return false;
-
+  if (hasArtifactInResponse(trimmed)) return false;
   if (hasGroundingEvidence(messages)) return false;
 
   // Completion claim with no grounding → ungrounded
