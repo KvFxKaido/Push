@@ -42,18 +42,20 @@ import type {
 import {
   runCoderAgent as runCoderAgentLib,
   generateCheckpointAnswer as generateCheckpointAnswerLib,
-  applyObservationUpdates,
-  detectUpdateStateCall,
-  formatCoderState,
-  formatCoderStateDiff,
-  invalidateObservationDependencies,
-  normalizeTrimmedRoleAlternation,
   shouldInjectCoderStateOnToolResult,
   summarizeCoderStateForHandoff,
   type CoderAgentOptions,
   type CoderAfterModelResult,
   type CoderToolExecResult,
 } from '@push/lib/coder-agent';
+import {
+  applyObservationUpdates,
+  detectUpdateStateCall,
+  formatCoderState,
+  formatCoderStateDiff,
+  invalidateObservationDependencies,
+} from '@push/lib/working-memory';
+import { normalizeTrimmedRoleAlternation } from '@push/lib/coder-context-trim';
 import {
   buildCoderDetectors,
   buildCoderEvaluateAfterModel,
