@@ -40,22 +40,15 @@ import {
 } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { isReadOnlyToolCall, type AnyToolCall } from '@/lib/tool-dispatch';
-import {
-  evaluateVerificationState,
-  formatVerificationBlock,
-  recordVerificationArtifact,
-  recordVerificationCommandResult,
-  recordVerificationMutation,
-} from '@/lib/verification-runtime';
-import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
+import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verification-runtime';
 import { createId } from '@push/lib/id-utils';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatCard, ChatMessage, ToolExecutionResult } from '@/types';
 import {
+  applyPostExecutionSideEffects,
   delegateCallNeedsSandbox,
   executeChatHookToolCall,
   getDelegateCompletionAgent,
-  inferVerificationCommandResult,
   shouldEmitPeriodicPulse,
   type TurnRunContext,
 } from './chat-send-helpers';
@@ -80,7 +73,6 @@ export async function executeSingleToolCall(
     ensureSandboxRef,
     scratchpadRef,
     todoRef,
-    runtimeHandlersRef,
     repoRef,
     isMainProtectedRef,
     branchInfoRef,
@@ -93,11 +85,7 @@ export async function executeSingleToolCall(
     emitRunEngineEvent,
     flushCheckpoint,
     getVerificationState,
-    updateVerificationState,
     executeDelegateCall,
-    skipAutoCreateRef,
-    activeChatIdRef,
-    conversationsRef,
   } = ctx;
   const {
     applyPostToolPolicyEffects,
@@ -222,102 +210,10 @@ export async function executeSingleToolCall(
     };
   }
 
-  const verificationResult = singleRawResult?.raw ?? toolExecResult;
-  const touchedPaths =
-    verificationResult.postconditions?.touchedFiles.map((file) => file.path) ?? [];
-  if (touchedPaths.length > 0) {
-    updateVerificationState(chatId, (state) =>
-      recordVerificationMutation(state, {
-        source: 'tool',
-        touchedPaths,
-        detail: `${getToolName(toolCall)} mutated the workspace.`,
-      }),
-    );
-  } else if (
-    toolCall.source === 'sandbox' &&
-    toolCall.call.tool === 'sandbox_exec' &&
-    !isReadOnlyToolCall(toolCall)
-  ) {
-    updateVerificationState(chatId, (state) =>
-      recordVerificationMutation(state, {
-        source: 'tool',
-        detail: 'sandbox_exec may have mutated the workspace.',
-      }),
-    );
-  }
-
-  const verificationCommand = inferVerificationCommandResult(verificationResult);
-  if (verificationCommand) {
-    updateVerificationState(chatId, (state) =>
-      recordVerificationCommandResult(state, verificationCommand.command, {
-        exitCode: verificationCommand.exitCode,
-        detail: verificationCommand.detail,
-      }),
-    );
-    updateVerificationState(chatId, (state) =>
-      recordVerificationArtifact(
-        state,
-        `Verification command produced output: ${verificationCommand.command}`,
-      ),
-    );
-  } else if (
-    toolCall.source === 'sandbox' &&
-    (toolCall.call.tool === 'sandbox_diff' ||
-      toolCall.call.tool === 'sandbox_prepare_commit' ||
-      toolCall.call.tool === 'sandbox_push')
-  ) {
-    updateVerificationState(chatId, (state) =>
-      recordVerificationArtifact(state, `${toolCall.call.tool} produced artifact evidence.`),
-    );
-  }
-
-  // Post-execution side effects
-  if (toolExecResult.promotion?.repo) {
-    const promotedRepo = toolExecResult.promotion.repo;
-    repoRef.current = promotedRepo.full_name;
-
-    setConversations((prev) => {
-      const conv = prev[chatId];
-      if (!conv) return prev;
-      const updated = {
-        ...prev,
-        [chatId]: {
-          ...conv,
-          repoFullName: promotedRepo.full_name,
-          lastMessageAt: Date.now(),
-        },
-      };
-      dirtyConversationIdsRef.current.add(chatId);
-      return updated;
-    });
-
-    runtimeHandlersRef.current?.bindSandboxSessionToRepo?.(
-      promotedRepo.full_name,
-      promotedRepo.default_branch,
-    );
-    runtimeHandlersRef.current?.onSandboxPromoted?.(promotedRepo);
-  }
-
-  if (toolExecResult.branchSwitch) {
-    // Slice 2 conversation-fork migration. Migration logic lives in
-    // branch-fork-migration.ts so this dispatcher stays small and the
-    // migration is testable in isolation. Dispatches on payload.kind:
-    // 'forked' migrates the active conversation; 'switched' or undefined
-    // falls through to the existing auto-switch behavior.
-    applyBranchSwitchPayload(toolExecResult.branchSwitch, {
-      activeChatIdRef,
-      conversationsRef,
-      branchInfoRef,
-      skipAutoCreateRef,
-      setConversations,
-      dirtyConversationIdsRef,
-      runtimeHandlersRef,
-    });
-  }
-
-  if (toolExecResult.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-    runtimeHandlersRef.current?.onSandboxUnreachable?.(toolExecResult.structuredError.message);
-  }
+  // Per-tool side effects (verification mutation/command/artifact tracking,
+  // repo promotion, branch-switch payload migration, sandbox unreachable).
+  // Shared with the batched branch — see chat-send-helpers.ts.
+  applyPostExecutionSideEffects(toolCall, toolExecResult, ctx);
 
   // Build result message with post-execution sandbox status
   invalidateSandboxStatus();
