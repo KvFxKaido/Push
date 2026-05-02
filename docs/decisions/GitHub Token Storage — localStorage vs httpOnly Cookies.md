@@ -52,9 +52,9 @@ In short: the migration is real defense, but it's defense against XSS — and we
 
 The current operating posture, ordered roughly by leverage:
 
-- **CSP defenses against script injection.** Every served HTML response in the Worker carries a CSP that disallows inline event handlers, restricts `script-src` to first-party origins, and emits `upgrade-insecure-requests` (`worker-middleware.ts:150–155`). XSS that can't run script can't read localStorage either.
+- **CSP defenses against script injection.** Every served HTML response in the Worker carries a CSP that disallows inline event handlers, restricts `script-src` to first-party origins, and emits `upgrade-insecure-requests` (`worker-middleware.ts:150-155`). XSS that can't run script can't read localStorage either.
 - **Input handling discipline.** React escapes by default; we don't use `dangerouslySetInnerHTML` on user-generated content. Markdown rendering passes through controlled renderers, not direct HTML insertion.
-- **Origin allowlist on every API route.** `validateOrigin` (`worker-middleware.ts:343–363`) rejects cross-origin calls before any handler runs, so a token leaked client-side still can't be used to drive *Push's* APIs from an attacker's page in a victim's browser.
+- **Origin allowlist on every API route.** `validateOrigin` (`worker-middleware.ts:343-363`) rejects cross-origin calls before any handler runs, so a token leaked client-side still can't be used to drive *Push's* APIs from an attacker's page in a victim's browser.
 - **Short-lived tokens.** GitHub App installation tokens carry a 1-hour TTL; provider API keys are user-scoped and the user can rotate them at any time. `/api/github/app-logout` shortens that further to "until the next logout."
 - **Server-side revocation on logout.** `useGitHubAppAuth.disconnect()` posts the token to `/api/github/app-logout` (with `keepalive: true`) before clearing local state. Local clear happens regardless of fetch outcome.
 - **HSTS on every Worker response.** `Strict-Transport-Security: max-age=31536000; includeSubDomains` (`worker-middleware.ts:155`) takes plain-HTTP token interception off the table after first contact.
