@@ -249,11 +249,20 @@ describe('withWorkerSpan', () => {
     expect(typeof span?.errorMessage).toBe('string');
   });
 
-  // Known limitation: the wrapper stashes __workerSpan on the thrown value,
-  // which throws a TypeError in strict mode if the throw is a primitive
-  // (string, number, etc.). Worth a small source fix to coerce to an Error
-  // or skip the attachment — tracked here so a future fix has a hook.
-  it.todo('supports throwing non-Error primitives without crashing');
+  it('supports throwing non-Error primitives without crashing', async () => {
+    const sentinel = Symbol('not-thrown');
+    for (const primitive of ['oops', 42, true, null, undefined] as const) {
+      let caught: unknown = sentinel;
+      try {
+        await withWorkerSpan('upstream', parent, {}, async () => {
+          throw primitive;
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBe(primitive);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -124,8 +124,12 @@ export async function withWorkerSpan<T>(
     errorMessage = err instanceof Error ? err.message : String(err);
     // Re-throw after recording, but construct the span for the finally-style log
     const span: WorkerSpan = { context: ctx, name, startTime, attributes, status, errorMessage };
-    // Attach span to the error for callers that want to log it
-    (err as Record<string, unknown>).__workerSpan = span;
+    // Attach span to the error for callers that want to log it. Primitives
+    // (string, number, etc.) can't carry properties in strict mode and would
+    // throw a TypeError, so leave them untouched.
+    if (err !== null && (typeof err === 'object' || typeof err === 'function')) {
+      (err as Record<string, unknown>).__workerSpan = span;
+    }
     throw err;
   }
 }
