@@ -10,6 +10,13 @@ export interface GitHubCoreBranch {
   name: string;
   isDefault: boolean;
   isProtected: boolean;
+  pr?: GitHubCoreBranchPR;
+}
+
+export interface GitHubCoreBranchPR {
+  number: number;
+  state: 'open' | 'merged' | 'closed';
+  title: string;
 }
 
 export interface GitHubCorePRFile {
@@ -303,6 +310,15 @@ const utf8Encoder = new TextEncoder();
 interface RepoBranchApi {
   name?: string;
   protected?: boolean;
+  commit?: { sha?: string };
+}
+
+interface CommitPullApi {
+  number: number;
+  state: 'open' | 'closed';
+  title: string;
+  merged_at: string | null;
+  head?: { ref?: string };
 }
 
 interface RepoContentEntryApi {
@@ -627,13 +643,30 @@ export async function fetchRepoBranchesData(
     pageCount += 1;
   }
 
-  const branches: GitHubCoreBranch[] = all
-    .filter((branch) => typeof branch.name === 'string' && branch.name.trim().length > 0)
-    .map((branch) => ({
-      name: branch.name as string,
-      isDefault: branch.name === defaultBranch,
-      isProtected: Boolean(branch.protected),
-    }))
+  const rawBranches = all.filter(
+    (branch) => typeof branch.name === 'string' && branch.name.trim().length > 0,
+  );
+
+  const tipShas = new Map<string, string>();
+  for (const branch of rawBranches) {
+    const sha = branch.commit?.sha;
+    if (typeof sha === 'string' && sha.length > 0) tipShas.set(branch.name as string, sha);
+  }
+
+  const prByBranch = await enrichBranchesWithPRs(runtime, repo, tipShas);
+
+  const branches: GitHubCoreBranch[] = rawBranches
+    .map((branch) => {
+      const name = branch.name as string;
+      const enriched: GitHubCoreBranch = {
+        name,
+        isDefault: name === defaultBranch,
+        isProtected: Boolean(branch.protected),
+      };
+      const pr = prByBranch.get(name);
+      if (pr) enriched.pr = pr;
+      return enriched;
+    })
     .sort((a, b) => {
       if (a.name === defaultBranch) return -1;
       if (b.name === defaultBranch) return 1;
@@ -641,6 +674,54 @@ export async function fetchRepoBranchesData(
     });
 
   return { repo, defaultBranch, branches };
+}
+
+async function enrichBranchesWithPRs(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  tipShas: Map<string, string>,
+): Promise<Map<string, GitHubCoreBranchPR>> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const result = new Map<string, GitHubCoreBranchPR>();
+
+  const lookups = await Promise.allSettled(
+    Array.from(tipShas.entries()).map(async ([branchName, sha]) => {
+      const res = await runtime.githubFetch(
+        buildGitHubApiUrl(runtime, `/repos/${repo}/commits/${sha}/pulls?per_page=20`),
+        { headers },
+      );
+      if (!res.ok) return null;
+      const data = (await res.json()) as CommitPullApi[];
+      if (!Array.isArray(data) || data.length === 0) return null;
+      const matched = data.filter((pr) => pr.head?.ref === branchName);
+      const candidates = matched.length > 0 ? matched : data;
+      const pr = candidates.reduce<CommitPullApi | null>(
+        (best, current) => (best === null || current.number > best.number ? current : best),
+        null,
+      );
+      if (!pr) return null;
+      const state: GitHubCoreBranchPR['state'] = pr.merged_at
+        ? 'merged'
+        : pr.state === 'open'
+          ? 'open'
+          : 'closed';
+      return { branchName, pr: { number: pr.number, state, title: pr.title } };
+    }),
+  );
+
+  for (const lookup of lookups) {
+    if (lookup.status === 'fulfilled' && lookup.value) {
+      result.set(lookup.value.branchName, lookup.value.pr);
+    }
+  }
+
+  return result;
+}
+
+function formatBranchPRMark(branch: GitHubCoreBranch): string {
+  if (branch.isDefault) return '';
+  if (!branch.pr) return ' (no PR)';
+  return ` (PR #${branch.pr.number} ${branch.pr.state})`;
 }
 
 export async function executeListBranchesTool(
@@ -663,7 +744,8 @@ export async function executeListBranchesTool(
   for (const branch of branches) {
     const marker = branch.isDefault ? ' ★' : '';
     const protectedMark = branch.isProtected ? ' 🔒' : '';
-    lines.push(`  ${branch.name}${marker}${protectedMark}`);
+    const prMark = formatBranchPRMark(branch);
+    lines.push(`  ${branch.name}${marker}${protectedMark}${prMark}`);
   }
 
   return {

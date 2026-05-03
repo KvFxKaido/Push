@@ -627,7 +627,12 @@ export interface FileCardData {
 export interface BranchListCardData {
   repo: string;
   defaultBranch: string;
-  branches: { name: string; isDefault: boolean; isProtected: boolean }[];
+  branches: {
+    name: string;
+    isDefault: boolean;
+    isProtected: boolean;
+    pr?: { number: number; state: 'open' | 'merged' | 'closed'; title: string };
+  }[];
 }
 
 export interface FileListCardData {
