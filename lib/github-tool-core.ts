@@ -11,6 +11,12 @@ export interface GitHubCoreBranch {
   isDefault: boolean;
   isProtected: boolean;
   pr?: GitHubCoreBranchPR;
+  /**
+   * True iff a PR lookup completed (with or without a match). Distinguishes
+   * "no PR exists" from "lookup not run / failed" so callers don't render a
+   * false `(no PR)` marker on transient API errors or skipped enrichment.
+   */
+  prLookupOk?: boolean;
 }
 
 export interface GitHubCoreBranchPR {
@@ -647,13 +653,17 @@ export async function fetchRepoBranchesData(
     (branch) => typeof branch.name === 'string' && branch.name.trim().length > 0,
   );
 
-  const tipShas = new Map<string, string>();
-  for (const branch of rawBranches) {
-    const sha = branch.commit?.sha;
-    if (typeof sha === 'string' && sha.length > 0) tipShas.set(branch.name as string, sha);
+  const enrichmentInput = new Map<string, string>();
+  if (rawBranches.length <= PR_ENRICHMENT_BRANCH_LIMIT) {
+    for (const branch of rawBranches) {
+      const name = branch.name as string;
+      if (name === defaultBranch) continue;
+      const sha = branch.commit?.sha;
+      if (typeof sha === 'string' && sha.length > 0) enrichmentInput.set(name, sha);
+    }
   }
 
-  const prByBranch = await enrichBranchesWithPRs(runtime, repo, tipShas);
+  const enrichment = await enrichBranchesWithPRs(runtime, repo, enrichmentInput);
 
   const branches: GitHubCoreBranch[] = rawBranches
     .map((branch) => {
@@ -663,8 +673,9 @@ export async function fetchRepoBranchesData(
         isDefault: name === defaultBranch,
         isProtected: Boolean(branch.protected),
       };
-      const pr = prByBranch.get(name);
+      const pr = enrichment.found.get(name);
       if (pr) enriched.pr = pr;
+      if (enrichment.lookupOk.has(name)) enriched.prLookupOk = true;
       return enriched;
     })
     .sort((a, b) => {
@@ -676,52 +687,79 @@ export async function fetchRepoBranchesData(
   return { repo, defaultBranch, branches };
 }
 
+const PR_ENRICHMENT_BRANCH_LIMIT = 50;
+const PR_ENRICHMENT_CONCURRENCY = 6;
+
+interface BranchPREnrichment {
+  found: Map<string, GitHubCoreBranchPR>;
+  lookupOk: Set<string>;
+}
+
 async function enrichBranchesWithPRs(
   runtime: GitHubCoreRuntime,
   repo: string,
-  tipShas: Map<string, string>,
-): Promise<Map<string, GitHubCoreBranchPR>> {
+  branchToSha: Map<string, string>,
+): Promise<BranchPREnrichment> {
+  const found = new Map<string, GitHubCoreBranchPR>();
+  const lookupOk = new Set<string>();
+  if (branchToSha.size === 0) return { found, lookupOk };
+
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
-  const result = new Map<string, GitHubCoreBranchPR>();
 
-  const lookups = await Promise.allSettled(
-    Array.from(tipShas.entries()).map(async ([branchName, sha]) => {
-      const res = await runtime.githubFetch(
-        buildGitHubApiUrl(runtime, `/repos/${repo}/commits/${sha}/pulls?per_page=20`),
-        { headers },
-      );
-      if (!res.ok) return null;
-      const data = (await res.json()) as CommitPullApi[];
-      if (!Array.isArray(data) || data.length === 0) return null;
-      const matched = data.filter((pr) => pr.head?.ref === branchName);
-      const candidates = matched.length > 0 ? matched : data;
-      const pr = candidates.reduce<CommitPullApi | null>(
-        (best, current) => (best === null || current.number > best.number ? current : best),
-        null,
-      );
-      if (!pr) return null;
-      const state: GitHubCoreBranchPR['state'] = pr.merged_at
-        ? 'merged'
-        : pr.state === 'open'
-          ? 'open'
-          : 'closed';
-      return { branchName, pr: { number: pr.number, state, title: pr.title } };
-    }),
-  );
-
-  for (const lookup of lookups) {
-    if (lookup.status === 'fulfilled' && lookup.value) {
-      result.set(lookup.value.branchName, lookup.value.pr);
-    }
+  // Dedupe by SHA: multiple branches at the same tip share one /pulls call.
+  const shaToBranches = new Map<string, string[]>();
+  for (const [branch, sha] of branchToSha.entries()) {
+    const list = shaToBranches.get(sha);
+    if (list) list.push(branch);
+    else shaToBranches.set(sha, [branch]);
   }
 
-  return result;
+  const shas = Array.from(shaToBranches.keys());
+  for (let i = 0; i < shas.length; i += PR_ENRICHMENT_CONCURRENCY) {
+    const chunk = shas.slice(i, i + PR_ENRICHMENT_CONCURRENCY);
+    const results = await Promise.allSettled(
+      chunk.map(async (sha) => {
+        const res = await runtime.githubFetch(
+          buildGitHubApiUrl(runtime, `/repos/${repo}/commits/${sha}/pulls?per_page=100`),
+          { headers },
+        );
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const data = (await res.json()) as CommitPullApi[];
+        return Array.isArray(data) ? data : [];
+      }),
+    );
+
+    chunk.forEach((sha, idx) => {
+      const result = results[idx];
+      const branchesForSha = shaToBranches.get(sha) || [];
+      if (result.status !== 'fulfilled') return;
+      for (const branchName of branchesForSha) {
+        lookupOk.add(branchName);
+        const matched = result.value.filter((pr) => pr.head?.ref === branchName);
+        if (matched.length === 0) continue;
+        const pr = matched.reduce<CommitPullApi | null>(
+          (best, current) => (best === null || current.number > best.number ? current : best),
+          null,
+        );
+        if (!pr) continue;
+        const state: GitHubCoreBranchPR['state'] = pr.merged_at
+          ? 'merged'
+          : pr.state === 'open'
+            ? 'open'
+            : 'closed';
+        found.set(branchName, { number: pr.number, state, title: pr.title });
+      }
+    });
+  }
+
+  return { found, lookupOk };
 }
 
 function formatBranchPRMark(branch: GitHubCoreBranch): string {
   if (branch.isDefault) return '';
-  if (!branch.pr) return ' (no PR)';
-  return ` (PR #${branch.pr.number} ${branch.pr.state})`;
+  if (branch.pr) return ` (PR #${branch.pr.number} ${branch.pr.state})`;
+  if (branch.prLookupOk) return ' (no PR)';
+  return '';
 }
 
 export async function executeListBranchesTool(

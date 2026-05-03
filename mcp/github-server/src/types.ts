@@ -44,6 +44,7 @@ export interface BranchListCardData {
     isDefault: boolean;
     isProtected: boolean;
     pr?: { number: number; state: 'open' | 'merged' | 'closed'; title: string };
+    prLookupOk?: boolean;
   }[];
 }
 
