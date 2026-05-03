@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Shield, Star } from 'lucide-react';
+import { GitMerge, GitPullRequest, GitPullRequestClosed, Shield, Star } from 'lucide-react';
 import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
 import type { BranchListCardData } from '@/types';
 import {
@@ -7,8 +7,42 @@ import {
   CARD_LIST_CLASS,
   CARD_BADGE_INFO,
   CARD_BADGE_WARNING,
+  CARD_BADGE_SUCCESS,
 } from '@/lib/utils';
 import { ExpandChevron, ExpandableCardPanel } from './expandable';
+
+type BranchPR = NonNullable<BranchListCardData['branches'][number]['pr']>;
+
+function PRBadge({ pr }: { pr: BranchPR }) {
+  if (pr.state === 'merged') {
+    return (
+      <span
+        className={`${CARD_BADGE_SUCCESS} inline-flex items-center gap-0.5 px-1.5 py-0.5 text-push-xs shrink-0`}
+        title={pr.title}
+      >
+        <GitMerge className="h-2.5 w-2.5" />#{pr.number} merged
+      </span>
+    );
+  }
+  if (pr.state === 'open') {
+    return (
+      <span
+        className={`${CARD_BADGE_INFO} inline-flex items-center gap-0.5 px-1.5 py-0.5 text-push-xs shrink-0`}
+        title={pr.title}
+      >
+        <GitPullRequest className="h-2.5 w-2.5" />#{pr.number} open
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`${CARD_BADGE_WARNING} inline-flex items-center gap-0.5 px-1.5 py-0.5 text-push-xs shrink-0`}
+      title={pr.title}
+    >
+      <GitPullRequestClosed className="h-2.5 w-2.5" />#{pr.number} closed
+    </span>
+  );
+}
 
 export function BranchListCard({ data }: { data: BranchListCardData }) {
   const [expanded, setExpanded] = useState(data.branches.length <= 5);
@@ -52,6 +86,7 @@ export function BranchListCard({ data }: { data: BranchListCardData }) {
                   protected
                 </span>
               )}
+              {!branch.isDefault && branch.pr && <PRBadge pr={branch.pr} />}
             </div>
           ))}
         </div>
