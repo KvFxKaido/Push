@@ -255,26 +255,20 @@ describe('withWorkerSpan', () => {
     ['boolean', false],
     ['null', null],
     ['undefined', undefined],
+    ['symbol', Symbol('test')],
+    ['bigint', 123n],
   ])('re-throws %s primitives cleanly without crashing', async (_label, thrown) => {
     // Primitives can't carry the __workerSpan attachment (assigning a property
     // on a primitive throws TypeError in strict mode), so the wrapper must
-    // skip the attachment and re-throw the value unchanged.
-    let caught: unknown;
-    let threwInternally = false;
-    try {
-      await withWorkerSpan('upstream', parent, {}, async () => {
+    // skip the attachment and re-throw the value unchanged. `rejects.toBe`
+    // both proves the promise rejected (so a swallowed `undefined` throw
+    // would fail the assertion) and that the rejection value is exactly the
+    // thrown primitive (so a wrapper-internal TypeError would fail too).
+    await expect(
+      withWorkerSpan('upstream', parent, {}, async () => {
         throw thrown;
-      });
-    } catch (err) {
-      caught = err;
-      // If the wrapper itself crashed trying to attach __workerSpan, the
-      // caught value would be a TypeError, not the original thrown primitive.
-      if (err instanceof TypeError && /Cannot create property/.test(err.message)) {
-        threwInternally = true;
-      }
-    }
-    expect(threwInternally).toBe(false);
-    expect(caught).toBe(thrown);
+      }),
+    ).rejects.toBe(thrown);
   });
 });
 
