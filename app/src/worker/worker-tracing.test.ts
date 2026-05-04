@@ -249,11 +249,33 @@ describe('withWorkerSpan', () => {
     expect(typeof span?.errorMessage).toBe('string');
   });
 
-  // Known limitation: the wrapper stashes __workerSpan on the thrown value,
-  // which throws a TypeError in strict mode if the throw is a primitive
-  // (string, number, etc.). Worth a small source fix to coerce to an Error
-  // or skip the attachment — tracked here so a future fix has a hook.
-  it.todo('supports throwing non-Error primitives without crashing');
+  it.each([
+    ['string', 'a plain string'],
+    ['number', 42],
+    ['boolean', false],
+    ['null', null],
+    ['undefined', undefined],
+  ])('re-throws %s primitives cleanly without crashing', async (_label, thrown) => {
+    // Primitives can't carry the __workerSpan attachment (assigning a property
+    // on a primitive throws TypeError in strict mode), so the wrapper must
+    // skip the attachment and re-throw the value unchanged.
+    let caught: unknown;
+    let threwInternally = false;
+    try {
+      await withWorkerSpan('upstream', parent, {}, async () => {
+        throw thrown;
+      });
+    } catch (err) {
+      caught = err;
+      // If the wrapper itself crashed trying to attach __workerSpan, the
+      // caught value would be a TypeError, not the original thrown primitive.
+      if (err instanceof TypeError && /Cannot create property/.test(err.message)) {
+        threwInternally = true;
+      }
+    }
+    expect(threwInternally).toBe(false);
+    expect(caught).toBe(thrown);
+  });
 });
 
 // ---------------------------------------------------------------------------
