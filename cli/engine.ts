@@ -38,6 +38,7 @@ import {
   estimateContextTokens,
   getContextBudget,
 } from './context-manager.js';
+import { transformContextBeforeLLM, type DistillResult } from '../lib/context-transformer.ts';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { summarizeToolResultPreview } from '../lib/run-events.ts';
 import { assertReadyForAssistantTurn } from '../lib/llm-message-invariants.ts';
@@ -654,17 +655,11 @@ export async function runAssistantLoop(
   // Lazily enrich system prompt with workspace context (git status,
   // project instructions, memory) if it hasn't been loaded yet.
   await ensureSystemPromptReady(state);
-  // Surgical context distillation for long sessions: reduce history to essentials
-  // if starting a new run with significant history.
-  if ((state.messages as Message[]).length > 40) {
-    const distillResult = distillContext(state.messages as Message[]);
-    state.messages = distillResult.messages as any;
-    dispatchEvent('status', {
-      source: 'orchestrator',
-      phase: 'context_distillation',
-      detail: `History distilled to ${distillResult.messages.length} essential messages.`,
-    });
-  }
+  // Long-session distillation now runs through the per-round pipeline
+  // below (see the `round === 1 && length > 40` clause). state.messages
+  // is no longer mutated at session entry — distillation is a per-hop
+  // transformation, leaving the canonical transcript append-only so
+  // prefix caching and resume-from-disk see the full history.
 
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();
@@ -895,33 +890,55 @@ export async function runAssistantLoop(
       }
     }
 
-    // Trim context to fit provider budget (state.messages is never mutated)
-    if (
+    // Build the per-hop view of state.messages: filter (no-op for CLI) →
+    // distill (when triggered) → trim. state.messages itself is never
+    // mutated — distillation is a transient compression for this LLM call.
+    const beforeDistillCount = (state.messages as Message[]).length;
+    const shouldDistill =
+      (round === 1 && beforeDistillCount > 40) ||
       shouldDistillMidSession(
         state.messages as Message[],
         state.workingMemory as WorkingMemory,
         round,
         providerConfig.id,
         state.model,
-      )
-    ) {
-      const beforeCount = (state.messages as Message[]).length;
-      const distillResult = distillContext(state.messages as Message[]);
-      state.messages = distillResult.messages as any;
-      if (distillResult.distilled) {
-        dispatchEvent('status', {
-          source: 'orchestrator',
-          phase: 'context_distillation',
-          detail: `Round ${round}: history distilled from ${beforeCount} to ${distillResult.messages.length} essential messages.`,
-        });
-      }
+      );
+    let capturedDistill: DistillResult<Message> | null = null;
+    let capturedTrim: TrimResult | null = null;
+    const transformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
+      surface: 'cli',
+      enableFilterVisible: false,
+      enableDistillation: shouldDistill,
+      distill: (msgs) => {
+        const result = distillContext(msgs);
+        capturedDistill = result;
+        return result;
+      },
+      manageContext: (msgs) => {
+        const result = trimContext(msgs, providerConfig.id, state.model);
+        capturedTrim = result;
+        return { messages: result.messages, compactionApplied: result.trimmed };
+      },
+    });
+    // Cast through the closure-mutable ref. TS narrows `capturedDistill`
+    // to its declared null because it doesn't track the synchronous
+    // callback assignment; the explicit type assertion restores the
+    // possibly-set view.
+    const distillResult = capturedDistill as DistillResult<Message> | null;
+    const trimResult: TrimResult = (capturedTrim as TrimResult | null) ?? {
+      messages: transformed.messages,
+      trimmed: false,
+      beforeTokens: 0,
+      afterTokens: 0,
+      removedCount: 0,
+    };
+    if (distillResult && distillResult.distilled) {
+      dispatchEvent('status', {
+        source: 'orchestrator',
+        phase: 'context_distillation',
+        detail: `Round ${round}: history distilled from ${beforeDistillCount} to ${distillResult.messages.length} essential messages.`,
+      });
     }
-
-    const trimResult: TrimResult = trimContext(
-      state.messages as Message[],
-      providerConfig.id,
-      state.model,
-    );
     lastTrimResult = trimResult;
     recordContextTrim(state.sessionId, trimResult);
     if (trimResult.trimmed) {
@@ -948,12 +965,12 @@ export async function runAssistantLoop(
 
     let assistantText: string;
     try {
-      assertReadyForAssistantTurn(trimResult.messages, 'cli/runAssistantLoop');
+      assertReadyForAssistantTurn(transformed.messages, 'cli/runAssistantLoop');
       assistantText = await streamCompletion(
         providerConfig,
         apiKey,
         state.model,
-        trimResult.messages,
+        transformed.messages,
         (token: string): void => {
           dispatchEvent('assistant_token', { text: token });
         },
@@ -1193,11 +1210,15 @@ export async function runAssistantLoop(
         (state.messages as Message[]).push({ role: 'user', content: finalizationPrompt });
         let assistantPushed = false;
         try {
-          const finalTrimResult = trimContext(
-            state.messages as Message[],
-            providerConfig.id,
-            state.model,
-          );
+          const finalTransformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
+            surface: 'cli',
+            enableFilterVisible: false,
+            enableDistillation: false,
+            manageContext: (msgs) => {
+              const result = trimContext(msgs, providerConfig.id, state.model);
+              return { messages: result.messages, compactionApplied: result.trimmed };
+            },
+          });
           const finalStreamOptions: {
             onThinkingToken?: (token: string | null) => void;
             sessionId?: string;
@@ -1217,7 +1238,7 @@ export async function runAssistantLoop(
             providerConfig,
             apiKey,
             state.model,
-            finalTrimResult.messages,
+            finalTransformed.messages,
             (token: string): void => {
               dispatchEvent('assistant_token', { text: token });
             },
@@ -1618,12 +1639,19 @@ export async function runAssistantLoop(
 
   let finalSummaryText = warning;
   try {
-    const finalTrimResult = trimContext(
-      state.messages as Message[],
-      providerConfig.id,
-      state.model,
-    );
-    if (finalTrimResult.trimmed) {
+    let capturedFinalTrim: TrimResult | null = null;
+    const finalTransformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
+      surface: 'cli',
+      enableFilterVisible: false,
+      enableDistillation: false,
+      manageContext: (msgs) => {
+        const result = trimContext(msgs, providerConfig.id, state.model);
+        capturedFinalTrim = result;
+        return { messages: result.messages, compactionApplied: result.trimmed };
+      },
+    });
+    const finalTrimResult = capturedFinalTrim as TrimResult | null;
+    if (finalTrimResult && finalTrimResult.trimmed) {
       dispatchEvent('status', {
         source: 'orchestrator',
         phase: 'context_trimming',
@@ -1649,7 +1677,7 @@ export async function runAssistantLoop(
       providerConfig,
       apiKey,
       state.model,
-      finalTrimResult.messages,
+      finalTransformed.messages,
       (token: string): void => {
         dispatchEvent('assistant_token', { text: token });
       },
