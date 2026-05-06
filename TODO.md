@@ -25,7 +25,7 @@
    Also ran `cd app && npx vitest run` — 1828 pass / 0 fail / 1 todo across 140 files.
    Reconciliation required during validation: (a) added `readSymbolsFromSandbox` to the `vi.mock('./sandbox-client', …)` factory in `sandbox-tools.test.ts` — the new handler-context wiring imports it at top-level, so every test was surfacing the "No export is defined on the mock" warning and downstream undefined-property failures; (b) adjusted six characterization tests in `sandbox-tools.test.ts` and one in `sandbox-read-only-inspection-handlers.test.ts` that asserted behaviors that never actually existed (e.g. redaction secrets too short for the `\bsk-[A-Za-z0-9_-]{20,}\b` pattern, a `[Tool Error — sandbox_read_file]` prefix that the dispatcher never emitted, `totalLines` on the fileLedger `partial_read` shape which the ledger does not store).
 
-## Phase 2: Mutation Family — IN PROGRESS
+## Phase 2: Mutation Family — DONE
 
 Phase 1 dropped ~484 lines; dispatcher is currently 2807 lines. The mutation family is the remaining concentration: five case arms totalling ~2169 lines. Splitting into 2a + 2b so each sub-phase lands as its own green commit.
 
@@ -56,4 +56,4 @@ Explorer-agent pass over the five arms (edit_file @ 572, edit_range @ 1130, sear
 
 ### Target — ACHIEVED
 
-`sandbox-tools.ts` is now 475 lines: detection/validation re-exports, five small context-builder helpers (`buildVerificationContext`, `buildGitReleaseContext`, `buildReadOnlyInspectionContext`, `buildEditContext`, `buildWriteContext`), and the `executeSandboxToolCall` dispatcher itself — most of whose case arms are one-line delegations to extracted handler modules. The "dispatcher as router" shape the Big Four Extraction Track was aimed at is in place.
+`sandbox-tools.ts` is now 475 lines: detection/validation re-exports, five small context-builder helpers (`buildVerificationContext`, `buildGitReleaseContext`, `buildReadOnlyInspectionContext`, `buildEditContext`, `buildWriteContext`), and the `executeSandboxToolCall` dispatcher itself — most of whose case arms are one-line delegations to extracted handler modules. The "dispatcher as router" shape the Big Four Extraction Track was aimed at is in place.

@@ -1,6 +1,6 @@
 # Push Roadmap (Canonical)
 
-Last updated: 2026-04-26
+Last updated: 2026-05-05
 
 This is the single source of truth for active product and engineering direction.
 
@@ -64,6 +64,7 @@ Current cycle emphasis: transcript-first CLI ergonomics, selective CLI adoption 
 
 | Date | Decision | Source |
 |---|---|---|
+| 2026-05-05 | Context-transformer pipeline shipped end-to-end: distillStage scaffolding (#478), `distillContext` → `DistillResult` shape alignment (#479), CLI migration to append-only transcript + per-hop `transformContextBeforeLLM` (#480), `cacheBreakpointIndex` threading for Anthropic-style prompt caching via OpenRouter (#481), and hybrid O(diff) persistence with `messages.jsonl` + slim `state.json` (#482). CLI message pipeline now routes through the same shared transformer as web; `state.messages` is canonical and append-only. | PRs #478, #479, #480, #481, #482 |
 | 2026-04-26 | "UX: Preserving Context on Branch Creation" shipped end-to-end via slice 2 (#412 — conversation-preserving fork migration), slice 2.1 (#413 — "New Branch from Here" UI), slice 2.5 (#414 — `sandbox_switch_branch` + foreground branch-checkout/switch guard), and slice 3 (#415 — `sandbox_create_branch` in background coder jobs + four hardening fixes). Foreground/background result boundary locked in: foreground tools emit `branchSwitch` for UI routing (chat migration / selection); background tools emit `meta: { branchCreated?, branchSwitched? }` (defined in `lib/coder-agent-bindings.ts`) for observability only — no background result fires chat or routing side effects. `sandbox_create_branch` is wired for both surfaces; `sandbox_switch_branch` is foreground-only for now. | PRs #412, #413, #414, #415 |
 | 2026-04-25 | PushStream Gateway Migration CLI tranche shipped in #402 + #403, sealing the migration end-to-end. `cli/provider.ts#streamCompletion` is now a thin retry/timeout wrapper around `openAISSEPump`; the two queue/notify shims that bridged its callback API into a `PushStream` for lib-side agent roles (`createDaemonProviderStream`, `buildPlannerPushStream`) are gone in favour of the native PushStream. Web and CLI share `lib/openai-sse-pump.ts` and `lib/reasoning-tokens.ts#normalizeReasoning` end-to-end. Behaviour shift: CLI's daemon and planner paths no longer inherit `streamCompletion`'s 3-attempt retry policy on 429/5xx/network — symmetric with the web side; `cli/engine.ts`'s REPL/headless path keeps `streamCompletion` retries unchanged. | `docs/decisions/PushStream Gateway Migration.md` rows 19–20 |
 | 2026-04-25 | PushStream Gateway Migration completed across PRs #365 → #401. Every agent role iterates `PushStream<M>` events directly; every provider routes through a native `<provider>Stream` consuming the shared `openAISSEPump`; both bridges, the `ProviderStreamFn` callback shape, `legacyChatPushStream`, `PROVIDER_STREAM_CONFIGS`, and the `streamSSEChat` / `streamSSEChatOnce` machinery are all deleted. CLI consumption (`cli/provider.ts`) tracked separately under "Selective CLI Adoption of Shared Runtime" — different surface, parallel work. | `docs/decisions/PushStream Gateway Migration.md` rows 1–18 |
