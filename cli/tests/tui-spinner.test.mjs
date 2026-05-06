@@ -6,6 +6,8 @@ import {
   SPINNER_NAMES,
   SPINNERS,
   spinnerFrame,
+  VERB_BY_TOOL,
+  verbForActivity,
 } from '../tui-spinner.ts';
 
 function withEnv(vars, fn) {
@@ -168,5 +170,62 @@ describe('detectSpinnerName', () => {
     withEnv({ PUSH_SPINNER: 'helix', PUSH_REDUCED_MOTION: '1', REDUCED_MOTION: undefined }, () => {
       assert.equal(detectSpinnerName(), 'off');
     });
+  });
+});
+
+// ─── verbForActivity ───────────────────────────────────────────
+
+describe('verbForActivity', () => {
+  it('returns null when activity is null', () => {
+    assert.equal(verbForActivity(null), null);
+  });
+
+  it('maps thinking and streaming to fixed verbs', () => {
+    assert.equal(verbForActivity({ kind: 'thinking' }), 'thinking');
+    assert.equal(verbForActivity({ kind: 'streaming' }), 'replying');
+  });
+
+  it('maps known tool names via VERB_BY_TOOL', () => {
+    assert.equal(verbForActivity({ kind: 'tool', toolName: 'read_file' }), 'reading');
+    assert.equal(verbForActivity({ kind: 'tool', toolName: 'edit_file' }), 'editing');
+    assert.equal(verbForActivity({ kind: 'tool', toolName: 'git_commit' }), 'committing');
+    assert.equal(verbForActivity({ kind: 'tool', toolName: 'delegate_coder' }), 'coding');
+    assert.equal(verbForActivity({ kind: 'tool', toolName: 'delegate_explorer' }), 'exploring');
+    assert.equal(verbForActivity({ kind: 'tool', toolName: 'sandbox_exec' }), 'running');
+  });
+
+  it('falls back to "working" for unknown tool names', () => {
+    assert.equal(verbForActivity({ kind: 'tool', toolName: 'unheard_of_tool' }), 'working');
+  });
+
+  it('keeps verbs short enough to fit a narrow header (<=10 chars)', () => {
+    const verbs = [
+      verbForActivity({ kind: 'thinking' }),
+      verbForActivity({ kind: 'streaming' }),
+      ...Object.values(VERB_BY_TOOL),
+      'working',
+    ];
+    for (const v of verbs) {
+      assert.ok(typeof v === 'string' && v.length > 0 && v.length <= 10, `verb too long: ${v}`);
+    }
+  });
+
+  it('VERB_BY_TOOL covers the canonical tool vocabulary', () => {
+    // Spot-check the broad categories so we notice if a category drops
+    // out of the map. This is not exhaustive (new tools are expected to
+    // land via the 'working' fallback until they're explicitly mapped).
+    for (const k of [
+      'read_file',
+      'list_dir',
+      'search_files',
+      'web_search',
+      'write_file',
+      'edit_file',
+      'exec',
+      'git_commit',
+      'git_create_branch',
+    ]) {
+      assert.ok(VERB_BY_TOOL[k], `missing canonical tool: ${k}`);
+    }
   });
 });
