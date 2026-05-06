@@ -151,6 +151,23 @@ function getEventsPathInRoot(root: string, sessionId: string): string {
   return path.join(getSessionDirInRoot(root, sessionId), 'events.jsonl');
 }
 
+function getMessagesPathInRoot(root: string, sessionId: string): string {
+  return path.join(getSessionDirInRoot(root, sessionId), 'messages.jsonl');
+}
+
+/**
+ * Tracks how many entries from `state.messages` have already been
+ * persisted to `messages.jsonl`. Lives in-memory only; reset on every
+ * load. Indexed by the `SessionState` object so multiple in-flight
+ * sessions don't share counters.
+ *
+ * Invariant: `lastPersistedMessageCount.get(state) <= state.messages.length`
+ * holds across normal append turns. When the user invokes a non-append
+ * operation (e.g. /compact), `state.messages` shrinks and the next save
+ * detects that via the length comparison and rewrites the log.
+ */
+const lastPersistedMessageCount: WeakMap<SessionState, number> = new WeakMap();
+
 function attachSessionRoot(state: unknown, root: string): void {
   if (!state || typeof state !== 'object') return;
   Object.defineProperty(state, SESSION_ROOT_SYMBOL, {
@@ -180,15 +197,19 @@ async function ensureSessionDir(sessionId: string, root: string): Promise<void> 
 
 // ─── State persistence ──────────────────────────────────────────
 
-export async function saveSessionState(state: SessionState): Promise<void> {
-  const root = getStateSessionRoot(state);
-  attachSessionRoot(state, root);
-  state.updatedAt = Date.now();
-  await ensureSessionDir(state.sessionId, root);
+/**
+ * Writes the slim portion of state (everything except `messages`) to
+ * `state.json` atomically via tmp + rename.
+ */
+async function writeSlimState(state: SessionState, root: string): Promise<void> {
   const statePath = getStatePathInRoot(root, state.sessionId);
   const tempPath = `${statePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  // Strip messages from the on-disk state — they live in messages.jsonl.
+  // Spread copy so we don't mutate the live state object.
+  const { messages: _messages, ...slim } = state;
+  void _messages;
   try {
-    await fs.writeFile(tempPath, JSON.stringify(state, null, 2), {
+    await fs.writeFile(tempPath, JSON.stringify(slim, null, 2), {
       encoding: 'utf8',
       mode: 0o600,
     });
@@ -197,6 +218,102 @@ export async function saveSessionState(state: SessionState): Promise<void> {
     await fs.rm(tempPath, { force: true });
     throw error;
   }
+}
+
+/**
+ * Persist session state. Messages live in append-only `messages.jsonl`;
+ * everything else (workingMemory, eventSeq, etc.) lives in `state.json`
+ * which gets rewritten on every save.
+ *
+ * The append-only invariant means cost per save scales with the count of
+ * NEW messages since the last save, not the full transcript length.
+ *
+ * Three branches by current vs persisted length:
+ *   - greater than persisted: append the diff to messages.jsonl.
+ *   - equal: no-op for the log; only the slim state.json gets rewritten.
+ *   - less than persisted: a non-append rewrite happened (e.g. /compact).
+ *     Truncate messages.jsonl and re-emit the full current array.
+ *
+ * Crash safety: append-then-write order. If the process dies between the
+ * messages.jsonl append and the state.json write, the log has the truth
+ * and the next save catches state.json up. The reverse order would
+ * "lose" newest messages from the log, which is unrecoverable.
+ */
+export async function saveSessionState(state: SessionState): Promise<void> {
+  const root = getStateSessionRoot(state);
+  attachSessionRoot(state, root);
+  state.updatedAt = Date.now();
+  await ensureSessionDir(state.sessionId, root);
+
+  const messages = Array.isArray(state.messages) ? state.messages : [];
+  const lastWritten = lastPersistedMessageCount.get(state) ?? 0;
+
+  if (messages.length < lastWritten) {
+    // Non-append rewrite (e.g. compaction) — full re-emit.
+    await rewriteMessagesLog(state);
+    return;
+  }
+
+  if (messages.length > lastWritten) {
+    const newOnes = messages.slice(lastWritten);
+    const lines = `${newOnes.map((m) => JSON.stringify(m)).join('\n')}\n`;
+    await fs.appendFile(getMessagesPathInRoot(root, state.sessionId), lines, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    lastPersistedMessageCount.set(state, messages.length);
+  }
+
+  await writeSlimState(state, root);
+}
+
+/**
+ * Truncate and re-emit `messages.jsonl` from the current `state.messages`,
+ * then rewrite the slim state.json. Used by `saveSessionState` when a
+ * non-append rewrite is detected, and exposed for callers that explicitly
+ * want to force a re-emit (e.g. unit tests).
+ *
+ * Atomic via tmp + rename on the messages.jsonl write so a crash mid-rewrite
+ * leaves the previous log intact.
+ */
+export async function rewriteMessagesLog(state: SessionState): Promise<void> {
+  const root = getStateSessionRoot(state);
+  attachSessionRoot(state, root);
+  state.updatedAt = Date.now();
+  await ensureSessionDir(state.sessionId, root);
+
+  const messages = Array.isArray(state.messages) ? state.messages : [];
+  const messagesPath = getMessagesPathInRoot(root, state.sessionId);
+  const tempPath = `${messagesPath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  const lines = messages.length > 0 ? `${messages.map((m) => JSON.stringify(m)).join('\n')}\n` : '';
+  try {
+    await fs.writeFile(tempPath, lines, { encoding: 'utf8', mode: 0o600 });
+    await fs.rename(tempPath, messagesPath);
+  } catch (error) {
+    await fs.rm(tempPath, { force: true });
+    throw error;
+  }
+  lastPersistedMessageCount.set(state, messages.length);
+
+  await writeSlimState(state, root);
+}
+
+/**
+ * Read messages.jsonl into an array. Returns null when the file is
+ * absent — that signals a legacy session whose messages are still
+ * embedded in state.json; the next save will migrate them.
+ */
+async function loadMessagesLog(root: string, sessionId: string): Promise<unknown[] | null> {
+  const logPath = getMessagesPathInRoot(root, sessionId);
+  let raw: string;
+  try {
+    raw = await fs.readFile(logPath, 'utf8');
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+  const lines = raw.split('\n').filter((l) => l.length > 0);
+  return lines.map((line) => JSON.parse(line));
 }
 
 export async function appendSessionEvent(
@@ -245,16 +362,31 @@ export async function loadSessionState(sessionId: string): Promise<SessionState>
   const root = (await resolveSessionRootForRead(sessionId)) || path.resolve(getSessionRoot());
   const raw = await fs.readFile(getStatePathInRoot(root, sessionId), 'utf8');
   const parsed: unknown = JSON.parse(raw);
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    (parsed as SessionState).sessionId !== sessionId ||
-    !Array.isArray((parsed as SessionState).messages)
-  ) {
+  if (!parsed || typeof parsed !== 'object' || (parsed as SessionState).sessionId !== sessionId) {
     throw new Error(`Invalid session state: ${sessionId}`);
   }
-  attachSessionRoot(parsed, root);
-  return parsed as SessionState;
+  const stateObj = parsed as SessionState;
+
+  // Hydrate messages from the append-only log. Slim state.json (post-PR 4)
+  // omits `messages` entirely; legacy state.json (pre-PR 4) carries them
+  // inline. When the log is absent, fall back to whatever's embedded —
+  // the next save will migrate any embedded array into the log and strip
+  // it from state.json. This keeps existing on-disk sessions resumable
+  // and also handles fresh sessions that haven't seen any messages yet
+  // (no log file, no embedded array → start empty).
+  const messagesFromLog = await loadMessagesLog(root, sessionId);
+  if (messagesFromLog !== null) {
+    stateObj.messages = messagesFromLog;
+    lastPersistedMessageCount.set(stateObj, messagesFromLog.length);
+  } else {
+    if (!Array.isArray(stateObj.messages)) stateObj.messages = [];
+    // Force the next save to write all embedded messages (if any) to
+    // the log so subsequent loads use the post-PR 4 path.
+    lastPersistedMessageCount.set(stateObj, 0);
+  }
+
+  attachSessionRoot(stateObj, root);
+  return stateObj;
 }
 
 export async function loadSessionEvents(sessionId: string): Promise<SessionEvent[]> {
@@ -462,6 +594,13 @@ export async function listSessions(): Promise<SessionListEntry[]> {
         const sessionId = typeof stateObj.sessionId === 'string' ? stateObj.sessionId : entry.name;
         if (!SESSION_ID_RE.test(sessionId)) continue;
 
+        // Pull the preview message from messages.jsonl (post-PR 4 sessions).
+        // Fall back to whatever's embedded in state.json (legacy sessions).
+        // listSessions is human-triggered, so reading the full log is fine.
+        let messagesForPreview: unknown = stateObj.messages;
+        const fromLog = await loadMessagesLog(root, sessionId);
+        if (fromLog !== null) messagesForPreview = fromLog;
+
         const row: SessionListEntry = {
           sessionId,
           updatedAt: Number.isFinite(Number(stateObj.updatedAt)) ? Number(stateObj.updatedAt) : 0,
@@ -470,7 +609,7 @@ export async function listSessions(): Promise<SessionListEntry[]> {
           cwd: typeof stateObj.cwd === 'string' ? stateObj.cwd : '',
           sessionName:
             typeof stateObj.sessionName === 'string' ? (stateObj.sessionName as string).trim() : '',
-          lastUserMessage: extractLastHumanUserMessage(stateObj.messages),
+          lastUserMessage: extractLastHumanUserMessage(messagesForPreview),
         };
 
         const existing = byId.get(sessionId);
