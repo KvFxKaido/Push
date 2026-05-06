@@ -59,13 +59,21 @@ const CATALOG_PROBE_PROVIDERS: readonly AIProviderType[] = [
 function guessWindowFromName(model: string): number {
   const m = model.toLowerCase();
   // Order matters — more specific patterns first so haiku doesn't get
-  // bucketed with the larger Claude family.
+  // bucketed with the larger Claude family, and deepseek-v4 doesn't get
+  // bucketed with the smaller v3/earlier window.
   if (m.includes('haiku')) return 200_000;
   if (m.includes('claude')) return 1_000_000;
   if (m.includes('gemini')) return 1_000_000;
   if (m.includes('grok')) return 2_000_000;
   if (m.includes('kimi') || m.includes('moonshot')) return 256_000;
   if (m.includes('gpt-5')) return 1_000_000;
+  // DeepSeek v4 family ships with 1M context. v3 and earlier topped at
+  // 128K. Listed below the v4 check so `deepseek-v4-pro` doesn't get
+  // bucketed with the older window. Ollama Cloud's /v1/models response
+  // doesn't include context_length, so without these patterns deepseek
+  // falls through to the 100K default.
+  if (m.includes('deepseek-v4')) return 1_000_000;
+  if (m.includes('deepseek')) return 128_000;
   return 0;
 }
 

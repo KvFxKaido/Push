@@ -83,6 +83,29 @@ describe('getContextBudget', () => {
     });
   });
 
+  it('derives a 1M-class budget for DeepSeek v4 family on Ollama', () => {
+    // Ollama Cloud's /v1/models response omits context_length, so v4
+    // models with 1M windows would otherwise fall through to the 100K
+    // default. The name-pattern fallback rescues them.
+    const expected = {
+      maxTokens: Math.floor(1_000_000 * 0.92),
+      targetTokens: Math.floor(1_000_000 * 0.85),
+      summarizeTokens: 88_000,
+    };
+    expect(getContextBudget('ollama', 'deepseek-v4-pro')).toEqual(expected);
+    expect(getContextBudget('ollama', 'deepseek-v4-flash')).toEqual(expected);
+  });
+
+  it('derives a 128K budget for older DeepSeek models', () => {
+    // v3.x and earlier top out at ~128K; the bare `deepseek` pattern
+    // floors them at that instead of the 100K default.
+    expect(getContextBudget('ollama', 'deepseek-v3.2')).toEqual({
+      maxTokens: Math.floor(128_000 * 0.92),
+      targetTokens: Math.floor(128_000 * 0.85),
+      summarizeTokens: 88_000,
+    });
+  });
+
   it('keeps summarizeTokens at or below the target for the unknown-model default fallback', () => {
     // Synthesize a model name that misses every pattern so this exercises the
     // default fallback budget (100K), where summarizeTokens is capped at the
