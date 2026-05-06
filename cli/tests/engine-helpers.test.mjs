@@ -31,8 +31,8 @@ describe('shouldDistillMidSession', () => {
   };
 
   // Build messages that produce large token estimates.
-  // Each char ≈ 1/3.5 tokens + 4 overhead. A 200_000-char message ≈ 57_146 tokens.
-  // Two of those ≈ 114_292 tokens, well over the 44k threshold.
+  // Each char ≈ 1/3.5 tokens + 4 overhead. A 200_000-char message ≈ 57_147 tokens.
+  // Two of those ≈ 114_294 tokens, well over the 44k threshold.
   const bigMessages = [
     { role: 'user', content: 'x'.repeat(200_000) },
     { role: 'assistant', content: 'y'.repeat(200_000) },

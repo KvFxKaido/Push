@@ -380,8 +380,12 @@ export function trimContext(messages: Message[], providerId: string, model: stri
   const budget: ContextBudget = getContextBudget(providerId, model);
   const beforeTokens: number = estimateContextTokens(normalizedMessages);
 
-  // Under target — return a shallow copy, no trimming needed
-  if (beforeTokens <= budget.targetTokens) {
+  // Under the early-summarization threshold — return a shallow copy, no trimming needed.
+  // For default budgets where summarizeTokens === targetTokens this matches the old
+  // single-threshold behavior. For large-context profiles (Claude/Gemini/Grok/Kimi) the
+  // summarize tier is much lower than the target so old tool output gets compressed
+  // long before we'd otherwise drop messages.
+  if (beforeTokens <= budget.summarizeTokens) {
     return {
       messages: [...normalizedMessages],
       trimmed: false,
@@ -396,12 +400,17 @@ export function trimContext(messages: Message[], providerId: string, model: stri
 
   // ---------------------------------------------------------------------------
   // Phase 1: Summarize old verbose content (skip last 14 messages)
+  //
+  // Threshold is `summarizeTokens` (not `targetTokens`) so large-context budgets
+  // compress old tool output as soon as the conversation crosses the lean
+  // working-context line, instead of letting hundreds of K of uncompressed
+  // tool noise accumulate up to the much higher drop target.
   // ---------------------------------------------------------------------------
   const result: Message[] = normalizedMessages.map((m: Message) => ({ ...m })); // shallow copy each message
   const recentBoundary: number = Math.max(0, result.length - 14);
   let currentTokens: number = beforeTokens;
 
-  for (let i = 0; i < recentBoundary && currentTokens > budget.targetTokens; i++) {
+  for (let i = 0; i < recentBoundary && currentTokens > budget.summarizeTokens; i++) {
     // Never summarize the system prompt or the first real user message
     if (i === 0 && result[i].role === 'system') continue;
     if (i === firstUserIdx) continue;

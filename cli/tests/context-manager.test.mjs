@@ -422,21 +422,29 @@ describe('trimContext — edge cases', () => {
     assert.ok(result.removedCount > 0, 'should remove messages via hard fallback');
   });
 
-  it('uses Gemini budget when appropriate', () => {
+  it('Gemini budget summarizes early but defers message dropping until past 800K target', () => {
     const msgs = [makeSystemMsg(500), makeUserMsg('Hello')];
-    // Add enough to exceed 88K but not 900K
+    // Build a transcript that lands between the 88K summarize tier and the
+    // 800K Gemini drop target. Default profile (88K = 88K) drops here; Gemini
+    // (88K summarize, 800K target) should only summarize.
     for (let i = 0; i < 12; i++) {
       msgs.push(...makeToolPair(`tool_${i}`, 20000));
     }
 
     const tokens = estimateContextTokens(msgs);
-    if (tokens > 88_000 && tokens <= 900_000) {
-      // With default budget it would trim, with Gemini it wouldn't
+    if (tokens > 88_000 && tokens <= 700_000) {
       const defaultResult = trimContext(msgs, 'ollama', 'test-model');
       const geminiResult = trimContext(msgs, 'ollama', 'gemini-3-flash-preview');
 
       assert.equal(defaultResult.trimmed, true);
-      assert.equal(geminiResult.trimmed, false);
+      assert.ok(defaultResult.removedCount > 0, 'default profile should drop messages');
+
+      assert.equal(geminiResult.trimmed, true);
+      assert.equal(geminiResult.removedCount, 0, 'Gemini profile should only summarize');
+      const summarizedSeen = geminiResult.messages.some((m) =>
+        m.content.includes('[...summarized]'),
+      );
+      assert.ok(summarizedSeen, 'Gemini profile should produce summarized tool results');
     }
   });
 });
