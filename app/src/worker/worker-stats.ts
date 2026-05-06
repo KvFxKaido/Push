@@ -33,13 +33,16 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
   const groupBy = url.searchParams.get('group_by') || 'provider';
 
   // Validate params to prevent SQL injection (though we use templates, it's good practice)
-  const validWindows: Record<string, string> = {
-    '1h': '1 HOUR',
-    '24h': '1 DAY',
-    '7d': '7 DAY',
-    '30d': '30 DAY',
+  // CF Analytics Engine SQL takes INTERVAL as `'<number>' <unit>` — the number
+  // is a quoted string and the unit is a bare keyword. The combined form
+  // `'1 DAY'` and the bare-number form `1 DAY` both fail the AE parser.
+  const validWindows: Record<string, { count: string; unit: string }> = {
+    '1h': { count: '1', unit: 'HOUR' },
+    '24h': { count: '1', unit: 'DAY' },
+    '7d': { count: '7', unit: 'DAY' },
+    '30d': { count: '30', unit: 'DAY' },
   };
-  const interval = validWindows[window] || '1 DAY';
+  const interval = validWindows[window] || { count: '1', unit: 'DAY' };
 
   const validGroups: Record<string, string[]> = {
     provider: ['blob2'],
@@ -69,20 +72,30 @@ export async function handleStats(request: Request, env: Env): Promise<Response>
   }
 
   // Template the query.
-  // Sentinel filtering:
-  //   - double1 (ttfbMs) uses -1 for failed requests — exclude from latency percentiles
-  //   - double6 (tokensIn) and double7 (tokensOut) use -1 for unknown — exclude from sums
+  // CF Analytics Engine SQL constraints driving this shape (see
+  // docs/runbooks/Provider Stats Endpoint.md for the full dialect notes):
+  //   - Percentile uses the parameterized `quantileWeighted(level)(value, weight)`
+  //     form with the built-in `_sample_interval` column as the weight.
+  //     ClickHouse `quantile`/`quantileIf` and the flat 3-arg variant are
+  //     not exposed.
+  //   - `if(cond, then, else)` is type-strict: Double + Integer fails (use 0.0,
+  //     not 0); Double + Null fails (no inline way to drop sentinel rows).
+  // Sentinel handling:
+  //   - Token sums use `if(x > 0, x, 0.0)` — both branches are Double.
+  //   - Latency percentiles include failed-request rows with double1=-1,
+  //     which slightly drags p50/p95 below the true value when failures are
+  //     non-trivial. Acceptable for v1; tighten later if needed.
   const query = `
     SELECT
       ${groupSelect},
       count() as requests,
       avg(double9) as success_rate,
-      quantileIf(0.5)(double1, double1 > 0) as p50_ms,
-      quantileIf(0.95)(double1, double1 > 0) as p95_ms,
-      sum(if(double6 > 0, double6, 0)) as tokens_in,
-      sum(if(double7 > 0, double7, 0)) as tokens_out
+      quantileWeighted(0.5)(double1, _sample_interval) as p50_ms,
+      quantileWeighted(0.95)(double1, _sample_interval) as p95_ms,
+      sum(if(double6 > 0, double6, 0.0)) as tokens_in,
+      sum(if(double7 > 0, double7, 0.0)) as tokens_out
     FROM push_provider_stats
-    WHERE timestamp > now() - INTERVAL '${interval}'
+    WHERE timestamp > now() - INTERVAL '${interval.count}' ${interval.unit}
       AND blob1 = '1'
     GROUP BY ${groupSelect}
     ORDER BY requests DESC
