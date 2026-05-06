@@ -3,8 +3,8 @@
  *
  * Push's loop body is append-only: every code path adds messages to the
  * canonical transcript via `.push()`. This module is the single seam where
- * messages get rewritten before reaching the LLM — filtering, compaction,
- * and (in PR-2) accumulated working-memory injection.
+ * messages get rewritten before reaching the LLM — visibility filtering,
+ * surgical distillation, and compaction.
  *
  * Contract:
  *   pure function of (messages, options). Identical inputs produce
@@ -17,9 +17,10 @@
  * cache misses. Keeping the pipeline pure + driven by an append-only input
  * keeps the cached prefix stable.
  *
- * Pipeline ordering is fixed inside this module. Callers cannot reorder
- * stages — they can only enable/disable them via options. Stages added in
- * future PRs slot into the array; the public API doesn't change.
+ * Pipeline ordering is fixed inside this module (filter → distill →
+ * manageContext). Callers cannot reorder stages — they can only
+ * enable/disable them via options. New stages slot into the pipeline
+ * array; the public API stays the same.
  */
 
 // ---------------------------------------------------------------------------
@@ -38,10 +39,30 @@ export interface ManageContextResult<M extends TransformableMessage> {
   compactionApplied: boolean;
 }
 
+export interface DistillResult<M extends TransformableMessage> {
+  messages: M[];
+  /** True if the output differs from the input — i.e., distillation
+   *  rewrote, inserted, dropped, or replaced messages (e.g., swapping a
+   *  span of turns for a digest message). Pass-through implementations
+   *  that return the input unchanged should report false. This flag is
+   *  what trips `rewriteApplied` on the top-level result, so set it
+   *  whenever the prefix may have moved and cache invariants need to
+   *  gate on a structural rewrite. */
+  distilled: boolean;
+}
+
 export interface TransformContextOptions<M extends TransformableMessage> {
   surface: 'web' | 'cli';
   /** When true (default), drop messages with `visibleToModel === false`. */
   enableFilterVisible?: boolean;
+  /** When true and `distill` is provided, run the distillation step.
+   *  Caller decides the trigger (round count, message count, working-
+   *  memory pressure, etc.) and flips this flag accordingly — the stage
+   *  itself only invokes the function. */
+  enableDistillation?: boolean;
+  /** Pre-bound distillation function. Must be a pure function of its
+   *  input. CLI binds `distillContext` here; web does not use this stage. */
+  distill?: (messages: M[]) => DistillResult<M>;
   /** When true and `manageContext` is provided, run the compaction step. */
   enableManageContext?: boolean;
   /** Pre-bound compaction function. Must be a pure function of its input. */
@@ -53,12 +74,18 @@ export interface TransformedContext<M extends TransformableMessage> {
   /** Index of the last `role: 'user'` message in `messages`, or -1 if none.
    *  Provider format adapters apply `cache_control` here. */
   cacheBreakpointIndex: number;
-  /** True if the compaction stage actually rewrote/dropped messages. When
-   *  this fires the cache breakpoint may move backward — invariants that
-   *  assume monotonicity should gate on this flag. Filter-induced drops do
-   *  not flip this flag because filtering is consistent across turns and
-   *  does not by itself break breakpoint monotonicity. */
-  compactionApplied: boolean;
+  /** True if any rewrite stage (currently distillation or compaction)
+   *  rewrote, inserted, dropped, or replaced messages. When this fires
+   *  the cache breakpoint may move backward — invariants that assume
+   *  monotonicity should gate on this flag. Filter-induced drops do not
+   *  flip this flag because filtering is consistent across turns and
+   *  does not by itself break breakpoint monotonicity.
+   *
+   *  The name is deliberately stage-agnostic: the manageContext callback
+   *  contract still uses `compactionApplied` (it IS compaction-specific
+   *  from that callback's point of view), but at the top level we report
+   *  the union of all rewrite-style stages. */
+  rewriteApplied: boolean;
   metrics: {
     inputCount: number;
     outputCount: number;
@@ -69,10 +96,17 @@ export interface TransformedContext<M extends TransformableMessage> {
 // Pipeline
 // ---------------------------------------------------------------------------
 
+interface StageResult<M extends TransformableMessage> {
+  messages: M[];
+  /** True if this stage rewrote, inserted, dropped, or replaced messages.
+   *  Aggregated across stages into `TransformedContext.rewriteApplied`. */
+  rewriteApplied: boolean;
+}
+
 interface Stage<M extends TransformableMessage> {
   name: string;
   isEnabled: (options: TransformContextOptions<M>) => boolean;
-  run: (messages: M[], options: TransformContextOptions<M>) => ManageContextResult<M>;
+  run: (messages: M[], options: TransformContextOptions<M>) => StageResult<M>;
 }
 
 function filterVisibleStage<M extends TransformableMessage>(): Stage<M> {
@@ -81,8 +115,20 @@ function filterVisibleStage<M extends TransformableMessage>(): Stage<M> {
     isEnabled: (o) => o.enableFilterVisible !== false,
     run: (messages) => ({
       messages: messages.filter((m) => m.visibleToModel !== false),
-      compactionApplied: false,
+      rewriteApplied: false,
     }),
+  };
+}
+
+function distillStage<M extends TransformableMessage>(): Stage<M> {
+  return {
+    name: 'distill',
+    isEnabled: (o) => o.enableDistillation === true && Boolean(o.distill),
+    // isEnabled guarantees options.distill is defined; no defensive guard.
+    run: (messages, options) => {
+      const result = options.distill!(messages);
+      return { messages: result.messages, rewriteApplied: result.distilled };
+    },
   };
 }
 
@@ -90,16 +136,18 @@ function manageContextStage<M extends TransformableMessage>(): Stage<M> {
   return {
     name: 'manageContext',
     isEnabled: (o) => o.enableManageContext !== false && Boolean(o.manageContext),
+    // isEnabled guarantees options.manageContext is defined; no defensive guard.
     run: (messages, options) => {
-      if (!options.manageContext) return { messages, compactionApplied: false };
-      return options.manageContext(messages);
+      const result = options.manageContext!(messages);
+      return { messages: result.messages, rewriteApplied: result.compactionApplied };
     },
   };
 }
 
-// Order is fixed. Callers cannot reorder; PR-2 stages append to this array.
+// Order is fixed: filter (drop hidden) → distill (preserve essentials) →
+// manageContext (compact for budget). Callers cannot reorder.
 function buildPipeline<M extends TransformableMessage>(): Stage<M>[] {
-  return [filterVisibleStage<M>(), manageContextStage<M>()];
+  return [filterVisibleStage<M>(), distillStage<M>(), manageContextStage<M>()];
 }
 
 // ---------------------------------------------------------------------------
@@ -112,19 +160,19 @@ export function transformContextBeforeLLM<M extends TransformableMessage>(
 ): TransformedContext<M> {
   const inputCount = messages.length;
   let working: M[] = [...messages];
-  let compactionApplied = false;
+  let rewriteApplied = false;
 
   for (const stage of buildPipeline<M>()) {
     if (!stage.isEnabled(options)) continue;
     const result = stage.run(working, options);
     working = result.messages;
-    if (result.compactionApplied) compactionApplied = true;
+    if (result.rewriteApplied) rewriteApplied = true;
   }
 
   return {
     messages: working,
     cacheBreakpointIndex: findLastUserIndex(working),
-    compactionApplied,
+    rewriteApplied,
     metrics: { inputCount, outputCount: working.length },
   };
 }

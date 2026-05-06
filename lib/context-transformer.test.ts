@@ -78,7 +78,7 @@ describe('transformContextBeforeLLM — append-stability', () => {
     const baseOut = transformContextBeforeLLM(base, baseOptions);
     const extOut = transformContextBeforeLLM(extended, baseOptions);
 
-    if (!baseOut.compactionApplied && !extOut.compactionApplied) {
+    if (!baseOut.rewriteApplied && !extOut.rewriteApplied) {
       expect(extOut.cacheBreakpointIndex).toBeGreaterThanOrEqual(baseOut.cacheBreakpointIndex);
     }
   });
@@ -142,11 +142,11 @@ describe('transformContextBeforeLLM — manageContext stage', () => {
   it('does not run when manageContext is not provided', () => {
     const messages: FakeMsg[] = [sample({ role: 'user', content: 'hello' })];
     const out = transformContextBeforeLLM(messages, baseOptions);
-    expect(out.compactionApplied).toBe(false);
+    expect(out.rewriteApplied).toBe(false);
     expect(out.messages).toEqual(messages);
   });
 
-  it('records compactionApplied when the bound manageContext reports compaction', () => {
+  it('records rewriteApplied when the bound manageContext reports compaction', () => {
     const messages: FakeMsg[] = [
       sample({ role: 'user', content: 'big' }),
       sample({ role: 'assistant', content: 'reply' }),
@@ -158,7 +158,7 @@ describe('transformContextBeforeLLM — manageContext stage', () => {
         compactionApplied: true,
       }),
     });
-    expect(out.compactionApplied).toBe(true);
+    expect(out.rewriteApplied).toBe(true);
     expect(out.messages[0].content).toBe('[digest]');
   });
 
@@ -191,6 +191,134 @@ describe('transformContextBeforeLLM — manageContext stage', () => {
       },
     });
     expect(mgrSawCount).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// distill stage
+// ---------------------------------------------------------------------------
+
+describe('transformContextBeforeLLM — distill stage', () => {
+  const trivialDistill = (msgs: FakeMsg[]) => ({
+    messages: msgs.length > 3 ? [msgs[0], ...msgs.slice(-2)] : msgs,
+    distilled: msgs.length > 3,
+  });
+
+  it('does not run when enableDistillation is false (default)', () => {
+    const messages: FakeMsg[] = Array.from({ length: 10 }, (_, i) =>
+      sample({ role: i % 2 === 0 ? 'user' : 'assistant', content: `m${i}` }),
+    );
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      distill: trivialDistill,
+    });
+    expect(out.messages).toHaveLength(10);
+    expect(out.rewriteApplied).toBe(false);
+  });
+
+  it('does not run when distill is missing even if enableDistillation is true', () => {
+    const messages: FakeMsg[] = [sample({ role: 'user', content: 'a' })];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      enableDistillation: true,
+    });
+    expect(out.messages).toEqual(messages);
+    expect(out.rewriteApplied).toBe(false);
+  });
+
+  it('runs when both enableDistillation and distill are provided', () => {
+    const messages: FakeMsg[] = Array.from({ length: 6 }, (_, i) =>
+      sample({ role: i % 2 === 0 ? 'user' : 'assistant', content: `m${i}` }),
+    );
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      enableDistillation: true,
+      distill: trivialDistill,
+    });
+    expect(out.messages).toHaveLength(3);
+    expect(out.rewriteApplied).toBe(true);
+  });
+
+  it('reports rewriteApplied: false when distill is a no-op', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'a' }),
+      sample({ role: 'assistant', content: 'b' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      enableDistillation: true,
+      distill: trivialDistill,
+    });
+    expect(out.messages).toEqual(messages);
+    expect(out.rewriteApplied).toBe(false);
+  });
+
+  it('runs filter before distill (distill sees the visible subset)', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'visible' }),
+      sample({ role: 'user', content: 'hidden', visibleToModel: false }),
+      sample({ role: 'assistant', content: 'reply' }),
+      sample({ role: 'user', content: 'tail' }),
+    ];
+    let distillSawCount = -1;
+    transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      enableDistillation: true,
+      distill: (msgs) => {
+        distillSawCount = msgs.length;
+        return { messages: msgs, distilled: false };
+      },
+    });
+    expect(distillSawCount).toBe(3);
+  });
+
+  it('runs distill before manageContext (mgr sees the distilled subset)', () => {
+    const messages: FakeMsg[] = Array.from({ length: 5 }, (_, i) =>
+      sample({ role: i % 2 === 0 ? 'user' : 'assistant', content: `m${i}` }),
+    );
+    let mgrSawCount = -1;
+    transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      enableDistillation: true,
+      distill: (msgs) => ({ messages: msgs.slice(0, 2), distilled: true }),
+      manageContext: (msgs) => {
+        mgrSawCount = msgs.length;
+        return { messages: msgs, compactionApplied: false };
+      },
+    });
+    expect(mgrSawCount).toBe(2);
+  });
+
+  it('determinism: identical input produces identical output', () => {
+    const messages: FakeMsg[] = Array.from({ length: 8 }, (_, i) =>
+      sample({ role: i % 2 === 0 ? 'user' : 'assistant', content: `m${i}` }),
+    );
+    const opts = {
+      ...baseOptions,
+      enableDistillation: true,
+      distill: trivialDistill,
+    };
+    const out1 = transformContextBeforeLLM(messages, opts);
+    const out2 = transformContextBeforeLLM(messages, opts);
+    expect(out1).toEqual(out2);
+  });
+
+  it('append-stability holds when distill is below trigger threshold', () => {
+    const base: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'assistant', content: 'reply' }),
+    ];
+    const extended: FakeMsg[] = [...base, sample({ role: 'user', content: 'second' })];
+    const opts = {
+      ...baseOptions,
+      enableDistillation: true,
+      distill: trivialDistill,
+    };
+    const baseOut = transformContextBeforeLLM(base, opts);
+    const extOut = transformContextBeforeLLM(extended, opts);
+    expect(baseOut.rewriteApplied).toBe(false);
+    expect(extOut.rewriteApplied).toBe(false);
+    expect(extOut.messages.slice(0, baseOut.messages.length)).toEqual(baseOut.messages);
   });
 });
 
@@ -255,12 +383,11 @@ describe('transformContextBeforeLLM — snapshots', () => {
     expect({
       messages: out.messages,
       cacheBreakpointIndex: out.cacheBreakpointIndex,
-      compactionApplied: out.compactionApplied,
+      rewriteApplied: out.rewriteApplied,
       metrics: out.metrics,
     }).toMatchInlineSnapshot(`
       {
         "cacheBreakpointIndex": 4,
-        "compactionApplied": false,
         "messages": [
           {
             "content": "You are a helpful assistant.",
@@ -288,6 +415,7 @@ describe('transformContextBeforeLLM — snapshots', () => {
           "inputCount": 6,
           "outputCount": 5,
         },
+        "rewriteApplied": false,
       }
     `);
   });
