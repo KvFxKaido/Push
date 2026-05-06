@@ -5,9 +5,14 @@ import { shouldDistillMidSession, buildParseErrorMessage } from '../engine.ts';
 // ─── shouldDistillMidSession ────────────────────────────────────
 
 describe('shouldDistillMidSession', () => {
-  // Default budget: targetTokens = 60_000, half = 30_000.
-  // Token estimate: ceil(text.length / 3.5) + 4 per message.
-  // To exceed 30k tokens we need messages whose total estimated tokens > 30_000.
+  // Default budget: targetTokens = 88_000, half = 44_000.
+  // Token estimate: lib content-aware sampler — ASCII-only text with no code
+  // symbols falls through to ceil(text.length / 3.5) + 4 per message.
+  // Provider/model pair below is neutral so getContextBudget hits the default
+  // profile (avoid 'claude'/'gemini'/'grok'/'kimi' which route to richer
+  // model-class budgets and shift the half-budget threshold).
+  const PROVIDER = 'cli-test';
+  const MODEL = 'cli-test-model';
 
   const planMemory = {
     plan: 'Step 1: read files. Step 2: implement.',
@@ -26,11 +31,11 @@ describe('shouldDistillMidSession', () => {
   };
 
   // Build messages that produce large token estimates.
-  // Each char ≈ 1/3.5 tokens + 4 overhead. A 100_000-char message ≈ 28_575 tokens.
-  // Two of those ≈ 57_150 tokens, well over the 30k threshold.
+  // Each char ≈ 1/3.5 tokens + 4 overhead. A 200_000-char message ≈ 57_147 tokens.
+  // Two of those ≈ 114_294 tokens, well over the 44k threshold.
   const bigMessages = [
-    { role: 'user', content: 'x'.repeat(100_000) },
-    { role: 'assistant', content: 'y'.repeat(100_000) },
+    { role: 'user', content: 'x'.repeat(200_000) },
+    { role: 'assistant', content: 'y'.repeat(200_000) },
   ];
 
   const smallMessages = [
@@ -39,32 +44,23 @@ describe('shouldDistillMidSession', () => {
   ];
 
   it('returns false when round <= 4', () => {
-    assert.equal(shouldDistillMidSession(bigMessages, planMemory, 1, 'anthropic', 'claude'), false);
-    assert.equal(shouldDistillMidSession(bigMessages, planMemory, 4, 'anthropic', 'claude'), false);
+    assert.equal(shouldDistillMidSession(bigMessages, planMemory, 1, PROVIDER, MODEL), false);
+    assert.equal(shouldDistillMidSession(bigMessages, planMemory, 4, PROVIDER, MODEL), false);
   });
 
   it('returns false when workingMemory has no plan', () => {
-    assert.equal(shouldDistillMidSession(bigMessages, undefined, 5, 'anthropic', 'claude'), false);
-    assert.equal(
-      shouldDistillMidSession(bigMessages, emptyPlanMemory, 5, 'anthropic', 'claude'),
-      false,
-    );
-    assert.equal(
-      shouldDistillMidSession(bigMessages, { plan: '   ' }, 5, 'anthropic', 'claude'),
-      false,
-    );
+    assert.equal(shouldDistillMidSession(bigMessages, undefined, 5, PROVIDER, MODEL), false);
+    assert.equal(shouldDistillMidSession(bigMessages, emptyPlanMemory, 5, PROVIDER, MODEL), false);
+    assert.equal(shouldDistillMidSession(bigMessages, { plan: '   ' }, 5, PROVIDER, MODEL), false);
   });
 
   it('returns false when plan exists but tokens are under half budget', () => {
-    assert.equal(
-      shouldDistillMidSession(smallMessages, planMemory, 5, 'anthropic', 'claude'),
-      false,
-    );
+    assert.equal(shouldDistillMidSession(smallMessages, planMemory, 5, PROVIDER, MODEL), false);
   });
 
   it('returns true when round > 4, plan exists, and tokens exceed half budget', () => {
-    assert.equal(shouldDistillMidSession(bigMessages, planMemory, 5, 'anthropic', 'claude'), true);
-    assert.equal(shouldDistillMidSession(bigMessages, planMemory, 10, 'anthropic', 'claude'), true);
+    assert.equal(shouldDistillMidSession(bigMessages, planMemory, 5, PROVIDER, MODEL), true);
+    assert.equal(shouldDistillMidSession(bigMessages, planMemory, 10, PROVIDER, MODEL), true);
   });
 });
 

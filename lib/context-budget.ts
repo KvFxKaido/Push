@@ -90,28 +90,31 @@ function normalizeModelName(model?: string): string {
  * Resolve the context budget for a given provider and model.
  * Provider is a string (e.g. 'ollama', 'openrouter', 'zen', 'nvidia', 'vertex')
  * to avoid coupling to app-specific type definitions.
+ *
+ * Returns a fresh copy each call so callers can mutate without poisoning the
+ * shared singleton.
  */
 export function getContextBudget(provider?: string, model?: string): ContextBudget {
   const normalizedModel = normalizeModelName(model);
 
   // GPT-5.4 models get a large-context profile, but with a conservative target
   if (normalizedModel.includes('gpt-5.4')) {
-    return GPT5_PRO_CONTEXT_BUDGET;
+    return { ...GPT5_PRO_CONTEXT_BUDGET };
   }
 
   // Non-Haiku Claude models get the larger 1M-class profile.
   if (normalizedModel.includes('claude') && !normalizedModel.includes('haiku')) {
-    return CLAUDE_CONTEXT_BUDGET;
+    return { ...CLAUDE_CONTEXT_BUDGET };
   }
 
   // Grok models — larger long-term history
   if (normalizedModel.includes('grok')) {
-    return GROK_CONTEXT_BUDGET;
+    return { ...GROK_CONTEXT_BUDGET };
   }
 
   // Moonshot Kimi models — 262K context on Workers AI and OpenRouter.
   if (normalizedModel.includes('kimi') || normalizedModel.includes('moonshot')) {
-    return KIMI_CONTEXT_BUDGET;
+    return { ...KIMI_CONTEXT_BUDGET };
   }
 
   // Gemini models on any provider — full 1M budget
@@ -122,10 +125,10 @@ export function getContextBudget(provider?: string, model?: string): ContextBudg
       provider === 'vertex') &&
     normalizedModel.includes('gemini')
   ) {
-    return GEMINI_CONTEXT_BUDGET;
+    return { ...GEMINI_CONTEXT_BUDGET };
   }
 
-  return DEFAULT_CONTEXT_BUDGET;
+  return { ...DEFAULT_CONTEXT_BUDGET };
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +149,7 @@ export function getContextBudget(provider?: string, model?: string): ContextBudg
  * blowing past real limits.
  */
 export function estimateTokens(text: string): number {
-  if (!text) return 0;
+  if (typeof text !== 'string' || !text) return 0;
   const len = text.length;
 
   // For short text, the overhead of sampling isn't worth it

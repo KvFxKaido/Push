@@ -72,8 +72,10 @@ describe('estimateTokens', () => {
   });
 
   it('estimates tokens for typical text', () => {
-    const text = 'Hello, world!'; // 13 chars → ceil(13/3.5) = 4
-    assert.equal(estimateTokens(text), Math.ceil(13 / 3.5));
+    // Short text (< 200 chars) uses a tighter 3.2 chars/token rate
+    // because the content-aware sampler isn't worth running on tiny inputs.
+    const text = 'Hello, world!'; // 13 chars → ceil(13/3.2) = 5
+    assert.equal(estimateTokens(text), Math.ceil(13 / 3.2));
   });
 
   it('returns 0 for non-string input', () => {
@@ -107,51 +109,68 @@ describe('estimateMessageTokens', () => {
 describe('getContextBudget', () => {
   it('returns default budget for non-Gemini provider', () => {
     const budget = getContextBudget('nvidia', 'nvidia/llama-3.1-nemotron-70b-instruct');
-    assert.equal(budget.targetTokens, 60_000);
+    assert.equal(budget.targetTokens, 88_000);
     assert.equal(budget.maxTokens, 100_000);
   });
 
   it('returns Gemini budget for exact model name on Ollama', () => {
     const budget = getContextBudget('ollama', 'gemini-3-flash-preview');
-    assert.equal(budget.targetTokens, 600_000);
-    assert.equal(budget.maxTokens, 950_000);
+    assert.equal(budget.targetTokens, 800_000);
+    assert.equal(budget.maxTokens, 850_000);
   });
 
   it('matches gemini variants case-insensitively on Ollama', () => {
     const budget = getContextBudget('ollama', 'Gemini-3-Flash-Preview');
-    assert.equal(budget.targetTokens, 600_000);
+    assert.equal(budget.targetTokens, 800_000);
   });
 
   it('matches model names containing gemini on Ollama', () => {
     const budget = getContextBudget('ollama', 'my-gemini-3-flash-custom');
-    assert.equal(budget.targetTokens, 600_000);
+    assert.equal(budget.targetTokens, 800_000);
   });
 
   it('returns Gemini budget for OpenRouter with Gemini model', () => {
     const budget = getContextBudget('openrouter', 'google/gemini-3.1-pro-preview');
-    assert.equal(budget.targetTokens, 600_000);
-    assert.equal(budget.maxTokens, 950_000);
+    assert.equal(budget.targetTokens, 800_000);
+    assert.equal(budget.maxTokens, 850_000);
   });
 
   it('returns Gemini budget for Zen with Gemini model', () => {
     const budget = getContextBudget('zen', 'gemini-3-flash');
-    assert.equal(budget.targetTokens, 600_000);
-    assert.equal(budget.maxTokens, 950_000);
+    assert.equal(budget.targetTokens, 800_000);
+    assert.equal(budget.maxTokens, 850_000);
   });
 
   it('returns default budget for non-Gemini Zen model', () => {
     const budget = getContextBudget('zen', 'big-pickle');
-    assert.equal(budget.targetTokens, 60_000);
+    assert.equal(budget.targetTokens, 88_000);
   });
 
   it('returns default budget for Gemini model on unsupported providers', () => {
     const budget = getContextBudget('nvidia', 'gemini-3-flash-preview');
-    assert.equal(budget.targetTokens, 60_000);
+    assert.equal(budget.targetTokens, 88_000);
   });
 
   it('returns default budget when model is undefined', () => {
     const budget = getContextBudget('ollama', undefined);
-    assert.equal(budget.targetTokens, 60_000);
+    assert.equal(budget.targetTokens, 88_000);
+  });
+
+  it('returns Claude 1M-class budget for non-Haiku Claude models', () => {
+    const budget = getContextBudget('openrouter', 'anthropic/claude-sonnet-4.6');
+    assert.equal(budget.targetTokens, 800_000);
+    assert.equal(budget.maxTokens, 850_000);
+  });
+
+  it('falls back to default budget for Claude Haiku', () => {
+    const budget = getContextBudget('openrouter', 'anthropic/claude-haiku-4.5');
+    assert.equal(budget.targetTokens, 88_000);
+  });
+
+  it('returns Kimi/Moonshot budget for Kimi models', () => {
+    const budget = getContextBudget('openrouter', 'moonshotai/kimi-k2');
+    assert.equal(budget.targetTokens, 210_000);
+    assert.equal(budget.maxTokens, 240_000);
   });
 
   it('returns a new object each call (no shared mutation)', () => {
@@ -159,7 +178,7 @@ describe('getContextBudget', () => {
     const b = getContextBudget('ollama', 'test');
     assert.notEqual(a, b);
     a.targetTokens = 0;
-    assert.equal(b.targetTokens, 60_000);
+    assert.equal(b.targetTokens, 88_000);
   });
 });
 
@@ -403,21 +422,29 @@ describe('trimContext — edge cases', () => {
     assert.ok(result.removedCount > 0, 'should remove messages via hard fallback');
   });
 
-  it('uses Gemini budget when appropriate', () => {
+  it('Gemini budget summarizes early but defers message dropping until past 800K target', () => {
     const msgs = [makeSystemMsg(500), makeUserMsg('Hello')];
-    // Add enough to exceed 88K but not 900K
+    // Build a transcript that lands between the 88K summarize tier and the
+    // 800K Gemini drop target. Default profile (88K = 88K) drops here; Gemini
+    // (88K summarize, 800K target) should only summarize.
     for (let i = 0; i < 12; i++) {
       msgs.push(...makeToolPair(`tool_${i}`, 20000));
     }
 
     const tokens = estimateContextTokens(msgs);
-    if (tokens > 88_000 && tokens <= 900_000) {
-      // With default budget it would trim, with Gemini it wouldn't
+    if (tokens > 88_000 && tokens <= 700_000) {
       const defaultResult = trimContext(msgs, 'ollama', 'test-model');
       const geminiResult = trimContext(msgs, 'ollama', 'gemini-3-flash-preview');
 
       assert.equal(defaultResult.trimmed, true);
-      assert.equal(geminiResult.trimmed, false);
+      assert.ok(defaultResult.removedCount > 0, 'default profile should drop messages');
+
+      assert.equal(geminiResult.trimmed, true);
+      assert.equal(geminiResult.removedCount, 0, 'Gemini profile should only summarize');
+      const summarizedSeen = geminiResult.messages.some((m) =>
+        m.content.includes('[...summarized]'),
+      );
+      assert.ok(summarizedSeen, 'Gemini profile should produce summarized tool results');
     }
   });
 });

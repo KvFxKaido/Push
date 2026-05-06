@@ -16,6 +16,13 @@
 // Interfaces
 // ---------------------------------------------------------------------------
 
+import {
+  type ContextBudget,
+  estimateContextTokens,
+  estimateMessageTokens,
+  estimateTokens,
+  getContextBudget,
+} from '../lib/context-budget.ts';
 import type { DistillResult } from '../lib/context-transformer.ts';
 
 export interface Message {
@@ -42,23 +49,12 @@ export interface CompactResult {
   totalTurns: number;
 }
 
-export interface ContextBudget {
-  targetTokens: number;
-  maxTokens: number;
-}
-
-// ---------------------------------------------------------------------------
-// Token estimation (same heuristic as web app — orchestrator.ts:187-213)
-// ---------------------------------------------------------------------------
-
-/**
- * Rough token estimate: ~3.5 chars per token for English/code.
- * Intentionally conservative (slightly over-estimates).
- */
-export function estimateTokens(text: string): number {
-  if (typeof text !== 'string') return 0;
-  return Math.ceil(text.length / 3.5);
-}
+// Budget + token estimation re-exported from the shared runtime so the CLI
+// stays in lockstep with web on context-window heuristics. Local logic below
+// (trim/compact/distill) operates on the CLI's `Message` shape, which is
+// structurally compatible with `lib/context-budget`'s `TokenEstimationMessage`.
+export type { ContextBudget };
+export { estimateTokens, estimateMessageTokens, estimateContextTokens, getContextBudget };
 
 function toContentString(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -68,38 +64,6 @@ function toContentString(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-export function estimateMessageTokens(msg: Message): number {
-  return estimateTokens(toContentString(msg.content)) + 4; // 4-token per-message overhead
-}
-
-export function estimateContextTokens(messages: Message[]): number {
-  let total: number = 0;
-  for (const msg of messages) {
-    total += estimateMessageTokens(msg);
-  }
-  return total;
-}
-
-// ---------------------------------------------------------------------------
-// Budget resolution
-// ---------------------------------------------------------------------------
-const DEFAULT_BUDGET: ContextBudget = { targetTokens: 60_000, maxTokens: 100_000 };
-// Gemini models (1M context window) — Ollama, OpenRouter, and Zen with Gemini models
-const GEMINI_BUDGET: ContextBudget = { targetTokens: 600_000, maxTokens: 950_000 };
-
-export function getContextBudget(providerId: string, model: string): ContextBudget {
-  // Ollama, OpenRouter, or Zen running a Gemini model — using a conservative budget within 1M limit
-  const normalized: string = (model || '').trim().toLowerCase();
-  if (
-    (providerId === 'ollama' || providerId === 'openrouter' || providerId === 'zen') &&
-    normalized.includes('gemini')
-  ) {
-    return { ...GEMINI_BUDGET };
-  }
-
-  return { ...DEFAULT_BUDGET };
 }
 
 // ---------------------------------------------------------------------------
@@ -416,8 +380,12 @@ export function trimContext(messages: Message[], providerId: string, model: stri
   const budget: ContextBudget = getContextBudget(providerId, model);
   const beforeTokens: number = estimateContextTokens(normalizedMessages);
 
-  // Under target — return a shallow copy, no trimming needed
-  if (beforeTokens <= budget.targetTokens) {
+  // Under the early-summarization threshold — return a shallow copy, no trimming needed.
+  // For default budgets where summarizeTokens === targetTokens this matches the old
+  // single-threshold behavior. For large-context profiles (Claude/Gemini/Grok/Kimi) the
+  // summarize tier is much lower than the target so old tool output gets compressed
+  // long before we'd otherwise drop messages.
+  if (beforeTokens <= budget.summarizeTokens) {
     return {
       messages: [...normalizedMessages],
       trimmed: false,
@@ -432,12 +400,17 @@ export function trimContext(messages: Message[], providerId: string, model: stri
 
   // ---------------------------------------------------------------------------
   // Phase 1: Summarize old verbose content (skip last 14 messages)
+  //
+  // Threshold is `summarizeTokens` (not `targetTokens`) so large-context budgets
+  // compress old tool output as soon as the conversation crosses the lean
+  // working-context line, instead of letting hundreds of K of uncompressed
+  // tool noise accumulate up to the much higher drop target.
   // ---------------------------------------------------------------------------
   const result: Message[] = normalizedMessages.map((m: Message) => ({ ...m })); // shallow copy each message
   const recentBoundary: number = Math.max(0, result.length - 14);
   let currentTokens: number = beforeTokens;
 
-  for (let i = 0; i < recentBoundary && currentTokens > budget.targetTokens; i++) {
+  for (let i = 0; i < recentBoundary && currentTokens > budget.summarizeTokens; i++) {
     // Never summarize the system prompt or the first real user message
     if (i === 0 && result[i].role === 'system') continue;
     if (i === firstUserIdx) continue;
