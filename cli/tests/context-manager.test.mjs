@@ -72,8 +72,10 @@ describe('estimateTokens', () => {
   });
 
   it('estimates tokens for typical text', () => {
-    const text = 'Hello, world!'; // 13 chars → ceil(13/3.5) = 4
-    assert.equal(estimateTokens(text), Math.ceil(13 / 3.5));
+    // Short text (< 200 chars) uses a tighter 3.2 chars/token rate
+    // because the content-aware sampler isn't worth running on tiny inputs.
+    const text = 'Hello, world!'; // 13 chars → ceil(13/3.2) = 5
+    assert.equal(estimateTokens(text), Math.ceil(13 / 3.2));
   });
 
   it('returns 0 for non-string input', () => {
@@ -107,51 +109,68 @@ describe('estimateMessageTokens', () => {
 describe('getContextBudget', () => {
   it('returns default budget for non-Gemini provider', () => {
     const budget = getContextBudget('nvidia', 'nvidia/llama-3.1-nemotron-70b-instruct');
-    assert.equal(budget.targetTokens, 60_000);
+    assert.equal(budget.targetTokens, 88_000);
     assert.equal(budget.maxTokens, 100_000);
   });
 
   it('returns Gemini budget for exact model name on Ollama', () => {
     const budget = getContextBudget('ollama', 'gemini-3-flash-preview');
-    assert.equal(budget.targetTokens, 600_000);
-    assert.equal(budget.maxTokens, 950_000);
+    assert.equal(budget.targetTokens, 800_000);
+    assert.equal(budget.maxTokens, 850_000);
   });
 
   it('matches gemini variants case-insensitively on Ollama', () => {
     const budget = getContextBudget('ollama', 'Gemini-3-Flash-Preview');
-    assert.equal(budget.targetTokens, 600_000);
+    assert.equal(budget.targetTokens, 800_000);
   });
 
   it('matches model names containing gemini on Ollama', () => {
     const budget = getContextBudget('ollama', 'my-gemini-3-flash-custom');
-    assert.equal(budget.targetTokens, 600_000);
+    assert.equal(budget.targetTokens, 800_000);
   });
 
   it('returns Gemini budget for OpenRouter with Gemini model', () => {
     const budget = getContextBudget('openrouter', 'google/gemini-3.1-pro-preview');
-    assert.equal(budget.targetTokens, 600_000);
-    assert.equal(budget.maxTokens, 950_000);
+    assert.equal(budget.targetTokens, 800_000);
+    assert.equal(budget.maxTokens, 850_000);
   });
 
   it('returns Gemini budget for Zen with Gemini model', () => {
     const budget = getContextBudget('zen', 'gemini-3-flash');
-    assert.equal(budget.targetTokens, 600_000);
-    assert.equal(budget.maxTokens, 950_000);
+    assert.equal(budget.targetTokens, 800_000);
+    assert.equal(budget.maxTokens, 850_000);
   });
 
   it('returns default budget for non-Gemini Zen model', () => {
     const budget = getContextBudget('zen', 'big-pickle');
-    assert.equal(budget.targetTokens, 60_000);
+    assert.equal(budget.targetTokens, 88_000);
   });
 
   it('returns default budget for Gemini model on unsupported providers', () => {
     const budget = getContextBudget('nvidia', 'gemini-3-flash-preview');
-    assert.equal(budget.targetTokens, 60_000);
+    assert.equal(budget.targetTokens, 88_000);
   });
 
   it('returns default budget when model is undefined', () => {
     const budget = getContextBudget('ollama', undefined);
-    assert.equal(budget.targetTokens, 60_000);
+    assert.equal(budget.targetTokens, 88_000);
+  });
+
+  it('returns Claude 1M-class budget for non-Haiku Claude models', () => {
+    const budget = getContextBudget('openrouter', 'anthropic/claude-sonnet-4.6');
+    assert.equal(budget.targetTokens, 800_000);
+    assert.equal(budget.maxTokens, 850_000);
+  });
+
+  it('falls back to default budget for Claude Haiku', () => {
+    const budget = getContextBudget('openrouter', 'anthropic/claude-haiku-4.5');
+    assert.equal(budget.targetTokens, 88_000);
+  });
+
+  it('returns Kimi/Moonshot budget for Kimi models', () => {
+    const budget = getContextBudget('openrouter', 'moonshotai/kimi-k2');
+    assert.equal(budget.targetTokens, 210_000);
+    assert.equal(budget.maxTokens, 240_000);
   });
 
   it('returns a new object each call (no shared mutation)', () => {
@@ -159,7 +178,7 @@ describe('getContextBudget', () => {
     const b = getContextBudget('ollama', 'test');
     assert.notEqual(a, b);
     a.targetTokens = 0;
-    assert.equal(b.targetTokens, 60_000);
+    assert.equal(b.targetTokens, 88_000);
   });
 });
 

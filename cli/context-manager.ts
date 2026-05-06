@@ -16,6 +16,13 @@
 // Interfaces
 // ---------------------------------------------------------------------------
 
+import {
+  type ContextBudget,
+  estimateContextTokens,
+  estimateMessageTokens,
+  estimateTokens,
+  getContextBudget,
+} from '../lib/context-budget.ts';
 import type { DistillResult } from '../lib/context-transformer.ts';
 
 export interface Message {
@@ -42,23 +49,12 @@ export interface CompactResult {
   totalTurns: number;
 }
 
-export interface ContextBudget {
-  targetTokens: number;
-  maxTokens: number;
-}
-
-// ---------------------------------------------------------------------------
-// Token estimation (same heuristic as web app — orchestrator.ts:187-213)
-// ---------------------------------------------------------------------------
-
-/**
- * Rough token estimate: ~3.5 chars per token for English/code.
- * Intentionally conservative (slightly over-estimates).
- */
-export function estimateTokens(text: string): number {
-  if (typeof text !== 'string') return 0;
-  return Math.ceil(text.length / 3.5);
-}
+// Budget + token estimation re-exported from the shared runtime so the CLI
+// stays in lockstep with web on context-window heuristics. Local logic below
+// (trim/compact/distill) operates on the CLI's `Message` shape, which is
+// structurally compatible with `lib/context-budget`'s `TokenEstimationMessage`.
+export type { ContextBudget };
+export { estimateTokens, estimateMessageTokens, estimateContextTokens, getContextBudget };
 
 function toContentString(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -68,38 +64,6 @@ function toContentString(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-export function estimateMessageTokens(msg: Message): number {
-  return estimateTokens(toContentString(msg.content)) + 4; // 4-token per-message overhead
-}
-
-export function estimateContextTokens(messages: Message[]): number {
-  let total: number = 0;
-  for (const msg of messages) {
-    total += estimateMessageTokens(msg);
-  }
-  return total;
-}
-
-// ---------------------------------------------------------------------------
-// Budget resolution
-// ---------------------------------------------------------------------------
-const DEFAULT_BUDGET: ContextBudget = { targetTokens: 60_000, maxTokens: 100_000 };
-// Gemini models (1M context window) — Ollama, OpenRouter, and Zen with Gemini models
-const GEMINI_BUDGET: ContextBudget = { targetTokens: 600_000, maxTokens: 950_000 };
-
-export function getContextBudget(providerId: string, model: string): ContextBudget {
-  // Ollama, OpenRouter, or Zen running a Gemini model — using a conservative budget within 1M limit
-  const normalized: string = (model || '').trim().toLowerCase();
-  if (
-    (providerId === 'ollama' || providerId === 'openrouter' || providerId === 'zen') &&
-    normalized.includes('gemini')
-  ) {
-    return { ...GEMINI_BUDGET };
-  }
-
-  return { ...DEFAULT_BUDGET };
 }
 
 // ---------------------------------------------------------------------------
