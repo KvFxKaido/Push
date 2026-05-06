@@ -657,11 +657,12 @@ export async function runAssistantLoop(
   // Surgical context distillation for long sessions: reduce history to essentials
   // if starting a new run with significant history.
   if ((state.messages as Message[]).length > 40) {
-    state.messages = distillContext(state.messages as Message[]) as any;
+    const distillResult = distillContext(state.messages as Message[]);
+    state.messages = distillResult.messages as any;
     dispatchEvent('status', {
       source: 'orchestrator',
       phase: 'context_distillation',
-      detail: `History distilled to ${(state.messages as Message[]).length} essential messages.`,
+      detail: `History distilled to ${distillResult.messages.length} essential messages.`,
     });
   }
 
@@ -905,12 +906,13 @@ export async function runAssistantLoop(
       )
     ) {
       const beforeCount = (state.messages as Message[]).length;
-      state.messages = distillContext(state.messages as Message[]) as any;
-      if ((state.messages as Message[]).length < beforeCount) {
+      const distillResult = distillContext(state.messages as Message[]);
+      state.messages = distillResult.messages as any;
+      if (distillResult.distilled) {
         dispatchEvent('status', {
           source: 'orchestrator',
           phase: 'context_distillation',
-          detail: `Round ${round}: history distilled from ${beforeCount} to ${(state.messages as Message[]).length} essential messages.`,
+          detail: `Round ${round}: history distilled from ${beforeCount} to ${distillResult.messages.length} essential messages.`,
         });
       }
     }

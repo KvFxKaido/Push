@@ -16,6 +16,8 @@
 // Interfaces
 // ---------------------------------------------------------------------------
 
+import type { DistillResult } from '../lib/context-transformer.ts';
+
 export interface Message {
   role: string;
   content: string;
@@ -343,12 +345,16 @@ export function compactContext(
 /**
  * Surgical contextual filtering for agent handoffs.
  * Preserves system prompt, first user message, latest working memory, and tail context.
+ *
+ * Returns a DistillResult so callers can bind this directly to the
+ * `distill` option of `transformContextBeforeLLM`. `distilled` is true
+ * when the preserved subset strictly omits messages (length < input).
  */
 export function distillContext(
   messages: Message[],
   options: { tailSize?: number } = {},
-): Message[] {
-  if (!messages || messages.length === 0) return [];
+): DistillResult<Message> {
+  if (!messages || messages.length === 0) return { messages: [], distilled: false };
 
   const tailSize: number = typeof options.tailSize === 'number' ? options.tailSize : 10;
   const normalized: Message[] = normalizeMessages(messages);
@@ -384,10 +390,14 @@ export function distillContext(
     preservedIndices.add(i);
   }
 
-  // Return preserved messages in original order
-  return Array.from(preservedIndices)
+  const preservedMessages: Message[] = Array.from(preservedIndices)
     .sort((a, b) => a - b)
     .map((idx) => normalized[idx]);
+
+  return {
+    messages: preservedMessages,
+    distilled: preservedMessages.length !== messages.length,
+  };
 }
 
 /**

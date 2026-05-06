@@ -499,16 +499,17 @@ describe('compactContext', () => {
 // ─── distillContext ──────────────────────────────────────────────
 
 describe('distillContext', () => {
-  it('returns empty array for empty input', () => {
+  it('returns empty result for empty input', () => {
     const result = distillContext([]);
-    assert.deepEqual(result, []);
+    assert.deepEqual(result.messages, []);
+    assert.equal(result.distilled, false);
   });
 
   it('preserves system prompt at index 0', () => {
     const msgs = [makeSystemMsg(100), makeUserMsg('Hello'), makeAssistantMsg('Hi!')];
     const result = distillContext(msgs);
-    assert.equal(result[0]?.role, 'system');
-    assert.equal(result[0]?.content, msgs[0].content);
+    assert.equal(result.messages[0]?.role, 'system');
+    assert.equal(result.messages[0]?.content, msgs[0].content);
   });
 
   it('preserves first user message', () => {
@@ -519,7 +520,9 @@ describe('distillContext', () => {
       makeUserMsg('Follow up'),
     ];
     const result = distillContext(msgs);
-    const firstUser = result.find((m) => m.role === 'user' && m.content === 'Original request');
+    const firstUser = result.messages.find(
+      (m) => m.role === 'user' && m.content === 'Original request',
+    );
     assert.ok(firstUser, 'first user message should be preserved');
   });
 
@@ -537,7 +540,7 @@ describe('distillContext', () => {
       makeUserMsg('Follow up'),
     ];
     const result = distillContext(msgs);
-    const found = result.some((m) => m.content.includes('"tool": "coder_update_state"'));
+    const found = result.messages.some((m) => m.content.includes('"tool": "coder_update_state"'));
     assert.ok(found, 'latest working memory update should be preserved');
   });
 
@@ -549,10 +552,10 @@ describe('distillContext', () => {
     }
     const result = distillContext(msgs);
     // Should preserve last 10 messages from tail
-    assert.ok(result.length >= 10, 'should preserve at least tail messages');
+    assert.ok(result.messages.length >= 10, 'should preserve at least tail messages');
     // Last message should be included
     const lastMsg = msgs[msgs.length - 1];
-    const found = result.some((m) => m.content === lastMsg.content);
+    const found = result.messages.some((m) => m.content === lastMsg.content);
     assert.ok(found, 'last message should be in result');
   });
 
@@ -567,9 +570,9 @@ describe('distillContext', () => {
     ];
     const result = distillContext(msgs);
     // Check that indices are in ascending order
-    for (let i = 1; i < result.length; i++) {
-      const prevIdx = msgs.findIndex((m) => m.content === result[i - 1].content);
-      const currIdx = msgs.findIndex((m) => m.content === result[i].content);
+    for (let i = 1; i < result.messages.length; i++) {
+      const prevIdx = msgs.findIndex((m) => m.content === result.messages[i - 1].content);
+      const currIdx = msgs.findIndex((m) => m.content === result.messages[i].content);
       assert.ok(currIdx > prevIdx, 'messages should maintain original order');
     }
   });
@@ -584,7 +587,7 @@ describe('distillContext', () => {
     const resultLargeTail = distillContext(msgs, { tailSize: 15 });
     // Larger tail should preserve more messages
     assert.ok(
-      resultLargeTail.length >= resultSmallTail.length,
+      resultLargeTail.messages.length >= resultSmallTail.messages.length,
       'larger tailSize should preserve at least as many messages',
     );
   });
@@ -597,7 +600,25 @@ describe('distillContext', () => {
       makeToolResult('read_file', 100),
     ];
     const result = distillContext(msgs);
-    assert.ok(result.length > 0, 'should return messages even without working memory');
-    assert.equal(result[0].role, 'system', 'system prompt should still be preserved');
+    assert.ok(result.messages.length > 0, 'should return messages even without working memory');
+    assert.equal(result.messages[0].role, 'system', 'system prompt should still be preserved');
+  });
+
+  it('reports distilled: false when no messages were dropped', () => {
+    const msgs = [makeSystemMsg(100), makeUserMsg('Hello'), makeAssistantMsg('Hi!')];
+    const result = distillContext(msgs);
+    assert.equal(result.distilled, false);
+    assert.equal(result.messages.length, msgs.length);
+  });
+
+  it('reports distilled: true when messages were dropped', () => {
+    const msgs = [makeSystemMsg(100), makeUserMsg('Start')];
+    for (let i = 0; i < 20; i++) {
+      msgs.push(makeAssistantMsg(`Reply ${i}`));
+      msgs.push(makeUserMsg(`User ${i}`));
+    }
+    const result = distillContext(msgs);
+    assert.equal(result.distilled, true);
+    assert.ok(result.messages.length < msgs.length);
   });
 });
