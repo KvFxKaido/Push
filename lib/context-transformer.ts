@@ -41,8 +41,13 @@ export interface ManageContextResult<M extends TransformableMessage> {
 
 export interface DistillResult<M extends TransformableMessage> {
   messages: M[];
-  /** True if the distillation step actually preserved a strict subset.
-   *  Surfaces that pass through unchanged should report false. */
+  /** True if the output differs from the input — i.e., distillation
+   *  rewrote, inserted, dropped, or replaced messages (e.g., swapping a
+   *  span of turns for a digest message). Pass-through implementations
+   *  that return the input unchanged should report false. This flag is
+   *  what trips `rewriteApplied` on the top-level result, so set it
+   *  whenever the prefix may have moved and cache invariants need to
+   *  gate on a structural rewrite. */
   distilled: boolean;
 }
 
@@ -69,13 +74,18 @@ export interface TransformedContext<M extends TransformableMessage> {
   /** Index of the last `role: 'user'` message in `messages`, or -1 if none.
    *  Provider format adapters apply `cache_control` here. */
   cacheBreakpointIndex: number;
-  /** True if any rewrite stage (compaction or distillation) actually
-   *  rewrote/dropped messages. When this fires the cache breakpoint may
-   *  move backward — invariants that assume monotonicity should gate on
-   *  this flag. Filter-induced drops do not flip this flag because
-   *  filtering is consistent across turns and does not by itself break
-   *  breakpoint monotonicity. */
-  compactionApplied: boolean;
+  /** True if any rewrite stage (currently distillation or compaction)
+   *  rewrote, inserted, dropped, or replaced messages. When this fires
+   *  the cache breakpoint may move backward — invariants that assume
+   *  monotonicity should gate on this flag. Filter-induced drops do not
+   *  flip this flag because filtering is consistent across turns and
+   *  does not by itself break breakpoint monotonicity.
+   *
+   *  The name is deliberately stage-agnostic: the manageContext callback
+   *  contract still uses `compactionApplied` (it IS compaction-specific
+   *  from that callback's point of view), but at the top level we report
+   *  the union of all rewrite-style stages. */
+  rewriteApplied: boolean;
   metrics: {
     inputCount: number;
     outputCount: number;
@@ -86,10 +96,17 @@ export interface TransformedContext<M extends TransformableMessage> {
 // Pipeline
 // ---------------------------------------------------------------------------
 
+interface StageResult<M extends TransformableMessage> {
+  messages: M[];
+  /** True if this stage rewrote, inserted, dropped, or replaced messages.
+   *  Aggregated across stages into `TransformedContext.rewriteApplied`. */
+  rewriteApplied: boolean;
+}
+
 interface Stage<M extends TransformableMessage> {
   name: string;
   isEnabled: (options: TransformContextOptions<M>) => boolean;
-  run: (messages: M[], options: TransformContextOptions<M>) => ManageContextResult<M>;
+  run: (messages: M[], options: TransformContextOptions<M>) => StageResult<M>;
 }
 
 function filterVisibleStage<M extends TransformableMessage>(): Stage<M> {
@@ -98,7 +115,7 @@ function filterVisibleStage<M extends TransformableMessage>(): Stage<M> {
     isEnabled: (o) => o.enableFilterVisible !== false,
     run: (messages) => ({
       messages: messages.filter((m) => m.visibleToModel !== false),
-      compactionApplied: false,
+      rewriteApplied: false,
     }),
   };
 }
@@ -107,10 +124,10 @@ function distillStage<M extends TransformableMessage>(): Stage<M> {
   return {
     name: 'distill',
     isEnabled: (o) => o.enableDistillation === true && Boolean(o.distill),
+    // isEnabled guarantees options.distill is defined; no defensive guard.
     run: (messages, options) => {
-      if (!options.distill) return { messages, compactionApplied: false };
-      const result = options.distill(messages);
-      return { messages: result.messages, compactionApplied: result.distilled };
+      const result = options.distill!(messages);
+      return { messages: result.messages, rewriteApplied: result.distilled };
     },
   };
 }
@@ -119,9 +136,10 @@ function manageContextStage<M extends TransformableMessage>(): Stage<M> {
   return {
     name: 'manageContext',
     isEnabled: (o) => o.enableManageContext !== false && Boolean(o.manageContext),
+    // isEnabled guarantees options.manageContext is defined; no defensive guard.
     run: (messages, options) => {
-      if (!options.manageContext) return { messages, compactionApplied: false };
-      return options.manageContext(messages);
+      const result = options.manageContext!(messages);
+      return { messages: result.messages, rewriteApplied: result.compactionApplied };
     },
   };
 }
@@ -142,19 +160,19 @@ export function transformContextBeforeLLM<M extends TransformableMessage>(
 ): TransformedContext<M> {
   const inputCount = messages.length;
   let working: M[] = [...messages];
-  let compactionApplied = false;
+  let rewriteApplied = false;
 
   for (const stage of buildPipeline<M>()) {
     if (!stage.isEnabled(options)) continue;
     const result = stage.run(working, options);
     working = result.messages;
-    if (result.compactionApplied) compactionApplied = true;
+    if (result.rewriteApplied) rewriteApplied = true;
   }
 
   return {
     messages: working,
     cacheBreakpointIndex: findLastUserIndex(working),
-    compactionApplied,
+    rewriteApplied,
     metrics: { inputCount, outputCount: working.length },
   };
 }

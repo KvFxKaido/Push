@@ -78,7 +78,7 @@ describe('transformContextBeforeLLM — append-stability', () => {
     const baseOut = transformContextBeforeLLM(base, baseOptions);
     const extOut = transformContextBeforeLLM(extended, baseOptions);
 
-    if (!baseOut.compactionApplied && !extOut.compactionApplied) {
+    if (!baseOut.rewriteApplied && !extOut.rewriteApplied) {
       expect(extOut.cacheBreakpointIndex).toBeGreaterThanOrEqual(baseOut.cacheBreakpointIndex);
     }
   });
@@ -142,11 +142,11 @@ describe('transformContextBeforeLLM — manageContext stage', () => {
   it('does not run when manageContext is not provided', () => {
     const messages: FakeMsg[] = [sample({ role: 'user', content: 'hello' })];
     const out = transformContextBeforeLLM(messages, baseOptions);
-    expect(out.compactionApplied).toBe(false);
+    expect(out.rewriteApplied).toBe(false);
     expect(out.messages).toEqual(messages);
   });
 
-  it('records compactionApplied when the bound manageContext reports compaction', () => {
+  it('records rewriteApplied when the bound manageContext reports compaction', () => {
     const messages: FakeMsg[] = [
       sample({ role: 'user', content: 'big' }),
       sample({ role: 'assistant', content: 'reply' }),
@@ -158,7 +158,7 @@ describe('transformContextBeforeLLM — manageContext stage', () => {
         compactionApplied: true,
       }),
     });
-    expect(out.compactionApplied).toBe(true);
+    expect(out.rewriteApplied).toBe(true);
     expect(out.messages[0].content).toBe('[digest]');
   });
 
@@ -213,7 +213,7 @@ describe('transformContextBeforeLLM — distill stage', () => {
       distill: trivialDistill,
     });
     expect(out.messages).toHaveLength(10);
-    expect(out.compactionApplied).toBe(false);
+    expect(out.rewriteApplied).toBe(false);
   });
 
   it('does not run when distill is missing even if enableDistillation is true', () => {
@@ -223,7 +223,7 @@ describe('transformContextBeforeLLM — distill stage', () => {
       enableDistillation: true,
     });
     expect(out.messages).toEqual(messages);
-    expect(out.compactionApplied).toBe(false);
+    expect(out.rewriteApplied).toBe(false);
   });
 
   it('runs when both enableDistillation and distill are provided', () => {
@@ -236,10 +236,10 @@ describe('transformContextBeforeLLM — distill stage', () => {
       distill: trivialDistill,
     });
     expect(out.messages).toHaveLength(3);
-    expect(out.compactionApplied).toBe(true);
+    expect(out.rewriteApplied).toBe(true);
   });
 
-  it('reports compactionApplied: false when distill is a no-op', () => {
+  it('reports rewriteApplied: false when distill is a no-op', () => {
     const messages: FakeMsg[] = [
       sample({ role: 'user', content: 'a' }),
       sample({ role: 'assistant', content: 'b' }),
@@ -250,7 +250,7 @@ describe('transformContextBeforeLLM — distill stage', () => {
       distill: trivialDistill,
     });
     expect(out.messages).toEqual(messages);
-    expect(out.compactionApplied).toBe(false);
+    expect(out.rewriteApplied).toBe(false);
   });
 
   it('runs filter before distill (distill sees the visible subset)', () => {
@@ -316,8 +316,8 @@ describe('transformContextBeforeLLM — distill stage', () => {
     };
     const baseOut = transformContextBeforeLLM(base, opts);
     const extOut = transformContextBeforeLLM(extended, opts);
-    expect(baseOut.compactionApplied).toBe(false);
-    expect(extOut.compactionApplied).toBe(false);
+    expect(baseOut.rewriteApplied).toBe(false);
+    expect(extOut.rewriteApplied).toBe(false);
     expect(extOut.messages.slice(0, baseOut.messages.length)).toEqual(baseOut.messages);
   });
 });
@@ -383,12 +383,11 @@ describe('transformContextBeforeLLM — snapshots', () => {
     expect({
       messages: out.messages,
       cacheBreakpointIndex: out.cacheBreakpointIndex,
-      compactionApplied: out.compactionApplied,
+      rewriteApplied: out.rewriteApplied,
       metrics: out.metrics,
     }).toMatchInlineSnapshot(`
       {
         "cacheBreakpointIndex": 4,
-        "compactionApplied": false,
         "messages": [
           {
             "content": "You are a helpful assistant.",
@@ -416,6 +415,7 @@ describe('transformContextBeforeLLM — snapshots', () => {
           "inputCount": 6,
           "outputCount": 5,
         },
+        "rewriteApplied": false,
       }
     `);
   });
