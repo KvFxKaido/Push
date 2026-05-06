@@ -34,6 +34,7 @@ import {
   SPINNER_NAMES,
   SPINNERS,
   spinnerFrame,
+  verbForActivity,
 } from './tui-spinner.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
@@ -190,6 +191,10 @@ function createTUIState() {
   return {
     // Run state machine: idle | running | awaiting_approval | awaiting_user_question
     runState: 'idle',
+    // What the agent is doing right now, used to label the spinner
+    // (thinking / replying / <tool verb>). Null when idle. Updated from
+    // engine events; resolved via tui-spinner.verbForActivity.
+    activity: null,
     // Transcript: array of { role, text, timestamp }
     transcript: [],
     transcriptVersion: 0,
@@ -517,7 +522,7 @@ function renderHeader(
   buf,
   layout,
   theme,
-  { provider, model, session, sessionName, cwd, runState, branch, animation, spinner },
+  { provider, model, session, sessionName, cwd, runState, branch, animation, spinner, activity },
 ) {
   const { glyphs } = theme;
   const { top, left, width } = layout.header;
@@ -535,6 +540,10 @@ function renderHeader(
       : runState === 'awaiting_approval'
         ? theme.style('state.error', glyphs.statusDot)
         : theme.style('state.success', glyphs.statusDot);
+  // Verb sits next to the spinner glyph while running (thinking,
+  // replying, or a tool verb). Falls through to runState otherwise so
+  // 'idle' / 'awaiting_approval' still read clearly.
+  const verb = runState === 'running' ? (verbForActivity(activity) ?? 'running') : runState;
 
   // ── Top border: ┌─ ⬡ Push ──...──┐ ────────────────────────────
   // Fixed chars: ┌─ (2) + space (1) + ⬡ (1) + space (1) + Push (4) + space (1) + fill + ┐ (1) = 11 + fill = width
@@ -554,7 +563,7 @@ function renderHeader(
 
   // ── Content row: │  ● state  provider · model   ~/dir · branch  │ ──
   const sep = theme.style('fg.dim', '·');
-  const stateLabel = theme.style('fg.dim', runState);
+  const stateLabel = theme.style('fg.dim', verb);
   const providerStr = theme.style('accent.link', provider);
   const modelStr = theme.bold(theme.style('fg.primary', model));
   const leftInner = `${stateDot} ${stateLabel}  ${providerStr} ${sep} ${modelStr}`;
@@ -1976,6 +1985,7 @@ export async function runTUI(options = {}) {
         branch,
         animation: { effect: animation.effect, tick: animation.tick },
         spinner: { name: spinner.name, tick: animation.tick },
+        activity: tuiState.activity,
       });
       screenBuf.writeLine(
         layout.header.top + layout.header.height,
@@ -2156,6 +2166,10 @@ export async function runTUI(options = {}) {
         }
         tuiState.reasoningBuf += event.payload.text;
         tuiState.reasoningStreaming = true;
+        if (tuiState.activity?.kind !== 'thinking') {
+          tuiState.activity = { kind: 'thinking' };
+          tuiState.dirty.add('header');
+        }
         tuiState.dirty.add(tuiState.reasoningModalOpen ? 'all' : 'footer');
         scheduler.schedule();
         break;
@@ -2175,6 +2189,10 @@ export async function runTUI(options = {}) {
       case 'assistant_token':
         tuiState.streamBuf += event.payload.text;
         tuiState.scrollOffset = 0; // auto-scroll on new tokens
+        if (tuiState.activity?.kind !== 'streaming') {
+          tuiState.activity = { kind: 'streaming' };
+          tuiState.dirty.add('header');
+        }
         tuiState.dirty.add('transcript');
         tuiState.dirty.add('footer'); // LIVE indicator
         scheduler.schedule();
@@ -2210,6 +2228,8 @@ export async function runTUI(options = {}) {
           error: false,
           timestamp: Date.now(),
         });
+        tuiState.activity = { kind: 'tool', toolName: event.payload.toolName };
+        tuiState.dirty.add('header');
         scheduler.schedule();
         break;
       }
@@ -2249,6 +2269,14 @@ export async function runTUI(options = {}) {
         if (updatedTranscriptToolCall) {
           invalidateTranscriptRenderCache(tuiState);
           tuiState.dirty.add('transcript');
+        }
+        // Tool finished — model resumes reasoning. The next assistant_*
+        // event will overwrite this; we set 'thinking' here so the gap
+        // between tool result and the next reasoning token doesn't show
+        // a stale tool verb.
+        if (tuiState.activity?.kind !== 'thinking') {
+          tuiState.activity = { kind: 'thinking' };
+          tuiState.dirty.add('header');
         }
         scheduler.schedule();
         // Refresh git status after file-modifying operations
@@ -2327,6 +2355,8 @@ export async function runTUI(options = {}) {
 
       case 'run_complete': {
         tuiState.runState = 'idle';
+        tuiState.activity = null;
+        tuiState.dirty.add('header');
         // assistant_done normally flushes the stream; this is a fallback for
         // failed/aborted runs that ended after partial output.
         flushPendingAssistantStream();
@@ -2629,6 +2659,7 @@ export async function runTUI(options = {}) {
           }
         } finally {
           tuiState.runState = 'idle';
+          tuiState.activity = null;
           runAbort = null;
           tuiState.dirty.add('all');
           scheduler.flush();
@@ -2671,6 +2702,7 @@ export async function runTUI(options = {}) {
       await saveSessionState(state);
     } finally {
       tuiState.runState = 'idle';
+      tuiState.activity = null;
       runAbort = null;
       tuiState.dirty.add('all');
       scheduler.flush();
@@ -2752,6 +2784,7 @@ export async function runTUI(options = {}) {
 
   function resetTUIViewForSessionChange() {
     tuiState.runState = 'idle';
+    tuiState.activity = null;
     tuiState.streamBuf = '';
     closeApprovalPane();
     approvalResolve = null;
