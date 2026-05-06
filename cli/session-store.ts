@@ -168,6 +168,29 @@ function getMessagesPathInRoot(root: string, sessionId: string): string {
  */
 const lastPersistedMessageCount: WeakMap<SessionState, number> = new WeakMap();
 
+/**
+ * Cheap content fingerprint paired with the count above. Catches
+ * in-place edits that don't change `state.messages.length` (e.g. a
+ * system-prompt refresh that overwrites `messages[0]`, or a /compact
+ * that drops one message and inserts a digest at the same length). On
+ * each save we recompute the fingerprint of the leading and trailing
+ * entries; when length matches `lastPersistedMessageCount` but the
+ * fingerprint diverges, `saveSessionState` falls through to
+ * `rewriteMessagesLog` instead of leaving stale data on disk.
+ *
+ * The fingerprint only samples `[0]` and `[length-1]` — that's cheap
+ * (O(1) per save) and covers the realistic non-append patterns. Callers
+ * doing a wholesale middle-rewrite should still use `rewriteMessagesLog`
+ * directly to be explicit.
+ */
+const lastPersistedFingerprint: WeakMap<SessionState, string> = new WeakMap();
+
+function fingerprintMessages(messages: unknown[]): string {
+  if (messages.length === 0) return '';
+  if (messages.length === 1) return JSON.stringify(messages[0]);
+  return `${JSON.stringify(messages[0])}|${JSON.stringify(messages[messages.length - 1])}`;
+}
+
 function attachSessionRoot(state: unknown, root: string): void {
   if (!state || typeof state !== 'object') return;
   Object.defineProperty(state, SESSION_ROOT_SYMBOL, {
@@ -228,16 +251,25 @@ async function writeSlimState(state: SessionState, root: string): Promise<void> 
  * The append-only invariant means cost per save scales with the count of
  * NEW messages since the last save, not the full transcript length.
  *
- * Three branches by current vs persisted length:
- *   - greater than persisted: append the diff to messages.jsonl.
- *   - equal: no-op for the log; only the slim state.json gets rewritten.
- *   - less than persisted: a non-append rewrite happened (e.g. /compact).
- *     Truncate messages.jsonl and re-emit the full current array.
+ * Four branches:
+ *   - count > persisted: append the diff to messages.jsonl.
+ *   - count < persisted: a non-append rewrite happened (e.g. /compact
+ *     that shrank length). Truncate messages.jsonl and re-emit.
+ *   - count === persisted but fingerprint of `[0]+[last]` changed:
+ *     in-place edit detected (e.g. sys-prompt refresh overwrites
+ *     `messages[0]`). Force a re-emit so the on-disk log doesn't go
+ *     stale.
+ *   - count === persisted and fingerprint matches: no-op for the log;
+ *     only the slim state.json gets rewritten.
  *
- * Crash safety: append-then-write order. If the process dies between the
- * messages.jsonl append and the state.json write, the log has the truth
- * and the next save catches state.json up. The reverse order would
- * "lose" newest messages from the log, which is unrecoverable.
+ * Callers performing a wholesale rewrite (e.g. middle-of-array edit
+ * that the fingerprint can't catch) should call `rewriteMessagesLog`
+ * directly instead of relying on the fingerprint heuristic.
+ *
+ * Crash safety: append-then-write order. If the process dies between
+ * the messages.jsonl append and the state.json write, the log has the
+ * truth and the next save catches state.json up. The reverse order
+ * would "lose" newest messages from the log, which is unrecoverable.
  */
 export async function saveSessionState(state: SessionState): Promise<void> {
   const root = getStateSessionRoot(state);
@@ -247,22 +279,36 @@ export async function saveSessionState(state: SessionState): Promise<void> {
 
   const messages = Array.isArray(state.messages) ? state.messages : [];
   const lastWritten = lastPersistedMessageCount.get(state) ?? 0;
+  const currentFingerprint = fingerprintMessages(messages);
 
   if (messages.length < lastWritten) {
-    // Non-append rewrite (e.g. compaction) — full re-emit.
+    // Non-append rewrite (e.g. compaction shrank the array) — full re-emit.
     await rewriteMessagesLog(state);
     return;
   }
 
-  if (messages.length > lastWritten) {
-    const newOnes = messages.slice(lastWritten);
-    const lines = `${newOnes.map((m) => JSON.stringify(m)).join('\n')}\n`;
-    await fs.appendFile(getMessagesPathInRoot(root, state.sessionId), lines, {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
-    lastPersistedMessageCount.set(state, messages.length);
+  if (messages.length === lastWritten) {
+    const persistedFingerprint = lastPersistedFingerprint.get(state);
+    if (persistedFingerprint !== undefined && persistedFingerprint !== currentFingerprint) {
+      // Same length, different content at the head/tail boundary — an
+      // in-place edit that the count check missed. Re-emit the log.
+      await rewriteMessagesLog(state);
+      return;
+    }
+    // Genuinely no message change since last save. Skip the log; only
+    // the slim state.json needs updating.
+    await writeSlimState(state, root);
+    return;
   }
+
+  const newOnes = messages.slice(lastWritten);
+  const lines = `${newOnes.map((m) => JSON.stringify(m)).join('\n')}\n`;
+  await fs.appendFile(getMessagesPathInRoot(root, state.sessionId), lines, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  lastPersistedMessageCount.set(state, messages.length);
+  lastPersistedFingerprint.set(state, currentFingerprint);
 
   await writeSlimState(state, root);
 }
@@ -294,6 +340,7 @@ export async function rewriteMessagesLog(state: SessionState): Promise<void> {
     throw error;
   }
   lastPersistedMessageCount.set(state, messages.length);
+  lastPersistedFingerprint.set(state, fingerprintMessages(messages));
 
   await writeSlimState(state, root);
 }
@@ -302,6 +349,16 @@ export async function rewriteMessagesLog(state: SessionState): Promise<void> {
  * Read messages.jsonl into an array. Returns null when the file is
  * absent — that signals a legacy session whose messages are still
  * embedded in state.json; the next save will migrate them.
+ *
+ * Crash tolerance: if the process died mid-`appendFile`, the last line
+ * may be a partial JSON string. Drop any trailing line that fails to
+ * parse so the rest of the session remains loadable. Earlier lines
+ * are committed-by-newline (full lines preceding the partial one are
+ * complete and parseable).
+ *
+ * If a non-trailing line fails to parse, the file is structurally
+ * corrupt — we still throw rather than silently dropping middle
+ * messages, since that would hide real data loss.
  */
 async function loadMessagesLog(root: string, sessionId: string): Promise<unknown[] | null> {
   const logPath = getMessagesPathInRoot(root, sessionId);
@@ -313,7 +370,23 @@ async function loadMessagesLog(root: string, sessionId: string): Promise<unknown
     throw err;
   }
   const lines = raw.split('\n').filter((l) => l.length > 0);
-  return lines.map((line) => JSON.parse(line));
+  const messages: unknown[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    try {
+      messages.push(JSON.parse(lines[i]));
+    } catch (err) {
+      const isLastLine = i === lines.length - 1;
+      // The split above filtered the empty trailing string after the
+      // final newline, so the only way a line lacks a terminating
+      // newline is if the write was cut short — that's specifically
+      // the last entry we kept. Tolerate only this case; otherwise
+      // surface the corruption.
+      const fileEndsWithNewline = raw.endsWith('\n');
+      if (isLastLine && !fileEndsWithNewline) continue;
+      throw err;
+    }
+  }
+  return messages;
 }
 
 export async function appendSessionEvent(
@@ -378,11 +451,13 @@ export async function loadSessionState(sessionId: string): Promise<SessionState>
   if (messagesFromLog !== null) {
     stateObj.messages = messagesFromLog;
     lastPersistedMessageCount.set(stateObj, messagesFromLog.length);
+    lastPersistedFingerprint.set(stateObj, fingerprintMessages(messagesFromLog));
   } else {
     if (!Array.isArray(stateObj.messages)) stateObj.messages = [];
     // Force the next save to write all embedded messages (if any) to
     // the log so subsequent loads use the post-PR 4 path.
     lastPersistedMessageCount.set(stateObj, 0);
+    lastPersistedFingerprint.set(stateObj, '');
   }
 
   attachSessionRoot(stateObj, root);
@@ -571,6 +646,68 @@ function extractLastHumanUserMessage(messages: unknown): string {
   return '';
 }
 
+/**
+ * Tail-read the last `LIST_PREVIEW_TAIL_BYTES` of `messages.jsonl`,
+ * parse the complete lines, and return the most recent human user
+ * message. Avoids reading multi-MB transcripts during `listSessions`,
+ * which is the human-interactive resume picker path.
+ *
+ * Returns `null` when the log file is absent (caller falls back to
+ * embedded `state.json` messages for legacy sessions). Returns `''`
+ * when the tail contains no qualifying user message, matching the
+ * existing `extractLastHumanUserMessage` empty-state.
+ *
+ * Tail size is sized to comfortably hold at least the last few turns
+ * of even verbose sessions; if no qualifying message lives in the
+ * tail (rare on long sessions), the preview shows empty rather than
+ * paying the cost of a full-file read. Acceptable tradeoff for the
+ * listing path.
+ */
+const LIST_PREVIEW_TAIL_BYTES = 16 * 1024;
+
+async function readLastUserMessageFromLog(root: string, sessionId: string): Promise<string | null> {
+  const logPath = getMessagesPathInRoot(root, sessionId);
+  let handle: import('node:fs/promises').FileHandle;
+  try {
+    handle = await fs.open(logPath, 'r');
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+  try {
+    const stat = await handle.stat();
+    if (stat.size === 0) return '';
+    const start = Math.max(0, stat.size - LIST_PREVIEW_TAIL_BYTES);
+    const buf = Buffer.alloc(stat.size - start);
+    await handle.read(buf, 0, buf.length, start);
+    let tail = buf.toString('utf8');
+    if (start > 0) {
+      // Drop the (likely partial) first line — the tail boundary may
+      // bisect a JSON entry. Skip past the first newline.
+      const firstNewline = tail.indexOf('\n');
+      tail = firstNewline >= 0 ? tail.slice(firstNewline + 1) : '';
+    }
+    const lines = tail.split('\n').filter((l) => l.length > 0);
+    const messages: unknown[] = [];
+    const fileEndsWithNewline = tail.endsWith('\n');
+    for (let i = 0; i < lines.length; i++) {
+      try {
+        messages.push(JSON.parse(lines[i]));
+      } catch {
+        // Tolerate a partial last line (interrupted append); skip and
+        // keep walking. Same crash-recovery semantics as
+        // loadMessagesLog.
+        if (i === lines.length - 1 && !fileEndsWithNewline) continue;
+        // Otherwise the tail boundary nicked a line awkwardly — just
+        // skip it; we still have earlier lines for the preview.
+      }
+    }
+    return extractLastHumanUserMessage(messages);
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function listSessions(): Promise<SessionListEntry[]> {
   const roots = getSessionRootsForRead();
   const byId = new Map<string, SessionListEntry>();
@@ -594,12 +731,14 @@ export async function listSessions(): Promise<SessionListEntry[]> {
         const sessionId = typeof stateObj.sessionId === 'string' ? stateObj.sessionId : entry.name;
         if (!SESSION_ID_RE.test(sessionId)) continue;
 
-        // Pull the preview message from messages.jsonl (post-PR 4 sessions).
-        // Fall back to whatever's embedded in state.json (legacy sessions).
-        // listSessions is human-triggered, so reading the full log is fine.
-        let messagesForPreview: unknown = stateObj.messages;
-        const fromLog = await loadMessagesLog(root, sessionId);
-        if (fromLog !== null) messagesForPreview = fromLog;
+        // Pull the preview message from messages.jsonl (post-PR 4 sessions)
+        // by tail-reading just the last ~16KB so the picker stays fast even
+        // for sessions with very long transcripts. Fall back to whatever's
+        // embedded in state.json (legacy sessions whose messages haven't
+        // been migrated to the log yet).
+        const tailPreview = await readLastUserMessageFromLog(root, sessionId);
+        const lastUserMessage =
+          tailPreview !== null ? tailPreview : extractLastHumanUserMessage(stateObj.messages);
 
         const row: SessionListEntry = {
           sessionId,
@@ -609,7 +748,7 @@ export async function listSessions(): Promise<SessionListEntry[]> {
           cwd: typeof stateObj.cwd === 'string' ? stateObj.cwd : '',
           sessionName:
             typeof stateObj.sessionName === 'string' ? (stateObj.sessionName as string).trim() : '',
-          lastUserMessage: extractLastHumanUserMessage(messagesForPreview),
+          lastUserMessage,
         };
 
         const existing = byId.get(sessionId);

@@ -16,6 +16,7 @@ import {
   appendSessionEvent,
   loadSessionState,
   listSessions,
+  rewriteMessagesLog,
 } from './session-store.js';
 import {
   buildSystemPromptBase,
@@ -842,7 +843,12 @@ async function runInteractive(
       beforeTokens: result.beforeTokens,
       afterTokens: result.afterTokens,
     });
-    await saveSessionState(state);
+    // /compact replaces state.messages with a digest+tail array. That
+    // can produce same-length output (drop one, insert digest) where
+    // saveSessionState's length-only fast path would skip the log.
+    // Use rewriteMessagesLog explicitly so the on-disk transcript
+    // matches what the user just compacted.
+    await rewriteMessagesLog(state);
 
     process.stdout.write(
       `Compacted context: ${result.compactedCount} messages -> 1 summary ` +
