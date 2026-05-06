@@ -16,6 +16,7 @@ import {
   validateOrigin,
   wlog,
   type Env,
+  type JsonProxyConfig,
 } from './worker-middleware';
 
 // ---------------------------------------------------------------------------
@@ -919,7 +920,7 @@ describe('createJsonProxyHandler', () => {
   // ---------------------------------------------------------------------------
 
   describe('createJsonProxyHandler — AI Gateway routing', () => {
-    const jsonBaseConfig = {
+    const jsonBaseConfig: JsonProxyConfig = {
       name: 'Test JSON Provider',
       logTag: 'api/test/models',
       upstreamUrl: 'https://upstream.test/v1/models',
