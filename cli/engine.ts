@@ -656,10 +656,18 @@ export async function runAssistantLoop(
   // project instructions, memory) if it hasn't been loaded yet.
   await ensureSystemPromptReady(state);
   // Long-session distillation now runs through the per-round pipeline
-  // below (see the `round === 1 && length > 40` clause). state.messages
-  // is no longer mutated at session entry — distillation is a per-hop
-  // transformation, leaving the canonical transcript append-only so
-  // prefix caching and resume-from-disk see the full history.
+  // below (see the `length > 40` clause). state.messages is no longer
+  // mutated at session entry — distillation is a per-hop transformation,
+  // leaving the canonical transcript append-only so resume-from-disk
+  // sees the full history. (Append-only state is also a precondition
+  // for provider-prefix caching once the CLI threads cacheBreakpointIndex
+  // through to provider format adapters; that's a follow-up PR.)
+  //
+  // Trade-off: state.json grows over the session lifetime since
+  // saveSessionState rewrites the full transcript each round. Resume
+  // load time scales linearly with history. Acceptable for typical
+  // session lengths; if it bites, the mitigation is incremental
+  // persistence (event log) rather than reverting to lossy mutation.
 
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();
@@ -893,9 +901,13 @@ export async function runAssistantLoop(
     // Build the per-hop view of state.messages: filter (no-op for CLI) →
     // distill (when triggered) → trim. state.messages itself is never
     // mutated — distillation is a transient compression for this LLM call.
+    // The long-session trigger (length > 40) fires on every round, not
+    // just round 1, so multi-round runs that started long stay distilled
+    // throughout. shouldDistillMidSession layers the smarter token-budget
+    // gate on top once the agent has a working-memory plan.
     const beforeDistillCount = (state.messages as Message[]).length;
     const shouldDistill =
-      (round === 1 && beforeDistillCount > 40) ||
+      beforeDistillCount > 40 ||
       shouldDistillMidSession(
         state.messages as Message[],
         state.workingMemory as WorkingMemory,
@@ -948,6 +960,20 @@ export async function runAssistantLoop(
         detail: `${trimResult.beforeTokens} → ${trimResult.afterTokens} tokens (${trimResult.removedCount} msgs removed)`,
       });
     }
+
+    // After the per-hop transform, refresh the round-scoped metrics that
+    // downstream consumers (working-memory pressure check, TUI footer
+    // meter) rely on. state.messages is now the full append-only
+    // transcript, so deriving these from it would over-report. The
+    // canonical signal is the post-transform view that actually goes to
+    // the LLM.
+    const transformedChars = transformed.messages.reduce(
+      (sum: number, m: Message) => sum + (typeof m.content === 'string' ? m.content.length : 0),
+      0,
+    );
+    contextChars = transformedChars;
+    state.lastPromptTokens = trimResult.afterTokens || estimateContextTokens(transformed.messages);
+    state.lastPromptChars = transformedChars;
 
     const streamOptions: { onThinkingToken?: (token: string | null) => void; sessionId?: string } =
       {
@@ -1210,10 +1236,17 @@ export async function runAssistantLoop(
         (state.messages as Message[]).push({ role: 'user', content: finalizationPrompt });
         let assistantPushed = false;
         try {
+          // Re-apply distillation at finalization on long sessions.
+          // Pre-migration the in-place state.messages mutation meant
+          // finalization always saw the distilled subset; now we have
+          // to ask for it explicitly or trim alone might drop preserved
+          // bits like coder_update_state results.
+          const finalShouldDistill = (state.messages as Message[]).length > 40;
           const finalTransformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
             surface: 'cli',
             enableFilterVisible: false,
-            enableDistillation: false,
+            enableDistillation: finalShouldDistill,
+            distill: finalShouldDistill ? distillContext : undefined,
             manageContext: (msgs) => {
               const result = trimContext(msgs, providerConfig.id, state.model);
               return { messages: result.messages, compactionApplied: result.trimmed };
@@ -1639,11 +1672,18 @@ export async function runAssistantLoop(
 
   let finalSummaryText = warning;
   try {
+    // Re-apply distillation at max-rounds finalization on long sessions.
+    // Pre-migration the in-place state.messages mutation meant
+    // finalization always saw the distilled subset; now we have to ask
+    // for it explicitly or trim alone might drop preserved bits like
+    // coder_update_state results.
+    const finalShouldDistill = (state.messages as Message[]).length > 40;
     let capturedFinalTrim: TrimResult | null = null;
     const finalTransformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
       surface: 'cli',
       enableFilterVisible: false,
-      enableDistillation: false,
+      enableDistillation: finalShouldDistill,
+      distill: finalShouldDistill ? distillContext : undefined,
       manageContext: (msgs) => {
         const result = trimContext(msgs, providerConfig.id, state.model);
         capturedFinalTrim = result;

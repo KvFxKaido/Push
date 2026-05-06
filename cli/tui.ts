@@ -1981,7 +1981,15 @@ export async function runTUI(options = {}) {
 
     const renderFooterRegion = () => {
       const isStreaming = tuiState.runState === 'running' && tuiState.streamBuf.length > 0;
-      const tokens = estimateContextTokens(state.messages || []);
+      // The canonical transcript in state.messages is append-only — the
+      // engine never mutates it during distillation. The actual prompt
+      // sent to the provider is the per-hop post-transform view, which
+      // the engine writes into state.lastPromptTokens after each round.
+      // Fall back to estimating from the full transcript only when no
+      // round has run yet (fresh session).
+      const lastPromptTokens =
+        typeof state.lastPromptTokens === 'number' ? state.lastPromptTokens : null;
+      const tokens = lastPromptTokens ?? estimateContextTokens(state.messages || []);
       const budget = getContextBudget(state.provider, state.model);
       renderStatusBar(screenBuf, layout, theme, {
         gitStatus: tuiState.gitStatus,
