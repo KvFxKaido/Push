@@ -662,13 +662,10 @@ export async function runAssistantLoop(
   // sees the full history. The append-only invariant is also what makes
   // provider-prefix caching effective: `transformed.cacheBreakpointIndex`
   // is threaded into `streamCompletion` and tagged at the wire boundary
-  // in `cli/openai-stream.ts` (OpenRouter only today).
-  //
-  // Trade-off: state.json grows over the session lifetime since
-  // saveSessionState rewrites the full transcript each round. Resume
-  // load time scales linearly with history. Acceptable for typical
-  // session lengths; if it bites, the mitigation is incremental
-  // persistence (event log) rather than reverting to lossy mutation.
+  // in `cli/openai-stream.ts` (OpenRouter only today). Persistence is
+  // O(diff): saveSessionState appends new messages to messages.jsonl
+  // instead of rewriting state.json's full transcript per round
+  // (cli/session-store.ts).
 
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();

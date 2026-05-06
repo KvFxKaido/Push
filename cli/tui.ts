@@ -84,6 +84,7 @@ import {
   listSessions,
   deleteSession,
   getSessionRoot,
+  rewriteMessagesLog,
 } from './session-store.js';
 import {
   buildSystemPromptBase,
@@ -1657,7 +1658,11 @@ export async function runTUI(options = {}) {
     await ensureSystemPromptReady(state);
 
     if (sessionPersisted) {
-      await saveSessionState(state);
+      // Non-append mutation (overwrites messages[0] in place). Force a
+      // log rewrite so the persisted transcript reflects the refreshed
+      // system prompt — saveSessionState's length-only fast path would
+      // skip the log on a same-length edit.
+      await rewriteMessagesLog(state);
     }
   }
 
@@ -2704,7 +2709,10 @@ export async function runTUI(options = {}) {
       beforeTokens: result.beforeTokens,
       afterTokens: result.afterTokens,
     });
-    await saveSessionState(state);
+    // Force a log rewrite — /compact is a wholesale replacement and
+    // can produce same-length output (drop one, insert digest) that
+    // saveSessionState's length-only fast path would skip.
+    await rewriteMessagesLog(state);
 
     addTranscriptEntry(
       tuiState,

@@ -419,9 +419,17 @@ describe('interactive REPL /compact', needsChildStdout, () => {
     assert.equal(code, 0, `stderr=${cleanStderr}\nstdout=${cleanStdout}`);
     assert.match(cleanStdout, /Compacted context:/);
 
-    const savedRaw = await fs.readFile(statePath, 'utf8');
-    const saved = JSON.parse(savedRaw);
-    const contents = saved.messages.map((m) => String(m.content));
+    // Messages now live in messages.jsonl (one JSON per line); state.json
+    // is slim and does not carry the array. Reload via the public path
+    // (`messages.jsonl` if present, embedded fallback otherwise) and
+    // assert the same compaction invariants.
+    const messagesPath = path.join(sessionDir, 'messages.jsonl');
+    const messagesRaw = await fs.readFile(messagesPath, 'utf8');
+    const persistedMessages = messagesRaw
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line));
+    const contents = persistedMessages.map((m) => String(m.content));
     assert.ok(
       contents.some((c) => c.includes('[CONTEXT DIGEST]')),
       'should persist context digest',

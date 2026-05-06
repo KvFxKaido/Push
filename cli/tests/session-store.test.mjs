@@ -19,6 +19,7 @@ const {
   getSessionDir,
   validateSessionId,
   isInternalEnvelope,
+  rewriteMessagesLog,
   SESSION_ID_RE,
   PROTOCOL_VERSION,
 } = await import('../session-store.ts');
@@ -556,5 +557,421 @@ describe('isInternalEnvelope', () => {
     assert.equal(isInternalEnvelope('Fix the retry loop'), false);
     assert.equal(isInternalEnvelope(''), false);
     assert.equal(isInternalEnvelope('  [TOOL_RESULT][/TOOL_RESULT]'), false); // leading whitespace (caller trims)
+  });
+});
+
+// ─── Hybrid persistence (messages.jsonl + slim state.json) ───────
+
+describe('saveSessionState — hybrid persistence', () => {
+  function freshState(overrides = {}) {
+    return {
+      sessionId: makeSessionId(),
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'ollama',
+      model: 'test',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [],
+      ...overrides,
+    };
+  }
+
+  it('writes messages.jsonl on save and strips messages from state.json', async () => {
+    const state = freshState({
+      messages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' },
+      ],
+    });
+    await saveSessionState(state);
+
+    const dir = getSessionDir(state.sessionId);
+    const messagesRaw = await fs.readFile(path.join(dir, 'messages.jsonl'), 'utf8');
+    const lines = messagesRaw.split('\n').filter((l) => l.length > 0);
+    assert.equal(lines.length, 2);
+    assert.deepEqual(JSON.parse(lines[0]), { role: 'user', content: 'hello' });
+    assert.deepEqual(JSON.parse(lines[1]), { role: 'assistant', content: 'hi' });
+
+    const stateRaw = await fs.readFile(path.join(dir, 'state.json'), 'utf8');
+    const onDiskState = JSON.parse(stateRaw);
+    assert.equal('messages' in onDiskState, false, 'state.json should not carry messages');
+  });
+
+  it('appends only new messages on subsequent saves (no full rewrite)', async () => {
+    const state = freshState({ messages: [{ role: 'user', content: 'a' }] });
+    await saveSessionState(state);
+    state.messages.push({ role: 'assistant', content: 'b' });
+    state.messages.push({ role: 'user', content: 'c' });
+    await saveSessionState(state);
+
+    const dir = getSessionDir(state.sessionId);
+    const lines = (await fs.readFile(path.join(dir, 'messages.jsonl'), 'utf8'))
+      .split('\n')
+      .filter((l) => l.length > 0);
+    assert.equal(lines.length, 3);
+    assert.equal(JSON.parse(lines[2]).content, 'c');
+  });
+
+  it('rewrites messages.jsonl when length shrinks (compaction path)', async () => {
+    const state = freshState({
+      messages: [
+        { role: 'user', content: 'a' },
+        { role: 'assistant', content: 'b' },
+        { role: 'user', content: 'c' },
+      ],
+    });
+    await saveSessionState(state);
+    // Simulate compaction: replace messages with a smaller array.
+    state.messages = [{ role: 'user', content: '[CONTEXT DIGEST] summary' }];
+    await saveSessionState(state);
+
+    const dir = getSessionDir(state.sessionId);
+    const lines = (await fs.readFile(path.join(dir, 'messages.jsonl'), 'utf8'))
+      .split('\n')
+      .filter((l) => l.length > 0);
+    assert.equal(lines.length, 1);
+    assert.equal(JSON.parse(lines[0]).content, '[CONTEXT DIGEST] summary');
+  });
+
+  it('handles empty session (no messages, no log file)', async () => {
+    const state = freshState();
+    await saveSessionState(state);
+    const dir = getSessionDir(state.sessionId);
+    const stateRaw = await fs.readFile(path.join(dir, 'state.json'), 'utf8');
+    const onDiskState = JSON.parse(stateRaw);
+    assert.equal('messages' in onDiskState, false);
+    // messages.jsonl may not exist when there were no messages to write.
+
+    const loaded = await loadSessionState(state.sessionId);
+    assert.deepEqual(loaded.messages, []);
+  });
+});
+
+describe('loadSessionState — hybrid persistence', () => {
+  it('round-trips messages through messages.jsonl', async () => {
+    const id = makeSessionId();
+    const original = {
+      sessionId: id,
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'ollama',
+      model: 'test',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' },
+      ],
+    };
+    await saveSessionState(original);
+
+    const loaded = await loadSessionState(id);
+    assert.deepEqual(loaded.messages, original.messages);
+  });
+
+  it('migrates legacy state.json with embedded messages on first save after load', async () => {
+    // Simulate a pre-PR 4 session: state.json contains messages inline,
+    // no messages.jsonl exists. Loading should hydrate from the embedded
+    // array, and the next save should write the log + strip state.json.
+    const id = makeSessionId();
+    const dir = getSessionDir(id);
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    const legacyState = {
+      sessionId: id,
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'ollama',
+      model: 'test',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [
+        { role: 'user', content: 'legacy-1' },
+        { role: 'assistant', content: 'legacy-2' },
+      ],
+    };
+    await fs.writeFile(path.join(dir, 'state.json'), JSON.stringify(legacyState), 'utf8');
+
+    const loaded = await loadSessionState(id);
+    assert.equal(loaded.messages.length, 2);
+    assert.equal(loaded.messages[0].content, 'legacy-1');
+
+    // Save once: this should migrate the embedded array into messages.jsonl
+    // and strip the messages key from state.json.
+    await saveSessionState(loaded);
+
+    const messagesRaw = await fs.readFile(path.join(dir, 'messages.jsonl'), 'utf8');
+    const lines = messagesRaw.split('\n').filter((l) => l.length > 0);
+    assert.equal(lines.length, 2);
+
+    const stateRaw = await fs.readFile(path.join(dir, 'state.json'), 'utf8');
+    assert.equal('messages' in JSON.parse(stateRaw), false);
+
+    // A second load should still see the same messages.
+    const reloaded = await loadSessionState(id);
+    assert.deepEqual(reloaded.messages, legacyState.messages);
+  });
+});
+
+describe('listSessions — preview from messages.jsonl', () => {
+  it('extracts lastUserMessage from the log when state.json is slim', async () => {
+    const state = {
+      sessionId: makeSessionId(),
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'ollama',
+      model: 'test',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'first user message' },
+        { role: 'assistant', content: 'reply' },
+        { role: 'user', content: 'second user message' },
+      ],
+    };
+    await saveSessionState(state);
+
+    const list = await listSessions();
+    const row = list.find((entry) => entry.sessionId === state.sessionId);
+    assert.ok(row, 'session should appear in list');
+    assert.equal(row.lastUserMessage, 'second user message');
+  });
+});
+
+describe('rewriteMessagesLog', () => {
+  it('truncates and re-emits the log, then writes slim state.json', async () => {
+    const state = {
+      sessionId: makeSessionId(),
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'ollama',
+      model: 'test',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [
+        { role: 'user', content: 'a' },
+        { role: 'user', content: 'b' },
+        { role: 'user', content: 'c' },
+      ],
+    };
+    await saveSessionState(state);
+    state.messages = [{ role: 'user', content: 'replaced' }];
+    await rewriteMessagesLog(state);
+
+    const dir = getSessionDir(state.sessionId);
+    const lines = (await fs.readFile(path.join(dir, 'messages.jsonl'), 'utf8'))
+      .split('\n')
+      .filter((l) => l.length > 0);
+    assert.equal(lines.length, 1);
+    assert.equal(JSON.parse(lines[0]).content, 'replaced');
+  });
+});
+
+describe('saveSessionState — in-place mutation defenses', () => {
+  it('detects same-length edit at messages[0] via fingerprint and rewrites', async () => {
+    // Simulates the system-prompt refresh case: messages[0] is replaced
+    // in place without changing array length. The length-only fast path
+    // would skip the log; the fingerprint check should force a rewrite.
+    const state = {
+      sessionId: makeSessionId(),
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'ollama',
+      model: 'test',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [
+        { role: 'system', content: 'old-sys' },
+        { role: 'user', content: 'hi' },
+      ],
+    };
+    await saveSessionState(state);
+    state.messages[0] = { role: 'system', content: 'new-sys' };
+    await saveSessionState(state);
+
+    const dir = getSessionDir(state.sessionId);
+    const lines = (await fs.readFile(path.join(dir, 'messages.jsonl'), 'utf8'))
+      .split('\n')
+      .filter((l) => l.length > 0);
+    assert.equal(lines.length, 2);
+    assert.equal(JSON.parse(lines[0]).content, 'new-sys');
+    assert.equal(JSON.parse(lines[1]).content, 'hi');
+  });
+
+  it('detects same-length edit at the tail via fingerprint and rewrites', async () => {
+    const state = {
+      sessionId: makeSessionId(),
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'ollama',
+      model: 'test',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [
+        { role: 'user', content: 'a' },
+        { role: 'user', content: 'b' },
+      ],
+    };
+    await saveSessionState(state);
+    state.messages[1] = { role: 'user', content: 'b-edited' };
+    await saveSessionState(state);
+
+    const dir = getSessionDir(state.sessionId);
+    const lines = (await fs.readFile(path.join(dir, 'messages.jsonl'), 'utf8'))
+      .split('\n')
+      .filter((l) => l.length > 0);
+    assert.equal(lines.length, 2);
+    assert.equal(JSON.parse(lines[1]).content, 'b-edited');
+  });
+
+  it('skips the log on a true no-op save (no message changes)', async () => {
+    const state = {
+      sessionId: makeSessionId(),
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'ollama',
+      model: 'test',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [
+        { role: 'user', content: 'a' },
+        { role: 'user', content: 'b' },
+      ],
+    };
+    await saveSessionState(state);
+    const dir = getSessionDir(state.sessionId);
+    const messagesPath = path.join(dir, 'messages.jsonl');
+    const firstStat = await fs.stat(messagesPath);
+    // Save again with no message changes — only state.json should be
+    // touched. messages.jsonl mtime/size should be stable.
+    state.workingMemory = { plan: 'updated' };
+    await saveSessionState(state);
+    const secondStat = await fs.stat(messagesPath);
+    assert.equal(firstStat.size, secondStat.size);
+    assert.equal(firstStat.mtimeMs, secondStat.mtimeMs);
+  });
+});
+
+describe('loadMessagesLog — partial-line tolerance', () => {
+  it('drops a malformed final line that is missing its terminating newline', async () => {
+    // Simulates a crash mid-appendFile: the last message's JSON is
+    // partially written (e.g. truncated mid-string). Earlier lines are
+    // committed-by-newline and should still load cleanly.
+    const id = makeSessionId();
+    const dir = getSessionDir(id);
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    // First save lays down a clean log; then we append a partial line.
+    const state = {
+      sessionId: id,
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'ollama',
+      model: 'test',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [
+        { role: 'user', content: 'one' },
+        { role: 'user', content: 'two' },
+      ],
+    };
+    await saveSessionState(state);
+    const messagesPath = path.join(dir, 'messages.jsonl');
+    // Tack on a truncated JSON fragment (no closing brace, no newline).
+    await fs.appendFile(messagesPath, '{"role":"user","content":"thr', 'utf8');
+
+    const loaded = await loadSessionState(id);
+    assert.equal(loaded.messages.length, 2);
+    assert.equal(loaded.messages[0].content, 'one');
+    assert.equal(loaded.messages[1].content, 'two');
+  });
+
+  it('throws on a malformed middle line (real corruption, not crash recovery)', async () => {
+    const id = makeSessionId();
+    const dir = getSessionDir(id);
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    const messagesPath = path.join(dir, 'messages.jsonl');
+    // First line valid; second line garbage; third line valid + trailing
+    // newline. The final newline means the corruption is mid-file, not
+    // at the tail — that's a real data integrity issue we should
+    // surface rather than silently dropping middle messages.
+    await fs.writeFile(
+      messagesPath,
+      `${JSON.stringify({ role: 'user', content: 'one' })}\n` +
+        'this-is-not-json\n' +
+        `${JSON.stringify({ role: 'user', content: 'three' })}\n`,
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(dir, 'state.json'),
+      JSON.stringify({
+        sessionId: id,
+        eventSeq: 0,
+        updatedAt: 0,
+        cwd: '/tmp',
+        provider: 'ollama',
+        model: 'test',
+        rounds: 0,
+        sessionName: '',
+        workingMemory: {},
+      }),
+      'utf8',
+    );
+
+    await assert.rejects(
+      () => loadSessionState(id),
+      (err) => err instanceof SyntaxError || err.name === 'SyntaxError',
+    );
+  });
+});
+
+describe('listSessions — tail-read preview', () => {
+  it('returns the right preview without reading the full log', async () => {
+    // Build a session with a long-ish transcript so the tail-read path
+    // is exercised. Even with the full file present, the preview should
+    // surface the most recent human user message.
+    const state = {
+      sessionId: makeSessionId(),
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'ollama',
+      model: 'test',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'first user' },
+        { role: 'assistant', content: 'reply' },
+        { role: 'user', content: '[TOOL_RESULT]\nfile.ts\n[/TOOL_RESULT]' },
+        { role: 'user', content: 'most recent user' },
+      ],
+    };
+    await saveSessionState(state);
+
+    const list = await listSessions();
+    const row = list.find((entry) => entry.sessionId === state.sessionId);
+    assert.ok(row);
+    assert.equal(row.lastUserMessage, 'most recent user');
   });
 });
