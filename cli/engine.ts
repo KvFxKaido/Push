@@ -38,6 +38,7 @@ import {
   estimateContextTokens,
   getContextBudget,
 } from './context-manager.js';
+import { transformContextBeforeLLM, type DistillResult } from '../lib/context-transformer.ts';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { summarizeToolResultPreview } from '../lib/run-events.ts';
 import { assertReadyForAssistantTurn } from '../lib/llm-message-invariants.ts';
@@ -654,17 +655,19 @@ export async function runAssistantLoop(
   // Lazily enrich system prompt with workspace context (git status,
   // project instructions, memory) if it hasn't been loaded yet.
   await ensureSystemPromptReady(state);
-  // Surgical context distillation for long sessions: reduce history to essentials
-  // if starting a new run with significant history.
-  if ((state.messages as Message[]).length > 40) {
-    const distillResult = distillContext(state.messages as Message[]);
-    state.messages = distillResult.messages as any;
-    dispatchEvent('status', {
-      source: 'orchestrator',
-      phase: 'context_distillation',
-      detail: `History distilled to ${distillResult.messages.length} essential messages.`,
-    });
-  }
+  // Long-session distillation now runs through the per-round pipeline
+  // below (see the `length > 40` clause). state.messages is no longer
+  // mutated at session entry — distillation is a per-hop transformation,
+  // leaving the canonical transcript append-only so resume-from-disk
+  // sees the full history. (Append-only state is also a precondition
+  // for provider-prefix caching once the CLI threads cacheBreakpointIndex
+  // through to provider format adapters; that's a follow-up PR.)
+  //
+  // Trade-off: state.json grows over the session lifetime since
+  // saveSessionState rewrites the full transcript each round. Resume
+  // load time scales linearly with history. Acceptable for typical
+  // session lengths; if it bites, the mitigation is incremental
+  // persistence (event log) rather than reverting to lossy mutation.
 
   if (!state.workingMemory || typeof state.workingMemory !== 'object') {
     state.workingMemory = createWorkingMemory();
@@ -895,33 +898,59 @@ export async function runAssistantLoop(
       }
     }
 
-    // Trim context to fit provider budget (state.messages is never mutated)
-    if (
+    // Build the per-hop view of state.messages: filter (no-op for CLI) →
+    // distill (when triggered) → trim. state.messages itself is never
+    // mutated — distillation is a transient compression for this LLM call.
+    // The long-session trigger (length > 40) fires on every round, not
+    // just round 1, so multi-round runs that started long stay distilled
+    // throughout. shouldDistillMidSession layers the smarter token-budget
+    // gate on top once the agent has a working-memory plan.
+    const beforeDistillCount = (state.messages as Message[]).length;
+    const shouldDistill =
+      beforeDistillCount > 40 ||
       shouldDistillMidSession(
         state.messages as Message[],
         state.workingMemory as WorkingMemory,
         round,
         providerConfig.id,
         state.model,
-      )
-    ) {
-      const beforeCount = (state.messages as Message[]).length;
-      const distillResult = distillContext(state.messages as Message[]);
-      state.messages = distillResult.messages as any;
-      if (distillResult.distilled) {
-        dispatchEvent('status', {
-          source: 'orchestrator',
-          phase: 'context_distillation',
-          detail: `Round ${round}: history distilled from ${beforeCount} to ${distillResult.messages.length} essential messages.`,
-        });
-      }
+      );
+    let capturedDistill: DistillResult<Message> | null = null;
+    let capturedTrim: TrimResult | null = null;
+    const transformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
+      surface: 'cli',
+      enableFilterVisible: false,
+      enableDistillation: shouldDistill,
+      distill: (msgs) => {
+        const result = distillContext(msgs);
+        capturedDistill = result;
+        return result;
+      },
+      manageContext: (msgs) => {
+        const result = trimContext(msgs, providerConfig.id, state.model);
+        capturedTrim = result;
+        return { messages: result.messages, compactionApplied: result.trimmed };
+      },
+    });
+    // Cast through the closure-mutable ref. TS narrows `capturedDistill`
+    // to its declared null because it doesn't track the synchronous
+    // callback assignment; the explicit type assertion restores the
+    // possibly-set view.
+    const distillResult = capturedDistill as DistillResult<Message> | null;
+    const trimResult: TrimResult = (capturedTrim as TrimResult | null) ?? {
+      messages: transformed.messages,
+      trimmed: false,
+      beforeTokens: 0,
+      afterTokens: 0,
+      removedCount: 0,
+    };
+    if (distillResult && distillResult.distilled) {
+      dispatchEvent('status', {
+        source: 'orchestrator',
+        phase: 'context_distillation',
+        detail: `Round ${round}: history distilled from ${beforeDistillCount} to ${distillResult.messages.length} essential messages.`,
+      });
     }
-
-    const trimResult: TrimResult = trimContext(
-      state.messages as Message[],
-      providerConfig.id,
-      state.model,
-    );
     lastTrimResult = trimResult;
     recordContextTrim(state.sessionId, trimResult);
     if (trimResult.trimmed) {
@@ -931,6 +960,20 @@ export async function runAssistantLoop(
         detail: `${trimResult.beforeTokens} → ${trimResult.afterTokens} tokens (${trimResult.removedCount} msgs removed)`,
       });
     }
+
+    // After the per-hop transform, refresh the round-scoped metrics that
+    // downstream consumers (working-memory pressure check, TUI footer
+    // meter) rely on. state.messages is now the full append-only
+    // transcript, so deriving these from it would over-report. The
+    // canonical signal is the post-transform view that actually goes to
+    // the LLM.
+    const transformedChars = transformed.messages.reduce(
+      (sum: number, m: Message) => sum + (typeof m.content === 'string' ? m.content.length : 0),
+      0,
+    );
+    contextChars = transformedChars;
+    state.lastPromptTokens = trimResult.afterTokens || estimateContextTokens(transformed.messages);
+    state.lastPromptChars = transformedChars;
 
     const streamOptions: { onThinkingToken?: (token: string | null) => void; sessionId?: string } =
       {
@@ -948,12 +991,12 @@ export async function runAssistantLoop(
 
     let assistantText: string;
     try {
-      assertReadyForAssistantTurn(trimResult.messages, 'cli/runAssistantLoop');
+      assertReadyForAssistantTurn(transformed.messages, 'cli/runAssistantLoop');
       assistantText = await streamCompletion(
         providerConfig,
         apiKey,
         state.model,
-        trimResult.messages,
+        transformed.messages,
         (token: string): void => {
           dispatchEvent('assistant_token', { text: token });
         },
@@ -1193,11 +1236,22 @@ export async function runAssistantLoop(
         (state.messages as Message[]).push({ role: 'user', content: finalizationPrompt });
         let assistantPushed = false;
         try {
-          const finalTrimResult = trimContext(
-            state.messages as Message[],
-            providerConfig.id,
-            state.model,
-          );
+          // Re-apply distillation at finalization on long sessions.
+          // Pre-migration the in-place state.messages mutation meant
+          // finalization always saw the distilled subset; now we have
+          // to ask for it explicitly or trim alone might drop preserved
+          // bits like coder_update_state results.
+          const finalShouldDistill = (state.messages as Message[]).length > 40;
+          const finalTransformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
+            surface: 'cli',
+            enableFilterVisible: false,
+            enableDistillation: finalShouldDistill,
+            distill: finalShouldDistill ? distillContext : undefined,
+            manageContext: (msgs) => {
+              const result = trimContext(msgs, providerConfig.id, state.model);
+              return { messages: result.messages, compactionApplied: result.trimmed };
+            },
+          });
           const finalStreamOptions: {
             onThinkingToken?: (token: string | null) => void;
             sessionId?: string;
@@ -1217,7 +1271,7 @@ export async function runAssistantLoop(
             providerConfig,
             apiKey,
             state.model,
-            finalTrimResult.messages,
+            finalTransformed.messages,
             (token: string): void => {
               dispatchEvent('assistant_token', { text: token });
             },
@@ -1618,12 +1672,26 @@ export async function runAssistantLoop(
 
   let finalSummaryText = warning;
   try {
-    const finalTrimResult = trimContext(
-      state.messages as Message[],
-      providerConfig.id,
-      state.model,
-    );
-    if (finalTrimResult.trimmed) {
+    // Re-apply distillation at max-rounds finalization on long sessions.
+    // Pre-migration the in-place state.messages mutation meant
+    // finalization always saw the distilled subset; now we have to ask
+    // for it explicitly or trim alone might drop preserved bits like
+    // coder_update_state results.
+    const finalShouldDistill = (state.messages as Message[]).length > 40;
+    let capturedFinalTrim: TrimResult | null = null;
+    const finalTransformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
+      surface: 'cli',
+      enableFilterVisible: false,
+      enableDistillation: finalShouldDistill,
+      distill: finalShouldDistill ? distillContext : undefined,
+      manageContext: (msgs) => {
+        const result = trimContext(msgs, providerConfig.id, state.model);
+        capturedFinalTrim = result;
+        return { messages: result.messages, compactionApplied: result.trimmed };
+      },
+    });
+    const finalTrimResult = capturedFinalTrim as TrimResult | null;
+    if (finalTrimResult && finalTrimResult.trimmed) {
       dispatchEvent('status', {
         source: 'orchestrator',
         phase: 'context_trimming',
@@ -1649,7 +1717,7 @@ export async function runAssistantLoop(
       providerConfig,
       apiKey,
       state.model,
-      finalTrimResult.messages,
+      finalTransformed.messages,
       (token: string): void => {
         dispatchEvent('assistant_token', { text: token });
       },
