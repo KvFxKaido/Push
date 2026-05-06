@@ -15,7 +15,7 @@ import {
   saveSessionState,
   makeRunId,
 } from './session-store.js';
-import { streamCompletion } from './provider.js';
+import { streamCompletion, type StreamCompletionOptions } from './provider.js';
 import {
   createFileLedger,
   getLedgerSummary,
@@ -976,11 +976,7 @@ export async function runAssistantLoop(
     state.lastPromptTokens = trimResult.afterTokens || estimateContextTokens(transformed.messages);
     state.lastPromptChars = transformedChars;
 
-    const streamOptions: {
-      onThinkingToken?: (token: string | null) => void;
-      sessionId?: string;
-      cacheBreakpointIndex?: number;
-    } = {
+    const streamOptions: StreamCompletionOptions = {
       onThinkingToken: emit
         ? (token: string | null): void => {
             if (token === null) {
@@ -1257,11 +1253,7 @@ export async function runAssistantLoop(
               return { messages: result.messages, compactionApplied: result.trimmed };
             },
           });
-          const finalStreamOptions: {
-            onThinkingToken?: (token: string | null) => void;
-            sessionId?: string;
-            cacheBreakpointIndex?: number;
-          } = {
+          const finalStreamOptions: StreamCompletionOptions = {
             onThinkingToken: emit
               ? (token: string | null): void => {
                   if (token === null) {
@@ -1705,11 +1697,7 @@ export async function runAssistantLoop(
         detail: `${finalTrimResult.beforeTokens} → ${finalTrimResult.afterTokens} tokens (${finalTrimResult.removedCount} msgs removed)`,
       });
     }
-    const finalStreamOptions: {
-      onThinkingToken?: (token: string | null) => void;
-      sessionId?: string;
-      cacheBreakpointIndex?: number;
-    } = {
+    const finalStreamOptions: StreamCompletionOptions = {
       onThinkingToken: emit
         ? (token: string | null): void => {
             if (token === null) {

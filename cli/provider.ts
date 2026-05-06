@@ -37,7 +37,7 @@ interface ChatMessage {
   content: string;
 }
 
-interface StreamCompletionOptions {
+export interface StreamCompletionOptions {
   onThinkingToken?: ((token: string | null) => void) | null;
   /** OpenRouter session_id for grouping related requests. */
   sessionId?: string;

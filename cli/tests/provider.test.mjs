@@ -8,6 +8,7 @@ import {
   DEFAULT_TIMEOUT_MS,
   MAX_RETRIES,
 } from '../provider.ts';
+import { createCliProviderStream } from '../openai-stream.ts';
 
 // ─── Env helper ─────────────────────────────────────────────────
 
@@ -908,6 +909,60 @@ describe('streamCompletion', () => {
       );
 
       assert.equal(typeof capturedBody.messages[0].content, 'string');
+    });
+
+    // Exercises the lib-side agent-role path that calls createCliProviderStream
+    // directly with a `systemPromptOverride`. The `cacheBreakpointIndex` is
+    // into `req.messages` (which excludes the synthesized system), so the
+    // wire-side adapter must add `systemPrependOffset = 1` before tagging.
+    it('applies systemPrependOffset when systemPromptOverride is set', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const stream = createCliProviderStream(orConfig, 'key');
+      // Drain the stream so the request body is captured.
+      const events = stream({
+        provider: 'openrouter',
+        model: 'model',
+        messages: [
+          { id: 'm0', role: 'user', content: 'first', timestamp: 0 },
+          { id: 'm1', role: 'assistant', content: 'reply', timestamp: 0 },
+          { id: 'm2', role: 'user', content: 'last', timestamp: 0 },
+        ],
+        systemPromptOverride: 'sys-from-override',
+        // Index 2 is into req.messages (the user 'last'). With the
+        // synthesized system at wire index 0, the tagged wire index
+        // should be 2 + 1 = 3.
+        cacheBreakpointIndex: 2,
+      });
+      for await (const _ of events) {
+        // drain
+      }
+
+      // Wire shape: [synth-system, user 'first', assistant 'reply', user 'last']
+      assert.equal(capturedBody.messages.length, 4);
+      assert.deepEqual(capturedBody.messages[0], {
+        role: 'system',
+        content: [
+          { type: 'text', text: 'sys-from-override', cache_control: { type: 'ephemeral' } },
+        ],
+      });
+      assert.deepEqual(capturedBody.messages[1], { role: 'user', content: 'first' });
+      assert.deepEqual(capturedBody.messages[2], { role: 'assistant', content: 'reply' });
+      assert.deepEqual(capturedBody.messages[3], {
+        role: 'user',
+        content: [{ type: 'text', text: 'last', cache_control: { type: 'ephemeral' } }],
+      });
     });
   });
 
