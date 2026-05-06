@@ -37,10 +37,18 @@ interface ChatMessage {
   content: string;
 }
 
-interface StreamCompletionOptions {
+export interface StreamCompletionOptions {
   onThinkingToken?: ((token: string | null) => void) | null;
   /** OpenRouter session_id for grouping related requests. */
   sessionId?: string;
+  /**
+   * Index into `messages` of the last user-role message (from
+   * `transformContextBeforeLLM`'s `cacheBreakpointIndex`). When set and
+   * the provider supports it, the adapter applies prompt-caching
+   * markers at this boundary. -1 / undefined disables caching for the
+   * call.
+   */
+  cacheBreakpointIndex?: number;
 }
 
 function isRetryableError(err: unknown): boolean {
@@ -228,6 +236,7 @@ export async function streamCompletion(
           model,
           messages: llmMessages,
           signal: compositeSignal,
+          cacheBreakpointIndex: options?.cacheBreakpointIndex,
         }),
       );
 
