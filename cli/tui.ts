@@ -2166,9 +2166,11 @@ export async function runTUI(options = {}) {
         }
         tuiState.reasoningBuf += event.payload.text;
         tuiState.reasoningStreaming = true;
-        tuiState.activity = { kind: 'thinking' };
+        if (tuiState.activity?.kind !== 'thinking') {
+          tuiState.activity = { kind: 'thinking' };
+          tuiState.dirty.add('header');
+        }
         tuiState.dirty.add(tuiState.reasoningModalOpen ? 'all' : 'footer');
-        tuiState.dirty.add('header');
         scheduler.schedule();
         break;
 
@@ -2272,8 +2274,10 @@ export async function runTUI(options = {}) {
         // event will overwrite this; we set 'thinking' here so the gap
         // between tool result and the next reasoning token doesn't show
         // a stale tool verb.
-        tuiState.activity = { kind: 'thinking' };
-        tuiState.dirty.add('header');
+        if (tuiState.activity?.kind !== 'thinking') {
+          tuiState.activity = { kind: 'thinking' };
+          tuiState.dirty.add('header');
+        }
         scheduler.schedule();
         // Refresh git status after file-modifying operations
         if (

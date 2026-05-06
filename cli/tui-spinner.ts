@@ -144,19 +144,41 @@ export type SpinnerActivity =
   | null;
 
 // Map a tool name to a short present-participle verb. Keys are the
-// canonical tool names emitted by the engine; values stay short enough
-// to fit the header at narrow terminal widths (~8 chars max).
+// canonical tool names emitted by the engine (see `lib/tool-registry.ts`)
+// plus the CLI-local handlers from `cli/tools.ts`. Values stay short
+// enough to fit the header at narrow terminal widths (≤10 chars).
+//
+// Unmapped tools fall back to the literal "working" via verbForActivity;
+// keep this in sync with the registry rather than chasing every alias.
 export const VERB_BY_TOOL: Readonly<Record<string, string>> = {
+  // ── Read / inspect ────────────────────────────────────────────
   read_file: 'reading',
+  sandbox_read_file: 'reading',
   read_symbol: 'reading',
   read_symbols: 'reading',
+  sandbox_read_symbols: 'reading',
+  read_symbols_outline: 'reading',
   list_dir: 'listing',
+  list_directory: 'listing',
+  sandbox_list_dir: 'listing',
   search_files: 'searching',
+  sandbox_search: 'searching',
+  sandbox_find_references: 'searching',
   grep: 'searching',
+  grep_file: 'searching',
   web_search: 'searching',
+
+  // ── Edit / write ──────────────────────────────────────────────
   write_file: 'writing',
+  sandbox_write_file: 'writing',
   edit_file: 'editing',
+  sandbox_edit_file: 'editing',
+  sandbox_edit_range: 'editing',
+  sandbox_search_replace: 'editing',
+  sandbox_apply_patchset: 'editing',
   undo_edit: 'editing',
+
+  // ── Execute ───────────────────────────────────────────────────
   exec: 'running',
   exec_start: 'running',
   exec_poll: 'running',
@@ -164,18 +186,57 @@ export const VERB_BY_TOOL: Readonly<Record<string, string>> = {
   exec_stop: 'running',
   exec_list_sessions: 'running',
   sandbox_exec: 'running',
+  sandbox_run_tests: 'testing',
+  sandbox_check_types: 'checking',
+  sandbox_verify_workspace: 'verifying',
+
+  // ── Git / branches ────────────────────────────────────────────
   git_status: 'inspecting',
   git_diff: 'inspecting',
+  sandbox_diff: 'inspecting',
   git_commit: 'committing',
+  sandbox_prepare_commit: 'committing',
+  sandbox_push: 'pushing',
+  promote_to_github: 'pushing',
   git_create_branch: 'branching',
   create_branch: 'branching',
   switch_branch: 'branching',
   sandbox_create_branch: 'branching',
   sandbox_switch_branch: 'branching',
+  list_branches: 'inspecting',
+  delete_branch: 'branching',
+
+  // ── GitHub ────────────────────────────────────────────────────
+  fetch_pr: 'fetching',
+  list_prs: 'fetching',
+  list_commits: 'fetching',
+  list_commit_files: 'fetching',
+  fetch_checks: 'fetching',
+  find_existing_pr: 'fetching',
+  check_pr_mergeable: 'checking',
+  create_pr: 'opening',
+  merge_pr: 'merging',
+  trigger_workflow: 'running',
+  get_workflow_runs: 'fetching',
+  get_workflow_logs: 'fetching',
+
+  // ── Diagnostics / memory / scratchpad / todos ─────────────────
   lsp_diagnostics: 'inspecting',
-  read_symbols_outline: 'reading',
   save_memory: 'saving',
+  sandbox_save_draft: 'saving',
+  sandbox_download: 'fetching',
+  set_scratchpad: 'noting',
+  append_scratchpad: 'noting',
+  read_scratchpad: 'reading',
+  todo_write: 'planning',
+  todo_read: 'reading',
+  todo_clear: 'planning',
+  plan_tasks: 'planning',
+
+  // ── Conversation ──────────────────────────────────────────────
   ask_user: 'asking',
+
+  // ── Delegation ────────────────────────────────────────────────
   delegate_coder: 'coding',
   delegate_explorer: 'exploring',
   delegate_reviewer: 'reviewing',

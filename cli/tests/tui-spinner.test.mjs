@@ -215,6 +215,7 @@ describe('verbForActivity', () => {
     // out of the map. This is not exhaustive (new tools are expected to
     // land via the 'working' fallback until they're explicitly mapped).
     for (const k of [
+      // CLI-local handlers
       'read_file',
       'list_dir',
       'search_files',
@@ -224,6 +225,25 @@ describe('verbForActivity', () => {
       'exec',
       'git_commit',
       'git_create_branch',
+      // Canonical names from lib/tool-registry.ts
+      'sandbox_read_file',
+      'sandbox_write_file',
+      'sandbox_edit_file',
+      'sandbox_exec',
+      'sandbox_run_tests',
+      'sandbox_check_types',
+      'sandbox_prepare_commit',
+      'sandbox_create_branch',
+      'sandbox_switch_branch',
+      'plan_tasks',
+      'todo_write',
+      'create_pr',
+      'merge_pr',
+      // Delegation
+      'delegate_coder',
+      'delegate_explorer',
+      'delegate_reviewer',
+      'delegate_auditor',
     ]) {
       assert.ok(VERB_BY_TOOL[k], `missing canonical tool: ${k}`);
     }
