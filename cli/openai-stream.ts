@@ -85,12 +85,48 @@ async function* cliProviderStream(
   //     pass the system prompt as `systemPromptOverride` and start
   //     `messages` at the user turn.
   // Honour both: prepend the override only when present.
-  const messages: { role: string; content: string }[] = [];
-  if (typeof req.systemPromptOverride === 'string' && req.systemPromptOverride) {
-    messages.push({ role: 'system', content: req.systemPromptOverride });
+  type WireContent =
+    | string
+    | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[];
+  const messages: { role: string; content: WireContent }[] = [];
+  const systemPrependOffset =
+    typeof req.systemPromptOverride === 'string' && req.systemPromptOverride ? 1 : 0;
+  if (systemPrependOffset === 1) {
+    messages.push({ role: 'system', content: req.systemPromptOverride as string });
   }
   for (const m of req.messages) {
     messages.push({ role: m.role, content: m.content });
+  }
+
+  // Prompt caching: tag the system message at index 0 (if present) and the
+  // last user message (`cacheBreakpointIndex`) with Anthropic-style
+  // `cache_control: ephemeral`. Mirrors `app/src/lib/orchestrator.ts:285-298`
+  // and 367-387. OpenRouter forwards this to Claude models; non-Anthropic
+  // routes harmlessly ignore the marker. We gate on `config.id === 'openrouter'`
+  // because that's the only CLI provider known to route to Anthropic. Other
+  // gateway-style providers (zen / kilocode / openadapter) are conservative
+  // pass-throughs until parity is verified.
+  const cacheable =
+    config.id === 'openrouter' &&
+    typeof req.cacheBreakpointIndex === 'number' &&
+    req.cacheBreakpointIndex >= 0;
+  if (cacheable) {
+    if (messages[0]?.role === 'system' && typeof messages[0].content === 'string') {
+      messages[0] = {
+        role: 'system',
+        content: [
+          { type: 'text', text: messages[0].content, cache_control: { type: 'ephemeral' } },
+        ],
+      };
+    }
+    const wireBreakpoint = (req.cacheBreakpointIndex as number) + systemPrependOffset;
+    const target = messages[wireBreakpoint];
+    if (target && target.role === 'user' && typeof target.content === 'string') {
+      messages[wireBreakpoint] = {
+        role: 'user',
+        content: [{ type: 'text', text: target.content, cache_control: { type: 'ephemeral' } }],
+      };
+    }
   }
 
   const model = req.model && req.model.trim() ? req.model : config.defaultModel;

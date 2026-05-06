@@ -819,6 +819,124 @@ describe('streamCompletion', () => {
 
       assert.ok(capturedBody.session_id.length <= 256);
     });
+
+    // ─── Prompt caching (cacheBreakpointIndex) ───────────────────
+
+    it('tags system + breakpoint with cache_control when cacheBreakpointIndex is set', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const messages = [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'reply' },
+        { role: 'user', content: 'last' },
+      ];
+      await streamCompletion(orConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
+        cacheBreakpointIndex: 3,
+      });
+
+      assert.deepEqual(capturedBody.messages[0], {
+        role: 'system',
+        content: [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }],
+      });
+      assert.deepEqual(capturedBody.messages[1], { role: 'user', content: 'first' });
+      assert.deepEqual(capturedBody.messages[2], { role: 'assistant', content: 'reply' });
+      assert.deepEqual(capturedBody.messages[3], {
+        role: 'user',
+        content: [{ type: 'text', text: 'last', cache_control: { type: 'ephemeral' } }],
+      });
+    });
+
+    it('does not tag when cacheBreakpointIndex is omitted', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const messages = [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'first' },
+      ];
+      await streamCompletion(orConfig, 'key', 'model', messages, null);
+
+      assert.equal(typeof capturedBody.messages[0].content, 'string');
+      assert.equal(typeof capturedBody.messages[1].content, 'string');
+    });
+
+    it('does not tag when cacheBreakpointIndex is -1 (no user message)', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      await streamCompletion(
+        orConfig,
+        'key',
+        'model',
+        [{ role: 'system', content: 'sys' }],
+        null,
+        DEFAULT_TIMEOUT_MS,
+        null,
+        { cacheBreakpointIndex: -1 },
+      );
+
+      assert.equal(typeof capturedBody.messages[0].content, 'string');
+    });
+  });
+
+  describe('prompt caching gate (non-openrouter)', () => {
+    it('does not tag cache_control for non-openrouter providers even when cacheBreakpointIndex is set', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const messages = [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'last' },
+      ];
+      await streamCompletion(testConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
+        cacheBreakpointIndex: 1,
+      });
+
+      assert.equal(typeof capturedBody.messages[0].content, 'string');
+      assert.equal(typeof capturedBody.messages[1].content, 'string');
+    });
   });
 
   // The reasoning split itself is exhaustively tested in

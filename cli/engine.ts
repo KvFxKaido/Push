@@ -659,9 +659,10 @@ export async function runAssistantLoop(
   // below (see the `length > 40` clause). state.messages is no longer
   // mutated at session entry — distillation is a per-hop transformation,
   // leaving the canonical transcript append-only so resume-from-disk
-  // sees the full history. (Append-only state is also a precondition
-  // for provider-prefix caching once the CLI threads cacheBreakpointIndex
-  // through to provider format adapters; that's a follow-up PR.)
+  // sees the full history. The append-only invariant is also what makes
+  // provider-prefix caching effective: `transformed.cacheBreakpointIndex`
+  // is threaded into `streamCompletion` and tagged at the wire boundary
+  // in `cli/openai-stream.ts` (OpenRouter only today).
   //
   // Trade-off: state.json grows over the session lifetime since
   // saveSessionState rewrites the full transcript each round. Resume
@@ -975,19 +976,23 @@ export async function runAssistantLoop(
     state.lastPromptTokens = trimResult.afterTokens || estimateContextTokens(transformed.messages);
     state.lastPromptChars = transformedChars;
 
-    const streamOptions: { onThinkingToken?: (token: string | null) => void; sessionId?: string } =
-      {
-        onThinkingToken: emit
-          ? (token: string | null): void => {
-              if (token === null) {
-                dispatchEvent('assistant_thinking_done', {});
-                return;
-              }
-              dispatchEvent('assistant_thinking_token', { text: token });
+    const streamOptions: {
+      onThinkingToken?: (token: string | null) => void;
+      sessionId?: string;
+      cacheBreakpointIndex?: number;
+    } = {
+      onThinkingToken: emit
+        ? (token: string | null): void => {
+            if (token === null) {
+              dispatchEvent('assistant_thinking_done', {});
+              return;
             }
-          : undefined,
-        sessionId: state.sessionId,
-      };
+            dispatchEvent('assistant_thinking_token', { text: token });
+          }
+        : undefined,
+      sessionId: state.sessionId,
+      cacheBreakpointIndex: transformed.cacheBreakpointIndex,
+    };
 
     let assistantText: string;
     try {
@@ -1255,6 +1260,7 @@ export async function runAssistantLoop(
           const finalStreamOptions: {
             onThinkingToken?: (token: string | null) => void;
             sessionId?: string;
+            cacheBreakpointIndex?: number;
           } = {
             onThinkingToken: emit
               ? (token: string | null): void => {
@@ -1266,6 +1272,7 @@ export async function runAssistantLoop(
                 }
               : undefined,
             sessionId: state.sessionId,
+            cacheBreakpointIndex: finalTransformed.cacheBreakpointIndex,
           };
           const finalizationText = await streamCompletion(
             providerConfig,
@@ -1701,6 +1708,7 @@ export async function runAssistantLoop(
     const finalStreamOptions: {
       onThinkingToken?: (token: string | null) => void;
       sessionId?: string;
+      cacheBreakpointIndex?: number;
     } = {
       onThinkingToken: emit
         ? (token: string | null): void => {
@@ -1712,6 +1720,7 @@ export async function runAssistantLoop(
           }
         : undefined,
       sessionId: state.sessionId,
+      cacheBreakpointIndex: finalTransformed.cacheBreakpointIndex,
     };
     const assistantText = await streamCompletion(
       providerConfig,

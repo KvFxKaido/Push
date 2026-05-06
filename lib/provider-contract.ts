@@ -105,6 +105,15 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
   hasSandbox?: boolean;
   /** Forwarded through the adapter so gateways can signal context compaction. */
   onPreCompact?: (event: PreCompactEvent) => void;
+  /**
+   * Index into `messages` of the last user-role message, as computed by
+   * `transformContextBeforeLLM`. When set (>= 0), gateways MAY use it to
+   * attach Anthropic-style `cache_control: { type: 'ephemeral' }` markers
+   * at the prompt prefix boundary so the cached prefix stays byte-stable
+   * across turns when only new messages were appended. Gateways that
+   * don't support prefix caching ignore this field.
+   */
+  cacheBreakpointIndex?: number;
 }
 
 export type PushStream<M extends LlmMessage = LlmMessage> = (
