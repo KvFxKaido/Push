@@ -5,7 +5,8 @@ export type ToolRegistrySource =
   | 'scratchpad'
   | 'todo'
   | 'web-search'
-  | 'ask-user';
+  | 'ask-user'
+  | 'artifacts';
 
 export interface ToolSpec {
   canonicalName: string;
@@ -555,6 +556,19 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     protocolDescription: 'Ask the user a structured question with options',
     exampleJson:
       '{"tool": "ask", "args": {"question": "Which option?", "options": [{"id": "a", "label": "Option A"}]}}',
+  },
+  {
+    canonicalName: 'create_artifact',
+    publicName: 'artifact',
+    source: 'artifacts',
+    readOnly: false,
+    statusLabel: 'Creating artifact...',
+    protocolSignature: 'artifact(kind, title, files?, source?, entry?, dependencies?)',
+    protocolDescription:
+      'Create a renderable artifact: static-html, static-react, mermaid, or file-tree. ' +
+      'Live-preview artifacts use a separate tool because they require sandbox-side orchestration.',
+    exampleJson:
+      '{"tool": "artifact", "args": {"kind": "static-react", "title": "Counter demo", "files": [{"path": "/App.js", "content": "export default () => <h1>Hi</h1>"}]}}',
   },
 ] as const;
 

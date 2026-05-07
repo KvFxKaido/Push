@@ -41,6 +41,7 @@ import {
 } from '../session-store.ts';
 import { READ_ONLY_TOOLS, READ_ONLY_TOOL_PROTOCOL } from '../tools.ts';
 import { roleCanUseTool } from '../../lib/capabilities.ts';
+import { getToolSpec } from '../../lib/tool-registry.ts';
 import { buildExplorerSystemPrompt } from '../../lib/explorer-agent.ts';
 import { startMockProviderServer, patchProviderConfig } from './mock-provider-server.mjs';
 import { canListenOnLoopback } from './test-environment.mjs';
@@ -3047,6 +3048,41 @@ describe('Explorer daemon tool protocol namespace', () => {
       !prompt.includes('repo_read'),
       'override prompt must not leak default-block web public name repo_read',
     );
+  });
+});
+
+// Drift-detector for the `create_artifact` tool. Pins both the registry
+// shape (canonical name, public alias, source, mutating) and the
+// capability grants by role so a future refactor can't silently shift
+// who is allowed to emit artifact tool calls. Coder is intentionally
+// denied today: the Coder dispatcher in
+// `lib/coder-agent-bindings.ts` rejects any source other than
+// `'sandbox'` / `'web-search'`, so granting `artifacts:write` to coder
+// without widening that allowlist would surface as a runtime denial. If
+// you flip the dispatcher, flip this test in the same PR.
+describe('create_artifact tool registry + capability drift', () => {
+  it('pins the canonical / public / source / mutation shape of create_artifact', () => {
+    const spec = getToolSpec('create_artifact');
+    assert.ok(spec, 'create_artifact must be registered in TOOL_SPECS');
+    assert.equal(spec.canonicalName, 'create_artifact');
+    assert.equal(spec.publicName, 'artifact');
+    assert.equal(spec.source, 'artifacts');
+    assert.equal(spec.readOnly, false);
+
+    const byPublic = getToolSpec('artifact');
+    assert.equal(byPublic?.canonicalName, 'create_artifact');
+  });
+
+  it('grants artifacts:write to orchestrator only; coder/explorer/reviewer/auditor denied', () => {
+    assert.equal(roleCanUseTool('orchestrator', 'create_artifact'), true);
+    assert.equal(
+      roleCanUseTool('coder', 'create_artifact'),
+      false,
+      'coder grant is intentionally deferred until the coder dispatcher allowlist accepts the artifacts source',
+    );
+    assert.equal(roleCanUseTool('explorer', 'create_artifact'), false);
+    assert.equal(roleCanUseTool('reviewer', 'create_artifact'), false);
+    assert.equal(roleCanUseTool('auditor', 'create_artifact'), false);
   });
 });
 

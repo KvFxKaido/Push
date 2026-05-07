@@ -43,7 +43,8 @@ export type Capability =
   | 'scratchpad' // Read/write the session scratchpad
   | 'todo' // Read/write the model's structured todo list
   | 'web:search' // Search the web for current information
-  | 'user:ask'; // Ask the user a structured question
+  | 'user:ask' // Ask the user a structured question
+  | 'artifacts:write'; // Create renderable artifacts (HTML/React/Mermaid/file-tree)
 
 /** All known capabilities (for validation/iteration). */
 export const ALL_CAPABILITIES: readonly Capability[] = [
@@ -66,6 +67,7 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   'todo',
   'web:search',
   'user:ask',
+  'artifacts:write',
 ];
 
 // ---------------------------------------------------------------------------
@@ -145,6 +147,14 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
 
   // Ask user
   ask_user: ['user:ask'],
+
+  // Artifacts. Coder grant is intentionally deferred until the
+  // Coder-side dispatcher allowlist (`buildCoderToolExec` in
+  // `lib/coder-agent-bindings.ts`) is widened to include the
+  // `'artifacts'` source — adding the grant here without that change
+  // would surface a runtime denial. Orchestrator path is
+  // source-agnostic and works today.
+  create_artifact: ['artifacts:write'],
 
   // CLI-native tools (daemon tool surface in `cli/tools.ts`). These names
   // are distinct from the sandbox family above because the CLI dispatches
@@ -235,6 +245,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'todo',
     'web:search',
     'user:ask',
+    'artifacts:write',
   ]),
 
   // Explorer is the read-only investigator. The grant is intentionally
@@ -319,6 +330,7 @@ export const CAPABILITY_LABELS: Readonly<Record<Capability, string>> = {
   todo: 'track its todo list',
   'web:search': 'search the web',
   'user:ask': 'ask questions',
+  'artifacts:write': 'create artifacts',
 };
 
 /**
