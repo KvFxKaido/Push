@@ -11,6 +11,7 @@ const savedEnv = {
   PUSH_THEME: process.env.PUSH_THEME,
   PUSH_ANIMATION: process.env.PUSH_ANIMATION,
   PUSH_SPINNER: process.env.PUSH_SPINNER,
+  PUSH_TUI_LAYOUT: process.env.PUSH_TUI_LAYOUT,
 };
 
 function restoreEnv() {
@@ -144,5 +145,21 @@ describe('applyConfigToEnv', () => {
     applyConfigToEnv({ spinner: 'helix' });
 
     assert.equal(process.env.PUSH_SPINNER, 'orbit');
+  });
+
+  it('applies layout to PUSH_TUI_LAYOUT when missing', () => {
+    delete process.env.PUSH_TUI_LAYOUT;
+
+    applyConfigToEnv({ layout: 'quiet' });
+
+    assert.equal(process.env.PUSH_TUI_LAYOUT, 'quiet');
+  });
+
+  it('does not override existing PUSH_TUI_LAYOUT', () => {
+    process.env.PUSH_TUI_LAYOUT = 'standard';
+
+    applyConfigToEnv({ layout: 'quiet' });
+
+    assert.equal(process.env.PUSH_TUI_LAYOUT, 'standard');
   });
 });

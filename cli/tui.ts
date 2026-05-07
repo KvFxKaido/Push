@@ -31,6 +31,7 @@ import {
 import {
   detectSpinnerName,
   isSpinnerName,
+  moodVerb,
   SPINNER_NAMES,
   SPINNERS,
   spinnerFrame,
@@ -75,6 +76,15 @@ import {
   computeLayout,
   osc52Copy,
 } from './tui-renderer.js';
+import {
+  detectLayoutMode,
+  isLayoutMode,
+  makeBadge,
+  pushWrappedLines,
+  renderAssistantEntryLines,
+  renderEntryLines,
+  summarizeToolArgs,
+} from './tui-framers.js';
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
 import { getCuratedModels, fetchModels } from './model-catalog.js';
 import {
@@ -241,6 +251,10 @@ function createTUIState() {
     // `resultPreview` on transcript tool_calls is truncated; this holds the
     // untruncated payload dispatched on the live event.
     lastToolResult: null, // { name, text, isError } | null
+    // Visual layout mode for the transcript ('standard' | 'quiet').
+    // Resolved at startup from PUSH_TUI_LAYOUT / config.layout; default
+    // 'standard'. The framer dispatch reads this on every render.
+    layout: 'standard',
   };
 }
 
@@ -277,252 +291,23 @@ function addToolFeedEntry(tuiState, entry) {
 
 // ── Pane renderers ──────────────────────────────────────────────────
 
-function makeBadge(theme, label, { fg = 'fg.primary', bg = 'border.default', bold = true } = {}) {
-  const text = ` ${label} `;
-  const styled = theme.styleFgBg(fg, bg, text);
-  return bold ? theme.bold(styled) : styled;
-}
-
-function safeJsonStringify(value) {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '[unserializable]';
-  }
-}
-
-function summarizeToolArgs(args, maxWidth) {
-  if (!args || typeof args !== 'object') return '';
-  let preview = '';
-  if (typeof args.command === 'string' && args.command) {
-    preview = args.command;
-  } else if (typeof args.path === 'string' && args.path) {
-    preview = args.path;
-  } else if (typeof args.file === 'string' && args.file) {
-    preview = args.file;
-  } else {
-    preview = safeJsonStringify(args);
-  }
-  return truncate(preview, Math.max(1, maxWidth));
-}
-
-function parseJsonToolCalls(text) {
-  try {
-    const parsed = JSON.parse(text);
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      !Array.isArray(parsed) &&
-      typeof parsed.tool === 'string'
-    ) {
-      return [{ tool: parsed.tool, args: parsed.args ?? null }];
-    }
-    if (Array.isArray(parsed)) {
-      const calls = parsed
-        .filter((item) => item && typeof item === 'object' && typeof item.tool === 'string')
-        .map((item) => ({ tool: item.tool, args: item.args ?? null }));
-      return calls.length ? calls : null;
-    }
-  } catch {
-    // fall through
-  }
-  return null;
-}
-
-function pushWrappedLines(
-  out,
-  text,
-  width,
-  { firstPrefix = '', nextPrefix = firstPrefix, styleFn = (s) => s } = {},
-) {
-  const raw = String(text ?? '');
-  const rawLines = raw.split('\n');
-  let firstRendered = false;
-
-  for (const rawLine of rawLines) {
-    const wrapWidth = Math.max(1, width - visibleWidth(firstRendered ? nextPrefix : firstPrefix));
-    const wrapped = wordWrap(rawLine, wrapWidth);
-    const segments = wrapped.length ? wrapped : [''];
-    for (const segment of segments) {
-      const prefix = firstRendered ? nextPrefix : firstPrefix;
-      out.push(prefix + styleFn(segment));
-      firstRendered = true;
-    }
-  }
-
-  if (!firstRendered) {
-    out.push(firstPrefix);
-  }
-}
-
-function renderAssistantEntryLines(
-  out,
-  text,
-  width,
-  theme,
-  {
-    streaming = false,
-    expandToolJsonPayloads = false,
-    entryKey = null,
-    payloadUI = null, // { blocks, cursorId, expandedIds, inspectorOpen }
-  } = {},
-) {
-  const badge = makeBadge(theme, streaming ? 'AI *' : 'AI', {
-    fg: 'bg.base',
-    bg: 'accent.primary',
-  });
-  const firstPrefix = `${badge} `;
-  const nextPrefix = ' '.repeat(Math.max(2, visibleWidth(firstPrefix)));
-  let canUseFirstPrefix = true;
-  let jsonFenceOrdinal = 0;
-
-  const pushAssistant = (lineText, styleFn = (s) => theme.style('fg.primary', s)) => {
-    pushWrappedLines(out, lineText, width, {
-      firstPrefix: canUseFirstPrefix ? firstPrefix : nextPrefix,
-      nextPrefix,
-      styleFn,
-    });
-    canUseFirstPrefix = false;
-  };
-
-  const pushToolSummary = (summary) => {
-    pushAssistant(summary, (s) => theme.style('accent.secondary', s));
-  };
-
-  const pushCodeLine = (line) => {
-    pushAssistant(line, (s) => theme.style('fg.secondary', s));
-  };
-
-  const lines = String(text ?? '').split('\n');
-  let fenceLang = null;
-  let fenceBuf = [];
-
-  const flushFence = () => {
-    const body = fenceBuf.join('\n').trim();
-    const lang = (fenceLang || '').toLowerCase();
-    const jsonFenceIndex = lang === 'json' ? jsonFenceOrdinal++ : null;
-    const payloadId =
-      lang === 'json' && entryKey != null ? `${entryKey}:json:${jsonFenceIndex}` : null;
-    const selected = Boolean(payloadId && payloadUI?.cursorId === payloadId);
-    const expandedByBlock = Boolean(payloadId && payloadUI?.expandedIds?.has(payloadId));
-    const expanded = expandToolJsonPayloads || expandedByBlock;
-
-    if (lang === 'json' && body) {
-      const toolCalls = parseJsonToolCalls(body);
-      if (toolCalls) {
-        const blockStart = out.length;
-        const marker = expanded ? (theme.unicode ? '▾' : 'v') : theme.unicode ? '▸' : '>';
-        const countLabel =
-          toolCalls.length === 1 ? '1 tool call' : `${toolCalls.length} tool calls`;
-        const modeHint = expanded ? 'expanded' : 'collapsed';
-        const headerText = `${marker} JSON payload · ${countLabel} · ${modeHint}`;
-        pushAssistant(headerText, (s) => {
-          if (selected && payloadUI?.inspectorOpen) return theme.inverse(s);
-          return theme.style('fg.dim', s);
-        });
-
-        if (expanded) {
-          for (const codeLine of fenceBuf) {
-            pushCodeLine(codeLine);
-          }
-        } else {
-          for (const call of toolCalls) {
-            const preview = summarizeToolArgs(call.args, Math.max(10, width - 28));
-            const summary = preview
-              ? `${theme.glyphs.arrow} ${call.tool}  ${theme.style('fg.dim', preview)}`
-              : `${theme.glyphs.arrow} ${call.tool}`;
-            pushToolSummary(summary);
-          }
-        }
-
-        if (payloadId && Array.isArray(payloadUI?.blocks)) {
-          payloadUI.blocks.push({
-            id: payloadId,
-            startLine: blockStart,
-            endLine: Math.max(blockStart, out.length - 1),
-            expanded,
-            selected,
-            visible: false,
-            toolCount: toolCalls.length,
-          });
-        }
-
-        fenceLang = null;
-        fenceBuf = [];
-        return;
-      }
-    }
-
-    if (body) {
-      const label = lang ? `code (${lang})` : 'code';
-      pushAssistant(label, (s) => theme.style('fg.dim', s));
-      for (const codeLine of fenceBuf) {
-        pushCodeLine(codeLine);
-      }
-    }
-
-    fenceLang = null;
-    fenceBuf = [];
-  };
-
-  for (const rawLine of lines) {
-    const fenceMatch = rawLine.match(/^```([A-Za-z0-9_-]+)?\s*$/);
-    if (fenceMatch) {
-      if (fenceLang == null) {
-        fenceLang = fenceMatch[1] || '';
-        fenceBuf = [];
-      } else {
-        flushFence();
-      }
-      continue;
-    }
-    if (fenceLang != null) {
-      fenceBuf.push(rawLine);
-      continue;
-    }
-
-    const line = rawLine;
-    if (line.trim() === '') {
-      pushAssistant('', (s) => s);
-      continue;
-    }
-    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) {
-      pushAssistant(
-        theme.glyphs.horizontal.repeat(Math.max(6, Math.min(width - visibleWidth(nextPrefix), 24))),
-        (s) => theme.style('fg.dim', s),
-      );
-      continue;
-    }
-
-    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
-    if (heading) {
-      pushAssistant(heading[2], (s) => theme.bold(theme.style('accent.link', s)));
-      continue;
-    }
-
-    const bullet = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
-    if (bullet) {
-      const indent = ' '.repeat(Math.min(4, bullet[1].length));
-      pushAssistant(`${indent}${bullet[2]} ${bullet[3]}`, (s) => theme.style('fg.primary', s));
-      continue;
-    }
-
-    if (/^\s*>\s+/.test(line)) {
-      pushAssistant(line.replace(/^\s*>\s+/, ''), (s) => theme.style('fg.secondary', s));
-      continue;
-    }
-
-    pushAssistant(line, (s) => theme.style('fg.primary', s));
-  }
-
-  if (fenceLang != null) flushFence();
-}
-
 function renderHeader(
   buf,
   layout,
   theme,
-  { provider, model, session, sessionName, cwd, runState, branch, animation, spinner, activity },
+  {
+    provider,
+    model,
+    session,
+    sessionName,
+    cwd,
+    runState,
+    branch,
+    animation,
+    spinner,
+    activity,
+    layoutMode = 'standard',
+  },
 ) {
   const { glyphs } = theme;
   const { top, left, width } = layout.header;
@@ -542,8 +327,31 @@ function renderHeader(
         : theme.style('state.success', glyphs.statusDot);
   // Verb sits next to the spinner glyph while running (thinking,
   // replying, or a tool verb). Falls through to runState otherwise so
-  // 'idle' / 'awaiting_approval' still read clearly.
-  const verb = runState === 'running' ? (verbForActivity(activity) ?? 'running') : runState;
+  // 'idle' / 'awaiting_approval' still read clearly. In quiet layout,
+  // when there's no activity-specific verb yet, swap the mechanical
+  // 'running' for a deterministic mood verb (roosting / brewing / …)
+  // seeded by sessionId — softer than a status code, stable per session.
+  const fallbackRunningVerb = layoutMode === 'quiet' ? moodVerb(session) : 'running';
+  const verb =
+    runState === 'running' ? (verbForActivity(activity) ?? fallbackRunningVerb) : runState;
+
+  const sep = theme.style('fg.dim', '·');
+  const stateLabel = theme.style('fg.dim', verb);
+  const providerStr = theme.style('accent.link', provider);
+  const modelStr = theme.bold(theme.style('fg.primary', model));
+  const homeDir = process.env.HOME || '';
+  const shortCwd = homeDir && cwd.startsWith(homeDir) ? '~' + cwd.slice(homeDir.length) : cwd;
+  const branchPart = branch ? ` ${sep} ${theme.style('accent.link', branch)}` : '';
+
+  if (layoutMode === 'quiet') {
+    // Single dim row: `● state · provider · model · ~/dir · branch`.
+    // No box, no session line — the bottom status bar already carries
+    // session/git context, so trade chrome for transcript real estate.
+    const cwdStr = theme.style('fg.dim', truncate(shortCwd, Math.floor(width * 0.35)));
+    const row = `${stateDot} ${stateLabel} ${sep} ${providerStr} ${sep} ${modelStr} ${sep} ${cwdStr}${branchPart}`;
+    buf.writeLine(top, left, padTo(row, width));
+    return;
+  }
 
   // ── Top border: ┌─ ⬡ Push ──...──┐ ────────────────────────────
   // Fixed chars: ┌─ (2) + space (1) + ⬡ (1) + space (1) + Push (4) + space (1) + fill + ┐ (1) = 11 + fill = width
@@ -562,15 +370,7 @@ function renderHeader(
   buf.writeLine(top, left, topBorder);
 
   // ── Content row: │  ● state  provider · model   ~/dir · branch  │ ──
-  const sep = theme.style('fg.dim', '·');
-  const stateLabel = theme.style('fg.dim', verb);
-  const providerStr = theme.style('accent.link', provider);
-  const modelStr = theme.bold(theme.style('fg.primary', model));
   const leftInner = `${stateDot} ${stateLabel}  ${providerStr} ${sep} ${modelStr}`;
-
-  const homeDir = process.env.HOME || '';
-  const shortCwd = homeDir && cwd.startsWith(homeDir) ? '~' + cwd.slice(homeDir.length) : cwd;
-  const branchPart = branch ? ` ${sep} ${theme.style('accent.link', branch)}` : '';
   const rightInner =
     theme.style('fg.secondary', truncate(shortCwd, Math.floor(width * 0.35))) + branchPart;
 
@@ -620,7 +420,6 @@ function findFirstTranscriptBlockStartingAtOrAfter(entryBlocks, targetLine) {
 
 function renderTranscript(buf, layout, theme, tuiState) {
   const { top, left, width, height } = layout.transcript;
-  const { glyphs } = theme;
 
   const expandedPayloadIdsKey = tuiState.toolJsonPayloadsExpanded
     ? 'all'
@@ -632,6 +431,7 @@ function renderTranscript(buf, layout, theme, tuiState) {
     tuiState.payloadInspectorOpen ? 1 : 0,
     tuiState.payloadCursorId || '',
     expandedPayloadIdsKey,
+    tuiState.layout,
   ].join('::');
 
   let cached = tuiState.transcriptRenderCache;
@@ -652,105 +452,12 @@ function renderTranscript(buf, layout, theme, tuiState) {
         inspectorOpen: tuiState.payloadInspectorOpen,
       };
 
-      if (entry.role === 'user') {
-        const prefix = makeBadge(theme, 'YOU', { fg: 'bg.base', bg: 'accent.secondary' }) + ' ';
-        const nextPrefix = ' '.repeat(Math.max(2, visibleWidth(prefix)));
-        const wrapped = wordWrap(entry.text, Math.max(1, width - visibleWidth(prefix)));
-        for (let i = 0; i < wrapped.length; i++) {
-          entryLines.push(
-            i === 0
-              ? prefix + theme.style('fg.primary', wrapped[i])
-              : nextPrefix + theme.style('fg.primary', wrapped[i]),
-          );
-        }
-      } else if (entry.role === 'assistant') {
-        renderAssistantEntryLines(entryLines, entry.text, width, theme, {
-          expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
-          entryKey: `${entry.timestamp ?? 0}:${entryIndex}`,
-          payloadUI,
-        });
-      } else if (entry.role === 'tool_call') {
-        const pending = entry.error !== true && !entry.duration;
-        const status = pending
-          ? theme.style('accent.secondary', '…')
-          : entry.error
-            ? theme.style('state.error', glyphs.cross_mark || 'ERR')
-            : theme.style('state.success', glyphs.check || 'OK');
-        const badge = makeBadge(theme, 'TOOL', { fg: 'bg.base', bg: 'border.hover', bold: false });
-        const dur = entry.duration ? theme.style('fg.dim', ` ${entry.duration}ms`) : '';
-        const prefix = `${badge} `;
-        // Show tool args preview (path, command, file)
-        const argsHint = summarizeToolArgs(entry.args, Math.max(10, width - 40));
-        const argsStr = argsHint ? theme.style('fg.dim', ` ${argsHint}`) : '';
-        const base = `${status} ${entry.text}${argsStr}${dur}`;
-        pushWrappedLines(entryLines, base, width, {
-          firstPrefix: prefix,
-          nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-          styleFn: (s) => theme.style('fg.secondary', s),
-        });
-        // Show result preview (first line of output, readable)
-        if (entry.resultPreview && !pending) {
-          const nextPad = ' '.repeat(Math.max(2, visibleWidth(prefix)));
-          const previewLine = entry.resultPreview.split('\n')[0].trim();
-          if (previewLine) {
-            const previewStr = truncate(
-              previewLine,
-              Math.max(10, width - visibleWidth(nextPad) - 4),
-            );
-            pushWrappedLines(entryLines, previewStr, width, {
-              firstPrefix: nextPad,
-              nextPrefix: nextPad,
-              styleFn: (s) => theme.style('fg.dim', s),
-            });
-          }
-        }
-      } else if (entry.role === 'status') {
-        const badge = makeBadge(theme, 'INFO', {
-          fg: 'bg.base',
-          bg: 'border.default',
-          bold: false,
-        });
-        const prefix = `${badge} `;
-        pushWrappedLines(entryLines, entry.text, width, {
-          firstPrefix: prefix,
-          nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-          styleFn: (s) => theme.style('fg.dim', s),
-        });
-      } else if (entry.role === 'error') {
-        const badge = makeBadge(theme, 'ERR', { fg: 'fg.primary', bg: 'state.error' });
-        const prefix = `${badge} `;
-        pushWrappedLines(entryLines, entry.text, width, {
-          firstPrefix: prefix,
-          nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-          styleFn: (s) => theme.style('state.error', s),
-        });
-      } else if (entry.role === 'warning') {
-        const badge = makeBadge(theme, 'WARN', { fg: 'bg.base', bg: 'state.warn' });
-        const prefix = `${badge} `;
-        pushWrappedLines(entryLines, entry.text, width, {
-          firstPrefix: prefix,
-          nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-          styleFn: (s) => theme.style('state.warn', s),
-        });
-      } else if (entry.role === 'reasoning') {
-        entryLines.push(
-          `${makeBadge(theme, 'THINK', { fg: 'bg.base', bg: 'border.default', bold: false })} ` +
-            theme.style('fg.dim', 'thinking'),
-        );
-      } else if (entry.role === 'verdict') {
-        const isApproved = entry.verdict === 'APPROVED';
-        const icon = isApproved ? glyphs.check : glyphs.cross_mark;
-        const label = isApproved
-          ? makeBadge(theme, `${icon} APPROVED`, { fg: 'fg.primary', bg: 'state.success' })
-          : makeBadge(theme, `${icon} DENIED`, { fg: 'fg.primary', bg: 'state.error' });
-        const kindStr = entry.kind ? theme.style('fg.dim', ` ${entry.kind}`) : '';
-        const summaryStr = entry.summary
-          ? theme.style('fg.muted', '  ' + truncate(entry.summary, width - 20))
-          : '';
-        entryLines.push(`  ${label}${kindStr}${summaryStr}`);
-      } else if (entry.role === 'divider') {
-        entryLines.push(theme.style('fg.dim', glyphs.horizontal.repeat(Math.min(width, 40))));
-      }
+      renderEntryLines(entryLines, entry, width, theme, {
+        expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
+        entryKey: `${entry.timestamp ?? 0}:${entryIndex}`,
+        payloadUI,
+        layout: tuiState.layout,
+      });
 
       const blockStartLine = totalLines;
       const block = {
@@ -770,12 +477,22 @@ function renderTranscript(buf, layout, theme, tuiState) {
 
   const streamingLines = [];
 
-  // Add streaming buffer if assistant is currently streaming
+  // Add streaming buffer if assistant is currently streaming. In quiet
+  // layout, swap the AI badge for the same bullet the assistant framer
+  // uses so the in-progress response matches finished entries.
   if (tuiState.streamBuf) {
+    const quietPrefix =
+      tuiState.layout === 'quiet'
+        ? {
+            firstPrefix: `${theme.style('fg.muted', theme.unicode ? '•' : '*')} `,
+            nextPrefix: '  ',
+          }
+        : null;
     renderAssistantEntryLines(streamingLines, tuiState.streamBuf, width, theme, {
       streaming: true,
       expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
       payloadUI: null,
+      ...(quietPrefix ? { prefixOverride: quietPrefix } : {}),
     });
   }
 
@@ -908,26 +625,37 @@ function renderToolPane(buf, layout, theme, tuiState) {
 function renderComposer(buf, layout, theme, composer, tuiState, tabState) {
   const { top, left, width, height } = layout.composer;
   const { glyphs } = theme;
+  const quiet = tuiState.layout === 'quiet';
 
-  // Top border with label
-  const stateLabel =
-    tuiState.runState === 'running'
-      ? theme.style('state.warn', ' streaming... ')
-      : tuiState.runState === 'awaiting_approval'
-        ? theme.style('state.error', ' approval required ')
-        : tuiState.runState === 'awaiting_user_question'
-          ? theme.style('accent.primary', ' ? question ')
-          : theme.style('fg.muted', ' message ');
-  const tabHint = tabState ? tabState.hint : null;
-  const label = tabHint ? stateLabel + theme.style('accent.primary', ` ${tabHint} `) : stateLabel;
+  if (quiet) {
+    // Quiet: dim divider with no embedded label. Run-state already shows
+    // in the header row and the bottom status bar; the composer doesn't
+    // need to repeat it. Tab-hint still shows on the candidates row below.
+    const divider = theme.style('fg.dim', glyphs.horizontal.repeat(width));
+    buf.writeLine(top, left, divider);
+  } else {
+    // Standard: top border with label embedded.
+    const stateLabel =
+      tuiState.runState === 'running'
+        ? theme.style('state.warn', ' streaming... ')
+        : tuiState.runState === 'awaiting_approval'
+          ? theme.style('state.error', ' approval required ')
+          : tuiState.runState === 'awaiting_user_question'
+            ? theme.style('accent.primary', ' ? question ')
+            : theme.style('fg.muted', ' message ');
+    const tabHint = tabState ? tabState.hint : null;
+    const label = tabHint ? stateLabel + theme.style('accent.primary', ` ${tabHint} `) : stateLabel;
 
-  const borderChar = glyphs.horizontal;
-  const labelWidth = visibleWidth(label);
-  const borderLeft = borderChar.repeat(2);
-  const borderRight = borderChar.repeat(Math.max(0, width - 2 - labelWidth - 2));
-  const topBorder =
-    theme.style('border.default', borderLeft) + label + theme.style('border.default', borderRight);
-  buf.writeLine(top, left, topBorder);
+    const borderChar = glyphs.horizontal;
+    const labelWidth = visibleWidth(label);
+    const borderLeft = borderChar.repeat(2);
+    const borderRight = borderChar.repeat(Math.max(0, width - 2 - labelWidth - 2));
+    const topBorder =
+      theme.style('border.default', borderLeft) +
+      label +
+      theme.style('border.default', borderRight);
+    buf.writeLine(top, left, topBorder);
+  }
 
   // Candidates bar (when tab completion is active — preview or cycling)
   let candidateRowUsed = false;
@@ -1529,8 +1257,23 @@ export async function runTUI(options = {}) {
   // `let` (not `const`) so /theme <name> can hot-swap the theme without
   // restarting the TUI. Renderers receive `theme` as a parameter on every
   // frame, so reassigning this closure variable propagates to the next draw.
-  let theme = createTheme();
+  //
+  // Quiet layout pairs to the `mono` palette by default — only when the
+  // user hasn't expressed a theme preference (no PUSH_THEME env, no
+  // config.theme). An explicit theme always wins. Same precedence rule
+  // /theme <name> + /animate use.
+  // Capture the layout env *before* any in-session /layout set/unpin
+  // mutates it. Without this, a TUI launched with `PUSH_TUI_LAYOUT=quiet`
+  // and then toggled via /layout would lose the env preference forever:
+  // /layout unpin would delete env and fall through to the default rather
+  // than honour the value the user originally launched with.
+  const originalEnvLayout = (process.env.PUSH_TUI_LAYOUT || '').trim() || null;
+  const initialLayout = detectLayoutMode();
+  const explicitTheme = (process.env.PUSH_THEME || '').trim();
+  const pairedThemeName = initialLayout === 'quiet' && !explicitTheme ? 'mono' : undefined;
+  let theme = createTheme(pairedThemeName ? { name: pairedThemeName } : {});
   const tuiState = createTUIState();
+  tuiState.layout = initialLayout;
   const composer = createComposer();
   const keybinds = createKeybindMap();
   const screenBuf = createScreenBuffer();
@@ -1945,12 +1688,14 @@ export async function runTUI(options = {}) {
     }
 
     const composerLines = composer.getLines().length;
-    const layoutKey = `${rows}x${cols}:${tuiState.toolPaneOpen ? 1 : 0}:${composerLines}`;
+    const headerHeight = tuiState.layout === 'quiet' ? 1 : 4;
+    const layoutKey = `${rows}x${cols}:${tuiState.toolPaneOpen ? 1 : 0}:${composerLines}:${tuiState.layout}`;
     let layout = layoutCache?.key === layoutKey ? layoutCache.layout : null;
     if (!layout) {
       layout = computeLayout(rows, cols, {
         toolPaneOpen: tuiState.toolPaneOpen,
         composerLines,
+        headerHeight,
       });
       layoutCache = { key: layoutKey, layout };
     }
@@ -1986,12 +1731,18 @@ export async function runTUI(options = {}) {
         animation: { effect: animation.effect, tick: animation.tick },
         spinner: { name: spinner.name, tick: animation.tick },
         activity: tuiState.activity,
+        layoutMode: tuiState.layout,
       });
-      screenBuf.writeLine(
-        layout.header.top + layout.header.height,
-        layout.innerLeft,
-        drawDivider(layout.innerWidth, theme.glyphs, theme),
-      );
+      // Standard layout has its own boxed bottom border; quiet mode skips
+      // the divider too — the gap row above the transcript is enough
+      // visual separation, and the line is what makes the screen feel busy.
+      if (tuiState.layout !== 'quiet') {
+        screenBuf.writeLine(
+          layout.header.top + layout.header.height,
+          layout.innerLeft,
+          drawDivider(layout.innerWidth, theme.glyphs, theme),
+        );
+      }
     };
 
     const renderFooterRegion = () => {
@@ -2015,6 +1766,7 @@ export async function runTUI(options = {}) {
         contextBudget: budget,
         fileAwareness: tuiState.fileAwareness,
       });
+      tuiState.session = state.sessionId;
       renderKeybindHints(screenBuf, layout, theme, tuiState);
     };
 
@@ -3806,6 +3558,101 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  async function handleLayoutCommand(arg) {
+    const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
+    const sub = (parts[0] || '').toLowerCase();
+    const layouts = ['standard', 'quiet'];
+
+    if (!sub || sub === 'show') {
+      const pinned = isLayoutMode(config.layout) ? ' (pinned)' : '';
+      addTranscriptEntry(tuiState, 'status', `layout: ${tuiState.layout}${pinned}`);
+      scheduler.flush();
+      return;
+    }
+
+    if (sub === 'list') {
+      const lines = layouts.map((name) => {
+        const marker = name === tuiState.layout ? '*' : ' ';
+        const desc =
+          name === 'quiet'
+            ? 'reserved bullet-led shape; no badges, no boxed header'
+            : 'default badge-led shape with boxed header';
+        return `  ${marker} ${name.padEnd(10)}  ${desc}`;
+      });
+      addTranscriptEntry(tuiState, 'status', ['Layouts:', ...lines].join('\n'));
+      scheduler.flush();
+      return;
+    }
+
+    const sub0 = ((sub === 'set' ? parts[1] : sub) || '').toLowerCase().trim();
+    if (sub0 === 'unpin') {
+      delete config.layout;
+      // Restore the env that the TUI was launched with (if any) instead
+      // of nuking it. detectLayoutMode reads env first, so this lets
+      // unpin honour an externally-set PUSH_TUI_LAYOUT — matches what
+      // the help text promises ("revert to env or default").
+      if (originalEnvLayout) {
+        process.env.PUSH_TUI_LAYOUT = originalEnvLayout;
+      } else {
+        delete process.env.PUSH_TUI_LAYOUT;
+      }
+      await saveConfig(config);
+      tuiState.layout = detectLayoutMode();
+      // Layout swap moves pane regions and changes framer tables; invalidate
+      // both layout and transcript caches so the next frame rebuilds clean.
+      let unpinNote = '';
+      const explicitThemeUnpin = (process.env.PUSH_THEME || '').trim();
+      if (!explicitThemeUnpin) {
+        const targetThemeName = tuiState.layout === 'quiet' ? 'mono' : 'default';
+        if (theme.name !== targetThemeName) {
+          theme = createTheme({ tier: theme.tier, unicode: theme.unicode, name: targetThemeName });
+          unpinNote = `, theme → ${targetThemeName}`;
+        }
+      }
+      invalidateTranscriptRenderCache(tuiState);
+      tuiState.dirty.add('all');
+      addTranscriptEntry(tuiState, 'status', `layout: ${tuiState.layout} (unpinned)${unpinNote}`);
+      scheduler.flush();
+      return;
+    }
+
+    if (!isLayoutMode(sub0)) {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Unknown layout: ${sub0 || '(missing)'}. Available: ${layouts.join(', ')}. Use 'unpin' to clear.`,
+      );
+      scheduler.flush();
+      return;
+    }
+
+    tuiState.layout = sub0;
+    config.layout = sub0;
+    process.env.PUSH_TUI_LAYOUT = sub0;
+    await saveConfig(config);
+
+    // Re-pair theme to layout when the user hasn't expressed a theme
+    // preference. Going quiet → switch to mono; going standard → revert
+    // to detected default. We only rebuild the theme runtime; we never
+    // persist this into config.theme, so the user can flip back without
+    // residue. An explicit theme (set via /theme or PUSH_THEME) always
+    // wins — same rule as initial pairing.
+    let pairedNote = '';
+    const explicitTheme2 = (process.env.PUSH_THEME || '').trim();
+    if (!explicitTheme2) {
+      const targetThemeName = sub0 === 'quiet' ? 'mono' : 'default';
+      if (theme.name !== targetThemeName) {
+        theme = createTheme({ tier: theme.tier, unicode: theme.unicode, name: targetThemeName });
+        pairedNote = `, theme → ${targetThemeName}`;
+      }
+    }
+
+    invalidateTranscriptRenderCache(tuiState);
+    tuiState.dirty.add('all');
+    addTranscriptEntry(tuiState, 'status', `layout: ${sub0} (saved)${pairedNote}`);
+    scheduler.flush();
+  }
+
   function handleDebugCommand(arg) {
     const sub = (arg || '').trim();
     if (!sub) {
@@ -3882,6 +3729,10 @@ export async function runTUI(options = {}) {
         await handleSpinnerCommand(arg || null);
         return true;
 
+      case 'layout':
+        await handleLayoutCommand(arg || null);
+        return true;
+
       case 'debug':
         handleDebugCommand(arg || null);
         return true;
@@ -3915,6 +3766,10 @@ export async function runTUI(options = {}) {
             '  /spinner list        List Braille spinners (with frame previews)',
             '  /spinner <name>      Pin a spinner (off|braille|orbit|breathe|pulse|helix)',
             '  /spinner unpin       Unpin: revert to static status dot',
+            '  /layout              Show current TUI layout (standard|quiet)',
+            '  /layout list         List available layouts',
+            '  /layout <name>       Switch layout live and persist (standard|quiet)',
+            '  /layout unpin        Unpin: revert to env or default (standard)',
             '  /debug runtime       Show runtime path/provider/session diagnostics',
             '  /skills              List available skills',
             '  /skills reload       Reload workspace + Claude skills',

@@ -19,6 +19,7 @@ export interface PushConfig {
   theme?: string;
   animation?: string;
   spinner?: string;
+  layout?: string;
   ollama?: ProviderConfig;
   openrouter?: ProviderConfig;
   zen?: ProviderConfig;
@@ -91,6 +92,7 @@ export function applyConfigToEnv(config: PushConfig): void {
   setEnvIfMissing('PUSH_THEME', config.theme);
   setEnvIfMissing('PUSH_ANIMATION', config.animation);
   setEnvIfMissing('PUSH_SPINNER', config.spinner);
+  setEnvIfMissing('PUSH_TUI_LAYOUT', config.layout);
 
   const ollama = ensureObject(config.ollama) as ProviderConfig;
   setEnvIfMissing('PUSH_OLLAMA_URL', ollama.url);

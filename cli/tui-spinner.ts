@@ -257,3 +257,41 @@ export function verbForActivity(activity: SpinnerActivity): string | null {
   }
   return null;
 }
+
+/**
+ * Quiet-layout mood verbs — picked once per session for the running state
+ * when no activity-specific verb is available. Fixed pool, deterministic
+ * by seed, so the verb stays stable across renders within a session
+ * instead of flickering between frames.
+ *
+ * Length cap: ≤8 chars so the verb fits the narrow header at small
+ * terminal widths. Order matters for stability — appending is safe,
+ * reordering changes which session gets which verb.
+ */
+export const MOOD_VERBS: readonly string[] = [
+  'roosting',
+  'brewing',
+  'musing',
+  'mulling',
+  'weaving',
+  'pacing',
+  'noodling',
+];
+
+/**
+ * Pick a mood verb deterministically from `seed`. Same seed → same verb.
+ * Empty/missing seed falls back to the first entry. Used by the quiet
+ * layout to soften the running-state label without per-frame churn.
+ */
+export function moodVerb(seed: string | null | undefined): string {
+  const s = String(seed || '');
+  if (!s) return MOOD_VERBS[0];
+  // Simple FNV-1a-style hash over codepoints. Doesn't need to be
+  // crypto-quality — just stable and well-distributed for short strings.
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h ^ s.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return MOOD_VERBS[h % MOOD_VERBS.length];
+}
