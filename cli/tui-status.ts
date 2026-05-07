@@ -42,6 +42,24 @@ export function formatTokenCount(tokens: number): string {
   return `${Math.round(tokens / 1000)}k`;
 }
 
+/**
+ * Format an elapsed duration as `Ys` for < 60s, otherwise `Xm Ys`.
+ * Negative or NaN inputs are clamped to 0.
+ *
+ * Used by the quiet-layout running indicator to show how long the
+ * current turn has been in progress. We deliberately don't show
+ * sub-second precision — the row updates ~10×/s via the animation
+ * ticker, but seconds-resolution is the right grain for "is the agent
+ * stuck or making progress" reading.
+ */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor((Number.isFinite(ms) ? ms : 0) / 1000));
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}m ${s}s`;
+}
+
 // ── Git status ──────────────────────────────────────────────────────
 
 export interface CompactGitStatus {

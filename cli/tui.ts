@@ -38,7 +38,13 @@ import {
   verbForActivity,
 } from './tui-spinner.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
-import { renderStatusBar, renderKeybindHints, getCompactGitStatus } from './tui-status.js';
+import {
+  formatElapsed,
+  formatTokenCount,
+  getCompactGitStatus,
+  renderKeybindHints,
+  renderStatusBar,
+} from './tui-status.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
 import { filterSessions } from './tui-fuzzy.js';
 import { findLastAssistantText, findLastCodeBlock, formatByteSize } from './tui-copy.js';
@@ -255,6 +261,12 @@ function createTUIState() {
     // Resolved at startup from PUSH_TUI_LAYOUT / config.layout; default
     // 'standard'. The framer dispatch reads this on every render.
     layout: 'standard',
+    // Wall-clock ms when the current turn started (idle → running).
+    // Cleared on running → idle. Preserved across awaiting_* ↔ running
+    // since those are continuations of the same turn (e.g. user
+    // approving a tool). Null when idle. Used by the quiet-layout
+    // running indicator to show elapsed time.
+    turnStartedAt: null,
   };
 }
 
@@ -620,6 +632,49 @@ function renderToolPane(buf, layout, theme, tuiState) {
     const line = r < slice.length ? slice[r] : '';
     buf.writeLine(top + 1 + r, left, padTo(line, width));
   }
+}
+
+/**
+ * Quiet-layout running indicator. Lives in the gap row directly above
+ * the composer (composer.top - 1 — that row is otherwise blank). Format:
+ *
+ *   * roosting… (4m 5s · 17.9k tokens)
+ *
+ * Only renders in quiet layout while running. In every other state we
+ * emit a blank padded line so the screen-buffer diff drops the row;
+ * without that the previous frame's content would linger because the
+ * buffer doesn't auto-clear unwritten rows (see tui-renderer.ts).
+ *
+ * Called every animation tick (10 FPS) while running, so elapsed time
+ * updates roughly once per second of wall clock.
+ */
+function renderActivityIndicator(buf, layout, theme, tuiState, tokens, sessionId) {
+  const top = layout.composer.top - 1;
+  if (top < 1) return; // tiny terminal — gap row collapsed
+
+  const visible =
+    tuiState.layout === 'quiet' &&
+    tuiState.runState === 'running' &&
+    typeof tuiState.turnStartedAt === 'number';
+
+  if (!visible) {
+    // Clear the row so a previous frame's indicator doesn't linger.
+    buf.writeLine(top, layout.innerLeft, ' '.repeat(layout.innerWidth));
+    return;
+  }
+
+  const verb = verbForActivity(tuiState.activity) ?? moodVerb(sessionId);
+  const elapsed = formatElapsed(Date.now() - tuiState.turnStartedAt);
+  const tokenStr = typeof tokens === 'number' ? formatTokenCount(tokens) : null;
+
+  const sep = theme.style('fg.dim', '·');
+  const star = theme.style('fg.dim', '*');
+  const verbStyled = theme.style('fg.muted', `${verb}…`);
+  const metaInner = tokenStr ? `${elapsed} ${sep} ${tokenStr} tokens` : elapsed;
+  const meta = theme.style('fg.dim', `(${metaInner})`);
+  const row = `${star} ${verbStyled} ${meta}`;
+
+  buf.writeLine(top, layout.innerLeft, padTo(row, layout.innerWidth));
 }
 
 function renderComposer(buf, layout, theme, composer, tuiState, tabState) {
@@ -1573,10 +1628,16 @@ export async function runTUI(options = {}) {
   // runState === 'running' on Unicode-capable terminals). The interval
   // itself stays alive while any consumer is *eligible*, so the first
   // frame of a new run paints immediately.
+  // The quiet-layout activity row needs the ticker to fire while running
+  // so its elapsed-time display advances. Eligibility = active consumer;
+  // visibility = "would the next frame look different from this one".
+  const activityRowVisible = () => tuiState.layout === 'quiet' && tuiState.runState === 'running';
   const anyConsumerVisible = () =>
     animation.effect !== 'off' ||
-    (spinner.name !== 'off' && tuiState.runState === 'running' && theme.unicode);
-  const anyConsumerEligible = () => animation.effect !== 'off' || spinner.name !== 'off';
+    (spinner.name !== 'off' && tuiState.runState === 'running' && theme.unicode) ||
+    activityRowVisible();
+  const anyConsumerEligible = () =>
+    animation.effect !== 'off' || spinner.name !== 'off' || activityRowVisible();
   const startAnimationTicker = () => {
     if (animationInterval) return;
     animationInterval = setInterval(() => {
@@ -1600,6 +1661,26 @@ export async function runTUI(options = {}) {
     else stopAnimationTicker();
   };
   refreshTicker();
+
+  // Single point that mutates runState. Manages the turn-start timestamp
+  // (idle → running starts the clock; running → idle clears it; awaiting_*
+  // ↔ running preserves it because a tool-approval round-trip is part of
+  // the same turn) and wakes the animation ticker so the activity row
+  // can update its elapsed-time display while running.
+  const setRunState = (next) => {
+    const prev = tuiState.runState;
+    if (next === 'running' && prev === 'idle') {
+      tuiState.turnStartedAt = Date.now();
+    } else if (next === 'idle') {
+      tuiState.turnStartedAt = null;
+    }
+    tuiState.runState = next;
+    // Mark footer dirty so the activity-indicator row clears or appears
+    // promptly on a transition, even if the triggering event handler
+    // didn't queue a footer redraw.
+    tuiState.dirty.add('footer');
+    refreshTicker();
+  };
 
   // Git status will be refreshed periodically and after certain events
 
@@ -1768,6 +1849,7 @@ export async function runTUI(options = {}) {
       });
       tuiState.session = state.sessionId;
       renderKeybindHints(screenBuf, layout, theme, tuiState);
+      renderActivityIndicator(screenBuf, layout, theme, tuiState, tokens, state.sessionId);
     };
 
     if (mustFullRedraw) {
@@ -2068,7 +2150,7 @@ export async function runTUI(options = {}) {
         // Daemon mode: show approval modal and send decision back
         if (daemonClient?.connected && event.payload?.approvalId) {
           const approvalId = event.payload.approvalId;
-          tuiState.runState = 'awaiting_approval';
+          setRunState('awaiting_approval');
           openApprovalPane({
             kind: event.payload.kind || 'action',
             summary: event.payload.summary || event.payload.title,
@@ -2097,7 +2179,7 @@ export async function runTUI(options = {}) {
       case 'approval_received':
         // Daemon mode: approval was processed, resume display
         if (tuiState.runState === 'awaiting_approval') {
-          tuiState.runState = 'running';
+          setRunState('running');
           closeApprovalPane();
           approvalResolve = null;
           tuiState.dirty.add('all');
@@ -2106,7 +2188,7 @@ export async function runTUI(options = {}) {
         break;
 
       case 'run_complete': {
-        tuiState.runState = 'idle';
+        setRunState('idle');
         tuiState.activity = null;
         tuiState.dirty.add('header');
         // assistant_done normally flushes the stream; this is a fallback for
@@ -2195,7 +2277,7 @@ export async function runTUI(options = {}) {
       new Promise((resolve) => {
         questionInputBuf = '';
         questionResolve = resolve;
-        tuiState.runState = 'awaiting_user_question';
+        setRunState('awaiting_user_question');
         tuiState.userQuestion = { question, choices: choices ?? null };
         tuiState.dirty.add('all');
         scheduler.flush();
@@ -2209,7 +2291,7 @@ export async function runTUI(options = {}) {
       questionResolve = null;
       questionInputBuf = '';
       tuiState.userQuestion = null;
-      tuiState.runState = 'running';
+      setRunState('running');
       tuiState.dirty.add('all');
       scheduler.schedule();
     }
@@ -2221,7 +2303,7 @@ export async function runTUI(options = {}) {
       questionResolve = null;
       questionInputBuf = '';
       tuiState.userQuestion = null;
-      tuiState.runState = 'running';
+      setRunState('running');
       tuiState.dirty.add('all');
       scheduler.schedule();
     }
@@ -2272,7 +2354,7 @@ export async function runTUI(options = {}) {
       }
 
       return new Promise((resolve) => {
-        tuiState.runState = 'awaiting_approval';
+        setRunState('awaiting_approval');
         openApprovalPane({ kind: tool, summary: detail, patternIndex, suggestedPrefix });
         approvalResolve = resolve;
         tuiState.dirty.add('all');
@@ -2337,7 +2419,7 @@ export async function runTUI(options = {}) {
 
   /** Run the assistant loop on a user message (or skill-expanded prompt). */
   async function runPrompt(text, options = {}) {
-    tuiState.runState = 'running';
+    setRunState('running');
     tuiState.reasoningBuf = '';
     tuiState.reasoningStreaming = false;
     // Reset visible-emission counter so the run_complete safety net can
@@ -2410,7 +2492,7 @@ export async function runTUI(options = {}) {
             addTranscriptEntry(tuiState, 'error', `Daemon error: ${err.message}`);
           }
         } finally {
-          tuiState.runState = 'idle';
+          setRunState('idle');
           tuiState.activity = null;
           runAbort = null;
           tuiState.dirty.add('all');
@@ -2453,7 +2535,7 @@ export async function runTUI(options = {}) {
       }
       await saveSessionState(state);
     } finally {
-      tuiState.runState = 'idle';
+      setRunState('idle');
       tuiState.activity = null;
       runAbort = null;
       tuiState.dirty.add('all');
@@ -2535,7 +2617,7 @@ export async function runTUI(options = {}) {
   }
 
   function resetTUIViewForSessionChange() {
-    tuiState.runState = 'idle';
+    setRunState('idle');
     tuiState.activity = null;
     tuiState.streamBuf = '';
     closeApprovalPane();
@@ -4031,7 +4113,7 @@ export async function runTUI(options = {}) {
       approvalResolve(true);
       approvalResolve = null;
       closeApprovalPane();
-      tuiState.runState = 'running';
+      setRunState('running');
       tuiState.dirty.add('all');
       scheduler.schedule();
     }
@@ -4056,7 +4138,7 @@ export async function runTUI(options = {}) {
       approvalResolve(true);
       approvalResolve = null;
       closeApprovalPane();
-      tuiState.runState = 'running';
+      setRunState('running');
       tuiState.dirty.add('all');
       scheduler.schedule();
     }
@@ -4105,7 +4187,7 @@ export async function runTUI(options = {}) {
     approvalResolve(true);
     approvalResolve = null;
     closeApprovalPane();
-    tuiState.runState = 'running';
+    setRunState('running');
     tuiState.dirty.add('all');
     scheduler.schedule();
   }
@@ -4124,7 +4206,7 @@ export async function runTUI(options = {}) {
       approvalResolve(false);
       approvalResolve = null;
       closeApprovalPane();
-      tuiState.runState = 'running';
+      setRunState('running');
       tuiState.dirty.add('all');
       scheduler.schedule();
     }
