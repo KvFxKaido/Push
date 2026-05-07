@@ -59,6 +59,12 @@ import { summarizeSnapshotIndex } from './src/worker/snapshot-index';
 import { handleAdminSnapshots } from './src/worker/admin-routes';
 import { handleJobsRoute, matchJobsRoute } from './src/worker/worker-coder-job';
 import { handleStats } from './src/worker/worker-stats';
+import {
+  handleArtifactsCreate,
+  handleArtifactsDelete,
+  handleArtifactsGet,
+  handleArtifactsList,
+} from './src/worker/worker-artifacts';
 
 // Re-export the Sandbox Durable Object class so wrangler can bind to it.
 // The Cloudflare Sandbox SDK ships the DO implementation; we only need to
@@ -307,6 +313,12 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/github/app-oauth', method: 'POST', handler: handleGitHubAppOAuth },
   { path: '/api/github/app-logout', method: 'POST', handler: handleGitHubAppLogout },
   { path: '/api/github/tools', method: 'POST', handler: handleGitHubTools },
+  // Artifacts — all POST so scope + args ride in the JSON body. See
+  // app/src/worker/worker-artifacts.ts for the request/response shape.
+  { path: '/api/artifacts/create', method: 'POST', handler: handleArtifactsCreate },
+  { path: '/api/artifacts/list', method: 'POST', handler: handleArtifactsList },
+  { path: '/api/artifacts/get', method: 'POST', handler: handleArtifactsGet },
+  { path: '/api/artifacts/delete', method: 'POST', handler: handleArtifactsDelete },
   { path: '/api/ollama/chat', method: 'POST', handler: handleOllamaChat },
   { path: '/api/ollama/models', method: 'GET', handler: handleOllamaModels },
   { path: '/api/openrouter/chat', method: 'POST', handler: handleOpenRouterChat },
