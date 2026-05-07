@@ -1311,6 +1311,13 @@ export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
         // commands `isHighRiskCommand()` flags.
         allowExec: true,
         execMode: 'auto',
+        // Surface the actual role to executor cases that gate by
+        // capability (e.g. `create_artifact`'s defense-in-depth check)
+        // and to author-stamping. Without this, a Coder-emitted
+        // artifact would default to `role: 'orchestrator'` and
+        // misattribute.
+        role: 'coder',
+        runId,
       });
       const resultText = typeof result?.text === 'string' ? result.text : '';
       if (result && result.ok === true) {
@@ -1475,6 +1482,10 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
         // `roleCanUseTool`.
         allowExec: false,
         execMode: 'auto',
+        // Same rationale as the Coder wrapper above: pass the actual
+        // role so capability-gated executor cases (artifact dispatch
+        // etc.) deny correctly rather than defaulting to orchestrator.
+        role: 'explorer',
       });
       const resultText = typeof result?.text === 'string' ? result.text : '';
       return { resultText };
