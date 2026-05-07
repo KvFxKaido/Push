@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   detectSpinnerName,
   isSpinnerName,
+  MOOD_VERBS,
+  moodVerb,
   SPINNER_NAMES,
   SPINNERS,
   spinnerFrame,
@@ -246,6 +248,40 @@ describe('verbForActivity', () => {
       'delegate_auditor',
     ]) {
       assert.ok(VERB_BY_TOOL[k], `missing canonical tool: ${k}`);
+    }
+  });
+});
+
+describe('moodVerb', () => {
+  it('returns the same verb for the same seed (deterministic)', () => {
+    const a = moodVerb('sess_abc123');
+    const b = moodVerb('sess_abc123');
+    assert.equal(a, b);
+  });
+
+  it('distributes different seeds across the pool', () => {
+    // Sample a handful of seeds; we don't promise uniformity, just that
+    // we don't always return the same verb.
+    const seeds = ['sess_a', 'sess_b', 'sess_c', 'sess_d', 'sess_e', 'sess_f'];
+    const verbs = new Set(seeds.map(moodVerb));
+    assert.ok(verbs.size >= 2, `expected variety across seeds, got: ${[...verbs].join(',')}`);
+  });
+
+  it('returns the first pool entry for missing/empty seeds', () => {
+    assert.equal(moodVerb(''), MOOD_VERBS[0]);
+    assert.equal(moodVerb(null), MOOD_VERBS[0]);
+    assert.equal(moodVerb(undefined), MOOD_VERBS[0]);
+  });
+
+  it('returned verb is always a member of the pool', () => {
+    for (const seed of ['x', 'y', 'long-session-id-12345']) {
+      assert.ok(MOOD_VERBS.includes(moodVerb(seed)), `unexpected verb for ${seed}`);
+    }
+  });
+
+  it('pool entries fit the narrow header width (≤8 chars)', () => {
+    for (const v of MOOD_VERBS) {
+      assert.ok(v.length > 0 && v.length <= 8, `mood verb out of bounds: ${v}`);
     }
   });
 });

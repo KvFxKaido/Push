@@ -5,6 +5,7 @@
 
 import { visibleWidth, truncate, padTo } from './tui-renderer.js';
 import { getGitInfo } from './workspace-context.js';
+import { moodVerb } from './tui-spinner.js';
 import type { Theme, TokenName } from './tui-theme.js';
 
 // ── Token estimation ────────────────────────────────────────────────
@@ -309,6 +310,11 @@ interface TuiState {
   runState: RunState;
   payloadInspectorOpen: boolean;
   toolJsonPayloadsExpanded: boolean;
+  layout?: 'standard' | 'quiet';
+  // Session id used by the quiet layout to seed the mood-verb pick when
+  // running without an activity-specific verb. Optional: standard layout
+  // doesn't need it.
+  session?: string;
 }
 
 /**
@@ -324,46 +330,54 @@ export function renderKeybindHints(
   const { top, left, width } = layout.footer;
   const line = top + 1;
 
+  // Quiet layout uses the muted token for the keys themselves so the
+  // whole hint row sits closer to the divider, matching Claude Code's
+  // bottom strip. Standard keeps the link-coloured keys it shipped with.
+  const keyToken = tuiState.layout === 'quiet' ? 'fg.muted' : 'accent.link';
+
   // Left: keybind hints
   let leftHints: string;
   if (tuiState.runState === 'awaiting_approval') {
     leftHints = [
-      theme.style('accent.link', 'Ctrl+Y / y') + theme.style('fg.dim', ' approve'),
-      theme.style('accent.link', 'a') + theme.style('fg.dim', ' always'),
-      theme.style('accent.link', 'Ctrl+N / n') + theme.style('fg.dim', ' deny'),
-      theme.style('accent.link', 'Esc') + theme.style('fg.dim', ' dismiss'),
+      theme.style(keyToken, 'Ctrl+Y / y') + theme.style('fg.dim', ' approve'),
+      theme.style(keyToken, 'a') + theme.style('fg.dim', ' always'),
+      theme.style(keyToken, 'Ctrl+N / n') + theme.style('fg.dim', ' deny'),
+      theme.style(keyToken, 'Esc') + theme.style('fg.dim', ' dismiss'),
     ].join('  ');
   } else if (tuiState.runState === 'awaiting_user_question') {
     leftHints = [
-      theme.style('accent.link', 'Enter') + theme.style('fg.dim', ' submit answer'),
-      theme.style('accent.link', 'Esc') + theme.style('fg.dim', ' skip'),
+      theme.style(keyToken, 'Enter') + theme.style('fg.dim', ' submit answer'),
+      theme.style(keyToken, 'Esc') + theme.style('fg.dim', ' skip'),
     ].join('  ');
   } else if (tuiState.payloadInspectorOpen) {
     leftHints = [
-      theme.style('accent.link', 'j/k,↑↓') + theme.style('fg.dim', ' move'),
-      theme.style('accent.link', 'Enter') + theme.style('fg.dim', ' toggle'),
-      theme.style('accent.link', 'a') +
+      theme.style(keyToken, 'j/k,↑↓') + theme.style('fg.dim', ' move'),
+      theme.style(keyToken, 'Enter') + theme.style('fg.dim', ' toggle'),
+      theme.style(keyToken, 'a') +
         theme.style(
           'fg.dim',
           tuiState.toolJsonPayloadsExpanded ? ' all:expanded' : ' all:collapsed',
         ),
-      theme.style('accent.link', 'Esc / Ctrl+O') + theme.style('fg.dim', ' close'),
+      theme.style(keyToken, 'Esc / Ctrl+O') + theme.style('fg.dim', ' close'),
     ].join('  ');
   } else {
     leftHints = [
-      theme.style('accent.link', 'Ctrl+T') + theme.style('fg.dim', ' tools'),
-      theme.style('accent.link', 'Ctrl+O') + theme.style('fg.dim', ' payloads'),
-      theme.style('accent.link', 'Ctrl+G') + theme.style('fg.dim', ' reasoning'),
-      theme.style('accent.link', 'Ctrl+C') + theme.style('fg.dim', ' cancel'),
-      theme.style('accent.link', 'Ctrl+R') + theme.style('fg.dim', ' sessions'),
-      theme.style('accent.link', 'Ctrl+P') + theme.style('fg.dim', ' provider'),
+      theme.style(keyToken, 'Ctrl+T') + theme.style('fg.dim', ' tools'),
+      theme.style(keyToken, 'Ctrl+O') + theme.style('fg.dim', ' payloads'),
+      theme.style(keyToken, 'Ctrl+G') + theme.style('fg.dim', ' reasoning'),
+      theme.style(keyToken, 'Ctrl+C') + theme.style('fg.dim', ' cancel'),
+      theme.style(keyToken, 'Ctrl+R') + theme.style('fg.dim', ' sessions'),
+      theme.style(keyToken, 'Ctrl+P') + theme.style('fg.dim', ' provider'),
     ].join('  ');
   }
 
-  // Right: state indicator
+  // Right: state indicator. Quiet layout swaps the mechanical 'running'
+  // for the same mood verb the header picks, so both ends of the screen
+  // agree.
+  const runningLabel = tuiState.layout === 'quiet' ? moodVerb(tuiState.session) : 'running';
   const stateLabel =
     tuiState.runState === 'running'
-      ? theme.style('state.warn', 'running')
+      ? theme.style('state.warn', runningLabel)
       : tuiState.runState === 'awaiting_approval'
         ? theme.style('state.error', 'awaiting approval')
         : tuiState.runState === 'awaiting_user_question'
