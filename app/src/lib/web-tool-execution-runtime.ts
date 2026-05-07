@@ -21,9 +21,11 @@ import type { ApprovalGateRegistry } from './approval-gates';
 import { executeToolCall } from './github-tools';
 import { executeSandboxToolCall } from './sandbox-tools';
 import { executeWebSearch } from './web-search-tools';
+import { executeArtifactToolCall } from './artifact-tools';
 import { getActiveProvider, type ActiveProvider } from './orchestrator';
 import { type AnyToolCall } from './tool-dispatch';
 import { execInSandbox } from './sandbox-client';
+import type { ArtifactAuthor, ArtifactScope } from '@push/lib/artifacts/types';
 
 // ---------------------------------------------------------------------------
 // Pure helpers — private to the Web adapter.
@@ -42,6 +44,7 @@ export function getHookToolArgs(toolCall: AnyToolCall): Record<string, unknown> 
     case 'delegate':
     case 'web-search':
     case 'ask-user':
+    case 'artifacts':
       return { ...toolCall.call.args };
     case 'scratchpad':
       return toolCall.call.content ? { content: toolCall.call.content } : {};
@@ -65,6 +68,7 @@ export function applyHookToolArgs(
     case 'delegate':
     case 'web-search':
     case 'ask-user':
+    case 'artifacts':
       Object.assign(toolCall.call.args, modifiedArgs);
       return;
     case 'scratchpad':
@@ -311,6 +315,58 @@ export class WebToolExecutionRuntime
             card: { type: 'ask-user', data: toolCall.call.args },
           };
           break;
+
+        case 'artifacts': {
+          if (!context.allowedRepo) {
+            const err: StructuredToolError = {
+              type: 'INVALID_ARG',
+              retryable: false,
+              message: 'Artifact creation requires an active repo.',
+              detail: `NO_ACTIVE_REPO — Attempted tool: ${toolCall.call.tool}`,
+            };
+            result = {
+              text: `[Tool Error] ${err.message}`,
+              structuredError: err,
+            };
+            break;
+          }
+          // Web artifacts must be chat-scoped. The CLI files under
+          // repo+branch by design (no chatId), but on the web the wider
+          // scope causes cross-chat list pollution, so the runtime
+          // refuses to persist a web artifact without one. Surface
+          // misconfigured callers immediately as a non-retryable
+          // INVALID_ARG rather than silently filing branch-scoped.
+          if (!context.chatId) {
+            const err: StructuredToolError = {
+              type: 'INVALID_ARG',
+              retryable: false,
+              message: 'Artifact creation on the web surface requires a chat id.',
+              detail: `MISSING_CHAT_ID — Attempted tool: ${toolCall.call.tool}`,
+            };
+            result = {
+              text: `[Tool Error] ${err.message}`,
+              structuredError: err,
+            };
+            break;
+          }
+          // Branch is best-effort: fall back to null when no sandbox is
+          // attached. The Worker accepts `branch: null` (CLI sessions
+          // outside a git repo do the same), so an artifact filed before
+          // a sandbox warms up still persists, just under a wider scope.
+          const branch = context.sandboxId ? await this.getSandboxBranch(context.sandboxId) : null;
+          const scope: ArtifactScope = {
+            repoFullName: context.allowedRepo,
+            branch,
+            chatId: context.chatId,
+          };
+          const author: ArtifactAuthor = {
+            surface: 'web',
+            role: context.role ?? 'orchestrator',
+            createdAt: Date.now(),
+          };
+          result = await executeArtifactToolCall(toolCall.call.args, scope, author);
+          break;
+        }
 
         default:
           result = { text: '[Tool Error] Unknown tool source.' };

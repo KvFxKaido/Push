@@ -158,6 +158,7 @@ describe('executeTool -- correlation span attributes', () => {
   it('emits all canonical push.* attributes when ctx.correlation is supplied', async () => {
     const ctx: ToolExecRunContext = {
       repoFullName: 'owner/repo',
+      chatId: 'c-test',
       sandboxId: 'sb-1',
       isMainProtected: false,
       defaultBranch: 'main',
@@ -190,6 +191,7 @@ describe('executeTool -- correlation span attributes', () => {
   it('emits no correlation attributes when ctx.correlation is undefined', async () => {
     const ctx: ToolExecRunContext = {
       repoFullName: 'owner/repo',
+      chatId: null,
       sandboxId: 'sb-1',
       isMainProtected: false,
       defaultBranch: 'main',
@@ -213,6 +215,7 @@ describe('executeTool -- correlation span attributes', () => {
   it('only emits the subset of correlation fields that are set', async () => {
     const ctx: ToolExecRunContext = {
       repoFullName: null,
+      chatId: 'c-only',
       sandboxId: null,
       isMainProtected: false,
       defaultBranch: undefined,

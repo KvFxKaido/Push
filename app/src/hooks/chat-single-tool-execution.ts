@@ -186,6 +186,7 @@ export async function executeSingleToolCall(
   } else {
     const singleCtx: ToolExecRunContext = {
       repoFullName: repoRef.current,
+      chatId,
       sandboxId: sandboxIdRef.current,
       isMainProtected: isMainProtectedRef.current,
       defaultBranch: branchInfoRef.current?.defaultBranch,

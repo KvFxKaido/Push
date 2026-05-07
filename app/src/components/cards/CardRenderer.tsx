@@ -139,6 +139,12 @@ const JobCard = lazyWithRecovery(
     (module) => module.JobCard,
   ),
 );
+const ArtifactCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('@/components/artifacts/ArtifactCard'),
+    (module) => module.ArtifactCard,
+  ),
+);
 
 interface CardRendererProps {
   card: ChatCard;
@@ -221,6 +227,7 @@ const DATA_ONLY_CARDS: Record<string, ComponentType<{ data: any }>> = {
   'delegation-result': DelegationResultCard,
   'coder-progress': CoderProgressCard,
   'coder-job': JobCard,
+  artifact: ArtifactCard,
 };
 
 const ACTION_CARDS: Record<

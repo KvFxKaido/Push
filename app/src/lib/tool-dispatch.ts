@@ -23,6 +23,7 @@ import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-
 import { detectTodoToolCall, type TodoToolCall } from './todo-tools';
 import { detectWebSearchToolCall, type WebSearchToolCall } from './web-search-tools';
 import { detectAskUserToolCall, type AskUserToolCall } from './ask-user-tools';
+import { detectArtifactToolCall, type ArtifactToolCall } from './artifact-tools';
 import { type ActiveProvider } from './orchestrator';
 import { ALL_CAPABILITIES, type Capability } from './capabilities';
 import { asRecord, detectToolFromText, extractBareToolJsonObjects } from './utils';
@@ -320,6 +321,7 @@ function getToolCallArgs(toolCall: AnyToolCall): unknown {
     case 'sandbox':
     case 'delegate':
     case 'web-search':
+    case 'artifacts':
       return toolCall.call.args;
     case 'scratchpad':
       return { tool: toolCall.call.tool, content: toolCall.call.content };
@@ -380,7 +382,8 @@ export type AnyToolCall =
   | { source: 'scratchpad'; call: ScratchpadToolCall }
   | { source: 'todo'; call: TodoToolCall }
   | { source: 'web-search'; call: WebSearchToolCall }
-  | { source: 'ask-user'; call: AskUserToolCall };
+  | { source: 'ask-user'; call: AskUserToolCall }
+  | { source: 'artifacts'; call: ArtifactToolCall };
 
 /**
  * Scan assistant output for any tool call (GitHub, Sandbox, Scratchpad, or delegation).
@@ -406,6 +409,10 @@ export function detectAnyToolCall(text: string): AnyToolCall | null {
   // Check ask_user tool
   const askUserCall = detectAskUserToolCall(text);
   if (askUserCall) return { source: 'ask-user', call: askUserCall };
+
+  // Check create_artifact tool (artifact dispatch)
+  const artifactCall = detectArtifactToolCall(text);
+  if (artifactCall) return { source: 'artifacts', call: artifactCall };
 
   // Check sandbox tools (sandbox_ prefix)
   const sandboxCall = detectSandboxToolCall(text);
@@ -477,6 +484,7 @@ export async function executeAnyToolCall(
   approvalGates?: ApprovalGateRegistry,
   capabilityLedger?: import('./capabilities').CapabilityLedger,
   approvalCallback?: (toolName: string, reason: string, recoveryPath: string) => Promise<boolean>,
+  chatId?: string,
 ): Promise<ToolExecutionResult> {
   const runtime = new WebToolExecutionRuntime();
   return runtime.execute(toolCall, {
@@ -490,6 +498,7 @@ export async function executeAnyToolCall(
     approvalGates,
     capabilityLedger,
     approvalCallback,
+    chatId,
   }) as Promise<ToolExecutionResult>;
 }
 
