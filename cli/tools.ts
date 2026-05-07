@@ -14,6 +14,20 @@ import {
 import type { ArtifactAuthor, ArtifactScope } from '../lib/artifacts/types.ts';
 import { CliFlatJsonArtifactStore } from './artifacts-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
+import { roleCanUseTool } from '../lib/capabilities.ts';
+import type { AgentRole } from '../lib/runtime-contract.ts';
+
+const KNOWN_AGENT_ROLES = new Set<AgentRole>([
+  'orchestrator',
+  'explorer',
+  'coder',
+  'reviewer',
+  'auditor',
+]);
+
+function isAgentRole(value: unknown): value is AgentRole {
+  return typeof value === 'string' && KNOWN_AGENT_ROLES.has(value as AgentRole);
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -2337,7 +2351,37 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         };
       }
 
+      // Both the canonical name (`create_artifact`) and the public alias
+      // (`artifact`, advertised in lib/tool-registry.ts → exampleJson)
+      // dispatch here. The CLI executor doesn't run callers through
+      // resolveToolName so without this fallthrough a model emitting
+      // the advertised public name would hit the "unknown tool" path.
+      case 'artifact':
       case 'create_artifact': {
+        // Defense in depth: today the Coder/Explorer kernel detectors
+        // filter out non-sandbox sources before they reach this
+        // executor, so the role check below is unreachable on the
+        // normal path. The check still belongs here in case a future
+        // entry point bypasses that filter — without it, a Coder-
+        // emitted artifact would be persisted and misattributed as
+        // orchestrator. Pair this with options.role plumbing in
+        // pushd.ts when the Coder grant lands.
+        const role: AgentRole =
+          typeof options.role === 'string' && isAgentRole(options.role)
+            ? options.role
+            : 'orchestrator';
+        if (!roleCanUseTool(role, 'create_artifact')) {
+          return {
+            ok: false,
+            text: `Role "${role}" cannot create artifacts. Required capability: artifacts:write.`,
+            structuredError: {
+              code: 'CAPABILITY_DENIED',
+              message: `Role "${role}" lacks artifacts:write capability.`,
+              retryable: false,
+            },
+          };
+        }
+
         // Validate the model-supplied args. Failure maps to the
         // structuredError envelope shape the CLI uses elsewhere so the
         // model can recover with a fixed payload rather than retrying
@@ -2366,32 +2410,43 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           branch: identity.branch,
         };
 
-        // Role is hardcoded to 'orchestrator' because that's the only
-        // role with `artifacts:write` today; the daemon wrappers
-        // (`makeDaemonCoderToolExec` etc.) gate non-orchestrator roles
-        // on the shared capability table before reaching here. If the
-        // coder grant lands later, options.role plumbing will pick it
-        // up.
         const author: ArtifactAuthor = {
           surface: 'cli',
-          role: 'orchestrator',
+          role,
           runId: typeof options.runId === 'string' ? options.runId : undefined,
           createdAt: Date.now(),
         };
 
-        const record = buildArtifactRecord(validation.args, { scope, author });
-        const store = new CliFlatJsonArtifactStore();
-        await store.put(record);
+        // Wrap construction + persistence so a transient FS error
+        // (disk full, EACCES, race on tempdir cleanup) becomes a
+        // retryable structured error instead of an uncaught throw the
+        // engine has no envelope for.
+        try {
+          const record = buildArtifactRecord(validation.args, { scope, author });
+          const store = new CliFlatJsonArtifactStore();
+          await store.put(record);
 
-        return {
-          ok: true,
-          text: summarizeArtifact(record),
-          meta: {
-            artifactId: record.id,
-            kind: record.kind,
-            scope,
-          },
-        };
+          return {
+            ok: true,
+            text: summarizeArtifact(record),
+            meta: {
+              artifactId: record.id,
+              kind: record.kind,
+              scope,
+            },
+          };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            ok: false,
+            text: `Failed to persist artifact: ${message}`,
+            structuredError: {
+              code: 'ARTIFACT_PERSIST_FAILED',
+              message,
+              retryable: true,
+            },
+          };
+        }
       }
 
       case 'lsp_diagnostics': {
