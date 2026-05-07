@@ -57,10 +57,16 @@ export function budgetFromWindow(windowTokens: number): ContextBudget {
 
 /**
  * OpenRouter (and similar gateways) append routing variants like ":nitro",
- * ":free", or ":beta" to the catalog's base IDs. Strip on the last colon so
- * name-pattern probes don't silently miss for routed selections — without
- * this, `anthropic/claude-sonnet-4.6:nitro` would skip the catalog window
- * entirely and fall through to the coarse name-pattern table.
+ * ":free", or ":beta" to the catalog's base IDs. Strip on the last colon to
+ * normalize a model ID for lookup. Two consumers:
+ *
+ * - The web's catalog probe keys metadata on the bare base ID, so without
+ *   stripping, `anthropic/claude-sonnet-4.6:nitro` misses the catalog window.
+ * - The CLI's name-pattern fallback in `getContextBudget` retries with the
+ *   stripped ID when the original name doesn't match a family token. This
+ *   matters mainly for hypothetical IDs where the suffix obscures an
+ *   otherwise-recognizable base — most real routed IDs (e.g. those carrying
+ *   `claude`, `gemini`) already match before stripping.
  */
 export function stripRoutingSuffix(model: string): string {
   const colon = model.lastIndexOf(':');
