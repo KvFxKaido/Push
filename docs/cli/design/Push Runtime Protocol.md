@@ -71,6 +71,7 @@ Primary (local):
 
 Secondary (remote app bridge):
 - WebSocket endpoint that forwards the same JSON envelopes unchanged
+- Remote cross-machine use should go through the Worker/Durable Object relay described in `docs/decisions/Remote Sessions via pushd Relay.md`; direct public WebSocket exposure from the user's computer is not the preferred topology.
 
 Message framing:
 - UTF-8 NDJSON (one JSON object per line)
@@ -720,4 +721,4 @@ Recommended exit mapping:
 ## Open Follow-Ups
 
 1. Decide default event retention depth/time for replay.
-2. Decide whether app remote bridge is direct WebSocket or worker-mediated relay.
+2. Resolve the exact remote bridge mechanics under `docs/decisions/Remote Sessions via pushd Relay.md`; the current draft favors a worker-mediated relay, with direct public WebSocket exposure out of scope.
