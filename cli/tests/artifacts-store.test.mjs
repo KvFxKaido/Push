@@ -140,6 +140,18 @@ describe('CliFlatJsonArtifactStore', () => {
     assert.equal(await store.get(SCOPE, 'art_kill'), null);
   });
 
+  it('rejects artifact ids containing path separators (path-traversal guard)', async () => {
+    const store = new CliFlatJsonArtifactStore();
+    const malicious = ['../other/art', 'foo/bar', 'foo\\bar', '..', '.', ''];
+    for (const id of malicious) {
+      await assert.rejects(() => store.get(SCOPE, id), /Invalid artifact id/);
+      await assert.rejects(() => store.delete(SCOPE, id), /Invalid artifact id/);
+    }
+    // put rejects via the record's id field too.
+    const evilRecord = { ...makeMermaid({ id: 'art_ok' }), id: '../escape' };
+    await assert.rejects(() => store.put(evilRecord), /Invalid artifact id/);
+  });
+
   it('throws on a corrupt artifact file rather than swallowing it', async () => {
     const store = new CliFlatJsonArtifactStore();
     // Persist a real artifact so the scope directory exists.

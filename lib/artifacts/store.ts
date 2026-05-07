@@ -37,7 +37,12 @@ export interface ArtifactStore {
   /** List artifacts under a scope. Newest-first. */
   list(query: ListArtifactsQuery): Promise<ArtifactRecord[]>;
 
-  /** Insert or replace an artifact. The record's `scope` must match `record.scope`. */
+  /**
+   * Insert or replace an artifact. Implementations key persistence off
+   * `record.scope`; callers must not mutate `record.scope` after
+   * construction or a subsequent `get`/`list` against the original
+   * scope will miss the record.
+   */
   put(record: ArtifactRecord): Promise<void>;
 
   /** Delete an artifact by id within its scope. No-op when missing. */

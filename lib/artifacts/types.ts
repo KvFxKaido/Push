@@ -164,7 +164,7 @@ interface ArtifactRecordBase {
   author: ArtifactAuthor;
   title: string;
   status: ArtifactStatus;
-  /** ISO-8601 string for human readability; ms-since-epoch in `author.createdAt`. */
+  /** ms-since-epoch timestamp; pair with `author.createdAt` for first-vs-last edit. */
   updatedAt: number;
   errorMessage?: string;
 }

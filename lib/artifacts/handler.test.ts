@@ -99,6 +99,46 @@ describe('validateCreateArtifactArgs', () => {
     });
     expect(result.ok).toBe(true);
   });
+
+  it('rejects oversized dependency count with TOO_MANY_DEPENDENCIES', () => {
+    const tooMany: Record<string, string> = {};
+    for (let i = 0; i < 33; i++) tooMany[`dep_${i}`] = '1.0.0';
+    const result = validateCreateArtifactArgs({
+      kind: 'static-react',
+      title: 'app',
+      files: [{ path: '/App.js', content: '...' }],
+      dependencies: tooMany,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('TOO_MANY_DEPENDENCIES');
+  });
+
+  it('caps total bytes across dependency keys + values', () => {
+    // One dep, but the value is huge (> 16 KiB cap). Bypassing the
+    // file-byte budget via dependencies was the Codex P2 finding.
+    const result = validateCreateArtifactArgs({
+      kind: 'static-react',
+      title: 'app',
+      files: [{ path: '/App.js', content: '...' }],
+      dependencies: { react: 'x'.repeat(20 * 1024) },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe('TOO_LARGE');
+    expect(result.field).toBe('dependencies');
+  });
+
+  it('trims leading and trailing whitespace from the title', () => {
+    const result = validateCreateArtifactArgs({
+      kind: 'mermaid',
+      title: '   Spaced Out   ',
+      source: 'graph TD; A-->B',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.args.title).toBe('Spaced Out');
+  });
 });
 
 describe('buildArtifactRecord', () => {

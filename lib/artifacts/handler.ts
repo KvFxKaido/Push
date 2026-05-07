@@ -36,6 +36,7 @@ const MAX_FILE_BYTES = 256 * 1024; // 256 KiB per file
 const MAX_TOTAL_BYTES = 1024 * 1024; // 1 MiB total per artifact
 const MAX_MERMAID_CHARS = 64 * 1024; // 64 KiB
 const MAX_DEPENDENCY_COUNT = 32;
+const MAX_DEPENDENCY_BYTES = 16 * 1024; // 16 KiB total across all dep keys + values
 
 export type ArtifactValidationFailure = {
   ok: false;
@@ -45,6 +46,7 @@ export type ArtifactValidationFailure = {
     | 'INVALID_TYPE'
     | 'TOO_LARGE'
     | 'TOO_MANY_FILES'
+    | 'TOO_MANY_DEPENDENCIES'
     | 'EMPTY_FILES'
     | 'DUPLICATE_FILE_PATH';
   field: string;
@@ -234,7 +236,9 @@ function validateTitle(raw: unknown): { ok: true; title: string } | ArtifactVali
   if (raw.length > MAX_TITLE_CHARS) {
     return fail('TOO_LARGE', 'title', `Title is ${raw.length} chars; max is ${MAX_TITLE_CHARS}.`);
   }
-  return { ok: true, title: raw };
+  // Trim so the stored title is what the UI will display — leading/
+  // trailing whitespace is almost always a model artifact, not intent.
+  return { ok: true, title: raw.trim() };
 }
 
 function validateMermaidSource(
@@ -327,18 +331,30 @@ function validateDependencies(
   const entries = Object.entries(raw);
   if (entries.length > MAX_DEPENDENCY_COUNT) {
     return fail(
-      'TOO_MANY_FILES',
+      'TOO_MANY_DEPENDENCIES',
       'dependencies',
       `Got ${entries.length} dependencies; max is ${MAX_DEPENDENCY_COUNT}.`,
     );
   }
+  // Independent byte budget so a model can't bypass MAX_TOTAL_BYTES by
+  // pasting an oversized lockfile or a giant version string into the
+  // dependencies map (file content goes through a separate accumulator).
   const deps: Record<string, string> = {};
+  let depBytes = 0;
   for (const [name, version] of entries) {
     if (typeof version !== 'string' || version.length === 0) {
       return fail(
         'INVALID_TYPE',
         `dependencies.${name}`,
         'Dependency versions must be non-empty strings.',
+      );
+    }
+    depBytes += Buffer.byteLength(name, 'utf8') + Buffer.byteLength(version, 'utf8');
+    if (depBytes > MAX_DEPENDENCY_BYTES) {
+      return fail(
+        'TOO_LARGE',
+        'dependencies',
+        `Dependency keys + values exceed ${MAX_DEPENDENCY_BYTES} bytes.`,
       );
     }
     deps[name] = version;

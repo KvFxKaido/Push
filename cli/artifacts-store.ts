@@ -30,6 +30,25 @@ function rootDir(): string {
 }
 
 /**
+ * Reject artifact ids that could escape the scope directory when
+ * interpolated into `path.join`. Production ids are UUIDs from
+ * `crypto.randomUUID()`, but `get`/`delete` will accept ids from URLs
+ * or tool args once dispatch lands — a model-supplied
+ * `../other-scope/art` would otherwise read or unlink a sibling
+ * artifact. Allowed: ASCII alphanumerics, `-`, `_`. Length capped at
+ * 128 to bound the input surface.
+ */
+const SAFE_ARTIFACT_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+function assertSafeArtifactId(id: string): void {
+  if (!SAFE_ARTIFACT_ID.test(id)) {
+    throw new Error(
+      `Invalid artifact id ${JSON.stringify(id)}: must match ${SAFE_ARTIFACT_ID.source}.`,
+    );
+  }
+}
+
+/**
  * Filesystem-safe directory name for a scope. The chat key is the
  * narrowest match; CLI callers without `chatId` fall through to the
  * branch key. Colons are swapped for `__` so the directory works on
@@ -46,6 +65,7 @@ function scopeDirPath(scope: ArtifactScope): string {
 }
 
 function recordFilePath(scope: ArtifactScope, id: string): string {
+  assertSafeArtifactId(id);
   return path.join(scopeDirPath(scope), `${id}.json`);
 }
 
@@ -116,6 +136,7 @@ export class CliFlatJsonArtifactStore implements ArtifactStore {
   }
 
   async put(record: ArtifactRecord): Promise<void> {
+    assertSafeArtifactId(record.id);
     const dir = scopeDirPath(record.scope);
     await fs.mkdir(dir, { recursive: true });
     const filePath = path.join(dir, `${record.id}.json`);
