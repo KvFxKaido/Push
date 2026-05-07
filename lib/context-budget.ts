@@ -15,9 +15,10 @@
 export interface ContextBudget {
   maxTokens: number;
   targetTokens: number;
-  /** Threshold at which old tool results get summarized. Decoupled from
-   *  targetTokens so large-context models still get lean working
-   *  context without premature message dropping. */
+  /** Threshold at which old tool results get summarized. Capped at the
+   *  default 88K so smaller-window models don't summarize past their target,
+   *  and so large-window models don't accumulate excessive tool noise before
+   *  the first summarization pass. */
   summarizeTokens: number;
 }
 
@@ -25,110 +26,102 @@ export interface ContextBudget {
 const DEFAULT_CONTEXT_MAX_TOKENS = 100_000; // Hard cap
 const DEFAULT_CONTEXT_TARGET_TOKENS = 88_000; // Soft target leaves room for system prompt + response
 
-// Gemini models (1M context window)
-const GEMINI_CONTEXT_MAX_TOKENS = 850_000;
-const GEMINI_CONTEXT_TARGET_TOKENS = 800_000;
+// Universal budget formula. Both ratios stay below the model's real window
+// because the heuristic token estimator can undercount on code-dense or
+// CJK-heavy conversations — the 8% headroom covers that drift plus the
+// system prompt and response budget the API counts against the same window.
+export const MAX_RATIO = 0.92;
+export const TARGET_RATIO = 0.85;
 
-// GPT-5.4 models — large context but conservative target
-const GPT5_PRO_CONTEXT_MAX_TOKENS = 850_000;
-const GPT5_PRO_CONTEXT_TARGET_TOKENS = 725_000;
-const GPT5_PRO_CONTEXT_SUMMARIZE_TOKENS = 160_000;
-
-// Grok models — ~2M context, larger margin
-const GROK_CONTEXT_MAX_TOKENS = 1_500_000;
-const GROK_CONTEXT_TARGET_TOKENS = 1_350_000;
-const GROK_CONTEXT_SUMMARIZE_TOKENS = 180_000;
-
-// Moonshot Kimi models — 262K context on Workers AI / OpenRouter.
-// Margin matches Gemini (~92% of the real cap) because estimateTokens
-// can undercount on code-dense or CJK-heavy conversations.
-const KIMI_CONTEXT_MAX_TOKENS = 240_000;
-const KIMI_CONTEXT_TARGET_TOKENS = 210_000;
-const KIMI_CONTEXT_SUMMARIZE_TOKENS = 160_000;
-
-const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
+export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   maxTokens: DEFAULT_CONTEXT_MAX_TOKENS,
   targetTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS, // same as target for non-Gemini
-};
-
-const GEMINI_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GEMINI_CONTEXT_MAX_TOKENS,
-  targetTokens: GEMINI_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS, // summarize early like other providers
-};
-
-const CLAUDE_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GEMINI_CONTEXT_MAX_TOKENS,
-  targetTokens: GEMINI_CONTEXT_TARGET_TOKENS,
   summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
 };
 
-const GPT5_PRO_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GPT5_PRO_CONTEXT_MAX_TOKENS,
-  targetTokens: GPT5_PRO_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: GPT5_PRO_CONTEXT_SUMMARIZE_TOKENS,
-};
-
-const GROK_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: GROK_CONTEXT_MAX_TOKENS,
-  targetTokens: GROK_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: GROK_CONTEXT_SUMMARIZE_TOKENS,
-};
-
-const KIMI_CONTEXT_BUDGET: ContextBudget = {
-  maxTokens: KIMI_CONTEXT_MAX_TOKENS,
-  targetTokens: KIMI_CONTEXT_TARGET_TOKENS,
-  summarizeTokens: KIMI_CONTEXT_SUMMARIZE_TOKENS,
-};
-
-function normalizeModelName(model?: string): string {
-  return (model || '').trim().toLowerCase();
+/**
+ * Derive a context budget from a known window size. Both surfaces use the
+ * same ratios so a model's `maxTokens`/`targetTokens` only depend on its
+ * window — whether the window came from a catalog probe (web) or the
+ * name-pattern fallback (CLI + web fallback) is irrelevant here.
+ */
+export function budgetFromWindow(windowTokens: number): ContextBudget {
+  const maxTokens = Math.floor(windowTokens * MAX_RATIO);
+  const targetTokens = Math.floor(windowTokens * TARGET_RATIO);
+  return {
+    maxTokens,
+    targetTokens,
+    summarizeTokens: Math.min(DEFAULT_CONTEXT_TARGET_TOKENS, targetTokens),
+  };
 }
 
 /**
- * Resolve the context budget for a given provider and model.
- * Provider is a string (e.g. 'ollama', 'openrouter', 'zen', 'nvidia', 'vertex')
- * to avoid coupling to app-specific type definitions.
+ * OpenRouter (and similar gateways) append routing variants like ":nitro",
+ * ":free", or ":beta" to the catalog's base IDs. Strip on the last colon to
+ * normalize a model ID for lookup. Two consumers:
  *
- * Returns a fresh copy each call so callers can mutate without poisoning the
- * shared singleton.
+ * - The web's catalog probe keys metadata on the bare base ID, so without
+ *   stripping, `anthropic/claude-sonnet-4.6:nitro` misses the catalog window.
+ * - The CLI's name-pattern fallback in `getContextBudget` retries with the
+ *   stripped ID when the original name doesn't match a family token. This
+ *   matters mainly for hypothetical IDs where the suffix obscures an
+ *   otherwise-recognizable base — most real routed IDs (e.g. those carrying
+ *   `claude`, `gemini`) already match before stripping.
  */
-export function getContextBudget(provider?: string, model?: string): ContextBudget {
-  const normalizedModel = normalizeModelName(model);
+export function stripRoutingSuffix(model: string): string {
+  const colon = model.lastIndexOf(':');
+  return colon > 0 ? model.slice(0, colon) : model;
+}
 
-  // GPT-5.4 models get a large-context profile, but with a conservative target
-  if (normalizedModel.includes('gpt-5.4')) {
-    return { ...GPT5_PRO_CONTEXT_BUDGET };
+/**
+ * Coarse name-pattern table for models without catalog metadata. Matches the
+ * major model families' real context windows so providers that don't expose
+ * `context_length` (Ollama Cloud, Cloudflare Workers AI, etc.) still get a
+ * sensible budget.
+ *
+ * Order matters — more specific patterns first so haiku doesn't get
+ * bucketed with the larger Claude family, and `deepseek-v4` doesn't get
+ * bucketed with the smaller v3/earlier window.
+ */
+export function guessWindowFromName(model: string): number {
+  const m = model.toLowerCase();
+  if (m.includes('haiku')) return 200_000;
+  if (m.includes('claude')) return 1_000_000;
+  if (m.includes('gemini')) return 1_000_000;
+  if (m.includes('grok')) return 2_000_000;
+  if (m.includes('kimi') || m.includes('moonshot')) return 256_000;
+  if (m.includes('gpt-5')) return 1_000_000;
+  // DeepSeek v4 family ships with 1M context. v3 and earlier topped at
+  // 128K. Listed below the v4 check so `deepseek-v4-pro` doesn't get
+  // bucketed with the older window.
+  if (m.includes('deepseek-v4')) return 1_000_000;
+  if (m.includes('deepseek')) return 128_000;
+  return 0;
+}
+
+/**
+ * Resolve a context budget from provider + model using the name-pattern
+ * fallback. Provider is accepted for API parity with the web wrapper but is
+ * unused here — `guessWindowFromName` is purely name-based.
+ *
+ * Web's `orchestrator-context.ts#getContextBudget` layers catalog probing on
+ * top of this; the CLI calls this directly. Returns a fresh copy so callers
+ * can mutate without poisoning the shared default.
+ */
+export function getContextBudget(_provider?: string, model?: string): ContextBudget {
+  const normalizedModel = (model || '').trim();
+  if (!normalizedModel) return { ...DEFAULT_CONTEXT_BUDGET };
+
+  let windowTokens = guessWindowFromName(normalizedModel);
+  if (windowTokens === 0) {
+    const baseId = stripRoutingSuffix(normalizedModel);
+    if (baseId !== normalizedModel) {
+      windowTokens = guessWindowFromName(baseId);
+    }
   }
 
-  // Non-Haiku Claude models get the larger 1M-class profile.
-  if (normalizedModel.includes('claude') && !normalizedModel.includes('haiku')) {
-    return { ...CLAUDE_CONTEXT_BUDGET };
-  }
-
-  // Grok models — larger long-term history
-  if (normalizedModel.includes('grok')) {
-    return { ...GROK_CONTEXT_BUDGET };
-  }
-
-  // Moonshot Kimi models — 262K context on Workers AI and OpenRouter.
-  if (normalizedModel.includes('kimi') || normalizedModel.includes('moonshot')) {
-    return { ...KIMI_CONTEXT_BUDGET };
-  }
-
-  // Gemini models on any provider — full 1M budget
-  if (
-    (provider === 'ollama' ||
-      provider === 'openrouter' ||
-      provider === 'zen' ||
-      provider === 'vertex') &&
-    normalizedModel.includes('gemini')
-  ) {
-    return { ...GEMINI_CONTEXT_BUDGET };
-  }
-
-  return { ...DEFAULT_CONTEXT_BUDGET };
+  if (windowTokens <= 0) return { ...DEFAULT_CONTEXT_BUDGET };
+  return budgetFromWindow(windowTokens);
 }
 
 // ---------------------------------------------------------------------------
