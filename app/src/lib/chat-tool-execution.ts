@@ -120,6 +120,9 @@ export async function executeTool(
           ctx.model,
           undefined,
           ctx.approvalGates ?? DEFAULT_APPROVAL_GATES,
+          undefined,
+          undefined,
+          ctx.correlation?.chatId,
         );
       }
 

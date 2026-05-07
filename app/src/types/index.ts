@@ -1,5 +1,6 @@
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { VerificationPolicy } from '@/lib/verification-policy';
+import type { ArtifactRecord } from '@push/lib/artifacts/types';
 import type {
   AcceptanceCriterion,
   AgentRole,
@@ -346,7 +347,14 @@ export type ChatCard =
   | { type: 'delegation-result'; data: DelegationResultCardData }
   | { type: 'ask-user'; data: AskUserCardData }
   | { type: 'coder-progress'; data: CoderWorkingMemory }
-  | { type: 'coder-job'; data: CoderJobCardData };
+  | { type: 'coder-job'; data: CoderJobCardData }
+  | { type: 'artifact'; data: ArtifactCardData };
+
+/** Inline artifact card — wraps a fully-formed `ArtifactRecord` so the renderer
+ *  can dispatch on `record.kind` without a second fetch. */
+export interface ArtifactCardData {
+  record: ArtifactRecord;
+}
 
 // --- Background Coder Job ---
 // Mirrors CoderJobStatus in app/src/worker/coder-job-do.ts. Kept in the
