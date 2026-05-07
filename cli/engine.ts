@@ -548,8 +548,11 @@ export function buildToolResultMessage(
   };
 
   const metaLine: string = metaEnvelope ? `\n[meta] ${JSON.stringify(metaEnvelope)}` : '';
-  const safeBody = escapeToolResultBoundaries(JSON.stringify(payload, null, 2));
-  return `[TOOL_RESULT]\n${safeBody}${metaLine}\n[/TOOL_RESULT]`;
+  // Escape across the whole assembled body so metaEnvelope (which can carry
+  // attacker-controlled paths/branch names/commit messages) cannot terminate
+  // the envelope early either.
+  const safeBody = escapeToolResultBoundaries(`${JSON.stringify(payload, null, 2)}${metaLine}`);
+  return `[TOOL_RESULT]\n${safeBody}\n[/TOOL_RESULT]`;
 }
 
 export function buildParseErrorMessage(malformed: { reason: string; sample: string }[]): string {
