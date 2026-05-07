@@ -638,7 +638,7 @@ function renderToolPane(buf, layout, theme, tuiState) {
  * Quiet-layout running indicator. Lives in the gap row directly above
  * the composer (composer.top - 1 — that row is otherwise blank). Format:
  *
- *   * roosting… (4m 5s · 17.9k tokens)
+ *   * roosting… (4m 5s · 4.1k tokens)
  *
  * Only renders in quiet layout while running. In every other state we
  * emit a blank padded line so the screen-buffer diff drops the row;
@@ -1669,7 +1669,13 @@ export async function runTUI(options = {}) {
   // can update its elapsed-time display while running.
   const setRunState = (next) => {
     const prev = tuiState.runState;
-    if (next === 'running' && prev === 'idle') {
+    // Start the turn-clock on any leave-from-idle, not only idle → running.
+    // Some paths can transition straight from idle into an awaiting_*
+    // state (e.g. a user-question prompt that fires before the engine
+    // enters its run loop), and we want elapsed time to count from that
+    // moment so the indicator reads correctly when we eventually hit
+    // 'running'.
+    if (prev === 'idle' && next !== 'idle') {
       tuiState.turnStartedAt = Date.now();
     } else if (next === 'idle') {
       tuiState.turnStartedAt = null;
