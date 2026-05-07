@@ -121,6 +121,10 @@
     {
       "binding": "SANDBOX_TOKENS",
       "id": "7065ef8c73b94b5d945971c45aadb3e9"
+    },
+    {
+      "binding": "ARTIFACTS",
+      "id": "8fd209d7301d40d1a7a02eb88934bf8e"
     }
   ],
   // Cloudflare Sandbox SDK — the default sandbox backend when
