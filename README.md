@@ -63,6 +63,8 @@ npx wrangler dev --port 8787
 
 See [app/README.md](app/README.md) for environment variables, OAuth setup, Worker secrets, and sandbox deployment.
 
+If you run the hosted web app on a personal Cloudflare account, see [Private Cloudflare Deployment](docs/runbooks/Private%20Cloudflare%20Deployment.md) before sharing the URL.
+
 ### Android app (experimental)
 
 The Android app is currently a Capacitor shell for the production web bundle. It is useful for native WebView testing, OAuth checks, and sideloaded debug builds, but it is not yet treated as a release channel.

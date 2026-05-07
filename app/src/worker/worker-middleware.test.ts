@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CAPACITOR_ANDROID_ORIGIN,
   CONTENT_SECURITY_POLICY,
+  DEPLOYMENT_AUTH_REQUIRED_CODE,
+  DEPLOYMENT_TOKEN_HEADER,
   MAX_BODY_SIZE_BYTES,
   SECURITY_HEADERS,
   applySecurityHeaders,
@@ -18,6 +20,8 @@ import {
   normalizeOrigin,
   passthroughAuth,
   readBodyText,
+  isDeploymentTokenConfigured,
+  requireDeploymentTokenForApi,
   runPreamble,
   standardAuth,
   validateOrigin,
@@ -257,6 +261,60 @@ describe('validateOrigin', () => {
       ok: false,
       error: 'Missing or invalid Origin/Referer',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Private deployment gate
+// ---------------------------------------------------------------------------
+
+describe('requireDeploymentTokenForApi', () => {
+  it('does nothing when no deployment token is configured', () => {
+    const request = makeRequest('https://push.example.test/api/sandbox/create', {
+      method: 'POST',
+    });
+    expect(isDeploymentTokenConfigured(makeEnv())).toBe(false);
+    expect(requireDeploymentTokenForApi(request, makeEnv())).toBeNull();
+  });
+
+  it('allows /api/health without a token so clients can bootstrap diagnostics', () => {
+    const request = makeRequest('https://push.example.test/api/health', { method: 'GET' });
+    expect(
+      requireDeploymentTokenForApi(request, makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' })),
+    ).toBe(null);
+  });
+
+  it('allows a protected API request with the matching deployment token', () => {
+    const request = makeRequest('https://push.example.test/api/sandbox/create', {
+      method: 'POST',
+      headers: { [DEPLOYMENT_TOKEN_HEADER]: 'secret' },
+    });
+    expect(
+      requireDeploymentTokenForApi(request, makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' })),
+    ).toBe(null);
+  });
+
+  it('rejects a protected API request with a missing or wrong deployment token', async () => {
+    const request = makeRequest('https://push.example.test/api/sandbox/create', {
+      method: 'POST',
+      headers: { [DEPLOYMENT_TOKEN_HEADER]: 'wrong' },
+    });
+    const response = requireDeploymentTokenForApi(
+      request,
+      makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' }),
+    );
+    expect(response?.status).toBe(401);
+    const body = (await response!.json()) as { code?: string };
+    expect(body.code).toBe(DEPLOYMENT_AUTH_REQUIRED_CODE);
+  });
+
+  it('skips OPTIONS preflight so CORS can negotiate custom headers', () => {
+    const request = makeRequest('https://push.example.test/api/sandbox/create', {
+      method: 'OPTIONS',
+    });
+    expect(
+      requireDeploymentTokenForApi(request, makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' })),
+    ).toBe(null);
   });
 });
 

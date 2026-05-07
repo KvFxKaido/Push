@@ -22,6 +22,17 @@
   "vars": {
     "PUSH_SANDBOX_PROVIDER": "cloudflare"
   },
+  // Optional private-deployment gate for personal production testing. Do not
+  // put the value in vars; set it as a secret:
+  //
+  //   TOKEN=$(openssl rand -hex 32)
+  //   printf '%s\n' "$TOKEN"
+  //   printf '%s' "$TOKEN" | npx wrangler secret put PUSH_DEPLOYMENT_TOKEN
+  //
+  // When present, every /api/* route except /api/health requires the browser to
+  // send X-Push-Deployment-Token. Open the app once with #push_token=<token> to
+  // store it locally. Cloudflare Access in front of the hostname is still the
+  // preferred outer gate.
   // Worker bundle shim — `import.meta.env` is Vite-only (client build). The
   // Worker runtime doesn't have it, so transitive imports of client modules
   // (via `@/lib/*` chains from coder-job-do.ts, etc.) that read

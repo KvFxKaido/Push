@@ -101,6 +101,11 @@ export interface Env {
   STATS_ADMIN_TOKEN?: string;
   // Cloudflare API token with Analytics Engine: Read permission (distinct from CF_AI_GATEWAY_TOKEN which is gateway-scoped)
   CF_ANALYTICS_TOKEN?: string;
+  // Optional private-deployment gate. When set, every /api/* route except
+  // /api/health requires X-Push-Deployment-Token to match this secret. This is
+  // intentionally separate from Authorization because provider calls use that
+  // header for BYOK model keys.
+  PUSH_DEPLOYMENT_TOKEN?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +370,62 @@ export function validateOrigin(
   }
 
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Private deployment gate
+// ---------------------------------------------------------------------------
+
+export const DEPLOYMENT_TOKEN_HEADER = 'X-Push-Deployment-Token';
+export const DEPLOYMENT_AUTH_REQUIRED_CODE = 'DEPLOYMENT_AUTH_REQUIRED';
+
+function trimSecret(value: string | undefined): string {
+  return value?.trim() ?? '';
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const aBytes = new TextEncoder().encode(a);
+  const bBytes = new TextEncoder().encode(b);
+  const max = Math.max(aBytes.length, bBytes.length);
+  let diff = aBytes.length ^ bBytes.length;
+  for (let i = 0; i < max; i += 1) {
+    diff |= (aBytes[i] ?? 0) ^ (bBytes[i] ?? 0);
+  }
+  return diff === 0;
+}
+
+export function isDeploymentTokenConfigured(env: Env): boolean {
+  return trimSecret(env.PUSH_DEPLOYMENT_TOKEN).length > 0;
+}
+
+export function isDeploymentTokenExemptPath(pathname: string): boolean {
+  return pathname === '/api/health';
+}
+
+export function requireDeploymentTokenForApi(
+  request: Request,
+  env: Env,
+  requestUrl = new URL(request.url),
+): Response | null {
+  if (request.method === 'OPTIONS') return null;
+  if (!requestUrl.pathname.startsWith('/api/')) return null;
+  if (isDeploymentTokenExemptPath(requestUrl.pathname)) return null;
+
+  const expected = trimSecret(env.PUSH_DEPLOYMENT_TOKEN);
+  if (!expected) return null;
+
+  const provided = trimSecret(request.headers.get(DEPLOYMENT_TOKEN_HEADER) ?? undefined);
+  if (provided && timingSafeEqual(provided, expected)) return null;
+
+  return Response.json(
+    {
+      error: 'Deployment token required',
+      code: DEPLOYMENT_AUTH_REQUIRED_CODE,
+      details:
+        'This Push deployment is private. Open the app once with #push_token=<token>, or send X-Push-Deployment-Token on API requests.',
+    },
+    { status: 401 },
+  );
 }
 
 // ---------------------------------------------------------------------------

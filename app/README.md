@@ -37,7 +37,10 @@ Without any AI key the app prompts for one on first use.
 
 Worker secrets (set via `wrangler secret put`):
 
+- `PUSH_DEPLOYMENT_TOKEN` — optional private-deployment API gate. When set, every `/api/*` route except `/api/health` requires `X-Push-Deployment-Token`. Open the app once with `#push_token=<token>` to store it in the browser.
 - `MODAL_SANDBOX_BASE_URL` — only needed when `PUSH_SANDBOX_PROVIDER=modal`. Modal app base URL (e.g. `https://youruser--push-sandbox`).
+
+For production phone testing, prefer putting the whole hostname behind Cloudflare Access. `PUSH_DEPLOYMENT_TOKEN` is a repo-side backstop/fallback, not a substitute for a real edge access policy. See [Private Cloudflare Deployment](../docs/runbooks/Private%20Cloudflare%20Deployment.md).
 
 ## Sandbox backend
 

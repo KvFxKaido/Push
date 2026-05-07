@@ -6,8 +6,10 @@ import { RootErrorBoundary } from './components/RootErrorBoundary.tsx';
 import { initPushTracing } from './lib/tracing.ts';
 import { installGlobalErrorHandlers, primeErrorReporting } from './lib/error-reporting.ts';
 import { perfMark } from './lib/perf-marks.ts';
+import { installDeploymentAuthFetch } from './lib/deployment-auth.ts';
 
 perfMark('app:boot');
+installDeploymentAuthFetch();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

@@ -12,7 +12,11 @@
 
 import type { ExecutionContext, ScheduledEvent } from '@cloudflare/workers-types';
 import type { Env } from './src/worker/worker-middleware';
-import { applySecurityHeaders, corsHeadersFor } from './src/worker/worker-middleware';
+import {
+  applySecurityHeaders,
+  corsHeadersFor,
+  requireDeploymentTokenForApi,
+} from './src/worker/worker-middleware';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from './src/lib/request-id';
 
 import {
@@ -99,6 +103,11 @@ export default {
           requestWithId,
           env,
         );
+      }
+
+      const deploymentAuthResponse = requireDeploymentTokenForApi(requestWithId, env, url);
+      if (deploymentAuthResponse) {
+        return withRequestIdOnResponse(deploymentAuthResponse, requestId, requestWithId, env);
       }
 
       const exactRoute = matchExactApiRoute(url.pathname, request.method);
