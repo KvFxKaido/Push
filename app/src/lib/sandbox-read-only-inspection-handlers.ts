@@ -45,6 +45,7 @@ import {
   isSensitivePath,
   redactSensitiveText,
 } from './sensitive-data-guard';
+import { escapeEnvelopeBoundaries } from '@push/lib/untrusted-content';
 import {
   buildSearchNoResultsHints,
   buildSearchPathErrorHints,
@@ -198,9 +199,14 @@ export async function handleReadFile(
     const hashDisplayLen = adaptiveHashDisplayLength(fullHashes);
     const lineHashes = fullHashes.map((hash) => hash.slice(0, hashDisplayLen));
 
+    // Hashes match the on-disk content (so hashline edits can verify), but
+    // the rendered line is escaped for display so a file containing crafted
+    // infrastructure markers cannot break out of [TOOL_RESULT] or spoof a
+    // [meta]/[CODER_STATE] block.
     toolResultContent = linesToNumber
       .map(
-        (line, idx) => `${String(rangeStart + idx).padStart(padWidth)}:${lineHashes[idx]}\t${line}`,
+        (line, idx) =>
+          `${String(rangeStart + idx).padStart(padWidth)}:${lineHashes[idx]}\t${escapeEnvelopeBoundaries(line)}`,
       )
       .join('\n');
   }

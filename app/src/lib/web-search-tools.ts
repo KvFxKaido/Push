@@ -19,6 +19,7 @@ import { detectToolFromText } from './utils';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getTavilyKey } from '@/hooks/useTavilyConfig';
 import { getToolArgHint, getToolPublicName, resolveToolName } from './tool-registry';
+import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -148,18 +149,21 @@ async function executeWebSearchCore(
       return { text: `[Tool Result — web_search]\nNo results found for "${query}".` };
     }
 
-    // Format results for LLM consumption
+    // Format results for LLM consumption. Untrusted snippets from the open
+    // web are sanitized so they cannot break out of the [TOOL_RESULT]
+    // envelope, spoof infrastructure markers like [meta] / [CODER_STATE],
+    // or embed echo-able JSON tool-call shapes.
     const formatted = results
       .map(
         (r, i) =>
-          `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content.slice(0, MAX_RESULT_SNIPPET_LENGTH)}`,
+          `${i + 1}. **${sanitizeUntrustedSource(r.title)}**\n   ${sanitizeUntrustedSource(r.url)}\n   ${sanitizeUntrustedSource(r.content.slice(0, MAX_RESULT_SNIPPET_LENGTH))}`,
       )
       .join('\n\n');
 
     const cardData: WebSearchCardData = { query, results };
 
     return {
-      text: `[Tool Result — web_search]\nQuery: "${query}"\n${results.length} result${results.length > 1 ? 's' : ''}:\n\n${formatted}`,
+      text: `[Tool Result — web_search]\nQuery: "${sanitizeUntrustedSource(query)}"\n${results.length} result${results.length > 1 ? 's' : ''}:\n\n${formatted}`,
       card: { type: 'web-search', data: cardData },
     };
   } catch (err) {

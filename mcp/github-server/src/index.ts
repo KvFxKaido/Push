@@ -21,6 +21,7 @@ import {
   type GitHubCoreRuntime,
 } from '../../../lib/github-tool-core.js';
 import { asRecord, parseGitHubCoreToolCall } from '../../../lib/github-tool-parser.js';
+import { sanitizeUntrustedSource } from '../../../lib/untrusted-content.js';
 
 const SERVER_NAME = 'push-github-mcp';
 const SERVER_VERSION = '0.1.0';
@@ -64,11 +65,17 @@ function buildGitHubHeaders(
 
 function formatTextResult(text: string) {
   const { text: safeText } = redactSensitiveText(text);
+  // GitHub-API content (PR body, issue body, review comments, file content,
+  // commit messages, branch names) is attacker-controlled. After credential
+  // redaction, sanitize so a crafted PR body cannot break out of the agent's
+  // [TOOL_RESULT] envelope, spoof a [meta]/[CODER_STATE] block, or embed an
+  // echo-able JSON tool-call shape.
+  const guardedText = sanitizeUntrustedSource(safeText);
   return {
     content: [
       {
         type: 'text' as const,
-        text: safeText,
+        text: guardedText,
       },
     ],
   };
