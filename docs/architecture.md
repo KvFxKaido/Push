@@ -50,6 +50,7 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 - **Shared runtime contract** — canonical task-graph, memory, delegation-brief, role-context, and run-event semantics live in root `lib/` and are consumed by both web and CLI
 - **Sandbox awareness** — session capability blocks expose container lifetime, creation/download events, and recent workspace lifecycle state directly to the agent
 - **Workspace Hub** — scratchpad, console, files, diff, PRs, review, and commit/push live in a single branch-scoped coding surface
+- **Renderable artifacts** — model-emitted `create_artifact` tool calls persist typed records (`static-html`, `static-react`, `mermaid`, `file-tree`, `live-preview`) under `repoFullName + branch + chatId` (web) or `repoFullName + branch` (CLI). Web stores in Workers KV via the `/api/artifacts/*` routes; CLI stores as flat JSON under `~/.push/artifacts/`. Renderers under `app/src/components/artifacts/` are kind-dispatched and lazy-loaded so chats only pay for what they show
 - **Review sources** — Branch diff, Last commit, Working tree
 - **Harness reliability** — adaptive hashline edits, patchset transactions, resumable sessions, and active branch handling
 - **GitHub flow** — PR merge flow, branch-scoped chats, commit/push, and workspace publish-to-GitHub
