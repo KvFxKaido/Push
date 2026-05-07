@@ -773,6 +773,7 @@ export async function runAssistantLoop(
           execMode,
           providerId: providerConfig?.id,
           providerApiKey: apiKey,
+          runId,
         });
     const result: ToolResult = rawResult ?? { ok: false, text: 'Tool returned no result' };
     recordAwarenessFromCall(call, result, awarenessLedger, state.cwd);

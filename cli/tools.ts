@@ -6,6 +6,14 @@ import { execFile, spawn } from 'node:child_process';
 import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from './hashline.js';
 import { runDiagnostics } from './diagnostics.js';
 import { runCommandInResolvedShell, spawnCommandInResolvedShell } from './shell.js';
+import {
+  buildArtifactRecord,
+  summarizeArtifact,
+  validateCreateArtifactArgs,
+} from '../lib/artifacts/handler.ts';
+import type { ArtifactAuthor, ArtifactScope } from '../lib/artifacts/types.ts';
+import { CliFlatJsonArtifactStore } from './artifacts-store.ts';
+import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -2326,6 +2334,63 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           ok: true,
           text: `Memory saved (${content.length} chars). Will be loaded into system prompt on next session.`,
           meta: { path: memoryPath, chars: content.length },
+        };
+      }
+
+      case 'create_artifact': {
+        // Validate the model-supplied args. Failure maps to the
+        // structuredError envelope shape the CLI uses elsewhere so the
+        // model can recover with a fixed payload rather than retrying
+        // a malformed call repeatedly.
+        const validation = validateCreateArtifactArgs(call.args);
+        if (!validation.ok) {
+          return {
+            ok: false,
+            text: `Cannot create artifact (${validation.code} on ${validation.field}): ${validation.message}`,
+            structuredError: {
+              code: validation.code,
+              message: validation.message,
+              retryable: false,
+            },
+          };
+        }
+
+        // Resolve the durable scope — repoFullName + branch via git.
+        // CLI sessions don't have a chatId, so the artifact files under
+        // the branch-scoped key (per the user's decision in the design
+        // round). Web callers pass chatId through the (future) Worker
+        // path and hit the chat-scoped key.
+        const identity = await resolveWorkspaceIdentity(workspaceRoot);
+        const scope: ArtifactScope = {
+          repoFullName: identity.repoFullName,
+          branch: identity.branch,
+        };
+
+        // Role is hardcoded to 'orchestrator' because that's the only
+        // role with `artifacts:write` today; the daemon wrappers
+        // (`makeDaemonCoderToolExec` etc.) gate non-orchestrator roles
+        // on the shared capability table before reaching here. If the
+        // coder grant lands later, options.role plumbing will pick it
+        // up.
+        const author: ArtifactAuthor = {
+          surface: 'cli',
+          role: 'orchestrator',
+          runId: typeof options.runId === 'string' ? options.runId : undefined,
+          createdAt: Date.now(),
+        };
+
+        const record = buildArtifactRecord(validation.args, { scope, author });
+        const store = new CliFlatJsonArtifactStore();
+        await store.put(record);
+
+        return {
+          ok: true,
+          text: summarizeArtifact(record),
+          meta: {
+            artifactId: record.id,
+            kind: record.kind,
+            scope,
+          },
         };
       }
 
