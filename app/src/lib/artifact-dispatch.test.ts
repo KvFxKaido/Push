@@ -122,4 +122,18 @@ describe('artifact dispatch drift', () => {
     expect(result.structuredError?.detail).toContain('NO_ACTIVE_REPO');
     expect(global.fetch).not.toHaveBeenCalled();
   });
+
+  it('refuses to persist a web artifact without a chat id', async () => {
+    const detected = detectAnyToolCall(CALL_TEXT);
+    if (!detected) throw new Error('Expected a detected tool call');
+
+    // Repo set, sandbox set, but chatId omitted — the runtime must fail
+    // closed rather than silently file the artifact under repo+branch
+    // and pollute the chat-scoped list.
+    const result = await executeAnyToolCall(detected, 'KvFxKaido/Push', 'sb-123');
+    expect(result.structuredError?.type).toBe('INVALID_ARG');
+    expect(result.structuredError?.detail).toContain('MISSING_CHAT_ID');
+    expect(result.text).toContain('requires a chat id');
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });

@@ -134,6 +134,7 @@ export async function executeBatchedToolCalls(
 
   const runCtx: ToolExecRunContext = {
     repoFullName: repoRef.current,
+    chatId,
     sandboxId: sandboxIdRef.current,
     isMainProtected: isMainProtectedRef.current,
     defaultBranch: branchInfoRef.current?.defaultBranch,
@@ -260,6 +261,7 @@ export async function executeBatchedToolCalls(
 
     const batchCtx: ToolExecRunContext = {
       repoFullName: repoRef.current,
+      chatId,
       sandboxId: sandboxIdRef.current,
       isMainProtected: isMainProtectedRef.current,
       defaultBranch: branchInfoRef.current?.defaultBranch,
@@ -443,6 +445,7 @@ export async function executeBatchedToolCalls(
     } else {
       const mutCtx: ToolExecRunContext = {
         repoFullName: repoRef.current,
+        chatId,
         sandboxId: sandboxIdRef.current,
         isMainProtected: isMainProtectedRef.current,
         defaultBranch: branchInfoRef.current?.defaultBranch,

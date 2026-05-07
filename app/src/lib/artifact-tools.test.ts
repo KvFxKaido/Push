@@ -221,4 +221,63 @@ describe('executeArtifactToolCall', () => {
     expect(result.structuredError?.detail).toBe('NETWORK');
     expect(result.structuredError?.retryable).toBe(true);
   });
+
+  it('passes an AbortSignal so the request can time out', async () => {
+    let receivedSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        receivedSignal = init.signal ?? undefined;
+        return new Response(JSON.stringify({ ok: true, record: RECORD, summary: 'ok' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+
+    await executeArtifactToolCall(
+      { kind: 'mermaid', title: 'X', source: 'graph TD; A-->B' },
+      SCOPE,
+      AUTHOR,
+    );
+    expect(receivedSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('reports a TIMEOUT when the abort fires before fetch resolves', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (_url: string, init: RequestInit) =>
+            new Promise((_resolve, reject) => {
+              const signal = init.signal as AbortSignal | undefined;
+              if (signal?.aborted) {
+                reject(new DOMException('Aborted', 'AbortError'));
+                return;
+              }
+              signal?.addEventListener('abort', () => {
+                reject(new DOMException('Aborted', 'AbortError'));
+              });
+            }),
+        ),
+      );
+
+      const promise = executeArtifactToolCall(
+        { kind: 'mermaid', title: 'X', source: 'graph TD; A-->B' },
+        SCOPE,
+        AUTHOR,
+      );
+      // Fast-forward past the 30s budget so the executor's setTimeout
+      // fires `controller.abort()`, which rejects the pending fetch
+      // promise with an AbortError and sets `signal.aborted = true`.
+      await vi.advanceTimersByTimeAsync(30_001);
+      const result = await promise;
+      expect(result.structuredError?.type).toBe('UNKNOWN');
+      expect(result.structuredError?.detail).toBe('TIMEOUT');
+      expect(result.structuredError?.retryable).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

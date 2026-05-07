@@ -46,6 +46,15 @@ const DEFAULT_APPROVAL_GATES = createDefaultApprovalGates();
 /** Context that stays constant for the duration of a sendMessage call. */
 export interface ToolExecRunContext {
   repoFullName: string | null;
+  /**
+   * Active chat id for this turn. Required because tools that scope
+   * persistence by chat (notably `create_artifact`) need it
+   * unconditionally — passing it via `correlation` accidentally
+   * left it undefined on the single/batched paths that build the
+   * context without correlation tags. `null` is reserved for callers
+   * that genuinely have no chat (none today on the web surface).
+   */
+  chatId: string | null;
   sandboxId: string | null;
   isMainProtected: boolean;
   defaultBranch: string | undefined;
@@ -122,7 +131,7 @@ export async function executeTool(
           ctx.approvalGates ?? DEFAULT_APPROVAL_GATES,
           undefined,
           undefined,
-          ctx.correlation?.chatId,
+          ctx.chatId ?? undefined,
         );
       }
 

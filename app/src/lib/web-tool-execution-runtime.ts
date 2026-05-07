@@ -330,6 +330,25 @@ export class WebToolExecutionRuntime
             };
             break;
           }
+          // Web artifacts must be chat-scoped. The CLI files under
+          // repo+branch by design (no chatId), but on the web the wider
+          // scope causes cross-chat list pollution, so the runtime
+          // refuses to persist a web artifact without one. Surface
+          // misconfigured callers immediately as a non-retryable
+          // INVALID_ARG rather than silently filing branch-scoped.
+          if (!context.chatId) {
+            const err: StructuredToolError = {
+              type: 'INVALID_ARG',
+              retryable: false,
+              message: 'Artifact creation on the web surface requires a chat id.',
+              detail: `MISSING_CHAT_ID — Attempted tool: ${toolCall.call.tool}`,
+            };
+            result = {
+              text: `[Tool Error] ${err.message}`,
+              structuredError: err,
+            };
+            break;
+          }
           // Branch is best-effort: fall back to null when no sandbox is
           // attached. The Worker accepts `branch: null` (CLI sessions
           // outside a git repo do the same), so an artifact filed before

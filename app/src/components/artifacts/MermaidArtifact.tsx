@@ -18,6 +18,29 @@ interface MermaidArtifactProps {
 
 let renderCounter = 0;
 
+// Mermaid configures itself globally — re-running `initialize` on every
+// effect raced cross-diagram config when several artifacts mount in the
+// same turn. Memoize the dynamic import + initialize call in a
+// module-level promise so the first render pays the cost and subsequent
+// renders just resolve to the same `mermaid` instance.
+type MermaidApi = typeof import('mermaid').default;
+let mermaidPromise: Promise<MermaidApi> | null = null;
+
+function loadMermaid(): Promise<MermaidApi> {
+  if (!mermaidPromise) {
+    mermaidPromise = import('mermaid').then((mod) => {
+      const mermaid = mod.default;
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        securityLevel: 'strict',
+      });
+      return mermaid;
+    });
+  }
+  return mermaidPromise;
+}
+
 export function MermaidArtifact({ record }: MermaidArtifactProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [svg, setSvg] = useState<string | null>(null);
@@ -31,12 +54,7 @@ export function MermaidArtifact({ record }: MermaidArtifactProps) {
 
     (async () => {
       try {
-        const mermaid = (await import('mermaid')).default;
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: 'dark',
-          securityLevel: 'strict',
-        });
+        const mermaid = await loadMermaid();
         const result = await mermaid.render(id, record.source);
         if (!cancelled) setSvg(result.svg);
       } catch (err) {

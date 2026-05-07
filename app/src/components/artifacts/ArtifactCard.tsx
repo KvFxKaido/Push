@@ -4,8 +4,12 @@
  * Picks the right renderer based on `record.kind`. Each renderer is
  * code-split via `lazyWithRecovery` so chats that only show, say,
  * Mermaid diagrams don't pull Sandpack into their bundle, and vice
- * versa. The `Suspense` boundary in `CardRenderer` covers the load
- * fallback for every artifact kind in one place.
+ * versa.
+ *
+ * Suspense layering: `CardRenderer` wraps every card (so its boundary
+ * covers loading the `ArtifactCard` module itself), and the local
+ * `Suspense` here covers the per-kind renderer chunk so the title +
+ * id header paints immediately while the kind-specific body streams in.
  */
 
 import { Suspense } from 'react';

@@ -37,6 +37,13 @@ export interface ArtifactToolCall {
 
 const CREATE_ARTIFACT_URL = resolveApiUrl('/api/artifacts/create');
 
+/**
+ * Bounds the worker round-trip so a hung connection doesn't strand the
+ * tool round forever. Generous enough for a cold KV write on a slow
+ * link; the model gets a retryable error if we hit it.
+ */
+const CREATE_ARTIFACT_TIMEOUT_MS = 30_000;
+
 // ---------------------------------------------------------------------------
 // Detection
 // ---------------------------------------------------------------------------
@@ -102,24 +109,32 @@ export async function executeArtifactToolCall(
   author: ArtifactAuthor,
 ): Promise<ToolExecutionResult> {
   let response: Response;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CREATE_ARTIFACT_TIMEOUT_MS);
   try {
     response = await fetch(CREATE_ARTIFACT_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ args, scope, author }),
+      signal: controller.signal,
     });
   } catch (err) {
+    const aborted = controller.signal.aborted;
     const message = err instanceof Error ? err.message : String(err);
     const structuredError: StructuredToolError = {
       type: 'UNKNOWN',
       retryable: true,
-      message: `Artifact create failed: ${message}`,
-      detail: 'NETWORK',
+      message: aborted
+        ? `Artifact create timed out after ${CREATE_ARTIFACT_TIMEOUT_MS}ms.`
+        : `Artifact create failed: ${message}`,
+      detail: aborted ? 'TIMEOUT' : 'NETWORK',
     };
     return {
       text: `[Tool Error] ${structuredError.message}`,
       structuredError,
     };
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   let body: unknown;
