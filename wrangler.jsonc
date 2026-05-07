@@ -103,6 +103,16 @@
   //
   // Until the binding is added, /api/sandbox-cf/* routes fail closed with
   // NOT_CONFIGURED 503 (including create). Modal path is unaffected.
+  // Renderable artifact store — model-emitted HTML/React/Mermaid/file-tree
+  // payloads persist here per chat scope. Same fail-closed contract as
+  // SANDBOX_TOKENS above: when the binding is missing every /api/artifacts/*
+  // route returns NOT_CONFIGURED 503 so the operator notices. Add manually
+  // after running:
+  //
+  //   npx wrangler kv:namespace create ARTIFACTS
+  //
+  // Then insert into the kv_namespaces array below:
+  //   { "binding": "ARTIFACTS", "id": "<returned id>" }
   "kv_namespaces": [
     {
       "binding": "SNAPSHOT_INDEX",

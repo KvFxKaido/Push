@@ -74,6 +74,11 @@ export interface Env {
   // (NOT_CONFIGURED 503) on every route including create when the binding
   // is missing. No silent auth bypass; no half-auth'd sandboxes.
   SANDBOX_TOKENS?: KVNamespace;
+  // Renderable artifact store (HTML/React/Mermaid/file-tree) — same
+  // fail-closed pattern as SANDBOX_TOKENS: optional binding, every
+  // /api/artifacts/* route returns NOT_CONFIGURED 503 when unset so the
+  // operator notices instead of silently returning empty lists.
+  ARTIFACTS?: KVNamespace;
   // Local-dev escape hatch for the per-exec sandbox deadline. Set to "1" in
   // .dev.vars to raise SANDBOX_EXEC_TIMEOUT_MS from 150s to 300s — covers
   // first-request container cold-starts on local wrangler, which routinely
