@@ -148,12 +148,14 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   // Ask user
   ask_user: ['user:ask'],
 
-  // Artifacts. Coder grant is intentionally deferred until the
-  // Coder-side dispatcher allowlist (`buildCoderToolExec` in
-  // `lib/coder-agent-bindings.ts`) is widened to include the
-  // `'artifacts'` source — adding the grant here without that change
-  // would surface a runtime denial. Orchestrator path is
-  // source-agnostic and works today.
+  // Artifacts. Granted to orchestrator and coder. The CLI Coder path
+  // (`makeDaemonCoderToolExec` in cli/pushd.ts) plumbs `role: 'coder'`
+  // through to the cli/tools.ts dispatch, which uses `roleCanUseTool`
+  // as a defense-in-depth check before persisting. The web Coder
+  // (lib/coder-agent-bindings.ts) is still gated on its own kernel
+  // source filter — granting the capability there is a separate PR
+  // because the kernel needs an `executeArtifactToolCall` service
+  // injection to actually run the call.
   create_artifact: ['artifacts:write'],
 
   // CLI-native tools (daemon tool surface in `cli/tools.ts`). These names
@@ -279,6 +281,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'todo',
     'web:search',
     'user:ask',
+    'artifacts:write',
   ]),
 
   reviewer: new Set<Capability>(['repo:read', 'pr:read']),

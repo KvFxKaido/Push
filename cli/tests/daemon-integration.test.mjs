@@ -3054,12 +3054,10 @@ describe('Explorer daemon tool protocol namespace', () => {
 // Drift-detector for the `create_artifact` tool. Pins both the registry
 // shape (canonical name, public alias, source, mutating) and the
 // capability grants by role so a future refactor can't silently shift
-// who is allowed to emit artifact tool calls. Coder is intentionally
-// denied today: the Coder dispatcher in
-// `lib/coder-agent-bindings.ts` rejects any source other than
-// `'sandbox'` / `'web-search'`, so granting `artifacts:write` to coder
-// without widening that allowlist would surface as a runtime denial. If
-// you flip the dispatcher, flip this test in the same PR.
+// who is allowed to emit artifact tool calls. Coder is now granted
+// (cli/pushd.ts:makeDaemonCoderToolExec plumbs `role: 'coder'` through
+// to the dispatch + the cli/tools.ts case gates with `roleCanUseTool`);
+// explorer / reviewer / auditor remain denied.
 describe('create_artifact tool registry + capability drift', () => {
   it('pins the canonical / public / source / mutation shape of create_artifact', () => {
     const spec = getToolSpec('create_artifact');
@@ -3073,13 +3071,9 @@ describe('create_artifact tool registry + capability drift', () => {
     assert.equal(byPublic?.canonicalName, 'create_artifact');
   });
 
-  it('grants artifacts:write to orchestrator only; coder/explorer/reviewer/auditor denied', () => {
+  it('grants artifacts:write to orchestrator and coder; explorer/reviewer/auditor denied', () => {
     assert.equal(roleCanUseTool('orchestrator', 'create_artifact'), true);
-    assert.equal(
-      roleCanUseTool('coder', 'create_artifact'),
-      false,
-      'coder grant is intentionally deferred until the coder dispatcher allowlist accepts the artifacts source',
-    );
+    assert.equal(roleCanUseTool('coder', 'create_artifact'), true);
     assert.equal(roleCanUseTool('explorer', 'create_artifact'), false);
     assert.equal(roleCanUseTool('reviewer', 'create_artifact'), false);
     assert.equal(roleCanUseTool('auditor', 'create_artifact'), false);

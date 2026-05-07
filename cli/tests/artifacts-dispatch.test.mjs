@@ -151,23 +151,47 @@ describe('executeToolCall(create_artifact)', () => {
     assert.equal(loaded.author.role, 'orchestrator');
   });
 
-  it('denies non-orchestrator roles with CAPABILITY_DENIED (defense in depth)', async () => {
-    // The Coder kernel filter normally drops non-sandbox calls before
-    // they reach the executor, so this path is unreachable on the
-    // happy path. The check is here so a future entry point that
-    // bypasses the filter doesn't silently misattribute.
+  it('persists a Coder-role artifact with author.role="coder"', async () => {
+    // Coder is now granted artifacts:write; daemon wrappers
+    // (makeDaemonCoderToolExec) plumb role='coder' through. The
+    // resulting record must carry the actual emitting role for
+    // attribution — orchestrator default would mask which delegation
+    // produced the artifact.
     const result = await executeToolCall(
       {
         tool: 'create_artifact',
-        args: { kind: 'mermaid', title: 'should fail', source: 'graph TD; A-->B' },
+        args: { kind: 'mermaid', title: 'Coder artifact', source: 'graph TD; A-->B' },
       },
       tempWorkspace,
       { runId: 'run_coder', role: 'coder' },
     );
 
-    assert.equal(result.ok, false);
-    assert.equal(result.structuredError.code, 'CAPABILITY_DENIED');
-    assert.match(result.structuredError.message, /artifacts:write/);
+    assert.equal(result.ok, true);
+    const store = new CliFlatJsonArtifactStore();
+    const loaded = await store.get(result.meta.scope, result.meta.artifactId);
+    assert.equal(loaded.author.role, 'coder');
+    assert.equal(loaded.author.runId, 'run_coder');
+  });
+
+  it('denies explorer/reviewer/auditor with CAPABILITY_DENIED (defense in depth)', async () => {
+    // These roles never had artifacts:write and shouldn't get past
+    // the dispatch role gate. Explorer in particular reaches
+    // executeToolCall via makeDaemonExplorerToolExec, so the gate is
+    // load-bearing for the read-only invariant.
+    for (const role of ['explorer', 'reviewer', 'auditor']) {
+      const result = await executeToolCall(
+        {
+          tool: 'create_artifact',
+          args: { kind: 'mermaid', title: 'should fail', source: 'graph TD; A-->B' },
+        },
+        tempWorkspace,
+        { runId: `run_${role}`, role },
+      );
+
+      assert.equal(result.ok, false, `role=${role} should be denied`);
+      assert.equal(result.structuredError.code, 'CAPABILITY_DENIED');
+      assert.match(result.structuredError.message, /artifacts:write/);
+    }
   });
 
   it('treats an unknown role string as orchestrator-default (fail-safe)', async () => {
