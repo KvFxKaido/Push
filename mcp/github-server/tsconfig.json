@@ -12,6 +12,11 @@
     "declaration": true,
     "sourceMap": true
   },
-  "include": ["src/**/*.ts", "../../lib/github-tool-core.ts", "../../lib/github-tool-parser.ts"],
+  "include": [
+    "src/**/*.ts",
+    "../../lib/github-tool-core.ts",
+    "../../lib/github-tool-parser.ts",
+    "../../lib/untrusted-content.ts"
+  ],
   "exclude": ["src/**/*.test.ts"]
 }

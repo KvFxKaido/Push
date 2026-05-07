@@ -52,6 +52,7 @@ import {
   shellEscape,
 } from './sandbox-tool-utils';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
+import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
 
@@ -349,8 +350,12 @@ export async function executeSandboxToolCall(
           `Command: ${call.args.command}`,
           `Exit code: ${result.exitCode}`,
         ];
-        if (result.stdout) lines.push(`\nStdout:\n${result.stdout}`);
-        if (result.stderr) lines.push(`\nStderr:\n${result.stderr}`);
+        // stdout/stderr is fully attacker-controlled (any program output, file
+        // contents via `cat`, etc.). Sanitize: escape envelope markers, spoof
+        // infrastructure tags, AND defang embedded JSON tool-call shapes that
+        // the model could echo back next turn.
+        if (result.stdout) lines.push(`\nStdout:\n${sanitizeUntrustedSource(result.stdout)}`);
+        if (result.stderr) lines.push(`\nStderr:\n${sanitizeUntrustedSource(result.stderr)}`);
         if (result.truncated) lines.push(`\n[Output truncated]`);
 
         // On non-zero exit, append a corrective hint if stderr matches a known pattern

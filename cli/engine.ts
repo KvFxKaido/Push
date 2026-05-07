@@ -39,6 +39,7 @@ import {
   getContextBudget,
 } from './context-manager.js';
 import { transformContextBeforeLLM, type DistillResult } from '../lib/context-transformer.ts';
+import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { summarizeToolResultPreview } from '../lib/run-events.ts';
 import { assertReadyForAssistantTurn } from '../lib/llm-message-invariants.ts';
@@ -547,7 +548,11 @@ export function buildToolResultMessage(
   };
 
   const metaLine: string = metaEnvelope ? `\n[meta] ${JSON.stringify(metaEnvelope)}` : '';
-  return `[TOOL_RESULT]\n${JSON.stringify(payload, null, 2)}${metaLine}\n[/TOOL_RESULT]`;
+  // Escape across the whole assembled body so metaEnvelope (which can carry
+  // attacker-controlled paths/branch names/commit messages) cannot terminate
+  // the envelope early either.
+  const safeBody = escapeToolResultBoundaries(`${JSON.stringify(payload, null, 2)}${metaLine}`);
+  return `[TOOL_RESULT]\n${safeBody}\n[/TOOL_RESULT]`;
 }
 
 export function buildParseErrorMessage(malformed: { reason: string; sample: string }[]): string {
