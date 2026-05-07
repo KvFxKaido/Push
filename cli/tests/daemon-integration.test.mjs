@@ -109,6 +109,28 @@ async function waitUntil(predicate, { timeoutMs = 5000, intervalMs = 25 } = {}) 
   throw new Error('timeout waiting for condition');
 }
 
+/**
+ * Poll a broadcaster array until an event matching `predicate` arrives, then
+ * return it. The persist path (loadSessionEvents) flushes synchronously when
+ * delegations complete, but broadcasts dispatch on the next tick — so a bare
+ * `broadcasted.find(...)` immediately after `waitForDelegationComplete` is
+ * racy under CI load. Callers replace the find+assert.ok pair with a single
+ * await.
+ */
+async function waitForBroadcast(
+  broadcasted,
+  predicate,
+  { timeoutMs = 5000, intervalMs = 25, message = 'expected broadcast event' } = {},
+) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const hit = broadcasted.find(predicate);
+    if (hit) return hit;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`timeout: ${message}`);
+}
+
 async function canListenOnUnixSocket(socketPath) {
   const server = net.createServer();
   try {
@@ -1356,10 +1378,11 @@ describe('submit_task_graph', needsLoopback, () => {
       assert.equal(completedGraph.payload.nodeCount, 1);
       assert.equal(completedGraph.payload.aborted, false);
 
-      const broadcastGraphCompleted = broadcasted.find(
+      const broadcastGraphCompleted = await waitForBroadcast(
+        broadcasted,
         (e) => e.type === 'task_graph.graph_completed' && e.payload.executionId === executionId,
+        { message: 'expected task_graph.graph_completed broadcast' },
       );
-      assert.ok(broadcastGraphCompleted, 'expected task_graph.graph_completed broadcast');
     } finally {
       restoreConfig();
       await mock.stop();
@@ -1957,14 +1980,16 @@ describe('delegate_explorer', needsLoopback, () => {
       assert.equal(record.outcome.status, 'complete');
       assert.equal(record.outcome.agent, 'explorer');
 
-      const broadcastStarted = broadcasted.find(
+      await waitForBroadcast(
+        broadcasted,
         (e) => e.type === 'subagent.started' && e.payload.subagentId === subagentId,
+        { message: 'expected subagent.started broadcast' },
       );
-      const broadcastCompleted = broadcasted.find(
+      await waitForBroadcast(
+        broadcasted,
         (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+        { message: 'expected subagent.completed broadcast' },
       );
-      assert.ok(broadcastStarted, 'expected subagent.started broadcast');
-      assert.ok(broadcastCompleted, 'expected subagent.completed broadcast');
     } finally {
       restoreConfig();
       await mock.stop();
@@ -2386,14 +2411,16 @@ describe('delegate_coder', needsLoopback, () => {
       assert.equal(record.outcome.status, 'complete');
       assert.equal(record.outcome.agent, 'coder');
 
-      const broadcastStarted = broadcasted.find(
+      await waitForBroadcast(
+        broadcasted,
         (e) => e.type === 'subagent.started' && e.payload.subagentId === subagentId,
+        { message: 'expected subagent.started broadcast' },
       );
-      const broadcastCompleted = broadcasted.find(
+      await waitForBroadcast(
+        broadcasted,
         (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+        { message: 'expected subagent.completed broadcast' },
       );
-      assert.ok(broadcastStarted, 'expected subagent.started broadcast');
-      assert.ok(broadcastCompleted, 'expected subagent.completed broadcast');
     } finally {
       restoreConfig();
       await mock.stop();
@@ -3254,10 +3281,11 @@ describe('delegate_reviewer', needsLoopback, () => {
       assert.ok(record.result.summary.includes('MOCK_REVIEWER_SUMMARY'));
       assert.equal(record.result.comments.length, 1);
 
-      const broadcastCompleted = broadcasted.find(
+      const broadcastCompleted = await waitForBroadcast(
+        broadcasted,
         (e) => e.type === 'subagent.completed' && e.payload.subagentId === subagentId,
+        { message: 'expected subagent.completed broadcast' },
       );
-      assert.ok(broadcastCompleted, 'expected subagent.completed broadcast');
       assert.ok(broadcastCompleted.payload.reviewResult);
     } finally {
       restoreConfig();
