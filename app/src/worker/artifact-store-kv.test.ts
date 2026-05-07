@@ -13,7 +13,7 @@ import type { KVNamespace } from '@cloudflare/workers-types';
 
 import type { ArtifactRecord, ArtifactScope } from '@push/lib/artifacts/types';
 
-import { WebKvArtifactStore } from './artifact-store-kv';
+import { InvalidArtifactIdError, WebKvArtifactStore } from './artifact-store-kv';
 
 interface MockKvEntry {
   value: string;
@@ -37,8 +37,11 @@ class MockKvNamespace {
 
   async list<TMeta = unknown>(options?: {
     prefix?: string;
+    cursor?: string;
   }): Promise<{
     keys: Array<{ name: string; metadata?: TMeta }>;
+    list_complete: true;
+    cacheStatus: null;
   }> {
     const prefix = options?.prefix ?? '';
     const keys = [];
@@ -46,7 +49,48 @@ class MockKvNamespace {
       if (!name.startsWith(prefix)) continue;
       keys.push({ name, metadata: entry.metadata as TMeta });
     }
-    return { keys };
+    return { keys, list_complete: true, cacheStatus: null };
+  }
+}
+
+/**
+ * Mock that splits results across multiple `list()` calls so the
+ * pagination loop in `WebKvArtifactStore.list` is exercised. Returns
+ * `pageSize` keys per call until exhausted, then `list_complete:
+ * true`.
+ */
+class PaginatedMockKvNamespace {
+  private readonly store = new Map<string, MockKvEntry>();
+  private readonly pageSize: number;
+
+  constructor(pageSize: number) {
+    this.pageSize = pageSize;
+  }
+
+  async get(key: string): Promise<string | null> {
+    return this.store.get(key)?.value ?? null;
+  }
+
+  async put(key: string, value: string, options?: { metadata?: unknown }): Promise<void> {
+    this.store.set(key, { value, metadata: options?.metadata });
+  }
+
+  async delete(key: string): Promise<void> {
+    this.store.delete(key);
+  }
+
+  async list<TMeta = unknown>(options?: { prefix?: string; cursor?: string }) {
+    const prefix = options?.prefix ?? '';
+    const all = [...this.store.entries()].filter(([name]) => name.startsWith(prefix));
+    const startIdx = options?.cursor ? Number(options.cursor) : 0;
+    const slice = all.slice(startIdx, startIdx + this.pageSize);
+    const list_complete = startIdx + this.pageSize >= all.length;
+    return {
+      keys: slice.map(([name, entry]) => ({ name, metadata: entry.metadata as TMeta })),
+      list_complete,
+      cursor: list_complete ? undefined : String(startIdx + this.pageSize),
+      cacheStatus: null,
+    };
   }
 }
 
@@ -180,16 +224,31 @@ describe('WebKvArtifactStore', () => {
     expect(await store.get(SCOPE, 'art_one')).toBeNull();
   });
 
-  it('rejects path-traversal-shaped artifact ids on get/put/delete', async () => {
+  it('rejects path-traversal-shaped artifact ids on get/put/delete with InvalidArtifactIdError', async () => {
     const kv = new MockKvNamespace();
     const store = new WebKvArtifactStore(kv as unknown as KVNamespace);
     const malicious = ['../other/art', 'foo/bar', '..', '.', ''];
     for (const id of malicious) {
-      await expect(store.get(SCOPE, id)).rejects.toThrow(/Invalid artifact id/);
-      await expect(store.delete(SCOPE, id)).rejects.toThrow(/Invalid artifact id/);
+      await expect(store.get(SCOPE, id)).rejects.toBeInstanceOf(InvalidArtifactIdError);
+      await expect(store.delete(SCOPE, id)).rejects.toBeInstanceOf(InvalidArtifactIdError);
     }
     const evilRecord = { ...makeMermaid(), id: '../escape' };
-    await expect(store.put(evilRecord)).rejects.toThrow(/Invalid artifact id/);
+    await expect(store.put(evilRecord)).rejects.toBeInstanceOf(InvalidArtifactIdError);
+  });
+
+  it('walks all KV list pages so artifacts past the first 1000-key window are returned', async () => {
+    // Force a page size of 3 and seed 7 records so the loop has to make
+    // three calls (3 + 3 + 1) before `list_complete`. Without cursor
+    // pagination the older revs returned only 3.
+    const kv = new PaginatedMockKvNamespace(3);
+    const store = new WebKvArtifactStore(kv as unknown as KVNamespace);
+    for (let i = 0; i < 7; i++) {
+      await store.put(
+        makeMermaid({ id: `art_${i}`, updatedAt: 1000 + i } as Partial<ArtifactRecord>),
+      );
+    }
+    const list = await store.list({ scope: SCOPE });
+    expect(list).toHaveLength(7);
   });
 
   it('writes list-friendly metadata on put for cheap pre-fetch filtering', async () => {

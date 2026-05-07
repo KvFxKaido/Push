@@ -1,26 +1,35 @@
 /**
  * Workers KV implementation of `ArtifactStore`.
  *
- * Layout: each artifact persists at key `buildScopeKeys(scope).chat ??
- * .branch + ":" + id`. List operations use KV's `list({ prefix })` to
- * find matching keys, then issue per-key gets. That's the same N+1
- * pattern as the CLI flat-JSON store — fine at v1 cardinality where
- * the doc on the lib interface budgets for "a few dozen artifacts per
- * branch."
+ * Layout: each artifact persists at the canonical key from
+ * `primaryStorageKey(scope, id)` in `lib/artifacts/scope.ts` — the
+ * same shape the CLI store derives from. Sharing the helper keeps
+ * key-shape changes centralized so a future migration touches one
+ * file.
  *
- * Metadata field on KV writes carries `{ updatedAt, kind, title }` so
- * listing can sort and filter without dereferencing every value. The
- * record itself is the source of truth; metadata is a denormalized
- * view that can be regenerated from the value if it ever drifts.
+ * List operations walk all KV `list({ prefix })` pages until
+ * `list_complete`, then dereference each value, then filter and sort
+ * on the real record fields. The N+1 pattern is acceptable at v1
+ * cardinality ("a few dozen artifacts per branch" per the lib
+ * interface doc) and the swap target is SQLite if listing pressure
+ * shows up.
  *
- * Path-safety: KV keys aren't filesystem paths, so the CLI's `:` → `__`
- * substitution doesn't apply. Keys can contain `:` directly. The
- * canonical scope-key shape from `buildScopeKeys` is used as-is.
+ * Per-record metadata (`{ updatedAt, kind, title }`) is still written
+ * at `put` time because KV's `metadata` slot is essentially free, and
+ * a future re-introduction of the metadata fast-path can light up
+ * without a migration. List operations don't read it today — the
+ * record value is the single source of truth, which avoids false
+ * negatives if metadata ever drifts.
+ *
+ * Path-safety: `assertSafeArtifactId` rejects ids containing `:` or
+ * other path-shaping characters. KV keys aren't filesystem paths but
+ * the `:` delimiter in our scope-key shape would otherwise let an id
+ * like `art:foo` collide with another scope's records.
  */
 
 import type { KVNamespace } from '@cloudflare/workers-types';
 
-import { buildScopeKeys } from '@push/lib/artifacts/scope';
+import { buildScopeKeys, primaryStorageKey } from '@push/lib/artifacts/scope';
 import type { ArtifactRecord, ArtifactScope } from '@push/lib/artifacts/types';
 import type { ArtifactStore, ListArtifactsQuery } from '@push/lib/artifacts/store';
 
@@ -31,28 +40,29 @@ interface KvListMetadata {
 }
 
 /**
- * Reject artifact ids that could broaden the scope when concatenated
- * into a KV key. KV doesn't have a path-traversal vector the way
- * filesystem stores do, but a malicious id containing `:` could
- * collide with our scope-key delimiter and read/overwrite an
- * unrelated record. Same allowlist as the CLI store — ASCII
- * alphanumerics, `-`, `_`, max 128 chars.
+ * Typed error so handlers can distinguish a client-side id-validation
+ * failure (400) from a server-side KV failure (500). The previous
+ * generic `Error` had handlers blanket-mapping every store exception
+ * to `INVALID_ID`, which masked real outages.
  */
+export class InvalidArtifactIdError extends Error {
+  constructor(id: string) {
+    super(`Invalid artifact id ${JSON.stringify(id)}: must match /^[A-Za-z0-9_-]{1,128}$/.`);
+    this.name = 'InvalidArtifactIdError';
+  }
+}
+
 const SAFE_ARTIFACT_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 function assertSafeArtifactId(id: string): void {
   if (!SAFE_ARTIFACT_ID.test(id)) {
-    throw new Error(
-      `Invalid artifact id ${JSON.stringify(id)}: must match ${SAFE_ARTIFACT_ID.source}.`,
-    );
+    throw new InvalidArtifactIdError(id);
   }
 }
 
-function primaryKey(scope: ArtifactScope, id: string): string {
+function recordKey(scope: ArtifactScope, id: string): string {
   assertSafeArtifactId(id);
-  const keys = buildScopeKeys(scope);
-  const parent = keys.chat ?? keys.branch;
-  return `${parent}:${id}`;
+  return primaryStorageKey(scope, id);
 }
 
 function scopePrefix(scope: ArtifactScope): string {
@@ -77,6 +87,27 @@ function matchesKindFilter(
   return allowed.includes(kind);
 }
 
+interface KvKeyEntry {
+  name: string;
+}
+
+/**
+ * Walk every page of `kv.list({ prefix })` until `list_complete`.
+ * Workers KV caps a single `list` call at 1000 keys, and a long-lived
+ * chat that crosses that boundary would otherwise silently drop
+ * artifacts past the first page from `list()` results.
+ */
+async function listAllKeys(kv: KVNamespace, prefix: string): Promise<KvKeyEntry[]> {
+  const all: KvKeyEntry[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await kv.list<KvListMetadata>({ prefix, cursor });
+    for (const key of page.keys) all.push({ name: key.name });
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return all;
+}
+
 export class WebKvArtifactStore implements ArtifactStore {
   private readonly kv: KVNamespace;
 
@@ -85,41 +116,29 @@ export class WebKvArtifactStore implements ArtifactStore {
   }
 
   async get(scope: ArtifactScope, id: string): Promise<ArtifactRecord | null> {
-    const raw = await this.kv.get(primaryKey(scope, id), 'text');
+    const key = recordKey(scope, id);
+    const raw = await this.kv.get(key, 'text');
     if (raw === null) return null;
     try {
       return JSON.parse(raw) as ArtifactRecord;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Corrupt artifact at ${primaryKey(scope, id)}: ${message}`);
+      throw new Error(`Corrupt artifact at ${key}: ${message}`);
     }
   }
 
   async list(query: ListArtifactsQuery): Promise<ArtifactRecord[]> {
     const prefix = scopePrefix(query.scope);
-    // Filter by metadata when possible to skip values we won't return.
-    // KV's `list` returns up to 1000 keys per call by default — fine
-    // until the v1 → SQLite swap point.
-    const listing = await this.kv.list<KvListMetadata>({ prefix });
-    type KvKey = (typeof listing.keys)[number];
-    const candidates = listing.keys.filter((entry: KvKey) => {
-      const meta = entry.metadata;
-      if (!meta) return true; // older records without metadata still get fetched
-      return matchesKindFilter(meta.kind, query.kind);
-    });
+    const entries = await listAllKeys(this.kv, prefix);
 
-    // Sort by metadata when available so we can apply `limit` before
-    // dereferencing values that won't make it into the result.
-    candidates.sort((a: KvKey, b: KvKey) => {
-      const aTs = a.metadata?.updatedAt ?? 0;
-      const bTs = b.metadata?.updatedAt ?? 0;
-      return bTs - aTs;
-    });
-    const limited =
-      query.limit !== undefined && query.limit >= 0 ? candidates.slice(0, query.limit) : candidates;
-
+    // Fetch every value, filter and sort on the real record fields.
+    // Treating the record as the single source of truth (rather than
+    // KV metadata) avoids false-negative drops if metadata ever drifts
+    // — Copilot's read on the previous metadata fast-path. Limit
+    // applies after sort so newest-first semantics hold even if some
+    // entries are missing metadata.
     const records = await Promise.all(
-      limited.map(async (entry: KvKey) => {
+      entries.map(async (entry) => {
         const raw = await this.kv.get(entry.name, 'text');
         if (raw === null) return null;
         try {
@@ -130,20 +149,26 @@ export class WebKvArtifactStore implements ArtifactStore {
         }
       }),
     );
-    return records
+
+    const filtered = records
       .filter((r: ArtifactRecord | null): r is ArtifactRecord => r !== null)
       .filter((r: ArtifactRecord) => matchesKindFilter(r.kind, query.kind))
       .sort((a: ArtifactRecord, b: ArtifactRecord) => b.updatedAt - a.updatedAt);
+
+    if (query.limit !== undefined && query.limit >= 0) {
+      return filtered.slice(0, query.limit);
+    }
+    return filtered;
   }
 
   async put(record: ArtifactRecord): Promise<void> {
-    const key = primaryKey(record.scope, record.id);
+    const key = recordKey(record.scope, record.id);
     await this.kv.put(key, JSON.stringify(record), {
       metadata: buildMetadata(record),
     });
   }
 
   async delete(scope: ArtifactScope, id: string): Promise<void> {
-    await this.kv.delete(primaryKey(scope, id));
+    await this.kv.delete(recordKey(scope, id));
   }
 }

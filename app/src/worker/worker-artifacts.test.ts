@@ -253,4 +253,37 @@ describe('handleArtifactsGet / handleArtifactsDelete', () => {
     const json = (await res.json()) as { code: string };
     expect(json.code).toBe('INVALID_ID');
   });
+
+  it('maps KV outages on get to 500 INTERNAL_ERROR (not 400 INVALID_ID)', async () => {
+    // Earlier revs collapsed every store-side error to 400 INVALID_ID,
+    // which masked real KV outages or corrupt records. Server-side
+    // failures must preserve their server-side classification so the
+    // client/model can retry instead of treating it as a permanent
+    // bad input.
+    const kv = {
+      get: () => Promise.reject(new Error('KV unreachable')),
+      put: async () => {},
+      delete: async () => {},
+      list: async () => ({ keys: [], list_complete: true, cacheStatus: null }),
+    };
+    const env = { ARTIFACTS: kv as unknown as KVNamespace };
+    const res = await handleArtifactsGet(makeRequest({ scope: SCOPE, id: 'art_valid_id' }), env);
+    expect(res.status).toBe(500);
+    const json = (await res.json()) as { code: string };
+    expect(json.code).toBe('INTERNAL_ERROR');
+  });
+
+  it('maps KV outages on delete to 500 INTERNAL_ERROR (not 400 INVALID_ID)', async () => {
+    const kv = {
+      get: async () => null,
+      put: async () => {},
+      delete: () => Promise.reject(new Error('KV unreachable')),
+      list: async () => ({ keys: [], list_complete: true, cacheStatus: null }),
+    };
+    const env = { ARTIFACTS: kv as unknown as KVNamespace };
+    const res = await handleArtifactsDelete(makeRequest({ scope: SCOPE, id: 'art_valid_id' }), env);
+    expect(res.status).toBe(500);
+    const json = (await res.json()) as { code: string };
+    expect(json.code).toBe('INTERNAL_ERROR');
+  });
 });

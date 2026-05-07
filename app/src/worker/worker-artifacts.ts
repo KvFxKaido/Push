@@ -38,7 +38,7 @@ import { isArtifactKind } from '@push/lib/artifacts/types';
 import type { AgentRole } from '@push/lib/runtime-contract';
 import type { ListArtifactsQuery } from '@push/lib/artifacts/store';
 
-import { WebKvArtifactStore } from './artifact-store-kv';
+import { InvalidArtifactIdError, WebKvArtifactStore } from './artifact-store-kv';
 
 interface ArtifactsEnv {
   ARTIFACTS?: KVNamespace;
@@ -267,9 +267,14 @@ export async function handleArtifactsGet(request: Request, env: ArtifactsEnv): P
     const record = await store.get(scope, body.id);
     return jsonResponse({ ok: true, record });
   } catch (err) {
+    // Distinguish client-side validation errors (bad id shape) from
+    // server-side failures (KV outage, corrupt record JSON). Earlier
+    // revs collapsed both to 400 INVALID_ID, masking real outages.
+    if (err instanceof InvalidArtifactIdError) {
+      return jsonResponse({ ok: false, code: 'INVALID_ID', message: err.message }, 400);
+    }
     const message = err instanceof Error ? err.message : String(err);
-    // `assertSafeArtifactId` throws on traversal-shaped ids.
-    return jsonResponse({ ok: false, code: 'INVALID_ID', message }, 400);
+    return jsonResponse({ ok: false, code: 'INTERNAL_ERROR', message }, 500);
   }
 }
 
@@ -303,7 +308,10 @@ export async function handleArtifactsDelete(
     await store.delete(scope, body.id);
     return jsonResponse({ ok: true });
   } catch (err) {
+    if (err instanceof InvalidArtifactIdError) {
+      return jsonResponse({ ok: false, code: 'INVALID_ID', message: err.message }, 400);
+    }
     const message = err instanceof Error ? err.message : String(err);
-    return jsonResponse({ ok: false, code: 'INVALID_ID', message }, 400);
+    return jsonResponse({ ok: false, code: 'INTERNAL_ERROR', message }, 500);
   }
 }
