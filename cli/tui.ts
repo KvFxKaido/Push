@@ -1262,6 +1262,12 @@ export async function runTUI(options = {}) {
   // user hasn't expressed a theme preference (no PUSH_THEME env, no
   // config.theme). An explicit theme always wins. Same precedence rule
   // /theme <name> + /animate use.
+  // Capture the layout env *before* any in-session /layout set/unpin
+  // mutates it. Without this, a TUI launched with `PUSH_TUI_LAYOUT=quiet`
+  // and then toggled via /layout would lose the env preference forever:
+  // /layout unpin would delete env and fall through to the default rather
+  // than honour the value the user originally launched with.
+  const originalEnvLayout = (process.env.PUSH_TUI_LAYOUT || '').trim() || null;
   const initialLayout = detectLayoutMode();
   const explicitTheme = (process.env.PUSH_THEME || '').trim();
   const pairedThemeName = initialLayout === 'quiet' && !explicitTheme ? 'mono' : undefined;
@@ -3581,7 +3587,15 @@ export async function runTUI(options = {}) {
     const sub0 = ((sub === 'set' ? parts[1] : sub) || '').toLowerCase().trim();
     if (sub0 === 'unpin') {
       delete config.layout;
-      delete process.env.PUSH_TUI_LAYOUT;
+      // Restore the env that the TUI was launched with (if any) instead
+      // of nuking it. detectLayoutMode reads env first, so this lets
+      // unpin honour an externally-set PUSH_TUI_LAYOUT — matches what
+      // the help text promises ("revert to env or default").
+      if (originalEnvLayout) {
+        process.env.PUSH_TUI_LAYOUT = originalEnvLayout;
+      } else {
+        delete process.env.PUSH_TUI_LAYOUT;
+      }
       await saveConfig(config);
       tuiState.layout = detectLayoutMode();
       // Layout swap moves pane regions and changes framer tables; invalidate

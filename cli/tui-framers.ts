@@ -555,7 +555,10 @@ function quietBullet(theme: Theme): string {
 }
 
 function quietBranch(theme: Theme): string {
-  return theme.unicode ? '└─ ' : 'L  ';
+  // ASCII fallback follows GNU `tree -A`'s corner glyph: `+--`. The
+  // earlier `'L  '` sat awkwardly between letter and tree-corner; +--
+  // reads unambiguously as a branch in non-Unicode terminals.
+  return theme.unicode ? '└─ ' : '+--';
 }
 
 const quietUserFramer: EntryFramer = {
