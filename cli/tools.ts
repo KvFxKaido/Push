@@ -500,9 +500,45 @@ function pruneExecSessions() {
   }
 }
 
+// CLI-side aliases: tool names that resolve to the same case in
+// `executeToolCall`'s switch. Normalizing both the user's policy lists and
+// the inbound `call.tool` through this map keeps `disabledTools` /
+// `alwaysAllow` enforcement consistent regardless of which name the model
+// emits. The web/lib registry has its own aliasing (`lib/tool-registry.ts`)
+// but uses different canonical names; this map is intentionally CLI-local.
+const CLI_TOOL_ALIASES = new Map([['artifact', 'create_artifact']]);
+
+function canonicalizeCliToolName(name) {
+  if (typeof name !== 'string') return '';
+  const trimmed = name.trim();
+  if (!trimmed) return '';
+  return CLI_TOOL_ALIASES.get(trimmed) ?? trimmed;
+}
+
+// Resolve a comma-separated env var into a Set of canonicalized tool names,
+// with an optional explicit list winning over the env. `undefined` array
+// means "fall back to env"; an empty array means "no entries" and
+// short-circuits the env read so callers can opt out.
+function resolveToolPolicyList(explicit, envVar) {
+  const normalize = (entries) =>
+    new Set(entries.map((name) => canonicalizeCliToolName(name)).filter(Boolean));
+  if (Array.isArray(explicit)) {
+    return normalize(explicit);
+  }
+  const raw = process.env[envVar];
+  if (!raw) return new Set();
+  return normalize(raw.split(','));
+}
+
 async function guardExecCommand(command, options = {}, mode = 'exec') {
   const execMode = options.execMode ?? 'auto';
   const operationLabel = mode === 'exec_start' ? 'exec_start' : 'exec';
+  // `alwaysAllow` waives approval for the named tool but does NOT bypass the
+  // headless `--allow-exec` requirement below — that's a separate safety
+  // gate for non-interactive runs. Resolved once in the dispatcher and
+  // passed in via options.
+  const alwaysAllowExec =
+    Array.isArray(options.alwaysAllow) && options.alwaysAllow.includes(operationLabel);
   const blockedMessage =
     mode === 'exec_start'
       ? 'Blocked: exec_start is disabled in headless mode. Use --allow-exec to enable.'
@@ -525,6 +561,13 @@ async function guardExecCommand(command, options = {}, mode = 'exec') {
   }
 
   if (execMode === 'yolo') {
+    return { ok: true };
+  }
+
+  // `alwaysAllow` skips approval prompts for the listed tool name even when
+  // execMode would otherwise prompt. It's evaluated after the headless gate
+  // so non-interactive runs still need `--allow-exec` to execute commands.
+  if (alwaysAllowExec) {
     return { ok: true };
   }
 
@@ -1403,8 +1446,34 @@ export async function backupFile(filePath, workspaceRoot) {
  *   If not provided, all calls proceed (headless default: deny high-risk).
  * - providerId: active provider id ('ollama' | 'openrouter' | 'zen' | 'nvidia') for provider-aware tools.
  * - providerApiKey: resolved provider API key for provider-aware tools.
+ * - disabledTools: CLI tool names blocked at dispatch (config: `disabledTools`).
+ * - alwaysAllow: CLI tool names that bypass approval (config: `alwaysAllow`).
+ *   Both fall back to `PUSH_DISABLED_TOOLS` / `PUSH_ALWAYS_ALLOW` env (comma-
+ *   separated) when the option is omitted, so the daemon's delegated tool
+ *   executors inherit the user's policy without re-loading config.
  */
 export async function executeToolCall(call, workspaceRoot, options = {}) {
+  const disabledList = resolveToolPolicyList(options.disabledTools, 'PUSH_DISABLED_TOOLS');
+  const callCanonical = canonicalizeCliToolName(call?.tool);
+  if (disabledList.has(callCanonical)) {
+    return {
+      ok: false,
+      text: `Blocked: tool "${call.tool}" is disabled by user config (disabledTools). Do not retry — pick a different approach.`,
+      structuredError: {
+        code: 'TOOL_DISABLED',
+        message: `Tool "${call.tool}" disabled by config`,
+        retryable: false,
+      },
+    };
+  }
+  // Forward a canonicalized `alwaysAllow` set into the per-case guard via
+  // options so command guards see the same set without re-resolving env on
+  // every call. We always normalize (even when an explicit array was
+  // passed) to keep alias semantics consistent at the gate.
+  const alwaysAllowList = resolveToolPolicyList(options.alwaysAllow, 'PUSH_ALWAYS_ALLOW');
+  if (alwaysAllowList.size > 0) {
+    options = { ...options, alwaysAllow: [...alwaysAllowList] };
+  }
   try {
     switch (call.tool) {
       case 'read_file': {

@@ -80,6 +80,12 @@ export interface RunOptions {
   allowExec?: boolean;
   safeExecPatterns?: string[];
   execMode?: string;
+  // CLI tool names blocked at `executeToolCall` dispatch. Empty/undefined
+  // means no tools are blocked.
+  disabledTools?: string[];
+  // CLI tool names that bypass approval prompts in their gate
+  // (today: `exec`, `exec_start`).
+  alwaysAllow?: string[];
   // Skip the terminal `run_complete` append + dispatch. Callers that run
   // `runAssistantLoop` as a sub-step of a larger turn (delegation per-node)
   // set this so the parent scope is the only writer of `run_complete` —
@@ -621,6 +627,8 @@ export async function runAssistantLoop(
     allowExec,
     safeExecPatterns,
     execMode,
+    disabledTools,
+    alwaysAllow,
     suppressRunComplete = false,
     suppressEventPersist = false,
   } = options;
@@ -771,6 +779,8 @@ export async function runAssistantLoop(
           allowExec,
           safeExecPatterns,
           execMode,
+          disabledTools,
+          alwaysAllow,
           providerId: providerConfig?.id,
           providerApiKey: apiKey,
           runId,

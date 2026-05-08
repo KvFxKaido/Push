@@ -127,6 +127,24 @@ When `--accept` is present, Push also frames the task using the shared delegatio
 
 Per-provider settings (model, endpoint URL, API key) are stored under the provider name. The config file is chmod 0600.
 
+### Tool allow / deny lists
+
+Two arrays in `~/.push/config.json` shape what tools the agent can run:
+
+```json
+{
+  "disabledTools": ["exec", "exec_start"],
+  "alwaysAllow": ["exec"],
+  "safeExecPatterns": ["npm test", "git status"]
+}
+```
+
+- `disabledTools` — CLI tool names blocked at dispatch. The agent receives a `TOOL_DISABLED` error and is instructed not to retry.
+- `alwaysAllow` — CLI tool names that bypass approval prompts. Today only `exec` and `exec_start` actually prompt; other entries are forward-compatible no-ops. Does **not** bypass `--allow-exec` in headless mode.
+- `safeExecPatterns` — command-prefix allowlist for `exec` (existing). Use this for command-level granularity instead of allowing the whole tool.
+
+The CLI exports both lists to `PUSH_DISABLED_TOOLS` and `PUSH_ALWAYS_ALLOW` (comma-separated) so the `pushd` daemon's delegated tool executors inherit the same policy without re-reading config.
+
 ### Environment variables
 
 Config resolves in order: CLI flags > env vars > config file > defaults.

@@ -403,7 +403,16 @@ async function runHeadless(
   maxRounds,
   jsonOutput,
   acceptanceChecks,
-  { allowExec = false, safeExecPatterns = [], execMode = 'auto' } = {},
+  {
+    allowExec = false,
+    safeExecPatterns = [],
+    execMode = 'auto',
+    // `disabledTools` / `alwaysAllow` deliberately default to `undefined` so
+    // omission flows through to `executeToolCall`'s env-var fallback. An
+    // explicit `[]` is an opt-out and is preserved.
+    disabledTools,
+    alwaysAllow,
+  } = {},
 ) {
   const taskPrompt = buildHeadlessTaskBrief(task, acceptanceChecks);
   await appendUserMessageWithFileReferences(state, taskPrompt, state.cwd, {
@@ -426,6 +435,8 @@ async function runHeadless(
       allowExec,
       safeExecPatterns,
       execMode,
+      disabledTools,
+      alwaysAllow,
     });
     await saveSessionState(state);
 
@@ -789,6 +800,11 @@ async function runInteractive(
     config.safeExecPatterns = [];
   }
   const safeExecPatterns = config.safeExecPatterns;
+  // Pass undefined (not []) when the key is absent so `executeToolCall`'s
+  // env-var fallback (`PUSH_DISABLED_TOOLS` / `PUSH_ALWAYS_ALLOW`) actually
+  // applies. An explicit empty array is an opt-out and would mask the env.
+  const disabledTools = Array.isArray(config.disabledTools) ? config.disabledTools : undefined;
+  const alwaysAllow = Array.isArray(config.alwaysAllow) ? config.alwaysAllow : undefined;
 
   // Lazy session creation: defer disk writes until first user message.
   let sessionPersisted = alreadyPersisted;
@@ -1064,6 +1080,8 @@ async function runInteractive(
                 emit: onEvent,
                 safeExecPatterns,
                 execMode,
+                disabledTools,
+                alwaysAllow,
               },
             );
             await saveSessionState(state);
@@ -1113,6 +1131,8 @@ async function runInteractive(
           emit: onEvent,
           safeExecPatterns,
           execMode,
+          disabledTools,
+          alwaysAllow,
         });
         await saveSessionState(state);
         if (result.outcome === 'aborted') {
@@ -1270,6 +1290,8 @@ function sanitizeConfig(config) {
     tavilyApiKey: config.tavilyApiKey ? maskSecret(config.tavilyApiKey) : null,
     webSearchBackend: config.webSearchBackend || null,
     safeExecPatterns: Array.isArray(config.safeExecPatterns) ? config.safeExecPatterns : [],
+    disabledTools: Array.isArray(config.disabledTools) ? config.disabledTools : [],
+    alwaysAllow: Array.isArray(config.alwaysAllow) ? config.alwaysAllow : [],
     ollama: config.ollama ? redactProvider(config.ollama) : {},
     openrouter: config.openrouter ? redactProvider(config.openrouter) : {},
     zen: config.zen ? redactProvider(config.zen) : {},
@@ -2568,7 +2590,22 @@ export async function main() {
     const headlessSafePatterns = Array.isArray(persistedConfig.safeExecPatterns)
       ? persistedConfig.safeExecPatterns
       : [];
+    // Same env-fallback contract as the REPL path: undefined -> env wins,
+    // explicit array -> opt-out.
+    const headlessDisabledTools = Array.isArray(persistedConfig.disabledTools)
+      ? persistedConfig.disabledTools
+      : undefined;
+    const headlessAlwaysAllow = Array.isArray(persistedConfig.alwaysAllow)
+      ? persistedConfig.alwaysAllow
+      : undefined;
     const headlessExecMode = process.env.PUSH_EXEC_MODE || 'auto';
+    const headlessRunOpts = {
+      allowExec,
+      safeExecPatterns: headlessSafePatterns,
+      execMode: headlessExecMode,
+      disabledTools: headlessDisabledTools,
+      alwaysAllow: headlessAlwaysAllow,
+    };
     if (values.delegate) {
       const { runDelegatedHeadless } = await import('./delegation-entry.js');
       return runDelegatedHeadless(
@@ -2579,7 +2616,7 @@ export async function main() {
         maxRounds,
         values.json,
         acceptanceChecks,
-        { allowExec, safeExecPatterns: headlessSafePatterns, execMode: headlessExecMode },
+        headlessRunOpts,
       );
     }
     return runHeadless(
@@ -2590,7 +2627,7 @@ export async function main() {
       maxRounds,
       values.json,
       acceptanceChecks,
-      { allowExec, safeExecPatterns: headlessSafePatterns, execMode: headlessExecMode },
+      headlessRunOpts,
     );
   }
 

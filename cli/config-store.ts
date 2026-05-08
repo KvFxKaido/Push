@@ -20,6 +20,14 @@ export interface PushConfig {
   animation?: string;
   spinner?: string;
   layout?: string;
+  // Tool name allow/deny lists (CLI tool names from `cli/tools.ts` — e.g.
+  // `exec`, `exec_start`, `write_file`). `disabledTools` blocks at dispatch;
+  // `alwaysAllow` waives approval for the listed tools (today only `exec`
+  // and `exec_start` actually prompt, so other entries are forward-compat
+  // no-ops). Command-prefix allowlisting stays in `safeExecPatterns`.
+  alwaysAllow?: string[];
+  disabledTools?: string[];
+  safeExecPatterns?: string[];
   ollama?: ProviderConfig;
   openrouter?: ProviderConfig;
   zen?: ProviderConfig;
@@ -93,6 +101,18 @@ export function applyConfigToEnv(config: PushConfig): void {
   setEnvIfMissing('PUSH_ANIMATION', config.animation);
   setEnvIfMissing('PUSH_SPINNER', config.spinner);
   setEnvIfMissing('PUSH_TUI_LAYOUT', config.layout);
+
+  // Forward tool allow/deny lists as comma-separated env vars so child
+  // processes (notably the pushd daemon's delegated tool executors) see
+  // the same policy without re-reading `~/.push/config.json`. Empty arrays
+  // are skipped because there's nothing to communicate — the parser in
+  // `cli/tools.ts` already treats unset/empty env vars as "no entries".
+  if (Array.isArray(config.disabledTools) && config.disabledTools.length) {
+    setEnvIfMissing('PUSH_DISABLED_TOOLS', config.disabledTools.join(','));
+  }
+  if (Array.isArray(config.alwaysAllow) && config.alwaysAllow.length) {
+    setEnvIfMissing('PUSH_ALWAYS_ALLOW', config.alwaysAllow.join(','));
+  }
 
   const ollama = ensureObject(config.ollama) as ProviderConfig;
   setEnvIfMissing('PUSH_OLLAMA_URL', ollama.url);
