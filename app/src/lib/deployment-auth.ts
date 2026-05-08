@@ -1,8 +1,22 @@
+import { resolveApiUrl } from './api-url';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 
 export const DEPLOYMENT_TOKEN_HEADER = 'X-Push-Deployment-Token';
 export const DEPLOYMENT_TOKEN_STORAGE_KEY = 'push_deployment_token';
 export const DEPLOYMENT_TOKEN_HASH_PARAM = 'push_token';
+export const DEPLOYMENT_AUTH_PROBE_PATH = '/api/auth-probe';
+export const DEPLOYMENT_AUTH_REQUIRED_CODE = 'DEPLOYMENT_AUTH_REQUIRED';
+
+export type DeploymentAuthState = 'unknown' | 'ok' | 'required' | 'invalid';
+type Listener = (state: DeploymentAuthState) => void;
+const listeners = new Set<Listener>();
+let currentState: DeploymentAuthState = 'unknown';
+
+function setState(next: DeploymentAuthState): void {
+  if (next === currentState) return;
+  currentState = next;
+  for (const listener of listeners) listener(next);
+}
 
 declare global {
   interface Window {
@@ -98,19 +112,72 @@ export function captureDeploymentTokenFromHash(): string {
   return token;
 }
 
+async function inspectDeploymentAuthResponse(
+  res: Response,
+  input: RequestInfo | URL,
+): Promise<void> {
+  if (res.status !== 401 || !shouldAttachDeploymentToken(input)) return;
+  try {
+    const body = (await res.clone().json()) as { code?: unknown };
+    if (body?.code === DEPLOYMENT_AUTH_REQUIRED_CODE) {
+      setState(getDeploymentToken() ? 'invalid' : 'required');
+    }
+  } catch {
+    // body wasn't JSON or already consumed — leave state alone
+  }
+}
+
+export function getDeploymentAuthState(): DeploymentAuthState {
+  return currentState;
+}
+
+export function subscribeDeploymentAuthState(listener: Listener): () => void {
+  listeners.add(listener);
+  listener(currentState);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export async function probeDeploymentAuth(): Promise<DeploymentAuthState> {
+  if (typeof window === 'undefined') return currentState;
+  try {
+    const res = await window.fetch(resolveApiUrl(DEPLOYMENT_AUTH_PROBE_PATH), {
+      method: 'GET',
+      cache: 'no-store',
+    });
+    if (res.ok) {
+      setState('ok');
+      return 'ok';
+    }
+    if (res.status === 401) {
+      const body = (await res.json().catch(() => ({}))) as { code?: unknown };
+      if (body?.code === DEPLOYMENT_AUTH_REQUIRED_CODE) {
+        const next: DeploymentAuthState = getDeploymentToken() ? 'invalid' : 'required';
+        setState(next);
+        return next;
+      }
+    }
+  } catch {
+    // network noise — leave state alone, app surfaces its own offline UI
+  }
+  return currentState;
+}
+
 export function installDeploymentAuthFetch(): void {
   if (typeof window === 'undefined' || window.__pushDeploymentAuthFetchInstalled) return;
 
   captureDeploymentTokenFromHash();
   const baseFetch = window.fetch.bind(window);
-  window.fetch = ((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  window.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const token = getDeploymentToken();
-    if (!token || !shouldAttachDeploymentToken(input)) {
-      return baseFetch(input, init);
-    }
-
-    const [nextInput, nextInit] = withDeploymentToken(input, init, token);
-    return baseFetch(nextInput, nextInit);
+    const [nextInput, nextInit] =
+      token && shouldAttachDeploymentToken(input)
+        ? withDeploymentToken(input, init, token)
+        : ([input, init] as [RequestInfo | URL, RequestInit | undefined]);
+    const res = await baseFetch(nextInput, nextInit);
+    void inspectDeploymentAuthResponse(res, input);
+    return res;
   }) as typeof window.fetch;
 
   window.__pushDeploymentAuthFetchInstalled = true;

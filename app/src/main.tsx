@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.tsx';
 import { RootErrorBoundary } from './components/RootErrorBoundary.tsx';
+import { DeploymentTokenGate } from './components/DeploymentTokenGate.tsx';
 import { initPushTracing } from './lib/tracing.ts';
 import { installGlobalErrorHandlers, primeErrorReporting } from './lib/error-reporting.ts';
 import { perfMark } from './lib/perf-marks.ts';
@@ -36,7 +37,9 @@ if (tracingConfig.enabled && (tracingConfig.endpoint || tracingConfig.consoleExp
 createRoot(rootElement).render(
   <StrictMode>
     <RootErrorBoundary>
-      <App />
+      <DeploymentTokenGate>
+        <App />
+      </DeploymentTokenGate>
     </RootErrorBoundary>
   </StrictMode>,
 );
