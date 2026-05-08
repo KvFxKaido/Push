@@ -59,7 +59,14 @@ export interface CreateCheckpointOptions {
   workspaceRoot: string;
   name?: string;
   sessionId: string;
-  messagesPath?: string | null;
+  /**
+   * In-memory session messages to snapshot as JSONL. Snapshotting from
+   * the in-memory state (rather than the on-disk path) sidesteps
+   * `cli/session-store.ts`'s legacy cwd-local read path, which can
+   * silently leave `messages.jsonl` empty for resumed sessions whose log
+   * lives outside the default session root.
+   */
+  messages?: readonly unknown[];
   provider?: string | null;
   model?: string | null;
 }
@@ -98,9 +105,11 @@ function getCheckpointDir(workspaceRoot: string, name: string): string {
 }
 
 function defaultName(): string {
-  // ISO-like, filesystem-safe: 2026-05-08_23-45-12
+  // ISO-like, filesystem-safe with millisecond precision so two unnamed
+  // creates in the same wall-second don't collide:
+  //   2026-05-08_23-45-12_345
   const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
+  const pad = (n: number, width = 2) => String(n).padStart(width, '0');
   return [
     d.getUTCFullYear(),
     '-',
@@ -113,6 +122,8 @@ function defaultName(): string {
     pad(d.getUTCMinutes()),
     '-',
     pad(d.getUTCSeconds()),
+    '_',
+    pad(d.getUTCMilliseconds(), 3),
   ].join('');
 }
 
@@ -138,29 +149,41 @@ async function gitTry(workspaceRoot: string, args: string[]): Promise<string | n
 
 /**
  * List paths that differ from HEAD: modified, added, untracked. Deleted
- * files are intentionally excluded — we can't snapshot bytes that aren't
- * there, and surfacing them as "deletions to undo" would require a
- * different restore path. Untracked but gitignored files are excluded by
- * `git status --porcelain` honoring `.gitignore`. Returns repo-relative,
- * forward-slash paths.
+ * files are excluded — we can't snapshot bytes that aren't there, and
+ * surfacing them as "deletions to undo" would require a different restore
+ * path. Gitignored files are excluded because `git status` honors
+ * `.gitignore` (we pass `--untracked-files=all` for genuine untracked).
+ *
+ * Uses `--porcelain=v1 -z` (NUL-delimited) instead of newline-split. With
+ * default `core.quotepath`, newline-split parsing breaks on filenames with
+ * spaces (C-quoted) or unusual chars. NUL termination is the standard
+ * robust path. Renames in `-z` output emit two records per entry — the
+ * to-path first, then the from-path — so we step over the from-path.
  */
 async function listChangedFiles(workspaceRoot: string): Promise<string[]> {
-  const out = await gitTry(workspaceRoot, ['status', '--porcelain', '--untracked-files=all']);
+  const out = await gitTry(workspaceRoot, [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+  ]);
   if (out == null) return [];
+  const tokens = out.split('\0');
   const paths: string[] = [];
-  for (const line of out.split('\n')) {
-    if (!line.trim()) continue;
-    // Porcelain v1: XY␠path   (rename: XY␠old -> new)
-    const status = line.slice(0, 2);
-    let rest = line.slice(3);
-    // Skip pure deletions (' D' or 'D ') — handled in restore as no-op.
-    if (status[0] === 'D' && status[1] !== 'M') continue;
-    if (status[1] === 'D') continue;
-    if (status.startsWith('R')) {
-      // Renamed: only keep the new path.
-      const arrow = rest.indexOf(' -> ');
-      if (arrow !== -1) rest = rest.slice(arrow + 4);
-    }
+  for (let i = 0; i < tokens.length; i++) {
+    const record = tokens[i];
+    if (!record) continue;
+    if (record.length < 3) continue;
+    const status = record.slice(0, 2);
+    const rest = record.slice(3);
+    // Porcelain v1: when X==R (rename) or X==C (copy), the next NUL-
+    // terminated record is the from-path. Consume it so it isn't
+    // mistakenly parsed as its own entry.
+    const isRenameOrCopy = status[0] === 'R' || status[0] === 'C';
+    if (isRenameOrCopy) i++;
+    // Skip any deletion: X==D pairs only with Y==' ' (per git-status(1)),
+    // and Y==D means the worktree no longer has the file regardless of X.
+    if (status[0] === 'D' || status[1] === 'D') continue;
     paths.push(rest);
   }
   return paths;
@@ -198,7 +221,11 @@ async function ensureGitignoreEntry(workspaceRoot: string): Promise<void> {
     // No .gitignore — write a fresh one.
   }
   const target = '.push/checkpoints/';
-  if (content.split('\n').some((line) => line.trim() === target)) return;
+  // git treats `.push/checkpoints` (no trailing slash) and `.push/checkpoints/`
+  // identically for our purposes; treat either as already-present so we don't
+  // append a duplicate when the user has already added the no-slash form.
+  const existing = new Set(content.split('\n').map((line) => line.trim()));
+  if (existing.has(target) || existing.has('.push/checkpoints')) return;
   const sep = content.length === 0 || content.endsWith('\n') ? '' : '\n';
   const trailer = content.length === 0 ? '' : '\n';
   await fs.writeFile(
@@ -243,14 +270,10 @@ export async function createCheckpoint(opts: CreateCheckpointOptions): Promise<C
   }
 
   let messageCount = 0;
-  if (opts.messagesPath) {
-    try {
-      const raw = await fs.readFile(opts.messagesPath, 'utf8');
-      messageCount = raw.split('\n').filter((l) => l.trim()).length;
-      await fs.writeFile(path.join(dir, MESSAGES_FILENAME), raw);
-    } catch {
-      // No messages yet (lazy session) — leave count at 0.
-    }
+  if (opts.messages && opts.messages.length > 0) {
+    const lines = `${opts.messages.map((m) => JSON.stringify(m)).join('\n')}\n`;
+    await fs.writeFile(path.join(dir, MESSAGES_FILENAME), lines);
+    messageCount = opts.messages.length;
   }
 
   const meta: CheckpointMeta = {

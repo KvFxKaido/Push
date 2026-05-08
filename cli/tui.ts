@@ -101,7 +101,6 @@ import {
   listSessions,
   deleteSession,
   getSessionRoot,
-  getSessionDir,
   rewriteMessagesLog,
 } from './session-store.js';
 import {
@@ -2629,19 +2628,6 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
-  function formatCheckpointAge(iso) {
-    const ms = Date.now() - new Date(iso).getTime();
-    if (!Number.isFinite(ms) || ms < 0) return iso;
-    const s = Math.floor(ms / 1000);
-    if (s < 60) return `${s}s ago`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const d = Math.floor(h / 24);
-    return `${d}d ago`;
-  }
-
   async function handleCheckpointCommand(rawArg) {
     const arg = String(rawArg || '').trim();
     if (!arg) {
@@ -2662,7 +2648,6 @@ export async function runTUI(options = {}) {
     }
     const parts = arg.split(/\s+/);
     const op = parts[0];
-    const messagesPath = path.join(getSessionDir(state.sessionId), 'messages.jsonl');
 
     if (op === 'create') {
       try {
@@ -2670,7 +2655,7 @@ export async function runTUI(options = {}) {
           workspaceRoot: state.cwd,
           name: parts[1],
           sessionId: state.sessionId,
-          messagesPath,
+          messages: state.messages,
           provider: state.provider,
           model: state.model,
         });
@@ -2704,7 +2689,7 @@ export async function runTUI(options = {}) {
       } else {
         const lines = items.map(
           (m) =>
-            `  ${m.name}  ${formatCheckpointAge(m.createdAt)}  ${m.fileCount} file(s), ${m.messageCount} msg${m.branch ? ` @${m.branch}` : ''}`,
+            `  ${m.name}  ${formatRelativeTime(m.createdAt)}  ${m.fileCount} file(s), ${m.messageCount} msg${m.branch ? ` @${m.branch}` : ''}`,
         );
         addTranscriptEntry(tuiState, 'status', lines.join('\n'));
       }
@@ -2736,7 +2721,7 @@ export async function runTUI(options = {}) {
         addTranscriptEntry(
           tuiState,
           'status',
-          `Would restore ${meta.fileCount} file(s) from ${meta.name} (${formatCheckpointAge(meta.createdAt)}).\n${head}${tail}\n\nThis will OVERWRITE matching files. Re-run with --force to apply.\nConversation rollback is not in-process: after restoring files, /exit and run \`push resume ${meta.sessionId || '<session>'}\` to restore the conversation.`,
+          `Would restore ${meta.fileCount} file(s) from ${meta.name} (${formatRelativeTime(meta.createdAt)}).\n${head}${tail}\n\nThis will OVERWRITE matching files. Re-run with --force to apply.\nConversation rollback is not in-process: after restoring files, /exit and run \`push resume ${meta.sessionId || '<session>'}\` to restore the conversation.`,
         );
         scheduler.flush();
         return;

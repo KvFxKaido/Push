@@ -98,13 +98,67 @@ describe('createCheckpoint', () => {
     );
   });
 
-  it('auto-generates a timestamp name when none is provided', async () => {
+  it('auto-generates a timestamp name with millisecond precision', async () => {
     await fs.writeFile(path.join(workspace, 'a.txt'), 'edit\n');
     const meta = await createCheckpoint({
       workspaceRoot: workspace,
       sessionId: 'sess_test_abcdef',
     });
-    assert.match(meta.name, /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/);
+    // Includes a 3-digit millisecond suffix so two unnamed creates in the
+    // same wall-second don't collide.
+    assert.match(meta.name, /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_\d{3}$/);
+  });
+
+  it('captures in-memory messages as JSONL when provided', async () => {
+    await fs.writeFile(path.join(workspace, 'a.txt'), 'edit\n');
+    const messages = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'hello' },
+    ];
+    const meta = await createCheckpoint({
+      workspaceRoot: workspace,
+      name: 'with-msgs',
+      sessionId: 'sess_test_abcdef',
+      messages,
+    });
+    assert.equal(meta.messageCount, 3);
+    const raw = await fs.readFile(
+      path.join(getCheckpointRoot(workspace), 'with-msgs', 'messages.jsonl'),
+      'utf8',
+    );
+    const lines = raw.split('\n').filter((l) => l);
+    assert.equal(lines.length, 3);
+    assert.deepEqual(JSON.parse(lines[1]), messages[1]);
+  });
+
+  it('skips messages.jsonl when no messages are provided', async () => {
+    await fs.writeFile(path.join(workspace, 'a.txt'), 'edit\n');
+    const meta = await createCheckpoint({
+      workspaceRoot: workspace,
+      name: 'no-msgs',
+      sessionId: 'sess_test_abcdef',
+    });
+    assert.equal(meta.messageCount, 0);
+    await assert.rejects(
+      fs.access(path.join(getCheckpointRoot(workspace), 'no-msgs', 'messages.jsonl')),
+    );
+  });
+
+  it('handles filenames with spaces (NUL-delimited git status)', async () => {
+    const fname = 'a file with spaces.txt';
+    await fs.writeFile(path.join(workspace, fname), 'spacey\n');
+    const meta = await createCheckpoint({
+      workspaceRoot: workspace,
+      name: 'spaces',
+      sessionId: 'sess_test_abcdef',
+    });
+    assert.deepEqual(meta.files, [fname]);
+    const snapped = await fs.readFile(
+      path.join(getCheckpointRoot(workspace), 'spaces', 'files', fname),
+      'utf8',
+    );
+    assert.equal(snapped, 'spacey\n');
   });
 
   it('appends .push/checkpoints/ to .gitignore (and is idempotent)', async () => {

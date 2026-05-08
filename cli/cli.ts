@@ -17,7 +17,6 @@ import {
   loadSessionState,
   listSessions,
   rewriteMessagesLog,
-  getSessionDir,
 } from './session-store.js';
 import {
   createCheckpoint,
@@ -879,19 +878,6 @@ async function runInteractive(
     );
   }
 
-  function formatRelativeAge(iso) {
-    const ms = Date.now() - new Date(iso).getTime();
-    if (!Number.isFinite(ms) || ms < 0) return iso;
-    const s = Math.floor(ms / 1000);
-    if (s < 60) return `${s}s ago`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const d = Math.floor(h / 24);
-    return `${d}d ago`;
-  }
-
   async function handleCheckpointCommand(rawArg) {
     const arg = String(rawArg || '').trim();
     if (!arg) {
@@ -910,7 +896,6 @@ async function runInteractive(
     }
     const parts = arg.split(/\s+/);
     const op = parts[0];
-    const messagesPath = path.join(getSessionDir(state.sessionId), 'messages.jsonl');
 
     if (op === 'create') {
       const name = parts[1];
@@ -919,7 +904,7 @@ async function runInteractive(
           workspaceRoot: state.cwd,
           name,
           sessionId: state.sessionId,
-          messagesPath,
+          messages: state.messages,
           provider: state.provider,
           model: state.model,
         });
@@ -946,7 +931,7 @@ async function runInteractive(
       for (const m of items) {
         const branch = m.branch ? ` ${fmt.dim(`@${m.branch}`)}` : '';
         process.stdout.write(
-          `  ${fmt.bold(m.name)}  ${fmt.dim(formatRelativeAge(m.createdAt))}  ${m.fileCount} file(s), ${m.messageCount} msg${branch}\n`,
+          `  ${fmt.bold(m.name)}  ${fmt.dim(formatRelativeTime(m.createdAt))}  ${m.fileCount} file(s), ${m.messageCount} msg${branch}\n`,
         );
       }
       return;
@@ -968,7 +953,7 @@ async function runInteractive(
       if (!force) {
         // Preview only — destructive action requires --force.
         process.stdout.write(
-          `Would restore ${meta.fileCount} file(s) from ${fmt.bold(meta.name)} (${formatRelativeAge(meta.createdAt)}).\n` +
+          `Would restore ${meta.fileCount} file(s) from ${fmt.bold(meta.name)} (${formatRelativeTime(meta.createdAt)}).\n` +
             `${meta.files
               .slice(0, 10)
               .map((f) => `  - ${f}`)
