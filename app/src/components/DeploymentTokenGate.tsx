@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   getDeploymentAuthState,
+  getDeploymentToken,
   probeDeploymentAuth,
   setDeploymentToken,
   subscribeDeploymentAuthState,
@@ -12,16 +13,27 @@ import { Label } from '@/components/ui/label';
 
 export function DeploymentTokenGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<DeploymentAuthState>(getDeploymentAuthState);
+  // Render children optimistically while the probe is in flight only when a
+  // token is already in storage — that path is already authenticated against
+  // the gate or will fail mid-session and flip the state. Without a token,
+  // block on `unknown` so we don't briefly expose UI/cached data on a private
+  // deployment before the probe lands.
+  const [hadStoredToken] = useState(() => Boolean(getDeploymentToken()));
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => subscribeDeploymentAuthState(setState), []);
+  useEffect(() => {
+    const unsubscribe = subscribeDeploymentAuthState(setState);
+    return unsubscribe;
+  }, []);
   useEffect(() => {
     void probeDeploymentAuth();
   }, []);
 
-  if (state === 'ok' || state === 'unknown') return <>{children}</>;
+  if (state === 'ok') return <>{children}</>;
+  if (state === 'unknown' && hadStoredToken) return <>{children}</>;
+  if (state === 'unknown') return null;
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();

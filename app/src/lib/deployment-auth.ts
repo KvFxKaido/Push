@@ -1,3 +1,4 @@
+import { resolveApiUrl } from './api-url';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 
 export const DEPLOYMENT_TOKEN_HEADER = 'X-Push-Deployment-Token';
@@ -141,7 +142,10 @@ export function subscribeDeploymentAuthState(listener: Listener): () => void {
 export async function probeDeploymentAuth(): Promise<DeploymentAuthState> {
   if (typeof window === 'undefined') return currentState;
   try {
-    const res = await fetch(DEPLOYMENT_AUTH_PROBE_PATH, { method: 'GET' });
+    const res = await window.fetch(resolveApiUrl(DEPLOYMENT_AUTH_PROBE_PATH), {
+      method: 'GET',
+      cache: 'no-store',
+    });
     if (res.ok) {
       setState('ok');
       return 'ok';
