@@ -500,9 +500,33 @@ function pruneExecSessions() {
   }
 }
 
+// Resolve a comma-separated env var into a Set of trimmed tool names, with an
+// optional explicit list winning over the env. `undefined` array means "fall
+// back to env"; an empty array means "no entries" and short-circuits the env
+// read so callers can opt out.
+function resolveToolPolicyList(explicit, envVar) {
+  if (Array.isArray(explicit)) {
+    return new Set(explicit.map((name) => String(name).trim()).filter(Boolean));
+  }
+  const raw = process.env[envVar];
+  if (!raw) return new Set();
+  return new Set(
+    raw
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean),
+  );
+}
+
 async function guardExecCommand(command, options = {}, mode = 'exec') {
   const execMode = options.execMode ?? 'auto';
   const operationLabel = mode === 'exec_start' ? 'exec_start' : 'exec';
+  // `alwaysAllow` waives approval for the named tool but does NOT bypass the
+  // headless `--allow-exec` requirement below — that's a separate safety
+  // gate for non-interactive runs. Resolved once in the dispatcher and
+  // passed in via options.
+  const alwaysAllowExec =
+    Array.isArray(options.alwaysAllow) && options.alwaysAllow.includes(operationLabel);
   const blockedMessage =
     mode === 'exec_start'
       ? 'Blocked: exec_start is disabled in headless mode. Use --allow-exec to enable.'
@@ -525,6 +549,13 @@ async function guardExecCommand(command, options = {}, mode = 'exec') {
   }
 
   if (execMode === 'yolo') {
+    return { ok: true };
+  }
+
+  // `alwaysAllow` skips approval prompts for the listed tool name even when
+  // execMode would otherwise prompt. It's evaluated after the headless gate
+  // so non-interactive runs still need `--allow-exec` to execute commands.
+  if (alwaysAllowExec) {
     return { ok: true };
   }
 
@@ -1403,8 +1434,33 @@ export async function backupFile(filePath, workspaceRoot) {
  *   If not provided, all calls proceed (headless default: deny high-risk).
  * - providerId: active provider id ('ollama' | 'openrouter' | 'zen' | 'nvidia') for provider-aware tools.
  * - providerApiKey: resolved provider API key for provider-aware tools.
+ * - disabledTools: CLI tool names blocked at dispatch (config: `disabledTools`).
+ * - alwaysAllow: CLI tool names that bypass approval (config: `alwaysAllow`).
+ *   Both fall back to `PUSH_DISABLED_TOOLS` / `PUSH_ALWAYS_ALLOW` env (comma-
+ *   separated) when the option is omitted, so the daemon's delegated tool
+ *   executors inherit the user's policy without re-loading config.
  */
 export async function executeToolCall(call, workspaceRoot, options = {}) {
+  const disabledList = resolveToolPolicyList(options.disabledTools, 'PUSH_DISABLED_TOOLS');
+  if (disabledList.has(call.tool)) {
+    return {
+      ok: false,
+      text: `Blocked: tool "${call.tool}" is disabled by user config (disabledTools). Do not retry — pick a different approach.`,
+      structuredError: {
+        code: 'TOOL_DISABLED',
+        message: `Tool "${call.tool}" disabled by config`,
+        retryable: false,
+      },
+    };
+  }
+  // Forward `alwaysAllow` resolution into the per-case guard via options so
+  // command guards see the same set without re-resolving env on every call.
+  if (options.alwaysAllow === undefined) {
+    const alwaysAllowList = resolveToolPolicyList(undefined, 'PUSH_ALWAYS_ALLOW');
+    if (alwaysAllowList.size > 0) {
+      options = { ...options, alwaysAllow: [...alwaysAllowList] };
+    }
+  }
   try {
     switch (call.tool) {
       case 'read_file': {
