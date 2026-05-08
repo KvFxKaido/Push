@@ -145,6 +145,26 @@ Two arrays in `~/.push/config.json` shape what tools the agent can run:
 
 The CLI exports both lists to `PUSH_DISABLED_TOOLS` and `PUSH_ALWAYS_ALLOW` (comma-separated) so the `pushd` daemon's delegated tool executors inherit the same policy without re-reading config.
 
+### Checkpoints
+
+Snapshot+rollback for the working tree. Inspired by Nano Coder's `/checkpoint`.
+
+```
+/checkpoint create [name]          # snapshot changed + untracked files
+/checkpoint list                   # newest first
+/checkpoint load <name>            # preview only — shows what would change
+/checkpoint load <name> --force    # actually restore files (overwrites!)
+/checkpoint delete <name>
+```
+
+Snapshots live in `<workspace>/.push/checkpoints/<name>/`, kept out of git via an auto-appended `.gitignore` entry. Each snapshot captures:
+
+- `meta.json` — provider, model, sessionId, branch, HEAD sha, file list
+- `messages.jsonl` — copy of the session transcript at create time
+- `files/<rel-path>` — only paths that differ from HEAD (modified/added/untracked), capped at 1 MB each
+
+Restore semantics: `--force` writes files back immediately; conversation rollback is **not** applied in-process. To restore the conversation, `/exit` then `push resume <sessionId>` (printed in the load output).
+
 ### Environment variables
 
 Config resolves in order: CLI flags > env vars > config file > defaults.
