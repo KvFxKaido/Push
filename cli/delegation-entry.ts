@@ -140,7 +140,9 @@ export async function runDelegatedHeadless(
   maxRounds,
   jsonOutput,
   acceptanceChecks,
-  { allowExec = false, safeExecPatterns = [], execMode = 'auto' } = {},
+  // `disabledTools` / `alwaysAllow` default to `undefined` so omission flows
+  // through to `executeToolCall`'s env-var fallback.
+  { allowExec = false, safeExecPatterns = [], execMode = 'auto', disabledTools, alwaysAllow } = {},
 ) {
   const ac = new AbortController();
   const onSigint = () => ac.abort();
@@ -197,7 +199,15 @@ export async function runDelegatedHeadless(
         maxRounds,
         jsonOutput,
         acceptanceChecks,
-        { allowExec, safeExecPatterns, execMode, signal: ac.signal, runId },
+        {
+          allowExec,
+          safeExecPatterns,
+          execMode,
+          disabledTools,
+          alwaysAllow,
+          signal: ac.signal,
+          runId,
+        },
       );
     }
 
@@ -232,7 +242,15 @@ export async function runDelegatedHeadless(
         maxRounds,
         jsonOutput,
         acceptanceChecks,
-        { allowExec, safeExecPatterns, execMode, signal: ac.signal, runId },
+        {
+          allowExec,
+          safeExecPatterns,
+          execMode,
+          disabledTools,
+          alwaysAllow,
+          signal: ac.signal,
+          runId,
+        },
       );
     }
 
@@ -351,6 +369,8 @@ export async function runDelegatedHeadless(
         allowExec,
         safeExecPatterns,
         execMode,
+        disabledTools,
+        alwaysAllow,
         runId,
       });
 
@@ -511,7 +531,7 @@ async function runNonDelegatedFallback(
   maxRounds,
   jsonOutput,
   acceptanceChecks,
-  { allowExec, safeExecPatterns, execMode, signal, runId },
+  { allowExec, safeExecPatterns, execMode, disabledTools, alwaysAllow, signal, runId },
 ) {
   const taskPrompt = buildHeadlessTaskBrief(task, acceptanceChecks);
   await appendUserMessageWithFileReferences(state, taskPrompt, state.cwd, {
@@ -526,6 +546,8 @@ async function runNonDelegatedFallback(
     allowExec,
     safeExecPatterns,
     execMode,
+    disabledTools,
+    alwaysAllow,
     runId,
   });
   await saveSessionState(state);
@@ -589,6 +611,9 @@ export async function runUserTurnWithDelegation(
     allowExec = false,
     safeExecPatterns = [],
     execMode = 'auto',
+    // Same env-fallback contract as the headless entry.
+    disabledTools,
+    alwaysAllow,
     runId: providedRunId,
   } = options;
 
@@ -789,6 +814,8 @@ export async function runUserTurnWithDelegation(
       allowExec,
       safeExecPatterns,
       execMode,
+      disabledTools,
+      alwaysAllow,
       runId,
       approvalFn,
       askUserFn,

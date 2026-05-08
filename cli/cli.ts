@@ -407,8 +407,11 @@ async function runHeadless(
     allowExec = false,
     safeExecPatterns = [],
     execMode = 'auto',
-    disabledTools = [],
-    alwaysAllow = [],
+    // `disabledTools` / `alwaysAllow` deliberately default to `undefined` so
+    // omission flows through to `executeToolCall`'s env-var fallback. An
+    // explicit `[]` is an opt-out and is preserved.
+    disabledTools,
+    alwaysAllow,
   } = {},
 ) {
   const taskPrompt = buildHeadlessTaskBrief(task, acceptanceChecks);
@@ -797,8 +800,11 @@ async function runInteractive(
     config.safeExecPatterns = [];
   }
   const safeExecPatterns = config.safeExecPatterns;
-  const disabledTools = Array.isArray(config.disabledTools) ? config.disabledTools : [];
-  const alwaysAllow = Array.isArray(config.alwaysAllow) ? config.alwaysAllow : [];
+  // Pass undefined (not []) when the key is absent so `executeToolCall`'s
+  // env-var fallback (`PUSH_DISABLED_TOOLS` / `PUSH_ALWAYS_ALLOW`) actually
+  // applies. An explicit empty array is an opt-out and would mask the env.
+  const disabledTools = Array.isArray(config.disabledTools) ? config.disabledTools : undefined;
+  const alwaysAllow = Array.isArray(config.alwaysAllow) ? config.alwaysAllow : undefined;
 
   // Lazy session creation: defer disk writes until first user message.
   let sessionPersisted = alreadyPersisted;
@@ -2584,12 +2590,14 @@ export async function main() {
     const headlessSafePatterns = Array.isArray(persistedConfig.safeExecPatterns)
       ? persistedConfig.safeExecPatterns
       : [];
+    // Same env-fallback contract as the REPL path: undefined -> env wins,
+    // explicit array -> opt-out.
     const headlessDisabledTools = Array.isArray(persistedConfig.disabledTools)
       ? persistedConfig.disabledTools
-      : [];
+      : undefined;
     const headlessAlwaysAllow = Array.isArray(persistedConfig.alwaysAllow)
       ? persistedConfig.alwaysAllow
-      : [];
+      : undefined;
     const headlessExecMode = process.env.PUSH_EXEC_MODE || 'auto';
     const headlessRunOpts = {
       allowExec,

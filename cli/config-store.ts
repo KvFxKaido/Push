@@ -105,8 +105,8 @@ export function applyConfigToEnv(config: PushConfig): void {
   // Forward tool allow/deny lists as comma-separated env vars so child
   // processes (notably the pushd daemon's delegated tool executors) see
   // the same policy without re-reading `~/.push/config.json`. Empty arrays
-  // are intentionally omitted so daemon-side fallback never sees an empty
-  // string and treats it as "block everything".
+  // are skipped because there's nothing to communicate — the parser in
+  // `cli/tools.ts` already treats unset/empty env vars as "no entries".
   if (Array.isArray(config.disabledTools) && config.disabledTools.length) {
     setEnvIfMissing('PUSH_DISABLED_TOOLS', config.disabledTools.join(','));
   }

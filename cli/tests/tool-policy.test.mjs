@@ -73,6 +73,20 @@ describe('disabledTools', () => {
     );
     assert.equal(result.ok, true);
   });
+
+  it('normalizes the artifact <-> create_artifact alias both ways', async () => {
+    // User disables canonical name; model emits the alias.
+    const aliasCall = await executeToolCall({ tool: 'artifact', args: {} }, workspace, {
+      disabledTools: ['create_artifact'],
+    });
+    assert.equal(aliasCall.structuredError?.code, 'TOOL_DISABLED');
+
+    // User disables the alias; model emits the canonical name.
+    const canonicalCall = await executeToolCall({ tool: 'create_artifact', args: {} }, workspace, {
+      disabledTools: ['artifact'],
+    });
+    assert.equal(canonicalCall.structuredError?.code, 'TOOL_DISABLED');
+  });
 });
 
 describe('alwaysAllow', () => {
