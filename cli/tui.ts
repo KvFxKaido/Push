@@ -104,6 +104,12 @@ import {
   rewriteMessagesLog,
 } from './session-store.js';
 import {
+  createCheckpoint,
+  listCheckpoints,
+  loadCheckpoint,
+  deleteCheckpoint,
+} from './checkpoint-store.js';
+import {
   buildSystemPromptBase,
   ensureSystemPromptReady,
   runAssistantTurn,
@@ -2622,6 +2628,154 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  async function handleCheckpointCommand(rawArg) {
+    const arg = String(rawArg || '').trim();
+    if (!arg) {
+      addTranscriptEntry(
+        tuiState,
+        'status',
+        [
+          'Usage:',
+          '  /checkpoint create [name]    Snapshot conversation + changed files',
+          '  /checkpoint list              List saved checkpoints',
+          '  /checkpoint load <name>       Preview a restore',
+          '  /checkpoint load <name> --force   Restore files (overwrites!)',
+          '  /checkpoint delete <name>     Remove a checkpoint',
+        ].join('\n'),
+      );
+      scheduler.flush();
+      return;
+    }
+    const parts = arg.split(/\s+/);
+    const op = parts[0];
+
+    if (op === 'create') {
+      try {
+        const meta = await createCheckpoint({
+          workspaceRoot: state.cwd,
+          name: parts[1],
+          sessionId: state.sessionId,
+          messages: state.messages,
+          provider: state.provider,
+          model: state.model,
+        });
+        const skipNote = meta.skippedFiles?.length
+          ? ` (${meta.skippedFiles.length} skipped — too large or unreadable)`
+          : '';
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          `Saved checkpoint ${meta.name}: ${meta.fileCount} file(s), ${meta.messageCount} message(s)${skipNote}.`,
+        );
+      } catch (err) {
+        addTranscriptEntry(
+          tuiState,
+          'error',
+          `checkpoint: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      scheduler.flush();
+      return;
+    }
+
+    if (op === 'list') {
+      const items = await listCheckpoints(state.cwd);
+      if (items.length === 0) {
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          'No checkpoints. Create one with /checkpoint create [name].',
+        );
+      } else {
+        const lines = items.map(
+          (m) =>
+            `  ${m.name}  ${formatRelativeTime(m.createdAt)}  ${m.fileCount} file(s), ${m.messageCount} msg${m.branch ? ` @${m.branch}` : ''}`,
+        );
+        addTranscriptEntry(tuiState, 'status', lines.join('\n'));
+      }
+      scheduler.flush();
+      return;
+    }
+
+    if (op === 'load') {
+      const name = parts[1];
+      if (!name) {
+        addTranscriptEntry(tuiState, 'warning', 'Usage: /checkpoint load <name> [--force]');
+        scheduler.flush();
+        return;
+      }
+      const force = parts.includes('--force');
+      const items = await listCheckpoints(state.cwd);
+      const meta = items.find((m) => m.name === name);
+      if (!meta) {
+        addTranscriptEntry(tuiState, 'error', `checkpoint: no checkpoint named "${name}".`);
+        scheduler.flush();
+        return;
+      }
+      if (!force) {
+        const head = meta.files
+          .slice(0, 10)
+          .map((f) => `  - ${f}`)
+          .join('\n');
+        const tail = meta.files.length > 10 ? `\n  ... and ${meta.files.length - 10} more` : '';
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          `Would restore ${meta.fileCount} file(s) from ${meta.name} (${formatRelativeTime(meta.createdAt)}).\n${head}${tail}\n\nThis will OVERWRITE matching files. Re-run with --force to apply.\nConversation rollback is not in-process: after restoring files, /exit and run \`push resume ${meta.sessionId || '<session>'}\` to restore the conversation.`,
+        );
+        scheduler.flush();
+        return;
+      }
+      try {
+        const result = await loadCheckpoint(state.cwd, name);
+        const skipNote = result.skippedFiles.length
+          ? ` (${result.skippedFiles.length} skipped)`
+          : '';
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          `Restored ${result.restoredFiles.length} file(s) from ${name}${skipNote}.\nConversation is unchanged. To restore the conversation: /exit, then \`push resume ${result.meta.sessionId || '<session>'}\`.`,
+        );
+      } catch (err) {
+        addTranscriptEntry(
+          tuiState,
+          'error',
+          `checkpoint: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      scheduler.flush();
+      return;
+    }
+
+    if (op === 'delete') {
+      const name = parts[1];
+      if (!name) {
+        addTranscriptEntry(tuiState, 'warning', 'Usage: /checkpoint delete <name>');
+        scheduler.flush();
+        return;
+      }
+      try {
+        await deleteCheckpoint(state.cwd, name);
+        addTranscriptEntry(tuiState, 'status', `Deleted checkpoint ${name}.`);
+      } catch (err) {
+        addTranscriptEntry(
+          tuiState,
+          'error',
+          `checkpoint: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      scheduler.flush();
+      return;
+    }
+
+    addTranscriptEntry(
+      tuiState,
+      'warning',
+      `Unknown subcommand "${op}". Type /checkpoint for help.`,
+    );
+    scheduler.flush();
+  }
+
   function resetTUIViewForSessionChange() {
     setRunState('idle');
     tuiState.activity = null;
@@ -3862,6 +4016,7 @@ export async function runTUI(options = {}) {
             '  /skills              List available skills',
             '  /skills reload       Reload workspace + Claude skills',
             `  /compact [turns]      Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)`,
+            '  /checkpoint           Snapshot/rollback (create | list | load | delete)',
             '  /copy [last|code|tool]  Copy content to clipboard via OSC 52 (default: last)',
             '  /<skill> [args]      Run a skill (e.g. /commit, /review)',
             '  /resume              Open resumable session picker',
@@ -3978,6 +4133,10 @@ export async function runTUI(options = {}) {
 
       case 'compact':
         await compactSessionContext(arg || null);
+        return true;
+
+      case 'checkpoint':
+        await handleCheckpointCommand(arg || null);
         return true;
 
       case 'copy': {

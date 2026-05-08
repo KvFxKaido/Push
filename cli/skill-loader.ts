@@ -38,6 +38,7 @@ export const RESERVED_COMMANDS: Set<string> = new Set([
   'animate',
   'spinner',
   'layout',
+  'checkpoint',
 ]);
 
 type SkillSource = 'builtin' | 'workspace' | 'claude';

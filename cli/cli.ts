@@ -19,6 +19,12 @@ import {
   rewriteMessagesLog,
 } from './session-store.js';
 import {
+  createCheckpoint,
+  listCheckpoints,
+  loadCheckpoint,
+  deleteCheckpoint,
+} from './checkpoint-store.js';
+import {
   buildSystemPromptBase,
   ensureSystemPromptReady,
   runAssistantLoop,
@@ -872,6 +878,130 @@ async function runInteractive(
     );
   }
 
+  async function handleCheckpointCommand(rawArg) {
+    const arg = String(rawArg || '').trim();
+    if (!arg) {
+      process.stdout.write(
+        [
+          'Usage:',
+          '  /checkpoint create [name]    Snapshot conversation + changed files',
+          '  /checkpoint list              List saved checkpoints',
+          '  /checkpoint load <name>       Preview a restore',
+          '  /checkpoint load <name> --force   Restore files (overwrites!)',
+          '  /checkpoint delete <name>     Remove a checkpoint',
+          '',
+        ].join('\n'),
+      );
+      return;
+    }
+    const parts = arg.split(/\s+/);
+    const op = parts[0];
+
+    if (op === 'create') {
+      const name = parts[1];
+      try {
+        const meta = await createCheckpoint({
+          workspaceRoot: state.cwd,
+          name,
+          sessionId: state.sessionId,
+          messages: state.messages,
+          provider: state.provider,
+          model: state.model,
+        });
+        const skipNote = meta.skippedFiles?.length
+          ? ` (${meta.skippedFiles.length} skipped — too large or unreadable)`
+          : '';
+        process.stdout.write(
+          `Saved checkpoint ${fmt.bold(meta.name)}: ${meta.fileCount} file(s), ${meta.messageCount} message(s)${skipNote}.\n`,
+        );
+      } catch (err) {
+        process.stderr.write(
+          `${fmt.error('checkpoint:')} ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+      return;
+    }
+
+    if (op === 'list') {
+      const items = await listCheckpoints(state.cwd);
+      if (items.length === 0) {
+        process.stdout.write('No checkpoints. Create one with /checkpoint create [name].\n');
+        return;
+      }
+      for (const m of items) {
+        const branch = m.branch ? ` ${fmt.dim(`@${m.branch}`)}` : '';
+        process.stdout.write(
+          `  ${fmt.bold(m.name)}  ${fmt.dim(formatRelativeTime(m.createdAt))}  ${m.fileCount} file(s), ${m.messageCount} msg${branch}\n`,
+        );
+      }
+      return;
+    }
+
+    if (op === 'load') {
+      const name = parts[1];
+      if (!name) {
+        process.stdout.write('Usage: /checkpoint load <name> [--force]\n');
+        return;
+      }
+      const force = parts.includes('--force');
+      const items = await listCheckpoints(state.cwd);
+      const meta = items.find((m) => m.name === name);
+      if (!meta) {
+        process.stderr.write(`${fmt.error('checkpoint:')} no checkpoint named "${name}".\n`);
+        return;
+      }
+      if (!force) {
+        // Preview only — destructive action requires --force.
+        process.stdout.write(
+          `Would restore ${meta.fileCount} file(s) from ${fmt.bold(meta.name)} (${formatRelativeTime(meta.createdAt)}).\n` +
+            `${meta.files
+              .slice(0, 10)
+              .map((f) => `  - ${f}`)
+              .join(
+                '\n',
+              )}${meta.files.length > 10 ? `\n  ... and ${meta.files.length - 10} more` : ''}\n` +
+            `\nThis will OVERWRITE matching files in your working tree. Re-run with --force to apply.\n` +
+            `Conversation rollback is not in-process: after restoring files, /exit and run ${fmt.bold(`push resume ${meta.sessionId || '<session>'}`)} to restore the conversation.\n`,
+        );
+        return;
+      }
+      try {
+        const result = await loadCheckpoint(state.cwd, name);
+        const skipNote = result.skippedFiles.length
+          ? ` (${result.skippedFiles.length} skipped)`
+          : '';
+        process.stdout.write(
+          `Restored ${result.restoredFiles.length} file(s) from ${fmt.bold(name)}${skipNote}.\n` +
+            `Conversation is unchanged. To restore the conversation: /exit, then ${fmt.bold(`push resume ${result.meta.sessionId || '<session>'}`)}.\n`,
+        );
+      } catch (err) {
+        process.stderr.write(
+          `${fmt.error('checkpoint:')} ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+      return;
+    }
+
+    if (op === 'delete') {
+      const name = parts[1];
+      if (!name) {
+        process.stdout.write('Usage: /checkpoint delete <name>\n');
+        return;
+      }
+      try {
+        await deleteCheckpoint(state.cwd, name);
+        process.stdout.write(`Deleted checkpoint ${fmt.bold(name)}.\n`);
+      } catch (err) {
+        process.stderr.write(
+          `${fmt.error('checkpoint:')} ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+      return;
+    }
+
+    process.stdout.write(`Unknown subcommand "${op}". Type /checkpoint for help.\n`);
+  }
+
   const execMode = process.env.PUSH_EXEC_MODE || 'auto';
   const completer = createCompleter({
     ctx,
@@ -939,6 +1069,7 @@ async function runInteractive(
             `  ${fmt.bold('/skills')}              List available skills\n` +
             `  ${fmt.bold('/skills')} reload       Reload workspace + Claude skills\n` +
             `  ${fmt.bold('/compact')} [turns]     Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns)\n` +
+            `  ${fmt.bold('/checkpoint')}           Snapshot/rollback (create | list | load | delete)\n` +
             `  ${fmt.bold('/<skill>')} [args]      Run a skill (e.g. /commit, /review src/app.ts)\n` +
             `  ${fmt.dim('@path[:line[-end]]')}     Preload file refs into context (e.g. @src/app.ts:10-40)\n` +
             `  ${fmt.bold('/session')}             Print session id\n` +
@@ -1040,6 +1171,12 @@ async function runInteractive(
       if (line === '/compact' || line.startsWith('/compact ')) {
         const arg = line.slice('/compact'.length).trim();
         await compactSessionContext(arg || null);
+        continue;
+      }
+
+      // /checkpoint [op] [args] — Nano-style snapshot/rollback
+      if (line === '/checkpoint' || line.startsWith('/checkpoint ')) {
+        await handleCheckpointCommand(line.slice('/checkpoint'.length));
         continue;
       }
 
