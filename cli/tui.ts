@@ -103,12 +103,7 @@ import {
   getSessionRoot,
   rewriteMessagesLog,
 } from './session-store.js';
-import {
-  createCheckpoint,
-  listCheckpoints,
-  loadCheckpoint,
-  deleteCheckpoint,
-} from './checkpoint-store.js';
+import { runCheckpointCommand } from './checkpoint-command.js';
 import {
   buildSystemPromptBase,
   ensureSystemPromptReady,
@@ -2628,152 +2623,44 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  // TUI renderer: route every channel through the transcript and flush
+  // the scheduler once per message so output appears immediately. Bold/dim
+  // are no-ops because the transcript renderer strips ANSI styling and
+  // wrapping the text would just look like noise.
+  const tuiCheckpointRenderer = {
+    status: (text) => {
+      addTranscriptEntry(tuiState, 'status', text);
+      scheduler.flush();
+    },
+    warning: (text) => {
+      addTranscriptEntry(tuiState, 'warning', text);
+      scheduler.flush();
+    },
+    error: (text) => {
+      addTranscriptEntry(tuiState, 'error', `checkpoint: ${text}`);
+      scheduler.flush();
+    },
+    bold: (text) => text,
+    dim: (text) => text,
+    // Backtick-wrap command-formatted tokens so they stay visually
+    // distinct in the transcript even though styling is stripped. This
+    // restores the explicit backticks the original TUI handler used
+    // around `push resume <id>` before the shared dispatcher.
+    code: (text) => `\`${text}\``,
+  };
+
   async function handleCheckpointCommand(rawArg) {
-    const arg = String(rawArg || '').trim();
-    if (!arg) {
-      addTranscriptEntry(
-        tuiState,
-        'status',
-        [
-          'Usage:',
-          '  /checkpoint create [name]    Snapshot conversation + changed files',
-          '  /checkpoint list              List saved checkpoints',
-          '  /checkpoint load <name>       Preview a restore',
-          '  /checkpoint load <name> --force   Restore files (overwrites!)',
-          '  /checkpoint delete <name>     Remove a checkpoint',
-        ].join('\n'),
-      );
-      scheduler.flush();
-      return;
-    }
-    const parts = arg.split(/\s+/);
-    const op = parts[0];
-
-    if (op === 'create') {
-      try {
-        const meta = await createCheckpoint({
-          workspaceRoot: state.cwd,
-          name: parts[1],
-          sessionId: state.sessionId,
-          messages: state.messages,
-          provider: state.provider,
-          model: state.model,
-        });
-        const skipNote = meta.skippedFiles?.length
-          ? ` (${meta.skippedFiles.length} skipped — too large or unreadable)`
-          : '';
-        addTranscriptEntry(
-          tuiState,
-          'status',
-          `Saved checkpoint ${meta.name}: ${meta.fileCount} file(s), ${meta.messageCount} message(s)${skipNote}.`,
-        );
-      } catch (err) {
-        addTranscriptEntry(
-          tuiState,
-          'error',
-          `checkpoint: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-      scheduler.flush();
-      return;
-    }
-
-    if (op === 'list') {
-      const items = await listCheckpoints(state.cwd);
-      if (items.length === 0) {
-        addTranscriptEntry(
-          tuiState,
-          'status',
-          'No checkpoints. Create one with /checkpoint create [name].',
-        );
-      } else {
-        const lines = items.map(
-          (m) =>
-            `  ${m.name}  ${formatRelativeTime(m.createdAt)}  ${m.fileCount} file(s), ${m.messageCount} msg${m.branch ? ` @${m.branch}` : ''}`,
-        );
-        addTranscriptEntry(tuiState, 'status', lines.join('\n'));
-      }
-      scheduler.flush();
-      return;
-    }
-
-    if (op === 'load') {
-      const name = parts[1];
-      if (!name) {
-        addTranscriptEntry(tuiState, 'warning', 'Usage: /checkpoint load <name> [--force]');
-        scheduler.flush();
-        return;
-      }
-      const force = parts.includes('--force');
-      const items = await listCheckpoints(state.cwd);
-      const meta = items.find((m) => m.name === name);
-      if (!meta) {
-        addTranscriptEntry(tuiState, 'error', `checkpoint: no checkpoint named "${name}".`);
-        scheduler.flush();
-        return;
-      }
-      if (!force) {
-        const head = meta.files
-          .slice(0, 10)
-          .map((f) => `  - ${f}`)
-          .join('\n');
-        const tail = meta.files.length > 10 ? `\n  ... and ${meta.files.length - 10} more` : '';
-        addTranscriptEntry(
-          tuiState,
-          'status',
-          `Would restore ${meta.fileCount} file(s) from ${meta.name} (${formatRelativeTime(meta.createdAt)}).\n${head}${tail}\n\nThis will OVERWRITE matching files. Re-run with --force to apply.\nConversation rollback is not in-process: after restoring files, /exit and run \`push resume ${meta.sessionId || '<session>'}\` to restore the conversation.`,
-        );
-        scheduler.flush();
-        return;
-      }
-      try {
-        const result = await loadCheckpoint(state.cwd, name);
-        const skipNote = result.skippedFiles.length
-          ? ` (${result.skippedFiles.length} skipped)`
-          : '';
-        addTranscriptEntry(
-          tuiState,
-          'status',
-          `Restored ${result.restoredFiles.length} file(s) from ${name}${skipNote}.\nConversation is unchanged. To restore the conversation: /exit, then \`push resume ${result.meta.sessionId || '<session>'}\`.`,
-        );
-      } catch (err) {
-        addTranscriptEntry(
-          tuiState,
-          'error',
-          `checkpoint: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-      scheduler.flush();
-      return;
-    }
-
-    if (op === 'delete') {
-      const name = parts[1];
-      if (!name) {
-        addTranscriptEntry(tuiState, 'warning', 'Usage: /checkpoint delete <name>');
-        scheduler.flush();
-        return;
-      }
-      try {
-        await deleteCheckpoint(state.cwd, name);
-        addTranscriptEntry(tuiState, 'status', `Deleted checkpoint ${name}.`);
-      } catch (err) {
-        addTranscriptEntry(
-          tuiState,
-          'error',
-          `checkpoint: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-      scheduler.flush();
-      return;
-    }
-
-    addTranscriptEntry(
-      tuiState,
-      'warning',
-      `Unknown subcommand "${op}". Type /checkpoint for help.`,
+    await runCheckpointCommand(
+      rawArg,
+      {
+        workspaceRoot: state.cwd,
+        sessionId: state.sessionId,
+        messages: state.messages,
+        provider: state.provider,
+        model: state.model,
+      },
+      tuiCheckpointRenderer,
     );
-    scheduler.flush();
   }
 
   function resetTUIViewForSessionChange() {
