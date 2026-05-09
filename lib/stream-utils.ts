@@ -92,8 +92,12 @@ export function streamWithTimeout(
  * progressing models that emit text every few seconds for many minutes —
  * each chunk legitimately resets the activity timer, so a 5–8 minute
  * unproductive loop never trips it. Wall-clock fires once `wallClockTimeoutMs`
- * elapses from the start of the call regardless of activity. Whichever
- * timer fires first wins; wall-clock takes precedence in the unlikely tie.
+ * elapses from the start of the call regardless of activity.
+ *
+ * Whichever timer fires first wins, definitively: the firing callback claims
+ * the single `timeoutKind` slot and clears the other timer in the same tick,
+ * so a near-simultaneous wall-clock callback can't overwrite an
+ * already-recorded activity timeout (or vice versa).
  *
  * On timeout, the returned signal is aborted and an Error with
  * `timeoutMessage` (or `wallClockTimeoutMessage` if set and applicable) is
@@ -115,15 +119,19 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
-  let timedOut = false;
-  let wallClockTimedOut = false;
+  // Single source of truth for which timer fired. The first callback to run
+  // claims the slot and clears the other timer; subsequent callbacks (if
+  // they were already in the macrotask queue) see a non-null value and bail.
+  let timeoutKind: 'activity' | 'wallClock' | null = null;
   let text = '';
   let error: Error | null = null;
 
   const resetTimer = () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      timedOut = true;
+      if (timeoutKind !== null) return;
+      timeoutKind = 'activity';
+      clearTimeout(wallClockTimer);
       controller.abort();
     }, timeoutMs);
   };
@@ -132,7 +140,9 @@ export async function iteratePushStreamText<M extends LlmMessage>(
     resetTimer();
     if (wallClockTimeoutMs !== undefined) {
       wallClockTimer = setTimeout(() => {
-        wallClockTimedOut = true;
+        if (timeoutKind !== null) return;
+        timeoutKind = 'wallClock';
+        clearTimeout(timer);
         controller.abort();
       }, wallClockTimeoutMs);
     }
@@ -156,7 +166,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
       // NOT reset the timer — see the doc comment above.
     }
   } catch (err) {
-    if (!timedOut && !wallClockTimedOut) {
+    if (timeoutKind === null) {
       error = err instanceof Error ? err : new Error(String(err));
     }
   } finally {
@@ -164,9 +174,9 @@ export async function iteratePushStreamText<M extends LlmMessage>(
     clearTimeout(wallClockTimer);
   }
 
-  if (wallClockTimedOut && !error) {
+  if (timeoutKind === 'wallClock' && !error) {
     error = new Error(wallClockTimeoutMessage ?? timeoutMessage);
-  } else if (timedOut && !error) {
+  } else if (timeoutKind === 'activity' && !error) {
     error = new Error(timeoutMessage);
   }
 

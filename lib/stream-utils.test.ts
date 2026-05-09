@@ -195,6 +195,32 @@ describe('iteratePushStreamText', () => {
     expect(error?.message).toBe('activity timed out');
   });
 
+  it('preserves the first-to-fire winner even when the other timer would have fired during teardown', async () => {
+    // Activity timer (50ms) trips on a long reasoning gap. After abort,
+    // we run all pending timers — including a wall-clock timer (60ms) whose
+    // deadline has now passed. The "first to fire wins" rule must keep the
+    // activity message: the wall-clock callback should bail because
+    // timeoutKind is already set.
+    const stream = makeGappedPushStream([
+      { event: { type: 'reasoning_delta', text: 'long thought' }, gapMs: 100 },
+      { event: { type: 'text_delta', text: 'never reached' }, gapMs: 0 },
+      { event: { type: 'done', finishReason: 'stop' }, gapMs: 0 },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      50,
+      'activity timed out',
+      60,
+      'wall-clock timed out',
+    );
+    await vi.runAllTimersAsync();
+    const { error } = await promise;
+
+    expect(error?.message).toBe('activity timed out');
+  });
+
   it('returns the upstream error when the stream throws', async () => {
     vi.useRealTimers();
     const stream: PushStream = () =>
