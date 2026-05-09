@@ -87,8 +87,17 @@ export function streamWithTimeout(
  * timer purposes too: a model that emits only reasoning indefinitely should
  * trip the per-role round timeout exactly as it did before the migration.
  *
+ * Optional `wallClockTimeoutMs` adds a separate non-resetting backstop. The
+ * activity timer alone is the wrong shape of failsafe for verbose-but-
+ * progressing models that emit text every few seconds for many minutes —
+ * each chunk legitimately resets the activity timer, so a 5–8 minute
+ * unproductive loop never trips it. Wall-clock fires once `wallClockTimeoutMs`
+ * elapses from the start of the call regardless of activity. Whichever
+ * timer fires first wins; wall-clock takes precedence in the unlikely tie.
+ *
  * On timeout, the returned signal is aborted and an Error with
- * `timeoutMessage` is returned in the result's `error` field.
+ * `timeoutMessage` (or `wallClockTimeoutMessage` if set and applicable) is
+ * returned in the result's `error` field.
  *
  * `reasoning_delta` events are ignored at the accumulation level too — the
  * helper's text result feeds JSON parsers that don't want reasoning prose
@@ -100,10 +109,14 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   request: Omit<PushStreamRequest<M>, 'signal'>,
   timeoutMs: number,
   timeoutMessage: string,
+  wallClockTimeoutMs?: number,
+  wallClockTimeoutMessage?: string,
 ): Promise<{ error: Error | null; text: string }> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
+  let wallClockTimedOut = false;
   let text = '';
   let error: Error | null = null;
 
@@ -117,6 +130,12 @@ export async function iteratePushStreamText<M extends LlmMessage>(
 
   try {
     resetTimer();
+    if (wallClockTimeoutMs !== undefined) {
+      wallClockTimer = setTimeout(() => {
+        wallClockTimedOut = true;
+        controller.abort();
+      }, wallClockTimeoutMs);
+    }
     const iterable = stream({
       ...(request as PushStreamRequest<M>),
       signal: controller.signal,
@@ -137,14 +156,17 @@ export async function iteratePushStreamText<M extends LlmMessage>(
       // NOT reset the timer — see the doc comment above.
     }
   } catch (err) {
-    if (!timedOut) {
+    if (!timedOut && !wallClockTimedOut) {
       error = err instanceof Error ? err : new Error(String(err));
     }
   } finally {
     clearTimeout(timer);
+    clearTimeout(wallClockTimer);
   }
 
-  if (timedOut && !error) {
+  if (wallClockTimedOut && !error) {
+    error = new Error(wallClockTimeoutMessage ?? timeoutMessage);
+  } else if (timedOut && !error) {
     error = new Error(timeoutMessage);
   }
 

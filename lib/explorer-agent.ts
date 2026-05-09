@@ -54,6 +54,12 @@ export type { DetectedToolCalls } from './deep-reviewer-agent.js';
 
 export const MAX_EXPLORER_ROUNDS = 14;
 export const EXPLORER_ROUND_TIMEOUT_MS = 60_000;
+// Wall-clock backstop for verbose-but-progressing models. The activity timer
+// above resets on every `text_delta`, so a model that emits visible content
+// every few seconds for many minutes never trips it — even when it's just
+// writing essay-length preambles between tool calls. The wall-clock timer
+// fires once per round regardless of activity, bounding unproductive loops.
+export const EXPLORER_ROUND_WALL_CLOCK_MS = 120_000;
 export const MAX_PROJECT_INSTRUCTIONS_SIZE = 12_000;
 
 export const EXPLORER_GITHUB_TOOL_NAMES = getToolPublicNames({
@@ -453,6 +459,8 @@ export async function runExplorerAgent<TCall, TCard>(
       },
       EXPLORER_ROUND_TIMEOUT_MS,
       `Explorer round ${rounds} timed out after ${EXPLORER_ROUND_TIMEOUT_MS / 1000}s.`,
+      EXPLORER_ROUND_WALL_CLOCK_MS,
+      `Explorer round ${rounds} exceeded ${EXPLORER_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
     );
 
     if (streamError) {
