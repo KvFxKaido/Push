@@ -23,11 +23,13 @@ function makeRenderer() {
     status: (t) => calls.push({ kind: 'status', text: t }),
     warning: (t) => calls.push({ kind: 'warning', text: t }),
     error: (t) => calls.push({ kind: 'error', text: t }),
-    // The dispatcher uses bold/dim inline. Wrap them in marker brackets so
-    // tests can assert that emphasis is applied to the right tokens
-    // without depending on ANSI escape codes.
+    // The dispatcher uses bold/dim/code inline. Wrap them in marker
+    // brackets so tests can assert that emphasis (bold/dim) and
+    // command-formatting (code) are applied to the right tokens
+    // without depending on ANSI escape codes or backticks.
     bold: (t) => `[B]${t}[/B]`,
     dim: (t) => `[D]${t}[/D]`,
+    code: (t) => `[C]${t}[/C]`,
   };
 }
 
@@ -93,6 +95,8 @@ describe('runCheckpointCommand — list', () => {
     assert.equal(r.calls.length, 1);
     assert.equal(r.calls[0].kind, 'status');
     assert.match(r.calls[0].text, /No checkpoints/);
+    // Command hint goes through the `code` channel so the TUI backticks it.
+    assert.match(r.calls[0].text, /\[C\]\/checkpoint create \[name\]\[\/C\]/);
   });
 
   it('emits one status with bolded names and dim metadata', async () => {
@@ -132,7 +136,7 @@ describe('runCheckpointCommand — load', () => {
     await createCheckpoint({
       workspaceRoot: workspace,
       name: 'p1',
-      sessionId: 'sess_test_abcdef',
+      sessionId: 'sess_abcdef_resume',
     });
     await fs.writeFile(path.join(workspace, 'a.txt'), 'mutated\n');
 
@@ -141,6 +145,11 @@ describe('runCheckpointCommand — load', () => {
     assert.equal(r.calls[0].kind, 'status');
     assert.match(r.calls[0].text, /Would restore 1 file/);
     assert.match(r.calls[0].text, /Re-run with --force/);
+    // Names go through `bold`; `push resume <id>` goes through `code`.
+    // The two are distinct so the TUI can backtick-wrap commands without
+    // turning every emphasized name into code-format too.
+    assert.match(r.calls[0].text, /\[B\]p1\[\/B\]/);
+    assert.match(r.calls[0].text, /\[C\]push resume sess_abcdef_resume\[\/C\]/);
 
     // Disk is unchanged.
     const onDisk = await fs.readFile(path.join(workspace, 'a.txt'), 'utf8');

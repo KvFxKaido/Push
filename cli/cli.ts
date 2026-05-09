@@ -879,6 +879,10 @@ async function runInteractive(
     error: (text) => process.stderr.write(`${fmt.error('checkpoint:')} ${text}\n`),
     bold: fmt.bold,
     dim: fmt.dim,
+    // Terminal output already supports ANSI; bold reads visually as a
+    // command-formatted token here. (TUI uses backticks instead because
+    // the transcript renderer strips styling.)
+    code: fmt.bold,
   };
 
   async function handleCheckpointCommand(rawArg) {

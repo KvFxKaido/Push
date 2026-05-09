@@ -14,10 +14,16 @@
  *                 renderer is responsible for any "checkpoint:" prefix
  *                 (REPL renders via `fmt.error`; TUI prepends in the
  *                 transcript entry).
- *   - `bold`    — wrap a single token for emphasis. REPL maps to ANSI;
- *                 TUI maps to identity (the transcript renderer strips
- *                 styling and the bold wrapping would just look noisy).
+ *   - `bold`    — wrap a single token for emphasis (e.g. a checkpoint
+ *                 name in a sentence). REPL maps to ANSI; TUI maps to
+ *                 identity (the transcript renderer strips styling).
  *   - `dim`     — same idea for de-emphasis.
+ *   - `code`    — wrap a token formatted as a command/code (e.g.
+ *                 `push resume <id>`). REPL maps to ANSI bold; TUI
+ *                 maps to backtick-wrapping so commands stay visually
+ *                 distinct in the transcript even without styling.
+ *                 Distinct from `bold` so we don't backtick-wrap names
+ *                 that are merely emphasized.
  *
  * The dispatcher swallows store errors and routes them through `error`. It
  * never throws — slash-command handlers are always best-effort.
@@ -36,6 +42,7 @@ export interface CheckpointRenderer {
   error: (text: string) => void;
   bold: (text: string) => string;
   dim: (text: string) => string;
+  code: (text: string) => string;
 }
 
 export interface CheckpointCommandContext {
@@ -97,7 +104,7 @@ export async function runCheckpointCommand(
   if (op === 'list') {
     const items = await listCheckpoints(ctx.workspaceRoot);
     if (items.length === 0) {
-      render.status('No checkpoints. Create one with /checkpoint create [name].');
+      render.status(`No checkpoints. Create one with ${render.code('/checkpoint create [name]')}.`);
       return;
     }
     const lines = items.map((m) => {
@@ -128,7 +135,7 @@ export async function runCheckpointCommand(
         .map((f) => `  - ${f}`)
         .join('\n');
       const tail = meta.files.length > 10 ? `\n  ... and ${meta.files.length - 10} more` : '';
-      const resumeHint = render.bold(`push resume ${meta.sessionId || '<session>'}`);
+      const resumeHint = render.code(`push resume ${meta.sessionId || '<session>'}`);
       render.status(
         `Would restore ${meta.fileCount} file(s) from ${render.bold(meta.name)} (${formatRelativeTime(meta.createdAt)}).\n${head}${tail}\n\nThis will OVERWRITE matching files in your working tree. Re-run with --force to apply.\nConversation rollback is not in-process: after restoring files, /exit and run ${resumeHint} to restore the conversation.`,
       );
@@ -137,7 +144,7 @@ export async function runCheckpointCommand(
     try {
       const result = await loadCheckpoint(ctx.workspaceRoot, name);
       const skipNote = result.skippedFiles.length ? ` (${result.skippedFiles.length} skipped)` : '';
-      const resumeHint = render.bold(`push resume ${result.meta.sessionId || '<session>'}`);
+      const resumeHint = render.code(`push resume ${result.meta.sessionId || '<session>'}`);
       render.status(
         `Restored ${result.restoredFiles.length} file(s) from ${render.bold(name)}${skipNote}.\nConversation is unchanged. To restore the conversation: /exit, then ${resumeHint}.`,
       );

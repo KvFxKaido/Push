@@ -2642,6 +2642,11 @@ export async function runTUI(options = {}) {
     },
     bold: (text) => text,
     dim: (text) => text,
+    // Backtick-wrap command-formatted tokens so they stay visually
+    // distinct in the transcript even though styling is stripped. This
+    // restores the explicit backticks the original TUI handler used
+    // around `push resume <id>` before the shared dispatcher.
+    code: (text) => `\`${text}\``,
   };
 
   async function handleCheckpointCommand(rawArg) {
