@@ -87,8 +87,21 @@ export function streamWithTimeout(
  * timer purposes too: a model that emits only reasoning indefinitely should
  * trip the per-role round timeout exactly as it did before the migration.
  *
+ * Optional `wallClockTimeoutMs` adds a separate non-resetting backstop. The
+ * activity timer alone is the wrong shape of failsafe for verbose-but-
+ * progressing models that emit text every few seconds for many minutes —
+ * each chunk legitimately resets the activity timer, so a 5–8 minute
+ * unproductive loop never trips it. Wall-clock fires once `wallClockTimeoutMs`
+ * elapses from the start of the call regardless of activity.
+ *
+ * Whichever timer fires first wins, definitively: the firing callback claims
+ * the single `timeoutKind` slot and clears the other timer in the same tick,
+ * so a near-simultaneous wall-clock callback can't overwrite an
+ * already-recorded activity timeout (or vice versa).
+ *
  * On timeout, the returned signal is aborted and an Error with
- * `timeoutMessage` is returned in the result's `error` field.
+ * `timeoutMessage` (or `wallClockTimeoutMessage` if set and applicable) is
+ * returned in the result's `error` field.
  *
  * `reasoning_delta` events are ignored at the accumulation level too — the
  * helper's text result feeds JSON parsers that don't want reasoning prose
@@ -100,23 +113,39 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   request: Omit<PushStreamRequest<M>, 'signal'>,
   timeoutMs: number,
   timeoutMessage: string,
+  wallClockTimeoutMs?: number,
+  wallClockTimeoutMessage?: string,
 ): Promise<{ error: Error | null; text: string }> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let timedOut = false;
+  let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
+  // Single source of truth for which timer fired. The first callback to run
+  // claims the slot and clears the other timer; subsequent callbacks (if
+  // they were already in the macrotask queue) see a non-null value and bail.
+  let timeoutKind: 'activity' | 'wallClock' | null = null;
   let text = '';
   let error: Error | null = null;
 
   const resetTimer = () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      timedOut = true;
+      if (timeoutKind !== null) return;
+      timeoutKind = 'activity';
+      clearTimeout(wallClockTimer);
       controller.abort();
     }, timeoutMs);
   };
 
   try {
     resetTimer();
+    if (wallClockTimeoutMs !== undefined) {
+      wallClockTimer = setTimeout(() => {
+        if (timeoutKind !== null) return;
+        timeoutKind = 'wallClock';
+        clearTimeout(timer);
+        controller.abort();
+      }, wallClockTimeoutMs);
+    }
     const iterable = stream({
       ...(request as PushStreamRequest<M>),
       signal: controller.signal,
@@ -137,14 +166,17 @@ export async function iteratePushStreamText<M extends LlmMessage>(
       // NOT reset the timer — see the doc comment above.
     }
   } catch (err) {
-    if (!timedOut) {
+    if (timeoutKind === null) {
       error = err instanceof Error ? err : new Error(String(err));
     }
   } finally {
     clearTimeout(timer);
+    clearTimeout(wallClockTimer);
   }
 
-  if (timedOut && !error) {
+  if (timeoutKind === 'wallClock' && !error) {
+    error = new Error(wallClockTimeoutMessage ?? timeoutMessage);
+  } else if (timeoutKind === 'activity' && !error) {
     error = new Error(timeoutMessage);
   }
 

@@ -123,6 +123,104 @@ describe('iteratePushStreamText', () => {
     expect(text).toBe('{"verdict":"safe","summary":"OK","risks":[]}');
   });
 
+  it('fires the wall-clock backstop when text_delta keeps resetting the activity timer', async () => {
+    // 50ms gaps between text_deltas with a 100ms activity timeout (never trips)
+    // and a 120ms wall-clock cap. The third text_delta lands at t=150ms, past
+    // the wall-clock — so the stream must abort with the wall-clock message.
+    const stream = makeGappedPushStream([
+      { event: { type: 'text_delta', text: 'a' }, gapMs: 50 },
+      { event: { type: 'text_delta', text: 'b' }, gapMs: 50 },
+      { event: { type: 'text_delta', text: 'c' }, gapMs: 50 },
+      { event: { type: 'text_delta', text: 'd' }, gapMs: 50 },
+      { event: { type: 'done', finishReason: 'stop' }, gapMs: 0 },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      100,
+      'activity timed out',
+      120,
+      'wall-clock timed out',
+    );
+    await vi.runAllTimersAsync();
+    const { error } = await promise;
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toBe('wall-clock timed out');
+  });
+
+  it('does not fire the wall-clock backstop when the stream completes within the cap', async () => {
+    const stream = makeGappedPushStream([
+      { event: { type: 'text_delta', text: 'hello ' }, gapMs: 20 },
+      { event: { type: 'text_delta', text: 'world' }, gapMs: 20 },
+      { event: { type: 'done', finishReason: 'stop' }, gapMs: 10 },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      100,
+      'activity timed out',
+      500,
+      'wall-clock timed out',
+    );
+    await vi.runAllTimersAsync();
+    const { error, text } = await promise;
+
+    expect(error).toBeNull();
+    expect(text).toBe('hello world');
+  });
+
+  it('falls back to the activity-timeout message when wall-clock is set but activity fires first', async () => {
+    // 60ms reasoning_delta gaps (don't reset activity) with a 50ms activity
+    // timeout and a generous 5000ms wall-clock. Activity fires first.
+    const stream = makeGappedPushStream([
+      { event: { type: 'reasoning_delta', text: 'thinking' }, gapMs: 60 },
+      { event: { type: 'text_delta', text: 'never reached' }, gapMs: 0 },
+      { event: { type: 'done', finishReason: 'stop' }, gapMs: 0 },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      50,
+      'activity timed out',
+      5000,
+      'wall-clock timed out',
+    );
+    await vi.runAllTimersAsync();
+    const { error } = await promise;
+
+    expect(error?.message).toBe('activity timed out');
+  });
+
+  it('preserves the first-to-fire winner even when the other timer would have fired during teardown', async () => {
+    // Activity timer (50ms) trips on a long reasoning gap. After abort,
+    // we run all pending timers — including a wall-clock timer (60ms) whose
+    // deadline has now passed. The "first to fire wins" rule must keep the
+    // activity message: the wall-clock callback should bail because
+    // timeoutKind is already set.
+    const stream = makeGappedPushStream([
+      { event: { type: 'reasoning_delta', text: 'long thought' }, gapMs: 100 },
+      { event: { type: 'text_delta', text: 'never reached' }, gapMs: 0 },
+      { event: { type: 'done', finishReason: 'stop' }, gapMs: 0 },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      50,
+      'activity timed out',
+      60,
+      'wall-clock timed out',
+    );
+    await vi.runAllTimersAsync();
+    const { error } = await promise;
+
+    expect(error?.message).toBe('activity timed out');
+  });
+
   it('returns the upstream error when the stream throws', async () => {
     vi.useRealTimers();
     const stream: PushStream = () =>
