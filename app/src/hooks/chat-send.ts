@@ -30,7 +30,7 @@ import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { handleMultipleMutationsError } from '@/lib/chat-tool-execution';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { getToolInvocationKey, type MutationFailureTracker } from '@push/lib/agent-loop-utils';
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, ReasoningBlock } from '@/types';
 import { createTurnRunContext } from './chat-send-helpers';
 import type { AssistantTurnResult, SendLoopContext } from './chat-send-types';
 import { executeBatchedToolCalls } from './chat-batched-execution';
@@ -70,6 +70,7 @@ export async function processAssistantTurn(
   round: number,
   accumulated: string,
   thinkingAccumulated: string,
+  reasoningBlocks: ReasoningBlock[],
   apiMessages: ChatMessage[],
   ctx: SendLoopContext,
   recoveryState: ToolCallRecoveryState,
@@ -121,6 +122,7 @@ export async function processAssistantTurn(
       detected,
       accumulated,
       thinkingAccumulated,
+      reasoningBlocks,
       apiMessages,
       lockedProvider,
     );
@@ -168,6 +170,7 @@ export async function processAssistantTurn(
       round,
       accumulated,
       thinkingAccumulated,
+      reasoningBlocks,
       apiMessages,
       ctx,
       recoveryState,
@@ -181,6 +184,7 @@ export async function processAssistantTurn(
       round,
       accumulated,
       thinkingAccumulated,
+      reasoningBlocks,
       apiMessages,
       ctx,
       recoveryState,
@@ -192,6 +196,7 @@ export async function processAssistantTurn(
     round,
     accumulated,
     thinkingAccumulated,
+    reasoningBlocks,
     apiMessages,
     ctx,
     recoveryState,

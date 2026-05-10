@@ -841,4 +841,70 @@ describe('openAISSEPump', () => {
     expect(joined).toContain('tool_b');
     expect(joined).toContain('"b":2');
   });
+
+  it('parses delta.reasoning_block into a structured reasoning_block event', async () => {
+    // The Anthropic bridge translator emits one structured
+    // `delta.reasoning_block` per `content_block_stop`. The pump must
+    // surface it as a typed `reasoning_block` event without conflating
+    // with the `reasoning_delta` text channel — they're independent
+    // (text drives display, structured carries the signature).
+    const s = makeStream();
+    const events = collect(openAISSEPump({ body: s.body }));
+    s.push(
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              reasoning_block: {
+                type: 'thinking',
+                text: 'thinking out loud',
+                signature: 'sig-A',
+              },
+            },
+          },
+        ],
+      }),
+    );
+    s.push(contentFrame('answer'));
+    s.finish();
+
+    const out = await events;
+    const blocks = out.filter(
+      (e): e is { type: 'reasoning_block'; block: { type: string } } =>
+        e.type === 'reasoning_block',
+    );
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].block).toEqual({
+      type: 'thinking',
+      text: 'thinking out loud',
+      signature: 'sig-A',
+    });
+
+    const reasoningDeltas = out.filter((e) => e.type === 'reasoning_delta');
+    expect(reasoningDeltas).toHaveLength(0);
+  });
+
+  it('drops malformed reasoning_block payloads without killing the stream', async () => {
+    const s = makeStream();
+    const events = collect(openAISSEPump({ body: s.body }));
+    // Missing signature on a thinking block — soft-drop.
+    s.push(
+      JSON.stringify({
+        choices: [{ delta: { reasoning_block: { type: 'thinking', text: 'orphan' } } }],
+      }),
+    );
+    // Unknown block type — soft-drop.
+    s.push(
+      JSON.stringify({
+        choices: [{ delta: { reasoning_block: { type: 'mystery', payload: '?' } } }],
+      }),
+    );
+    s.push(contentFrame('still works'));
+    s.finish();
+
+    const out = await events;
+    expect(out.filter((e) => e.type === 'reasoning_block')).toHaveLength(0);
+    expect(out.some((e) => e.type === 'text_delta' && e.text === 'still works')).toBe(true);
+    expect(out.some((e) => e.type === 'done')).toBe(true);
+  });
 });

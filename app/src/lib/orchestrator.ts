@@ -19,6 +19,25 @@ import {
 } from './orchestrator-prompt-builder';
 import { manageContext } from './message-context-manager';
 import { transformContextBeforeLLM } from '@push/lib/context-transformer';
+import { getZenGoTransport } from './zen-go';
+import { getVertexModelTransport } from './vertex-provider';
+
+/** Whether a `(provider, model)` route lands on the Anthropic Messages API
+ *  via the Worker bridge (`buildAnthropicMessagesRequest` →
+ *  `createAnthropicTranslatedStream`). Only routes that pass through the
+ *  bridge can consume the Push-private `reasoning_blocks` sidecar — all
+ *  other paths forward the OpenAI-shape body verbatim and a strict
+ *  upstream (Azure, OpenAI Chat, legacy Vertex) may reject the unknown
+ *  field. Default false so new providers don't silently leak the sidecar. */
+function routesThroughAnthropicBridge(
+  provider: Exclude<ActiveProvider, 'demo'> | undefined,
+  model: string | undefined,
+): boolean {
+  if (!provider || !model) return false;
+  if (provider === 'zen') return getZenGoTransport(model) === 'anthropic';
+  if (provider === 'vertex') return getVertexModelTransport(model) === 'anthropic';
+  return false;
+}
 // --- Re-exports from orchestrator-streaming (break circular dependency) ---
 export {
   parseProviderError,
@@ -107,10 +126,19 @@ interface LLMMessageContentImage {
 
 type LLMMessageContent = LLMMessageContentText | LLMMessageContentImage;
 
+/** Push-private extension. Sent only on assistant messages routed through
+ *  the Anthropic bridge; other backends ignore the field. See
+ *  `chat-request-guardrails.ts` `OpenAIReasoningBlock` and
+ *  `lib/provider-contract.ts` `ReasoningBlock` for the canonical shape. */
+type LLMReasoningBlock =
+  | { type: 'thinking'; text: string; signature: string }
+  | { type: 'redacted_thinking'; data: string };
+
 interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
   content: string | LLMMessageContent[];
   intentHint?: string | null;
+  reasoning_blocks?: LLMReasoningBlock[];
 }
 
 function isNonEmptyContent(content: string | LLMMessageContent[]): boolean {
@@ -319,7 +347,28 @@ export function toLLMMessages(
   });
   const windowedMessages = transformed.messages;
 
+  // Only emit `reasoning_blocks` on the wire when the route lands on the
+  // Anthropic bridge. Other backends would forward the sidecar verbatim
+  // to a strict OpenAI-compatible upstream (Azure, OpenAI Chat, legacy
+  // Vertex), which may reject the unknown field. The persisted blocks
+  // stay on the ChatMessage either way — when the user later switches
+  // back to an Anthropic-bridge route, future turns pick them up again.
+  const emitReasoningBlocks = routesThroughAnthropicBridge(providerType, providerModel);
+
   for (const msg of windowedMessages) {
+    // Anthropic requires signed thinking blocks to be re-sent verbatim on
+    // the assistant turn that produced them, ahead of any text/tool_use.
+    // The wire field rides as a sidecar on the assistant LLMMessage; the
+    // bridge layer (worker → openai-anthropic-bridge.ts) prepends them to
+    // the upstream `content[]`.
+    const reasoningBlocks =
+      emitReasoningBlocks &&
+      msg.role === 'assistant' &&
+      msg.reasoningBlocks &&
+      msg.reasoningBlocks.length > 0
+        ? msg.reasoningBlocks
+        : undefined;
+
     // Check for attachments (multimodal message)
     if (msg.attachments && msg.attachments.length > 0) {
       const contentParts: LLMMessageContent[] = [];
@@ -349,17 +398,23 @@ export function toLLMMessages(
       llmMessages.push({
         role: msg.role === 'user' ? 'user' : 'assistant',
         content: contentParts,
+        ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
       });
     } else {
       // Simple text message (existing behavior)
       // Guard against provider-side validation errors:
       // some OpenAI-compatible backends reject empty assistant turns.
-      if (msg.role === 'assistant' && !msg.content.trim()) {
+      // Exception: an assistant turn with no text but with signed
+      // reasoning blocks is legitimate (Anthropic returns this when the
+      // model thinks then immediately tool_uses) — keep it so the next
+      // turn's request can echo the signature back.
+      if (msg.role === 'assistant' && !msg.content.trim() && !reasoningBlocks) {
         continue;
       }
       llmMessages.push({
         role: msg.role === 'user' ? 'user' : 'assistant',
         content: msg.content,
+        ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
       });
     }
   }
@@ -386,9 +441,13 @@ export function toLLMMessages(
     }
   }
 
-  // Final sanitize pass: never send empty assistant messages.
+  // Final sanitize pass: never send empty assistant messages — except
+  // assistant turns that carry signed reasoning blocks (the bridge will
+  // emit them as the upstream `content[]`, so the message is not actually
+  // empty on the wire).
   return llmMessages.filter((msg) => {
     if (msg.role !== 'assistant') return true;
+    if (msg.reasoning_blocks && msg.reasoning_blocks.length > 0) return true;
     return isNonEmptyContent(msg.content);
   });
 }

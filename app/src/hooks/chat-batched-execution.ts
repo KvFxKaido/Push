@@ -35,7 +35,7 @@ import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { createId } from '@push/lib/id-utils';
 import type { DetectedToolCalls } from '@/lib/tool-dispatch';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, ReasoningBlock } from '@/types';
 import {
   applyPostExecutionSideEffects,
   delegateCallNeedsSandbox,
@@ -51,6 +51,7 @@ export async function executeBatchedToolCalls(
   round: number,
   accumulated: string,
   thinkingAccumulated: string,
+  reasoningBlocks: ReasoningBlock[],
   apiMessages: ChatMessage[],
   ctx: SendLoopContext,
   recoveryState: ToolCallRecoveryState,
@@ -229,6 +230,7 @@ export async function executeBatchedToolCalls(
       content: accumulated,
       timestamp: Date.now(),
       status: 'done' as const,
+      ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
     },
     ...toolResultMessages,
   ];

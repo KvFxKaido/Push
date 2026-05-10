@@ -43,7 +43,7 @@ import { isReadOnlyToolCall, type AnyToolCall } from '@/lib/tool-dispatch';
 import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verification-runtime';
 import { createId } from '@push/lib/id-utils';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
-import type { ChatCard, ChatMessage, ToolExecutionResult } from '@/types';
+import type { ChatCard, ChatMessage, ReasoningBlock, ToolExecutionResult } from '@/types';
 import {
   applyPostExecutionSideEffects,
   delegateCallNeedsSandbox,
@@ -59,6 +59,7 @@ export async function executeSingleToolCall(
   round: number,
   accumulated: string,
   thinkingAccumulated: string,
+  reasoningBlocks: ReasoningBlock[],
   apiMessages: ChatMessage[],
   ctx: SendLoopContext,
   recoveryState: ToolCallRecoveryState,
@@ -307,6 +308,7 @@ export async function executeSingleToolCall(
       content: accumulated,
       timestamp: Date.now(),
       status: 'done' as const,
+      ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
     },
     toolResultMsg,
   ];

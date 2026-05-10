@@ -1,5 +1,10 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
-import type { PreCompactEvent, PushStream, PushStreamEvent } from '@push/lib/provider-contract';
+import type {
+  PreCompactEvent,
+  PushStream,
+  PushStreamEvent,
+  ReasoningBlock,
+} from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
 import { ollamaStream } from './ollama-stream';
 import { cloudflareStream } from './cloudflare-stream';
@@ -382,6 +387,7 @@ export async function streamChat(
   modelOverride?: string,
   onPreCompact?: (event: PreCompactEvent) => void,
   todoContent?: string,
+  onReasoningBlock?: (block: ReasoningBlock) => void,
 ): Promise<void> {
   const provider = providerOverride || getActiveProvider();
 
@@ -448,6 +454,7 @@ export async function streamChat(
       onDone: wrappedOnDone,
       onError: wrappedOnError,
       onThinkingToken,
+      onReasoningBlock,
     },
     {
       timeouts: buildChatTimeouts(provider),

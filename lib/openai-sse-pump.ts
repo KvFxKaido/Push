@@ -14,7 +14,7 @@
  * filter for native tool calls) flows in via injected config.
  */
 
-import type { PushStreamEvent, StreamUsage } from './provider-contract.js';
+import type { PushStreamEvent, ReasoningBlock, StreamUsage } from './provider-contract.js';
 
 // ---------------------------------------------------------------------------
 // Helpers — duplicated across openrouter/zen/kilocode adapters before #392
@@ -54,6 +54,25 @@ export function mapOpenAIUsage(usage: {
 /** Strip model chat-template control tokens (e.g. `<|start|>`, `<|im_end|>`). */
 export function stripTemplateTokens(text: string): string {
   return text.replace(/<\|[a-z_]+\|>/gi, '');
+}
+
+/** Validate a `delta.reasoning_block` payload into a typed `ReasoningBlock`,
+ *  or return `undefined` when the shape is wrong. Treated as a soft drop:
+ *  a malformed block on the wire shouldn't kill the stream, it just means
+ *  this turn loses round-trip fidelity. */
+function parseReasoningBlock(value: unknown): ReasoningBlock | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const rec = value as Record<string, unknown>;
+  if (rec.type === 'thinking') {
+    if (typeof rec.text !== 'string') return undefined;
+    if (typeof rec.signature !== 'string' || !rec.signature) return undefined;
+    return { type: 'thinking', text: rec.text, signature: rec.signature };
+  }
+  if (rec.type === 'redacted_thinking') {
+    if (typeof rec.data !== 'string' || !rec.data) return undefined;
+    return { type: 'redacted_thinking', data: rec.data };
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +188,10 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
           content?: unknown;
           reasoning?: unknown;
           reasoning_content?: unknown;
+          /** Push-private: structured signed-thinking block emitted by the
+           *  Anthropic bridge translator. See `ReasoningBlock` in
+           *  `lib/provider-contract.ts`. Other backends never set this. */
+          reasoning_block?: unknown;
           tool_calls?: unknown;
         };
         finish_reason?: unknown;
@@ -202,6 +225,15 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
           : undefined;
     if (reasoning) {
       yield { type: 'reasoning_delta', text: reasoning };
+    }
+
+    // Structured signed-reasoning block — currently only emitted by the
+    // Anthropic bridge translator. Kept additive to `reasoning_delta`:
+    // the text channel keeps driving display, while this event carries
+    // the cryptographic signature so the next-turn round-trip survives.
+    const reasoningBlock = parseReasoningBlock(delta?.reasoning_block);
+    if (reasoningBlock) {
+      yield { type: 'reasoning_block', block: reasoningBlock };
     }
 
     if (typeof delta?.content === 'string' && delta.content) {

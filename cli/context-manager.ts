@@ -23,11 +23,21 @@ import {
   estimateTokens,
   getContextBudget,
 } from '../lib/context-budget.ts';
+import type { ReasoningBlock } from '../lib/provider-contract.ts';
 import type { DistillResult } from '../lib/context-transformer.ts';
 
 export interface Message {
   role: string;
   content: string;
+  /** Structured signed-reasoning blocks captured from a provider that
+   *  returns them (Anthropic). Round-tripped verbatim on the next request
+   *  to that provider. Currently no CLI provider exposes signed thinking
+   *  end-to-end (OpenRouter does not pass through Anthropic's
+   *  `thinking`/`redacted_thinking` blocks today), so this field stays
+   *  unused on the CLI hot path; it exists so persistence + adapter
+   *  upgrades don't drop data the moment a provider starts surfacing it.
+   *  See `ReasoningBlock` in `lib/provider-contract.ts`. */
+  reasoningBlocks?: ReasoningBlock[];
 }
 
 export interface TrimResult {

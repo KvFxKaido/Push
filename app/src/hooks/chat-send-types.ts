@@ -20,6 +20,7 @@ import type {
   ChatMessage,
   Conversation,
   CoderWorkingMemory,
+  ReasoningBlock,
   RunEventInput,
   ToolExecutionResult,
   VerificationRuntimeState,
@@ -116,6 +117,12 @@ export interface SendLoopContext {
 export interface StreamRoundResult {
   accumulated: string;
   thinkingAccumulated: string;
+  /** Structured signed-thinking blocks captured this round. Persisted on
+   *  the assistant message so the next request can echo them back to the
+   *  provider — required for Anthropic extended thinking + tool use to
+   *  survive across turns. Empty array when the upstream emitted no
+   *  signed reasoning. */
+  reasoningBlocks: ReasoningBlock[];
   error: Error | null;
 }
 

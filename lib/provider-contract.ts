@@ -63,6 +63,29 @@ export interface PreCompactEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Reasoning blocks (structured, signed)
+// ---------------------------------------------------------------------------
+
+/**
+ * A structured reasoning block from a provider that returns extended
+ * thinking with cryptographic signatures (currently Anthropic). Unlike the
+ * `reasoning_delta` text channel — which is display-only — these blocks
+ * MUST round-trip verbatim on chained turns: Anthropic's API requires the
+ * `signature` (or `redacted_thinking.data`) to be re-sent in the next
+ * request's assistant content[] when extended thinking + tool use are
+ * combined, otherwise the request 400s or silently degrades.
+ *
+ * Captured at `content_block_stop` boundaries by the Anthropic stream
+ * translator, persisted on the assistant `ChatMessage` / CLI `Message`
+ * alongside the existing `thinking` text accumulator, and re-emitted as
+ * the FIRST blocks of the assistant `content[]` array when the next
+ * request hits the bridge.
+ */
+export type ReasoningBlock =
+  | { type: 'thinking'; text: string; signature: string }
+  | { type: 'redacted_thinking'; data: string };
+
+// ---------------------------------------------------------------------------
 // Gateway Abstraction (New Wire Model)
 // ---------------------------------------------------------------------------
 
@@ -70,6 +93,14 @@ export type PushStreamEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'reasoning_delta'; text: string }
   | { type: 'reasoning_end' }
+  /**
+   * Emitted once per complete structured reasoning block when the upstream
+   * signals `content_block_stop`. Adapters that don't surface signed
+   * reasoning never emit this event — consumers should treat it as
+   * additive to the existing `reasoning_delta` text channel, not a
+   * replacement.
+   */
+  | { type: 'reasoning_block'; block: ReasoningBlock }
   // Native `delta.tool_calls` fragment from an OpenAI-shaped provider.
   // Streams emit one per fragment so the adapter's content timer can see
   // progress while a model is mid-way through a long tool-arg payload.
