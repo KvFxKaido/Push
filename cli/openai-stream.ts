@@ -85,40 +85,24 @@ async function* cliProviderStream(
   //     pass the system prompt as `systemPromptOverride` and start
   //     `messages` at the user turn.
   // Honour both: prepend the override only when present.
-  type WireReasoningBlock =
-    | { type: 'thinking'; text: string; signature: string }
-    | { type: 'redacted_thinking'; data: string };
   type WireContent =
     | string
     | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[];
-  type WireMessage = {
-    role: string;
-    content: WireContent;
-    reasoning_blocks?: WireReasoningBlock[];
-  };
-  const messages: WireMessage[] = [];
+  const messages: { role: string; content: WireContent }[] = [];
   const systemPrependOffset =
     typeof req.systemPromptOverride === 'string' && req.systemPromptOverride ? 1 : 0;
   if (systemPrependOffset === 1) {
     messages.push({ role: 'system', content: req.systemPromptOverride as string });
   }
+  // `reasoningBlocks` on `LlmMessage` is intentionally NOT forwarded on the
+  // wire here. Every CLI provider in `PROVIDER_CONFIGS` is a strict
+  // OpenAI-compatible endpoint (Ollama, OpenRouter, Zen, NVIDIA, etc.); a
+  // Push-private `reasoning_blocks` field would be an unknown message
+  // parameter and the upstream may reject it. Persistence on `Message`
+  // still survives so a future CLI provider that fronts the Anthropic
+  // bridge can opt in here.
   for (const m of req.messages) {
-    // `reasoningBlocks` rides on `LlmMessage` only when the upstream
-    // captured Anthropic-style signed thinking. Forward as the wire
-    // sidecar `reasoning_blocks` so any downstream provider that has
-    // an Anthropic bridge in front of it can reconstruct the upstream
-    // assistant `content[]`. Current CLI providers all ignore the
-    // field — see the field-level comment on `Message.reasoningBlocks`.
-    const extended = m as typeof m & { reasoningBlocks?: WireReasoningBlock[] };
-    const reasoningBlocks =
-      m.role === 'assistant' && extended.reasoningBlocks && extended.reasoningBlocks.length > 0
-        ? extended.reasoningBlocks
-        : undefined;
-    messages.push({
-      role: m.role,
-      content: m.content,
-      ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
-    });
+    messages.push({ role: m.role, content: m.content });
   }
 
   // Prompt caching: tag the system message at index 0 (if present) and the

@@ -127,6 +127,27 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
     };
   }
 
+  // `minimax-m2.7` routes through the Anthropic bridge in Zen Go
+  // (`getZenGoTransport`), so the orchestrator should emit the wire
+  // sidecar for that route.
+  const anthropicRoute = ['zen', 'minimax-m2.7'] as const;
+
+  function buildLlm(
+    messages: ChatMessage[],
+    provider: 'zen' | 'azure' | undefined = anthropicRoute[0],
+    model: string | undefined = anthropicRoute[1],
+  ) {
+    return toLLMMessages(
+      messages,
+      undefined, // workspaceContext
+      undefined, // hasSandbox
+      undefined, // systemPromptOverride
+      undefined, // scratchpadContent
+      provider,
+      model,
+    );
+  }
+
   it('forwards reasoningBlocks from a prior assistant turn as the wire reasoning_blocks sidecar', () => {
     const messages: ChatMessage[] = [
       makeMessage({ id: 'u1', role: 'user', content: 'Why?' }),
@@ -138,7 +159,7 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
       }),
       makeMessage({ id: 'u2', role: 'user', content: 'Continue.' }),
     ];
-    const llm = toLLMMessages(messages);
+    const llm = buildLlm(messages);
     const assistant = llm.find((m) => m.role === 'assistant');
     expect(assistant).toBeDefined();
     expect(assistant?.reasoning_blocks).toEqual([
@@ -161,7 +182,7 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
       }),
       makeMessage({ id: 'u2', role: 'user', content: 'follow up' }),
     ];
-    const llm = toLLMMessages(messages);
+    const llm = buildLlm(messages);
     const assistant = llm.find((m) => m.role === 'assistant');
     expect(assistant).toBeDefined();
     expect(assistant?.reasoning_blocks).toEqual([{ type: 'redacted_thinking', data: 'enc' }]);
@@ -169,8 +190,47 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
 
   it('does not emit reasoning_blocks on user messages', () => {
     const messages: ChatMessage[] = [makeMessage({ id: 'u1', role: 'user', content: 'hi' })];
-    const llm = toLLMMessages(messages);
+    const llm = buildLlm(messages);
     const user = llm.find((m) => m.role === 'user');
     expect(user?.reasoning_blocks).toBeUndefined();
+  });
+
+  it('does NOT emit reasoning_blocks for non-Anthropic-bridge routes (e.g. Azure)', () => {
+    // Azure is a strict OpenAI-compatible upstream — sending the
+    // Push-private sidecar would be an unknown message parameter and
+    // could be rejected. The persisted blocks stay on the ChatMessage
+    // either way; they only leak onto the wire when the route hits the
+    // Anthropic bridge.
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'q' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: 'a',
+        reasoningBlocks: [{ type: 'thinking', text: 't', signature: 's' }],
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'q2' }),
+    ];
+    const llm = buildLlm(messages, 'azure', 'gpt-5');
+    const assistant = llm.find((m) => m.role === 'assistant');
+    expect(assistant?.reasoning_blocks).toBeUndefined();
+  });
+
+  it('does NOT emit reasoning_blocks for Zen on an OpenAI-transport model', () => {
+    // Same provider, OpenAI-transport model — the route does not pass
+    // through the bridge, so the sidecar must not ride along.
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'q' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: 'a',
+        reasoningBlocks: [{ type: 'thinking', text: 't', signature: 's' }],
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'q2' }),
+    ];
+    const llm = buildLlm(messages, 'zen', 'glm-5.1');
+    const assistant = llm.find((m) => m.role === 'assistant');
+    expect(assistant?.reasoning_blocks).toBeUndefined();
   });
 });

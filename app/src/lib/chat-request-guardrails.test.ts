@@ -33,4 +33,115 @@ describe('validateAndNormalizeChatRequest', () => {
     if (result.ok) return;
     expect(result.error).toContain('invalid role');
   });
+
+  describe('reasoning_blocks normalization', () => {
+    it('keeps well-formed signed thinking blocks on `parsed` for the bridge to consume', () => {
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'minimax-m2.7',
+          messages: [
+            {
+              role: 'assistant',
+              content: 'ok',
+              reasoning_blocks: [{ type: 'thinking', text: 't', signature: 's' }],
+            },
+          ],
+        }),
+        { routeLabel: 'Zen', maxOutputTokens: 8192 },
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const msg = result.value.parsed.messages?.[0] as { reasoning_blocks?: unknown };
+      expect(msg.reasoning_blocks).toEqual([{ type: 'thinking', text: 't', signature: 's' }]);
+    });
+
+    it('strips reasoning_blocks from `bodyText` so non-Anthropic transports never see the sidecar', () => {
+      // The Anthropic bridge consumes from `parsed`; non-Anthropic
+      // transports forward `bodyText` verbatim. Stripping at the
+      // validator means strict OpenAI-compatible upstreams (Azure,
+      // OpenAI Chat, legacy Vertex) never see the unknown field.
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'minimax-m2.7',
+          messages: [
+            {
+              role: 'assistant',
+              content: 'ok',
+              reasoning_blocks: [{ type: 'thinking', text: 't', signature: 's' }],
+            },
+          ],
+        }),
+        { routeLabel: 'Zen', maxOutputTokens: 8192 },
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.bodyText).not.toContain('reasoning_blocks');
+    });
+
+    it('drops the field on user messages (only assistant turns may carry signed reasoning)', () => {
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'minimax-m2.7',
+          messages: [
+            {
+              role: 'user',
+              content: 'hi',
+              reasoning_blocks: [{ type: 'thinking', text: 't', signature: 's' }],
+            },
+          ],
+        }),
+        { routeLabel: 'Zen', maxOutputTokens: 8192 },
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const msg = result.value.parsed.messages?.[0] as { reasoning_blocks?: unknown };
+      expect(msg.reasoning_blocks).toBeUndefined();
+    });
+
+    it('drops a thinking block whose `text` exceeds the per-block size cap', () => {
+      const oversized = 'x'.repeat(512_001);
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'minimax-m2.7',
+          messages: [
+            {
+              role: 'assistant',
+              content: 'ok',
+              reasoning_blocks: [{ type: 'thinking', text: oversized, signature: 's' }],
+            },
+          ],
+        }),
+        { routeLabel: 'Zen', maxOutputTokens: 8192 },
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const msg = result.value.parsed.messages?.[0] as { reasoning_blocks?: unknown };
+      expect(msg.reasoning_blocks).toBeUndefined();
+    });
+
+    it('drops malformed reasoning_blocks (no signature) without rejecting the whole request', () => {
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'minimax-m2.7',
+          messages: [
+            {
+              role: 'assistant',
+              content: 'ok',
+              reasoning_blocks: [{ type: 'thinking', text: 't' }],
+            },
+          ],
+        }),
+        { routeLabel: 'Zen', maxOutputTokens: 8192 },
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const msg = result.value.parsed.messages?.[0] as { reasoning_blocks?: unknown };
+      expect(msg.reasoning_blocks).toBeUndefined();
+    });
+  });
 });

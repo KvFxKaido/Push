@@ -156,6 +156,7 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
               content: accumulated,
               timestamp: Date.now(),
               status: 'done' as const,
+              ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
             },
           ]
         : []),
@@ -311,6 +312,7 @@ export async function runRoundLoop(
       round,
       accumulated,
       thinkingAccumulated,
+      reasoningBlocks,
       apiMessages,
       loopCtx,
       toolCallRecoveryState,

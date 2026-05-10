@@ -7,7 +7,7 @@
  * Pure-ish helpers with explicit parameters. No React hooks, no closures over hook state.
  */
 
-import type { ChatMessage, ChatCard, ToolExecutionResult } from '@/types';
+import type { ChatMessage, ChatCard, ReasoningBlock, ToolExecutionResult } from '@/types';
 import type { ApprovalGateRegistry } from '@/lib/approval-gates';
 import { createDefaultApprovalGates } from '@/lib/approval-gates';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
@@ -324,10 +324,13 @@ export function handleRecoveryResult(
   recoveryResult: ToolCallRecoveryResult,
   accumulated: string,
   thinkingAccumulated: string,
+  reasoningBlocks: ReasoningBlock[],
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
   model: string | undefined,
 ): RecoveryAction {
+  const reasoningBlocksField =
+    reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {};
   // --- Telemetry ---
   const diagnosis =
     recoveryResult.kind === 'telemetry_only' ||
@@ -397,6 +400,7 @@ export function handleRecoveryResult(
           content: accumulated,
           timestamp: Date.now(),
           status: 'done' as const,
+          ...reasoningBlocksField,
         },
         feedbackMsg,
       ],
@@ -456,6 +460,7 @@ export function handleMultipleMutationsError(
   detected: { mutating: AnyToolCall | null; extraMutations: AnyToolCall[] },
   accumulated: string,
   thinkingAccumulated: string,
+  reasoningBlocks: ReasoningBlock[],
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
 ): MultipleMutationsErrorAction {
@@ -499,6 +504,7 @@ export function handleMultipleMutationsError(
         content: accumulated,
         timestamp: Date.now(),
         status: 'done' as const,
+        ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
       },
       errorMessage,
     ],

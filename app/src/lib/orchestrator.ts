@@ -19,6 +19,25 @@ import {
 } from './orchestrator-prompt-builder';
 import { manageContext } from './message-context-manager';
 import { transformContextBeforeLLM } from '@push/lib/context-transformer';
+import { getZenGoTransport } from './zen-go';
+import { getVertexModelTransport } from './vertex-provider';
+
+/** Whether a `(provider, model)` route lands on the Anthropic Messages API
+ *  via the Worker bridge (`buildAnthropicMessagesRequest` →
+ *  `createAnthropicTranslatedStream`). Only routes that pass through the
+ *  bridge can consume the Push-private `reasoning_blocks` sidecar — all
+ *  other paths forward the OpenAI-shape body verbatim and a strict
+ *  upstream (Azure, OpenAI Chat, legacy Vertex) may reject the unknown
+ *  field. Default false so new providers don't silently leak the sidecar. */
+function routesThroughAnthropicBridge(
+  provider: Exclude<ActiveProvider, 'demo'> | undefined,
+  model: string | undefined,
+): boolean {
+  if (!provider || !model) return false;
+  if (provider === 'zen') return getZenGoTransport(model) === 'anthropic';
+  if (provider === 'vertex') return getVertexModelTransport(model) === 'anthropic';
+  return false;
+}
 // --- Re-exports from orchestrator-streaming (break circular dependency) ---
 export {
   parseProviderError,
@@ -328,14 +347,25 @@ export function toLLMMessages(
   });
   const windowedMessages = transformed.messages;
 
+  // Only emit `reasoning_blocks` on the wire when the route lands on the
+  // Anthropic bridge. Other backends would forward the sidecar verbatim
+  // to a strict OpenAI-compatible upstream (Azure, OpenAI Chat, legacy
+  // Vertex), which may reject the unknown field. The persisted blocks
+  // stay on the ChatMessage either way — when the user later switches
+  // back to an Anthropic-bridge route, future turns pick them up again.
+  const emitReasoningBlocks = routesThroughAnthropicBridge(providerType, providerModel);
+
   for (const msg of windowedMessages) {
     // Anthropic requires signed thinking blocks to be re-sent verbatim on
     // the assistant turn that produced them, ahead of any text/tool_use.
     // The wire field rides as a sidecar on the assistant LLMMessage; the
     // bridge layer (worker → openai-anthropic-bridge.ts) prepends them to
-    // the upstream `content[]`, and non-Anthropic backends ignore the field.
+    // the upstream `content[]`.
     const reasoningBlocks =
-      msg.role === 'assistant' && msg.reasoningBlocks && msg.reasoningBlocks.length > 0
+      emitReasoningBlocks &&
+      msg.role === 'assistant' &&
+      msg.reasoningBlocks &&
+      msg.reasoningBlocks.length > 0
         ? msg.reasoningBlocks
         : undefined;
 

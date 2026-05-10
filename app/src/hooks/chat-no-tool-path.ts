@@ -35,13 +35,14 @@ import {
 import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
 import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verification-runtime';
 import { createId } from '@push/lib/id-utils';
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, ReasoningBlock } from '@/types';
 import type { AssistantTurnResult, SendLoopContext } from './chat-send-types';
 
 export async function processNoToolPath(
   round: number,
   accumulated: string,
   thinkingAccumulated: string,
+  reasoningBlocks: ReasoningBlock[],
   apiMessages: ChatMessage[],
   ctx: SendLoopContext,
   recoveryState: ToolCallRecoveryState,
@@ -97,6 +98,7 @@ export async function processNoToolPath(
     recoveryResult,
     accumulated,
     thinkingAccumulated,
+    reasoningBlocks,
     apiMessages,
     lockedProvider,
     resolvedModel,

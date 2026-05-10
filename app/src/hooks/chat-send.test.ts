@@ -253,6 +253,7 @@ describe('chat-send', () => {
       0,
       'Here is the final answer.',
       'Reasoning summary',
+      [],
       apiMessages,
       ctx,
       { diagnosisRetries: 0, recoveryAttempted: false },
@@ -288,6 +289,7 @@ describe('chat-send', () => {
       0,
       'Everything is done and completed.',
       '',
+      [],
       apiMessages,
       ctx,
       { diagnosisRetries: 0, recoveryAttempted: false },
@@ -336,6 +338,7 @@ describe('chat-send', () => {
       0,
       'Everything is done and completed.',
       '',
+      [],
       [makeMessage({ id: 'user-1', role: 'user', content: 'Fix the auth bug', status: 'done' })],
       ctx,
       { diagnosisRetries: 0, recoveryAttempted: false },
@@ -362,6 +365,7 @@ describe('chat-send', () => {
       0,
       '```json\n{"tool":"sandbox_exec","args":{"command":"rm -rf /workspace/tmp-cache"}}\n```',
       '',
+      [],
       [
         makeMessage({
           id: 'user-1',
@@ -405,6 +409,7 @@ describe('chat-send', () => {
       0,
       '```json\n{"tool":"delegate_explorer","args":{"task":"trace the auth flow"}}\n```',
       '',
+      [],
       [makeMessage({ id: 'user-1', role: 'user', content: 'Trace auth flow', status: 'done' })],
       ctx,
       { diagnosisRetries: 0, recoveryAttempted: false },
@@ -432,6 +437,7 @@ describe('chat-send', () => {
       0,
       '```json\n{"tool":"delegate_explorer","args":{"task":"trace the auth bug"}}\n```',
       '',
+      [],
       [makeMessage({ id: 'user-1', role: 'user', content: 'Trace auth bug', status: 'done' })],
       ctx,
       { diagnosisRetries: 0, recoveryAttempted: false },
@@ -466,7 +472,7 @@ describe('chat-send', () => {
       }),
     ];
 
-    const result = await processAssistantTurn(0, 'The task is done.', '', apiMessages, ctx, {
+    const result = await processAssistantTurn(0, 'The task is done.', '', [], apiMessages, ctx, {
       diagnosisRetries: 0,
       recoveryAttempted: false,
     });
@@ -525,6 +531,7 @@ describe('chat-send', () => {
       0,
       toolCall,
       '',
+      [],
       [makeMessage({ id: 'user-1', role: 'user', content: 'plan it', status: 'done' })],
       ctx,
       { diagnosisRetries: 0, recoveryAttempted: false },
@@ -561,6 +568,7 @@ describe('chat-send', () => {
       0,
       toolCall,
       '',
+      [],
       [makeMessage({ id: 'user-1', role: 'user', content: 'plan', status: 'done' })],
       ctx,
       { diagnosisRetries: 0, recoveryAttempted: false },
@@ -592,6 +600,7 @@ describe('chat-send', () => {
       0,
       '```json\n{"tool": "todo_clear"}\n```',
       '',
+      [],
       [makeMessage({ id: 'user-1', role: 'user', content: 'ship', status: 'done' })],
       ctx,
       { diagnosisRetries: 0, recoveryAttempted: false },
@@ -613,6 +622,7 @@ describe('chat-send', () => {
       0,
       '```json\n{"tool": "todo_read"}\n```',
       '',
+      [],
       [makeMessage({ id: 'user-1', role: 'user', content: 'list', status: 'done' })],
       ctx,
       { diagnosisRetries: 0, recoveryAttempted: false },

@@ -2,6 +2,12 @@ import { asRecord } from './utils';
 
 const MAX_REASONING_BLOCKS_PER_MESSAGE = 64;
 const MAX_REASONING_BLOCK_SIGNATURE_LENGTH = 16_384;
+/** Per-block cap on visible thinking text. Real Anthropic thinking budgets
+ *  top out around 64K tokens (~256K chars at 4 chars/token); 512K is the
+ *  upper bound for any one block we'd accept from a client request. Any
+ *  larger and we'd waste upstream bandwidth or exhaust memory before the
+ *  upstream itself complained. */
+const MAX_REASONING_BLOCK_TEXT_LENGTH = 512_000;
 
 /** Strip + validate the Push-private `reasoning_blocks` sidecar on an
  *  assistant message. Returns `undefined` (and silently drops the field)
@@ -19,6 +25,7 @@ function normalizeReasoningBlocks(raw: unknown): OpenAIReasoningBlock[] | undefi
     if (!rec) return undefined;
     if (rec.type === 'thinking') {
       if (typeof rec.text !== 'string') return undefined;
+      if (rec.text.length > MAX_REASONING_BLOCK_TEXT_LENGTH) return undefined;
       if (typeof rec.signature !== 'string' || !rec.signature) return undefined;
       if (rec.signature.length > MAX_REASONING_BLOCK_SIGNATURE_LENGTH) return undefined;
       out.push({ type: 'thinking', text: rec.text, signature: rec.signature });
@@ -267,11 +274,27 @@ export function validateAndNormalizeChatRequest(
     }
   }
 
+  // `bodyText` is what non-Anthropic transports forward upstream verbatim.
+  // The Push-private `reasoning_blocks` sidecar would be an unknown message
+  // parameter to strict OpenAI-compatible endpoints (Azure, OpenAI Chat,
+  // legacy Vertex) and may be rejected. Strip it here. The Anthropic bridge
+  // consumes from `parsed` (which still carries the field) and re-emits the
+  // blocks as Anthropic-shape `content[]` entries on its own wire.
+  const stripped = {
+    ...normalized,
+    messages: normalizedMessages.map((msg) => {
+      if (msg.reasoning_blocks === undefined) return msg;
+      const { reasoning_blocks: _stripped, ...rest } = msg;
+      void _stripped;
+      return rest;
+    }),
+  };
+
   return {
     ok: true,
     value: {
       parsed: normalized as OpenAIChatRequest,
-      bodyText: JSON.stringify(normalized),
+      bodyText: JSON.stringify(stripped),
       adjustments,
     },
   };
