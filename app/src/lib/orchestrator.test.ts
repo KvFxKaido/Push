@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { getContextBudget, ORCHESTRATOR_SYSTEM_PROMPT } from './orchestrator';
+import type { ChatMessage } from '@/types';
+import { getContextBudget, ORCHESTRATOR_SYSTEM_PROMPT, toLLMMessages } from './orchestrator';
 
 describe('ORCHESTRATOR_SYSTEM_PROMPT', () => {
   it('includes clarification guidance for when to ask vs assume', () => {
@@ -112,5 +113,64 @@ describe('getContextBudget', () => {
     // same 88K target rather than a truly tiny window.
     const budget = getContextBudget('openrouter', 'unknown-tiny-model');
     expect(budget.summarizeTokens).toBeLessThanOrEqual(budget.targetTokens);
+  });
+});
+
+describe('toLLMMessages reasoning_blocks round-trip', () => {
+  function makeMessage(partial: Partial<ChatMessage>): ChatMessage {
+    return {
+      id: partial.id ?? 'm',
+      role: partial.role ?? 'user',
+      content: partial.content ?? '',
+      timestamp: partial.timestamp ?? 0,
+      ...partial,
+    };
+  }
+
+  it('forwards reasoningBlocks from a prior assistant turn as the wire reasoning_blocks sidecar', () => {
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'Why?' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: 'Because Rayleigh.',
+        reasoningBlocks: [{ type: 'thinking', text: 'recall optics', signature: 'sig-1' }],
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'Continue.' }),
+    ];
+    const llm = toLLMMessages(messages);
+    const assistant = llm.find((m) => m.role === 'assistant');
+    expect(assistant).toBeDefined();
+    expect(assistant?.reasoning_blocks).toEqual([
+      { type: 'thinking', text: 'recall optics', signature: 'sig-1' },
+    ]);
+  });
+
+  it('keeps an assistant turn whose only payload is signed reasoning blocks', () => {
+    // Anthropic returns thinking-then-tool_use turns where the visible
+    // assistant content is empty but signed reasoning is non-empty. The
+    // sanitize pass must not drop these — the bridge will emit the
+    // thinking blocks as the wire content[].
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'do thing' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: '',
+        reasoningBlocks: [{ type: 'redacted_thinking', data: 'enc' }],
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'follow up' }),
+    ];
+    const llm = toLLMMessages(messages);
+    const assistant = llm.find((m) => m.role === 'assistant');
+    expect(assistant).toBeDefined();
+    expect(assistant?.reasoning_blocks).toEqual([{ type: 'redacted_thinking', data: 'enc' }]);
+  });
+
+  it('does not emit reasoning_blocks on user messages', () => {
+    const messages: ChatMessage[] = [makeMessage({ id: 'u1', role: 'user', content: 'hi' })];
+    const llm = toLLMMessages(messages);
+    const user = llm.find((m) => m.role === 'user');
+    expect(user?.reasoning_blocks).toBeUndefined();
   });
 });

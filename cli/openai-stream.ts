@@ -85,17 +85,40 @@ async function* cliProviderStream(
   //     pass the system prompt as `systemPromptOverride` and start
   //     `messages` at the user turn.
   // Honour both: prepend the override only when present.
+  type WireReasoningBlock =
+    | { type: 'thinking'; text: string; signature: string }
+    | { type: 'redacted_thinking'; data: string };
   type WireContent =
     | string
     | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[];
-  const messages: { role: string; content: WireContent }[] = [];
+  type WireMessage = {
+    role: string;
+    content: WireContent;
+    reasoning_blocks?: WireReasoningBlock[];
+  };
+  const messages: WireMessage[] = [];
   const systemPrependOffset =
     typeof req.systemPromptOverride === 'string' && req.systemPromptOverride ? 1 : 0;
   if (systemPrependOffset === 1) {
     messages.push({ role: 'system', content: req.systemPromptOverride as string });
   }
   for (const m of req.messages) {
-    messages.push({ role: m.role, content: m.content });
+    // `reasoningBlocks` rides on `LlmMessage` only when the upstream
+    // captured Anthropic-style signed thinking. Forward as the wire
+    // sidecar `reasoning_blocks` so any downstream provider that has
+    // an Anthropic bridge in front of it can reconstruct the upstream
+    // assistant `content[]`. Current CLI providers all ignore the
+    // field — see the field-level comment on `Message.reasoningBlocks`.
+    const extended = m as typeof m & { reasoningBlocks?: WireReasoningBlock[] };
+    const reasoningBlocks =
+      m.role === 'assistant' && extended.reasoningBlocks && extended.reasoningBlocks.length > 0
+        ? extended.reasoningBlocks
+        : undefined;
+    messages.push({
+      role: m.role,
+      content: m.content,
+      ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
+    });
   }
 
   // Prompt caching: tag the system message at index 0 (if present) and the

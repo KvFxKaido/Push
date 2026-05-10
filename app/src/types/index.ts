@@ -39,7 +39,8 @@ export type {
   TaskGraphProgressEvent,
   TaskGraphResult,
 } from '@push/lib/runtime-contract';
-import type { AIProviderType } from '@push/lib/provider-contract';
+import type { AIProviderType, ReasoningBlock } from '@push/lib/provider-contract';
+export type { ReasoningBlock } from '@push/lib/provider-contract';
 export type {
   AIProviderType,
   PreCompactEvent,
@@ -247,6 +248,14 @@ export interface ChatMessage {
   timestamp: number;
   status?: 'sending' | 'streaming' | 'done' | 'error';
   thinking?: string;
+  /** Structured reasoning blocks captured from providers that return signed
+   *  thinking (Anthropic). When the next request goes back to that
+   *  provider, these blocks must be re-sent verbatim as the FIRST entries
+   *  of the assistant `content[]` — Anthropic 400s the request otherwise
+   *  when extended thinking + tool use are combined. The display channel
+   *  (`thinking` text) is independent and may be present without these
+   *  blocks for providers that emit reasoning as plain text. */
+  reasoningBlocks?: ReasoningBlock[];
   cards?: ChatCard[];
   attachments?: AttachmentData[]; // User-attached files
   isToolCall?: boolean; // Assistant message that requested a tool

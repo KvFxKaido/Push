@@ -16,7 +16,7 @@ import { streamChat } from '@/lib/orchestrator';
 import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
 import { buildTodoContext } from '@/lib/todo-tools';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, ReasoningBlock } from '@/types';
 import type { SendLoopContext, StreamRoundResult } from './chat-send-types';
 
 export async function streamAssistantRound(
@@ -44,6 +44,7 @@ export async function streamAssistantRound(
   processedContentRef.current.clear();
   let accumulated = '';
   let thinkingAccumulated = '';
+  const reasoningBlocks: ReasoningBlock[] = [];
   const hasSandboxThisRound = Boolean(sandboxIdRef.current);
 
   // Set OpenRouter session_id so all requests in this conversation are grouped.
@@ -59,7 +60,7 @@ export async function streamAssistantRound(
     invariantError = err instanceof Error ? err : new Error(String(err));
   }
   if (invariantError) {
-    return { accumulated, thinkingAccumulated, error: invariantError };
+    return { accumulated, thinkingAccumulated, reasoningBlocks, error: invariantError };
   }
 
   const error = await new Promise<Error | null>((resolve) => {
@@ -136,6 +137,27 @@ export async function streamAssistantRound(
       resolvedModel,
       undefined,
       todoRef.current ? buildTodoContext(todoRef.current.todos) : undefined,
+      (block) => {
+        if (abortRef.current) return;
+        reasoningBlocks.push(block);
+        // Stamp the in-flight assistant message immediately. Subsequent
+        // setConversations updates in chat-tool-execution / chat-no-tool-path
+        // spread `...msgs[lastIdx]`, so this stamp survives every post-stream
+        // status flip and is what the next `buildLLMMessages` reads.
+        setConversations((prev) => {
+          const conv = prev[chatId];
+          if (!conv) return prev;
+          const msgs = [...conv.messages];
+          const lastIdx = msgs.length - 1;
+          if (msgs[lastIdx]?.role === 'assistant') {
+            msgs[lastIdx] = {
+              ...msgs[lastIdx],
+              reasoningBlocks: [...reasoningBlocks],
+            };
+          }
+          return { ...prev, [chatId]: { ...conv, messages: msgs } };
+        });
+      },
     );
   });
 
@@ -180,5 +202,5 @@ export async function streamAssistantRound(
     });
   }
 
-  return { accumulated, thinkingAccumulated, error };
+  return { accumulated, thinkingAccumulated, reasoningBlocks, error };
 }

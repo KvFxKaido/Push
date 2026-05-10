@@ -139,6 +139,7 @@ describe('runRoundLoop', () => {
     mockStreamAssistantRound.mockResolvedValueOnce({
       accumulated: 'hello',
       thinkingAccumulated: '',
+      reasoningBlocks: [],
       error: null,
     });
     mockProcessAssistantTurn.mockResolvedValueOnce({
@@ -173,8 +174,18 @@ describe('runRoundLoop', () => {
   it('runs multiple rounds when processAssistantTurn returns continue', async () => {
     const h = makeHarness();
     mockStreamAssistantRound
-      .mockResolvedValueOnce({ accumulated: 'r0', thinkingAccumulated: '', error: null })
-      .mockResolvedValueOnce({ accumulated: 'r1', thinkingAccumulated: '', error: null });
+      .mockResolvedValueOnce({
+        accumulated: 'r0',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        accumulated: 'r1',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      });
     mockProcessAssistantTurn
       .mockResolvedValueOnce({
         nextApiMessages: [],
@@ -216,6 +227,7 @@ describe('runRoundLoop', () => {
     mockStreamAssistantRound.mockResolvedValueOnce({
       accumulated: '',
       thinkingAccumulated: '',
+      reasoningBlocks: [],
       error: new Error('boom'),
     });
 
@@ -243,7 +255,7 @@ describe('runRoundLoop', () => {
     const h = makeHarness();
     mockStreamAssistantRound.mockImplementationOnce(async () => {
       h.loopCtx.abortRef.current = true;
-      return { accumulated: '', thinkingAccumulated: '', error: null };
+      return { accumulated: '', thinkingAccumulated: '', reasoningBlocks: [], error: null };
     });
 
     const result = await runRoundLoop(
@@ -274,8 +286,18 @@ describe('runRoundLoop', () => {
     h.dequeuePendingSteer.mockReturnValueOnce(steer).mockReturnValue(null);
 
     mockStreamAssistantRound
-      .mockResolvedValueOnce({ accumulated: 'partial', thinkingAccumulated: '', error: null })
-      .mockResolvedValueOnce({ accumulated: 'final', thinkingAccumulated: '', error: null });
+      .mockResolvedValueOnce({
+        accumulated: 'partial',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        accumulated: 'final',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      });
     mockProcessAssistantTurn.mockResolvedValueOnce({
       nextApiMessages: [],
       nextRecoveryState: emptyRecovery,
@@ -313,8 +335,18 @@ describe('runRoundLoop', () => {
     h.dequeuePendingSteer.mockReturnValueOnce(steer).mockReturnValue(null);
 
     mockStreamAssistantRound
-      .mockResolvedValueOnce({ accumulated: '   ', thinkingAccumulated: '', error: null })
-      .mockResolvedValueOnce({ accumulated: 'done', thinkingAccumulated: '', error: null });
+      .mockResolvedValueOnce({
+        accumulated: '   ',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        accumulated: 'done',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      });
     mockProcessAssistantTurn.mockResolvedValueOnce({
       nextApiMessages: [],
       nextRecoveryState: emptyRecovery,
@@ -349,8 +381,18 @@ describe('runRoundLoop', () => {
       .mockReturnValue(null);
 
     mockStreamAssistantRound
-      .mockResolvedValueOnce({ accumulated: 'r0', thinkingAccumulated: '', error: null })
-      .mockResolvedValueOnce({ accumulated: 'r1', thinkingAccumulated: '', error: null });
+      .mockResolvedValueOnce({
+        accumulated: 'r0',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        accumulated: 'r1',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      });
     mockProcessAssistantTurn
       .mockResolvedValueOnce({
         nextApiMessages: [],
@@ -391,8 +433,18 @@ describe('runRoundLoop', () => {
     h.pendingSteersByChatRef.current = { 'chat-1': [remaining] };
 
     mockStreamAssistantRound
-      .mockResolvedValueOnce({ accumulated: 'partial', thinkingAccumulated: '', error: null })
-      .mockResolvedValueOnce({ accumulated: 'done', thinkingAccumulated: '', error: null });
+      .mockResolvedValueOnce({
+        accumulated: 'partial',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        accumulated: 'done',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      });
     mockProcessAssistantTurn.mockResolvedValueOnce({
       nextApiMessages: [],
       nextRecoveryState: emptyRecovery,

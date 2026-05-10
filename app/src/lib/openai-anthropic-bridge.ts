@@ -1,4 +1,8 @@
-import type { OpenAIChatRequest, OpenAIContentPart } from './chat-request-guardrails';
+import type {
+  OpenAIChatRequest,
+  OpenAIContentPart,
+  OpenAIReasoningBlock,
+} from './chat-request-guardrails';
 
 function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> | null {
   const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
@@ -11,6 +15,24 @@ function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> |
       data: match[2],
     },
   };
+}
+
+/** Reasoning blocks must appear BEFORE text/tool_use in Anthropic's
+ *  assistant `content[]` when extended thinking is in use — otherwise the
+ *  API rejects the turn with `invalid_request_error`. */
+function reasoningBlocksToAnthropic(
+  blocks: OpenAIReasoningBlock[] | undefined,
+): Array<Record<string, unknown>> {
+  if (!blocks || blocks.length === 0) return [];
+  const out: Array<Record<string, unknown>> = [];
+  for (const block of blocks) {
+    if (block.type === 'thinking') {
+      out.push({ type: 'thinking', thinking: block.text, signature: block.signature });
+    } else if (block.type === 'redacted_thinking') {
+      out.push({ type: 'redacted_thinking', data: block.data });
+    }
+  }
+  return out;
 }
 
 function convertOpenAIContentToAnthropic(
@@ -43,6 +65,7 @@ function convertOpenAIContentToAnthropic(
 function buildOpenAISseChunk(params: {
   model: string;
   content?: string;
+  reasoningBlock?: OpenAIReasoningBlock;
   finishReason?: string | null;
   usage?: {
     prompt_tokens?: number;
@@ -50,6 +73,10 @@ function buildOpenAISseChunk(params: {
     total_tokens?: number;
   };
 }): string {
+  const delta: Record<string, unknown> = {};
+  if (params.content) delta.content = params.content;
+  if (params.reasoningBlock) delta.reasoning_block = params.reasoningBlock;
+
   const payload: Record<string, unknown> = {
     id: `chatcmpl-${crypto.randomUUID()}`,
     object: 'chat.completion.chunk',
@@ -58,7 +85,7 @@ function buildOpenAISseChunk(params: {
     choices: [
       {
         index: 0,
-        delta: params.content ? { content: params.content } : {},
+        delta,
         finish_reason: params.finishReason ?? null,
       },
     ],
@@ -109,10 +136,16 @@ export function buildAnthropicMessagesRequest(
       continue;
     }
 
-    anthropicMessages.push({
-      role: role === 'assistant' ? 'assistant' : 'user',
-      content: convertOpenAIContentToAnthropic(message.content),
-    });
+    const contentBlocks = convertOpenAIContentToAnthropic(message.content);
+    if (role === 'assistant') {
+      const reasoning = reasoningBlocksToAnthropic(message.reasoning_blocks);
+      anthropicMessages.push({
+        role: 'assistant',
+        content: reasoning.length > 0 ? [...reasoning, ...contentBlocks] : contentBlocks,
+      });
+    } else {
+      anthropicMessages.push({ role: 'user', content: contentBlocks });
+    }
   }
 
   const body: Record<string, unknown> = {
@@ -167,6 +200,23 @@ export function createAnthropicTranslatedStream(
         | { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
         | undefined;
 
+      // Per-index thinking-block accumulators. Anthropic streams open a
+      // `thinking` or `redacted_thinking` block via `content_block_start`,
+      // emit zero or more `thinking_delta` + a single `signature_delta`,
+      // then close with `content_block_stop`. We accumulate until stop and
+      // emit a single structured `reasoning_block` SSE chunk so the OpenAI
+      // pump can persist it onto the assistant message intact — the
+      // signature is what makes the next turn round-trippable, so
+      // splitting it across multiple deltas would force every consumer to
+      // re-assemble.
+      type ThinkingState = {
+        kind: 'thinking';
+        text: string;
+        signature: string;
+      };
+      type RedactedState = { kind: 'redacted_thinking'; data: string };
+      const openBlocks = new Map<number, ThinkingState | RedactedState>();
+
       const processSseLine = (rawLine: string): boolean => {
         const line = rawLine.trim();
         if (!line.startsWith('data:')) return false;
@@ -185,10 +235,85 @@ export function createAnthropicTranslatedStream(
         }
 
         const eventType = typeof parsed.type === 'string' ? parsed.type : '';
+
+        if (eventType === 'content_block_start') {
+          const idx = typeof parsed.index === 'number' ? parsed.index : -1;
+          const block = parsed.content_block as Record<string, unknown> | undefined;
+          if (idx >= 0 && block) {
+            if (block.type === 'thinking') {
+              openBlocks.set(idx, {
+                kind: 'thinking',
+                text: typeof block.thinking === 'string' ? block.thinking : '',
+                signature: typeof block.signature === 'string' ? block.signature : '',
+              });
+            } else if (block.type === 'redacted_thinking') {
+              openBlocks.set(idx, {
+                kind: 'redacted_thinking',
+                data: typeof block.data === 'string' ? block.data : '',
+              });
+            }
+          }
+          return false;
+        }
+
+        if (eventType === 'content_block_stop') {
+          const idx = typeof parsed.index === 'number' ? parsed.index : -1;
+          const state = idx >= 0 ? openBlocks.get(idx) : undefined;
+          if (state) {
+            openBlocks.delete(idx);
+            if (state.kind === 'thinking') {
+              // Drop blocks with no signature: without one Anthropic
+              // would reject the round-trip on the next turn anyway, and
+              // emitting a half-formed block would just push the failure
+              // downstream. Text-only thinking still flows via the
+              // existing reasoning_delta channel for display.
+              if (state.signature) {
+                controller.enqueue(
+                  encoder.encode(
+                    buildOpenAISseChunk({
+                      model,
+                      reasoningBlock: {
+                        type: 'thinking',
+                        text: state.text,
+                        signature: state.signature,
+                      },
+                    }),
+                  ),
+                );
+              }
+            } else if (state.data) {
+              controller.enqueue(
+                encoder.encode(
+                  buildOpenAISseChunk({
+                    model,
+                    reasoningBlock: { type: 'redacted_thinking', data: state.data },
+                  }),
+                ),
+              );
+            }
+          }
+          return false;
+        }
+
         if (eventType === 'content_block_delta') {
+          const idx = typeof parsed.index === 'number' ? parsed.index : -1;
           const delta = parsed.delta as Record<string, unknown> | undefined;
           if (delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
             controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, content: delta.text })));
+            return false;
+          }
+          // Thinking deltas ride a separate per-block state machine.
+          // Anthropic emits `thinking_delta` for the visible reasoning
+          // text and `signature_delta` for the cryptographic signature
+          // that makes the block round-trippable. We accumulate both into
+          // the open state and flush together at content_block_stop.
+          const state = idx >= 0 ? openBlocks.get(idx) : undefined;
+          if (state?.kind === 'thinking') {
+            if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+              state.text += delta.thinking;
+            } else if (delta?.type === 'signature_delta' && typeof delta.signature === 'string') {
+              state.signature += delta.signature;
+            }
           }
           return false;
         }

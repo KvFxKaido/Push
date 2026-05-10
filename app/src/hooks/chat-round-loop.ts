@@ -37,7 +37,7 @@ import {
 } from '@push/lib/agent-loop-utils';
 import { createId } from '@push/lib/id-utils';
 import { type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, ReasoningBlock } from '@/types';
 import { processAssistantTurn, streamAssistantRound, type SendLoopContext } from './chat-send';
 import { buildRuntimeUserMessage } from './chat-prepare-send';
 import type { PendingSteersByChat } from './usePendingSteer';
@@ -62,7 +62,11 @@ interface SteerDrainArgs {
   round: number;
   apiMessages: ChatMessage[];
   /** When provided, the assistant draft is preserved-or-popped; when null, the steer is appended after a completed turn. */
-  draftAssistant: { accumulated: string; thinkingAccumulated: string } | null;
+  draftAssistant: {
+    accumulated: string;
+    thinkingAccumulated: string;
+    reasoningBlocks: ReasoningBlock[];
+  } | null;
 }
 
 interface SteerDrainDeps {
@@ -109,7 +113,7 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
   let nextApiMessages: ChatMessage[];
 
   if (draftAssistant) {
-    const { accumulated, thinkingAccumulated } = draftAssistant;
+    const { accumulated, thinkingAccumulated, reasoningBlocks } = draftAssistant;
     const shouldKeepAssistantDraft = accumulated.trim().length > 0;
 
     loopCtx.setConversations((prev) => {
@@ -123,6 +127,7 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
             ...msgs[lastIdx],
             content: accumulated,
             thinking: thinkingAccumulated || undefined,
+            reasoningBlocks: reasoningBlocks.length > 0 ? reasoningBlocks : undefined,
             status: 'done',
           };
         } else {
@@ -256,7 +261,7 @@ export async function runRoundLoop(
       { chatId },
     );
 
-    const { accumulated, thinkingAccumulated, error } = await streamAssistantRound(
+    const { accumulated, thinkingAccumulated, reasoningBlocks, error } = await streamAssistantRound(
       round,
       apiMessages,
       loopCtx,
@@ -286,7 +291,11 @@ export async function runRoundLoop(
     });
 
     const beforeToolsDrain = drainPendingSteerIfAny(
-      { round, apiMessages, draftAssistant: { accumulated, thinkingAccumulated } },
+      {
+        round,
+        apiMessages,
+        draftAssistant: { accumulated, thinkingAccumulated, reasoningBlocks },
+      },
       { loopCtx, dequeuePendingSteer, pendingSteersByChatRef },
     );
     if (beforeToolsDrain.drained) {

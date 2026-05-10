@@ -1,12 +1,59 @@
 import { asRecord } from './utils';
 
+const MAX_REASONING_BLOCKS_PER_MESSAGE = 64;
+const MAX_REASONING_BLOCK_SIGNATURE_LENGTH = 16_384;
+
+/** Strip + validate the Push-private `reasoning_blocks` sidecar on an
+ *  assistant message. Returns `undefined` (and silently drops the field)
+ *  when the shape is wrong — this is metadata not user-authored input, so
+ *  a malformed entry shouldn't 400 the entire turn; it just means this
+ *  turn won't carry reasoning. The bridge layer is the only consumer that
+ *  cares; OpenAI Chat / non-Anthropic Vertex ignore the field. */
+function normalizeReasoningBlocks(raw: unknown): OpenAIReasoningBlock[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  if (raw.length === 0) return undefined;
+  if (raw.length > MAX_REASONING_BLOCKS_PER_MESSAGE) return undefined;
+  const out: OpenAIReasoningBlock[] = [];
+  for (const entry of raw) {
+    const rec = asRecord(entry);
+    if (!rec) return undefined;
+    if (rec.type === 'thinking') {
+      if (typeof rec.text !== 'string') return undefined;
+      if (typeof rec.signature !== 'string' || !rec.signature) return undefined;
+      if (rec.signature.length > MAX_REASONING_BLOCK_SIGNATURE_LENGTH) return undefined;
+      out.push({ type: 'thinking', text: rec.text, signature: rec.signature });
+      continue;
+    }
+    if (rec.type === 'redacted_thinking') {
+      if (typeof rec.data !== 'string' || !rec.data) return undefined;
+      if (rec.data.length > MAX_REASONING_BLOCK_SIGNATURE_LENGTH) return undefined;
+      out.push({ type: 'redacted_thinking', data: rec.data });
+      continue;
+    }
+    return undefined;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 export type OpenAIContentPart =
   | { type: 'text'; text?: string }
   | { type: 'image_url'; image_url?: { url?: string } };
 
+/** Structured reasoning blocks attached to a prior assistant message.
+ *  Push-private extension — not part of OpenAI's public schema. The
+ *  Anthropic bridge consumes these and re-emits them as the first entries
+ *  of the upstream Anthropic `content[]` so signed thinking round-trips
+ *  correctly across chained turns. Other backends (OpenAI Chat, Vertex
+ *  non-Anthropic) ignore the field entirely. See
+ *  `lib/provider-contract.ts` `ReasoningBlock` for the canonical shape. */
+export type OpenAIReasoningBlock =
+  | { type: 'thinking'; text: string; signature: string }
+  | { type: 'redacted_thinking'; data: string };
+
 export type OpenAIMessage = {
   role?: string;
   content?: string | OpenAIContentPart[] | null;
+  reasoning_blocks?: OpenAIReasoningBlock[];
 };
 
 export interface OpenAIChatRequest {
@@ -96,6 +143,9 @@ export function validateAndNormalizeChatRequest(
       );
     }
 
+    const reasoningBlocks =
+      role === 'assistant' ? normalizeReasoningBlocks(messageRecord.reasoning_blocks) : undefined;
+
     const rawContent = messageRecord.content;
     if (typeof rawContent === 'string' || rawContent === null || rawContent === undefined) {
       normalizedMessages.push({
@@ -103,6 +153,7 @@ export function validateAndNormalizeChatRequest(
           ? { content: rawContent as string | null }
           : {}),
         role,
+        ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
       });
       continue;
     }
@@ -160,7 +211,11 @@ export function validateAndNormalizeChatRequest(
       );
     }
 
-    normalizedMessages.push({ role, content: normalizedParts });
+    normalizedMessages.push({
+      role,
+      content: normalizedParts,
+      ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
+    });
   }
 
   const normalized: Record<string, unknown> = {

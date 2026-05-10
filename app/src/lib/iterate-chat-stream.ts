@@ -39,6 +39,7 @@ import type {
   LlmMessage,
   PreCompactEvent,
   PushStream,
+  ReasoningBlock,
   StreamUsage,
 } from '@push/lib/provider-contract';
 import {
@@ -86,6 +87,12 @@ export interface IterateChatStreamCallbacks {
   onDone: (usage?: StreamUsage) => void;
   onError: (error: Error) => void;
   onThinkingToken?: (token: string | null) => void;
+  /** Fired once per complete signed reasoning block (Anthropic-only
+   *  today). Independent of `onThinkingToken`: the text channel drives
+   *  display, this carries the cryptographic signature that the next
+   *  turn's request body must echo back. Consumers persist these on the
+   *  assistant message so chained turns survive. */
+  onReasoningBlock?: (block: ReasoningBlock) => void;
 }
 
 export interface IterateChatStreamOptions {
@@ -126,7 +133,7 @@ export async function iterateChatStream<M extends LlmMessage>(
   callbacks: IterateChatStreamCallbacks,
   options?: IterateChatStreamOptions,
 ): Promise<void> {
-  const { onToken, onDone, onError, onThinkingToken } = callbacks;
+  const { onToken, onDone, onError, onThinkingToken, onReasoningBlock } = callbacks;
   const externalSignal = request.signal;
 
   if (externalSignal?.aborted) {
@@ -236,6 +243,12 @@ export async function iterateChatStream<M extends LlmMessage>(
             // Structural signal — doesn't reset content timer because
             // it isn't progress toward user-visible output.
             onThinkingToken?.(null);
+            break;
+          case 'reasoning_block':
+            // Structured signed-thinking block; persisted on the
+            // assistant message so the next turn's request can echo it
+            // back. Doesn't count as user-visible content.
+            onReasoningBlock?.(event.block);
             break;
           case 'tool_call_delta':
             // Provider is mid-stream on a native tool-call payload.

@@ -138,6 +138,7 @@ describe('chat-send', () => {
     expect(result).toEqual({
       accumulated: 'Hello world',
       thinkingAccumulated: 'Need to inspect',
+      reasoningBlocks: [],
       error: null,
     });
     expect(conversationsRef.current['chat-1'].messages.at(-1)).toMatchObject({
@@ -181,6 +182,7 @@ describe('chat-send', () => {
     expect(result).toEqual({
       accumulated: 'Here is the full answer, accidentally on the reasoning channel.',
       thinkingAccumulated: '',
+      reasoningBlocks: [],
       error: null,
     });
     expect(conversationsRef.current['chat-1'].messages.at(-1)).toMatchObject({
