@@ -15,6 +15,8 @@
  *   - Vercel Open Agents Review §5.1–5.2: snapshots + port exposure
  */
 
+import type { DynamicPolicy, SandboxPolicy } from './sandbox-policy';
+
 // ---------------------------------------------------------------------------
 // Workspace manifest — declarative workspace description
 // ---------------------------------------------------------------------------
@@ -49,6 +51,18 @@ export interface SandboxManifest {
   seedFiles?: ManifestFileEntry[];
   /** Environment variables available to sandbox commands. */
   env?: ManifestEnvVar[];
+  /**
+   * Isolation policy for the sandbox. Static sections (filesystem, process)
+   * are applied at creation by providers that set
+   * `capabilities.staticPolicyEnforcement = true`. Dynamic sections
+   * (network, inference) are applied at creation AND may be hot-reloaded
+   * later via `applyPolicy()` on providers with
+   * `capabilities.dynamicPolicyEnforcement = true`. Providers that
+   * declare neither capability ignore this field; host-side enforcement
+   * (see `evaluateProcess`/`evaluateNetwork`) remains the caller's
+   * responsibility in that case.
+   */
+  policy?: SandboxPolicy;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +232,19 @@ export interface SandboxProviderCapabilities {
   portForwarding: boolean;
   /** Provider supports mounting external storage (S3, GCS, R2). */
   externalStorage: boolean;
+  /**
+   * Provider compiles `SandboxPolicy.static` (filesystem, process) into
+   * native rules at sandbox creation. When `false`, the manifest's static
+   * policy is ignored by the provider and the caller is responsible for
+   * any host-side enforcement.
+   */
+  staticPolicyEnforcement: boolean;
+  /**
+   * Provider compiles `SandboxPolicy.dynamic` (network, inference) into
+   * native rules at creation AND supports `applyPolicy()` for hot reload.
+   * When `false`, `applyPolicy()` must not be called.
+   */
+  dynamicPolicyEnforcement: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -345,4 +372,19 @@ export interface SandboxProvider {
 
   /** Delete a snapshot. Idempotent. */
   deleteSnapshot?(handle: SnapshotHandle): Promise<void>;
+
+  // -- Policy (optional) ----------------------------------------------------
+  // Providers with capabilities.dynamicPolicyEnforcement = true must
+  // implement this; others must omit it. The replacement is atomic from
+  // the caller's perspective — partial application is the provider's job
+  // to handle.
+
+  /**
+   * Replace the live sandbox's DynamicPolicy (network, inference). The
+   * StaticPolicy half is fixed at creation and cannot be mutated here —
+   * recreate the sandbox to change it. Implementation is required when
+   * `capabilities.dynamicPolicyEnforcement === true` and must be omitted
+   * otherwise.
+   */
+  applyPolicy?(sandboxId: string, policy: DynamicPolicy): Promise<void>;
 }

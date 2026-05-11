@@ -117,6 +117,8 @@ export class ModalSandboxProvider implements SandboxProvider {
     snapshots: true,
     portForwarding: false,
     externalStorage: false,
+    staticPolicyEnforcement: false,
+    dynamicPolicyEnforcement: false,
   };
 
   // -- Lifecycle ------------------------------------------------------------
