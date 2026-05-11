@@ -116,6 +116,8 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     snapshots: false,
     portForwarding: false,
     externalStorage: false,
+    staticPolicyEnforcement: false,
+    dynamicPolicyEnforcement: false,
   };
 
   // Per-instance token cache. Keyed by sandboxId, populated on create/connect
