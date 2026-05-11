@@ -55,6 +55,12 @@ export interface ProcessRule {
    * variable-arity scans). Return a non-null string to fire the rule;
    * the string becomes the decision's `reason`, overriding `rule.reason`.
    * Return `null` to skip. Takes precedence over `argMatch`.
+   *
+   * NB: predicates are executable code and **cannot be translated** into
+   * provider-native primitives (CF firewall rules, Modal NetworkPolicy,
+   * eBPF, etc.). Rules using `predicate` must be enforced by delegating
+   * to the reference `evaluateProcess` implementation. See
+   * `PolicyTranslator` for the implication.
    */
   predicate?: (req: ProcessRequest) => string | null;
   action: 'allow' | 'deny';
@@ -188,6 +194,14 @@ export function evaluateProcess(
 // ---------------------------------------------------------------------------
 // Provider translation — each provider exports an implementation. The bundle
 // types are provider-specific (e.g. CF firewall JSON, Modal NetworkPolicy).
+//
+// Translatability constraint: `ProcessRule.predicate` is executable JS and
+// has no provider-native equivalent. A translator that encounters a rule
+// with a predicate must either (a) reject the policy with a clear error,
+// or (b) split enforcement — emit a native-rule bundle for the
+// argMatch-only rules and delegate predicate-bearing rules to
+// `evaluateProcess` at the host (e.g. a sandbox-side sidecar that calls
+// back into Push). Translators MUST NOT silently drop predicate rules.
 // ---------------------------------------------------------------------------
 
 export interface PolicyTranslator<TStaticBundle, TDynamicBundle> {
