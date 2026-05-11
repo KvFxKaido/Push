@@ -40,6 +40,7 @@ export interface FilesystemRule {
 }
 
 export interface ProcessRule {
+  /** Exact command match, or `'*'` for any command (use when the predicate scans the raw line itself). */
   command: string;
   /**
    * Argv-shape matcher. Literal tokens match by equality; tokens wrapped in
@@ -48,6 +49,20 @@ export interface ProcessRule {
    * with the provider — this schema only names them.
    */
   argMatch?: string[];
+  /**
+   * Richer matcher for cases the simple pattern language can't express
+   * (shell tokenization, redirect filtering, ref-expression carve-outs,
+   * variable-arity scans). Return a non-null string to fire the rule;
+   * the string becomes the decision's `reason`, overriding `rule.reason`.
+   * Return `null` to skip. Takes precedence over `argMatch`.
+   *
+   * NB: predicates are executable code and **cannot be translated** into
+   * provider-native primitives (CF firewall rules, Modal NetworkPolicy,
+   * eBPF, etc.). Rules using `predicate` must be enforced by delegating
+   * to the reference `evaluateProcess` implementation. See
+   * `PolicyTranslator` for the implication.
+   */
+  predicate?: (req: ProcessRequest) => string | null;
   action: 'allow' | 'deny';
   reason?: string;
 }
@@ -136,6 +151,13 @@ export function evaluateNetwork(
 export interface ProcessRequest {
   command: string;
   argv: string[];
+  /**
+   * Raw shell command line, when the caller can't pre-parse to argv
+   * (e.g. `sandbox_exec` receives a free-form shell string). Predicates
+   * that need to inspect shell-level structure (redirects, command
+   * substitution, separators) read this.
+   */
+  raw?: string;
 }
 
 export interface ProcessDecision {
@@ -157,7 +179,12 @@ export function evaluateProcess(
 ): ProcessDecision {
   if (!policy) return { action: 'allow' };
   for (const rule of policy.process) {
-    if (rule.command !== req.command) continue;
+    if (rule.command !== '*' && rule.command !== req.command) continue;
+    if (rule.predicate) {
+      const reason = rule.predicate(req);
+      if (reason === null) continue;
+      return { action: rule.action, rule, reason };
+    }
     if (rule.argMatch && !argvMatches(rule.argMatch, req.argv, classify)) continue;
     return { action: rule.action, rule, reason: rule.reason };
   }
@@ -167,6 +194,14 @@ export function evaluateProcess(
 // ---------------------------------------------------------------------------
 // Provider translation — each provider exports an implementation. The bundle
 // types are provider-specific (e.g. CF firewall JSON, Modal NetworkPolicy).
+//
+// Translatability constraint: `ProcessRule.predicate` is executable JS and
+// has no provider-native equivalent. A translator that encounters a rule
+// with a predicate must either (a) reject the policy with a clear error,
+// or (b) split enforcement — emit a native-rule bundle for the
+// argMatch-only rules and delegate predicate-bearing rules to
+// `evaluateProcess` at the host (e.g. a sandbox-side sidecar that calls
+// back into Push). Translators MUST NOT silently drop predicate rules.
 // ---------------------------------------------------------------------------
 
 export interface PolicyTranslator<TStaticBundle, TDynamicBundle> {

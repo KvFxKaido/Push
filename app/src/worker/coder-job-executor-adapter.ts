@@ -28,7 +28,9 @@ import type { SandboxStatusResult, SandboxToolExecResult } from '@push/lib/coder
 import type { ChatCard } from '@/types';
 import type { AIProviderType } from '@push/lib/provider-contract';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from '@/lib/git-ref-validation';
-import { detectBlockedGitCommand, shellEscape } from '@/lib/sandbox-tool-utils';
+import { shellEscape } from '@/lib/sandbox-tool-utils';
+import { SANDBOX_EXEC_POLICY } from '@/lib/sandbox-git-policy';
+import { evaluateProcess } from '@push/lib/sandbox-policy';
 import type { SandboxToolCall } from './coder-job-detector-adapter';
 
 export interface CoderJobExecutorAdapter {
@@ -76,7 +78,13 @@ function mapCallToRoute(call: SandboxToolCall): RouteMapping {
       // keep the guard on regardless so background jobs can't silently
       // mutate repo history bypassing the audit trail the foreground
       // loop enforces.
-      const blockedGitOp = detectBlockedGitCommand(call.args.command);
+      const gitGuardDecision = evaluateProcess(SANDBOX_EXEC_POLICY, {
+        command: 'sh',
+        argv: [],
+        raw: call.args.command,
+      });
+      const blockedGitOp: string | null =
+        gitGuardDecision.action === 'deny' ? (gitGuardDecision.reason ?? null) : null;
       if (blockedGitOp && !call.args.allowDirectGit) {
         return { kind: 'git_blocked', op: blockedGitOp };
       }

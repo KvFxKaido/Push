@@ -47,10 +47,11 @@ import {
   classifyError,
   formatStructuredError,
   isLikelyMutatingSandboxExec,
-  detectBlockedGitCommand,
   createGitHubRepo,
   shellEscape,
 } from './sandbox-tool-utils';
+import { SANDBOX_EXEC_POLICY } from './sandbox-git-policy';
+import { evaluateProcess } from '@push/lib/sandbox-policy';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 
@@ -256,7 +257,13 @@ export async function executeSandboxToolCall(
       case 'sandbox_exec': {
         // Git guard: block direct git mutations unless user explicitly approved
         // In full-auto mode, allow direct git — the system has granted blanket permission
-        const blockedGitOp = detectBlockedGitCommand(call.args.command);
+        const gitGuardDecision = evaluateProcess(SANDBOX_EXEC_POLICY, {
+          command: 'sh',
+          argv: [],
+          raw: call.args.command,
+        });
+        const blockedGitOp: string | null =
+          gitGuardDecision.action === 'deny' ? (gitGuardDecision.reason ?? null) : null;
         const currentApprovalMode = getApprovalMode();
         const isBranchCreate =
           blockedGitOp === 'git checkout -b' || blockedGitOp === 'git switch -c';
