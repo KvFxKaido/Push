@@ -382,7 +382,9 @@ export interface SandboxProvider {
   /**
    * Replace the live sandbox's DynamicPolicy (network, inference). The
    * StaticPolicy half is fixed at creation and cannot be mutated here —
-   * recreate the sandbox to change it.
+   * recreate the sandbox to change it. Implementation is required when
+   * `capabilities.dynamicPolicyEnforcement === true` and must be omitted
+   * otherwise.
    */
   applyPolicy?(sandboxId: string, policy: DynamicPolicy): Promise<void>;
 }
