@@ -40,6 +40,7 @@ export interface FilesystemRule {
 }
 
 export interface ProcessRule {
+  /** Exact command match, or `'*'` for any command (use when the predicate scans the raw line itself). */
   command: string;
   /**
    * Argv-shape matcher. Literal tokens match by equality; tokens wrapped in
@@ -48,6 +49,14 @@ export interface ProcessRule {
    * with the provider — this schema only names them.
    */
   argMatch?: string[];
+  /**
+   * Richer matcher for cases the simple pattern language can't express
+   * (shell tokenization, redirect filtering, ref-expression carve-outs,
+   * variable-arity scans). Return a non-null string to fire the rule;
+   * the string becomes the decision's `reason`, overriding `rule.reason`.
+   * Return `null` to skip. Takes precedence over `argMatch`.
+   */
+  predicate?: (req: ProcessRequest) => string | null;
   action: 'allow' | 'deny';
   reason?: string;
 }
@@ -136,6 +145,13 @@ export function evaluateNetwork(
 export interface ProcessRequest {
   command: string;
   argv: string[];
+  /**
+   * Raw shell command line, when the caller can't pre-parse to argv
+   * (e.g. `sandbox_exec` receives a free-form shell string). Predicates
+   * that need to inspect shell-level structure (redirects, command
+   * substitution, separators) read this.
+   */
+  raw?: string;
 }
 
 export interface ProcessDecision {
@@ -157,7 +173,12 @@ export function evaluateProcess(
 ): ProcessDecision {
   if (!policy) return { action: 'allow' };
   for (const rule of policy.process) {
-    if (rule.command !== req.command) continue;
+    if (rule.command !== '*' && rule.command !== req.command) continue;
+    if (rule.predicate) {
+      const reason = rule.predicate(req);
+      if (reason === null) continue;
+      return { action: rule.action, rule, reason };
+    }
     if (rule.argMatch && !argvMatches(rule.argMatch, req.argv, classify)) continue;
     return { action: rule.action, rule, reason: rule.reason };
   }
