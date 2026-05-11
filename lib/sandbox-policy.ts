@@ -63,15 +63,17 @@ export interface StaticPolicy {
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | '*';
 
-export interface NetworkRule {
+interface NetworkRuleBase {
   /** Host glob, e.g. 'api.github.com', '*.anthropic.com'. */
   host: string;
   methods: HttpMethod[];
   pathGlob: string;
-  action: PolicyAction;
-  /** Required when action === 'route'. */
-  route?: RouteTarget;
 }
+
+/** Discriminated on `action` so `route` is required iff action === 'route'. */
+export type NetworkRule =
+  | (NetworkRuleBase & { action: 'allow' | 'deny' })
+  | (NetworkRuleBase & { action: 'route'; route: RouteTarget });
 
 export interface InferenceRule {
   provider: string;
@@ -110,6 +112,11 @@ export interface NetworkDecision {
   route?: RouteTarget;
 }
 
+/**
+ * Default-deny on missing policy: callers wiring this in should expect to
+ * fail closed and opt into a permissive rollout flag explicitly. Network
+ * egress is the higher-blast-radius layer, so the safer default lives here.
+ */
 export function evaluateNetwork(
   policy: DynamicPolicy | undefined,
   req: NetworkRequest,
@@ -119,7 +126,9 @@ export function evaluateNetwork(
     if (!hostMatches(rule.host, req.host)) continue;
     if (!methodMatches(rule.methods, req.method)) continue;
     if (!pathMatches(rule.pathGlob, req.path)) continue;
-    return { action: rule.action, rule, route: rule.route };
+    return rule.action === 'route'
+      ? { action: 'route', rule, route: rule.route }
+      : { action: rule.action, rule };
   }
   return { action: 'deny' };
 }
@@ -135,6 +144,12 @@ export interface ProcessDecision {
   reason?: string;
 }
 
+/**
+ * Default-allow on missing policy: process rules are intended as a denylist
+ * layered over today's `sandbox_exec`, which is itself default-allow with
+ * specific blocks. A no-policy box must keep working; the safer default
+ * sits at the network layer.
+ */
 export function evaluateProcess(
   policy: StaticPolicy | undefined,
   req: ProcessRequest,
@@ -180,12 +195,23 @@ function methodMatches(allowed: HttpMethod[], method: string): boolean {
 function pathMatches(pattern: string, path: string): boolean {
   if (pattern === '/**' || pattern === '**') return true;
   if (pattern === path) return true;
-  if (pattern.endsWith('/**')) return path.startsWith(pattern.slice(0, -3));
+  if (pattern.endsWith('/**')) {
+    // Require a '/' boundary so '/api/**' doesn't match '/api-internal'.
+    const prefix = pattern.slice(0, -3);
+    return path === prefix || path.startsWith(`${prefix}/`);
+  }
   return false;
 }
 
+/**
+ * Exact-length match. `argMatch` describes the full argv shape; trailing
+ * positionals must be expressed explicitly (e.g. with a future `<rest>`
+ * wildcard) rather than allowed implicitly. This is what lets Push
+ * distinguish `git checkout main` (bare branch — blockable) from
+ * `git checkout main file.ts` (file restore — must pass).
+ */
 function argvMatches(pattern: string[], argv: string[], classify: ArgClassifier): boolean {
-  if (pattern.length > argv.length) return false;
+  if (pattern.length !== argv.length) return false;
   return pattern.every((tok, i) => {
     if (tok.startsWith('<') && tok.endsWith('>')) return classify(tok, argv, i);
     return argv[i] === tok;
@@ -193,14 +219,24 @@ function argvMatches(pattern: string[], argv: string[], classify: ArgClassifier)
 }
 
 /**
- * Default classifier covers the one shape Push already enforces today: a
- * `<branch>` operand is a bare token containing no '/' or '.' (mirrors the
- * heuristic in `sandbox_exec`'s `git checkout` / `git switch` guard).
- * Extend by passing a custom classifier to `evaluateProcess`.
+ * Default classifier dispatches by command so it can reproduce the
+ * different branch heuristics `sandbox_exec` enforces today:
+ *   - `git checkout <branch>`: bare token, no '/' or '.' (file-restore forms
+ *     like `feat/foo` and `src/utils` are deliberately allowed through).
+ *   - `git switch <branch>`: slash-shaped names like `feat/foo` ARE blocked
+ *     because `switch` is branch-only; only '.'-containing tokens pass.
+ * Caller can pass a custom `ArgClassifier` to `evaluateProcess` to override.
+ *
+ * NB: even with this dispatch, the simple pattern language can't fully
+ * capture sandbox_exec's variable-arity scan-all-operands logic. Wiring
+ * sandbox_exec to this schema will require either a richer pattern (e.g.
+ * `<rest:branch>`) or a per-rule predicate hook.
  */
 const defaultArgClassifier: ArgClassifier = (token, argv, index) => {
   const operand = argv[index];
   if (operand === undefined) return false;
-  if (token === '<branch>') return !operand.includes('/') && !operand.includes('.');
-  return false;
+  if (token !== '<branch>') return false;
+  const cmd = argv[0] ?? '';
+  if (cmd === 'switch') return !operand.includes('.');
+  return !operand.includes('/') && !operand.includes('.');
 };
