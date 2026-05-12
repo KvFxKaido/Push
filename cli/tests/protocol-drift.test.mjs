@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 
 import { broadcastEvent } from '../pushd.ts';
 import {
+  PROTOCOL_VERSION,
   SCHEMA_VALIDATED_EVENT_TYPES,
   assertValidEvent,
   isStrictModeEnabled,
   validateRunEventPayload,
-} from '../protocol-schema.ts';
-import { PROTOCOL_VERSION } from '../session-store.ts';
+} from '../../lib/protocol-schema.ts';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from '../v1-downgrade.ts';
 
 const FIXED_TS = 1_712_345_678_901;

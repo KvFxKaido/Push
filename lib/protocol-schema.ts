@@ -59,7 +59,18 @@
  * fields or fields with the wrong type.
  */
 
-import { PROTOCOL_VERSION } from './session-store.js';
+/**
+ * The wire-protocol version tag pinned on every envelope. Bump this
+ * when introducing a breaking change to the envelope shape or the
+ * dispatch contract — clients negotiate compatibility against it in
+ * the `hello` handshake.
+ *
+ * Lives here (next to the validators) so the shared-runtime layer
+ * owns the protocol-version constant alongside the envelope schema.
+ * Re-exported by `cli/session-store.ts` for back-compat with existing
+ * CLI importers that previously got it from there.
+ */
+export const PROTOCOL_VERSION = 'push.runtime.v1';
 
 // ---------------------------------------------------------------------------
 // Result types

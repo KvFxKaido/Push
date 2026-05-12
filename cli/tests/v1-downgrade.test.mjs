@@ -6,8 +6,7 @@ import {
   synthesizeV1DelegationEvent,
   V1_SYNTHESIZABLE_EVENT_TYPES,
 } from '../v1-downgrade.ts';
-import { validateEventEnvelope } from '../protocol-schema.ts';
-import { PROTOCOL_VERSION } from '../session-store.ts';
+import { PROTOCOL_VERSION, validateEventEnvelope } from '../../lib/protocol-schema.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

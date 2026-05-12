@@ -86,7 +86,12 @@ export interface InterruptedSession {
 
 // ─── Constants ───────────────────────────────────────────────────
 
-export const PROTOCOL_VERSION = 'push.runtime.v1';
+// PROTOCOL_VERSION moved to lib/protocol-schema.ts (the canonical
+// owner of the wire contract). Imported + re-exported here so this
+// file can still reference it locally AND so CLI consumers that
+// previously read it from session-store keep working unchanged.
+import { PROTOCOL_VERSION } from '../lib/protocol-schema.js';
+export { PROTOCOL_VERSION };
 const SESSION_ROOT_SYMBOL: unique symbol = Symbol('push.sessionRoot');
 
 // Session IDs must match the output of makeSessionId(): sess_<base36>_<6 hex chars>

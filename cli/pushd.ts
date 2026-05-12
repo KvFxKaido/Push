@@ -68,7 +68,7 @@ import { runCoderAgent } from '../lib/coder-agent.ts';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
-import { assertValidEvent, isStrictModeEnabled } from './protocol-schema.js';
+import { assertValidEvent, isStrictModeEnabled } from '../lib/protocol-schema.js';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
 import {
   roleCanUseTool,
