@@ -18,6 +18,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   PROTOCOL_VERSION,
   SCHEMA_VALIDATED_EVENT_TYPES,
@@ -28,7 +29,7 @@ import {
   validateRunEventPayload,
 } from '../../lib/protocol-schema.ts';
 
-const REPO_ROOT = path.resolve(new URL('../..', import.meta.url).pathname);
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const APP_SRC = path.join(REPO_ROOT, 'app', 'src');
 
 /** Recursively walk a directory, returning all file paths under it. */
@@ -98,14 +99,19 @@ describe('protocol-schema drift guard (app/src/)', () => {
     // We don't care about variables that happen to share the name; we
     // care about *function definitions* that look like a re-implementation
     // of the canonical validators.
-    const validatorNames = ['validateEventEnvelope', 'validateRunEventPayload', 'assertValidEvent'];
+    const validatorNames = [
+      'validateEventEnvelope',
+      'validateRunEventPayload',
+      'validateEvent',
+      'assertValidEvent',
+    ];
     const definitionPatterns = validatorNames.map(
       (name) =>
         new RegExp(`(function|const|let)\\s+${name}\\s*[=(]|export\\s+function\\s+${name}\\b`),
     );
 
     const files = (await walk(APP_SRC)).filter(
-      (f) => /\.(ts|tsx)$/.test(f) && !/\.test\.(ts|tsx)$/.test(f),
+      (f) => /\.(ts|tsx|mjs|cjs|js)$/.test(f) && !/\.test\.(ts|tsx|mjs)$/.test(f),
     );
     const offenders = [];
     for (const file of files) {

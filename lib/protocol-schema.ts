@@ -93,10 +93,17 @@ export interface ValidationIssue {
  * validator; production leaves it unset for zero runtime cost.
  *
  * Reads `process.env` at call time (not at module import) so a test
- * setup step can flip the flag after importing this module.
+ * setup step can flip the flag after importing this module. The
+ * `process` reference goes through `globalThis` so the browser-side
+ * tsconfig (`types: ["vite/client"]`, no Node types) can compile this
+ * module — a bare `process.env` would fail typecheck and crash at
+ * runtime in the browser where no such global exists.
  */
 export function isStrictModeEnabled(): boolean {
-  const raw = process.env.PUSH_PROTOCOL_STRICT;
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+    ?.env;
+  if (!env) return false;
+  const raw = env.PUSH_PROTOCOL_STRICT;
   return raw === '1' || raw === 'true';
 }
 
