@@ -19,8 +19,12 @@
   "devDependencies": {
     "@biomejs/biome": "2.3.4",
     "@types/node": "^25.5.0",
+    "@types/ws": "^8.18.1",
     "@typescript/native-preview": "7.0.0-dev.20260421.2",
     "tsx": "^4.19.0",
     "typescript": "^6.0.2"
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
   }
 }
