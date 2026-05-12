@@ -26,8 +26,18 @@ import { checkOrigin } from './pushd-origin.js';
 import { verifyDeviceToken, touchLastUsed, type DeviceTokenRecord } from './pushd-device-tokens.js';
 
 export interface PushdWsAdapterDeps {
-  /** Existing pushd request dispatcher. Same fn the Unix socket uses. */
-  handleRequest: (req: unknown, emitEvent: (event: unknown) => void) => Promise<unknown>;
+  /**
+   * Existing pushd request dispatcher. Same fn the Unix socket uses,
+   * extended with an optional `context` arg so WS-only handlers (e.g.
+   * `daemon_identify`) can read the authenticated device-token record
+   * without leaking transport-specific state into every other handler.
+   * Unix-socket callers pass nothing; the dispatcher tolerates absence.
+   */
+  handleRequest: (
+    req: unknown,
+    emitEvent: (event: unknown) => void,
+    context?: { record?: DeviceTokenRecord },
+  ) => Promise<unknown>;
   /** Existing add/remove session client hooks. */
   addSessionClient: (
     sessionId: string,
@@ -293,7 +303,10 @@ export async function startPushdWs(
           ) {
             capabilities = (req.payload as { capabilities?: unknown }).capabilities;
           }
-          const response = (await deps.handleRequest(req, emit)) as {
+          // Pass the authenticated record along so daemon_identify
+          // (and any future WS-context-aware handler) can answer
+          // without WS-specific state leaking into the dispatcher.
+          const response = (await deps.handleRequest(req, emit, { record })) as {
             ok?: boolean;
             sessionId?: string;
             payload?: { sessionId?: string };

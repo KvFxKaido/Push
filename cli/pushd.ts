@@ -3176,6 +3176,102 @@ async function handleDelegateReviewer(req) {
   return ack;
 }
 
+// ─── Remote-sessions handlers (web app drives daemon over WS) ────
+//
+// These are reachable via the WS transport added in PR #507 and used
+// by the web's LocalDaemonSandboxClient (PR 3c.1). They mirror the
+// shape of the cloud sandbox's `/api/sandbox/*` endpoints so a single
+// web-side dispatcher can fork on session binding without translating
+// payloads. Unix-socket clients (legacy CLI) can call sandbox_exec
+// directly too, but daemon_identify is WS-only (its response surface
+// is the authenticated device token, which only exists on WS upgrades).
+
+const SANDBOX_EXEC_DEFAULT_TIMEOUT_MS = 60_000;
+const SANDBOX_EXEC_MAX_TIMEOUT_MS = 300_000;
+const SANDBOX_EXEC_MAX_OUTPUT = 256_000;
+
+async function handleSandboxExec(req) {
+  const payload = req.payload || {};
+  const command = typeof payload.command === 'string' ? payload.command : '';
+  if (!command) {
+    return makeErrorResponse(
+      req.requestId,
+      'sandbox_exec',
+      'INVALID_REQUEST',
+      'sandbox_exec requires a non-empty `command` string in payload.',
+    );
+  }
+
+  const rawTimeout =
+    typeof payload.timeoutMs === 'number' && Number.isFinite(payload.timeoutMs)
+      ? payload.timeoutMs
+      : SANDBOX_EXEC_DEFAULT_TIMEOUT_MS;
+  const timeoutMs = Math.min(Math.max(rawTimeout, 1_000), SANDBOX_EXEC_MAX_TIMEOUT_MS);
+  const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
+
+  const startedAt = Date.now();
+  const { runCommandInResolvedShell } = await import('./shell.js');
+
+  // Non-zero exit codes are NOT errors at the RPC layer — they're a
+  // normal result the model needs to see. We only set ok=false for
+  // INVALID_REQUEST cases above. The caller reads `exitCode` for the
+  // actual outcome.
+  try {
+    const { stdout, stderr } = await runCommandInResolvedShell(command, {
+      cwd,
+      timeout: timeoutMs,
+      maxBuffer: SANDBOX_EXEC_MAX_OUTPUT,
+    });
+    return makeResponse(req.requestId, 'sandbox_exec', null, true, {
+      stdout: truncateExecOutput(stdout),
+      stderr: truncateExecOutput(stderr),
+      exitCode: 0,
+      durationMs: Date.now() - startedAt,
+      truncated:
+        (stdout?.length ?? 0) > SANDBOX_EXEC_MAX_OUTPUT ||
+        (stderr?.length ?? 0) > SANDBOX_EXEC_MAX_OUTPUT,
+    });
+  } catch (err) {
+    const killed = Boolean(err?.killed);
+    const exitCode = typeof err?.code === 'number' ? err.code : killed ? 124 : 1;
+    return makeResponse(req.requestId, 'sandbox_exec', null, true, {
+      stdout: truncateExecOutput(err?.stdout ?? ''),
+      stderr: truncateExecOutput(err?.stderr ?? err?.message ?? ''),
+      exitCode,
+      durationMs: Date.now() - startedAt,
+      truncated: false,
+      timedOut: killed,
+    });
+  }
+}
+
+function truncateExecOutput(text) {
+  if (typeof text !== 'string') return '';
+  if (text.length <= SANDBOX_EXEC_MAX_OUTPUT) return text;
+  return `${text.slice(0, SANDBOX_EXEC_MAX_OUTPUT)}\n…[truncated]`;
+}
+
+async function handleDaemonIdentify(req, _emitEvent, context) {
+  const record = context?.record;
+  if (!record || typeof record.tokenId !== 'string') {
+    // Unix-socket clients have no authenticated record to identify;
+    // the request type is meaningful only over WS. Return a clear
+    // error rather than fabricating an identity.
+    return makeErrorResponse(
+      req.requestId,
+      'daemon_identify',
+      'UNSUPPORTED_VIA_TRANSPORT',
+      'daemon_identify is only available over the WebSocket transport.',
+    );
+  }
+  return makeResponse(req.requestId, 'daemon_identify', null, true, {
+    tokenId: record.tokenId,
+    boundOrigin: record.boundOrigin,
+    daemonVersion: VERSION,
+    protocolVersion: PROTOCOL_VERSION,
+  });
+}
+
 // ─── Request dispatcher ──────────────────────────────────────────
 
 const HANDLERS = {
@@ -3194,9 +3290,11 @@ const HANDLERS = {
   delegate_reviewer: handleDelegateReviewer,
   cancel_delegation: handleCancelDelegation,
   fetch_delegation_events: handleFetchDelegationEvents,
+  sandbox_exec: handleSandboxExec,
+  daemon_identify: handleDaemonIdentify,
 };
 
-export async function handleRequest(req, emitEvent) {
+export async function handleRequest(req, emitEvent, context = null) {
   if (!req || req.v !== PROTOCOL_VERSION) {
     return makeErrorResponse(
       req?.requestId || makeRequestId(),
@@ -3226,7 +3324,7 @@ export async function handleRequest(req, emitEvent) {
   }
 
   try {
-    return await handler(req, emitEvent);
+    return await handler(req, emitEvent, context);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return makeErrorResponse(req.requestId, req.type, 'INTERNAL_ERROR', message);
