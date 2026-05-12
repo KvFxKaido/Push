@@ -30,6 +30,8 @@ import process from 'node:process';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 
+import { startPushdWs, type PushdWsHandle } from './pushd-ws.js';
+
 import { PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
 import { createDaemonProviderStream } from './daemon-provider-stream.js';
 import {
@@ -150,6 +152,20 @@ export function getSocketPath() {
 
 export function getPidPath() {
   return path.join(os.homedir(), '.push', 'run', 'pushd.pid');
+}
+
+export function getPortPath() {
+  if (process.env.PUSHD_PORT_PATH) return process.env.PUSHD_PORT_PATH;
+  return path.join(os.homedir(), '.push', 'run', 'pushd.port');
+}
+
+export function isWsListenerEnabled() {
+  // PR 1: WS listener is dormant by default. Internal-dogfooding flag —
+  // the listener is loopback-only and token-gated either way, but the
+  // flag lets us harden the auth path before exposing it.
+  const raw = process.env.PUSHD_WS;
+  if (raw === undefined || raw === '') return false;
+  return raw === '1' || raw.toLowerCase() === 'true';
 }
 
 export function getLogPath() {
@@ -3652,6 +3668,8 @@ export async function main() {
     process.stdout.write(`pid: ${process.pid}\n`);
   });
 
+  let wsHandle: PushdWsHandle | null = null;
+
   server.on('listening', async () => {
     try {
       await writePidFile();
@@ -3660,6 +3678,28 @@ export async function main() {
       }
     } catch {
       // non-fatal
+    }
+
+    // Optional WebSocket listener for browser clients (PR 1 of the
+    // remote-sessions track). Loopback-only, token + Origin gated.
+    // Dormant unless PUSHD_WS=1.
+    if (isWsListenerEnabled()) {
+      try {
+        wsHandle = await startPushdWs(
+          {
+            handleRequest,
+            addSessionClient,
+            removeSessionClient,
+            makeErrorResponse,
+            makeRequestId,
+          },
+          { portFilePath: getPortPath() },
+        );
+        process.stdout.write(`pushd-ws listening on 127.0.0.1:${wsHandle.port}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`pushd-ws failed to start: ${msg}\n`);
+      }
     }
 
     // Recover interrupted runs from previous crash
@@ -3682,6 +3722,14 @@ export async function main() {
       if (entry.pendingApproval) {
         clearTimeout(entry.pendingApproval.timer);
         entry.pendingApproval.resolve('deny');
+      }
+    }
+
+    if (wsHandle) {
+      try {
+        await wsHandle.close();
+      } catch {
+        /* ignore */
       }
     }
 

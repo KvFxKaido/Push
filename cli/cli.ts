@@ -91,6 +91,7 @@ const KNOWN_OPTIONS = new Set([
   'noResumePrompt',
   'delegate',
   'deep',
+  'origin',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -181,6 +182,11 @@ Usage:
   push daemon start             Start background daemon
   push daemon stop              Stop background daemon
   push daemon status            Check daemon status
+  push daemon pair              Mint a device token (loopback-only)
+  push daemon pair --origin <url>
+                                Mint a device token bound to an exact origin
+  push daemon tokens            List device tokens (no secrets)
+  push daemon revoke <tokenId>  Revoke a device token
   push tui                       Start full-screen TUI
   push tui --session <id>        Resume session in TUI
   push attach <session-id>      Attach to a running daemon session
@@ -2001,9 +2007,98 @@ async function runDaemonSubcommand(values, positionals) {
     return runDaemonSubcommand(values, ['daemon', 'start']);
   }
 
+  if (action === 'pair') {
+    return runDaemonPair(values);
+  }
+
+  if (action === 'revoke') {
+    return runDaemonRevoke(positionals);
+  }
+
+  if (action === 'tokens') {
+    return runDaemonTokens(values);
+  }
+
   throw new Error(
-    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep]`,
+    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep] | pair [--origin <url>] | revoke <tokenId> | tokens`,
   );
+}
+
+async function runDaemonPair(values: Record<string, unknown>): Promise<number> {
+  const { normalizeOrigin, OriginNormalizationError } = await import('./pushd-origin.js');
+  const { mintDeviceToken } = await import('./pushd-device-tokens.js');
+
+  const rawOrigin = typeof values?.origin === 'string' ? (values.origin as string) : null;
+  let boundOrigin: 'loopback' | string = 'loopback';
+  let boundLabel = 'loopback (localhost / 127.0.0.1 / [::1] only)';
+
+  if (rawOrigin && rawOrigin.length > 0) {
+    try {
+      const normalized = normalizeOrigin(rawOrigin);
+      boundOrigin = normalized;
+      boundLabel = normalized;
+    } catch (err) {
+      const message = err instanceof OriginNormalizationError ? err.message : 'invalid origin';
+      process.stderr.write(`pair failed: ${message}\n`);
+      return 1;
+    }
+  }
+
+  const { token, tokenId } = await mintDeviceToken({ boundOrigin });
+
+  // Print the token exactly once. We deliberately do NOT log it anywhere
+  // else (no pushd.log entry, no debug echo). The bound origin is fine
+  // to repeat — it isn't secret.
+  process.stdout.write(`\nToken minted.\n`);
+  process.stdout.write(`  id:           ${tokenId}\n`);
+  process.stdout.write(`  bound origin: ${boundLabel}\n`);
+  process.stdout.write(`\n`);
+  process.stdout.write(`Bearer token (copy now — this is the only time it will be shown):\n`);
+  process.stdout.write(`\n  ${token}\n\n`);
+  process.stdout.write(
+    `Paste this token in the Push web app's "Pair Local PC" flow. Revoke with:\n`,
+  );
+  process.stdout.write(`  push daemon revoke ${tokenId}\n`);
+  return 0;
+}
+
+async function runDaemonRevoke(positionals: string[]): Promise<number> {
+  const tokenId = positionals[2];
+  if (!tokenId) {
+    process.stderr.write('Usage: push daemon revoke <tokenId>\n');
+    return 1;
+  }
+  const { revokeDeviceToken } = await import('./pushd-device-tokens.js');
+  const removed = await revokeDeviceToken(tokenId);
+  if (removed) {
+    process.stdout.write(`revoked ${tokenId}\n`);
+    return 0;
+  }
+  process.stderr.write(`no such token: ${tokenId}\n`);
+  return 1;
+}
+
+async function runDaemonTokens(values: Record<string, unknown>): Promise<number> {
+  const { listDeviceTokens } = await import('./pushd-device-tokens.js');
+  const records = await listDeviceTokens();
+  if (values?.json) {
+    // Hashes are SHA-256 of the bearer token. They are not the bearer
+    // itself and cannot be reversed; safe to include.
+    process.stdout.write(`${JSON.stringify(records, null, 2)}\n`);
+    return 0;
+  }
+  if (records.length === 0) {
+    process.stdout.write('no device tokens (pair with: push daemon pair [--origin <url>])\n');
+    return 0;
+  }
+  for (const r of records) {
+    const created = new Date(r.createdAt).toISOString();
+    const lastUsed = r.lastUsedAt ? new Date(r.lastUsedAt).toISOString() : 'never';
+    process.stdout.write(
+      `${r.tokenId}  ${r.boundOrigin}  created=${created}  lastUsed=${lastUsed}\n`,
+    );
+  }
+  return 0;
 }
 
 /**
@@ -2263,6 +2358,7 @@ export async function main() {
       delegate: { type: 'boolean', default: false },
       version: { type: 'boolean', short: 'v' },
       deep: { type: 'boolean' },
+      origin: { type: 'string' },
     },
   });
 
