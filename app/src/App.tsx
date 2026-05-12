@@ -8,10 +8,13 @@ import { toConversationIndex } from '@/lib/conversation-index';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import { perfMark, perfMeasure } from '@/lib/perf-marks';
+import { isLocalPcModeEnabled } from '@/lib/local-pc-binding';
+import { getPairedDevice } from '@/lib/local-pc-storage';
 import type {
   ActiveRepo,
   AppShellScreen,
   ConversationIndex,
+  LocalPcBinding,
   RepoWithActivity,
   WorkspaceSession,
 } from '@/types';
@@ -80,6 +83,24 @@ function normalizeWorkspaceSession(
     };
   }
 
+  if (candidate.kind === 'local-pc') {
+    // Local-pc sessions are only restorable if the binding can be
+    // round-tripped from the persisted value. A serialized session
+    // without a binding (or with a malformed one) can't proceed —
+    // drop it so the user lands on the hub and can re-pair if needed.
+    const rawBinding = candidate.binding;
+    if (!rawBinding || typeof rawBinding !== 'object') return null;
+    const b = rawBinding as Record<string, unknown>;
+    if (typeof b.port !== 'number' || typeof b.token !== 'string') return null;
+    const binding: LocalPcBinding = {
+      port: b.port,
+      token: b.token,
+      boundOrigin: typeof b.boundOrigin === 'string' ? b.boundOrigin : '',
+      tokenId: typeof b.tokenId === 'string' ? b.tokenId : undefined,
+    };
+    return { id: candidate.id, kind: 'local-pc', binding, sandboxId: null };
+  }
+
   return activeRepo
     ? { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null }
     : null;
@@ -120,6 +141,12 @@ const WorkspaceScreen = lazyWithRecovery(
     (module) => module.WorkspaceScreen,
   ),
 );
+const LocalPcPairing = lazyWithRecovery(
+  toDefaultExport(
+    () => import('@/sections/LocalPcPairing'),
+    (module) => module.LocalPcPairing,
+  ),
+);
 
 function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo, setCurrentBranch } = useActiveRepo();
@@ -128,6 +155,11 @@ function App() {
   );
   const [conversationIndex, setConversationIndex] = useState<ConversationIndex>({});
   const [pendingResumeChatId, setPendingResumeChatId] = useState<string | null>(null);
+  // Hub-level interstitial for the Local PC pairing flow. Decoupled from
+  // `workspaceSession` because pairing happens *before* a local-pc session
+  // record exists: the WorkspaceSession union mandates a `binding` on the
+  // 'local-pc' arm, so we route through this state until pairing yields one.
+  const [localPcPairingActive, setLocalPcPairingActive] = useState(false);
 
   const { resolveRepoAppearance, setRepoAppearance, clearRepoAppearance } = useRepoAppearance();
 
@@ -201,9 +233,51 @@ function App() {
     setWorkspaceSession({ id: crypto.randomUUID(), kind: 'chat', sandboxId: null });
   }, [clearActiveRepo]);
 
+  const handleStartLocalPc = useCallback(() => {
+    setPendingResumeChatId(null);
+    clearActiveRepo();
+    // If we already have a stored pairing, jump straight into the workspace.
+    // Otherwise route through the pairing interstitial. The IDB read is
+    // async, so optimistically show pairing then upgrade when it resolves —
+    // this keeps the click feeling instant on a fresh install.
+    setLocalPcPairingActive(true);
+    setWorkspaceSession(null);
+    void getPairedDevice().then((record) => {
+      if (!record) return;
+      setLocalPcPairingActive(false);
+      setWorkspaceSession({
+        id: crypto.randomUUID(),
+        kind: 'local-pc',
+        binding: {
+          port: record.port,
+          token: record.token,
+          tokenId: record.tokenId,
+          boundOrigin: record.boundOrigin,
+        },
+        sandboxId: null,
+      });
+    });
+  }, [clearActiveRepo]);
+
+  const handleLocalPcPaired = useCallback((binding: LocalPcBinding) => {
+    setLocalPcPairingActive(false);
+    setWorkspaceSession({
+      id: crypto.randomUUID(),
+      kind: 'local-pc',
+      binding,
+      sandboxId: null,
+    });
+  }, []);
+
+  const handleLocalPcPairingCancel = useCallback(() => {
+    setLocalPcPairingActive(false);
+    setWorkspaceSession(null);
+  }, []);
+
   const handleEndWorkspace = useCallback(() => {
     setPendingResumeChatId(null);
     setWorkspaceSession(null);
+    setLocalPcPairingActive(false);
   }, []);
 
   const handleSelectRepo = useCallback(
@@ -304,12 +378,17 @@ function App() {
   }, [workspaceSession]);
 
   const screen: AppShellScreen = useMemo(() => {
+    // Local-pc paths short-circuit auth: the daemon-paired flow doesn't
+    // need GitHub creds, so a pairing interstitial or a `kind: 'local-pc'`
+    // workspace renders even when the user is signed out of GitHub.
+    if (localPcPairingActive) return 'local-pc-pairing';
+    if (workspaceSession?.kind === 'local-pc') return 'workspace';
     if (workspaceSession?.kind === 'scratch') return 'workspace';
     if (workspaceSession?.kind === 'chat') return 'workspace';
     if (!authToken) return 'onboarding';
     if (workspaceSession?.kind === 'repo') return 'workspace';
     return 'home';
-  }, [authToken, workspaceSession]);
+  }, [authToken, workspaceSession, localPcPairingActive]);
 
   const suspenseFallback = <div className="h-dvh bg-[#000]" />;
 
@@ -328,6 +407,7 @@ function App() {
             onConnectOAuth={connectApp}
             onStartWorkspace={handleStartScratchWorkspace}
             onStartChat={handleStartChatMode}
+            onStartLocalPc={isLocalPcModeEnabled() ? handleStartLocalPc : undefined}
             onInstallApp={installApp}
             onConnectInstallationId={setInstallationIdManually}
             loading={authLoading}
@@ -358,9 +438,18 @@ function App() {
             onDisconnect={handleDisconnect}
             onStartWorkspace={handleStartScratchWorkspace}
             onStartChat={handleStartChatMode}
+            onStartLocalPc={isLocalPcModeEnabled() ? handleStartLocalPc : undefined}
             user={validatedUser}
           />
         </div>
+      </Suspense>
+    );
+  }
+
+  if (screen === 'local-pc-pairing') {
+    return (
+      <Suspense fallback={suspenseFallback}>
+        <LocalPcPairing onPaired={handleLocalPcPaired} onCancel={handleLocalPcPairingCancel} />
       </Suspense>
     );
   }
@@ -403,6 +492,7 @@ function App() {
           onSelectRepo: handleSelectRepo,
           onStartScratchWorkspace: handleStartScratchWorkspace,
           onStartChat: handleStartChatMode,
+          onStartLocalPc: handleStartLocalPc,
           onEndWorkspace: handleEndWorkspace,
         }}
         homeBridge={{
