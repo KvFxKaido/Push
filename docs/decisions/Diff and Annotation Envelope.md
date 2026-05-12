@@ -9,7 +9,7 @@ Related: `docs/decisions/Remote Sessions via pushd Relay.md`, `docs/decisions/We
 
 Diff rendering shows up on every Push surface that touches change-review:
 
-- Web: `app/src/components/cards/DiffPreviewCard.tsx`, `app/src/components/chat/hub-tabs/HubDiffTab.tsx`, `app/src/components/cards/CommitReviewCard.tsx`, `app/src/components/filebrowser/CommitPushSheet.tsx`. Today these consume a custom shape derived inline from `app/src/lib/diff-utils.ts` (`parseDiffStats`, `parseDiffIntoFiles`, `FileDiff`), and `DiffLine` does its own per-line `+/-` classification.
+- Web: `app/src/components/cards/DiffPreviewCard.tsx`, `app/src/components/chat/hub-tabs/HubDiffTab.tsx`, `app/src/components/cards/CommitReviewCard.tsx`, `app/src/components/filebrowser/CommitPushSheet.tsx`. Parsing (`parseDiffStats`, `parseDiffIntoFiles`, `FileDiff`, `chunkDiffByFile`, `classifyFilePath`) is already canonical in `lib/diff-utils.ts`, with `app/src/lib/diff-utils.ts` re-exporting it unchanged — that part of the convergence is done. What's still web-internal is the **card data shape** (`DiffPreviewCardData` in `app/src/types/index.ts`) and the **line-level rendering classification** that `DiffLine` does inline against raw `+/-` prefixes, neither of which carries annotations or role provenance.
 - CLI/TUI: Reviewer and Auditor produce diff-shaped output but the TUI renderer is bespoke and not aligned with the web shape.
 - Roles: Reviewer (advisory branch-diff / last-commit / working-tree), Auditor (pre-commit SAFE/UNSAFE gate), Coder (file mutation evidence). All three want to surface inline annotations against the diff — review comments, audit findings, role provenance, CI annotations.
 
@@ -71,7 +71,7 @@ Explicitly **not** in scope for v1:
 
 ## Implementation Rules
 
-- Envelope types live in `lib/` (e.g., `lib/diff-envelope.ts`) and are consumed by both web and CLI/TUI renderers. App-side `app/src/lib/diff-utils.ts` becomes a renderer-side adapter, not the source of truth.
+- Envelope types live in `lib/` (e.g., `lib/diff-envelope.ts`) and are consumed by both web and CLI/TUI renderers. Compose with the existing `lib/diff-utils.ts` parsing module rather than duplicating its `FileDiff` / `DiffStats` shapes — the envelope adds line-level kind, intra-line ranges, and the annotation surface on top of what's already shared.
 - Producer-side: Reviewer, Auditor, Coder all emit the same envelope shape. Surface-specific routing happens after.
 - Add a drift-detector test in the same PR that introduces the envelope — pattern follows `cli/tests/protocol-drift.test.mjs` (strict-mode schema pins) and the canonical-schema test for `lib/protocol-schema.ts`.
 - Streaming chunks must compose: a partial envelope (e.g., one file emitted, others pending) must validate as a typed partial, not as an opaque blob.
