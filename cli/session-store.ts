@@ -4,7 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
+import { PROTOCOL_VERSION } from '../lib/protocol-schema.js';
 import type { DelegationOutcome } from '../lib/runtime-contract.ts';
+
+// PROTOCOL_VERSION moved to lib/protocol-schema.ts (the canonical
+// owner of the wire contract). Re-exported here so the ~6 CLI files
+// that previously read it from session-store keep working without
+// touching their imports.
+export { PROTOCOL_VERSION };
 
 // ─── Interfaces ──────────────────────────────────────────────────
 
@@ -86,7 +93,6 @@ export interface InterruptedSession {
 
 // ─── Constants ───────────────────────────────────────────────────
 
-export const PROTOCOL_VERSION = 'push.runtime.v1';
 const SESSION_ROOT_SYMBOL: unique symbol = Symbol('push.sessionRoot');
 
 // Session IDs must match the output of makeSessionId(): sess_<base36>_<6 hex chars>

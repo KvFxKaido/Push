@@ -4,16 +4,16 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import {
-  validateEventEnvelope,
-  validateRunEventPayload,
-  validateEvent,
-  assertValidEvent,
-  isStrictModeEnabled,
+  PROTOCOL_VERSION,
   SCHEMA_VALIDATED_EVENT_TYPES,
   SUBAGENT_AGENTS,
   TASK_GRAPH_AGENTS,
-} from '../protocol-schema.ts';
-import { PROTOCOL_VERSION } from '../session-store.ts';
+  assertValidEvent,
+  isStrictModeEnabled,
+  validateEvent,
+  validateEventEnvelope,
+  validateRunEventPayload,
+} from '../../lib/protocol-schema.ts';
 
 // Cache the runtime-contract source file once per suite. The three
 // drift guard-rail tests (event types, RunEventSubagent roles,

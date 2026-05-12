@@ -59,7 +59,18 @@
  * fields or fields with the wrong type.
  */
 
-import { PROTOCOL_VERSION } from './session-store.js';
+/**
+ * The wire-protocol version tag pinned on every envelope. Bump this
+ * when introducing a breaking change to the envelope shape or the
+ * dispatch contract — clients negotiate compatibility against it in
+ * the `hello` handshake.
+ *
+ * Lives here (next to the validators) so the shared-runtime layer
+ * owns the protocol-version constant alongside the envelope schema.
+ * Re-exported by `cli/session-store.ts` for back-compat with existing
+ * CLI importers that previously got it from there.
+ */
+export const PROTOCOL_VERSION = 'push.runtime.v1';
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -82,10 +93,17 @@ export interface ValidationIssue {
  * validator; production leaves it unset for zero runtime cost.
  *
  * Reads `process.env` at call time (not at module import) so a test
- * setup step can flip the flag after importing this module.
+ * setup step can flip the flag after importing this module. The
+ * `process` reference goes through `globalThis` so the browser-side
+ * tsconfig (`types: ["vite/client"]`, no Node types) can compile this
+ * module — a bare `process.env` would fail typecheck and crash at
+ * runtime in the browser where no such global exists.
  */
 export function isStrictModeEnabled(): boolean {
-  const raw = process.env.PUSH_PROTOCOL_STRICT;
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+    ?.env;
+  if (!env) return false;
+  const raw = env.PUSH_PROTOCOL_STRICT;
   return raw === '1' || raw === 'true';
 }
 
