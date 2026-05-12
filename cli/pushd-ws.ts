@@ -79,6 +79,49 @@ function parseBearer(authHeader: string | undefined, maxLength: number): string 
   return token;
 }
 
+/**
+ * Browser WebSocket clients can't set arbitrary headers, so they
+ * can't use the Authorization header path. Carry the bearer in
+ * `Sec-WebSocket-Protocol` instead, alongside the canonical
+ * `pushd.v1` protocol selector. Format the client sends:
+ *
+ *   Sec-WebSocket-Protocol: pushd.v1, bearer.<token>
+ *
+ * The server picks `pushd.v1` to echo back (which the browser uses
+ * to confirm the upgrade) and validates the `bearer.` entry as the
+ * token. Order doesn't matter; whitespace around commas is allowed.
+ */
+const SUBPROTOCOL_SELECTOR = 'pushd.v1';
+const SUBPROTOCOL_BEARER_PREFIX = 'bearer.';
+
+function parseSubprotocolBearer(
+  subprotoHeader: string | undefined,
+  maxLength: number,
+): string | null {
+  if (typeof subprotoHeader !== 'string') return null;
+  const protocols = subprotoHeader
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  let selectorPresent = false;
+  let token: string | null = null;
+  for (const proto of protocols) {
+    if (proto === SUBPROTOCOL_SELECTOR) {
+      selectorPresent = true;
+      continue;
+    }
+    if (proto.startsWith(SUBPROTOCOL_BEARER_PREFIX)) {
+      const candidate = proto.slice(SUBPROTOCOL_BEARER_PREFIX.length);
+      if (candidate.length > 0 && candidate.length <= maxLength) {
+        token = candidate;
+      }
+    }
+  }
+  // Require BOTH: the protocol selector (so we know we're talking
+  // pushd.v1) AND the bearer entry. Either alone is malformed.
+  return selectorPresent ? token : null;
+}
+
 function writeUpgradeError(socket: Duplex, status: number, reason: string): void {
   // Never include the bearer token in the response body, even on
   // failure. The `reason` is shaped by `checkOrigin` / our own short
@@ -132,15 +175,34 @@ export async function startPushdWs(
   });
 
   // noServer mode: we handle the upgrade event ourselves so we can run
-  // the auth gate before WSS sees the connection.
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+  // the auth gate before WSS sees the connection. `handleProtocols`
+  // tells ws which Sec-WebSocket-Protocol entry to echo in the
+  // response — we always pick `pushd.v1` if the client offered it,
+  // so the browser's WebSocket constructor sees its requested
+  // protocol confirmed and the upgrade completes. The `bearer.*`
+  // entry is intentionally never selected — it carries the token,
+  // not a protocol identity, and must not be echoed back.
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: 1024 * 1024,
+    handleProtocols: (protocols) =>
+      protocols.has(SUBPROTOCOL_SELECTOR) ? SUBPROTOCOL_SELECTOR : false,
+  });
 
   httpServer.on('upgrade', async (req, socket, head) => {
     try {
       const rawOrigin = req.headers.origin as string | undefined;
       const authHeader = req.headers.authorization as string | undefined;
+      const subprotoHeader = req.headers['sec-websocket-protocol'] as string | undefined;
 
-      const token = parseBearer(authHeader, maxTokenLength);
+      // Prefer the Authorization header (CLI / wscat path); fall back
+      // to the Sec-WebSocket-Protocol carrier for browser clients
+      // which can't set arbitrary headers on a WebSocket. Whichever
+      // path matched determines whether we need to echo a confirmed
+      // subprotocol back in the upgrade response.
+      const token =
+        parseBearer(authHeader, maxTokenLength) ??
+        parseSubprotocolBearer(subprotoHeader, maxTokenLength);
       if (!token) {
         return writeUpgradeError(socket, 401, 'Missing or malformed bearer token.');
       }
@@ -162,6 +224,9 @@ export async function startPushdWs(
         return writeUpgradeError(socket, 403, originCheck.reason);
       }
 
+      // `handleProtocols` on the WSS constructor handles subprotocol
+      // echo in the upgrade response — we don't need to inject
+      // headers manually here.
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit('connection', ws, req, record!);
       });
