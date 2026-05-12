@@ -90,6 +90,7 @@ const KNOWN_OPTIONS = new Set([
   'no-resume-prompt',
   'noResumePrompt',
   'delegate',
+  'deep',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -1775,8 +1776,46 @@ function isProcessRunning(pid) {
   }
 }
 
-async function runDaemonSubcommand(positionals) {
+async function waitForProcessExit(pid, timeoutMs) {
+  const start = Date.now();
+  while (isProcessRunning(pid) && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return !isProcessRunning(pid);
+}
+
+async function readLogTail(logPath, lineCount) {
+  // pushd.log appends indefinitely (no rotation today). Read only the trailing
+  // chunk to keep memory bounded — 16KB is well over a typical "last 5 lines"
+  // worth of log output and small enough that the worst case is cheap.
+  const CHUNK_SIZE = 16384;
+  try {
+    const stat = await fs.stat(logPath);
+    const start = Math.max(0, stat.size - CHUNK_SIZE);
+    const handle = await fs.open(logPath, 'r');
+    try {
+      const { bytesRead, buffer } = await handle.read(
+        Buffer.alloc(CHUNK_SIZE),
+        0,
+        CHUNK_SIZE,
+        start,
+      );
+      const contents = buffer.toString('utf8', 0, bytesRead);
+      // If we landed mid-line at the chunk start, the first line may be
+      // truncated — slice(-lineCount) drops it as long as lineCount is small.
+      const lines = contents.split('\n').filter((line) => line.length > 0);
+      return lines.slice(-lineCount);
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
+async function runDaemonSubcommand(values, positionals) {
   const action = (positionals[1] || 'status').toLowerCase();
+  const deep = parseBoolFlag(values?.deep, 'deep');
 
   if (action === 'status') {
     const pid = await readPidFile();
@@ -1785,23 +1824,56 @@ async function runDaemonSubcommand(positionals) {
       // Also try a live ping to confirm responsiveness
       const { tryConnect } = await import('./daemon-client.js');
       const client = await tryConnect(socketPath, 1000);
+      let livenessLine;
+      let sessionCount = null;
       if (client) {
         try {
-          const res = await client.request('ping', {}, null, 1000);
-          client.close();
-          process.stdout.write(
-            `pushd is running (pid: ${pid})\nsocket: ${socketPath}\nstatus: responsive\n`,
-          );
+          await client.request('ping', {}, null, 1000);
+          livenessLine = 'status: responsive';
+          if (deep) {
+            try {
+              const res = await client.request('list_sessions', {}, null, 1500);
+              // request() resolves with the full response envelope; the
+              // handler's data lives under `.payload`.
+              const sessions = res?.payload?.sessions;
+              if (Array.isArray(sessions)) {
+                sessionCount = sessions.length;
+              }
+            } catch {
+              // list_sessions optional under --deep; don't fail the whole status
+            }
+          }
         } catch {
+          livenessLine = 'status: not responding to ping';
+        } finally {
           client.close();
-          process.stdout.write(
-            `pushd is running (pid: ${pid})\nsocket: ${socketPath}\nstatus: not responding to ping\n`,
-          );
         }
       } else {
+        livenessLine = 'status: socket not reachable';
+      }
+      process.stdout.write(
+        `pushd is running (pid: ${pid})\nsocket: ${socketPath}\n${livenessLine}\n`,
+      );
+      if (deep) {
+        let uptime = '';
+        try {
+          const stat = await fs.stat(getPidPath());
+          const ms = Date.now() - stat.mtime.getTime();
+          uptime = `${Math.floor(ms / 1000)}s since pid file written`;
+        } catch {
+          uptime = 'unknown';
+        }
+        process.stdout.write(`uptime: ${uptime}\n`);
         process.stdout.write(
-          `pushd is running (pid: ${pid})\nsocket: ${socketPath}\nstatus: socket not reachable\n`,
+          `sessions: ${sessionCount === null ? 'unavailable' : String(sessionCount)}\n`,
         );
+        const tail = await readLogTail(getLogPath(), 5);
+        if (tail.length === 0) {
+          process.stdout.write('log: (empty)\n');
+        } else {
+          process.stdout.write(`log (last ${tail.length}):\n`);
+          for (const line of tail) process.stdout.write(`  ${line}\n`);
+        }
       }
     } else {
       process.stdout.write('pushd is not running\n');
@@ -1894,7 +1966,44 @@ async function runDaemonSubcommand(positionals) {
     return 0;
   }
 
-  throw new Error(`Unknown daemon action: ${action}. Use: push daemon start|stop|status`);
+  if (action === 'restart') {
+    const pid = await readPidFile();
+    if (pid && isProcessRunning(pid)) {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch (err) {
+        // ESRCH means the process exited between our check and the signal —
+        // the desired end state. Anything else (EPERM etc.) is a real failure.
+        if (err?.code !== 'ESRCH') throw err;
+      }
+      // Wait up to 5s for the old process to fully exit before spawning a new
+      // one — otherwise the new pushd races the old one on the same socket.
+      const exited = await waitForProcessExit(pid, 5000);
+      if (!exited) {
+        process.stdout.write(
+          `pushd did not exit within 5s (pid: ${pid}); restart aborted. Try \`push daemon stop\` then \`push daemon start\`.\n`,
+        );
+        return 1;
+      }
+      process.stdout.write(`pushd stopped (pid: ${pid})\n`);
+    } else {
+      process.stdout.write('pushd was not running; starting fresh\n');
+      if (pid) {
+        // Clean up the stale PID file so start() begins from a known-empty
+        // state — same pattern as the status action.
+        try {
+          await fs.unlink(getPidPath());
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return runDaemonSubcommand(values, ['daemon', 'start']);
+  }
+
+  throw new Error(
+    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep]`,
+  );
 }
 
 /**
@@ -2153,6 +2262,7 @@ export async function main() {
       'no-resume-prompt': { type: 'boolean' },
       delegate: { type: 'boolean', default: false },
       version: { type: 'boolean', short: 'v' },
+      deep: { type: 'boolean' },
     },
   });
 
@@ -2419,7 +2529,7 @@ export async function main() {
   }
 
   if (subcommand === 'daemon') {
-    return runDaemonSubcommand(positionals);
+    return runDaemonSubcommand(values, positionals);
   }
 
   if (subcommand === 'attach') {
