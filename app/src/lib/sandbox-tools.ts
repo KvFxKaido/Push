@@ -22,7 +22,14 @@ import {
   downloadFromSandbox,
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
-import { LocalDaemonUnreachableError, execLocalDaemon } from './local-daemon-sandbox-client';
+import {
+  LocalDaemonUnreachableError,
+  execLocalDaemon,
+  getDiffLocalDaemon,
+  listDirLocalDaemon,
+  readFileLocalDaemon,
+  writeFileLocalDaemon,
+} from './local-daemon-sandbox-client';
 import { fetchAuditorFileContexts } from './auditor-file-context';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger } from './file-awareness-ledger';
@@ -238,6 +245,39 @@ function buildWriteContext(sandboxId: string): WriteHandlerContext {
     invalidateSymbolLedger: (path) => symbolLedger.invalidate(path),
     recordWriteFileMetric,
   };
+}
+
+/**
+ * Run a daemon-backed sandbox tool and map a `LocalDaemonUnreachableError`
+ * to a structured `SANDBOX_UNREACHABLE` result with a re-pair hint. Per-
+ * tool branches construct the success payload; this helper only handles
+ * the transport-failure case. PR 3c.3.
+ */
+async function runLocalDaemonTool(
+  toolName: string,
+  fn: () => Promise<ToolExecutionResult>,
+): Promise<ToolExecutionResult> {
+  try {
+    return await fn();
+  } catch (caught) {
+    if (caught instanceof LocalDaemonUnreachableError) {
+      const err: StructuredToolError = {
+        type: 'SANDBOX_UNREACHABLE',
+        retryable: false,
+        message: `Local PC daemon is unreachable: ${caught.reason}`,
+        detail:
+          'The daemon may have stopped or the bearer token may have been revoked. Re-pair to continue.',
+      };
+      return {
+        text: formatStructuredError(
+          err,
+          `[Tool Error — ${toolName}]\nLocal PC daemon is unreachable: ${caught.reason}\nThe daemon may have stopped or the bearer token may have been revoked. Re-pair to continue.`,
+        ),
+        structuredError: err,
+      };
+    }
+    throw caught;
+  }
 }
 
 export async function executeSandboxToolCall(
@@ -463,6 +503,33 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_read_file': {
+        if (options?.localDaemonBinding) {
+          return runLocalDaemonTool('sandbox_read_file', async () => {
+            const local = await readFileLocalDaemon(options.localDaemonBinding!, call.args.path, {
+              startLine: call.args.start_line,
+              endLine: call.args.end_line,
+            });
+            if (local.error) {
+              const err: StructuredToolError = {
+                type: local.code === 'ENOENT' ? 'FILE_NOT_FOUND' : 'UNKNOWN',
+                retryable: false,
+                message: local.error,
+                detail: `Path: ${call.args.path}`,
+              };
+              return {
+                text: formatStructuredError(
+                  err,
+                  `[Tool Error — sandbox_read_file]\n${local.error}`,
+                ),
+                structuredError: err,
+              };
+            }
+            const header = `[Tool Result — sandbox_read_file]\nPath: ${call.args.path}${
+              local.totalLines !== undefined ? ` (${local.totalLines} lines)` : ''
+            }${local.truncated ? ' [truncated]' : ''}`;
+            return { text: `${header}\n\n${local.content}` };
+          });
+        }
         return handleReadFile(buildReadOnlyInspectionContext(sandboxId), call.args);
       }
 
@@ -471,6 +538,36 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_list_dir': {
+        if (options?.localDaemonBinding) {
+          return runLocalDaemonTool('sandbox_list_dir', async () => {
+            const local = await listDirLocalDaemon(options.localDaemonBinding!, call.args.path);
+            if (local.error) {
+              const err: StructuredToolError = {
+                type: 'UNKNOWN',
+                retryable: false,
+                message: local.error,
+                detail: `Path: ${call.args.path ?? '(cwd)'}`,
+              };
+              return {
+                text: formatStructuredError(err, `[Tool Error — sandbox_list_dir]\n${local.error}`),
+                structuredError: err,
+              };
+            }
+            const rows = local.entries
+              .map((e) =>
+                e.type === 'directory'
+                  ? `${e.name}/`
+                  : e.size !== undefined
+                    ? `${e.name}\t${e.size}`
+                    : e.name,
+              )
+              .join('\n');
+            const header = `[Tool Result — sandbox_list_dir]\nPath: ${
+              call.args.path ?? '(cwd)'
+            }${local.truncated ? ` [truncated to ${local.entries.length}]` : ''}`;
+            return { text: `${header}\n\n${rows}` };
+          });
+        }
         return handleListDir(buildReadOnlyInspectionContext(sandboxId), call.args);
       }
 
@@ -487,10 +584,65 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_write_file': {
+        if (options?.localDaemonBinding) {
+          return runLocalDaemonTool('sandbox_write_file', async () => {
+            const local = await writeFileLocalDaemon(
+              options.localDaemonBinding!,
+              call.args.path,
+              call.args.content,
+            );
+            if (!local.ok || local.error) {
+              const err: StructuredToolError = {
+                type: 'WRITE_FAILED',
+                retryable: false,
+                message: local.error || 'Local-PC write failed',
+                detail: `Path: ${call.args.path}`,
+              };
+              return {
+                text: formatStructuredError(
+                  err,
+                  `[Tool Error — sandbox_write_file]\n${err.message}`,
+                ),
+                structuredError: err,
+              };
+            }
+            return {
+              text:
+                `[Tool Result — sandbox_write_file]\n` +
+                `Path: ${call.args.path}\n` +
+                `Bytes written: ${local.bytesWritten ?? 'n/a'}`,
+            };
+          });
+        }
         return handleWriteFile(buildWriteContext(sandboxId), call.args);
       }
 
       case 'sandbox_diff': {
+        if (options?.localDaemonBinding) {
+          return runLocalDaemonTool('sandbox_diff', async () => {
+            const local = await getDiffLocalDaemon(options.localDaemonBinding!);
+            if (local.error && !local.diff) {
+              const err: StructuredToolError = {
+                type: 'UNKNOWN',
+                retryable: false,
+                message: local.error,
+              };
+              return {
+                text: formatStructuredError(err, `[Tool Error — sandbox_diff]\n${local.error}`),
+                structuredError: err,
+              };
+            }
+            const parts = [`[Tool Result — sandbox_diff]`];
+            if (local.gitStatus) parts.push(`\nStatus:\n${local.gitStatus}`);
+            if (local.diff) {
+              parts.push(`\nDiff:\n${local.diff}`);
+              if (local.truncated) parts.push(`\n[Diff truncated]`);
+            } else {
+              parts.push(`\n(no working-copy changes vs HEAD)`);
+            }
+            return { text: parts.join('\n') };
+          });
+        }
         return handleSandboxDiff(buildGitReleaseContext(sandboxId));
       }
 

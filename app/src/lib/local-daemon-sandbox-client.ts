@@ -3,7 +3,7 @@
  * loopback WebSocket adapter (`local-daemon-binding`) for callers
  * that can't reach the React hook layer (`useLocalDaemon`).
  *
- * Scope (PR 3c.1):
+ * Scope (PR 3c.1 → 3c.3):
  *   - `execLocalDaemon`: run a shell command via pushd's `sandbox_exec`
  *     handler and return an `ExecResult`-shaped payload. The dispatch
  *     seam in `sandbox-tools.ts` forks on session binding and calls
@@ -11,11 +11,12 @@
  *   - `identifyLocalDaemon`: fetch `{ tokenId, boundOrigin, daemonVersion,
  *     protocolVersion }` via the `daemon_identify` handler. Used by
  *     LocalPcWorkspace to fill the "(unknown)" tokenId placeholder.
- *
- * Out of scope here: file ops, batch_write, diff, archive, etc. Those
- * land in 3c.2+ once the dispatch pattern is proven. Each tool follows
- * the same recipe (one pushd handler + one client method + one
- * `executeSandboxToolCall` fork case), so 3c.2+ can be Codex-friendly.
+ *   - `readFileLocalDaemon` / `writeFileLocalDaemon` /
+ *     `listDirLocalDaemon` / `getDiffLocalDaemon` (3c.3): per-tool
+ *     daemon ops. Each mirrors a `sandbox_*` cloud helper. Result
+ *     shapes are deliberately minimal — version cache, workspace
+ *     revision, and cloud-side optimistic concurrency are not modeled
+ *     yet; runtime callers treat the daemon return as authoritative.
  *
  * Transport: each call opens a transient binding. WS handshakes are
  * ~10ms on loopback so per-call cost is acceptable for proof-of-concept;
@@ -60,6 +61,55 @@ export interface LocalDaemonExecOptions {
 }
 
 /**
+ * Result shape of `sandbox_read_file` on the daemon. Mirrors the
+ * cloud `FileReadResult` field set the dispatch fork actually consumes;
+ * `version` / `workspace_revision` are stubbed (the daemon does not run
+ * a version cache) and treated as advisory only by the dispatch fork.
+ */
+export interface LocalDaemonReadFileResult {
+  content: string;
+  truncated: boolean;
+  totalLines?: number;
+  error?: string;
+  code?: string;
+}
+
+/** Args for `sandbox_read_file` on the daemon. */
+export interface LocalDaemonReadFileOptions {
+  startLine?: number;
+  endLine?: number;
+}
+
+/** Result of `sandbox_write_file` on the daemon. */
+export interface LocalDaemonWriteFileResult {
+  ok: boolean;
+  bytesWritten?: number;
+  error?: string;
+}
+
+/** One entry returned by `sandbox_list_dir` on the daemon. */
+export interface LocalDaemonDirEntry {
+  name: string;
+  type: 'file' | 'directory' | 'symlink' | 'other';
+  size?: number;
+}
+
+/** Result of `sandbox_list_dir` on the daemon. */
+export interface LocalDaemonListDirResult {
+  entries: LocalDaemonDirEntry[];
+  truncated: boolean;
+  error?: string;
+}
+
+/** Result of `sandbox_diff` on the daemon. */
+export interface LocalDaemonDiffResult {
+  diff: string;
+  truncated: boolean;
+  gitStatus?: string;
+  error?: string;
+}
+
+/**
  * Error thrown when the transient binding can't reach the daemon
  * (token rejected, port wrong, pushd not running, origin mismatch).
  * The adapter intentionally collapses these into one bucket; callers
@@ -97,6 +147,89 @@ export async function execLocalDaemon(
       // timeout-killed response without us beating it with a transport
       // timeout. Default 60s command + 5s slack.
       timeoutMs: (opts.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS) + 5_000,
+    }),
+  );
+  return response.payload;
+}
+
+/**
+ * Read a file via the paired pushd. `path` is interpreted on the
+ * daemon's local filesystem — the daemon resolves it relative to its
+ * cwd or as an absolute path; the web layer does not assume a
+ * `/workspace` prefix here. Optional `startLine` / `endLine` are
+ * 1-based inclusive when provided.
+ */
+export async function readFileLocalDaemon(
+  binding: LocalPcBinding,
+  path: string,
+  opts: LocalDaemonReadFileOptions = {},
+): Promise<LocalDaemonReadFileResult> {
+  const payload: Record<string, unknown> = { path };
+  if (opts.startLine !== undefined) payload.startLine = opts.startLine;
+  if (opts.endLine !== undefined) payload.endLine = opts.endLine;
+
+  const response = await withTransientBinding(binding, (handle) =>
+    handle.request<LocalDaemonReadFileResult>({
+      type: 'sandbox_read_file',
+      payload,
+      timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+    }),
+  );
+  return response.payload;
+}
+
+/**
+ * Write a file via the paired pushd. Creates intermediate directories.
+ * The daemon does not enforce version-cache concurrency today — the
+ * write is unconditional. A future PR can pass `expectedVersion` once
+ * the daemon side tracks per-path versions.
+ */
+export async function writeFileLocalDaemon(
+  binding: LocalPcBinding,
+  path: string,
+  content: string,
+): Promise<LocalDaemonWriteFileResult> {
+  const response = await withTransientBinding(binding, (handle) =>
+    handle.request<LocalDaemonWriteFileResult>({
+      type: 'sandbox_write_file',
+      payload: { path, content },
+      timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+    }),
+  );
+  return response.payload;
+}
+
+/**
+ * List a directory via the paired pushd. `path` is optional and
+ * defaults to the daemon's cwd.
+ */
+export async function listDirLocalDaemon(
+  binding: LocalPcBinding,
+  path?: string,
+): Promise<LocalDaemonListDirResult> {
+  const payload: Record<string, unknown> = {};
+  if (path) payload.path = path;
+
+  const response = await withTransientBinding(binding, (handle) =>
+    handle.request<LocalDaemonListDirResult>({
+      type: 'sandbox_list_dir',
+      payload,
+      timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+    }),
+  );
+  return response.payload;
+}
+
+/**
+ * Fetch `git diff HEAD` + `git status --porcelain` via the paired
+ * pushd. The daemon shells out git in its cwd.
+ */
+export async function getDiffLocalDaemon(binding: LocalPcBinding): Promise<LocalDaemonDiffResult> {
+  const response = await withTransientBinding(binding, (handle) =>
+    handle.request<LocalDaemonDiffResult>({
+      type: 'sandbox_diff',
+      payload: {},
+      timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
     }),
   );
   return response.payload;

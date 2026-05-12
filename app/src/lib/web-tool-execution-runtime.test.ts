@@ -509,42 +509,23 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
   });
 
   describe('LOCAL_DAEMON_SUPPORTED_TOOLS gate', () => {
-    // Codex P2 / Copilot / Kilo P1 on PR #514: when a local-pc session
+    // PR #514 (Codex P2 / Copilot / Kilo P1): when a local-pc session
     // has a binding but no sandboxId, only tools with a daemon
-    // implementation may dispatch. Without this gate, `sandbox_read_file`
-    // etc. would reach the cloud dispatcher with `sandboxId: ''` and
-    // fail confusingly against a nonexistent sandbox. Today only
-    // `sandbox_exec` is daemon-backed (PR #511); PR 3c.3+ adds the rest.
-
-    it('blocks sandbox_read_file with LOCAL_DAEMON_TOOL_UNSUPPORTED when binding-only', async () => {
-      const result = await runtime.execute(
-        {
-          source: 'sandbox',
-          call: { tool: 'sandbox_read_file', args: { path: '/workspace/src/app.ts' } },
-        },
-        {
-          allowedRepo: 'owner/repo',
-          sandboxId: null,
-          isMainProtected: false,
-          localDaemonBinding: binding,
-        },
-      );
-
-      expect(result.structuredError?.type).toBe('LOCAL_DAEMON_TOOL_UNSUPPORTED');
-      expect(result.structuredError?.retryable).toBe(false);
-      expect(result.text).toContain('sandbox_read_file');
-      expect(result.text).toContain('Local PC');
-      expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
-    });
+    // implementation may dispatch. Without this gate, a non-daemon tool
+    // would reach the cloud dispatcher with `sandboxId: ''` and fail
+    // confusingly against a nonexistent sandbox.
+    //
+    // Shipped daemon paths:
+    //   - sandbox_exec (PR #511)
+    //   - sandbox_read_file / _write_file / _list_dir / _diff (PR 3c.3)
 
     it.each([
-      'sandbox_write_file',
       'sandbox_edit_range',
-      'sandbox_list_dir',
-      'sandbox_get_diff',
+      'sandbox_search_replace',
       'sandbox_run_tests',
       'sandbox_prepare_commit',
-    ])('also blocks %s when binding-only', async (tool) => {
+      'sandbox_push',
+    ])('blocks %s when binding-only with LOCAL_DAEMON_TOOL_UNSUPPORTED', async (tool) => {
       const result = await runtime.execute(
         {
           source: 'sandbox',
@@ -559,15 +540,24 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
       );
 
       expect(result.structuredError?.type).toBe('LOCAL_DAEMON_TOOL_UNSUPPORTED');
+      expect(result.structuredError?.retryable).toBe(false);
+      expect(result.text).toContain(tool);
+      expect(result.text).toContain('Local PC');
       expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
     });
 
-    it('still allows sandbox_exec when binding-only (the one daemon-backed tool today)', async () => {
+    it.each([
+      'sandbox_exec',
+      'sandbox_read_file',
+      'sandbox_write_file',
+      'sandbox_list_dir',
+      'sandbox_diff',
+    ])('allows %s when binding-only (daemon-backed)', async (tool) => {
       await runtime.execute(
         {
           source: 'sandbox',
-          call: { tool: 'sandbox_exec', args: { command: 'echo hi' } },
-        },
+          call: { tool, args: {} },
+        } as unknown as AnyToolCall,
         {
           allowedRepo: 'owner/repo',
           sandboxId: null,

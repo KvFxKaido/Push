@@ -1,13 +1,13 @@
 # Remote Sessions via pushd Relay
 
-Date: 2026-05-07 (Phase 1 substrate + first-tool dispatch shipped 2026-05-11 → 2026-05-12; chat-layer runtime wiring 2026-05-12)
-Status: **Partially shipped** — Phase 1 substrate complete (#507–#510), dispatch seam landed with first tool (#511), chat-layer runtime wiring landed (3c.2a), UI half + remaining tool ops in progress under 3c.2b+
+Date: 2026-05-07 (Phase 1 substrate + first-tool dispatch shipped 2026-05-11 → 2026-05-12; chat-layer runtime wiring + tool-op fan-out 2026-05-12)
+Status: **Partially shipped** — Phase 1 substrate complete (#507–#510), dispatch seam landed with first tool (#511), chat-layer runtime wiring (3c.2a) and file-op fan-out (3c.3) landed; UI half (3c.2b), approvals/reconnect (1.f), and Phase 2+ open
 Owner: Push
 Related: `docs/cli/design/Push Runtime Protocol.md`, `docs/decisions/Web and CLI Runtime Contract.md`, `docs/decisions/push-runtime-v2.md`, `docs/decisions/Diff and Annotation Envelope.md`
 
 ## Shipping status
 
-The shipped scope diverged from the original Phase 1 enumeration in two ways: (a) the connector substrate is more complete than spec'd (full WS adapter, paired-device UI, mode chip, IndexedDB storage, dispatch seam), but (b) only `sandbox_exec` is currently routable through the daemon — the "edit files through the existing local tool surface" goal is partial.
+The shipped scope diverged from the original Phase 1 enumeration in two ways: (a) the connector substrate is more complete than spec'd (full WS adapter, paired-device UI, mode chip, IndexedDB storage, dispatch seam), and (b) tool-op fan-out (3c.3) landed before the UI half (3c.2b), so the daemon-side surface (`sandbox_exec` / `sandbox_read_file` / `sandbox_write_file` / `sandbox_list_dir` / `sandbox_diff`) is reachable from the runtime today but the user-visible chat doesn't yet drive a local-pc session.
 
 | Sub-phase | Scope | Status | PRs |
 |---|---|---|---|
@@ -16,7 +16,7 @@ The shipped scope diverged from the original Phase 1 enumeration in two ways: (a
 | 1.c — Dispatch seam + first tool | `SandboxExecutionOptions.localDaemonBinding` threaded; `executeSandboxToolCall`'s `sandbox_exec` case forks on it; `LocalDaemonUnreachableError` → `SANDBOX_UNREACHABLE` with re-pair hint; `daemon_identify` round-trip fills the paired-state UI; Codex P2 fix for `!sandboxId` guard so the local-pc arm (`sandboxId: null`) reaches the fork | Shipped 2026-05-12 | #511 |
 | 1.d — Chat-layer wiring (runtime half) | `localDaemonBindingRef` added to `SendLoopContext` + `ToolExecRunContext` + `lib/` `ToolExecutionContext`; `useChat` exposes `setLocalDaemonBinding`; all three `ToolExecRunContext` build sites (single + parallel + mutation batch) read the ref; `executeAnyToolCall` and `WebToolExecutionRuntime.execute()` forward it; the runtime-layer `!context.sandboxId` short-circuit relaxed to also allow a binding (mirrors the PR #511 fix at the dispatcher layer); `executeSandboxToolCall` now invoked with `options.localDaemonBinding` set. Chat-layer test pinned in `web-tool-execution-runtime.test.ts` ("local-daemon binding propagation"). | Shipped 2026-05-12 (runtime half) | PR 3c.2a |
 | 1.d — Chat-layer wiring (UI half) | Give `kind: 'local-pc'` sessions a chat surface that calls `setLocalDaemonBinding(session.binding)`. Today `WorkspaceScreen` still routes local-pc *away* from `WorkspaceSessionScreen` (the chat-bearing one) and into `LocalPcWorkspace` (probe-only), so no production caller sets the binding yet — the runtime seam is reachable, but the user-visible chat doesn't reach it. | Open (PR 3c.2b) | — |
-| 1.e — Remaining tool-op fan-out | Per-tool recipe: pushd handler + `local-daemon-sandbox-client` method + dispatch fork case. Candidate order: `sandbox_read_file`, `sandbox_write_file`, `sandbox_list_dir`, `sandbox_get_diff`. Codex-friendly per the codex-claude track split. | Open (PR 3c.3+) | — |
+| 1.e — Remaining tool-op fan-out | Per-tool recipe applied to `sandbox_read_file`, `sandbox_write_file`, `sandbox_list_dir`, `sandbox_diff`: pushd handler in `cli/pushd.ts` (re-roots `/workspace/`-prefixed paths against the daemon cwd; runs git diff HEAD + status --porcelain for diff), `local-daemon-sandbox-client` method, dispatch fork case in `sandbox-tools.ts` (with shared `runLocalDaemonTool` helper that maps `LocalDaemonUnreachableError` → `SANDBOX_UNREACHABLE`), `LOCAL_DAEMON_SUPPORTED_TOOLS` set extended in lockstep. Result shapes intentionally minimal — no version cache, no workspace-revision tracking, no card formatting yet. | Shipped 2026-05-12 | PR 3c.3 |
 | 1.f — Approvals + cancel/reconnect | Phase 1's spec'd "submit approvals" and "cancel/reconnect" surfaces on the web side. The pushd handlers exist (`submit_approval`, `cancel_run`); the web pairing UX doesn't surface them yet. | Open | — |
 | 2 — Worker-mediated relay | Outbound-from-PC WebSocket to a Worker/DO that pairs phone client to daemon. Deferred — not on the current sprint. | Open | — |
 | 3 — Permission + audit model | Repo allowlist, per-session attach token, connected-device list, audit log with surface/device provenance. | Open | — |
@@ -110,7 +110,7 @@ The goal is boring correctness:
 - stream events — **shipped** (the WS adapter validates and surfaces event envelopes via `onEvent`, PR #509)
 - submit approvals — pushd has `submit_approval` handler; web UI surface deferred to Phase 1.f
 - cancel/reconnect — pushd has `cancel_run`; web "Retry" button in unreachable banner exists, full reconnect-on-drop deferred (no auto-reconnect with backoff yet)
-- edit files through the existing local tool surface — **partial**: `sandbox_exec` dispatch shipped (PR #511); `sandbox_read_file` / `sandbox_write_file` / `sandbox_list_dir` / `sandbox_get_diff` deferred to 3c.3+
+- edit files through the existing local tool surface — **shipped**: `sandbox_exec` (PR #511) plus `sandbox_read_file` / `sandbox_write_file` / `sandbox_list_dir` / `sandbox_diff` (PR 3c.3). The full daemon-side surface is reachable through the runtime; UI half (3c.2b) is still open
 
 ### Phase 2: Worker-Mediated Relay
 

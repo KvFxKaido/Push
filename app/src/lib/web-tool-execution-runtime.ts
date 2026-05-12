@@ -99,22 +99,27 @@ const PROTECTED_MAIN_TOOLS = new Set(['sandbox_prepare_commit', 'sandbox_push'])
 /**
  * Sandbox tools that have a `pushd` daemon implementation today.
  *
- * The dispatch seam in `executeSandboxToolCall` (PR #511) only forks
- * `sandbox_exec` onto the daemon transport — every other sandbox tool
- * falls through to the cloud `execInSandbox` path. For a `kind: 'local-pc'`
- * session (binding present, `sandboxId: null`), routing an unsupported
- * tool to the cloud handler would call `execInSandbox('')` against a
- * nonexistent sandbox and surface a confusing error.
- *
- * Until PR 3c.3+ adds daemon implementations for the remaining tools
- * (`sandbox_read_file`, `sandbox_write_file`, `sandbox_list_dir`,
- * `sandbox_get_diff`, …), the runtime layer refuses these calls with a
+ * For a `kind: 'local-pc'` session (binding present, `sandboxId: null`),
+ * routing an unsupported tool to the cloud handler would call
+ * `execInSandbox('')` against a nonexistent sandbox and surface a
+ * confusing error. The runtime layer refuses these calls with a
  * structured `LOCAL_DAEMON_TOOL_UNSUPPORTED` error.
+ *
+ * Shipped daemon paths:
+ *   - `sandbox_exec` (PR #511 / 3c.1)
+ *   - `sandbox_read_file` / `sandbox_write_file` / `sandbox_list_dir` /
+ *     `sandbox_diff` (PR 3c.3)
  *
  * Extend this set in lockstep with each tool's per-pushd handler +
  * `local-daemon-sandbox-client` method + dispatch fork case.
  */
-const LOCAL_DAEMON_SUPPORTED_TOOLS = new Set(['sandbox_exec']);
+const LOCAL_DAEMON_SUPPORTED_TOOLS = new Set([
+  'sandbox_exec',
+  'sandbox_read_file',
+  'sandbox_write_file',
+  'sandbox_list_dir',
+  'sandbox_diff',
+]);
 
 async function readSandboxBranch(sandboxId: string): Promise<string | null> {
   try {

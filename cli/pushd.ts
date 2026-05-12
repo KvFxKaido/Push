@@ -3265,6 +3265,216 @@ function truncateExecOutput(text) {
   return `${text.slice(0, SANDBOX_EXEC_MAX_OUTPUT)}\n…[truncated]`;
 }
 
+// ─── Phase 1.e file ops (PR 3c.3) ──────────────────────────────────
+//
+// Mirror the cloud `sandbox_read_file` / `sandbox_write_file` /
+// `sandbox_list_dir` / `sandbox_diff` surface on the daemon. The
+// implementations are deliberately minimal: no version cache, no
+// optimistic concurrency, no workspace-revision tracking. Each
+// resolves paths through `resolveDaemonPath` so a model that pastes
+// `/workspace/foo` (the cloud convention) ends up reading from the
+// daemon's cwd instead of `/workspace/foo` literally on the host.
+
+const SANDBOX_FILE_MAX_BYTES = 1_000_000;
+const SANDBOX_FILE_MAX_LINES = 50_000;
+const SANDBOX_LIST_MAX_ENTRIES = 1_000;
+const SANDBOX_DIFF_MAX_BYTES = 1_000_000;
+const SANDBOX_GIT_TIMEOUT_MS = 30_000;
+
+/**
+ * Resolve a model-supplied path against the daemon's cwd.
+ *
+ * Cloud sandbox paths are conventionally rooted at `/workspace/...`.
+ * On the local daemon, the cwd at startup IS the workspace, so we
+ * strip a leading `/workspace/` and reinterpret the rest as relative.
+ * Absolute non-`/workspace/` paths are honored as-is (the user paired
+ * the daemon — they consented to local FS access). Bare relative
+ * paths resolve against cwd. The leading-tilde case is not expanded
+ * (cwd-based interpretation is enough for chat-driven reads).
+ */
+function resolveDaemonPath(p) {
+  if (typeof p !== 'string' || p === '') return '';
+  const cwd = process.cwd();
+  if (p.startsWith('/workspace/')) return path.resolve(cwd, p.slice('/workspace/'.length));
+  if (p === '/workspace') return cwd;
+  if (path.isAbsolute(p)) return p;
+  return path.resolve(cwd, p);
+}
+
+async function handleSandboxReadFile(req) {
+  const payload = req.payload || {};
+  const rawPath = typeof payload.path === 'string' ? payload.path : '';
+  if (!rawPath) {
+    return makeErrorResponse(
+      req.requestId,
+      'sandbox_read_file',
+      'INVALID_REQUEST',
+      'sandbox_read_file requires a non-empty `path` string in payload.',
+    );
+  }
+  const resolved = resolveDaemonPath(rawPath);
+  const startLine = Number.isInteger(payload.startLine) ? payload.startLine : undefined;
+  const endLine = Number.isInteger(payload.endLine) ? payload.endLine : undefined;
+
+  let buf;
+  try {
+    buf = await fs.readFile(resolved);
+  } catch (err) {
+    const code = typeof err?.code === 'string' ? err.code : 'READ_FAILED';
+    return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+      content: '',
+      truncated: false,
+      error: err?.message || 'read failed',
+      code,
+    });
+  }
+
+  if (buf.length > SANDBOX_FILE_MAX_BYTES) {
+    return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+      content: buf.slice(0, SANDBOX_FILE_MAX_BYTES).toString('utf8'),
+      truncated: true,
+    });
+  }
+
+  const allText = buf.toString('utf8');
+  const allLines = allText.split('\n');
+  const totalLines = allLines.length;
+
+  if (startLine !== undefined || endLine !== undefined) {
+    // Clamp to a sane window so a range read can't request megabytes.
+    const s = Math.max(1, startLine ?? 1);
+    const e = Math.min(totalLines, Math.max(s, endLine ?? totalLines));
+    const slice = allLines.slice(s - 1, e).join('\n');
+    return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+      content: slice,
+      truncated: false,
+      totalLines,
+    });
+  }
+
+  return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+    content:
+      totalLines > SANDBOX_FILE_MAX_LINES
+        ? allLines.slice(0, SANDBOX_FILE_MAX_LINES).join('\n')
+        : allText,
+    truncated: totalLines > SANDBOX_FILE_MAX_LINES,
+    totalLines,
+  });
+}
+
+async function handleSandboxWriteFile(req) {
+  const payload = req.payload || {};
+  const rawPath = typeof payload.path === 'string' ? payload.path : '';
+  const content = typeof payload.content === 'string' ? payload.content : null;
+  if (!rawPath || content === null) {
+    return makeErrorResponse(
+      req.requestId,
+      'sandbox_write_file',
+      'INVALID_REQUEST',
+      'sandbox_write_file requires `path` and `content` strings in payload.',
+    );
+  }
+  const resolved = resolveDaemonPath(rawPath);
+  try {
+    await fs.mkdir(path.dirname(resolved), { recursive: true });
+    await fs.writeFile(resolved, content, 'utf8');
+    return makeResponse(req.requestId, 'sandbox_write_file', null, true, {
+      ok: true,
+      bytesWritten: Buffer.byteLength(content, 'utf8'),
+    });
+  } catch (err) {
+    return makeResponse(req.requestId, 'sandbox_write_file', null, true, {
+      ok: false,
+      error: err?.message || 'write failed',
+    });
+  }
+}
+
+async function handleSandboxListDir(req) {
+  const payload = req.payload || {};
+  const rawPath = typeof payload.path === 'string' && payload.path ? payload.path : '.';
+  const resolved = resolveDaemonPath(rawPath);
+
+  let dirents;
+  try {
+    dirents = await fs.readdir(resolved, { withFileTypes: true });
+  } catch (err) {
+    return makeResponse(req.requestId, 'sandbox_list_dir', null, true, {
+      entries: [],
+      truncated: false,
+      error: err?.message || 'list failed',
+    });
+  }
+
+  const truncated = dirents.length > SANDBOX_LIST_MAX_ENTRIES;
+  const slice = truncated ? dirents.slice(0, SANDBOX_LIST_MAX_ENTRIES) : dirents;
+  const entries = await Promise.all(
+    slice.map(async (d) => {
+      let type;
+      if (d.isFile()) type = 'file';
+      else if (d.isDirectory()) type = 'directory';
+      else if (d.isSymbolicLink()) type = 'symlink';
+      else type = 'other';
+      let size;
+      if (type === 'file') {
+        try {
+          const stat = await fs.stat(path.join(resolved, d.name));
+          size = stat.size;
+        } catch {
+          // Best-effort — leave size undefined.
+        }
+      }
+      return { name: d.name, type, size };
+    }),
+  );
+
+  return makeResponse(req.requestId, 'sandbox_list_dir', null, true, {
+    entries,
+    truncated,
+  });
+}
+
+async function handleSandboxDiff(req) {
+  const { runCommandInResolvedShell } = await import('./shell.js');
+  const cwd = process.cwd();
+  // git diff HEAD: tracked-file working-copy changes vs the most recent
+  // commit. Untracked-file presence is conveyed by `git status --porcelain`
+  // below so the model has a complete picture.
+  let diffText = '';
+  let statusText = '';
+  let diffError;
+  try {
+    const out = await runCommandInResolvedShell('git diff HEAD', {
+      cwd,
+      timeout: SANDBOX_GIT_TIMEOUT_MS,
+      maxBuffer: SANDBOX_DIFF_MAX_BYTES + 64_000,
+    });
+    diffText = out.stdout || '';
+  } catch (err) {
+    // Treat as soft-error: not a fatal RPC failure (might just mean no
+    // commits yet), surface via the error field for the dispatch fork.
+    diffError = err?.stderr || err?.message || 'git diff failed';
+  }
+  try {
+    const out = await runCommandInResolvedShell('git status --porcelain', {
+      cwd,
+      timeout: SANDBOX_GIT_TIMEOUT_MS,
+      maxBuffer: 256_000,
+    });
+    statusText = out.stdout || '';
+  } catch {
+    // Status is advisory; swallow.
+  }
+
+  const truncated = diffText.length > SANDBOX_DIFF_MAX_BYTES;
+  return makeResponse(req.requestId, 'sandbox_diff', null, true, {
+    diff: truncated ? `${diffText.slice(0, SANDBOX_DIFF_MAX_BYTES)}\n…[truncated]` : diffText,
+    truncated,
+    gitStatus: statusText,
+    error: diffError,
+  });
+}
+
 async function handleDaemonIdentify(req, _emitEvent, context) {
   const record = context?.record;
   if (!record || typeof record.tokenId !== 'string') {
@@ -3305,6 +3515,10 @@ const HANDLERS = {
   cancel_delegation: handleCancelDelegation,
   fetch_delegation_events: handleFetchDelegationEvents,
   sandbox_exec: handleSandboxExec,
+  sandbox_read_file: handleSandboxReadFile,
+  sandbox_write_file: handleSandboxWriteFile,
+  sandbox_list_dir: handleSandboxListDir,
+  sandbox_diff: handleSandboxDiff,
   daemon_identify: handleDaemonIdentify,
 };
 

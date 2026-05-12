@@ -71,6 +71,10 @@ vi.mock('./edit-metrics', () => ({
 // exercise the `localDaemonBinding` branch don't open real WS sockets.
 vi.mock('./local-daemon-sandbox-client', () => ({
   execLocalDaemon: vi.fn(),
+  readFileLocalDaemon: vi.fn(),
+  writeFileLocalDaemon: vi.fn(),
+  listDirLocalDaemon: vi.fn(),
+  getDiffLocalDaemon: vi.fn(),
   LocalDaemonUnreachableError: class extends Error {
     readonly reason: string;
     constructor(reason: string) {
@@ -90,7 +94,14 @@ vi.mock('./tool-dispatch', async () => {
 
 import { classifyError, validateSandboxToolCall, executeSandboxToolCall } from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
-import { LocalDaemonUnreachableError, execLocalDaemon } from './local-daemon-sandbox-client';
+import {
+  LocalDaemonUnreachableError,
+  execLocalDaemon,
+  getDiffLocalDaemon,
+  listDirLocalDaemon,
+  readFileLocalDaemon,
+  writeFileLocalDaemon,
+} from './local-daemon-sandbox-client';
 import { runAuditor } from './auditor-agent';
 import { createGitHubRepo } from './sandbox-tool-utils';
 import { getActiveGitHubToken } from './github-auth';
@@ -4911,5 +4922,219 @@ describe('executeSandboxToolCall -- local-pc dispatch (PR 3c.1)', () => {
     );
 
     expect(result.text).toContain('Exit code: 124');
+  });
+});
+
+describe('executeSandboxToolCall -- local-pc dispatch (PR 3c.3 file ops)', () => {
+  beforeEach(() => {
+    vi.mocked(readFileLocalDaemon).mockReset();
+    vi.mocked(writeFileLocalDaemon).mockReset();
+    vi.mocked(listDirLocalDaemon).mockReset();
+    vi.mocked(getDiffLocalDaemon).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  const binding = {
+    port: 49152,
+    token: 'pushd_test_token_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    boundOrigin: 'http://localhost:5173',
+  };
+
+  describe('sandbox_read_file', () => {
+    it('routes through readFileLocalDaemon when binding is provided', async () => {
+      vi.mocked(readFileLocalDaemon).mockResolvedValueOnce({
+        content: 'line 1\nline 2\n',
+        truncated: false,
+        totalLines: 3,
+      });
+      const result = await executeSandboxToolCall(
+        { tool: 'sandbox_read_file', args: { path: 'src/app.ts' } },
+        '',
+        { localDaemonBinding: binding },
+      );
+      expect(readFileLocalDaemon).toHaveBeenCalledWith(binding, 'src/app.ts', {
+        startLine: undefined,
+        endLine: undefined,
+      });
+      expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+      expect(result.text).toContain('[Tool Result — sandbox_read_file]');
+      expect(result.text).toContain('Path: src/app.ts');
+      expect(result.text).toContain('line 1');
+    });
+
+    it('threads startLine and endLine into the client call', async () => {
+      vi.mocked(readFileLocalDaemon).mockResolvedValueOnce({
+        content: 'b\nc',
+        truncated: false,
+        totalLines: 5,
+      });
+      await executeSandboxToolCall(
+        {
+          tool: 'sandbox_read_file',
+          args: { path: 'lines.txt', start_line: 2, end_line: 3 },
+        },
+        '',
+        { localDaemonBinding: binding },
+      );
+      expect(readFileLocalDaemon).toHaveBeenCalledWith(binding, 'lines.txt', {
+        startLine: 2,
+        endLine: 3,
+      });
+    });
+
+    it('surfaces a daemon-payload ENOENT as FILE_NOT_FOUND', async () => {
+      vi.mocked(readFileLocalDaemon).mockResolvedValueOnce({
+        content: '',
+        truncated: false,
+        error: 'ENOENT: no such file',
+        code: 'ENOENT',
+      });
+      const result = await executeSandboxToolCall(
+        { tool: 'sandbox_read_file', args: { path: 'nope.txt' } },
+        '',
+        { localDaemonBinding: binding },
+      );
+      expect(result.structuredError?.type).toBe('FILE_NOT_FOUND');
+      expect(result.text).toContain('ENOENT');
+    });
+
+    it('maps LocalDaemonUnreachableError to SANDBOX_UNREACHABLE with a re-pair hint', async () => {
+      vi.mocked(readFileLocalDaemon).mockRejectedValueOnce(
+        new LocalDaemonUnreachableError('socket closed'),
+      );
+      const result = await executeSandboxToolCall(
+        { tool: 'sandbox_read_file', args: { path: 'foo.txt' } },
+        '',
+        { localDaemonBinding: binding },
+      );
+      expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+      expect(result.text).toContain('Re-pair to continue');
+    });
+  });
+
+  describe('sandbox_write_file', () => {
+    it('routes through writeFileLocalDaemon when binding is provided', async () => {
+      vi.mocked(writeFileLocalDaemon).mockResolvedValueOnce({ ok: true, bytesWritten: 11 });
+      const result = await executeSandboxToolCall(
+        { tool: 'sandbox_write_file', args: { path: 'out.txt', content: 'hello world' } },
+        '',
+        { localDaemonBinding: binding },
+      );
+      expect(writeFileLocalDaemon).toHaveBeenCalledWith(binding, 'out.txt', 'hello world');
+      expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+      expect(result.text).toContain('[Tool Result — sandbox_write_file]');
+      expect(result.text).toContain('Bytes written: 11');
+    });
+
+    it('surfaces a write failure as WRITE_FAILED', async () => {
+      vi.mocked(writeFileLocalDaemon).mockResolvedValueOnce({
+        ok: false,
+        error: 'EACCES: permission denied',
+      });
+      const result = await executeSandboxToolCall(
+        { tool: 'sandbox_write_file', args: { path: '/etc/passwd', content: 'x' } },
+        '',
+        { localDaemonBinding: binding },
+      );
+      expect(result.structuredError?.type).toBe('WRITE_FAILED');
+      expect(result.text).toContain('EACCES');
+    });
+  });
+
+  describe('sandbox_list_dir', () => {
+    it('routes through listDirLocalDaemon when binding is provided', async () => {
+      vi.mocked(listDirLocalDaemon).mockResolvedValueOnce({
+        entries: [
+          { name: 'a.txt', type: 'file', size: 10 },
+          { name: 'sub', type: 'directory' },
+        ],
+        truncated: false,
+      });
+      const result = await executeSandboxToolCall(
+        { tool: 'sandbox_list_dir', args: { path: 'src' } },
+        '',
+        { localDaemonBinding: binding },
+      );
+      expect(listDirLocalDaemon).toHaveBeenCalledWith(binding, 'src');
+      expect(result.text).toContain('[Tool Result — sandbox_list_dir]');
+      expect(result.text).toContain('a.txt');
+      expect(result.text).toContain('sub/');
+    });
+
+    it('omits the path argument when no path is given', async () => {
+      vi.mocked(listDirLocalDaemon).mockResolvedValueOnce({ entries: [], truncated: false });
+      await executeSandboxToolCall({ tool: 'sandbox_list_dir', args: {} }, '', {
+        localDaemonBinding: binding,
+      });
+      expect(listDirLocalDaemon).toHaveBeenCalledWith(binding, undefined);
+    });
+  });
+
+  describe('sandbox_diff', () => {
+    it('routes through getDiffLocalDaemon when binding is provided', async () => {
+      vi.mocked(getDiffLocalDaemon).mockResolvedValueOnce({
+        diff: 'diff --git a/x b/x\n+added\n',
+        truncated: false,
+        gitStatus: ' M src/foo.ts\n',
+      });
+      const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+        localDaemonBinding: binding,
+      });
+      expect(getDiffLocalDaemon).toHaveBeenCalledWith(binding);
+      expect(result.text).toContain('[Tool Result — sandbox_diff]');
+      expect(result.text).toContain('+added');
+      expect(result.text).toContain('M src/foo.ts');
+    });
+
+    it('shows "no changes" when the diff payload is empty', async () => {
+      vi.mocked(getDiffLocalDaemon).mockResolvedValueOnce({
+        diff: '',
+        truncated: false,
+        gitStatus: '',
+      });
+      const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+        localDaemonBinding: binding,
+      });
+      expect(result.text).toContain('no working-copy changes');
+    });
+
+    it('surfaces a fatal git error when diff is empty AND error is set', async () => {
+      vi.mocked(getDiffLocalDaemon).mockResolvedValueOnce({
+        diff: '',
+        truncated: false,
+        error: 'fatal: not a git repository',
+      });
+      const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+        localDaemonBinding: binding,
+      });
+      expect(result.structuredError?.type).toBe('UNKNOWN');
+      expect(result.text).toContain('not a git repository');
+    });
+  });
+
+  it('preserves the cloud path when no binding is provided (regression guard)', async () => {
+    // Each new fork is gated on `options?.localDaemonBinding`. Without
+    // a binding, all four cases must keep calling their cloud handlers,
+    // not the daemon mocks. Asserted with a non-sandbox-call check on
+    // each daemon mock — they should never have been touched in a turn
+    // that didn't pass a binding.
+    vi.mocked(readFileLocalDaemon).mockClear();
+    vi.mocked(writeFileLocalDaemon).mockClear();
+    vi.mocked(listDirLocalDaemon).mockClear();
+    vi.mocked(getDiffLocalDaemon).mockClear();
+
+    // sandbox_read_file with no binding should hit the cloud handler
+    // (which reads sandboxClient.readFromSandbox — not mocked here, so
+    // we just verify the daemon path wasn't taken).
+    try {
+      await executeSandboxToolCall(
+        { tool: 'sandbox_read_file', args: { path: 'foo.txt' } },
+        'sb-cloud-1',
+      );
+    } catch {
+      // Cloud handler will throw because sandboxFetch isn't stubbed —
+      // that's fine; the assertion below is what matters.
+    }
+    expect(readFileLocalDaemon).not.toHaveBeenCalled();
   });
 });
