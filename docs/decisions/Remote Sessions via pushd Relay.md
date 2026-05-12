@@ -13,7 +13,7 @@ The shipped scope diverged from the original Phase 1 enumeration in two ways: (a
 |---|---|---|---|
 | 1.a — Transport + protocol substrate | WS listener on pushd, device-token pairing with origin binding, shared `lib/protocol-schema.ts`, web adapter with subprotocol auth | Shipped 2026-05-11 | #507, #508, #509 |
 | 1.b — Pairing UI + paired workspace | Flag-gated `VITE_LOCAL_PC_MODE` Local PC tile on Onboarding + Hub, pairing panel, paired workspace shell with mode chip + ping probe, IndexedDB `paired_devices` store, bearer token kept out of localStorage | Shipped 2026-05-12 | #510 |
-| 1.c — Dispatch seam + first tool | `SandboxExecutionOptions.localDaemonBinding` threaded; `executeSandboxToolCall`'s `sandbox_exec` case forks on it; `LocalDaemonUnreachableError` → `SANDBOX_UNREACHABLE` with re-pair hint; `daemon_identify` round-trip fills the paired-state UI; Codex P2 fix for `!sandboxId` guard so the local-pc arm (sandboxId: null) reaches the fork | Shipped 2026-05-12 | #511 |
+| 1.c — Dispatch seam + first tool | `SandboxExecutionOptions.localDaemonBinding` threaded; `executeSandboxToolCall`'s `sandbox_exec` case forks on it; `LocalDaemonUnreachableError` → `SANDBOX_UNREACHABLE` with re-pair hint; `daemon_identify` round-trip fills the paired-state UI; Codex P2 fix for `!sandboxId` guard so the local-pc arm (`sandboxId: null`) reaches the fork | Shipped 2026-05-12 | #511 |
 | 1.d — Chat-layer wiring | Thread `workspaceSession.binding` through `useChat` → `executeSandboxToolCall.options.localDaemonBinding` so a real chat turn that emits `sandbox_exec` routes to the daemon. Requires giving `kind: 'local-pc'` sessions a chat surface — today `WorkspaceScreen` routes local-pc *away* from `WorkspaceSessionScreen` (the chat-bearing one) and into `LocalPcWorkspace` (probe-only). Without this, the dispatch seam is reachable only from unit tests. | Open (PR 3c.2) | — |
 | 1.e — Remaining tool-op fan-out | Per-tool recipe: pushd handler + `local-daemon-sandbox-client` method + dispatch fork case. Candidate order: `sandbox_read_file`, `sandbox_write_file`, `sandbox_list_dir`, `sandbox_get_diff`. Codex-friendly per the codex-claude track split. | Open (PR 3c.3+) | — |
 | 1.f — Approvals + cancel/reconnect | Phase 1's spec'd "submit approvals" and "cancel/reconnect" surfaces on the web side. The pushd handlers exist (`submit_approval`, `cancel_run`); the web pairing UX doesn't surface them yet. | Open | — |
@@ -30,8 +30,6 @@ The shipped scope diverged from the original Phase 1 enumeration in two ways: (a
 - **Bearer token NOT in localStorage** (PR #510 review fix): the `workspace_session` storage path used to round-trip the entire session through `safeStorageSet`, which for local-pc would have leaked the bearer. The persistence effect now strips local-pc sessions to a bearerless tombstone before serializing; the normalize loader returns `null` for any persisted local-pc record so the user re-clicks the tile to re-hydrate from IndexedDB. One persistence path, one exfiltration surface.
 - **`daemon_identify` is WS-only by construction** (PR #511): its response surface is the authenticated device-token record, which doesn't exist on the unauthenticated Unix socket. `handleRequest` gained an optional `context` argument that `pushd-ws.ts` populates with `{ record }`; the Unix-socket caller passes nothing; the dispatcher tolerates absence.
 - **`!sandboxId` guard relaxed** (PR #511 review fix): `executeSandboxToolCall` short-circuited before the dispatch fork because `WorkspaceSession.local-pc` carries `sandboxId: null`. Guard now requires both `!sandboxId` AND `!options?.localDaemonBinding` to refuse. Future binding-aware forks must respect the same gating.
-
-
 
 ## Context
 
@@ -111,7 +109,7 @@ The goal is boring correctness:
 - stream events — **shipped** (the WS adapter validates and surfaces event envelopes via `onEvent`, PR #509)
 - submit approvals — pushd has `submit_approval` handler; web UI surface deferred to Phase 1.f
 - cancel/reconnect — pushd has `cancel_run`; web "Retry" button in unreachable banner exists, full reconnect-on-drop deferred (no auto-reconnect with backoff yet)
-- edit files through the existing local tool surface — **partial**: `sandbox_exec` dispatch shipped (PR #511); `read_file` / `write_file` / `list_dir` / `diff` deferred to 3c.3+
+- edit files through the existing local tool surface — **partial**: `sandbox_exec` dispatch shipped (PR #511); `sandbox_read_file` / `sandbox_write_file` / `sandbox_list_dir` / `sandbox_get_diff` deferred to 3c.3+
 
 ### Phase 2: Worker-Mediated Relay
 
