@@ -90,6 +90,7 @@ const KNOWN_OPTIONS = new Set([
   'no-resume-prompt',
   'noResumePrompt',
   'delegate',
+  'deep',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -1775,8 +1776,27 @@ function isProcessRunning(pid) {
   }
 }
 
-async function runDaemonSubcommand(positionals) {
+async function waitForProcessExit(pid, timeoutMs) {
+  const start = Date.now();
+  while (isProcessRunning(pid) && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return !isProcessRunning(pid);
+}
+
+async function readLogTail(logPath, lineCount) {
+  try {
+    const contents = await fs.readFile(logPath, 'utf8');
+    const lines = contents.split('\n').filter((line) => line.length > 0);
+    return lines.slice(-lineCount);
+  } catch {
+    return [];
+  }
+}
+
+async function runDaemonSubcommand(values, positionals) {
   const action = (positionals[1] || 'status').toLowerCase();
+  const deep = Boolean(values?.deep);
 
   if (action === 'status') {
     const pid = await readPidFile();
@@ -1785,23 +1805,53 @@ async function runDaemonSubcommand(positionals) {
       // Also try a live ping to confirm responsiveness
       const { tryConnect } = await import('./daemon-client.js');
       const client = await tryConnect(socketPath, 1000);
+      let livenessLine;
+      let sessionCount = null;
       if (client) {
         try {
-          const res = await client.request('ping', {}, null, 1000);
-          client.close();
-          process.stdout.write(
-            `pushd is running (pid: ${pid})\nsocket: ${socketPath}\nstatus: responsive\n`,
-          );
+          await client.request('ping', {}, null, 1000);
+          livenessLine = 'status: responsive';
+          if (deep) {
+            try {
+              const res = await client.request('list_sessions', {}, null, 1500);
+              if (Array.isArray(res?.sessions)) {
+                sessionCount = res.sessions.length;
+              }
+            } catch {
+              // list_sessions optional under --deep; don't fail the whole status
+            }
+          }
         } catch {
+          livenessLine = 'status: not responding to ping';
+        } finally {
           client.close();
-          process.stdout.write(
-            `pushd is running (pid: ${pid})\nsocket: ${socketPath}\nstatus: not responding to ping\n`,
-          );
         }
       } else {
+        livenessLine = 'status: socket not reachable';
+      }
+      process.stdout.write(
+        `pushd is running (pid: ${pid})\nsocket: ${socketPath}\n${livenessLine}\n`,
+      );
+      if (deep) {
+        let uptime = '';
+        try {
+          const stat = await fs.stat(getPidPath());
+          const ms = Date.now() - stat.mtime.getTime();
+          uptime = `${Math.floor(ms / 1000)}s since pid file written`;
+        } catch {
+          uptime = 'unknown';
+        }
+        process.stdout.write(`uptime: ${uptime}\n`);
         process.stdout.write(
-          `pushd is running (pid: ${pid})\nsocket: ${socketPath}\nstatus: socket not reachable\n`,
+          `sessions: ${sessionCount === null ? 'unavailable' : String(sessionCount)}\n`,
         );
+        const tail = await readLogTail(getLogPath(), 5);
+        if (tail.length === 0) {
+          process.stdout.write('log: (empty)\n');
+        } else {
+          process.stdout.write(`log (last ${tail.length}):\n`);
+          for (const line of tail) process.stdout.write(`  ${line}\n`);
+        }
       }
     } else {
       process.stdout.write('pushd is not running\n');
@@ -1894,7 +1944,29 @@ async function runDaemonSubcommand(positionals) {
     return 0;
   }
 
-  throw new Error(`Unknown daemon action: ${action}. Use: push daemon start|stop|status`);
+  if (action === 'restart') {
+    const pid = await readPidFile();
+    if (pid && isProcessRunning(pid)) {
+      process.kill(pid, 'SIGTERM');
+      // Wait up to 5s for the old process to fully exit before spawning a new
+      // one — otherwise the new pushd races the old one on the same socket.
+      const exited = await waitForProcessExit(pid, 5000);
+      if (!exited) {
+        process.stdout.write(
+          `pushd did not exit within 5s (pid: ${pid}); restart aborted. Try \`push daemon stop\` then \`push daemon start\`.\n`,
+        );
+        return 1;
+      }
+      process.stdout.write(`pushd stopped (pid: ${pid})\n`);
+    } else {
+      process.stdout.write('pushd was not running; starting fresh\n');
+    }
+    return runDaemonSubcommand(values, ['daemon', 'start']);
+  }
+
+  throw new Error(
+    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep]`,
+  );
 }
 
 /**
@@ -2153,6 +2225,7 @@ export async function main() {
       'no-resume-prompt': { type: 'boolean' },
       delegate: { type: 'boolean', default: false },
       version: { type: 'boolean', short: 'v' },
+      deep: { type: 'boolean' },
     },
   });
 
@@ -2419,7 +2492,7 @@ export async function main() {
   }
 
   if (subcommand === 'daemon') {
-    return runDaemonSubcommand(positionals);
+    return runDaemonSubcommand(values, positionals);
   }
 
   if (subcommand === 'attach') {
