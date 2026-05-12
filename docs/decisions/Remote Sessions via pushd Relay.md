@@ -3,7 +3,7 @@
 Date: 2026-05-07 (Phase 1 substrate + first-tool dispatch shipped 2026-05-11 → 2026-05-12)
 Status: **Partially shipped** — Phase 1 substrate complete (#507–#510), dispatch seam landed with first tool (#511), chat-layer wiring + remaining tool ops in progress under PR 3c.2+
 Owner: Push
-Related: `docs/cli/design/Push Runtime Protocol.md`, `docs/decisions/Web and CLI Runtime Contract.md`, `docs/decisions/push-runtime-v2.md`
+Related: `docs/cli/design/Push Runtime Protocol.md`, `docs/decisions/Web and CLI Runtime Contract.md`, `docs/decisions/push-runtime-v2.md`, `docs/decisions/Diff and Annotation Envelope.md`
 
 ## Shipping status
 
@@ -185,6 +185,7 @@ Relay logging should be minimal. Protocol envelopes can contain file paths, comm
 5. ~~Workspace Hub UX: how does a user distinguish cloud sandbox workspaces from local-PC remote sessions?~~ **Answered (PR #510)**: dedicated "Local PC · Experimental" tile in both Onboarding and Hub (flag-gated by `VITE_LOCAL_PC_MODE`); paired workspace renders an always-visible amber `LocalPcModeChip` showing `Local PC · :<port> · <status>` in the header. Cloud sessions render no chip — absence is the affordance.
 6. Revocation: what is the exact PC-side UX for "kick this phone off now"? **Partially answered**: `push daemon revoke <tokenId>` exists on the CLI and the web "Unpair" button clears the IndexedDB record on the browser side. There's no live-disconnect surface yet — revoking a token affects future upgrades only, not an active socket. Phase 1.f or Phase 3 will close this.
 7. Network failure: how much local daemon work can continue when the phone disconnects? **Still open** — depends on Phase 1.d's chat-layer wiring (3c.2) shipping first.
+8. Diff/review payload shape across the relay: when a phone surface attaches to a remote `pushd` daemon and Reviewer/Auditor/Coder emit diff + annotations, what envelope rides the relay? **Tracked separately** in `docs/decisions/Diff and Annotation Envelope.md` (Draft, 2026-05-12). The decision there is to hand-roll the envelope in `lib/` and treat `@pierre/diffs` and `modem-dev/hunk` as design references only; this keeps remote sessions on `push.runtime.v1` without inventing a parallel vocabulary for review payloads.
 
 ## Implementation Rules
 
