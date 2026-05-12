@@ -44,15 +44,22 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
 
   // The test connection is owned by this component; close it on
   // unmount (Strict Mode + navigation), and never let two probes
-  // run concurrently if the user double-clicks Pair.
-  const testHandleRef = useRef<LocalDaemonBinding | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // run concurrently if the user double-clicks Pair. The handle +
+  // its backstop timer travel together so a callback from probe N
+  // can't accidentally clear the timer belonging to probe N+1
+  // (race surfaced in PR #510 review).
+  const inFlightRef = useRef<{
+    handle: LocalDaemonBinding;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
 
   useEffect(() => {
     return () => {
-      testHandleRef.current?.close();
-      testHandleRef.current = null;
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (inFlightRef.current) {
+        clearTimeout(inFlightRef.current.timer);
+        inFlightRef.current.handle.close();
+        inFlightRef.current = null;
+      }
     };
   }, []);
 
@@ -67,19 +74,23 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
     outcome: PairState,
     paired?: { binding: LocalPcBinding; record: PairedDeviceRecord },
   ) => {
-    handle.close();
-    if (testHandleRef.current === handle) {
-      testHandleRef.current = null;
+    // Only the in-flight probe gets to retire. Late callbacks from a
+    // superseded handle close their own WS and bail.
+    const inFlight = inFlightRef.current;
+    if (!inFlight || inFlight.handle !== handle) {
+      handle.close();
+      return;
     }
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
+    clearTimeout(inFlight.timer);
+    inFlight.handle.close();
+    inFlightRef.current = null;
+
     if (paired) {
-      // Storage is fire-and-forget; the binding is what the caller
-      // needs to flip into the workspace. If the put fails the user
-      // will be prompted to re-pair next boot, which is the same
-      // recovery as an explicit Unpair.
+      // Storage failure here is recoverable: if the put fails, the user
+      // re-clicks Local PC on next boot and lands back on the pairing
+      // form (the load path drops a tombstone with no binding). The
+      // alternative — awaiting setPairedDevice — would block the UI
+      // transition behind a write that almost never fails.
       void setPairedDevice(paired.record);
       onPaired(paired.binding);
       return;
@@ -89,11 +100,15 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
 
   const handlePair = (event?: { preventDefault?: () => void }) => {
     event?.preventDefault?.();
-    if (!formValid || state.kind === 'testing') return;
+    // Synchronous in-flight guard. `state.kind === 'testing'` lags by
+    // a render after `setState`, so two clicks dispatched in the same
+    // frame would both pass that check; the ref reflects the truth at
+    // the moment of the call.
+    if (!formValid || inFlightRef.current !== null) return;
+    setState({ kind: 'testing' });
 
     const portNum = Number(portInput);
     const token = tokenInput.trim();
-    setState({ kind: 'testing' });
 
     const handle = createLocalDaemonBinding({
       port: portNum,
@@ -133,19 +148,18 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
         });
       },
     });
-    testHandleRef.current = handle;
 
     // Backstop: if the WS upgrade hangs (e.g. pushd not listening at
     // all, OS holding the SYN), the adapter would sit at 'connecting'
-    // indefinitely. Cap the test wait independently.
-    timeoutRef.current = setTimeout(() => {
-      if (testHandleRef.current === handle) {
-        finishTest(handle, {
-          kind: 'failed',
-          reason: 'timed out waiting for pushd',
-        });
-      }
+    // indefinitely. Cap the test wait independently — and capture the
+    // timer alongside the handle so finishTest can clear the right one.
+    const timer = setTimeout(() => {
+      finishTest(handle, {
+        kind: 'failed',
+        reason: 'timed out waiting for pushd',
+      });
     }, TEST_TIMEOUT_MS);
+    inFlightRef.current = { handle, timer };
   };
 
   const isTesting = state.kind === 'testing';

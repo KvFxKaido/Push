@@ -18,7 +18,7 @@
  * real workspace UX onto the same `useLocalDaemon` seam.
  */
 import { Loader2, MonitorOff, Send } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { LocalPcModeChip } from '@/components/LocalPcModeChip';
 import { useLocalDaemon } from '@/hooks/useLocalDaemon';
 import { DaemonRequestError, type SessionResponse } from '@/lib/local-daemon-binding';
@@ -35,12 +35,16 @@ interface PingResult {
   ok: boolean;
   detail: string;
   at: number;
+  /** Monotonic sequence number — guaranteed unique even if two pings
+   *  land in the same millisecond, which `at` alone can't promise. */
+  seq: number;
 }
 
 export function LocalPcWorkspace({ binding, onUnpair }: LocalPcWorkspaceProps) {
   const { status, events, request, reconnect } = useLocalDaemon(binding);
   const [pingPending, setPingPending] = useState(false);
   const [pingHistory, setPingHistory] = useState<PingResult[]>([]);
+  const pingSeqRef = useRef(0);
 
   const handlePing = async () => {
     if (pingPending) return;
@@ -55,6 +59,7 @@ export function LocalPcWorkspace({ binding, onUnpair }: LocalPcWorkspaceProps) {
             ok: true,
             detail: response.payload?.pong ? `pong in ${rttMs}ms` : `response in ${rttMs}ms`,
             at: Date.now(),
+            seq: ++pingSeqRef.current,
           },
           ...prev,
         ].slice(0, 10),
@@ -66,7 +71,9 @@ export function LocalPcWorkspace({ binding, onUnpair }: LocalPcWorkspaceProps) {
           : err instanceof Error
             ? err.message
             : 'unknown error';
-      setPingHistory((prev) => [{ ok: false, detail, at: Date.now() }, ...prev].slice(0, 10));
+      setPingHistory((prev) =>
+        [{ ok: false, detail, at: Date.now(), seq: ++pingSeqRef.current }, ...prev].slice(0, 10),
+      );
     } finally {
       setPingPending(false);
     }
@@ -151,7 +158,7 @@ export function LocalPcWorkspace({ binding, onUnpair }: LocalPcWorkspaceProps) {
               <ul className="space-y-1 text-xs">
                 {pingHistory.map((entry) => (
                   <li
-                    key={entry.at}
+                    key={entry.seq}
                     className={`flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 ${
                       entry.ok
                         ? 'border-emerald-400/30 bg-emerald-500/5 text-emerald-100'

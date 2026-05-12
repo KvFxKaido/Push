@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import { useAuthSession } from '@/hooks/useAuthSession';
 import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
@@ -84,21 +84,14 @@ function normalizeWorkspaceSession(
   }
 
   if (candidate.kind === 'local-pc') {
-    // Local-pc sessions are only restorable if the binding can be
-    // round-tripped from the persisted value. A serialized session
-    // without a binding (or with a malformed one) can't proceed —
-    // drop it so the user lands on the hub and can re-pair if needed.
-    const rawBinding = candidate.binding;
-    if (!rawBinding || typeof rawBinding !== 'object') return null;
-    const b = rawBinding as Record<string, unknown>;
-    if (typeof b.port !== 'number' || typeof b.token !== 'string') return null;
-    const binding: LocalPcBinding = {
-      port: b.port,
-      token: b.token,
-      boundOrigin: typeof b.boundOrigin === 'string' ? b.boundOrigin : '',
-      tokenId: typeof b.tokenId === 'string' ? b.tokenId : undefined,
-    };
-    return { id: candidate.id, kind: 'local-pc', binding, sandboxId: null };
+    // Local-pc sessions are intentionally NOT restored from localStorage.
+    // The persistence effect strips bindings before serializing (the
+    // bearer must never survive a JSON round trip through localStorage —
+    // see PR #510 review), so any persisted record is by design a
+    // bearerless tombstone. Forcing a re-click of the Local PC tile
+    // re-hydrates from IndexedDB through the same code path that handles
+    // first-time entry, with no second persistence path to keep in sync.
+    return null;
   }
 
   return activeRepo
@@ -160,6 +153,12 @@ function App() {
   // record exists: the WorkspaceSession union mandates a `binding` on the
   // 'local-pc' arm, so we route through this state until pairing yields one.
   const [localPcPairingActive, setLocalPcPairingActive] = useState(false);
+  // Generation counter for in-flight `handleStartLocalPc` IDB reads. The
+  // tile click is async (paired_devices lookup) and the user may navigate
+  // away or click another mode before the promise resolves; bumping this
+  // ref on every flow-changing handler lets the stale resolver detect
+  // that it's been superseded and bail without committing state.
+  const localPcGenRef = useRef(0);
 
   const { resolveRepoAppearance, setRepoAppearance, clearRepoAppearance } = useRepoAppearance();
 
@@ -233,17 +232,19 @@ function App() {
     setWorkspaceSession({ id: crypto.randomUUID(), kind: 'chat', sandboxId: null });
   }, [clearActiveRepo]);
 
-  const handleStartLocalPc = useCallback(() => {
+  const handleStartLocalPc = useCallback(async () => {
+    // Capture the generation at click time. Any later flow-changing
+    // handler bumps the counter, so a slow IDB read can't "teleport"
+    // the user into a local-pc session after they've already moved on.
+    const myGen = ++localPcGenRef.current;
     setPendingResumeChatId(null);
     clearActiveRepo();
-    // If we already have a stored pairing, jump straight into the workspace.
-    // Otherwise route through the pairing interstitial. The IDB read is
-    // async, so optimistically show pairing then upgrade when it resolves —
-    // this keeps the click feeling instant on a fresh install.
-    setLocalPcPairingActive(true);
     setWorkspaceSession(null);
-    void getPairedDevice().then((record) => {
-      if (!record) return;
+
+    const record = await getPairedDevice();
+    if (localPcGenRef.current !== myGen) return; // superseded — bail
+
+    if (record) {
       setLocalPcPairingActive(false);
       setWorkspaceSession({
         id: crypto.randomUUID(),
@@ -256,10 +257,13 @@ function App() {
         },
         sandboxId: null,
       });
-    });
+    } else {
+      setLocalPcPairingActive(true);
+    }
   }, [clearActiveRepo]);
 
   const handleLocalPcPaired = useCallback((binding: LocalPcBinding) => {
+    localPcGenRef.current += 1;
     setLocalPcPairingActive(false);
     setWorkspaceSession({
       id: crypto.randomUUID(),
@@ -270,11 +274,13 @@ function App() {
   }, []);
 
   const handleLocalPcPairingCancel = useCallback(() => {
+    localPcGenRef.current += 1;
     setLocalPcPairingActive(false);
     setWorkspaceSession(null);
   }, []);
 
   const handleEndWorkspace = useCallback(() => {
+    localPcGenRef.current += 1;
     setPendingResumeChatId(null);
     setWorkspaceSession(null);
     setLocalPcPairingActive(false);
@@ -374,7 +380,15 @@ function App() {
       safeStorageRemove(WORKSPACE_SESSION_STORAGE_KEY);
       return;
     }
-    safeStorageSet(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify(workspaceSession));
+    // Local-pc sessions get stripped to a bearerless tombstone before
+    // serialization. The bearer token lives in IndexedDB (paired_devices)
+    // and is re-hydrated on the next tile click; persisting it here too
+    // would create a second exfiltration surface and a sync hazard.
+    const persisted =
+      workspaceSession.kind === 'local-pc'
+        ? { id: workspaceSession.id, kind: 'local-pc' as const, sandboxId: null }
+        : workspaceSession;
+    safeStorageSet(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify(persisted));
   }, [workspaceSession]);
 
   const screen: AppShellScreen = useMemo(() => {
