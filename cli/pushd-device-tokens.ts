@@ -125,10 +125,25 @@ async function readTokenFile(): Promise<DeviceTokenRecord[]> {
   return records;
 }
 
-async function writeTokenFile(records: DeviceTokenRecord[]): Promise<void> {
+// Serialize all read-modify-write cycles within this process. Without
+// this, a `revoke` that races with a concurrent `touchLastUsed` could
+// be lost (both read the same baseline, the touch writes back with the
+// revoked record still present). Cross-process races (CLI vs daemon)
+// are out of scope for PR 1 — those interleave at human latency.
+let writeQueue: Promise<unknown> = Promise.resolve();
+function serialize<T>(fn: () => Promise<T>): Promise<T> {
+  const next = writeQueue.then(fn, fn);
+  writeQueue = next.catch(() => {});
+  return next;
+}
+
+async function writeTokenFileLocked(records: DeviceTokenRecord[]): Promise<void> {
   await ensureTokensDir();
   const tokensPath = getTokensPath();
-  const tmpPath = `${tokensPath}.tmp`;
+  // Unique tmp suffix per write — even with the in-process queue,
+  // cross-process writers (CLI mint, daemon touch) must not collide
+  // on a shared tmp name.
+  const tmpPath = `${tokensPath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   const body = records.map((r) => JSON.stringify(r)).join('\n') + (records.length ? '\n' : '');
   // Write tmp + rename for atomicity; create with mode 0600 so a reader
   // never sees a wider-permission tmp file mid-write.
@@ -139,7 +154,14 @@ async function writeTokenFile(records: DeviceTokenRecord[]): Promise<void> {
   } finally {
     await handle.close();
   }
-  await fs.rename(tmpPath, tokensPath);
+  try {
+    await fs.rename(tmpPath, tokensPath);
+  } catch (err) {
+    // Best-effort cleanup of the unique tmp file if rename failed for
+    // any reason — don't leak it next to the real tokens file.
+    await fs.unlink(tmpPath).catch(() => {});
+    throw err;
+  }
   try {
     await fs.chmod(tokensPath, 0o600);
   } catch {
@@ -162,9 +184,11 @@ export async function mintDeviceToken(opts: { boundOrigin: BoundOrigin }): Promi
     boundOrigin: opts.boundOrigin,
     lastUsedAt: null,
   };
-  const existing = await readTokenFile();
-  existing.push(record);
-  await writeTokenFile(existing);
+  await serialize(async () => {
+    const existing = await readTokenFile();
+    existing.push(record);
+    await writeTokenFileLocked(existing);
+  });
   return { token, tokenId, record };
 }
 
@@ -201,11 +225,13 @@ export async function verifyDeviceToken(
  */
 export async function revokeDeviceToken(tokenId: string): Promise<boolean> {
   if (typeof tokenId !== 'string' || !tokenId.startsWith(TOKEN_ID_PREFIX)) return false;
-  const records = await readTokenFile();
-  const next = records.filter((r) => r.tokenId !== tokenId);
-  if (next.length === records.length) return false;
-  await writeTokenFile(next);
-  return true;
+  return serialize(async () => {
+    const records = await readTokenFile();
+    const next = records.filter((r) => r.tokenId !== tokenId);
+    if (next.length === records.length) return false;
+    await writeTokenFileLocked(next);
+    return true;
+  });
 }
 
 /**
@@ -222,15 +248,17 @@ export async function listDeviceTokens(): Promise<DeviceTokenRecord[]> {
  */
 export async function touchLastUsed(tokenId: string): Promise<void> {
   try {
-    const records = await readTokenFile();
-    let changed = false;
-    for (const r of records) {
-      if (r.tokenId === tokenId) {
-        r.lastUsedAt = Date.now();
-        changed = true;
+    await serialize(async () => {
+      const records = await readTokenFile();
+      let changed = false;
+      for (const r of records) {
+        if (r.tokenId === tokenId) {
+          r.lastUsedAt = Date.now();
+          changed = true;
+        }
       }
-    }
-    if (changed) await writeTokenFile(records);
+      if (changed) await writeTokenFileLocked(records);
+    });
   } catch {
     // non-fatal
   }

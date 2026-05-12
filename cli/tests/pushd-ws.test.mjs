@@ -73,6 +73,19 @@ function openWs({ token, origin }) {
   return new WebSocket(wsUrl(), { headers });
 }
 
+function closeAndWait(ws) {
+  return new Promise((resolve) => {
+    if (ws.readyState === ws.CLOSED) return resolve();
+    ws.once('close', () => resolve());
+    ws.once('error', () => resolve());
+    try {
+      ws.close();
+    } catch {
+      resolve();
+    }
+  });
+}
+
 function waitForUpgradeOutcome(ws) {
   return new Promise((resolve) => {
     let settled = false;
@@ -129,7 +142,7 @@ describe('pushd-ws auth gate', () => {
     const response = await roundTripPing(ws);
     assert.equal(response.ok, true);
     assert.equal(response.payload.echo, 'ping');
-    ws.close();
+    await closeAndWait(ws);
   });
 
   it('accepts a valid exact-origin-bound token + matching origin', async () => {
@@ -138,7 +151,7 @@ describe('pushd-ws auth gate', () => {
     const ws = openWs({ token, origin });
     const outcome = await waitForUpgradeOutcome(ws);
     assert.equal(outcome.kind, 'open');
-    ws.close();
+    await closeAndWait(ws);
   });
 
   it('rejects missing bearer token with 401', async () => {

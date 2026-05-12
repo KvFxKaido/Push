@@ -161,6 +161,44 @@ describe('listDeviceTokens', () => {
   });
 });
 
+describe('concurrent write serialization', () => {
+  it('parallel mint+touch+revoke never throws and preserves invariants', async () => {
+    // Reproduces the race the first CI run hit: two writers using the
+    // same tmp filename + interleaved read-modify-write. Without
+    // serialization + unique tmp names, this throws ENOENT and/or
+    // loses revocations.
+    const seed = await mintDeviceToken({ boundOrigin: 'loopback' });
+
+    const ops = [];
+    for (let i = 0; i < 20; i++) {
+      ops.push(mintDeviceToken({ boundOrigin: 'loopback' }));
+      ops.push(touchLastUsed(seed.tokenId));
+    }
+    const results = await Promise.all(ops);
+    const minted = results.filter((r) => r && typeof r === 'object' && 'tokenId' in r);
+    assert.equal(minted.length, 20);
+
+    // Revoke one of the minted tokens while more touches race. Revoke
+    // must stick — that's the security-relevant invariant.
+    const target = minted[10];
+    const [revoked] = await Promise.all([
+      revokeDeviceToken(target.tokenId),
+      touchLastUsed(seed.tokenId),
+      touchLastUsed(target.tokenId),
+      touchLastUsed(seed.tokenId),
+    ]);
+    assert.equal(revoked, true);
+
+    const after = await listDeviceTokens();
+    assert.equal(
+      after.find((r) => r.tokenId === target.tokenId),
+      undefined,
+      'revoked token must not reappear after a racing touch',
+    );
+    assert.equal(after.length, 20);
+  });
+});
+
 describe('touchLastUsed', () => {
   it('updates lastUsedAt for an existing token', async () => {
     const { tokenId } = await mintDeviceToken({ boundOrigin: 'loopback' });
