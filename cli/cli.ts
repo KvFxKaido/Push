@@ -1815,7 +1815,7 @@ async function readLogTail(logPath, lineCount) {
 
 async function runDaemonSubcommand(values, positionals) {
   const action = (positionals[1] || 'status').toLowerCase();
-  const deep = Boolean(values?.deep);
+  const deep = parseBoolFlag(values?.deep, 'deep');
 
   if (action === 'status') {
     const pid = await readPidFile();
@@ -1833,8 +1833,11 @@ async function runDaemonSubcommand(values, positionals) {
           if (deep) {
             try {
               const res = await client.request('list_sessions', {}, null, 1500);
-              if (Array.isArray(res?.sessions)) {
-                sessionCount = res.sessions.length;
+              // request() resolves with the full response envelope; the
+              // handler's data lives under `.payload`.
+              const sessions = res?.payload?.sessions;
+              if (Array.isArray(sessions)) {
+                sessionCount = sessions.length;
               }
             } catch {
               // list_sessions optional under --deep; don't fail the whole status
