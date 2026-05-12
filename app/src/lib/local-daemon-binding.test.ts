@@ -91,6 +91,21 @@ async function startStubServer(): Promise<FixtureServer> {
             })}\n`,
           );
         }
+        if (parsed.kind === 'request' && parsed.type === 'fail_me') {
+          // Exercise the ok:false → DaemonRequestError reject path.
+          ws.send(
+            `${JSON.stringify({
+              v: PROTOCOL_VERSION,
+              kind: 'response',
+              requestId: parsed.requestId,
+              type: 'fail_me',
+              sessionId: null,
+              ok: false,
+              payload: {},
+              error: { code: 'BAD_THING', message: 'thing was bad', retryable: false },
+            })}\n`,
+          );
+        }
       }
     });
     ws.on('close', () => clients.delete(ws));
@@ -117,26 +132,25 @@ function waitForStatus(
   predicate: (s: ConnectionStatus) => boolean,
 ): Promise<ConnectionStatus> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timed out waiting for status')), 3000);
-    const check = () => {
-      const match = statuses.find(predicate);
-      if (match) {
-        clearTimeout(timer);
-        resolve(match);
-      }
+    let done = false;
+    const settle = (fn: () => void) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      clearInterval(interval);
+      fn();
     };
-    check();
-    // Polling the array is fine — the adapter pushes synchronously
-    // via onStatus, so by the time the awaiter checks, anything that
-    // was going to arrive already has.
+    const timer = setTimeout(
+      () => settle(() => reject(new Error('timed out waiting for status'))),
+      3000,
+    );
     const interval = setInterval(() => {
       const match = statuses.find(predicate);
-      if (match) {
-        clearTimeout(timer);
-        clearInterval(interval);
-        resolve(match);
-      }
+      if (match) settle(() => resolve(match));
     }, 20);
+    // Check synchronously once in case the status is already there.
+    const immediate = statuses.find(predicate);
+    if (immediate) settle(() => resolve(immediate));
   });
 }
 
@@ -165,16 +179,44 @@ describe('local-daemon-binding', () => {
     binding.close();
   });
 
-  it('surfaces auth failure as auth-failed status (bad token)', async () => {
+  it('surfaces a bad token as unreachable (browser cannot distinguish auth-fail from net-fail)', async () => {
     const statuses: ConnectionStatus[] = [];
     const binding = createLocalDaemonBinding({
       port: server.port,
       token: 'pushd_wrong_token_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       onStatus: (s) => statuses.push(s),
     });
-    const status = await waitForStatus(statuses, (s) => s.state === 'auth-failed');
-    expect(status.state).toBe('auth-failed');
+    const status = await waitForStatus(statuses, (s) => s.state === 'unreachable');
+    expect(status.state).toBe('unreachable');
     binding.close();
+  });
+
+  it('refuses non-loopback hosts at construction', () => {
+    expect(() =>
+      createLocalDaemonBinding({
+        port: server.port,
+        token: VALID_TOKEN,
+        host: '0.0.0.0',
+      }),
+    ).toThrow(/non-loopback host/);
+  });
+
+  it('reports a client-initiated close as closed, not unreachable', async () => {
+    const statuses: ConnectionStatus[] = [];
+    const binding = createLocalDaemonBinding({
+      port: server.port,
+      token: VALID_TOKEN,
+      onStatus: (s) => statuses.push(s),
+    });
+    // Close while still connecting (or right after). The terminal
+    // status must be `closed` (code 1000) — not `unreachable`, which
+    // would falsely tell the UI the connection failed.
+    binding.close();
+    const status = await waitForStatus(
+      statuses,
+      (s) => s.state === 'closed' || s.state === 'unreachable',
+    );
+    expect(status.state).toBe('closed');
   });
 
   it('rejects request() when not open', async () => {
@@ -248,6 +290,28 @@ describe('local-daemon-binding', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(malformed.length).toBeGreaterThanOrEqual(2);
     expect(binding.status.state).toBe('open');
+    binding.close();
+  });
+
+  it('rejects ok:false responses with DaemonRequestError', async () => {
+    const { DaemonRequestError } = await import('./local-daemon-binding');
+    const statuses: ConnectionStatus[] = [];
+    const binding = createLocalDaemonBinding({
+      port: server.port,
+      token: VALID_TOKEN,
+      onStatus: (s) => statuses.push(s),
+    });
+    await waitForStatus(statuses, (s) => s.state === 'open');
+    try {
+      await binding.request({ type: 'fail_me' });
+      throw new Error('expected reject');
+    } catch (err) {
+      expect(err).toBeInstanceOf(DaemonRequestError);
+      const daemonErr = err as InstanceType<typeof DaemonRequestError>;
+      expect(daemonErr.code).toBe('BAD_THING');
+      expect(daemonErr.retryable).toBe(false);
+      expect(daemonErr.message).toBe('thing was bad');
+    }
     binding.close();
   });
 

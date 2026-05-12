@@ -19,6 +19,28 @@ import { PROTOCOL_VERSION, validateEventEnvelope } from '@push/lib/protocol-sche
 const SUBPROTOCOL_SELECTOR = 'pushd.v1';
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+
+/**
+ * Thrown by `request()` when the daemon returned a correlated
+ * response with `ok: false`. Callers can switch on `.code` to handle
+ * specific error kinds (INVALID_TOKEN, SESSION_NOT_FOUND, etc.).
+ *
+ * Rejecting on `ok: false` instead of resolving with a "you have to
+ * check `.ok`" envelope keeps the call-site contract honest: either
+ * the promise resolves with a successful response, or it rejects
+ * with an error you can `try/catch` like any other.
+ */
+export class DaemonRequestError extends Error {
+  readonly code: string;
+  readonly retryable: boolean;
+  constructor(opts: { code: string; message: string; retryable?: boolean }) {
+    super(opts.message);
+    this.name = 'DaemonRequestError';
+    this.code = opts.code;
+    this.retryable = opts.retryable ?? false;
+  }
+}
 
 /** Mirror of the wire envelope shape from `lib/protocol-schema.ts`. */
 export interface SessionEvent {
@@ -46,13 +68,32 @@ export interface SessionResponse<T = unknown> {
 export type ConnectionStatus =
   | { state: 'connecting' }
   | { state: 'open' }
-  | { state: 'auth-failed'; reason: string }
+  /**
+   * Connection died before it ever opened. Browsers intentionally
+   * hide the HTTP status of a failed WS upgrade from JS, so we can't
+   * distinguish "daemon not running" (TCP refused) from "token
+   * rejected at upgrade" from "origin mismatch" from "network error."
+   * All collapse into `unreachable`; callers should use the `reason`
+   * field + their own context (was the user just pairing? have they
+   * been connected before?) to decide whether to retry or prompt
+   * the user to re-pair.
+   */
+  | { state: 'unreachable'; code: number; reason: string }
+  /** Was open, then closed. Includes normal client-initiated close. */
   | { state: 'closed'; code: number; reason: string };
 
 export interface LocalDaemonBindingOptions {
   port: number;
   token: string;
-  /** Defaults to 127.0.0.1. Browsers refuse non-loopback https→ws anyway. */
+  /**
+   * Defaults to 127.0.0.1. Must be a loopback name — the adapter
+   * refuses non-loopback hosts at construction time to keep the
+   * bearer token (carried in `Sec-WebSocket-Protocol`) from leaking
+   * to a non-local endpoint. The server-side equivalent in
+   * `cli/pushd-ws.ts` enforces the same set on its bind side; this
+   * guard prevents the *client* from being tricked into pointing
+   * elsewhere.
+   */
   host?: string;
   /** Called on every status transition. */
   onStatus?: (status: ConnectionStatus) => void;
@@ -76,8 +117,12 @@ export interface RequestOptions {
 export interface LocalDaemonBinding {
   readonly status: ConnectionStatus;
   /**
-   * Send a request envelope. Resolves with the response payload, or
-   * rejects on error, timeout, or connection close.
+   * Send a request envelope. Resolves with the full SessionResponse
+   * envelope on success (daemon returned `ok: true`). Rejects with:
+   *   - `DaemonRequestError` if the daemon returned `ok: false`
+   *   - a plain `Error` on timeout (`timeoutMs`, default 30s)
+   *   - a plain `Error` if the connection closes before a response
+   *   - a plain `Error` if called before the connection is `open`
    */
   request<T = unknown>(opts: RequestOptions): Promise<SessionResponse<T>>;
   /** Close the connection. Idempotent. */
@@ -88,6 +133,7 @@ interface PendingRequest {
   resolve: (response: SessionResponse) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  type: string;
 }
 
 function makeRequestId(): string {
@@ -100,16 +146,19 @@ function makeRequestId(): string {
 
 export function createLocalDaemonBinding(opts: LocalDaemonBindingOptions): LocalDaemonBinding {
   const host = opts.host ?? DEFAULT_HOST;
+  if (!LOOPBACK_HOSTS.has(host)) {
+    throw new Error(`local-daemon-binding refuses non-loopback host: ${host}`);
+  }
   const url = `ws://${host}:${opts.port}`;
   const protocols = [SUBPROTOCOL_SELECTOR, `bearer.${opts.token}`];
 
   let status: ConnectionStatus = { state: 'connecting' };
-  // Tracks whether the connection ever opened. Lets us tell an
-  // upgrade-time auth rejection (browser closes with 1006 before any
-  // frame is received) apart from a mid-session drop. Browsers
-  // intentionally hide the HTTP status of a failed WS upgrade from
-  // JS, so this is the only signal we have.
+  // Tracks whether the connection ever opened. A close before open
+  // is reported as `unreachable` (auth fail, daemon down, refused, etc.
+  // — see the ConnectionStatus comment for why we can't distinguish),
+  // unless `clientClosed` is set (the close was initiated by us).
   let everOpened = false;
+  let clientClosed = false;
   const pending = new Map<string, PendingRequest>();
 
   const setStatus = (next: ConnectionStatus): void => {
@@ -167,7 +216,18 @@ export function createLocalDaemonBinding(opts: LocalDaemonBindingOptions): Local
         if (!entry) continue; // late response after timeout — drop
         pending.delete(reqId);
         clearTimeout(entry.timer);
-        entry.resolve(response);
+        if (response.ok) {
+          entry.resolve(response);
+        } else {
+          const err = response.error;
+          entry.reject(
+            new DaemonRequestError({
+              code: err?.code ?? 'UNKNOWN',
+              message: err?.message ?? `${entry.type} failed`,
+              retryable: err?.retryable ?? false,
+            }),
+          );
+        }
       } else if (envelope.kind === 'event') {
         const issues = validateEventEnvelope(parsed);
         if (issues.length > 0) {
@@ -192,14 +252,22 @@ export function createLocalDaemonBinding(opts: LocalDaemonBindingOptions): Local
       entry.reject(new Error(`connection closed before response (code=${code})`));
     }
     pending.clear();
-    if (!everOpened) {
-      // Closed before any frame was received → almost certainly an
-      // upgrade-time rejection (bad token, wrong origin, daemon
-      // refused). Surface as auth-failed so the UI can prompt
-      // re-pair rather than retrying blindly.
+    if (!everOpened && !clientClosed) {
+      // Closed before any frame was received and the consumer didn't
+      // ask for the close. Could be: daemon not running, wrong port,
+      // token rejected at upgrade, origin mismatch, or a network
+      // error — browsers don't expose the upgrade response to JS so
+      // the adapter genuinely cannot tell. Caller decides whether to
+      // retry or prompt for re-pair based on context.
+      //
+      // (Aborting a still-CONNECTING WebSocket fires close with code
+      // 1006 per spec, not 1000 — relying on the code alone isn't
+      // enough to tell intentional from broken. The `clientClosed`
+      // flag is the load-bearing signal.)
       setStatus({
-        state: 'auth-failed',
-        reason: reason || 'upgrade rejected before any frame',
+        state: 'unreachable',
+        code,
+        reason: reason || 'connection closed before open',
       });
     } else {
       setStatus({ state: 'closed', code, reason });
@@ -247,6 +315,7 @@ export function createLocalDaemonBinding(opts: LocalDaemonBindingOptions): Local
         resolve: resolve as (response: SessionResponse) => void,
         reject,
         timer,
+        type: reqOpts.type,
       });
       try {
         ws.send(`${JSON.stringify(envelope)}\n`);
@@ -259,6 +328,7 @@ export function createLocalDaemonBinding(opts: LocalDaemonBindingOptions): Local
   };
 
   const close = (): void => {
+    clientClosed = true;
     if (ws.readyState === ws.CLOSED || ws.readyState === ws.CLOSING) return;
     try {
       ws.close(1000, 'client closing');
