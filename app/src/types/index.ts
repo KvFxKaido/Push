@@ -55,17 +55,55 @@ export type { AuditVerdictCardData } from '@push/lib/auditor-agent';
 import type { UserProfile } from '@push/lib/user-identity';
 export type { UserProfile } from '@push/lib/user-identity';
 
-export type WorkspaceMode = 'repo' | 'scratch' | 'chat';
+export type WorkspaceMode = 'repo' | 'scratch' | 'chat' | 'local-pc';
+
+/**
+ * Identity of a paired local pushd daemon, captured at pairing time.
+ * The `port` and `token` together open the loopback WebSocket; the
+ * `tokenId` and `boundOrigin` are diagnostic surface (shown in the
+ * mode chip / paired-state UI), never used to authenticate.
+ *
+ * Carried inline on a `kind: 'local-pc'` session so the transport
+ * boundary is obvious at every read site: anything reading a
+ * non-local-pc session has no binding to consider, and `local-pc`
+ * sessions can't omit one.
+ */
+export interface LocalPcBinding {
+  port: number;
+  token: string;
+  /**
+   * Token id printed by `push daemon pair`. Optional in PR 3b: the
+   * web side learns the bearer at paste time but has no WS request
+   * type to fetch the matching tokenId from the daemon yet. A future
+   * `daemon_identify` round-trip (PR 3c) will fill this in; until
+   * then the paired-state UI may show `(unknown)` or omit it.
+   */
+  tokenId?: string;
+  /**
+   * Origin the CLI bound the token to at mint time. Today the web
+   * pairing flow always pairs from `window.location.origin`, so this
+   * field is effectively that value — but storing it explicitly lets
+   * a future flow (e.g. paste a token minted with a different origin)
+   * surface mismatch cleanly.
+   */
+  boundOrigin: string;
+}
 
 /**
  * Workspace session identity for the active repo or scratch workspace.
  * `id` is a stable logical identity that survives sandbox restarts.
  * `sandboxId` is the runtime container id (null until the container starts).
+ *
+ * Cloud-sandbox is implicit on scratch/repo/chat — those records keep
+ * their existing shape on disk. Only `kind: 'local-pc'` carries a
+ * `binding`, and it carries one mandatorily; that keeps the transport
+ * boundary impossible to read past by accident.
  */
 export type WorkspaceSession =
   | { id: string; kind: 'scratch'; sandboxId: string | null }
   | { id: string; kind: 'repo'; repo: ActiveRepo; sandboxId: string | null }
-  | { id: string; kind: 'chat'; sandboxId: null };
+  | { id: string; kind: 'chat'; sandboxId: null }
+  | { id: string; kind: 'local-pc'; binding: LocalPcBinding; sandboxId: null };
 
 /** Structured workspace context passed through the streaming pipeline to toLLMMessages. */
 export interface WorkspaceContext {
@@ -901,7 +939,7 @@ export type AppScreen = 'onboarding' | 'home' | 'chat' | 'file-browser';
  * 'workspace' replaces the 'chat' | 'file-browser' split — internal routing
  * between chat and file browser moves inside WorkspaceScreen.
  */
-export type AppShellScreen = 'onboarding' | 'home' | 'workspace';
+export type AppShellScreen = 'onboarding' | 'home' | 'workspace' | 'local-pc-pairing';
 
 // File browser types (re-exported from sandbox-client for convenience)
 export interface FileEntry {
@@ -1483,6 +1521,7 @@ export interface WorkspaceScreenNavigationProps {
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onStartScratchWorkspace: () => void;
   onStartChat: () => void;
+  onStartLocalPc: () => void;
   onEndWorkspace: () => void;
 }
 
