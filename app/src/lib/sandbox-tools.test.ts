@@ -67,6 +67,20 @@ vi.mock('./edit-metrics', () => ({
 
 // Mock tool-dispatch for extractBareToolJsonObjects.
 // We provide a real implementation since the detection tests rely on it.
+// PR 3c.1 dispatch fork: mock the local-daemon client so tests that
+// exercise the `localDaemonBinding` branch don't open real WS sockets.
+vi.mock('./local-daemon-sandbox-client', () => ({
+  execLocalDaemon: vi.fn(),
+  LocalDaemonUnreachableError: class extends Error {
+    readonly reason: string;
+    constructor(reason: string) {
+      super(`local daemon unreachable: ${reason}`);
+      this.reason = reason;
+      this.name = 'LocalDaemonUnreachableError';
+    }
+  },
+}));
+
 vi.mock('./tool-dispatch', async () => {
   const actual = await vi.importActual<typeof import('./tool-dispatch')>('./tool-dispatch');
   return {
@@ -76,6 +90,7 @@ vi.mock('./tool-dispatch', async () => {
 
 import { classifyError, validateSandboxToolCall, executeSandboxToolCall } from './sandbox-tools';
 import * as sandboxClient from './sandbox-client';
+import { LocalDaemonUnreachableError, execLocalDaemon } from './local-daemon-sandbox-client';
 import { runAuditor } from './auditor-agent';
 import { createGitHubRepo } from './sandbox-tool-utils';
 import { getActiveGitHubToken } from './github-auth';
@@ -4792,5 +4807,109 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
     expect(result.branchSwitch?.kind).toBe('switched');
     expect(result.text).toContain('[Context] Marked');
     expect(result.text).toContain('previously-read file');
+  });
+});
+
+describe('executeSandboxToolCall -- local-pc dispatch (PR 3c.1)', () => {
+  beforeEach(() => {
+    vi.mocked(execLocalDaemon).mockReset();
+    vi.mocked(sandboxClient.execInSandbox).mockReset();
+  });
+
+  const binding = {
+    port: 49152,
+    token: 'pushd_test_token_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    boundOrigin: 'http://localhost:5173',
+  };
+
+  it('routes sandbox_exec through the daemon when localDaemonBinding is provided', async () => {
+    vi.mocked(execLocalDaemon).mockResolvedValueOnce({
+      stdout: 'hello from local PC\n',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'echo hello' } },
+      '',
+      { localDaemonBinding: binding },
+    );
+
+    expect(execLocalDaemon).toHaveBeenCalledOnce();
+    expect(execLocalDaemon).toHaveBeenCalledWith(binding, 'echo hello', {});
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+    expect(result.text).toContain('hello from local PC');
+    expect(result.text).toContain('Exit code: 0');
+  });
+
+  it('does NOT short-circuit on missing sandboxId when a local binding is present', async () => {
+    // Regression for the Codex P2 finding on PR #511: the bare
+    // `!sandboxId` guard at the top of executeSandboxToolCall would
+    // return "No active sandbox" before the dispatch fork could run.
+    // WorkspaceSession.local-pc carries sandboxId: null, so this is
+    // the realistic shape — without the fix, this test asserts the
+    // bug; with the fix, the daemon path runs and returns ok.
+    vi.mocked(execLocalDaemon).mockResolvedValueOnce({
+      stdout: '/home/ishaw/projects/Push\n',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 2,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'pwd' } },
+      '',
+      { localDaemonBinding: binding },
+    );
+
+    expect(result.text).not.toContain('No active sandbox');
+    expect(result.text).toContain('Exit code: 0');
+  });
+
+  it('keeps the short-circuit when neither sandboxId nor a binding is supplied', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'pwd' } },
+      '',
+    );
+
+    expect(result.text).toContain('No active sandbox');
+    expect(execLocalDaemon).not.toHaveBeenCalled();
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+  });
+
+  it('maps LocalDaemonUnreachableError to a SANDBOX_UNREACHABLE result with a re-pair hint', async () => {
+    vi.mocked(execLocalDaemon).mockRejectedValueOnce(new LocalDaemonUnreachableError('bad token'));
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'echo nope' } },
+      '',
+      { localDaemonBinding: binding },
+    );
+
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+    expect(result.text).toContain('Local PC daemon is unreachable');
+    expect(result.text).toContain('Re-pair to continue');
+  });
+
+  it('propagates timedOut on the local result', async () => {
+    vi.mocked(execLocalDaemon).mockResolvedValueOnce({
+      stdout: '',
+      stderr: '',
+      exitCode: 124,
+      durationMs: 1000,
+      truncated: false,
+      timedOut: true,
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_exec', args: { command: 'sleep 60' } },
+      '',
+      { localDaemonBinding: binding },
+    );
+
+    expect(result.text).toContain('Exit code: 124');
   });
 });

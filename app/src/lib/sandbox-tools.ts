@@ -22,6 +22,7 @@ import {
   downloadFromSandbox,
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
+import { LocalDaemonUnreachableError, execLocalDaemon } from './local-daemon-sandbox-client';
 import { fetchAuditorFileContexts } from './auditor-file-context';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger } from './file-awareness-ledger';
@@ -244,7 +245,13 @@ export async function executeSandboxToolCall(
   sandboxId: string,
   options?: SandboxExecutionOptions,
 ): Promise<ToolExecutionResult> {
-  if (!sandboxId) {
+  // local-pc sessions intentionally carry sandboxId: null — the
+  // dispatch fork below routes via the daemon binding instead. Reject
+  // only when neither a sandbox nor a local binding is available
+  // (PR #511 review: Codex P2 caught that the bare `!sandboxId` guard
+  // would short-circuit local-pc dispatch as soon as 3c.2 threads the
+  // binding through useChat).
+  if (!sandboxId && !options?.localDaemonBinding) {
     const err = classifyError('Sandbox unreachable — no active sandbox', 'executeSandboxToolCall');
     return {
       text: formatStructuredError(err, '[Tool Error] No active sandbox — start one first.'),
@@ -319,11 +326,71 @@ export async function executeSandboxToolCall(
         const start = Date.now();
         const markWorkspaceMutated = isLikelyMutatingSandboxExec(call.args.command);
         const normalizedWorkdir = normalizeSandboxWorkdir(call.args.workdir);
-        const result = markWorkspaceMutated
-          ? await execInSandbox(sandboxId, call.args.command, normalizedWorkdir, {
-              markWorkspaceMutated: true,
-            })
-          : await execInSandbox(sandboxId, call.args.command, normalizedWorkdir);
+
+        // PR 3c.1: when the active session is `kind: 'local-pc'`, route
+        // sandbox_exec through the local daemon's WS instead of the
+        // cloud sandbox endpoint. Same `ExecResult` shape — every
+        // downstream consumer (card, sanitization, ledger stale-mark)
+        // is transport-agnostic. Unreachable bindings get their own
+        // error path with a "re-pair" recovery hint (the cloud
+        // "restart the sandbox" message would be wrong here).
+        let result: {
+          stdout: string;
+          stderr: string;
+          exitCode: number;
+          truncated: boolean;
+          timedOut?: boolean;
+          error?: string;
+        };
+        if (options?.localDaemonBinding) {
+          try {
+            const localResult = await execLocalDaemon(
+              options.localDaemonBinding,
+              call.args.command,
+              normalizedWorkdir ? { cwd: normalizedWorkdir } : {},
+            );
+            result = {
+              stdout: localResult.stdout,
+              stderr: localResult.stderr,
+              exitCode: localResult.exitCode,
+              truncated: localResult.truncated,
+              timedOut: localResult.timedOut,
+            };
+          } catch (caught) {
+            if (caught instanceof LocalDaemonUnreachableError) {
+              const durationMs = Date.now() - start;
+              const unreachableErr = classifyError(
+                `Local daemon unreachable: ${caught.reason}`,
+                call.args.command,
+              );
+              unreachableErr.type = 'SANDBOX_UNREACHABLE';
+              unreachableErr.retryable = false;
+              const cardData: SandboxCardData = {
+                command: call.args.command,
+                stdout: '',
+                stderr: caught.reason,
+                exitCode: -1,
+                truncated: false,
+                durationMs,
+              };
+              return {
+                text: formatStructuredError(
+                  unreachableErr,
+                  `[Tool Error — sandbox_exec]\nLocal PC daemon is unreachable: ${caught.reason}\nThe daemon may have stopped or the bearer token may have been revoked. Re-pair to continue.`,
+                ),
+                card: { type: 'sandbox', data: cardData },
+                structuredError: unreachableErr,
+              };
+            }
+            throw caught;
+          }
+        } else {
+          result = markWorkspaceMutated
+            ? await execInSandbox(sandboxId, call.args.command, normalizedWorkdir, {
+                markWorkspaceMutated: true,
+              })
+            : await execInSandbox(sandboxId, call.args.command, normalizedWorkdir);
+        }
         const durationMs = Date.now() - start;
 
         // Exit code -1 means the command was never dispatched — the container

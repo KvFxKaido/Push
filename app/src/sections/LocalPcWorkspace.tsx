@@ -18,12 +18,19 @@
  * real workspace UX onto the same `useLocalDaemon` seam.
  */
 import { Loader2, MonitorOff, Send } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LocalPcModeChip } from '@/components/LocalPcModeChip';
 import { useLocalDaemon } from '@/hooks/useLocalDaemon';
 import { DaemonRequestError, type SessionResponse } from '@/lib/local-daemon-binding';
 import { clearPairedDevice } from '@/lib/local-pc-storage';
 import type { LocalPcBinding } from '@/types';
+
+interface DaemonIdentity {
+  tokenId: string;
+  boundOrigin: string;
+  daemonVersion: string;
+  protocolVersion: string;
+}
 
 interface LocalPcWorkspaceProps {
   binding: LocalPcBinding;
@@ -44,7 +51,30 @@ export function LocalPcWorkspace({ binding, onUnpair }: LocalPcWorkspaceProps) {
   const { status, events, request, reconnect } = useLocalDaemon(binding);
   const [pingPending, setPingPending] = useState(false);
   const [pingHistory, setPingHistory] = useState<PingResult[]>([]);
+  const [identity, setIdentity] = useState<DaemonIdentity | null>(null);
   const pingSeqRef = useRef(0);
+
+  // Fetch daemon identity once the WS is open. Fills the tokenId
+  // placeholder in the pairing-details panel; the bearer never round-
+  // trips back (pushd only echoes the hashed id + bound origin).
+  useEffect(() => {
+    if (status.state !== 'open') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = (await request({
+          type: 'daemon_identify',
+        })) as SessionResponse<DaemonIdentity>;
+        if (!cancelled) setIdentity(response.payload);
+      } catch {
+        // Non-fatal: identity is diagnostic UI surface, not transport
+        // correctness. The mode chip + ping probe still work without it.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [status.state, request]);
 
   const handlePing = async () => {
     if (pingPending) return;
@@ -207,11 +237,21 @@ export function LocalPcWorkspace({ binding, onUnpair }: LocalPcWorkspaceProps) {
               <dt className="text-push-fg-dim">host</dt>
               <dd className="text-push-fg-secondary">127.0.0.1:{binding.port}</dd>
               <dt className="text-push-fg-dim">origin</dt>
-              <dd className="text-push-fg-secondary">{binding.boundOrigin || '(unknown)'}</dd>
+              <dd className="text-push-fg-secondary">
+                {identity?.boundOrigin || binding.boundOrigin || '(unknown)'}
+              </dd>
               <dt className="text-push-fg-dim">token id</dt>
               <dd className="text-push-fg-secondary">
-                {binding.tokenId || '(unknown — see PR 3c)'}
+                {identity?.tokenId || binding.tokenId || '(awaiting daemon identity)'}
               </dd>
+              {identity && (
+                <>
+                  <dt className="text-push-fg-dim">daemon</dt>
+                  <dd className="text-push-fg-secondary">
+                    v{identity.daemonVersion} · proto {identity.protocolVersion}
+                  </dd>
+                </>
+              )}
             </dl>
           </section>
         </div>

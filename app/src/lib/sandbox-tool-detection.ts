@@ -22,6 +22,20 @@ import { normalizeSandboxPath, normalizeSandboxWorkdir } from './sandbox-tool-ut
 export interface SandboxExecutionOptions {
   auditorProviderOverride?: import('./orchestrator').ActiveProvider;
   auditorModelOverride?: string | null;
+  /**
+   * When present, the active workspace is a `kind: 'local-pc'` session
+   * and the dispatcher routes whichever tool ops the local daemon
+   * supports through `local-daemon-sandbox-client` instead of the
+   * cloud sandbox. Absent means cloud sandbox (existing behaviour).
+   *
+   * PR 3c.1 routes only `sandbox_exec` through this seam; subsequent
+   * PRs (3c.2+) add read_file, write_file, etc. Tools that don't yet
+   * have a daemon implementation throw a structured "not implemented
+   * for local-pc" error rather than silently falling back to the
+   * cloud — that fallback would talk to a sandbox the user doesn't
+   * have and produce confusing errors.
+   */
+  localDaemonBinding?: import('@/types').LocalPcBinding;
 }
 
 export type SandboxPatchsetEdit =
