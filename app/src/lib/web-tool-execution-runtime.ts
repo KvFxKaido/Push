@@ -15,7 +15,12 @@ import type { ToolExecutionRuntime, ToolExecutionContext } from '@push/lib/tool-
 import { getToolCapabilities, ROLE_CAPABILITIES, roleCanUseTool } from '@push/lib/capabilities';
 import { resolveToolName } from '@push/lib/tool-registry';
 
-import type { StructuredToolError, ToolHookContext, ToolExecutionResult } from '@/types';
+import type {
+  LocalPcBinding,
+  StructuredToolError,
+  ToolHookContext,
+  ToolExecutionResult,
+} from '@/types';
 import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './tool-hooks';
 import type { ApprovalGateRegistry } from './approval-gates';
 import { executeToolCall } from './github-tools';
@@ -271,7 +276,8 @@ export class WebToolExecutionRuntime
           break;
 
         case 'sandbox': {
-          if (!context.sandboxId) {
+          const localDaemonBinding = context.localDaemonBinding as LocalPcBinding | undefined;
+          if (!context.sandboxId && !localDaemonBinding) {
             const err: StructuredToolError = {
               type: 'SANDBOX_UNREACHABLE',
               retryable: true,
@@ -284,9 +290,10 @@ export class WebToolExecutionRuntime
             };
             break;
           }
-          result = await executeSandboxToolCall(toolCall.call, context.sandboxId, {
+          result = await executeSandboxToolCall(toolCall.call, context.sandboxId ?? '', {
             auditorProviderOverride: activeProvider,
             auditorModelOverride: context.activeModel,
+            localDaemonBinding,
           });
           break;
         }

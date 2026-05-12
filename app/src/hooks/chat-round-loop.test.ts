@@ -80,6 +80,7 @@ function makeHarness(initialMessages: ChatMessage[] = [makeMessage()]): Harness 
     abortControllerRef: { current: null },
     sandboxIdRef: { current: null },
     ensureSandboxRef: { current: null },
+    localDaemonBindingRef: { current: null },
     scratchpadRef: { current: undefined },
     todoRef: { current: undefined },
     usageHandlerRef: { current: undefined },

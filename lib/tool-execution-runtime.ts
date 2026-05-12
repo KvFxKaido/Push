@@ -124,6 +124,20 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
    * undefined — CLI artifacts file under the branch-scoped key.
    */
   chatId?: string;
+  /**
+   * Opaque local-daemon binding carrier for remote-sessions Phase 1.d.
+   *
+   * When present, sandbox tools should route through the paired `pushd`
+   * WebSocket instead of the cloud sandbox provider. Typed as `unknown`
+   * here because the binding shape lives in the Web layer (`LocalPcBinding`
+   * in `app/src/types`); the runtime only forwards it to its sandbox
+   * dispatcher, which narrows. A future lib-side daemon client can
+   * promote this to a typed interface when it needs to read the fields.
+   *
+   * `sandboxId: null` is legal when this is set — the dispatcher decides
+   * which transport handles the call.
+   */
+  localDaemonBinding?: unknown;
 }
 
 // ---------------------------------------------------------------------------

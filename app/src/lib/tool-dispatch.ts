@@ -12,6 +12,7 @@ import type {
   AcceptanceCriterion,
   CoderDelegationArgs,
   ExplorerDelegationArgs,
+  LocalPcBinding,
   TaskGraphArgs,
 } from '@/types';
 import { type ToolHookRegistry } from './tool-hooks';
@@ -485,6 +486,7 @@ export async function executeAnyToolCall(
   capabilityLedger?: import('./capabilities').CapabilityLedger,
   approvalCallback?: (toolName: string, reason: string, recoveryPath: string) => Promise<boolean>,
   chatId?: string,
+  localDaemonBinding?: LocalPcBinding,
 ): Promise<ToolExecutionResult> {
   const runtime = new WebToolExecutionRuntime();
   return runtime.execute(toolCall, {
@@ -499,6 +501,7 @@ export async function executeAnyToolCall(
     capabilityLedger,
     approvalCallback,
     chatId,
+    localDaemonBinding,
   }) as Promise<ToolExecutionResult>;
 }
 

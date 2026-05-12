@@ -399,3 +399,106 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
     });
   });
 });
+
+/**
+ * Phase 1.d chat-layer wiring: when the chat round loop carries a
+ * `localDaemonBinding` (set on the SendLoopContext from a
+ * `kind: 'local-pc'` workspace session), the runtime must forward that
+ * binding into `executeSandboxToolCall`'s options bag so the sandbox
+ * dispatcher can fork to `execLocalDaemon`. PR #511 added the dispatch
+ * seam in `sandbox-tools.ts`; these tests pin the upstream half of the
+ * contract — the seam is reachable through the runtime, not just from
+ * unit tests that call `executeSandboxToolCall` directly.
+ */
+describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
+  const runtime = new WebToolExecutionRuntime();
+
+  const binding = {
+    port: 49152,
+    token: 'pushd_test_token_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+    boundOrigin: 'http://localhost:5173',
+  };
+
+  beforeEach(() => {
+    vi.mocked(sandboxTools.executeSandboxToolCall).mockClear();
+  });
+
+  it('forwards localDaemonBinding into executeSandboxToolCall options', async () => {
+    await runtime.execute(
+      {
+        source: 'sandbox',
+        call: { tool: 'sandbox_exec', args: { command: 'echo hello' } },
+      },
+      {
+        allowedRepo: 'owner/repo',
+        sandboxId: null,
+        isMainProtected: false,
+        localDaemonBinding: binding,
+      },
+    );
+
+    expect(vi.mocked(sandboxTools.executeSandboxToolCall)).toHaveBeenCalledTimes(1);
+    const [, , options] = vi.mocked(sandboxTools.executeSandboxToolCall).mock.calls[0];
+    expect(options?.localDaemonBinding).toBe(binding);
+  });
+
+  it('does NOT short-circuit on missing sandboxId when a binding is present', async () => {
+    // local-pc WorkspaceSession records carry `sandboxId: null` by
+    // construction — the binding is the transport. This pins the
+    // runtime-layer guard (mirrors the PR #511 fix at the
+    // executeSandboxToolCall layer).
+    const result = await runtime.execute(
+      {
+        source: 'sandbox',
+        call: { tool: 'sandbox_exec', args: { command: 'pwd' } },
+      },
+      {
+        allowedRepo: 'owner/repo',
+        sandboxId: null,
+        isMainProtected: false,
+        localDaemonBinding: binding,
+      },
+    );
+
+    expect(result.structuredError?.type).not.toBe('SANDBOX_UNREACHABLE');
+    expect(vi.mocked(sandboxTools.executeSandboxToolCall)).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the short-circuit when neither sandboxId nor binding is supplied', async () => {
+    const result = await runtime.execute(
+      {
+        source: 'sandbox',
+        call: { tool: 'sandbox_exec', args: { command: 'pwd' } },
+      },
+      {
+        allowedRepo: 'owner/repo',
+        sandboxId: null,
+        isMainProtected: false,
+      },
+    );
+
+    expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
+    expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
+  });
+
+  it('routes to the sandbox executor when sandboxId is present (binding absent)', async () => {
+    // Cloud sessions: binding is null, sandboxId carries the container
+    // id. Ensure the existing cloud path is unchanged.
+    await runtime.execute(
+      {
+        source: 'sandbox',
+        call: { tool: 'sandbox_exec', args: { command: 'ls' } },
+      },
+      {
+        allowedRepo: 'owner/repo',
+        sandboxId: 'sb-cloud-1',
+        isMainProtected: false,
+      },
+    );
+
+    expect(vi.mocked(sandboxTools.executeSandboxToolCall)).toHaveBeenCalledTimes(1);
+    const [, sandboxIdArg, options] = vi.mocked(sandboxTools.executeSandboxToolCall).mock.calls[0];
+    expect(sandboxIdArg).toBe('sb-cloud-1');
+    expect(options?.localDaemonBinding).toBeUndefined();
+  });
+});

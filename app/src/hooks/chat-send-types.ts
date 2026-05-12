@@ -20,6 +20,7 @@ import type {
   ChatMessage,
   Conversation,
   CoderWorkingMemory,
+  LocalPcBinding,
   ReasoningBlock,
   RunEventInput,
   ToolExecutionResult,
@@ -66,6 +67,14 @@ export interface SendLoopContext {
   abortControllerRef: MutableRefObject<AbortController | null>;
   sandboxIdRef: MutableRefObject<string | null>;
   ensureSandboxRef: MutableRefObject<(() => Promise<string | null>) | null>;
+  /**
+   * Local-daemon binding for `kind: 'local-pc'` workspace sessions
+   * (Phase 1.d). When the active session is local-pc, this ref carries
+   * the paired bearer/port so sandbox tool calls can route through
+   * `pushd` instead of a cloud sandbox. `null` on cloud sessions; the
+   * sandbox dispatcher uses absence to fall back to `execInSandbox`.
+   */
+  localDaemonBindingRef: MutableRefObject<LocalPcBinding | null>;
   scratchpadRef: MutableRefObject<ScratchpadHandlers | undefined>;
   todoRef: MutableRefObject<TodoHandlers | undefined>;
   usageHandlerRef: MutableRefObject<UsageHandler | undefined>;
