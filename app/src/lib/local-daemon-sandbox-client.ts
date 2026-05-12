@@ -10,7 +10,7 @@
  *     this when the active session is `kind: 'local-pc'`.
  *   - `identifyLocalDaemon`: fetch `{ tokenId, boundOrigin, daemonVersion,
  *     protocolVersion }` via the `daemon_identify` handler. Used by
- *     LocalPcWorkspace to fill the "(unknown)" tokenId placeholder.
+ *     LocalPcChatScreen (or its predecessors) to fill paired-state UI.
  *   - `readFileLocalDaemon` / `writeFileLocalDaemon` /
  *     `listDirLocalDaemon` / `getDiffLocalDaemon` (3c.3): per-tool
  *     daemon ops. Each mirrors a `sandbox_*` cloud helper. Result
