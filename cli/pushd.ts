@@ -65,6 +65,7 @@ import {
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runCoderAgent } from '../lib/coder-agent.ts';
+import { isSensitivePath as isDaemonSensitivePath } from '../lib/sensitive-paths.ts';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
@@ -3277,52 +3278,26 @@ function truncateExecOutput(text) {
 
 const SANDBOX_FILE_MAX_BYTES = 1_000_000;
 const SANDBOX_FILE_MAX_LINES = 50_000;
-// Higher cap for ranged reads: streaming line-by-line keeps memory
-// bounded by the largest line, but we still cap total bytes scanned
-// so a model can't ask for "line 1 of a 1GB file" and stall the
-// daemon. 32 MB ≈ 1M typical-source-code lines.
+// Higher cap for ranged reads than the whole-file path so a model can
+// read deep into multi-MB logs. Buffer-and-split implementation (NOT
+// streaming): `readFile` + `split('\n')` lets the ranged path produce
+// the same `totalLines` count as the whole-file path (split-on-newline
+// includes the trailing empty entry; readline yields one fewer). The
+// 32 MB cap keeps memory bounded for huge files — anything larger is
+// rejected with a FILE_TOO_LARGE soft error. Copilot PR #516.
 const SANDBOX_RANGED_READ_MAX_BYTES = 32_000_000;
 const SANDBOX_LIST_MAX_ENTRIES = 1_000;
 const SANDBOX_DIFF_MAX_BYTES = 1_000_000;
 const SANDBOX_GIT_TIMEOUT_MS = 30_000;
 
-// Mirror of `app/src/lib/sensitive-data-guard.ts`. The web layer ALSO
-// blocks these paths before forwarding to the daemon (clean prompt
-// context, no model round-trip), but a stolen bearer token outside
-// our client would bypass that. Defense in depth: the daemon refuses
-// the read at the boundary that actually has filesystem access.
-// Kept in sync manually; the list is short and changes rarely.
-const SENSITIVE_FILE_EXTENSIONS = ['.pem', '.key', '.p12', '.pfx'];
-const SENSITIVE_FILE_BASENAMES = new Set([
-  '.npmrc',
-  '.pypirc',
-  '.netrc',
-  '.git-credentials',
-  'id_rsa',
-  'id_ed25519',
-  'id_ecdsa',
-  'id_dsa',
-]);
-
-function isDaemonSensitivePath(p) {
-  if (typeof p !== 'string' || p === '') return false;
-  const normalized = p.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
-  const lower = normalized.toLowerCase();
-  const baseLower = (normalized.split('/').filter(Boolean).pop() ?? '').toLowerCase();
-  // .env / .env.<anything> (but not .env.example / .env.sample / etc.)
-  if (
-    /^\.env(?:\..+)?$/i.test(baseLower) &&
-    !/\.(example|sample|template|schema)(?:\.|$)/i.test(baseLower)
-  ) {
-    return true;
-  }
-  if (SENSITIVE_FILE_BASENAMES.has(baseLower)) return true;
-  if (SENSITIVE_FILE_EXTENSIONS.some((ext) => baseLower.endsWith(ext))) return true;
-  if (lower.includes('/.ssh/') || lower.endsWith('/.ssh')) return true;
-  if (lower.includes('/.aws/credentials') || lower.endsWith('/.aws/credentials')) return true;
-  if (lower.includes('/.docker/config.json') || lower.endsWith('/.docker/config.json')) return true;
-  return false;
-}
+// `isDaemonSensitivePath` is the same predicate the web layer uses,
+// imported from `@push/lib/sensitive-paths` so daemon and web share
+// one source of truth. The web layer ALSO blocks these paths before
+// forwarding to the daemon (clean prompt context, no model round-
+// trip), but a stolen bearer used outside our client would bypass
+// that. Defense in depth: the daemon refuses the read at the boundary
+// that actually has filesystem access. Centralized after Copilot
+// drift concern on PR #516.
 
 /**
  * Resolve a model-supplied path against the daemon's cwd.
@@ -3338,10 +3313,51 @@ function isDaemonSensitivePath(p) {
 function resolveDaemonPath(p) {
   if (typeof p !== 'string' || p === '') return '';
   const cwd = process.cwd();
-  if (p.startsWith('/workspace/')) return path.resolve(cwd, p.slice('/workspace/'.length));
+  if (p.startsWith('/workspace/')) {
+    const resolved = path.resolve(cwd, p.slice('/workspace/'.length));
+    return isContainedIn(resolved, cwd) ? resolved : null;
+  }
   if (p === '/workspace') return cwd;
   if (path.isAbsolute(p)) return p;
-  return path.resolve(cwd, p);
+  // Bare relative path: resolve against cwd AND enforce containment.
+  // A model-emitted `../outside` would resolve to a sibling of cwd
+  // and let the daemon read/write outside the paired workspace root
+  // — pairing consents to cwd, not to traversal. Absolute paths are
+  // still honored because pairing gates that explicitly; this only
+  // tightens the relative-path surface. Copilot PR #516.
+  const resolved = path.resolve(cwd, p);
+  return isContainedIn(resolved, cwd) ? resolved : null;
+}
+
+function isContainedIn(absChild, absParent) {
+  // path.relative is the canonical containment check: if the relative
+  // path either starts with `..` or is absolute, child is outside.
+  const rel = path.relative(absParent, absChild);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * Build a "soft" error envelope for the file-op handlers that exposes
+ * a code + a generic message + the model's original requested path
+ * — but NOT the daemon's fully-resolved absolute host path. Node's
+ * `err.message` for ENOENT/EACCES/etc. includes the resolved path,
+ * which leaks user/host filesystem details into the chat surface.
+ * Copilot PR #516.
+ */
+function safeFsErrorPayload(err, requestedPath) {
+  const code = typeof err?.code === 'string' ? err.code : 'READ_FAILED';
+  let message;
+  if (code === 'ENOENT') message = 'No such file or directory';
+  else if (code === 'EACCES') message = 'Permission denied';
+  else if (code === 'EISDIR') message = 'Path is a directory, not a file';
+  else if (code === 'ENOTDIR') message = 'Path is not a directory';
+  else if (code === 'EBUSY') message = 'Resource busy or locked';
+  else if (code === 'EMFILE' || code === 'ENFILE') message = 'Too many open files';
+  else message = 'Filesystem operation failed';
+  return {
+    code,
+    error: `${message}: ${requestedPath}`,
+  };
 }
 
 async function handleSandboxReadFile(req) {
@@ -3369,6 +3385,14 @@ async function handleSandboxReadFile(req) {
     });
   }
   const resolved = resolveDaemonPath(rawPath);
+  if (resolved === null) {
+    return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+      content: '',
+      truncated: false,
+      error: `path escapes workspace root: ${rawPath}`,
+      code: 'PATH_OUTSIDE_WORKSPACE',
+    });
+  }
   const startLine = Number.isInteger(payload.startLine) ? payload.startLine : undefined;
   const endLine = Number.isInteger(payload.endLine) ? payload.endLine : undefined;
   const isRangeRead = startLine !== undefined || endLine !== undefined;
@@ -3383,12 +3407,10 @@ async function handleSandboxReadFile(req) {
     try {
       stat = await fs.stat(resolved);
     } catch (err) {
-      const code = typeof err?.code === 'string' ? err.code : 'READ_FAILED';
       return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
         content: '',
         truncated: false,
-        error: err?.message || 'read failed',
-        code,
+        ...safeFsErrorPayload(err, rawPath),
       });
     }
     if (stat.size > SANDBOX_RANGED_READ_MAX_BYTES) {
@@ -3403,12 +3425,10 @@ async function handleSandboxReadFile(req) {
     try {
       buf = await fs.readFile(resolved);
     } catch (err) {
-      const code = typeof err?.code === 'string' ? err.code : 'READ_FAILED';
       return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
         content: '',
         truncated: false,
-        error: err?.message || 'read failed',
-        code,
+        ...safeFsErrorPayload(err, rawPath),
       });
     }
     const allLines = buf.toString('utf8').split('\n');
@@ -3427,12 +3447,10 @@ async function handleSandboxReadFile(req) {
   try {
     buf = await fs.readFile(resolved);
   } catch (err) {
-    const code = typeof err?.code === 'string' ? err.code : 'READ_FAILED';
     return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
       content: '',
       truncated: false,
-      error: err?.message || 'read failed',
-      code,
+      ...safeFsErrorPayload(err, rawPath),
     });
   }
 
@@ -3475,6 +3493,12 @@ async function handleSandboxWriteFile(req) {
     });
   }
   const resolved = resolveDaemonPath(rawPath);
+  if (resolved === null) {
+    return makeResponse(req.requestId, 'sandbox_write_file', null, true, {
+      ok: false,
+      error: `path escapes workspace root: ${rawPath}`,
+    });
+  }
   try {
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     await fs.writeFile(resolved, content, 'utf8');
@@ -3483,9 +3507,10 @@ async function handleSandboxWriteFile(req) {
       bytesWritten: Buffer.byteLength(content, 'utf8'),
     });
   } catch (err) {
+    const { error } = safeFsErrorPayload(err, rawPath);
     return makeResponse(req.requestId, 'sandbox_write_file', null, true, {
       ok: false,
-      error: err?.message || 'write failed',
+      error,
     });
   }
 }
@@ -3501,15 +3526,23 @@ async function handleSandboxListDir(req) {
     });
   }
   const resolved = resolveDaemonPath(rawPath);
+  if (resolved === null) {
+    return makeResponse(req.requestId, 'sandbox_list_dir', null, true, {
+      entries: [],
+      truncated: false,
+      error: `path escapes workspace root: ${rawPath}`,
+    });
+  }
 
   let dirents;
   try {
     dirents = await fs.readdir(resolved, { withFileTypes: true });
   } catch (err) {
+    const { error } = safeFsErrorPayload(err, rawPath);
     return makeResponse(req.requestId, 'sandbox_list_dir', null, true, {
       entries: [],
       truncated: false,
-      error: err?.message || 'list failed',
+      error,
     });
   }
 

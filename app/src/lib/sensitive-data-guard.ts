@@ -1,61 +1,11 @@
-const SENSITIVE_EXTENSIONS = ['.pem', '.key', '.p12', '.pfx'];
-const SENSITIVE_BASENAMES = new Set([
-  '.npmrc',
-  '.pypirc',
-  '.netrc',
-  '.git-credentials',
-  'id_rsa',
-  'id_ed25519',
-  'id_ecdsa',
-  'id_dsa',
-]);
+// The path predicate and its data tables now live in `@push/lib` so
+// the `pushd` daemon can share them (Copilot drift concern on PR #516).
+// Re-export keeps the existing app-layer import path stable.
+import { isSensitivePath } from '@push/lib/sensitive-paths';
+export { isSensitivePath };
 
 function normalizePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
-}
-
-function basename(path: string): string {
-  const normalized = normalizePath(path);
-  const parts = normalized.split('/').filter(Boolean);
-  return parts[parts.length - 1] ?? normalized;
-}
-
-function isEnvironmentTemplate(name: string): boolean {
-  return /\.(example|sample|template|schema)(?:\.|$)/i.test(name);
-}
-
-export function isSensitivePath(path: string): boolean {
-  const normalized = normalizePath(path);
-  if (!normalized) return false;
-
-  const lower = normalized.toLowerCase();
-  const base = basename(normalized).toLowerCase();
-
-  if (/^\.env(?:\..+)?$/i.test(base) && !isEnvironmentTemplate(base)) {
-    return true;
-  }
-
-  if (SENSITIVE_BASENAMES.has(base)) {
-    return true;
-  }
-
-  if (SENSITIVE_EXTENSIONS.some((ext) => base.endsWith(ext))) {
-    return true;
-  }
-
-  if (lower.includes('/.ssh/') || lower.endsWith('/.ssh')) {
-    return true;
-  }
-
-  if (lower.includes('/.aws/credentials') || lower.endsWith('/.aws/credentials')) {
-    return true;
-  }
-
-  if (lower.includes('/.docker/config.json') || lower.endsWith('/.docker/config.json')) {
-    return true;
-  }
-
-  return false;
 }
 
 export function filterSensitiveDirectoryEntries<T extends { name: string; path?: string }>(

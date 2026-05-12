@@ -122,6 +122,39 @@ describe('sandbox_read_file', () => {
     assert.equal(res.payload.code, 'SENSITIVE_PATH');
   });
 
+  it('refuses relative paths that escape the workspace root (Copilot PR #516)', async () => {
+    // `../outside` resolves to a sibling of the daemon cwd. Even
+    // though the user paired the daemon (consenting to local FS
+    // access), pairing is bound to cwd — the model shouldn't be able
+    // to slip out via path traversal.
+    const res = await handleRequest(
+      makeRequest('sandbox_read_file', { path: '../outside.txt' }),
+      NOOP_EMIT,
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.code, 'PATH_OUTSIDE_WORKSPACE');
+    assert.match(res.payload.error, /escapes workspace root/);
+  });
+
+  it('sanitizes ENOENT messages to omit the resolved host path', async () => {
+    // Node's default err.message for ENOENT includes the resolved
+    // absolute path. The handler should return a generic message
+    // plus the model's ORIGINAL requested path — not the host path
+    // (which leaks user/dir info into the chat).
+    const res = await handleRequest(
+      makeRequest('sandbox_read_file', { path: 'absent.txt' }),
+      NOOP_EMIT,
+    );
+    assert.equal(res.payload.code, 'ENOENT');
+    assert.match(res.payload.error, /No such file or directory.*absent\.txt/);
+    // tmpRoot is the host path the resolved absolute would expose —
+    // it MUST NOT be in the error.
+    assert.ok(
+      !res.payload.error.includes(tmpRoot),
+      `error must not include host path; got: ${res.payload.error}`,
+    );
+  });
+
   it('honors line range on a file larger than the whole-file byte cap (Codex P2)', async () => {
     // Build a 1.5MB file: each line is "xxxxx...x" (1024 bytes including
     // newline). 1500 lines * 1024 = 1.5MB > SANDBOX_FILE_MAX_BYTES (1MB).

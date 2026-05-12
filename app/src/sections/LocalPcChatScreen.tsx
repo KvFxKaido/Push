@@ -33,13 +33,13 @@
  * replaces the previous `LocalPcWorkspace` probe-only surface.
  */
 import { MonitorOff, Send, Square } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { LocalPcModeChip } from '@/components/LocalPcModeChip';
 import { useChat } from '@/hooks/useChat';
 import { useLocalDaemon } from '@/hooks/useLocalDaemon';
 import { clearPairedDevice } from '@/lib/local-pc-storage';
-import type { LocalPcBinding } from '@/types';
+import type { Conversation, LocalPcBinding } from '@/types';
 
 interface LocalPcChatScreenProps {
   binding: LocalPcBinding;
@@ -65,6 +65,11 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
     handleCardAction,
     setLocalDaemonBinding,
     setWorkspaceMode,
+    conversations,
+    conversationsLoaded,
+    activeChatId,
+    switchChat,
+    createNewChat,
   } = useChat(
     // No GitHub repo — local-pc sessions are bound to the daemon cwd,
     // not a remote repo.
@@ -84,12 +89,36 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
     };
   }, [binding, setLocalDaemonBinding]);
 
-  // Local-pc is its own workspace mode for memory-store / persistence
-  // purposes — tag it so `createNewChat` doesn't mis-classify as cloud.
-  // Synchronous so the next sendMessage sees the right mode.
+  // Tag local-pc as its own workspace mode (matches the union member
+  // in @/types). `createNewChat` reads this ref synchronously when it
+  // builds a Conversation, so future-sent turns are persisted under a
+  // local-pc-scoped key rather than mixed into cloud chat history.
+  // Codex C2 / Copilot on PR #516.
+  setWorkspaceMode('local-pc');
+
+  // Conversation scope: useChatAutoSwitch only auto-creates when an
+  // activeRepoFullName is set, which local-pc doesn't have. Without
+  // this, opening Local PC after a cloud chat would land the user in
+  // that cloud conversation and `sendMessage` would append daemon
+  // turns to the wrong record. On first mount we either switch to the
+  // most recent local-pc-tagged chat, or create a fresh one. The
+  // reentrancy guard keeps the effect idempotent across re-renders.
+  // Codex C2 on PR #516.
+  const initializedConversationRef = useRef(false);
   useEffect(() => {
-    setWorkspaceMode('chat');
-  }, [setWorkspaceMode]);
+    if (!conversationsLoaded || initializedConversationRef.current) return;
+    initializedConversationRef.current = true;
+    const activeConv = conversations[activeChatId] as Conversation | undefined;
+    if (activeConv?.mode === 'local-pc') return;
+    const localPcChats = Object.values(conversations)
+      .filter((c) => c.mode === 'local-pc')
+      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+    if (localPcChats.length > 0) {
+      switchChat(localPcChats[0].id);
+    } else {
+      createNewChat();
+    }
+  }, [conversationsLoaded, conversations, activeChatId, switchChat, createNewChat]);
 
   const [composeText, setComposeText] = useState('');
   const handleSend = () => {
