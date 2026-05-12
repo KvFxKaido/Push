@@ -17,7 +17,11 @@ import { PROTOCOL_VERSION } from '@push/lib/protocol-schema';
 import {
   LocalDaemonUnreachableError,
   execLocalDaemon,
+  getDiffLocalDaemon,
   identifyLocalDaemon,
+  listDirLocalDaemon,
+  readFileLocalDaemon,
+  writeFileLocalDaemon,
 } from './local-daemon-sandbox-client';
 import type { LocalPcBinding } from '@/types';
 
@@ -262,6 +266,201 @@ describe('execLocalDaemon', () => {
     await expect(execLocalDaemon(binding, 'echo nope')).rejects.toBeInstanceOf(
       LocalDaemonUnreachableError,
     );
+  });
+});
+
+describe('readFileLocalDaemon', () => {
+  it('round-trips a read response payload', async () => {
+    server.setResponseOverride('sandbox_read_file', {
+      ok: true,
+      payload: { content: 'file body', truncated: false, totalLines: 1 },
+    });
+    const res = await readFileLocalDaemon(binding, 'src/app.ts');
+    expect(res.content).toBe('file body');
+    expect(res.truncated).toBe(false);
+    expect(res.totalLines).toBe(1);
+  });
+
+  it('threads startLine and endLine into the request payload', async () => {
+    await server.close();
+    const captured: Record<string, unknown>[] = [];
+    const wss = new WebSocketServer({
+      port: 0,
+      handleProtocols: (p) => (p.has(SUBPROTOCOL_SELECTOR) ? SUBPROTOCOL_SELECTOR : false),
+    });
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const parsed = JSON.parse(data.toString('utf8').trim());
+        captured.push(parsed.payload);
+        ws.send(
+          `${JSON.stringify({
+            v: PROTOCOL_VERSION,
+            kind: 'response',
+            requestId: parsed.requestId,
+            type: parsed.type,
+            sessionId: null,
+            ok: true,
+            payload: { content: '', truncated: false },
+            error: null,
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    const port = (wss.address() as AddressInfo).port;
+    await readFileLocalDaemon(
+      { port, token: VALID_TOKEN, boundOrigin: 'http://localhost:5173' },
+      'lines.txt',
+      { startLine: 5, endLine: 10 },
+    );
+    expect(captured[0]).toEqual({ path: 'lines.txt', startLine: 5, endLine: 10 });
+    await new Promise<void>((r) => wss.close(() => r()));
+  });
+
+  it('propagates a payload-level error (missing file, etc.)', async () => {
+    server.setResponseOverride('sandbox_read_file', {
+      ok: true,
+      payload: { content: '', truncated: false, error: 'ENOENT: …', code: 'ENOENT' },
+    });
+    const res = await readFileLocalDaemon(binding, 'nope.txt');
+    expect(res.error).toMatch(/ENOENT/);
+    expect(res.code).toBe('ENOENT');
+  });
+});
+
+describe('writeFileLocalDaemon', () => {
+  it('round-trips a successful write response', async () => {
+    server.setResponseOverride('sandbox_write_file', {
+      ok: true,
+      payload: { ok: true, bytesWritten: 42 },
+    });
+    const res = await writeFileLocalDaemon(binding, 'out.txt', 'hello');
+    expect(res.ok).toBe(true);
+    expect(res.bytesWritten).toBe(42);
+  });
+
+  it('forwards path and content in the request payload', async () => {
+    await server.close();
+    const captured: Record<string, unknown>[] = [];
+    const wss = new WebSocketServer({
+      port: 0,
+      handleProtocols: (p) => (p.has(SUBPROTOCOL_SELECTOR) ? SUBPROTOCOL_SELECTOR : false),
+    });
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const parsed = JSON.parse(data.toString('utf8').trim());
+        captured.push(parsed.payload);
+        ws.send(
+          `${JSON.stringify({
+            v: PROTOCOL_VERSION,
+            kind: 'response',
+            requestId: parsed.requestId,
+            type: parsed.type,
+            sessionId: null,
+            ok: true,
+            payload: { ok: true, bytesWritten: 0 },
+            error: null,
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    const port = (wss.address() as AddressInfo).port;
+    await writeFileLocalDaemon(
+      { port, token: VALID_TOKEN, boundOrigin: 'http://localhost:5173' },
+      'a/b/c.txt',
+      'payload',
+    );
+    expect(captured[0]).toEqual({ path: 'a/b/c.txt', content: 'payload' });
+    await new Promise<void>((r) => wss.close(() => r()));
+  });
+
+  it('propagates a write-failure response', async () => {
+    server.setResponseOverride('sandbox_write_file', {
+      ok: true,
+      payload: { ok: false, error: 'EACCES: permission denied' },
+    });
+    const res = await writeFileLocalDaemon(binding, '/etc/passwd', 'rooted');
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/EACCES/);
+  });
+});
+
+describe('listDirLocalDaemon', () => {
+  it('returns directory entries', async () => {
+    server.setResponseOverride('sandbox_list_dir', {
+      ok: true,
+      payload: {
+        entries: [
+          { name: 'a.txt', type: 'file', size: 10 },
+          { name: 'sub', type: 'directory' },
+        ],
+        truncated: false,
+      },
+    });
+    const res = await listDirLocalDaemon(binding, 'src');
+    expect(res.entries.length).toBe(2);
+    expect(res.entries[0]).toMatchObject({ name: 'a.txt', type: 'file', size: 10 });
+    expect(res.entries[1]).toMatchObject({ name: 'sub', type: 'directory' });
+  });
+
+  it('omits path from the payload when listing the cwd', async () => {
+    await server.close();
+    const captured: Record<string, unknown>[] = [];
+    const wss = new WebSocketServer({
+      port: 0,
+      handleProtocols: (p) => (p.has(SUBPROTOCOL_SELECTOR) ? SUBPROTOCOL_SELECTOR : false),
+    });
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const parsed = JSON.parse(data.toString('utf8').trim());
+        captured.push(parsed.payload);
+        ws.send(
+          `${JSON.stringify({
+            v: PROTOCOL_VERSION,
+            kind: 'response',
+            requestId: parsed.requestId,
+            type: parsed.type,
+            sessionId: null,
+            ok: true,
+            payload: { entries: [], truncated: false },
+            error: null,
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    const port = (wss.address() as AddressInfo).port;
+    await listDirLocalDaemon({ port, token: VALID_TOKEN, boundOrigin: 'http://localhost:5173' });
+    expect(captured[0]).toEqual({});
+    await new Promise<void>((r) => wss.close(() => r()));
+  });
+});
+
+describe('getDiffLocalDaemon', () => {
+  it('returns diff and git-status text', async () => {
+    server.setResponseOverride('sandbox_diff', {
+      ok: true,
+      payload: {
+        diff: 'diff --git a/x b/x\n+added line\n',
+        truncated: false,
+        gitStatus: ' M src/foo.ts\n',
+      },
+    });
+    const res = await getDiffLocalDaemon(binding);
+    expect(res.diff).toContain('+added line');
+    expect(res.gitStatus).toContain('src/foo.ts');
+    expect(res.truncated).toBe(false);
+  });
+
+  it('propagates a soft error when git fails (non-repo cwd)', async () => {
+    server.setResponseOverride('sandbox_diff', {
+      ok: true,
+      payload: { diff: '', truncated: false, error: 'not a git repository' },
+    });
+    const res = await getDiffLocalDaemon(binding);
+    expect(res.diff).toBe('');
+    expect(res.error).toMatch(/not a git repository/);
   });
 });
 

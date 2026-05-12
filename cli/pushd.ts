@@ -3265,6 +3265,343 @@ function truncateExecOutput(text) {
   return `${text.slice(0, SANDBOX_EXEC_MAX_OUTPUT)}\n…[truncated]`;
 }
 
+// ─── Phase 1.e file ops (PR 3c.3) ──────────────────────────────────
+//
+// Mirror the cloud `sandbox_read_file` / `sandbox_write_file` /
+// `sandbox_list_dir` / `sandbox_diff` surface on the daemon. The
+// implementations are deliberately minimal: no version cache, no
+// optimistic concurrency, no workspace-revision tracking. Each
+// resolves paths through `resolveDaemonPath` so a model that pastes
+// `/workspace/foo` (the cloud convention) ends up reading from the
+// daemon's cwd instead of `/workspace/foo` literally on the host.
+
+const SANDBOX_FILE_MAX_BYTES = 1_000_000;
+const SANDBOX_FILE_MAX_LINES = 50_000;
+// Higher cap for ranged reads: streaming line-by-line keeps memory
+// bounded by the largest line, but we still cap total bytes scanned
+// so a model can't ask for "line 1 of a 1GB file" and stall the
+// daemon. 32 MB ≈ 1M typical-source-code lines.
+const SANDBOX_RANGED_READ_MAX_BYTES = 32_000_000;
+const SANDBOX_LIST_MAX_ENTRIES = 1_000;
+const SANDBOX_DIFF_MAX_BYTES = 1_000_000;
+const SANDBOX_GIT_TIMEOUT_MS = 30_000;
+
+// Mirror of `app/src/lib/sensitive-data-guard.ts`. The web layer ALSO
+// blocks these paths before forwarding to the daemon (clean prompt
+// context, no model round-trip), but a stolen bearer token outside
+// our client would bypass that. Defense in depth: the daemon refuses
+// the read at the boundary that actually has filesystem access.
+// Kept in sync manually; the list is short and changes rarely.
+const SENSITIVE_FILE_EXTENSIONS = ['.pem', '.key', '.p12', '.pfx'];
+const SENSITIVE_FILE_BASENAMES = new Set([
+  '.npmrc',
+  '.pypirc',
+  '.netrc',
+  '.git-credentials',
+  'id_rsa',
+  'id_ed25519',
+  'id_ecdsa',
+  'id_dsa',
+]);
+
+function isDaemonSensitivePath(p) {
+  if (typeof p !== 'string' || p === '') return false;
+  const normalized = p.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+  const lower = normalized.toLowerCase();
+  const baseLower = (normalized.split('/').filter(Boolean).pop() ?? '').toLowerCase();
+  // .env / .env.<anything> (but not .env.example / .env.sample / etc.)
+  if (
+    /^\.env(?:\..+)?$/i.test(baseLower) &&
+    !/\.(example|sample|template|schema)(?:\.|$)/i.test(baseLower)
+  ) {
+    return true;
+  }
+  if (SENSITIVE_FILE_BASENAMES.has(baseLower)) return true;
+  if (SENSITIVE_FILE_EXTENSIONS.some((ext) => baseLower.endsWith(ext))) return true;
+  if (lower.includes('/.ssh/') || lower.endsWith('/.ssh')) return true;
+  if (lower.includes('/.aws/credentials') || lower.endsWith('/.aws/credentials')) return true;
+  if (lower.includes('/.docker/config.json') || lower.endsWith('/.docker/config.json')) return true;
+  return false;
+}
+
+/**
+ * Resolve a model-supplied path against the daemon's cwd.
+ *
+ * Cloud sandbox paths are conventionally rooted at `/workspace/...`.
+ * On the local daemon, the cwd at startup IS the workspace, so we
+ * strip a leading `/workspace/` and reinterpret the rest as relative.
+ * Absolute non-`/workspace/` paths are honored as-is (the user paired
+ * the daemon — they consented to local FS access). Bare relative
+ * paths resolve against cwd. The leading-tilde case is not expanded
+ * (cwd-based interpretation is enough for chat-driven reads).
+ */
+function resolveDaemonPath(p) {
+  if (typeof p !== 'string' || p === '') return '';
+  const cwd = process.cwd();
+  if (p.startsWith('/workspace/')) return path.resolve(cwd, p.slice('/workspace/'.length));
+  if (p === '/workspace') return cwd;
+  if (path.isAbsolute(p)) return p;
+  return path.resolve(cwd, p);
+}
+
+async function handleSandboxReadFile(req) {
+  const payload = req.payload || {};
+  const rawPath = typeof payload.path === 'string' ? payload.path : '';
+  if (!rawPath) {
+    return makeErrorResponse(
+      req.requestId,
+      'sandbox_read_file',
+      'INVALID_REQUEST',
+      'sandbox_read_file requires a non-empty `path` string in payload.',
+    );
+  }
+  // Daemon-side sensitive-path reject. The web layer already blocks
+  // these before forwarding, but a stolen bearer used outside our
+  // client could skip that. The daemon is the boundary that actually
+  // touches the filesystem, so it gets the second copy of the rule.
+  // Kilo WARNING on PR #515.
+  if (isDaemonSensitivePath(rawPath)) {
+    return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+      content: '',
+      truncated: false,
+      error: 'sensitive path refused by daemon',
+      code: 'SENSITIVE_PATH',
+    });
+  }
+  const resolved = resolveDaemonPath(rawPath);
+  const startLine = Number.isInteger(payload.startLine) ? payload.startLine : undefined;
+  const endLine = Number.isInteger(payload.endLine) ? payload.endLine : undefined;
+  const isRangeRead = startLine !== undefined || endLine !== undefined;
+
+  // Ranged-read path: use a higher byte cap than the whole-file path
+  // so a model can read lines deep into a multi-MB file (e.g. a long
+  // log). totalLines is computed via the same split-on-newline rule
+  // the whole-file path uses, so both paths report the same value
+  // for the same file. Codex P2 on PR #515.
+  if (isRangeRead) {
+    let stat;
+    try {
+      stat = await fs.stat(resolved);
+    } catch (err) {
+      const code = typeof err?.code === 'string' ? err.code : 'READ_FAILED';
+      return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+        content: '',
+        truncated: false,
+        error: err?.message || 'read failed',
+        code,
+      });
+    }
+    if (stat.size > SANDBOX_RANGED_READ_MAX_BYTES) {
+      return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+        content: '',
+        truncated: true,
+        error: `file exceeds ${SANDBOX_RANGED_READ_MAX_BYTES} byte cap for ranged reads`,
+        code: 'FILE_TOO_LARGE',
+      });
+    }
+    let buf;
+    try {
+      buf = await fs.readFile(resolved);
+    } catch (err) {
+      const code = typeof err?.code === 'string' ? err.code : 'READ_FAILED';
+      return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+        content: '',
+        truncated: false,
+        error: err?.message || 'read failed',
+        code,
+      });
+    }
+    const allLines = buf.toString('utf8').split('\n');
+    const totalLines = allLines.length;
+    const s = Math.max(1, startLine ?? 1);
+    const e = Math.min(totalLines, Math.max(s, endLine ?? totalLines));
+    return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+      content: allLines.slice(s - 1, e).join('\n'),
+      truncated: false,
+      totalLines,
+    });
+  }
+
+  // Whole-file path: keep the previous in-memory implementation.
+  let buf;
+  try {
+    buf = await fs.readFile(resolved);
+  } catch (err) {
+    const code = typeof err?.code === 'string' ? err.code : 'READ_FAILED';
+    return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+      content: '',
+      truncated: false,
+      error: err?.message || 'read failed',
+      code,
+    });
+  }
+
+  if (buf.length > SANDBOX_FILE_MAX_BYTES) {
+    return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+      content: buf.slice(0, SANDBOX_FILE_MAX_BYTES).toString('utf8'),
+      truncated: true,
+    });
+  }
+
+  const allText = buf.toString('utf8');
+  const allLines = allText.split('\n');
+  const totalLines = allLines.length;
+  return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
+    content:
+      totalLines > SANDBOX_FILE_MAX_LINES
+        ? allLines.slice(0, SANDBOX_FILE_MAX_LINES).join('\n')
+        : allText,
+    truncated: totalLines > SANDBOX_FILE_MAX_LINES,
+    totalLines,
+  });
+}
+
+async function handleSandboxWriteFile(req) {
+  const payload = req.payload || {};
+  const rawPath = typeof payload.path === 'string' ? payload.path : '';
+  const content = typeof payload.content === 'string' ? payload.content : null;
+  if (!rawPath || content === null) {
+    return makeErrorResponse(
+      req.requestId,
+      'sandbox_write_file',
+      'INVALID_REQUEST',
+      'sandbox_write_file requires `path` and `content` strings in payload.',
+    );
+  }
+  if (isDaemonSensitivePath(rawPath)) {
+    return makeResponse(req.requestId, 'sandbox_write_file', null, true, {
+      ok: false,
+      error: 'sensitive path refused by daemon',
+    });
+  }
+  const resolved = resolveDaemonPath(rawPath);
+  try {
+    await fs.mkdir(path.dirname(resolved), { recursive: true });
+    await fs.writeFile(resolved, content, 'utf8');
+    return makeResponse(req.requestId, 'sandbox_write_file', null, true, {
+      ok: true,
+      bytesWritten: Buffer.byteLength(content, 'utf8'),
+    });
+  } catch (err) {
+    return makeResponse(req.requestId, 'sandbox_write_file', null, true, {
+      ok: false,
+      error: err?.message || 'write failed',
+    });
+  }
+}
+
+async function handleSandboxListDir(req) {
+  const payload = req.payload || {};
+  const rawPath = typeof payload.path === 'string' && payload.path ? payload.path : '.';
+  if (isDaemonSensitivePath(rawPath)) {
+    return makeResponse(req.requestId, 'sandbox_list_dir', null, true, {
+      entries: [],
+      truncated: false,
+      error: 'sensitive path refused by daemon',
+    });
+  }
+  const resolved = resolveDaemonPath(rawPath);
+
+  let dirents;
+  try {
+    dirents = await fs.readdir(resolved, { withFileTypes: true });
+  } catch (err) {
+    return makeResponse(req.requestId, 'sandbox_list_dir', null, true, {
+      entries: [],
+      truncated: false,
+      error: err?.message || 'list failed',
+    });
+  }
+
+  const truncated = dirents.length > SANDBOX_LIST_MAX_ENTRIES;
+  const slice = truncated ? dirents.slice(0, SANDBOX_LIST_MAX_ENTRIES) : dirents;
+  const entries = await Promise.all(
+    slice.map(async (d) => {
+      let type;
+      if (d.isFile()) type = 'file';
+      else if (d.isDirectory()) type = 'directory';
+      else if (d.isSymbolicLink()) type = 'symlink';
+      else type = 'other';
+      let size;
+      if (type === 'file') {
+        try {
+          const stat = await fs.stat(path.join(resolved, d.name));
+          size = stat.size;
+        } catch {
+          // Best-effort — leave size undefined.
+        }
+      }
+      return { name: d.name, type, size };
+    }),
+  );
+
+  return makeResponse(req.requestId, 'sandbox_list_dir', null, true, {
+    entries,
+    truncated,
+  });
+}
+
+// Empty-tree sha1 (`git hash-object -t tree --stdin < /dev/null`).
+// Built into every git installation. Diffing against it yields "every
+// tracked file is an add" — what we want when HEAD doesn't exist yet
+// (freshly init'd repo with no commits). Gemini PR #515.
+const GIT_EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+async function handleSandboxDiff(req) {
+  const { runCommandInResolvedShell } = await import('./shell.js');
+  const cwd = process.cwd();
+  // git diff HEAD: tracked-file working-copy changes vs the most recent
+  // commit. Untracked-file presence is conveyed by `git status --porcelain`
+  // below so the model has a complete picture. If HEAD doesn't exist
+  // (fresh repo, no commits), diff against the empty tree instead so
+  // the model still gets a useful payload.
+  let diffText = '';
+  let statusText = '';
+  let diffError;
+  let diffBase = 'HEAD';
+  try {
+    await runCommandInResolvedShell('git rev-parse --verify HEAD', {
+      cwd,
+      timeout: SANDBOX_GIT_TIMEOUT_MS,
+      maxBuffer: 64_000,
+    });
+  } catch {
+    diffBase = GIT_EMPTY_TREE;
+  }
+  try {
+    const out = await runCommandInResolvedShell(`git diff ${diffBase}`, {
+      cwd,
+      timeout: SANDBOX_GIT_TIMEOUT_MS,
+      maxBuffer: SANDBOX_DIFF_MAX_BYTES + 64_000,
+    });
+    diffText = out.stdout || '';
+  } catch (err) {
+    // Treat as soft-error: not a fatal RPC failure (might just mean no
+    // commits yet AND no empty-tree access — should be impossible, but
+    // we keep the soft error path), surface via the error field for
+    // the dispatch fork.
+    diffError = err?.stderr || err?.message || 'git diff failed';
+  }
+  try {
+    const out = await runCommandInResolvedShell('git status --porcelain', {
+      cwd,
+      timeout: SANDBOX_GIT_TIMEOUT_MS,
+      maxBuffer: 256_000,
+    });
+    statusText = out.stdout || '';
+  } catch {
+    // Status is advisory; swallow.
+  }
+
+  const truncated = diffText.length > SANDBOX_DIFF_MAX_BYTES;
+  return makeResponse(req.requestId, 'sandbox_diff', null, true, {
+    diff: truncated ? `${diffText.slice(0, SANDBOX_DIFF_MAX_BYTES)}\n…[truncated]` : diffText,
+    truncated,
+    gitStatus: statusText,
+    error: diffError,
+  });
+}
+
 async function handleDaemonIdentify(req, _emitEvent, context) {
   const record = context?.record;
   if (!record || typeof record.tokenId !== 'string') {
@@ -3305,6 +3642,10 @@ const HANDLERS = {
   cancel_delegation: handleCancelDelegation,
   fetch_delegation_events: handleFetchDelegationEvents,
   sandbox_exec: handleSandboxExec,
+  sandbox_read_file: handleSandboxReadFile,
+  sandbox_write_file: handleSandboxWriteFile,
+  sandbox_list_dir: handleSandboxListDir,
+  sandbox_diff: handleSandboxDiff,
   daemon_identify: handleDaemonIdentify,
 };
 

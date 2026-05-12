@@ -22,7 +22,20 @@ import {
   downloadFromSandbox,
 } from './sandbox-client';
 import { runAuditor } from './auditor-agent';
-import { LocalDaemonUnreachableError, execLocalDaemon } from './local-daemon-sandbox-client';
+import {
+  LocalDaemonUnreachableError,
+  execLocalDaemon,
+  getDiffLocalDaemon,
+  listDirLocalDaemon,
+  readFileLocalDaemon,
+  writeFileLocalDaemon,
+} from './local-daemon-sandbox-client';
+import {
+  filterSensitiveDirectoryEntries,
+  formatSensitivePathToolError,
+  isSensitivePath,
+  redactSensitiveText,
+} from './sensitive-data-guard';
 import { fetchAuditorFileContexts } from './auditor-file-context';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger } from './file-awareness-ledger';
@@ -238,6 +251,39 @@ function buildWriteContext(sandboxId: string): WriteHandlerContext {
     invalidateSymbolLedger: (path) => symbolLedger.invalidate(path),
     recordWriteFileMetric,
   };
+}
+
+/**
+ * Run a daemon-backed sandbox tool and map a `LocalDaemonUnreachableError`
+ * to a structured `SANDBOX_UNREACHABLE` result with a re-pair hint. Per-
+ * tool branches construct the success payload; this helper only handles
+ * the transport-failure case. PR 3c.3.
+ */
+async function runLocalDaemonTool(
+  toolName: string,
+  fn: () => Promise<ToolExecutionResult>,
+): Promise<ToolExecutionResult> {
+  try {
+    return await fn();
+  } catch (caught) {
+    if (caught instanceof LocalDaemonUnreachableError) {
+      const err: StructuredToolError = {
+        type: 'SANDBOX_UNREACHABLE',
+        retryable: false,
+        message: `Local PC daemon is unreachable: ${caught.reason}`,
+        detail:
+          'The daemon may have stopped or the bearer token may have been revoked. Re-pair to continue.',
+      };
+      return {
+        text: formatStructuredError(
+          err,
+          `[Tool Error — ${toolName}]\nLocal PC daemon is unreachable: ${caught.reason}\nThe daemon may have stopped or the bearer token may have been revoked. Re-pair to continue.`,
+        ),
+        structuredError: err,
+      };
+    }
+    throw caught;
+  }
 }
 
 export async function executeSandboxToolCall(
@@ -463,6 +509,53 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_read_file': {
+        if (options?.localDaemonBinding) {
+          // Match cloud `handleReadFile` semantics: refuse sensitive paths
+          // BEFORE they reach the daemon. The daemon also rejects these
+          // server-side (defense in depth), but the web check keeps the
+          // model's prompt context clean — no "I tried, it was blocked"
+          // round-trip. Codex P1 / Kilo / Gemini on PR #515.
+          if (isSensitivePath(call.args.path)) {
+            return { text: formatSensitivePathToolError(call.args.path) };
+          }
+          return runLocalDaemonTool('sandbox_read_file', async () => {
+            const local = await readFileLocalDaemon(options.localDaemonBinding!, call.args.path, {
+              startLine: call.args.start_line,
+              endLine: call.args.end_line,
+            });
+            if (local.error) {
+              // Use classifyError so daemon and cloud paths surface the
+              // same structured types (FILE_NOT_FOUND, AUTH_FAILURE,
+              // etc.) with consistent retryability. Copilot PR #515.
+              const err = classifyError(local.error, call.args.path);
+              if (local.code === 'ENOENT') err.type = 'FILE_NOT_FOUND';
+              err.detail = `Path: ${call.args.path}`;
+              return {
+                text: formatStructuredError(
+                  err,
+                  `[Tool Error — sandbox_read_file]\n${local.error}`,
+                ),
+                structuredError: err,
+              };
+            }
+            // File contents are attacker-controlled. Two defenses, in
+            // the same order the cloud `sandbox_exec` path applies them:
+            //   1. `redactSensitiveText` strips committed secrets
+            //      (.env-shaped content, AWS keys, etc.). Gemini PR #515.
+            //   2. `sanitizeUntrustedSource` defangs envelope-boundary
+            //      tags and embedded JSON tool-call shapes so the model
+            //      can't echo malicious file content back as a turn.
+            //      Copilot PR #515.
+            const redaction = redactSensitiveText(local.content);
+            const sanitized = sanitizeUntrustedSource(redaction.text);
+            const header = `[Tool Result — sandbox_read_file]\nPath: ${call.args.path}${
+              local.totalLines !== undefined ? ` (${local.totalLines} lines)` : ''
+            }${local.truncated ? ' [truncated]' : ''}${
+              redaction.redacted ? ' [secrets redacted]' : ''
+            }`;
+            return { text: `${header}\n\n${sanitized}` };
+          });
+        }
         return handleReadFile(buildReadOnlyInspectionContext(sandboxId), call.args);
       }
 
@@ -471,6 +564,47 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_list_dir': {
+        if (options?.localDaemonBinding) {
+          const dirPath = call.args.path ?? '(cwd)';
+          // Match cloud `handleListDir` semantics for the directory itself
+          // (refusing a list of e.g. `~/.ssh`). Individual sensitive
+          // entries are filtered after the daemon returns, also matching
+          // the cloud path.
+          if (call.args.path && isSensitivePath(call.args.path)) {
+            return { text: formatSensitivePathToolError(call.args.path) };
+          }
+          return runLocalDaemonTool('sandbox_list_dir', async () => {
+            const local = await listDirLocalDaemon(options.localDaemonBinding!, call.args.path);
+            if (local.error) {
+              const err = classifyError(local.error, dirPath);
+              err.detail = `Path: ${dirPath}`;
+              return {
+                text: formatStructuredError(err, `[Tool Error — sandbox_list_dir]\n${local.error}`),
+                structuredError: err,
+              };
+            }
+            const filtered = filterSensitiveDirectoryEntries(call.args.path ?? '', local.entries);
+            const rows = filtered.entries
+              .map((e) =>
+                e.type === 'directory'
+                  ? `${e.name}/`
+                  : e.size !== undefined
+                    ? `${e.name}\t${e.size}`
+                    : e.name,
+              )
+              .join('\n');
+            const hiddenNote =
+              filtered.hiddenCount > 0
+                ? ` (${filtered.hiddenCount} sensitive entr${
+                    filtered.hiddenCount === 1 ? 'y' : 'ies'
+                  } hidden)`
+                : '';
+            const header = `[Tool Result — sandbox_list_dir]\nPath: ${dirPath}${
+              local.truncated ? ` [truncated to ${local.entries.length}]` : ''
+            }${hiddenNote}`;
+            return { text: `${header}\n\n${rows}` };
+          });
+        }
         return handleListDir(buildReadOnlyInspectionContext(sandboxId), call.args);
       }
 
@@ -487,10 +621,69 @@ export async function executeSandboxToolCall(
       }
 
       case 'sandbox_write_file': {
+        if (options?.localDaemonBinding) {
+          // The cloud `handleWriteFile` has its own guards (file ledger,
+          // version cache, etc.); on the daemon side we have none of those
+          // yet but we DO want to keep models from writing into
+          // `.env`/`.ssh/...`/`.pem` paths regardless of session type.
+          if (isSensitivePath(call.args.path)) {
+            return { text: formatSensitivePathToolError(call.args.path) };
+          }
+          return runLocalDaemonTool('sandbox_write_file', async () => {
+            const local = await writeFileLocalDaemon(
+              options.localDaemonBinding!,
+              call.args.path,
+              call.args.content,
+            );
+            if (!local.ok || local.error) {
+              const err = classifyError(local.error || 'Local-PC write failed', call.args.path);
+              // Default classification will not pick WRITE_FAILED — set
+              // it explicitly when the daemon didn't surface a known
+              // error (EACCES, etc.) so the model still sees a write-
+              // specific failure type.
+              if (err.type === 'UNKNOWN') err.type = 'WRITE_FAILED';
+              err.detail = `Path: ${call.args.path}`;
+              return {
+                text: formatStructuredError(
+                  err,
+                  `[Tool Error — sandbox_write_file]\n${err.message}`,
+                ),
+                structuredError: err,
+              };
+            }
+            return {
+              text:
+                `[Tool Result — sandbox_write_file]\n` +
+                `Path: ${call.args.path}\n` +
+                `Bytes written: ${local.bytesWritten ?? 'n/a'}`,
+            };
+          });
+        }
         return handleWriteFile(buildWriteContext(sandboxId), call.args);
       }
 
       case 'sandbox_diff': {
+        if (options?.localDaemonBinding) {
+          return runLocalDaemonTool('sandbox_diff', async () => {
+            const local = await getDiffLocalDaemon(options.localDaemonBinding!);
+            if (local.error && !local.diff) {
+              const err = classifyError(local.error, 'sandbox_diff');
+              return {
+                text: formatStructuredError(err, `[Tool Error — sandbox_diff]\n${local.error}`),
+                structuredError: err,
+              };
+            }
+            const parts = [`[Tool Result — sandbox_diff]`];
+            if (local.gitStatus) parts.push(`\nStatus:\n${local.gitStatus}`);
+            if (local.diff) {
+              parts.push(`\nDiff:\n${local.diff}`);
+              if (local.truncated) parts.push(`\n[Diff truncated]`);
+            } else {
+              parts.push(`\n(no working-copy changes vs HEAD)`);
+            }
+            return { text: parts.join('\n') };
+          });
+        }
         return handleSandboxDiff(buildGitReleaseContext(sandboxId));
       }
 
