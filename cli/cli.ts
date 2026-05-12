@@ -1785,10 +1785,29 @@ async function waitForProcessExit(pid, timeoutMs) {
 }
 
 async function readLogTail(logPath, lineCount) {
+  // pushd.log appends indefinitely (no rotation today). Read only the trailing
+  // chunk to keep memory bounded — 16KB is well over a typical "last 5 lines"
+  // worth of log output and small enough that the worst case is cheap.
+  const CHUNK_SIZE = 16384;
   try {
-    const contents = await fs.readFile(logPath, 'utf8');
-    const lines = contents.split('\n').filter((line) => line.length > 0);
-    return lines.slice(-lineCount);
+    const stat = await fs.stat(logPath);
+    const start = Math.max(0, stat.size - CHUNK_SIZE);
+    const handle = await fs.open(logPath, 'r');
+    try {
+      const { bytesRead, buffer } = await handle.read(
+        Buffer.alloc(CHUNK_SIZE),
+        0,
+        CHUNK_SIZE,
+        start,
+      );
+      const contents = buffer.toString('utf8', 0, bytesRead);
+      // If we landed mid-line at the chunk start, the first line may be
+      // truncated — slice(-lineCount) drops it as long as lineCount is small.
+      const lines = contents.split('\n').filter((line) => line.length > 0);
+      return lines.slice(-lineCount);
+    } finally {
+      await handle.close();
+    }
   } catch {
     return [];
   }
@@ -1966,6 +1985,15 @@ async function runDaemonSubcommand(values, positionals) {
       process.stdout.write(`pushd stopped (pid: ${pid})\n`);
     } else {
       process.stdout.write('pushd was not running; starting fresh\n');
+      if (pid) {
+        // Clean up the stale PID file so start() begins from a known-empty
+        // state — same pattern as the status action.
+        try {
+          await fs.unlink(getPidPath());
+        } catch {
+          /* ignore */
+        }
+      }
     }
     return runDaemonSubcommand(values, ['daemon', 'start']);
   }
