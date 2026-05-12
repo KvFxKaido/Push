@@ -30,6 +30,12 @@ import {
   readFileLocalDaemon,
   writeFileLocalDaemon,
 } from './local-daemon-sandbox-client';
+import {
+  filterSensitiveDirectoryEntries,
+  formatSensitivePathToolError,
+  isSensitivePath,
+  redactSensitiveText,
+} from './sensitive-data-guard';
 import { fetchAuditorFileContexts } from './auditor-file-context';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger } from './file-awareness-ledger';
@@ -504,18 +510,26 @@ export async function executeSandboxToolCall(
 
       case 'sandbox_read_file': {
         if (options?.localDaemonBinding) {
+          // Match cloud `handleReadFile` semantics: refuse sensitive paths
+          // BEFORE they reach the daemon. The daemon also rejects these
+          // server-side (defense in depth), but the web check keeps the
+          // model's prompt context clean — no "I tried, it was blocked"
+          // round-trip. Codex P1 / Kilo / Gemini on PR #515.
+          if (isSensitivePath(call.args.path)) {
+            return { text: formatSensitivePathToolError(call.args.path) };
+          }
           return runLocalDaemonTool('sandbox_read_file', async () => {
             const local = await readFileLocalDaemon(options.localDaemonBinding!, call.args.path, {
               startLine: call.args.start_line,
               endLine: call.args.end_line,
             });
             if (local.error) {
-              const err: StructuredToolError = {
-                type: local.code === 'ENOENT' ? 'FILE_NOT_FOUND' : 'UNKNOWN',
-                retryable: false,
-                message: local.error,
-                detail: `Path: ${call.args.path}`,
-              };
+              // Use classifyError so daemon and cloud paths surface the
+              // same structured types (FILE_NOT_FOUND, AUTH_FAILURE,
+              // etc.) with consistent retryability. Copilot PR #515.
+              const err = classifyError(local.error, call.args.path);
+              if (local.code === 'ENOENT') err.type = 'FILE_NOT_FOUND';
+              err.detail = `Path: ${call.args.path}`;
               return {
                 text: formatStructuredError(
                   err,
@@ -524,10 +538,22 @@ export async function executeSandboxToolCall(
                 structuredError: err,
               };
             }
+            // File contents are attacker-controlled. Two defenses, in
+            // the same order the cloud `sandbox_exec` path applies them:
+            //   1. `redactSensitiveText` strips committed secrets
+            //      (.env-shaped content, AWS keys, etc.). Gemini PR #515.
+            //   2. `sanitizeUntrustedSource` defangs envelope-boundary
+            //      tags and embedded JSON tool-call shapes so the model
+            //      can't echo malicious file content back as a turn.
+            //      Copilot PR #515.
+            const redaction = redactSensitiveText(local.content);
+            const sanitized = sanitizeUntrustedSource(redaction.text);
             const header = `[Tool Result — sandbox_read_file]\nPath: ${call.args.path}${
               local.totalLines !== undefined ? ` (${local.totalLines} lines)` : ''
-            }${local.truncated ? ' [truncated]' : ''}`;
-            return { text: `${header}\n\n${local.content}` };
+            }${local.truncated ? ' [truncated]' : ''}${
+              redaction.redacted ? ' [secrets redacted]' : ''
+            }`;
+            return { text: `${header}\n\n${sanitized}` };
           });
         }
         return handleReadFile(buildReadOnlyInspectionContext(sandboxId), call.args);
@@ -539,21 +565,26 @@ export async function executeSandboxToolCall(
 
       case 'sandbox_list_dir': {
         if (options?.localDaemonBinding) {
+          const dirPath = call.args.path ?? '(cwd)';
+          // Match cloud `handleListDir` semantics for the directory itself
+          // (refusing a list of e.g. `~/.ssh`). Individual sensitive
+          // entries are filtered after the daemon returns, also matching
+          // the cloud path.
+          if (call.args.path && isSensitivePath(call.args.path)) {
+            return { text: formatSensitivePathToolError(call.args.path) };
+          }
           return runLocalDaemonTool('sandbox_list_dir', async () => {
             const local = await listDirLocalDaemon(options.localDaemonBinding!, call.args.path);
             if (local.error) {
-              const err: StructuredToolError = {
-                type: 'UNKNOWN',
-                retryable: false,
-                message: local.error,
-                detail: `Path: ${call.args.path ?? '(cwd)'}`,
-              };
+              const err = classifyError(local.error, dirPath);
+              err.detail = `Path: ${dirPath}`;
               return {
                 text: formatStructuredError(err, `[Tool Error — sandbox_list_dir]\n${local.error}`),
                 structuredError: err,
               };
             }
-            const rows = local.entries
+            const filtered = filterSensitiveDirectoryEntries(call.args.path ?? '', local.entries);
+            const rows = filtered.entries
               .map((e) =>
                 e.type === 'directory'
                   ? `${e.name}/`
@@ -562,9 +593,15 @@ export async function executeSandboxToolCall(
                     : e.name,
               )
               .join('\n');
-            const header = `[Tool Result — sandbox_list_dir]\nPath: ${
-              call.args.path ?? '(cwd)'
-            }${local.truncated ? ` [truncated to ${local.entries.length}]` : ''}`;
+            const hiddenNote =
+              filtered.hiddenCount > 0
+                ? ` (${filtered.hiddenCount} sensitive entr${
+                    filtered.hiddenCount === 1 ? 'y' : 'ies'
+                  } hidden)`
+                : '';
+            const header = `[Tool Result — sandbox_list_dir]\nPath: ${dirPath}${
+              local.truncated ? ` [truncated to ${local.entries.length}]` : ''
+            }${hiddenNote}`;
             return { text: `${header}\n\n${rows}` };
           });
         }
@@ -585,6 +622,13 @@ export async function executeSandboxToolCall(
 
       case 'sandbox_write_file': {
         if (options?.localDaemonBinding) {
+          // The cloud `handleWriteFile` has its own guards (file ledger,
+          // version cache, etc.); on the daemon side we have none of those
+          // yet but we DO want to keep models from writing into
+          // `.env`/`.ssh/...`/`.pem` paths regardless of session type.
+          if (isSensitivePath(call.args.path)) {
+            return { text: formatSensitivePathToolError(call.args.path) };
+          }
           return runLocalDaemonTool('sandbox_write_file', async () => {
             const local = await writeFileLocalDaemon(
               options.localDaemonBinding!,
@@ -592,12 +636,13 @@ export async function executeSandboxToolCall(
               call.args.content,
             );
             if (!local.ok || local.error) {
-              const err: StructuredToolError = {
-                type: 'WRITE_FAILED',
-                retryable: false,
-                message: local.error || 'Local-PC write failed',
-                detail: `Path: ${call.args.path}`,
-              };
+              const err = classifyError(local.error || 'Local-PC write failed', call.args.path);
+              // Default classification will not pick WRITE_FAILED — set
+              // it explicitly when the daemon didn't surface a known
+              // error (EACCES, etc.) so the model still sees a write-
+              // specific failure type.
+              if (err.type === 'UNKNOWN') err.type = 'WRITE_FAILED';
+              err.detail = `Path: ${call.args.path}`;
               return {
                 text: formatStructuredError(
                   err,
@@ -622,11 +667,7 @@ export async function executeSandboxToolCall(
           return runLocalDaemonTool('sandbox_diff', async () => {
             const local = await getDiffLocalDaemon(options.localDaemonBinding!);
             if (local.error && !local.diff) {
-              const err: StructuredToolError = {
-                type: 'UNKNOWN',
-                retryable: false,
-                message: local.error,
-              };
+              const err = classifyError(local.error, 'sandbox_diff');
               return {
                 text: formatStructuredError(err, `[Tool Error — sandbox_diff]\n${local.error}`),
                 structuredError: err,

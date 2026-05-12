@@ -61,10 +61,13 @@ export interface LocalDaemonExecOptions {
 }
 
 /**
- * Result shape of `sandbox_read_file` on the daemon. Mirrors the
- * cloud `FileReadResult` field set the dispatch fork actually consumes;
- * `version` / `workspace_revision` are stubbed (the daemon does not run
- * a version cache) and treated as advisory only by the dispatch fork.
+ * Result shape of `sandbox_read_file` on the daemon. Intentionally
+ * smaller than the cloud `FileReadResult`: the daemon doesn't run a
+ * version cache or track workspace revisions yet, so `version` and
+ * `workspace_revision` are omitted entirely (not stubbed). Dispatch
+ * forks that need optimistic-concurrency edits should treat a
+ * daemon-backed read as unversioned. A future PR may extend this
+ * once the daemon side gains per-path versioning.
  */
 export interface LocalDaemonReadFileResult {
   content: string;

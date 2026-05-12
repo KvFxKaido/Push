@@ -102,6 +102,54 @@ describe('sandbox_read_file', () => {
     assert.equal(res.payload.code, 'ENOENT');
     assert.ok(res.payload.error);
   });
+
+  it('refuses sensitive paths at the daemon boundary (Kilo PR #515)', async () => {
+    // Defense in depth: even if a stolen bearer bypasses the web-side
+    // isSensitivePath check, the daemon refuses these reads.
+    await fs.writeFile(path.join(tmpRoot, '.env'), 'SECRET=hunter2\n', 'utf8');
+    const res = await handleRequest(makeRequest('sandbox_read_file', { path: '.env' }), NOOP_EMIT);
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.code, 'SENSITIVE_PATH');
+    assert.equal(res.payload.content, '');
+    assert.match(res.payload.error, /sensitive/);
+  });
+
+  it('refuses absolute paths into ~/.ssh at the daemon boundary', async () => {
+    const res = await handleRequest(
+      makeRequest('sandbox_read_file', { path: '/home/whoever/.ssh/id_ed25519' }),
+      NOOP_EMIT,
+    );
+    assert.equal(res.payload.code, 'SENSITIVE_PATH');
+  });
+
+  it('honors line range on a file larger than the whole-file byte cap (Codex P2)', async () => {
+    // Build a 1.5MB file: each line is "xxxxx...x" (1024 bytes including
+    // newline). 1500 lines * 1024 = 1.5MB > SANDBOX_FILE_MAX_BYTES (1MB).
+    // Without the streaming fix, a range read of lines 1490–1495 would
+    // return the first 1MB truncated instead of the requested lines.
+    const linePayload = `${'x'.repeat(1023)}\n`;
+    const lines = [];
+    for (let i = 1; i <= 1500; i++) {
+      // Distinct prefix on the last 10 lines so we can verify which
+      // window the handler returned.
+      lines.push(i >= 1490 ? `line${i}_${'x'.repeat(1015)}\n` : linePayload);
+    }
+    await fs.writeFile(path.join(tmpRoot, 'big.txt'), lines.join(''), 'utf8');
+    const res = await handleRequest(
+      makeRequest('sandbox_read_file', {
+        path: 'big.txt',
+        startLine: 1490,
+        endLine: 1495,
+      }),
+      NOOP_EMIT,
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.truncated, false);
+    assert.match(res.payload.content, /^line1490_/);
+    assert.match(res.payload.content, /\nline1495_/);
+    // totalLines should be the exact file line count
+    assert.equal(res.payload.totalLines, 1501); // 1500 lines + trailing newline split
+  });
 });
 
 describe('sandbox_write_file', () => {
@@ -155,6 +203,22 @@ describe('sandbox_write_file', () => {
     assert.equal(res.payload.ok, true);
     assert.equal(res.payload.bytesWritten, 0);
   });
+
+  it('refuses sensitive paths at the daemon boundary', async () => {
+    const res = await handleRequest(
+      makeRequest('sandbox_write_file', { path: '.env', content: 'STOLEN_KEY=...' }),
+      NOOP_EMIT,
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.ok, false);
+    assert.match(res.payload.error, /sensitive/);
+    // And no file was written.
+    await assert.rejects(
+      fs.access(path.join(tmpRoot, '.env')),
+      /ENOENT/,
+      'daemon must NOT have written the sensitive file',
+    );
+  });
 });
 
 describe('sandbox_list_dir', () => {
@@ -190,6 +254,16 @@ describe('sandbox_list_dir', () => {
     assert.ok(res.payload.error);
     assert.deepEqual(res.payload.entries, []);
   });
+
+  it('refuses sensitive paths at the daemon boundary', async () => {
+    const res = await handleRequest(
+      makeRequest('sandbox_list_dir', { path: '/home/whoever/.ssh' }),
+      NOOP_EMIT,
+    );
+    assert.equal(res.ok, true);
+    assert.match(res.payload.error, /sensitive/);
+    assert.deepEqual(res.payload.entries, []);
+  });
 });
 
 describe('sandbox_diff', () => {
@@ -203,5 +277,28 @@ describe('sandbox_diff', () => {
     // non-git cwd. We only assert the envelope shape.
     assert.equal(typeof res.payload.diff, 'string');
     assert.equal(typeof res.payload.truncated, 'boolean');
+  });
+
+  it('falls back to the empty tree in a freshly-init repo (Gemini PR #515)', async () => {
+    // Initialize a repo but make no commits. Without the fallback,
+    // `git diff HEAD` errors and the model gets a confusing git
+    // message; with it, we diff against the empty tree and the staged/
+    // unstaged adds show up as additions.
+    const { runCommandInResolvedShell } = await import('../shell.js');
+    await runCommandInResolvedShell('git init --initial-branch=main', { cwd: tmpRoot });
+    await runCommandInResolvedShell(
+      'git config user.email test@test && git config user.name test',
+      { cwd: tmpRoot },
+    );
+    await fs.writeFile(path.join(tmpRoot, 'new.txt'), 'fresh content\n', 'utf8');
+    await runCommandInResolvedShell('git add new.txt', { cwd: tmpRoot });
+
+    const res = await handleRequest(makeRequest('sandbox_diff', {}), NOOP_EMIT);
+    assert.equal(res.ok, true);
+    // No `error` field — diff vs empty tree succeeded.
+    assert.equal(res.payload.error, undefined);
+    // The new file should appear as an add in the diff.
+    assert.match(res.payload.diff, /diff --git/);
+    assert.match(res.payload.diff, /\+fresh content/);
   });
 });
