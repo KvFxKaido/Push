@@ -36,6 +36,7 @@ export async function streamAssistantRound(
     workspaceContextRef,
     abortControllerRef,
     sandboxIdRef,
+    localDaemonBindingRef,
     setConversations,
     updateAgentStatus,
     emitRunEngineEvent,
@@ -45,7 +46,14 @@ export async function streamAssistantRound(
   let accumulated = '';
   let thinkingAccumulated = '';
   const reasoningBlocks: ReasoningBlock[] = [];
-  const hasSandboxThisRound = Boolean(sandboxIdRef.current);
+  // Sandbox tools are advertised in the prompt when ANY sandbox-shaped
+  // transport is available: a cloud sandbox id (`sandboxIdRef`) or a
+  // paired local-PC daemon binding (`localDaemonBindingRef`). Without
+  // the binding check, a local-pc session would see only chat tools in
+  // its system prompt and `sandbox_exec` / `sandbox_read_file` etc.
+  // would never be emitted even though the dispatch fork exists.
+  // Codex P2 on PR #516.
+  const hasSandboxThisRound = Boolean(sandboxIdRef.current || localDaemonBindingRef.current);
 
   // Set OpenRouter session_id so all requests in this conversation are grouped.
   // Set unconditionally: the orchestrator may resolve to OpenRouter even when
