@@ -73,6 +73,18 @@ function openWs({ token, origin }) {
   return new WebSocket(wsUrl(), { headers });
 }
 
+// Browser-style connection: carry the bearer through
+// Sec-WebSocket-Protocol instead of Authorization, mirroring what
+// the actual web client (PR 3a) does.
+function openWsViaSubprotocol({ token, origin, includeSelector = true }) {
+  const headers = {};
+  if (origin !== undefined) headers.Origin = origin;
+  const protocols = [];
+  if (includeSelector) protocols.push('pushd.v1');
+  if (token) protocols.push(`bearer.${token}`);
+  return new WebSocket(wsUrl(), protocols, { headers });
+}
+
 function closeAndWait(ws) {
   return new Promise((resolve) => {
     if (ws.readyState === ws.CLOSED) return resolve();
@@ -222,6 +234,51 @@ describe('pushd-ws auth gate', () => {
   it('writes the bound port file', async () => {
     const portContent = await fs.readFile(portPath, 'utf8');
     assert.equal(portContent.trim(), String(handle.port));
+  });
+
+  // ─── Subprotocol carrier (browser clients) ─────────────────────
+
+  it('accepts a token carried via Sec-WebSocket-Protocol subprotocol', async () => {
+    const { token } = await mintDeviceToken({ boundOrigin: 'loopback' });
+    const ws = openWsViaSubprotocol({ token, origin: 'http://localhost:5173' });
+    const outcome = await waitForUpgradeOutcome(ws);
+    assert.equal(outcome.kind, 'open', `unexpected: ${JSON.stringify(outcome)}`);
+    // Browser would reject the upgrade if the server didn't echo
+    // pushd.v1; ws exposes the negotiated value on .protocol.
+    assert.equal(ws.protocol, 'pushd.v1');
+    const response = await roundTripPing(ws);
+    assert.equal(response.ok, true);
+    await closeAndWait(ws);
+  });
+
+  it('rejects a subprotocol bearer that is missing the pushd.v1 selector', async () => {
+    const { token } = await mintDeviceToken({ boundOrigin: 'loopback' });
+    const ws = openWsViaSubprotocol({
+      token,
+      origin: 'http://localhost:5173',
+      includeSelector: false,
+    });
+    const outcome = await waitForUpgradeOutcome(ws);
+    assert.equal(outcome.kind, 'rejected');
+    assert.equal(outcome.statusCode, 401);
+  });
+
+  it('rejects an unknown subprotocol bearer with 401', async () => {
+    const ws = openWsViaSubprotocol({
+      token: 'pushd_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      origin: 'http://localhost:5173',
+    });
+    const outcome = await waitForUpgradeOutcome(ws);
+    assert.equal(outcome.kind, 'rejected');
+    assert.equal(outcome.statusCode, 401);
+  });
+
+  it('subprotocol bearer respects origin binding (rejects wrong origin)', async () => {
+    const { token } = await mintDeviceToken({ boundOrigin: 'https://push.zen-dev.com' });
+    const ws = openWsViaSubprotocol({ token, origin: 'https://evil.example' });
+    const outcome = await waitForUpgradeOutcome(ws);
+    assert.equal(outcome.kind, 'rejected');
+    assert.equal(outcome.statusCode, 403);
   });
 
   it('refuses non-loopback host overrides', async () => {
