@@ -72,6 +72,7 @@ export async function executeSingleToolCall(
     abortRef,
     sandboxIdRef,
     ensureSandboxRef,
+    localDaemonBindingRef,
     scratchpadRef,
     todoRef,
     repoRef,
@@ -149,10 +150,12 @@ export async function executeSingleToolCall(
 
   // Lazy auto-spin: create sandbox on demand for sandbox calls and any
   // delegation that can execute Coder work (direct or via task graph).
+  // Local-PC sessions skip this entirely — their binding is the transport.
   if (
     !toolExecResult &&
     (toolCall.source === 'sandbox' || delegateCallNeedsSandbox(toolCall)) &&
-    !sandboxIdRef.current
+    !sandboxIdRef.current &&
+    !localDaemonBindingRef.current
   ) {
     if (ensureSandboxRef.current) {
       updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
@@ -189,6 +192,7 @@ export async function executeSingleToolCall(
       repoFullName: repoRef.current,
       chatId,
       sandboxId: sandboxIdRef.current,
+      localDaemonBinding: localDaemonBindingRef.current ?? undefined,
       isMainProtected: isMainProtectedRef.current,
       defaultBranch: branchInfoRef.current?.defaultBranch,
       provider: lockedProvider,

@@ -7,7 +7,13 @@
  * Pure-ish helpers with explicit parameters. No React hooks, no closures over hook state.
  */
 
-import type { ChatMessage, ChatCard, ReasoningBlock, ToolExecutionResult } from '@/types';
+import type {
+  ChatMessage,
+  ChatCard,
+  LocalPcBinding,
+  ReasoningBlock,
+  ToolExecutionResult,
+} from '@/types';
 import type { ApprovalGateRegistry } from '@/lib/approval-gates';
 import { createDefaultApprovalGates } from '@/lib/approval-gates';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
@@ -56,6 +62,13 @@ export interface ToolExecRunContext {
    */
   chatId: string | null;
   sandboxId: string | null;
+  /**
+   * Local-daemon binding for `kind: 'local-pc'` sessions. When set,
+   * sandbox tool calls route through `pushd` over the paired WebSocket
+   * instead of the cloud sandbox provider. `sandboxId` may be `null`
+   * when this is set — the dispatcher chooses the transport.
+   */
+  localDaemonBinding?: LocalPcBinding;
   isMainProtected: boolean;
   defaultBranch: string | undefined;
   provider: ActiveProvider;
@@ -132,6 +145,7 @@ export async function executeTool(
           undefined,
           undefined,
           ctx.chatId ?? undefined,
+          ctx.localDaemonBinding,
         );
       }
 

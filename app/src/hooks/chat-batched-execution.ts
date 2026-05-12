@@ -64,6 +64,7 @@ export async function executeBatchedToolCalls(
     abortRef,
     sandboxIdRef,
     ensureSandboxRef,
+    localDaemonBindingRef,
     scratchpadRef,
     todoRef,
     repoRef,
@@ -127,7 +128,12 @@ export async function executeBatchedToolCalls(
     hasParallelSandboxCalls ||
     fileMutationBatch.some((call) => call.source === 'sandbox') ||
     detected.mutating?.source === 'sandbox';
-  if (batchNeedsSandbox && !sandboxIdRef.current && ensureSandboxRef.current) {
+  if (
+    batchNeedsSandbox &&
+    !sandboxIdRef.current &&
+    !localDaemonBindingRef.current &&
+    ensureSandboxRef.current
+  ) {
     updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
     const newId = await ensureSandboxRef.current();
     if (newId) sandboxIdRef.current = newId;
@@ -137,6 +143,7 @@ export async function executeBatchedToolCalls(
     repoFullName: repoRef.current,
     chatId,
     sandboxId: sandboxIdRef.current,
+    localDaemonBinding: localDaemonBindingRef.current ?? undefined,
     isMainProtected: isMainProtectedRef.current,
     defaultBranch: branchInfoRef.current?.defaultBranch,
     provider: lockedProvider,
@@ -265,6 +272,7 @@ export async function executeBatchedToolCalls(
       repoFullName: repoRef.current,
       chatId,
       sandboxId: sandboxIdRef.current,
+      localDaemonBinding: localDaemonBindingRef.current ?? undefined,
       isMainProtected: isMainProtectedRef.current,
       defaultBranch: branchInfoRef.current?.defaultBranch,
       provider: lockedProvider,
@@ -411,6 +419,7 @@ export async function executeBatchedToolCalls(
     if (
       (mutCall.source === 'sandbox' || delegateCallNeedsSandbox(mutCall)) &&
       !sandboxIdRef.current &&
+      !localDaemonBindingRef.current &&
       ensureSandboxRef.current
     ) {
       updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
@@ -449,6 +458,7 @@ export async function executeBatchedToolCalls(
         repoFullName: repoRef.current,
         chatId,
         sandboxId: sandboxIdRef.current,
+        localDaemonBinding: localDaemonBindingRef.current ?? undefined,
         isMainProtected: isMainProtectedRef.current,
         defaultBranch: branchInfoRef.current?.defaultBranch,
         provider: lockedProvider,
