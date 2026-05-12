@@ -9,13 +9,30 @@
  */
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { WebSocketServer, type WebSocket as WsServerSocket } from 'ws';
+import { WebSocket as WsClient, WebSocketServer, type WebSocket as WsServerSocket } from 'ws';
+import { PROTOCOL_VERSION } from '@push/lib/protocol-schema';
 import {
-  createLocalDaemonBinding,
   type ConnectionStatus,
   type SessionEvent,
+  createLocalDaemonBinding,
 } from './local-daemon-binding';
-import { PROTOCOL_VERSION } from '@push/lib/protocol-schema';
+
+// Node 22 has globalThis.WebSocket; Node 20 (which CI uses for the
+// app test job) does not. The adapter calls `new WebSocket(...)`
+// because that's the browser API it runs against in production.
+// Shim the global here so this test executes identically on both
+// Node versions. The `ws` client implements the W3C interface
+// (addEventListener / readyState / send / close) the adapter
+// relies on; the call only resolves at function-invocation time,
+// so installing the shim here at module top-level — before any
+// test calls createLocalDaemonBinding — is sufficient.
+if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === 'undefined') {
+  // Cast through unknown — the `ws` client class is structurally
+  // similar to the browser WebSocket but isn't the same nominal type
+  // (it extends EventEmitter, exposes once/listenerCount/etc.). For
+  // the adapter's purposes the W3C-compatible surface is sufficient.
+  (globalThis as unknown as { WebSocket: typeof WsClient }).WebSocket = WsClient;
+}
 
 const VALID_TOKEN = 'pushd_test_valid_token_xxxxxxxxxxxxxxxxxxxxxxxxxxx';
 const SUBPROTOCOL_SELECTOR = 'pushd.v1';
