@@ -17,6 +17,8 @@ interface HomeScreenProps {
   onDisconnect: () => void;
   onStartWorkspace: () => void;
   onStartChat: () => void;
+  /** Optional: undefined hides the Local PC tile (VITE_LOCAL_PC_MODE off). */
+  onStartLocalPc?: () => void;
   user: GitHubUser | null;
 }
 
@@ -34,6 +36,7 @@ export function HomeScreen({
   onDisconnect,
   onStartWorkspace,
   onStartChat,
+  onStartLocalPc,
   user,
 }: HomeScreenProps) {
   usePerfMark('home:painted', 'screen:home');
@@ -56,6 +59,7 @@ export function HomeScreen({
           onDisconnect={onDisconnect}
           onStartWorkspace={onStartWorkspace}
           onStartChat={onStartChat}
+          onStartLocalPc={onStartLocalPc}
           user={user}
         />
       </div>

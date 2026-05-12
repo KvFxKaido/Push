@@ -206,7 +206,12 @@ export function useWorkspaceSandboxController({
 
   useEffect(() => {
     setSandboxId(sandboxId);
-    if (workspaceSession.kind === 'chat') return;
+    // chat + local-pc sessions don't run a cloud sandbox: chat has no
+    // workspace at all, local-pc routes through its own WS adapter via
+    // LocalPcWorkspace. Either kind reaching this controller is an
+    // upstream routing bug, but we still need to keep the type narrow
+    // before the spread below — local-pc's `sandboxId` is `null`-only.
+    if (workspaceSession.kind === 'chat' || workspaceSession.kind === 'local-pc') return;
     if (workspaceSession.sandboxId === sandboxId) return;
     onWorkspaceSessionChange({ ...workspaceSession, sandboxId });
   }, [onWorkspaceSessionChange, sandboxId, setSandboxId, workspaceSession]);

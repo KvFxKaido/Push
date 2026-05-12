@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, Github, Key, MessageSquare } from 'lucide-react';
+import { Loader2, Github, Key, MessageSquare, Monitor } from 'lucide-react';
 import {
   HUB_MATERIAL_BUTTON_CLASS,
   HUB_MATERIAL_INPUT_CLASS,
@@ -16,6 +16,13 @@ interface OnboardingScreenProps {
   onConnectOAuth: () => void;
   onStartWorkspace: () => void;
   onStartChat: () => void;
+  /**
+   * Optional Local PC entry. The Local PC mode doesn't require GitHub
+   * auth (pushd is the entire backend), so its tile lives here on the
+   * onboarding screen too — not just on the post-auth hub. Undefined
+   * hides the tile (VITE_LOCAL_PC_MODE off).
+   */
+  onStartLocalPc?: () => void;
   onInstallApp: () => void;
   onConnectInstallationId: (installationId: string) => Promise<boolean>;
   loading: boolean;
@@ -29,6 +36,7 @@ export function OnboardingScreen({
   onConnectOAuth,
   onStartWorkspace,
   onStartChat,
+  onStartLocalPc,
   onInstallApp,
   onConnectInstallationId,
   loading,
@@ -270,6 +278,20 @@ export function OnboardingScreen({
                 <span className="relative z-10">Workspace</span>
               </button>
             </div>
+            {onStartLocalPc && (
+              <button
+                type="button"
+                onClick={onStartLocalPc}
+                className={`${onboardingButtonClass} mt-2 text-amber-200`}
+              >
+                <HubControlGlow />
+                <Monitor className="relative z-10 h-4 w-4" />
+                <span className="relative z-10">Local PC</span>
+                <span className="relative z-10 text-[10px] uppercase tracking-wide text-amber-200/60">
+                  Experimental
+                </span>
+              </button>
+            )}
             <p className="mt-2 text-center text-xs text-push-fg-dim">
               No account needed. Nothing is saved unless you choose.
             </p>

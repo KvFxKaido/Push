@@ -48,6 +48,8 @@ interface LauncherHomeContentProps {
   }) => Promise<void>;
   onStartWorkspace?: () => void;
   onStartChat?: () => void;
+  /** Optional: undefined hides the Local PC tile (feature flag off). */
+  onStartLocalPc?: () => void;
   sandboxSession?: LauncherSandboxSession | null;
   onResumeSandbox?: () => void;
   user: GitHubUser | null;
@@ -69,6 +71,7 @@ export function LauncherHomeContent({
   onPublishToGitHub,
   onStartWorkspace,
   onStartChat,
+  onStartLocalPc,
   sandboxSession,
   onResumeSandbox,
   user,
@@ -172,6 +175,7 @@ export function LauncherHomeContent({
           onPublishToGitHub={onPublishToGitHub}
           onStartWorkspace={onStartWorkspace}
           onStartChat={onStartChat}
+          onStartLocalPc={onStartLocalPc}
           sandboxSession={sandboxSession}
           onResumeSandbox={onResumeSandbox}
           mode={mode}

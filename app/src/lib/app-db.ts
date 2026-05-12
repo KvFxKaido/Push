@@ -7,7 +7,7 @@
  */
 
 const DB_NAME = 'push-app-db';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 export const STORE = {
   conversations: 'conversations',
@@ -16,6 +16,7 @@ export const STORE = {
   usageLog: 'usage_log',
   runJournal: 'run_journal',
   memoryRecords: 'memory_records',
+  pairedDevices: 'paired_devices',
 } as const;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -107,6 +108,16 @@ function openDb(): Promise<IDBDatabase> {
       ensureIndex(memStore, 'chatId', 'scope.chatId', { unique: false });
       ensureIndex(memStore, 'branch', 'scope.branch', { unique: false });
       ensureIndex(memStore, 'kind', 'kind', { unique: false });
+
+      // Paired devices — one record per paired local pushd. The remote-
+      // sessions track lets the web app drive a loopback daemon over WS;
+      // the bearer token + bound origin are minted on the CLI side and
+      // pasted into the web pairing panel. Schema permits multiple
+      // records so a future UI can manage many devices; today the UI
+      // only surfaces the first one.
+      if (!db.objectStoreNames.contains(STORE.pairedDevices)) {
+        db.createObjectStore(STORE.pairedDevices, { keyPath: 'id' });
+      }
     };
 
     req.onsuccess = () => resolve(req.result);

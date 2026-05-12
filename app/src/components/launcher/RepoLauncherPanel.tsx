@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Lock, MessageSquare, Palette, Plus, Search, Loader2 } from 'lucide-react';
+import { Lock, MessageSquare, Monitor, Palette, Plus, Search, Loader2 } from 'lucide-react';
 import {
   BranchWaveIcon,
   CommitPulseIcon,
@@ -109,6 +109,13 @@ interface RepoLauncherPanelProps {
   onResumeSandbox?: () => void;
   onStartWorkspace?: () => void;
   onStartChat?: () => void;
+  /**
+   * Local PC entry tile (flag-gated upstream by `isLocalPcModeEnabled`).
+   * Undefined hides the tile entirely — the launcher never decides
+   * the flag here, the App shell does, so a future move of the flag
+   * doesn't require touching this component.
+   */
+  onStartLocalPc?: () => void;
   mode?: 'default' | 'chat';
 }
 
@@ -128,6 +135,7 @@ export function RepoLauncherPanel({
   onResumeSandbox,
   onStartWorkspace,
   onStartChat,
+  onStartLocalPc,
   mode = 'default',
 }: RepoLauncherPanelProps) {
   const [showAllRepos, setShowAllRepos] = useState(false);
@@ -644,6 +652,21 @@ export function RepoLauncherPanel({
             <span className="relative z-10">{showAllRepos ? 'Hide' : 'Repos'}</span>
           </button>
         </div>
+
+        {onStartLocalPc && (
+          <button
+            type="button"
+            onClick={onStartLocalPc}
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 w-full justify-center gap-2 px-3 text-sm font-medium text-amber-200`}
+          >
+            <HubControlGlow />
+            <Monitor className="relative z-10 h-4 w-4" />
+            <span className="relative z-10">Local PC</span>
+            <span className="relative z-10 text-[10px] uppercase tracking-wide text-amber-200/60">
+              Experimental
+            </span>
+          </button>
+        )}
 
         <section className="space-y-2">
           <div className="flex items-center justify-between">
