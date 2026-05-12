@@ -96,9 +96,12 @@ describe('protocol-schema drift guard (app/src/)', () => {
   });
 
   it('does not duplicate envelope validator function names', async () => {
-    // We don't care about variables that happen to share the name; we
-    // care about *function definitions* that look like a re-implementation
-    // of the canonical validators.
+    // Match any top-level binding (function, const, let) that shares a
+    // canonical validator name. A `const validateEvent = ...` IS a
+    // re-implementation in spirit even when expressed as an arrow
+    // function, so we catch both forms. The (very low) risk of a false
+    // positive is worth the broader net here: the alternative is the
+    // web app shipping a quietly-divergent envelope validator.
     const validatorNames = [
       'validateEventEnvelope',
       'validateRunEventPayload',
