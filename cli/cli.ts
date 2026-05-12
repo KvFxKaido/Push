@@ -1947,7 +1947,13 @@ async function runDaemonSubcommand(values, positionals) {
   if (action === 'restart') {
     const pid = await readPidFile();
     if (pid && isProcessRunning(pid)) {
-      process.kill(pid, 'SIGTERM');
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch (err) {
+        // ESRCH means the process exited between our check and the signal —
+        // the desired end state. Anything else (EPERM etc.) is a real failure.
+        if (err?.code !== 'ESRCH') throw err;
+      }
       // Wait up to 5s for the old process to fully exit before spawning a new
       // one — otherwise the new pushd races the old one on the same socket.
       const exited = await waitForProcessExit(pid, 5000);
