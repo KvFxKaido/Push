@@ -223,4 +223,11 @@ describe('pushd-ws auth gate', () => {
     const portContent = await fs.readFile(portPath, 'utf8');
     assert.equal(portContent.trim(), String(handle.port));
   });
+
+  it('refuses non-loopback host overrides', async () => {
+    await assert.rejects(
+      () => startPushdWs(stubDeps, { host: '0.0.0.0', portFilePath: '/tmp/unused.port' }),
+      /non-loopback host/,
+    );
+  });
 });

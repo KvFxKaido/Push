@@ -9,7 +9,7 @@
  *  - Authenticated WS connections feed the same `handleRequest` dispatcher
  *    the Unix socket uses. Wire format on the WS side is NDJSON text
  *    frames, identical envelope shape to the Unix socket.
- *  - Behind PUSH_DAEMON_WS=1 — listener is not created when unset.
+ *  - Behind PUSHD_WS=1 (gated by the caller in `cli/pushd.ts`).
  *
  * Non-goals (PR 1): non-loopback bind, native/CLI pairing, public relay,
  * token rotation UX. Those are explicit later phases.
@@ -98,18 +98,29 @@ function writeUpgradeError(socket: Duplex, status: number, reason: string): void
       '\r\n' +
       body,
   );
-  socket.destroy();
+  // socket.end() flushes the buffered HTTP response before closing;
+  // socket.destroy() can drop the body on the floor if the kernel
+  // hasn't drained it yet.
+  socket.end();
 }
 
 /**
  * Start the WS listener and route authenticated connections to
  * `deps.handleRequest`. Returns a handle for shutdown.
  */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+
 export async function startPushdWs(
   deps: PushdWsAdapterDeps,
   options: PushdWsOptions = {},
 ): Promise<PushdWsHandle> {
   const host = options.host ?? DEFAULT_HOST;
+  // PR 1 policy is loopback-only. The `host` override exists for tests
+  // that need to pin a specific loopback form (IPv4 vs IPv6); reject
+  // anything that would expose the listener on LAN.
+  if (!LOOPBACK_HOSTS.has(host)) {
+    throw new Error(`pushd-ws refuses non-loopback host: ${host}`);
+  }
   const maxTokenLength = options.maxTokenLength ?? DEFAULT_MAX_TOKEN_LENGTH;
   const portFilePath = getPortFilePath(options.portFilePath);
 
@@ -174,7 +185,11 @@ export async function startPushdWs(
     const emit = (event: unknown) => {
       if (ws.readyState !== ws.OPEN) return;
       try {
-        ws.send(JSON.stringify(event));
+        // Append a trailing newline so a client reusing the Unix-socket
+        // NDJSON decoder over WS still sees a frame-terminator. WS
+        // framing carries the boundary on its own, but matching the
+        // Unix-socket wire keeps both transports decoder-compatible.
+        ws.send(`${JSON.stringify(event)}\n`);
       } catch {
         // connection may be closing
       }

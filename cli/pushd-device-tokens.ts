@@ -75,7 +75,11 @@ function makeTokenSecret(): string {
 }
 
 function makeTokenId(): string {
-  return `${TOKEN_ID_PREFIX}${randomBytes(4).toString('hex')}`;
+  // 8 bytes = 64 bits of entropy. The id is a public revocation handle
+  // (printed to stdout, stored in plaintext) so it doesn't need
+  // bearer-grade entropy, but 32 bits would hit a non-trivial birthday
+  // collision rate after a few thousand pairings.
+  return `${TOKEN_ID_PREFIX}${randomBytes(8).toString('hex')}`;
 }
 
 function constantTimeStringEqual(a: string, b: string): boolean {
