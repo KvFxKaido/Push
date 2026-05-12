@@ -438,8 +438,14 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
     );
 
     expect(vi.mocked(sandboxTools.executeSandboxToolCall)).toHaveBeenCalledTimes(1);
-    const [, , options] = vi.mocked(sandboxTools.executeSandboxToolCall).mock.calls[0];
+    const [, sandboxIdArg, options] = vi.mocked(sandboxTools.executeSandboxToolCall).mock.calls[0];
     expect(options?.localDaemonBinding).toBe(binding);
+    // Dispatcher signature is `sandboxId: string`; the binding-only branch
+    // narrows the runtime-context `null` to `''`. The daemon fork inside
+    // executeSandboxToolCall does not read sandboxId, so the empty string
+    // is functionally inert — but pinning the shape here flags any future
+    // regression that lets a stale id sneak through.
+    expect(sandboxIdArg).toBe('');
   });
 
   it('does NOT short-circuit on missing sandboxId when a binding is present', async () => {
@@ -500,5 +506,98 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
     const [, sandboxIdArg, options] = vi.mocked(sandboxTools.executeSandboxToolCall).mock.calls[0];
     expect(sandboxIdArg).toBe('sb-cloud-1');
     expect(options?.localDaemonBinding).toBeUndefined();
+  });
+
+  describe('LOCAL_DAEMON_SUPPORTED_TOOLS gate', () => {
+    // Codex P2 / Copilot / Kilo P1 on PR #514: when a local-pc session
+    // has a binding but no sandboxId, only tools with a daemon
+    // implementation may dispatch. Without this gate, `sandbox_read_file`
+    // etc. would reach the cloud dispatcher with `sandboxId: ''` and
+    // fail confusingly against a nonexistent sandbox. Today only
+    // `sandbox_exec` is daemon-backed (PR #511); PR 3c.3+ adds the rest.
+
+    it('blocks sandbox_read_file with LOCAL_DAEMON_TOOL_UNSUPPORTED when binding-only', async () => {
+      const result = await runtime.execute(
+        {
+          source: 'sandbox',
+          call: { tool: 'sandbox_read_file', args: { path: '/workspace/src/app.ts' } },
+        },
+        {
+          allowedRepo: 'owner/repo',
+          sandboxId: null,
+          isMainProtected: false,
+          localDaemonBinding: binding,
+        },
+      );
+
+      expect(result.structuredError?.type).toBe('LOCAL_DAEMON_TOOL_UNSUPPORTED');
+      expect(result.structuredError?.retryable).toBe(false);
+      expect(result.text).toContain('sandbox_read_file');
+      expect(result.text).toContain('Local PC');
+      expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'sandbox_write_file',
+      'sandbox_edit_range',
+      'sandbox_list_dir',
+      'sandbox_get_diff',
+      'sandbox_run_tests',
+      'sandbox_prepare_commit',
+    ])('also blocks %s when binding-only', async (tool) => {
+      const result = await runtime.execute(
+        {
+          source: 'sandbox',
+          call: { tool, args: {} },
+        } as unknown as AnyToolCall,
+        {
+          allowedRepo: 'owner/repo',
+          sandboxId: null,
+          isMainProtected: false,
+          localDaemonBinding: binding,
+        },
+      );
+
+      expect(result.structuredError?.type).toBe('LOCAL_DAEMON_TOOL_UNSUPPORTED');
+      expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
+    });
+
+    it('still allows sandbox_exec when binding-only (the one daemon-backed tool today)', async () => {
+      await runtime.execute(
+        {
+          source: 'sandbox',
+          call: { tool: 'sandbox_exec', args: { command: 'echo hi' } },
+        },
+        {
+          allowedRepo: 'owner/repo',
+          sandboxId: null,
+          isMainProtected: false,
+          localDaemonBinding: binding,
+        },
+      );
+
+      expect(vi.mocked(sandboxTools.executeSandboxToolCall)).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT block when sandboxId is present, even with a binding (mixed state)', async () => {
+      // Hypothetical: a cloud sandbox is up AND a local binding is
+      // attached. By construction this shouldn't happen for a `kind:
+      // 'local-pc'` workspace (those carry sandboxId: null), but the
+      // gate must not regress the cloud path when both are set.
+      await runtime.execute(
+        {
+          source: 'sandbox',
+          call: { tool: 'sandbox_read_file', args: { path: '/workspace/src/app.ts' } },
+        },
+        {
+          allowedRepo: 'owner/repo',
+          sandboxId: 'sb-cloud-1',
+          isMainProtected: false,
+          localDaemonBinding: binding,
+        },
+      );
+
+      expect(vi.mocked(sandboxTools.executeSandboxToolCall)).toHaveBeenCalledTimes(1);
+    });
   });
 });

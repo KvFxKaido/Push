@@ -96,6 +96,26 @@ export function applyHookToolArgs(
 
 const PROTECTED_MAIN_TOOLS = new Set(['sandbox_prepare_commit', 'sandbox_push']);
 
+/**
+ * Sandbox tools that have a `pushd` daemon implementation today.
+ *
+ * The dispatch seam in `executeSandboxToolCall` (PR #511) only forks
+ * `sandbox_exec` onto the daemon transport — every other sandbox tool
+ * falls through to the cloud `execInSandbox` path. For a `kind: 'local-pc'`
+ * session (binding present, `sandboxId: null`), routing an unsupported
+ * tool to the cloud handler would call `execInSandbox('')` against a
+ * nonexistent sandbox and surface a confusing error.
+ *
+ * Until PR 3c.3+ adds daemon implementations for the remaining tools
+ * (`sandbox_read_file`, `sandbox_write_file`, `sandbox_list_dir`,
+ * `sandbox_get_diff`, …), the runtime layer refuses these calls with a
+ * structured `LOCAL_DAEMON_TOOL_UNSUPPORTED` error.
+ *
+ * Extend this set in lockstep with each tool's per-pushd handler +
+ * `local-daemon-sandbox-client` method + dispatch fork case.
+ */
+const LOCAL_DAEMON_SUPPORTED_TOOLS = new Set(['sandbox_exec']);
+
 async function readSandboxBranch(sandboxId: string): Promise<string | null> {
   try {
     const result = await execInSandbox(sandboxId, 'cd /workspace && git branch --show-current');
@@ -286,6 +306,30 @@ export class WebToolExecutionRuntime
             };
             result = {
               text: `[Tool Error] No active sandbox. The sandbox may still be starting — wait a moment and retry. If this persists, the user needs to start a sandbox from the UI.\nerror_type: ${err.type}\nretryable: ${err.retryable}`,
+              structuredError: err,
+            };
+            break;
+          }
+          // Local-PC sessions (binding present, no cloud sandboxId) can
+          // only route tools that have a daemon implementation. Without
+          // this gate, e.g. `sandbox_read_file` would reach the cloud
+          // dispatcher with `sandboxId: ''` and fail against a nonexistent
+          // sandbox instead of returning a clean "not yet supported" error.
+          // See Codex P2 on PR #514. Extend LOCAL_DAEMON_SUPPORTED_TOOLS
+          // as each tool's daemon path lands (PR 3c.3+).
+          if (
+            localDaemonBinding &&
+            !context.sandboxId &&
+            !LOCAL_DAEMON_SUPPORTED_TOOLS.has(toolCall.call.tool)
+          ) {
+            const err: StructuredToolError = {
+              type: 'LOCAL_DAEMON_TOOL_UNSUPPORTED',
+              retryable: false,
+              message: `Tool "${toolCall.call.tool}" is not yet available on Local PC sessions.`,
+              detail: `Only ${Array.from(LOCAL_DAEMON_SUPPORTED_TOOLS).join(', ')} routes through the paired daemon today. Per-tool daemon handlers land in PR 3c.3+.`,
+            };
+            result = {
+              text: `[Tool Error — ${toolCall.call.tool}] ${err.message}\n${err.detail}`,
               structuredError: err,
             };
             break;
