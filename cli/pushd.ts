@@ -3222,25 +3222,39 @@ async function handleSandboxExec(req) {
       timeout: timeoutMs,
       maxBuffer: SANDBOX_EXEC_MAX_OUTPUT,
     });
+    // Success path can't actually carry truncated output: runCommand-
+    // InResolvedShell enforces maxBuffer by rejecting once stdout+
+    // stderr exceed it, so reaching here means both fit. Reporting
+    // anything but `false` would be misleading. (PR #511 review.)
     return makeResponse(req.requestId, 'sandbox_exec', null, true, {
       stdout: truncateExecOutput(stdout),
       stderr: truncateExecOutput(stderr),
       exitCode: 0,
       durationMs: Date.now() - startedAt,
-      truncated:
-        (stdout?.length ?? 0) > SANDBOX_EXEC_MAX_OUTPUT ||
-        (stderr?.length ?? 0) > SANDBOX_EXEC_MAX_OUTPUT,
+      truncated: false,
     });
   } catch (err) {
     const killed = Boolean(err?.killed);
+    // maxBuffer overflow surfaces as a string err.code AND
+    // err.killed === true. Distinguish it from a timeout so the
+    // model gets an accurate `truncated` and isn't misled into
+    // "command timed out" when the real signal was "output too big."
+    const isMaxBufferOverflow = err?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+    const isTimeout = killed && !isMaxBufferOverflow;
     const exitCode = typeof err?.code === 'number' ? err.code : killed ? 124 : 1;
+    // Defensive: also flag truncation if the captured output actually
+    // exceeds the cap, even if Node didn't tag the error code (some
+    // runtimes / future Node versions may shift the contract).
+    const capturedTooLarge =
+      (err?.stdout?.length ?? 0) > SANDBOX_EXEC_MAX_OUTPUT ||
+      (err?.stderr?.length ?? 0) > SANDBOX_EXEC_MAX_OUTPUT;
     return makeResponse(req.requestId, 'sandbox_exec', null, true, {
       stdout: truncateExecOutput(err?.stdout ?? ''),
       stderr: truncateExecOutput(err?.stderr ?? err?.message ?? ''),
       exitCode,
       durationMs: Date.now() - startedAt,
-      truncated: false,
-      timedOut: killed,
+      truncated: isMaxBufferOverflow || capturedTooLarge,
+      timedOut: isTimeout,
     });
   }
 }

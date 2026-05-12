@@ -120,9 +120,18 @@ export async function withTransientBinding<T>(
 ): Promise<SessionResponse<T>> {
   return new Promise<SessionResponse<T>>((resolve, reject) => {
     let settled = false;
+    let openTimer: ReturnType<typeof setTimeout> | null = null;
     const finish = (handle: LocalDaemonBinding, fnArg: () => Promise<void>) => {
       if (settled) return;
       settled = true;
+      // Clear the backstop timer the moment we know the outcome —
+      // otherwise it lingers as a pending timer (slowing test exit
+      // and retaining a handle ref in long-lived app sessions). PR
+      // #511 review caught the leak.
+      if (openTimer) {
+        clearTimeout(openTimer);
+        openTimer = null;
+      }
       void fnArg().finally(() => handle.close());
     };
 
@@ -158,7 +167,7 @@ export async function withTransientBinding<T>(
     // OPEN_TIMEOUT_MS, treat it as unreachable. The adapter's own
     // error events almost always fire faster than this, but a
     // pathological network state (SYN held by kernel) can hang it.
-    setTimeout(() => {
+    openTimer = setTimeout(() => {
       finish(handle, async () => {
         reject(new LocalDaemonUnreachableError('timed out before connection opened'));
       });

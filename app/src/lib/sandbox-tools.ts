@@ -245,7 +245,13 @@ export async function executeSandboxToolCall(
   sandboxId: string,
   options?: SandboxExecutionOptions,
 ): Promise<ToolExecutionResult> {
-  if (!sandboxId) {
+  // local-pc sessions intentionally carry sandboxId: null — the
+  // dispatch fork below routes via the daemon binding instead. Reject
+  // only when neither a sandbox nor a local binding is available
+  // (PR #511 review: Codex P2 caught that the bare `!sandboxId` guard
+  // would short-circuit local-pc dispatch as soon as 3c.2 threads the
+  // binding through useChat).
+  if (!sandboxId && !options?.localDaemonBinding) {
     const err = classifyError('Sandbox unreachable — no active sandbox', 'executeSandboxToolCall');
     return {
       text: formatStructuredError(err, '[Tool Error] No active sandbox — start one first.'),
@@ -333,6 +339,7 @@ export async function executeSandboxToolCall(
           stderr: string;
           exitCode: number;
           truncated: boolean;
+          timedOut?: boolean;
           error?: string;
         };
         if (options?.localDaemonBinding) {
@@ -347,6 +354,7 @@ export async function executeSandboxToolCall(
               stderr: localResult.stderr,
               exitCode: localResult.exitCode,
               truncated: localResult.truncated,
+              timedOut: localResult.timedOut,
             };
           } catch (caught) {
             if (caught instanceof LocalDaemonUnreachableError) {
