@@ -1,9 +1,35 @@
 # Remote Sessions via pushd Relay
 
-Date: 2026-05-07
-Status: Draft
+Date: 2026-05-07 (Phase 1 substrate + first-tool dispatch shipped 2026-05-11 → 2026-05-12)
+Status: **Partially shipped** — Phase 1 substrate complete (#507–#510), dispatch seam landed with first tool (#511), chat-layer wiring + remaining tool ops in progress under PR 3c.2+
 Owner: Push
 Related: `docs/cli/design/Push Runtime Protocol.md`, `docs/decisions/Web and CLI Runtime Contract.md`, `docs/decisions/push-runtime-v2.md`
+
+## Shipping status
+
+The shipped scope diverged from the original Phase 1 enumeration in two ways: (a) the connector substrate is more complete than spec'd (full WS adapter, paired-device UI, mode chip, IndexedDB storage, dispatch seam), but (b) only `sandbox_exec` is currently routable through the daemon — the "edit files through the existing local tool surface" goal is partial.
+
+| Sub-phase | Scope | Status | PRs |
+|---|---|---|---|
+| 1.a — Transport + protocol substrate | WS listener on pushd, device-token pairing with origin binding, shared `lib/protocol-schema.ts`, web adapter with subprotocol auth | Shipped 2026-05-11 | #507, #508, #509 |
+| 1.b — Pairing UI + paired workspace | Flag-gated `VITE_LOCAL_PC_MODE` Local PC tile on Onboarding + Hub, pairing panel, paired workspace shell with mode chip + ping probe, IndexedDB `paired_devices` store, bearer token kept out of localStorage | Shipped 2026-05-12 | #510 |
+| 1.c — Dispatch seam + first tool | `SandboxExecutionOptions.localDaemonBinding` threaded; `executeSandboxToolCall`'s `sandbox_exec` case forks on it; `LocalDaemonUnreachableError` → `SANDBOX_UNREACHABLE` with re-pair hint; `daemon_identify` round-trip fills the paired-state UI; Codex P2 fix for `!sandboxId` guard so the local-pc arm (`sandboxId: null`) reaches the fork | Shipped 2026-05-12 | #511 |
+| 1.d — Chat-layer wiring | Thread `workspaceSession.binding` through `useChat` → `executeSandboxToolCall.options.localDaemonBinding` so a real chat turn that emits `sandbox_exec` routes to the daemon. Requires giving `kind: 'local-pc'` sessions a chat surface — today `WorkspaceScreen` routes local-pc *away* from `WorkspaceSessionScreen` (the chat-bearing one) and into `LocalPcWorkspace` (probe-only). Without this, the dispatch seam is reachable only from unit tests. | Open (PR 3c.2) | — |
+| 1.e — Remaining tool-op fan-out | Per-tool recipe: pushd handler + `local-daemon-sandbox-client` method + dispatch fork case. Candidate order: `sandbox_read_file`, `sandbox_write_file`, `sandbox_list_dir`, `sandbox_get_diff`. Codex-friendly per the codex-claude track split. | Open (PR 3c.3+) | — |
+| 1.f — Approvals + cancel/reconnect | Phase 1's spec'd "submit approvals" and "cancel/reconnect" surfaces on the web side. The pushd handlers exist (`submit_approval`, `cancel_run`); the web pairing UX doesn't surface them yet. | Open | — |
+| 2 — Worker-mediated relay | Outbound-from-PC WebSocket to a Worker/DO that pairs phone client to daemon. Deferred — not on the current sprint. | Open | — |
+| 3 — Permission + audit model | Repo allowlist, per-session attach token, connected-device list, audit log with surface/device provenance. | Open | — |
+| 4 — Desktop wrapper | Tray/menu-bar packaging, `pushd` at login, pairing UI. Polish, not core. | Open | — |
+
+### Notable architectural decisions captured during Phase 1.a–1.c
+
+- **Subprotocol bearer carrier** (PR #509): browser `WebSocket` constructor can't set arbitrary headers, so the bearer travels in `Sec-WebSocket-Protocol: pushd.v1, bearer.<token>`. Server picks `pushd.v1` to echo and validates the `bearer.` entry. The `bearer.*` entry is intentionally never selected back.
+- **Loopback-only enforcement** at both server and client layers (defense in depth). The web adapter refuses non-loopback hosts at construction time even though the server already binds 127.0.0.1.
+- **Immutable origin binding at mint time**: tokens are bound to one origin via `push daemon pair --origin <url>`. Revoke + remint to change. The web pair flow auto-fills the origin from `window.location.origin` so it can't drift.
+- **Browser cannot distinguish auth-fail from connection-refused**: browsers hide the WS upgrade response from JS, so `unreachable` collapses (a) daemon not running, (b) wrong port, (c) token rejected at upgrade, (d) origin mismatch. UI surfaces a generic re-pair / retry affordance and uses context (was the user just pairing?) to decide.
+- **Bearer token NOT in localStorage** (PR #510 review fix): the `workspace_session` storage path used to round-trip the entire session through `safeStorageSet`, which for local-pc would have leaked the bearer. The persistence effect now strips local-pc sessions to a bearerless tombstone before serializing; the normalize loader returns `null` for any persisted local-pc record so the user re-clicks the tile to re-hydrate from IndexedDB. One persistence path, one exfiltration surface.
+- **`daemon_identify` is WS-only by construction** (PR #511): its response surface is the authenticated device-token record, which doesn't exist on the unauthenticated Unix socket. `handleRequest` gained an optional `context` argument that `pushd-ws.ts` populates with `{ record }`; the Unix-socket caller passes nothing; the dispatcher tolerates absence.
+- **`!sandboxId` guard relaxed** (PR #511 review fix): `executeSandboxToolCall` short-circuited before the dispatch fork because `WorkspaceSession.local-pc` carries `sandboxId: null`. Guard now requires both `!sandboxId` AND `!options?.localDaemonBinding` to refuse. Future binding-aware forks must respect the same gating.
 
 ## Context
 
@@ -77,13 +103,13 @@ Make the desktop browser/app talk to `pushd` on localhost with an explicit pairi
 
 The goal is boring correctness:
 
-- start or discover a local daemon
-- pair a client
-- attach to a session
-- stream events
-- submit approvals
-- cancel/reconnect
-- edit files through the existing local tool surface
+- start or discover a local daemon — **shipped** (`push daemon start` + `~/.push/run/pushd.port`, PR #507)
+- pair a client — **shipped** (`push daemon pair --origin <url>`, browser pairing panel, PR #507 + #510)
+- attach to a session — pushd has `attach_session` handler; web side wires it as part of Phase 1.d (3c.2)
+- stream events — **shipped** (the WS adapter validates and surfaces event envelopes via `onEvent`, PR #509)
+- submit approvals — pushd has `submit_approval` handler; web UI surface deferred to Phase 1.f
+- cancel/reconnect — pushd has `cancel_run`; web "Retry" button in unreachable banner exists, full reconnect-on-drop deferred (no auto-reconnect with backoff yet)
+- edit files through the existing local tool surface — **partial**: `sandbox_exec` dispatch shipped (PR #511); `sandbox_read_file` / `sandbox_write_file` / `sandbox_list_dir` / `sandbox_get_diff` deferred to 3c.3+
 
 ### Phase 2: Worker-Mediated Relay
 
@@ -152,13 +178,13 @@ Relay logging should be minimal. Protocol envelopes can contain file paths, comm
 
 ## Open Questions
 
-1. Identity: Cloudflare Access, deployment token, pairing code, device keypair, or some layered combination?
-2. Relay storage: Durable Object memory only, short event log in DO storage, KV/D1 index, or no durable replay in v1?
-3. Protocol validation: move `cli/protocol-schema.ts` into `lib/` in Phase 1, or wait until web/mobile consumes the daemon protocol directly?
-4. Local connector transport: browser-to-localhost WebSocket, native wrapper bridge, or both?
-5. Workspace Hub UX: how does a user distinguish cloud sandbox workspaces from local-PC remote sessions?
-6. Revocation: what is the exact PC-side UX for "kick this phone off now"?
-7. Network failure: how much local daemon work can continue when the phone disconnects?
+1. ~~Identity: Cloudflare Access, deployment token, pairing code, device keypair, or some layered combination?~~ **Answered (Phase 1)**: hashed device-token pairing with immutable origin binding at mint time. Tokens live in `~/.push/run/pushd.tokens` (chmod 0600), revocable by id. The phone/desktop client pastes the bearer once into the pairing panel; the daemon hashes-at-rest and compares on every upgrade. Deployment token + Cloudflare Access are still relevant for Phase 2's relay endpoint but not for client-to-daemon auth.
+2. Relay storage: Durable Object memory only, short event log in DO storage, KV/D1 index, or no durable replay in v1? **Still open** — Phase 2.
+3. ~~Protocol validation: move `cli/protocol-schema.ts` into `lib/` in Phase 1, or wait until web/mobile consumes the daemon protocol directly?~~ **Answered (PR #508)**: moved into `lib/protocol-schema.ts` during Phase 1 because the web adapter consumes it directly. `cli/session-store.ts` re-exports for back-compat. The `cli/tests/protocol-schema-canonical.test.mjs` drift guard scans `app/src/` for duplicate version literals or validator re-defs.
+4. ~~Local connector transport: browser-to-localhost WebSocket, native wrapper bridge, or both?~~ **Answered**: browser-to-localhost WebSocket. The browser's `WebSocket` constructor can't set arbitrary headers, so the bearer travels in `Sec-WebSocket-Protocol`. Native wrapper bridge is not on the current roadmap — Phase 4 desktop wrapper would still tunnel through the same WS, not introduce a parallel transport.
+5. ~~Workspace Hub UX: how does a user distinguish cloud sandbox workspaces from local-PC remote sessions?~~ **Answered (PR #510)**: dedicated "Local PC · Experimental" tile in both Onboarding and Hub (flag-gated by `VITE_LOCAL_PC_MODE`); paired workspace renders an always-visible amber `LocalPcModeChip` showing `Local PC · :<port> · <status>` in the header. Cloud sessions render no chip — absence is the affordance.
+6. Revocation: what is the exact PC-side UX for "kick this phone off now"? **Partially answered**: `push daemon revoke <tokenId>` exists on the CLI and the web "Unpair" button clears the IndexedDB record on the browser side. There's no live-disconnect surface yet — revoking a token affects future upgrades only, not an active socket. Phase 1.f or Phase 3 will close this.
+7. Network failure: how much local daemon work can continue when the phone disconnects? **Still open** — depends on Phase 1.d's chat-layer wiring (3c.2) shipping first.
 
 ## Implementation Rules
 
