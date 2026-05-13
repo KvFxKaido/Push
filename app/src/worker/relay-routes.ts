@@ -23,11 +23,12 @@
  *                       prefix is a structural check too — an
  *                       unprefixed value can't accidentally match.
  *   `pushd_da_*`     → phone attach (Phase 3 slice 2 token shape).
- *                       ⚠️ 2.c only enforces format (prefix + length).
- *                       2.d will add an envelope-aware allowlist
- *                       (pushd emits `phone_allow` envelopes; relay
- *                       only forwards pushd → allowed phones). The
- *                       endpoint stays feature-flagged off until then.
+ *                       Format-only check at the route. The actual
+ *                       session-attach gate runs in the DO: pushd
+ *                       emits `relay_phone_allow` envelopes (2.d.1)
+ *                       naming which attach tokens may join the
+ *                       session, and the DO only forwards pushd →
+ *                       phones whose bearer is in that allowlist.
  *
  * Per-route gates (same order as /api/jobs/*):
  *   1. PUSH_RELAY_ENABLED === '1'   → otherwise 503 NOT_ENABLED
@@ -212,13 +213,11 @@ function authenticateBearer(request: Request, env: Env): AuthResult | AuthError 
         error: { code: 'BEARER_REJECTED', message: 'Attach token format invalid.' },
       };
     }
-    // ⚠️ 2.c gap (Codex #525 P1): format check only. Until 2.d wires
-    // an envelope-aware allowlist (pushd emits `phone_allow`
-    // envelopes naming which attach tokens may join a session), a
-    // client with a well-shaped fake token can attach and receive
-    // pushd → phone frames. The endpoint stays feature-flagged off
-    // (`PUSH_RELAY_ENABLED`) until 2.d closes the gap; no pushd
-    // outbound dial exists yet (2.e), so no real traffic flows.
+    // Format-only check at the route layer. The DO enforces the
+    // actual session-attach gate via pushd-controlled allowlist
+    // (2.d.1): pushd emits `relay_phone_allow` envelopes naming
+    // which attach tokens may join the session; the DO only
+    // forwards pushd → phones whose bearer is in that allowlist.
     return { role: 'phone' };
   }
 
@@ -230,6 +229,27 @@ function authenticateBearer(request: Request, env: Env): AuthResult | AuthError 
 interface ParsedSubprotocol {
   protocol: string;
   bearer: string;
+}
+
+/**
+ * Re-extract the phone bearer (the `pushd_da_*` value, prefix
+ * stripped) from a forwarded request's `Sec-WebSocket-Protocol`
+ * header. Used by the DO to store the bearer alongside the
+ * connection so the allowlist match in `forwardData` has the
+ * identity to compare against. Returns null if the header is
+ * absent, the protocol doesn't match, the bearer is missing, or
+ * the bearer isn't shaped like a phone token.
+ *
+ * Note: the route handler has already validated the bearer at
+ * upgrade time. This re-parse exists because the alternative —
+ * passing the bearer via a query param on the forwarded request —
+ * would leak phone tokens into URL logs.
+ */
+export function extractPhoneBearer(headerValue: string | null): string | null {
+  const parsed = parseBearerSubprotocol(headerValue);
+  if (!parsed) return null;
+  if (!parsed.bearer.startsWith(PHONE_BEARER_PREFIX)) return null;
+  return parsed.bearer;
 }
 
 function parseBearerSubprotocol(headerValue: string | null): ParsedSubprotocol | null {

@@ -426,3 +426,167 @@ describe('protocol drift characterization — v1 downgrade fidelity', () => {
     assert.equal(isV2DelegationEvent('approval_received'), false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Relay-control envelopes (Phase 2.d.1)
+//
+// Drift detector for the relay vocabulary added in
+// `lib/protocol-schema.ts`. The relay DO (`app/src/worker/relay-do.ts`)
+// is the only consumer today, so the pin shape is:
+//
+//   - `RELAY_ENVELOPE_KINDS` lists every relay-control kind.
+//   - Each kind has a representative valid envelope that
+//     `validateRelayEnvelope` accepts.
+//   - Each kind has a representative malformed envelope that
+//     `validateRelayEnvelope` rejects.
+//   - `isRelayEnvelope` discriminates control envelopes from
+//     forwardable runtime events.
+//
+// If a 5th relay kind lands without a validator update, the matching
+// case here will be missing and CI fails. AGENTS.md guardrail #3 in
+// PR form.
+// ---------------------------------------------------------------------------
+
+import {
+  RELAY_ENVELOPE_KINDS,
+  isRelayEnvelope,
+  validateRelayEnvelope,
+} from '../../lib/protocol-schema.ts';
+
+describe('relay envelope schema', () => {
+  it('RELAY_ENVELOPE_KINDS is the complete set the validator accepts', () => {
+    const accepted = new Set();
+    for (const kind of RELAY_ENVELOPE_KINDS) {
+      const env = {
+        v: 'push.runtime.v1',
+        kind,
+        ts: 1,
+        // Per-kind minimum-valid fields.
+        ...(kind === 'relay_phone_allow' || kind === 'relay_phone_revoke'
+          ? { tokens: ['pushd_da_x'] }
+          : {}),
+        ...(kind === 'relay_replay_unavailable' ? { reason: 'BUFFER_GAP' } : {}),
+      };
+      const issues = validateRelayEnvelope(env);
+      assert.equal(
+        issues.length,
+        0,
+        `kind=${kind} should validate, got: ${JSON.stringify(issues)}`,
+      );
+      accepted.add(kind);
+    }
+    assert.deepEqual(Array.from(accepted).sort(), Array.from(RELAY_ENVELOPE_KINDS).sort());
+  });
+
+  it('isRelayEnvelope discriminates control envelopes from runtime events', () => {
+    assert.equal(isRelayEnvelope({ v: 'push.runtime.v1', kind: 'relay_attach', ts: 1 }), true);
+    // `kind: 'event'` is the runtime broadcast vocabulary; not a
+    // relay-control envelope.
+    assert.equal(
+      isRelayEnvelope({
+        v: 'push.runtime.v1',
+        kind: 'event',
+        sessionId: 's',
+        seq: 0,
+        ts: 1,
+        type: 'foo',
+        payload: {},
+      }),
+      false,
+    );
+    // Non-objects / missing kind:
+    assert.equal(isRelayEnvelope(null), false);
+    assert.equal(isRelayEnvelope('string'), false);
+    assert.equal(isRelayEnvelope({ v: 'push.runtime.v1' }), false);
+  });
+
+  it('rejects relay_phone_allow without tokens', () => {
+    const issues = validateRelayEnvelope({
+      v: 'push.runtime.v1',
+      kind: 'relay_phone_allow',
+      ts: 1,
+    });
+    assert.equal(issues.length > 0, true);
+    assert.equal(
+      issues.some((i) => i.path === 'tokens'),
+      true,
+    );
+  });
+
+  it('rejects relay_phone_revoke whose token array contains a non-string entry', () => {
+    const issues = validateRelayEnvelope({
+      v: 'push.runtime.v1',
+      kind: 'relay_phone_revoke',
+      tokens: ['pushd_da_x', 42],
+      ts: 1,
+    });
+    assert.equal(issues.length > 0, true);
+    assert.equal(
+      issues.some((i) => i.path === 'tokens[1]'),
+      true,
+    );
+  });
+
+  it('rejects relay_attach whose lastSeq is negative or non-integer', () => {
+    assert.equal(
+      validateRelayEnvelope({
+        v: 'push.runtime.v1',
+        kind: 'relay_attach',
+        lastSeq: -1,
+        ts: 1,
+      }).length > 0,
+      true,
+    );
+    assert.equal(
+      validateRelayEnvelope({
+        v: 'push.runtime.v1',
+        kind: 'relay_attach',
+        lastSeq: 1.5,
+        ts: 1,
+      }).length > 0,
+      true,
+    );
+    // Omitted lastSeq is valid (first-attach scenario).
+    assert.equal(
+      validateRelayEnvelope({ v: 'push.runtime.v1', kind: 'relay_attach', ts: 1 }).length,
+      0,
+    );
+  });
+
+  it('rejects relay_replay_unavailable without reason', () => {
+    const issues = validateRelayEnvelope({
+      v: 'push.runtime.v1',
+      kind: 'relay_replay_unavailable',
+      ts: 1,
+    });
+    assert.equal(issues.length > 0, true);
+    assert.equal(
+      issues.some((i) => i.path === 'reason'),
+      true,
+    );
+  });
+
+  it('rejects an unknown kind', () => {
+    const issues = validateRelayEnvelope({
+      v: 'push.runtime.v1',
+      kind: 'relay_made_up',
+      ts: 1,
+    });
+    assert.equal(
+      issues.some((i) => i.path === 'kind'),
+      true,
+    );
+  });
+
+  it('rejects wrong protocol version', () => {
+    const issues = validateRelayEnvelope({
+      v: 'push.runtime.v2',
+      kind: 'relay_attach',
+      ts: 1,
+    });
+    assert.equal(
+      issues.some((i) => i.path === 'v'),
+      true,
+    );
+  });
+});

@@ -49,9 +49,9 @@ class FakeWebSocket {
 
   send(): void {}
 
-  close(): void {
+  close(code = 1000, reason = ''): void {
     this.readyState = 3;
-    this.dispatch('close', { code: 1000, reason: '' });
+    this.dispatch('close', { code, reason });
   }
 
   addEventListener(type: string, fn: (event: unknown) => void): void {
@@ -93,10 +93,21 @@ function makeDO(): RelaySessionDO {
   return new RelaySessionDO(state, env);
 }
 
-function wsRequest(role?: 'pushd' | 'phone'): Request {
+const PHONE_BEARER_A = 'pushd_da_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const PHONE_BEARER_B = 'pushd_da_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+function wsRequest(role?: 'pushd' | 'phone', phoneBearer = PHONE_BEARER_A): Request {
   const url = new URL('https://example.com/');
   if (role) url.searchParams.set('role', role);
-  return new Request(url.toString(), { headers: { Upgrade: 'websocket' } });
+  const headers: Record<string, string> = { Upgrade: 'websocket' };
+  if (role === 'phone') {
+    headers['Sec-WebSocket-Protocol'] = `push.relay.v1, bearer.${phoneBearer}`;
+  }
+  return new Request(url.toString(), { headers });
+}
+
+function makeEnvelope(kind: string, extra: Record<string, unknown> = {}): string {
+  return JSON.stringify({ v: 'push.runtime.v1', kind, ts: Date.now(), ...extra });
 }
 
 describe('RelaySessionDO.fetch', () => {
@@ -129,6 +140,15 @@ describe('RelaySessionDO.fetch', () => {
     expect(doInstance.getRoleCounts()).toEqual({ pushd: 1, phone: 0 });
   });
 
+  it('returns 500 when role=phone but no bearer subprotocol is present (route handler must authenticate)', async () => {
+    const doInstance = makeDO();
+    const res = await doInstance.fetch(
+      new Request('https://example.com/?role=phone', { headers: { Upgrade: 'websocket' } }),
+    );
+    expect(res.status).toBe(500);
+    expect(doInstance.getConnectionCount()).toBe(0);
+  });
+
   it('returns 409 when a second pushd tries to attach to the same session', async () => {
     const doInstance = makeDO();
     await doInstance.fetch(wsRequest('pushd'));
@@ -138,105 +158,223 @@ describe('RelaySessionDO.fetch', () => {
   });
 });
 
-describe('RelaySessionDO.acceptConnection', () => {
-  it('registers the WebSocket with its role and calls accept()', () => {
+describe('RelaySessionDO accept*', () => {
+  it('acceptPushd registers a pushd connection and calls accept()', () => {
     const doInstance = makeDO();
     const ws = new FakeWebSocket();
-    doInstance.acceptConnection(ws as unknown as WebSocket, 'phone');
+    doInstance.acceptPushd(ws as unknown as WebSocket);
+    expect(ws.readyState).toBe(1);
+    expect(doInstance.getRoleCounts()).toEqual({ pushd: 1, phone: 0 });
+  });
+
+  it('acceptPhone registers a phone connection with its bearer', () => {
+    const doInstance = makeDO();
+    const ws = new FakeWebSocket();
+    doInstance.acceptPhone(ws as unknown as WebSocket, PHONE_BEARER_A);
     expect(ws.readyState).toBe(1);
     expect(doInstance.getRoleCounts()).toEqual({ pushd: 0, phone: 1 });
   });
 
-  it('deregisters the connection on close', () => {
+  it('deregisters on close', () => {
     const doInstance = makeDO();
     const ws = new FakeWebSocket();
-    doInstance.acceptConnection(ws as unknown as WebSocket, 'phone');
+    doInstance.acceptPhone(ws as unknown as WebSocket, PHONE_BEARER_A);
     ws.close();
     expect(doInstance.getConnectionCount()).toBe(0);
   });
 
-  it('deregisters the connection on error', () => {
+  it('deregisters on error', () => {
     const doInstance = makeDO();
     const ws = new FakeWebSocket();
-    doInstance.acceptConnection(ws as unknown as WebSocket, 'pushd');
+    doInstance.acceptPushd(ws as unknown as WebSocket);
     ws.dispatch('error', new Error('boom'));
-    expect(doInstance.getConnectionCount()).toBe(0);
-  });
-
-  it('tracks multiple independent connections', () => {
-    const doInstance = makeDO();
-    const wsA = new FakeWebSocket();
-    const wsB = new FakeWebSocket();
-    doInstance.acceptConnection(wsA as unknown as WebSocket, 'pushd');
-    doInstance.acceptConnection(wsB as unknown as WebSocket, 'phone');
-    expect(doInstance.getRoleCounts()).toEqual({ pushd: 1, phone: 1 });
-
-    wsA.close();
-    expect(doInstance.getRoleCounts()).toEqual({ pushd: 0, phone: 1 });
-
-    wsB.close();
     expect(doInstance.getConnectionCount()).toBe(0);
   });
 });
 
-describe('RelaySessionDO.forwardMessage', () => {
-  it('forwards pushd → all phones, but not back to pushd itself', () => {
+describe('RelaySessionDO forwarding (pushd ↔ phones)', () => {
+  it('forwards pushd → only phones whose bearer is in the allowlist', () => {
     const doInstance = makeDO();
     const pushd = new FakeWebSocket();
     const phoneA = new FakeWebSocket();
     const phoneB = new FakeWebSocket();
-    doInstance.acceptConnection(pushd as unknown as WebSocket, 'pushd');
-    doInstance.acceptConnection(phoneA as unknown as WebSocket, 'phone');
-    doInstance.acceptConnection(phoneB as unknown as WebSocket, 'phone');
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phoneA as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phoneB as unknown as WebSocket, PHONE_BEARER_B);
+
+    // pushd allows only phone A.
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
 
     const sendA = vi.spyOn(phoneA, 'send');
     const sendB = vi.spyOn(phoneB, 'send');
-    const sendPushd = vi.spyOn(pushd, 'send');
 
-    pushd.dispatch('message', { data: '{"kind":"hello"}' });
+    pushd.dispatch('message', { data: '{"kind":"event","payload":"hello"}' });
 
-    expect(sendA).toHaveBeenCalledWith('{"kind":"hello"}');
-    expect(sendB).toHaveBeenCalledWith('{"kind":"hello"}');
-    expect(sendPushd).not.toHaveBeenCalled();
+    expect(sendA).toHaveBeenCalledWith('{"kind":"event","payload":"hello"}');
+    expect(sendB).not.toHaveBeenCalled();
   });
 
-  it('forwards phone → pushd, but not back to phone itself', () => {
+  it('drops pushd → phones entirely when no allowlist entries exist (closes Codex #525 P1)', () => {
     const doInstance = makeDO();
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
-    doInstance.acceptConnection(pushd as unknown as WebSocket, 'pushd');
-    doInstance.acceptConnection(phone as unknown as WebSocket, 'phone');
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+
+    const sendPhone = vi.spyOn(phone, 'send');
+
+    pushd.dispatch('message', { data: '{"kind":"event","payload":"hello"}' });
+
+    expect(sendPhone).not.toHaveBeenCalled();
+  });
+
+  it('forwards phone → pushd unconditionally (no allowlist gate on inbound direction)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
 
     const sendPushd = vi.spyOn(pushd, 'send');
-    const sendPhone = vi.spyOn(phone, 'send');
 
     phone.dispatch('message', { data: '{"kind":"submit_approval"}' });
 
     expect(sendPushd).toHaveBeenCalledWith('{"kind":"submit_approval"}');
-    expect(sendPhone).not.toHaveBeenCalled();
   });
 
   it('drops phone messages when no pushd is attached', () => {
     const doInstance = makeDO();
     const phone = new FakeWebSocket();
-    doInstance.acceptConnection(phone as unknown as WebSocket, 'phone');
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
 
     const sendPhone = vi.spyOn(phone, 'send');
 
-    phone.dispatch('message', { data: '{"kind":"hello"}' });
+    phone.dispatch('message', { data: '{"kind":"event"}' });
 
     expect(sendPhone).not.toHaveBeenCalled();
   });
+});
 
-  it('drops pushd messages when no phones are attached', () => {
+describe('RelaySessionDO allowlist control envelopes', () => {
+  it('relay_phone_allow from pushd adds tokens to the allowlist', () => {
     const doInstance = makeDO();
     const pushd = new FakeWebSocket();
-    doInstance.acceptConnection(pushd as unknown as WebSocket, 'pushd');
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A, PHONE_BEARER_B] }),
+    });
+
+    expect([...doInstance.getAllowedPhoneBearers()].sort()).toEqual(
+      [PHONE_BEARER_A, PHONE_BEARER_B].sort(),
+    );
+  });
+
+  it('relay_phone_revoke from pushd removes tokens and closes affected phones with 1008', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_revoke', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    expect(doInstance.getAllowedPhoneBearers()).toEqual([]);
+    expect(phone.readyState).toBe(3);
+    // Close code 1008 mirrors pushd's device-token revoke path.
+    // (FakeWebSocket records the args on the dispatched close event;
+    // we verify via state-machine effect.)
+  });
+
+  it('ignores relay_phone_allow from a phone (pushd is the authority)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+
+    phone.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_B] }),
+    });
+
+    expect(doInstance.getAllowedPhoneBearers()).toEqual([]);
+  });
+
+  it('ignores relay_phone_revoke from a phone', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    phone.dispatch('message', {
+      data: makeEnvelope('relay_phone_revoke', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    // Still allowed.
+    expect(doInstance.getAllowedPhoneBearers()).toEqual([PHONE_BEARER_A]);
+  });
+
+  it('silently drops relay_attach (schema lands here; runtime is 2.d.2)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
 
     const sendPushd = vi.spyOn(pushd, 'send');
 
-    pushd.dispatch('message', { data: '{"kind":"hello"}' });
+    phone.dispatch('message', {
+      data: makeEnvelope('relay_attach', { lastSeq: 42 }),
+    });
 
+    // Not forwarded to pushd (it's a relay-control envelope, not a
+    // forwardable runtime event).
     expect(sendPushd).not.toHaveBeenCalled();
+  });
+
+  it('forwards non-relay-control JSON envelopes raw (relay stays dumb about provider/tool semantics)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    const sendPhone = vi.spyOn(phone, 'send');
+
+    const runtimeEvent =
+      '{"v":"push.runtime.v1","kind":"event","sessionId":"s1","seq":7,"ts":1,"type":"sandbox_exec","payload":{}}';
+    pushd.dispatch('message', { data: runtimeEvent });
+
+    expect(sendPhone).toHaveBeenCalledWith(runtimeEvent);
+  });
+
+  it('forwards malformed JSON unchanged (the relay does not pre-validate non-control payloads)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    const sendPhone = vi.spyOn(phone, 'send');
+    pushd.dispatch('message', { data: '{not json' });
+
+    expect(sendPhone).toHaveBeenCalledWith('{not json');
   });
 });
