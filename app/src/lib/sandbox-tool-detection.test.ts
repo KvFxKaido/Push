@@ -320,3 +320,61 @@ describe('IMPLEMENTED_SANDBOX_TOOLS', () => {
     }
   });
 });
+
+describe('LOCAL_PC_TOOL_PROTOCOL', () => {
+  it('does not advertise /workspace as a default workdir or repo root', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // The cloud protocol advertises `/workspace` as the default workdir
+    // (e.g. "default workdir: /workspace", "cloned to /workspace"). The
+    // local-pc variant must avoid those AFFIRMATIVE uses — negative
+    // mentions warning the model NOT to invent `/workspace` are fine
+    // and intentional. Test the specific cloud-pattern phrasings.
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/default workdir:\s*\/workspace/i);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/cloned to \/workspace/i);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/\(default:\s*\/workspace\)/i);
+  });
+
+  it('explicitly disclaims the /workspace prior', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // Because the model has a strong cloud-sandbox training prior that
+    // `/workspace` is the workspace root, an explicit disclaimer is
+    // load-bearing — not just an omission.
+    expect(LOCAL_PC_TOOL_PROTOCOL).toMatch(/no\s+`?\/workspace/i);
+  });
+
+  it('does not advertise remote-bound tools (commit / push / promote / save_draft)', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // These tools either require a GitHub remote or coordinate with
+    // the cloud Auditor, neither of which exists in local-pc mode.
+    // Hiding them at the prompt layer is the smallest intervention
+    // that stops the model from reaching for them.
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_prepare_commit|prepare_commit/);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_push\b|\bpush\(/);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/promote_to_github|promote\(/);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_save_draft|save_draft/);
+  });
+
+  it('discourages Explorer/Coder delegation explicitly', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // Without this hint the model still reaches for Explorer from
+    // training priors even when the tool isn't in its surface. Stated
+    // explicitly so we're not relying on absence-of-instruction.
+    expect(LOCAL_PC_TOOL_PROTOCOL).toMatch(/NO DELEGATION|do not delegate.*Explorer/i);
+  });
+
+  it('keeps the JSON fenced-call convention', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // Wire-format compat with the rest of Push: the tool-call parser
+    // only looks for ```json ... ``` blocks.
+    expect(LOCAL_PC_TOOL_PROTOCOL).toContain('```json');
+  });
+
+  it('lists the core sandbox_* tool public names that the daemon services', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // Public tool names per the registry: exec / read / write / ls /
+    // diff. These are what the model emits in fenced JSON calls.
+    for (const tool of ['exec', 'read', 'write', 'ls']) {
+      expect(LOCAL_PC_TOOL_PROTOCOL).toContain(tool);
+    }
+  });
+});

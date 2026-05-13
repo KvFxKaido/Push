@@ -124,6 +124,7 @@ export {
   detectSandboxToolCall,
   SANDBOX_TOOL_PROTOCOL,
   getSandboxToolProtocol,
+  LOCAL_PC_TOOL_PROTOCOL,
 } from './sandbox-tool-detection';
 
 // --- Execution ---

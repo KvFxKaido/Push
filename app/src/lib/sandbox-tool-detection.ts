@@ -504,6 +504,65 @@ Sandbox rules:
 - Use ${CHECK_TYPES_TOOL} to validate TypeScript/Python code before committing. Catches type errors that tests might miss.
 - Use ${VERIFY_WORKSPACE_TOOL} when the workspace may need "install → typecheck → test" in one step, especially if [SANDBOX_ENVIRONMENT] indicates dependencies are missing.`;
 
+/**
+ * Local-PC variant of the sandbox tool protocol. Mirrors the same JSON
+ * fenced-call convention but with three structural differences:
+ *
+ *   1. **Path semantics**: no `/workspace` references. The daemon's
+ *      cwd IS the workspace root. Relative paths resolve against it;
+ *      absolute paths are REAL host paths and may be rejected by the
+ *      daemon's allowlist if outside configured roots.
+ *   2. **No remote-bound tools**: drops PROMOTE / PREPARE_COMMIT /
+ *      PUSH / SAVE_DRAFT. The daemon has no `git push` destination,
+ *      and the Auditor/commit-review flow is cloud-coordinator-only.
+ *   3. **No VERIFY_WORKSPACE**: that tool reads `[SANDBOX_ENVIRONMENT]`
+ *      readiness hints, which the local daemon doesn't emit. The
+ *      model can still call exec/run_tests/check_types directly.
+ *
+ * Selected by orchestrator.ts when `workspaceContext.mode === 'local-pc'`
+ * (see the mode branch). Smoke-tested 2026-05-13.
+ */
+export const LOCAL_PC_TOOL_PROTOCOL = `
+LOCAL PC TOOLS — You are connected to a local pushd daemon on the user's machine.
+
+The daemon's current working directory is the workspace root. Relative paths resolve against it; absolute paths are REAL host filesystem paths.
+
+Available tools:
+- ${EXEC_TOOL}(command, workdir?) — Run a shell command on the host. workdir is optional; defaults to the daemon's cwd. Absolute workdirs are honored verbatim.
+- ${READ_TOOL}(path, start_line?, end_line?) — Read a file from the host filesystem. Only works on files — fails on directories. Use start_line/end_line to read a specific line range (1-indexed). When a range is specified, output includes line numbers for reference. Truncated reads include truncated_at_line and remaining_bytes.
+- ${SEARCH_TOOL}(query, path?) — Search file contents (uses rg/grep). Case-sensitive by default; supports regex patterns. Tip: use short, distinctive substrings rather than full names.
+- ${LIST_DIR_TOOL}(path?) — List files and folders. Defaults to the daemon's cwd.
+- ${WRITE_TOOL}(path, content, expected_version?) — Write or overwrite a file. If expected_version is provided, stale writes are rejected.
+- ${EDIT_RANGE_TOOL}(path, start_line, end_line, content, expected_version?) — Replace a contiguous line range using human-friendly line numbers.
+- ${REPLACE_TOOL}(path, search, replace, expected_version?) — Find the unique line containing search (case-sensitive substring) and replace that substring with replace. Errors if search matches zero or multiple lines.
+- ${EDIT_TOOL}(path, edits, expected_version?) — Edit a file using content hashes as line references. edits is an array of HashlineOp. ${READ_TOOL} results show each line as "lineNo:hash\\tcontent" — the prefix is a ready-made ref. Prefer ${EDIT_RANGE_TOOL} for contiguous block replacements; use ${EDIT_TOOL} for surgical anchored edits and multi-point changes.
+- ${DIFF_TOOL}() — Get the git diff of all uncommitted changes (if the workspace is a git repo).
+- ${RUN_TESTS_TOOL}(framework?) — Run the test suite. Auto-detects npm/pytest/cargo/go if framework not specified.
+- ${CHECK_TYPES_TOOL}() — Run type checker (tsc/pyright/mypy). Auto-detects from config files.
+- ${READ_SYMBOLS_TOOL}(path) — Extract a symbol index from a source file (functions, classes, imports). Use to understand structure before editing.
+- ${REFS_TOOL}(symbol, scope?) — Find all references to a symbol name. Scope defaults to the daemon's cwd.
+- ${APPLY_PATCHSET_TOOL}(edits, dryRun?, diagnostics?, checks?, rollbackOnFailure?) — Apply multi-file edits with all-or-nothing validation. Phase 1 reads + validates; Phase 2 writes if everything compiles. Pass dryRun=true to validate without writing.
+- ${DOWNLOAD_TOOL}(path?) — Download files as a compressed archive (tar.gz). Defaults to the daemon's cwd.
+
+Usage: Output a fenced JSON block:
+\`\`\`json
+{"tool": "${EXEC_TOOL}", "args": {"command": "npm test"}}
+\`\`\`
+
+LOCAL PC RULES (different from cloud sandbox — read carefully):
+- CRITICAL: To use a tool, you MUST include the fenced JSON block in your response. The system can ONLY detect and execute tool calls from JSON blocks.
+- PATHS: Relative paths resolve against the daemon's cwd (the workspace root). Absolute paths are REAL host paths — do NOT rewrite \`/tmp/foo\` to \`/workspace/foo\`. There is no \`/workspace\` on this machine.
+- ALLOWLIST: The daemon enforces a repo allowlist. Writes outside the daemon's cwd may be rejected with \`PATH_OUTSIDE_WORKSPACE\`. If that happens, retry with a path inside the workspace root, or surface the constraint to the user — do NOT invent a \`/workspace/\` path to substitute.
+- NO REMOTE: There is no \`git push\` target wired up here. Do not attempt commit/push/PR tools — they are not available.
+- NO DELEGATION: Do not delegate to the Explorer or Coder agent in local-pc mode. Their tooling depends on cloud-side context that doesn't exist here; the delegation will produce a confused "sandbox unavailable" failure. Call the sandbox_* tools above directly.
+- For multi-step tasks (edit + test), use multiple tool calls in sequence.
+- You may emit multiple tool calls in one message. Read-only calls (${SANDBOX_READ_ONLY_TOOL_NAMES}) run in parallel. Place any mutating call (${SANDBOX_MUTATING_TOOL_NAMES}) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn.
+- Prefer ${READ_TOOL} → write/edit flows for changes. Use expected_version from ${READ_TOOL} to avoid stale overwrites.
+- ${DIFF_TOOL} shows what you've changed — useful for showing the user what was modified, but the daemon won't push commits.
+- IMPORTANT: Direct git commit/push/merge/rebase commands in ${EXEC_TOOL} are blocked at the daemon's git guard. For local-pc work, this is intentional — the user reviews diffs through their own workflow outside Push.
+- IMPORTANT: ${READ_TOOL} only works on files. To explore directory structure, use ${LIST_DIR_TOOL} first.
+- For simple one-shot questions ("what's my pwd?", "read package.json"), call ONE tool and answer with the result. Do not over-explore.`;
+
 function sanitizeSandboxEnvironmentValue(value: string): string {
   return value
     .replace(/\r?\n/g, ' ')
