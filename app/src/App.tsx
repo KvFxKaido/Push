@@ -8,9 +8,7 @@ import { toConversationIndex } from '@/lib/conversation-index';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import { perfMark, perfMeasure } from '@/lib/perf-marks';
-import { isLocalPcModeEnabled } from '@/lib/local-pc-binding';
 import { getPairedDevice } from '@/lib/local-pc-storage';
-import { isRelayModeEnabled } from '@/lib/relay-binding';
 import { getPairedRemote } from '@/lib/relay-storage';
 import type {
   ActiveRepo,
@@ -497,8 +495,8 @@ function App() {
             onConnectOAuth={connectApp}
             onStartWorkspace={handleStartScratchWorkspace}
             onStartChat={handleStartChatMode}
-            onStartLocalPc={isLocalPcModeEnabled() ? handleStartLocalPc : undefined}
-            onStartRelay={isRelayModeEnabled() ? handleStartRelay : undefined}
+            onStartLocalPc={handleStartLocalPc}
+            onStartRelay={handleStartRelay}
             onInstallApp={installApp}
             onConnectInstallationId={setInstallationIdManually}
             loading={authLoading}
@@ -529,8 +527,8 @@ function App() {
             onDisconnect={handleDisconnect}
             onStartWorkspace={handleStartScratchWorkspace}
             onStartChat={handleStartChatMode}
-            onStartLocalPc={isLocalPcModeEnabled() ? handleStartLocalPc : undefined}
-            onStartRelay={isRelayModeEnabled() ? handleStartRelay : undefined}
+            onStartLocalPc={handleStartLocalPc}
+            onStartRelay={handleStartRelay}
             user={validatedUser}
           />
         </div>
@@ -593,7 +591,7 @@ function App() {
           onStartScratchWorkspace: handleStartScratchWorkspace,
           onStartChat: handleStartChatMode,
           onStartLocalPc: handleStartLocalPc,
-          onStartRelay: isRelayModeEnabled() ? handleStartRelay : undefined,
+          onStartRelay: handleStartRelay,
           onEndWorkspace: handleEndWorkspace,
         }}
         homeBridge={{
