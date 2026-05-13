@@ -124,8 +124,18 @@ describe('handleRelayRequest', () => {
     expect(body.error).toBe('NOT_CONFIGURED');
   });
 
-  it('returns 403 ORIGIN_REJECTED when Origin is absent', async () => {
-    const { env } = makeEnabledEnv();
+  // Phase 2.e carve-out (#529 Copilot review) changed the contract:
+  // requests with no Origin header SKIP validateOrigin entirely so
+  // pushd's Node WS can dial. The route-level origin gate is now a
+  // browser-CSRF defense (browsers always send Origin), not a
+  // phone-bearer boundary — the DO's pushd-controlled allowlist
+  // (2.d.1) is the actual phone gate. A non-browser tool sending a
+  // phone bearer with no Origin reaches the DO, where the allowlist
+  // either authorizes it (because pushd previously emitted
+  // `relay_phone_allow` for it) or it's silently un-forwarded.
+  it('skips Origin gate when Origin is absent (route forwards to DO regardless of bearer kind)', async () => {
+    const stubFetch = vi.fn(async () => new Response(null, { status: 200 }));
+    const { env, fetchSpy } = makeEnabledEnv(stubFetch);
     const res = await handleRelayRequest(
       new Request('https://example.com/api/relay/v1/session/s1/connect', {
         headers: { Upgrade: 'websocket', 'Sec-WebSocket-Protocol': PHONE_BEARER_HEADER },
@@ -133,9 +143,8 @@ describe('handleRelayRequest', () => {
       env,
       { action: 'connect', sessionId: 's1' },
     );
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('ORIGIN_REJECTED');
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('returns 403 ORIGIN_REJECTED when Origin is cross-origin and not allowlisted', async () => {
@@ -145,6 +154,61 @@ describe('handleRelayRequest', () => {
       sessionId: 's1',
     });
     expect(res.status).toBe(403);
+  });
+
+  // Phase 2.e carve-out (#529 Copilot review): skip the origin gate
+  // only when there's NO Origin header. pushd's Node WS doesn't add
+  // one; browsers always do. This makes the carve-out a property a
+  // browser cannot spoof from JS.
+  it('skips Origin gate when request has no Origin header (pushd Node WS path)', async () => {
+    const stubFetch = vi.fn(async () => new Response(null, { status: 200 }));
+    const { env, fetchSpy } = makeEnabledEnv(stubFetch);
+    const res = await handleRelayRequest(
+      new Request('https://example.com/api/relay/v1/session/s1/connect', {
+        headers: { Upgrade: 'websocket', 'Sec-WebSocket-Protocol': PUSHD_BEARER_HEADER },
+      }),
+      env,
+      { action: 'connect', sessionId: 's1' },
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // CSRF-spoof guard: a cross-origin page CAN'T suppress Origin on a
+  // WS upgrade, but if it could, the prior bearer-prefix gate would
+  // have let it bypass origin by setting Sec-WebSocket-Protocol. With
+  // the no-Origin-header gate, a request that carries an Origin AND a
+  // pushd bearer goes through validateOrigin — the bearer check runs
+  // after. A bad Origin is rejected regardless of bearer.
+  it('still validates Origin when Origin header is present, even with pushd bearer', async () => {
+    const { env } = makeEnabledEnv();
+    const res = await handleRelayRequest(
+      wsRequest({
+        Origin: 'https://evil.example',
+        'Sec-WebSocket-Protocol': PUSHD_BEARER_HEADER,
+      }),
+      env,
+      { action: 'connect', sessionId: 's1' },
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('ORIGIN_REJECTED');
+  });
+
+  // Symmetric-boundary check: a phone bearer always carries Origin
+  // (browser-originated), so the gate always runs for it. A bad
+  // origin is rejected with ORIGIN_REJECTED before the bearer is
+  // even validated.
+  it('still rejects phone bearer when Origin is cross-origin', async () => {
+    const { env } = makeEnabledEnv();
+    const res = await handleRelayRequest(
+      wsRequest({ Origin: 'https://evil.example', 'Sec-WebSocket-Protocol': PHONE_BEARER_HEADER }),
+      env,
+      { action: 'connect', sessionId: 's1' },
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('ORIGIN_REJECTED');
   });
 
   it('returns 429 RATE_LIMITED when the rate limiter rejects', async () => {

@@ -34,10 +34,18 @@
  *   1. PUSH_RELAY_ENABLED === '1'   → otherwise 503 NOT_ENABLED
  *   2. env.RELAY_SESSIONS bound     → otherwise 503 NOT_CONFIGURED
  *   3. validateOrigin               → otherwise 403 ORIGIN_REJECTED
- *      (NOTE: pushd's outbound dial in 2.e won't carry a browser
- *      Origin header. This gate will need a carve-out then — likely
- *      "valid pushd bearer bypasses Origin check since pushd is not a
- *      CSRF target.")
+ *      Phase 2.e carve-out (post-#529 Copilot review): skip the
+ *      origin gate when the request has NO `Origin` header at all.
+ *      pushd's outbound Node WS doesn't auto-add Origin; browsers
+ *      ALWAYS auto-add Origin on a WebSocket upgrade (even an
+ *      opaque-origin sandboxed iframe sends `Origin: null`). So
+ *      "Origin header is genuinely absent" is a property pushd can
+ *      satisfy and a browser CANNOT spoof — tighter than gating on
+ *      a `Sec-WebSocket-Protocol` bearer prefix, which a browser
+ *      could set arbitrarily (auth would still reject the bearer,
+ *      but the bypass widened the CSRF probe surface). Bearer
+ *      validation still runs after; this just controls whether
+ *      `validateOrigin` runs first.
  *   4. RATE_LIMITER                 → otherwise 429
  *   5. Upgrade: websocket           → otherwise 426
  *   6. Bearer parsing + validation  → otherwise 401
@@ -105,16 +113,27 @@ export async function handleRelayRequest(
     );
   }
 
-  // Origin + rate limiting mirror the /api/jobs/* pattern so the relay
-  // endpoint isn't a softer CSRF / abuse surface than the rest of /api/*.
-  // Browser PWA clients carry Origin; pushd's outbound dial in 2.e will
-  // NOT carry a browser Origin header, so this gate must be reworked
-  // alongside the 2.c auth model — most likely "auth token presence
-  // bypasses the Origin check, since pushd isn't a CSRF target."
+  // Phase 2.e: skip the origin gate when the request has NO `Origin`
+  // header at all. Browser WS upgrades ALWAYS auto-add Origin (the
+  // spec doesn't let JS suppress it); pushd's Node WS doesn't add
+  // one. So absence of Origin is a property pushd can satisfy and a
+  // browser cannot spoof from JS. Gating on the bearer prefix
+  // instead would let a malicious cross-origin page set
+  // `Sec-WebSocket-Protocol: push.relay.v1, bearer.pushd_relay_xyz`
+  // to bypass the origin check; auth would still reject the bearer,
+  // but it'd weaken the boundary needlessly. PR #529 Copilot review.
+  //
+  // `Origin: null` (sandboxed iframes, opaque origins) still has a
+  // header present, so it goes through validateOrigin where the
+  // allowlist check rejects it the same way any other unallowed
+  // origin is rejected.
   const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return jsonError('ORIGIN_REJECTED', originCheck.error ?? 'Origin not allowed', 403);
+  const hasOriginHeader = request.headers.get('Origin') !== null;
+  if (hasOriginHeader) {
+    const originCheck = validateOrigin(request, requestUrl, env);
+    if (!originCheck.ok) {
+      return jsonError('ORIGIN_REJECTED', originCheck.error ?? 'Origin not allowed', 403);
+    }
   }
 
   const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: getClientIp(request) });
