@@ -253,12 +253,23 @@ export function buildSessionCapabilityBlock(
     return `[${d.toISOString()}] ${e.message}`;
   });
 
+  // Local-pc sessions have a daemon (so `hasSandbox` is true) but no
+  // cloud sandbox environment — sandboxEnv is null. Without a guard,
+  // the writableRoot fallback emits `/workspace` for local-pc, which
+  // contradicts the local-pc tool protocol's "no /workspace" rule and
+  // can reintroduce the absolute-path-rewrite bug. Emit null instead;
+  // the local-pc protocol tells the model that the daemon's cwd IS the
+  // workspace root. Copilot flagged this as a low-confidence concern
+  // on PR #527; confirmed load-bearing on inspection.
+  const isLocalPc = workspaceContext.mode === 'local-pc';
+  const writableRoot =
+    sandboxEnv?.writable_root ?? (hasSandbox && !isLocalPc ? '/workspace' : null);
   const payload = {
     workspaceMode: workspaceContext.mode,
     githubTools: workspaceContext.includeGitHubTools,
     sandbox: {
       available: Boolean(hasSandbox),
-      writableRoot: sandboxEnv?.writable_root ?? (hasSandbox ? '/workspace' : null),
+      writableRoot,
       gitAvailable: sandboxEnv?.git_available ?? null,
       containerTtl: sandboxEnv?.container_ttl ?? null,
       containerTtlRemaining: remainingMinutes != null ? `${remainingMinutes}m` : null,

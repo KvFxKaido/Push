@@ -201,6 +201,19 @@ export function toLLMMessages(
       builder.set('delegation', null);
     }
 
+    // Local-PC mode — strip the cloud delegation block. The base
+    // `delegation` section advertises delegate_coder / delegate_explorer
+    // with the literal "Trace the auth flow / src/auth.ts" example that
+    // the model was parroting verbatim in pwd-only conversations. The
+    // local-pc tool protocol (injected below) tells the model NOT to
+    // delegate, but the contradictory base block reduces the signal —
+    // strip it cleanly for local-pc, the same way chat does. Copilot
+    // flagged this as a low-confidence concern on PR #527; verified
+    // load-bearing on inspection.
+    if (workspaceContext?.mode === 'local-pc') {
+      builder.set('delegation', null);
+    }
+
     // User identity (name, bio) when configured
     const profile = getUserProfile();
     const identityBlock = buildUserIdentityBlock(profile);

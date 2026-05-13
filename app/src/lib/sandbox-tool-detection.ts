@@ -556,7 +556,7 @@ LOCAL PC RULES (different from cloud sandbox — read carefully):
 - NO REMOTE: There is no \`git push\` target wired up here. Do not attempt commit/push/PR tools — they are not available.
 - NO DELEGATION: Do not delegate to the Explorer or Coder agent in local-pc mode. Their tooling depends on cloud-side context that doesn't exist here; the delegation will produce a confused "sandbox unavailable" failure. Call the sandbox_* tools above directly.
 - For multi-step tasks (edit + test), use multiple tool calls in sequence.
-- You may emit multiple tool calls in one message. Read-only calls (${SANDBOX_READ_ONLY_TOOL_NAMES}) run in parallel. Place any mutating call (${SANDBOX_MUTATING_TOOL_NAMES}) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn.
+- You may emit multiple tool calls in one message. Read-only calls (read, list_dir, search, read_symbols, refs, diff) run in parallel. Place any mutating call (write, edit, edit_range, replace, exec, patch) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn. Cloud-only mutating tools listed in the cloud protocol are NOT available here; the daemon does not service them.
 - Prefer ${READ_TOOL} → write/edit flows for changes. Use expected_version from ${READ_TOOL} to avoid stale overwrites.
 - ${DIFF_TOOL} shows what you've changed — useful for showing the user what was modified, but the daemon won't push commits.
 - IMPORTANT: Direct git commit/push/merge/rebase commands in ${EXEC_TOOL} are blocked at the daemon's git guard. For local-pc work, this is intentional — the user reviews diffs through their own workflow outside Push.
