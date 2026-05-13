@@ -230,18 +230,36 @@ describe('RelaySessionDO forwarding (pushd ↔ phones)', () => {
     expect(sendPhone).not.toHaveBeenCalled();
   });
 
-  it('forwards phone → pushd unconditionally (no allowlist gate on inbound direction)', () => {
+  it('forwards phone → pushd only when phone bearer is in the allowlist (Codex #526 P1)', () => {
     const doInstance = makeDO();
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
     doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
 
     const sendPushd = vi.spyOn(pushd, 'send');
 
     phone.dispatch('message', { data: '{"kind":"submit_approval"}' });
 
     expect(sendPushd).toHaveBeenCalledWith('{"kind":"submit_approval"}');
+  });
+
+  it('drops phone → pushd when phone bearer is NOT in the allowlist', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    // No relay_phone_allow sent — phone's bearer is not in allowlist.
+
+    const sendPushd = vi.spyOn(pushd, 'send');
+
+    phone.dispatch('message', { data: '{"kind":"submit_approval"}' });
+
+    expect(sendPushd).not.toHaveBeenCalled();
   });
 
   it('drops phone messages when no pushd is attached', () => {
@@ -279,6 +297,8 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     doInstance.acceptPushd(pushd as unknown as WebSocket);
     doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
 
+    const closeSpy = vi.spyOn(phone, 'close');
+
     pushd.dispatch('message', {
       data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
     });
@@ -287,10 +307,10 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     });
 
     expect(doInstance.getAllowedPhoneBearers()).toEqual([]);
+    // Assert the exact close args: 1008 = policy violation; reason
+    // mirrors pushd's device-token revoke path.
+    expect(closeSpy).toHaveBeenCalledWith(1008, 'phone bearer revoked');
     expect(phone.readyState).toBe(3);
-    // Close code 1008 mirrors pushd's device-token revoke path.
-    // (FakeWebSocket records the args on the dispatched close event;
-    // we verify via state-machine effect.)
   });
 
   it('ignores relay_phone_allow from a phone (pushd is the authority)', () => {
@@ -360,6 +380,28 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     pushd.dispatch('message', { data: runtimeEvent });
 
     expect(sendPhone).toHaveBeenCalledWith(runtimeEvent);
+  });
+
+  it('drops malformed relay-control envelopes instead of forwarding (does not leak reserved vocab)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    const sendPhone = vi.spyOn(phone, 'send');
+
+    // relay_phone_allow with no `tokens` field — kind matches but
+    // validation fails. The frame must be dropped (not forwarded
+    // raw), to keep the reserved vocab off the wire to phones.
+    pushd.dispatch('message', {
+      data: JSON.stringify({ v: 'push.runtime.v1', kind: 'relay_phone_allow', ts: 1 }),
+    });
+
+    expect(sendPhone).not.toHaveBeenCalled();
   });
 
   it('forwards malformed JSON unchanged (the relay does not pre-validate non-control payloads)', () => {

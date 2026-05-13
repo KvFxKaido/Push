@@ -232,16 +232,19 @@ interface ParsedSubprotocol {
 }
 
 /**
- * Re-extract the phone bearer (the `pushd_da_*` value, prefix
- * stripped) from a forwarded request's `Sec-WebSocket-Protocol`
- * header. Used by the DO to store the bearer alongside the
- * connection so the allowlist match in `forwardData` has the
- * identity to compare against. Returns null if the header is
- * absent, the protocol doesn't match, the bearer is missing, or
- * the bearer isn't shaped like a phone token.
+ * Re-extract the phone bearer from a forwarded request's
+ * `Sec-WebSocket-Protocol` header. Returns the full token
+ * including the `pushd_da_` prefix (only the `bearer.` subprotocol
+ * tag is stripped — the `pushd_da_` part stays, so the returned
+ * value can be compared directly against allowlist entries in
+ * `relay_phone_allow` envelopes). Returns null if the header is
+ * absent, the protocol doesn't match, the bearer entry is missing,
+ * or the bearer isn't shaped like a phone token.
  *
- * Note: the route handler has already validated the bearer at
- * upgrade time. This re-parse exists because the alternative —
+ * Used by the DO to store the bearer alongside the connection so
+ * the allowlist match in `handleMessage` has the identity to
+ * compare against. The route handler already validated the bearer
+ * at upgrade time; this re-parse exists because the alternative —
  * passing the bearer via a query param on the forwarded request —
  * would leak phone tokens into URL logs.
  */

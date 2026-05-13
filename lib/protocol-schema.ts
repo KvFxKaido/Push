@@ -678,10 +678,10 @@ export function validateRelayEnvelope(env: unknown): ValidationIssue[] {
     return issues;
   }
 
-  if (typeof env.ts !== 'number' || !Number.isFinite(env.ts) || env.ts <= 0) {
+  if (typeof env.ts !== 'number' || !Number.isFinite(env.ts) || env.ts < 0) {
     issues.push({
       path: 'ts',
-      message: `expected positive finite number (ms since epoch), got ${JSON.stringify(env.ts)}`,
+      message: `expected non-negative finite number (ms since epoch), got ${JSON.stringify(env.ts)}`,
     });
   }
 

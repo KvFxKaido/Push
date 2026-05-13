@@ -183,9 +183,15 @@ export class RelaySessionDO {
     // Only attempt to parse string frames — relay-control envelopes
     // are JSON text. Binary frames are forwarded raw.
     if (typeof data === 'string') {
-      const controlEnvelope = tryParseRelayEnvelope(data);
-      if (controlEnvelope) {
-        this.handleRelayControl(senderMeta, controlEnvelope);
+      const classified = classifyRelayFrame(data);
+      if (classified === 'drop') {
+        // Malformed envelope with a relay-control `kind` — drop
+        // rather than forward the reserved vocabulary to the
+        // counterparty (Copilot #526 hardening).
+        return;
+      }
+      if (classified) {
+        this.handleRelayControl(senderMeta, classified);
         return;
       }
     }
@@ -210,13 +216,14 @@ export class RelaySessionDO {
           this.allowedPhoneBearers.add(token);
         }
       } else {
-        for (const token of envelope.tokens) {
+        const revokedTokens = new Set(envelope.tokens);
+        for (const token of revokedTokens) {
           this.allowedPhoneBearers.delete(token);
         }
         // Drop any currently-connected phone whose bearer was revoked.
         // Close code 1008 mirrors the device-token revoke path in pushd.
         for (const [ws, meta] of this.connections) {
-          if (meta.role === 'phone' && envelope.tokens.includes(meta.bearer)) {
+          if (meta.role === 'phone' && revokedTokens.has(meta.bearer)) {
             ws.close(1008, 'phone bearer revoked');
           }
         }
@@ -254,11 +261,15 @@ export class RelaySessionDO {
         }
       }
     } else {
-      // phone → pushd. No allowlist gate here — pushd is the
-      // authority and will reject envelopes at the protocol layer
-      // if it doesn't recognize the originating bearer. (pushd sees
-      // the bearer at WS upgrade time via the relay's separate
-      // control channel in 2.e.)
+      // phone → pushd, also gated on the phone's bearer being in the
+      // allowlist (closes Codex #526 P1: pushd can't see the
+      // originating bearer on a forwarded frame, so the relay is the
+      // only place that can enforce this direction). Asymmetric
+      // gating was the wrong call — both directions need the same
+      // boundary.
+      if (!this.allowedPhoneBearers.has(senderMeta.bearer)) {
+        return;
+      }
       const pushd = this.getPushdConnection();
       if (pushd && pushd !== sender && pushd.readyState === 1) {
         pushd.send(data as string | ArrayBuffer);
@@ -296,18 +307,18 @@ export class RelaySessionDO {
 }
 
 /**
- * Parse a single text frame as a relay-control envelope. Returns the
- * typed envelope if (a) the frame is valid JSON, (b) the parsed value
- * has a `kind` in `RELAY_ENVELOPE_KINDS`, AND (c) the envelope passes
- * `validateRelayEnvelope`. Otherwise returns null and the frame is
- * forwarded raw to the counterparty.
+ * Three-way classifier on a text frame:
  *
- * This routing-by-discriminator keeps the relay's parsing surface
- * minimal: non-relay envelopes are never JSON-parsed twice (just the
- * initial discriminator check) and malformed JSON costs the relay
- * nothing.
+ *   - returns a typed envelope when the frame parses as a valid
+ *     relay-control envelope (caller consumes in-band);
+ *   - returns `'drop'` when the frame's `kind` looks like a relay
+ *     envelope but validation fails — caller drops the frame
+ *     entirely rather than forwarding the reserved vocabulary to
+ *     the counterparty (Copilot #526 hardening);
+ *   - returns null otherwise (caller forwards raw — non-control
+ *     payloads and malformed JSON both fall here).
  */
-function tryParseRelayEnvelope(text: string): RelayEnvelope | null {
+function classifyRelayFrame(text: string): RelayEnvelope | 'drop' | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -315,6 +326,6 @@ function tryParseRelayEnvelope(text: string): RelayEnvelope | null {
     return null;
   }
   if (!isRelayEnvelope(parsed)) return null;
-  if (validateRelayEnvelope(parsed).length > 0) return null;
+  if (validateRelayEnvelope(parsed).length > 0) return 'drop';
   return parsed;
 }
