@@ -69,6 +69,7 @@ import {
 } from './pushd-relay-config.js';
 import {
   createRelayAllowlistRegistry,
+  seedAllowlistFromAttachTokens,
   type RelayAllowlistRegistry,
 } from './pushd-relay-allowlist.js';
 import { encodeRemotePairBundle } from './pushd-relay-pair-bundle.js';
@@ -234,47 +235,47 @@ let activeRelayLastStatus: RelayConnectionStatus | null = null;
 const relayAllowlist: RelayAllowlistRegistry = createRelayAllowlistRegistry();
 
 /**
- * Build a `relay_phone_allow` envelope for the given bearer(s). The
- * `tokens` field carries the bearer text character-for-character —
- * the DO compares it against the phone's `Sec-WebSocket-Protocol`
- * bearer at upgrade time, so it has to be the same string (see
- * decision doc Q#2 walk-back: hash-based allowlisting is a follow-up
- * slice, not 2.e scope).
+ * Build a `relay_phone_allow` envelope for the given tokenHash(es).
+ * `tokenHashes` carries `sha256(bearer)` base64url-encoded — the
+ * DO hashes the phone's `Sec-WebSocket-Protocol` bearer at upgrade
+ * time and compares against the set. The wire never carries bearer
+ * plaintext, which is what lets the allowlist survive a daemon
+ * restart (the on-disk attach-token store also keeps only the hash).
  */
-function makeRelayPhoneAllowEnvelope(bearers: readonly string[]): string {
+function makeRelayPhoneAllowEnvelope(tokenHashes: readonly string[]): string {
   return `${JSON.stringify({
     v: PROTOCOL_VERSION,
     kind: 'relay_phone_allow',
-    tokens: bearers,
+    tokenHashes,
     ts: Date.now(),
   })}\n`;
 }
 
-function makeRelayPhoneRevokeEnvelope(bearers: readonly string[]): string {
+function makeRelayPhoneRevokeEnvelope(tokenHashes: readonly string[]): string {
   return `${JSON.stringify({
     v: PROTOCOL_VERSION,
     kind: 'relay_phone_revoke',
-    tokens: bearers,
+    tokenHashes,
     ts: Date.now(),
   })}\n`;
 }
 
 /**
- * Emit a `relay_phone_allow` envelope for the new bearer(s). If the
- * relay client isn't connected yet, the envelope is queued in the
- * relay client's pre-open send buffer and flushed on next open.
+ * Emit a `relay_phone_allow` envelope for the new tokenHash(es). If
+ * the relay client isn't connected yet, the envelope is queued in
+ * the relay client's pre-open send buffer and flushed on next open.
  * No-ops when no relay is configured at all.
  */
-function emitRelayAllowChange(bearers: readonly string[]): void {
-  if (bearers.length === 0) return;
+function emitRelayAllowChange(tokenHashes: readonly string[]): void {
+  if (tokenHashes.length === 0) return;
   if (!activeRelayClient) return;
-  activeRelayClient.send(makeRelayPhoneAllowEnvelope(bearers));
+  activeRelayClient.send(makeRelayPhoneAllowEnvelope(tokenHashes));
 }
 
-function emitRelayRevokeChange(bearers: readonly string[]): void {
-  if (bearers.length === 0) return;
+function emitRelayRevokeChange(tokenHashes: readonly string[]): void {
+  if (tokenHashes.length === 0) return;
   if (!activeRelayClient) return;
-  activeRelayClient.send(makeRelayPhoneRevokeEnvelope(bearers));
+  activeRelayClient.send(makeRelayPhoneRevokeEnvelope(tokenHashes));
 }
 
 /**
@@ -284,9 +285,26 @@ function emitRelayRevokeChange(bearers: readonly string[]): void {
  * re-emit is the recovery path.
  */
 function emitRelayFullAllowlist(send: (frame: string) => void): void {
-  const bearers = relayAllowlist.allBearers();
-  if (bearers.length === 0) return;
-  send(makeRelayPhoneAllowEnvelope(bearers));
+  const hashes = relayAllowlist.allTokenHashes();
+  if (hashes.length === 0) return;
+  send(makeRelayPhoneAllowEnvelope(hashes));
+}
+
+/**
+ * Boot-time rebuild of the relay allowlist registry from the
+ * persisted attach-token store. Without this, a daemon restart
+ * would emit an empty `relay_phone_allow` on the next relay connect
+ * and every paired phone would silently lose forwarding access
+ * until it re-paired.
+ *
+ * The persisted store keeps only hashes (no plaintext bearer ever
+ * lands on disk), which is exactly what the hash-keyed allowlist
+ * registry stores too — so the seed is a straight 1:1 copy. Expired
+ * records are filtered out lazily by `listDeviceAttachTokens()` so
+ * a token past its sliding-TTL window doesn't get re-allowlisted.
+ */
+async function seedRelayAllowlistFromAttachTokens(): Promise<number> {
+  return seedAllowlistFromAttachTokens(relayAllowlist, listDeviceAttachTokens);
 }
 
 /**
@@ -500,12 +518,12 @@ function startRelayClient(config: RelayConfig): RelayClientHandle {
 
 /**
  * Tear down the running relay client. By default the in-process
- * attach-bearer allowlist is PRESERVED — bearers are captured only
- * at mint time (pushd-attach-tokens stores hashes), so clearing them
- * would lock every already-paired phone out of the relay path on the
- * next `relay.connect` until they re-pair. Only the explicit `relay
- * disable` flow passes `clearAllowlist: true` (config gone → no
- * relay → no allowlist needed).
+ * tokenHash allowlist is PRESERVED — entries are reseeded at boot
+ * from the persisted attach-token store and adjusted at mint/revoke,
+ * so clearing here would force a full re-emit cycle on the next
+ * `relay.connect`. Only the explicit `relay disable` flow passes
+ * `clearAllowlist: true` (config gone → no relay → no allowlist
+ * needed).
  *
  * PR #529 Codex P1 + Copilot: `handleRelayEnable` calls this in its
  * live-restart path; without the preserve default, a disable/enable
@@ -4436,13 +4454,11 @@ async function handleRevokeDeviceToken(req, _emitEvent, context) {
   const closedConnections = activeWsHandle
     ? activeWsHandle.disconnectByTokenId(tokenId, 'device token revoked')
     : 0;
-  // Phase 2.e cascade: drop every bearer derived from the revoked
+  // Phase 2.e cascade: drop every tokenHash derived from the revoked
   // device from the relay allowlist and emit `relay_phone_revoke`
-  // for those that were actually registered. Bearers minted before
-  // a daemon restart aren't in the registry so removeMany returns
-  // only the ones we have.
-  const revokedBearers = relayAllowlist.removeMany(revokedAttachIds);
-  if (revokedBearers.length > 0) emitRelayRevokeChange(revokedBearers);
+  // for those that were actually registered.
+  const revokedHashes = relayAllowlist.removeMany(revokedAttachIds);
+  if (revokedHashes.length > 0) emitRelayRevokeChange(revokedHashes);
   void appendAuditEvent({
     type: 'auth.revoke_device',
     ...auditProvenance(context),
@@ -4496,14 +4512,14 @@ async function handleMintDeviceAttachToken(req, _emitEvent, context) {
     parentTokenId: auth.tokenId,
     boundOrigin: auth.boundOrigin as 'loopback' | string,
   });
-  // Phase 2.e: register the freshly-minted bearer in the relay
-  // allowlist and push a `relay_phone_allow` envelope. The bearer is
-  // in scope ONLY at this moment — pushd-attach-tokens stores hashes
-  // on disk, so this is the single chance to capture the bearer text
-  // for the relay path. If the relay client is offline, the envelope
-  // queues in its pre-open buffer and flushes on next open.
-  relayAllowlist.add(result.tokenId, result.token);
-  emitRelayAllowChange([result.token]);
+  // Phase 2.e + hash-allowlist hardening: register the tokenHash
+  // (already computed by mintDeviceAttachToken) in the relay
+  // allowlist and push a `relay_phone_allow` envelope. We never
+  // capture bearer plaintext — the on-disk store and the relay
+  // wire both speak hashes, which is what makes daemon-restart
+  // recovery work.
+  relayAllowlist.add(result.tokenId, result.record.tokenHash);
+  emitRelayAllowChange([result.record.tokenHash]);
   void appendAuditEvent({
     type: 'auth.mint_attach',
     ...auditProvenance(context),
@@ -4552,12 +4568,12 @@ async function handleRevokeDeviceAttachToken(req, _emitEvent, context) {
   const closedConnections = activeWsHandle
     ? activeWsHandle.disconnectByAttachTokenId(tokenId, 'attach token revoked')
     : 0;
-  // Phase 2.e: drop the bearer from the relay allowlist and push
-  // a `relay_phone_revoke`. If the bearer wasn't in the registry
-  // (daemon restarted between mint and revoke), the emit is a no-op
-  // — the DO never had it allowlisted either.
-  const removedBearer = relayAllowlist.remove(tokenId);
-  if (removedBearer !== null) emitRelayRevokeChange([removedBearer]);
+  // Phase 2.e: drop the tokenHash from the relay allowlist and push
+  // a `relay_phone_revoke`. The hash-keyed registry is reseeded at
+  // startup from the persisted attach-token store, so an entry that
+  // outlived a daemon restart is still present here.
+  const removedHash = relayAllowlist.remove(tokenId);
+  if (removedHash !== null) emitRelayRevokeChange([removedHash]);
   void appendAuditEvent({
     type: 'auth.revoke_attach',
     ...auditProvenance(context),
@@ -4743,12 +4759,12 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
     parentTokenId: device.tokenId,
     boundOrigin: 'loopback',
   });
-  // Register the new bearer in the relay allowlist (same path mint
-  // takes for the LAN-paired case) and emit a `relay_phone_allow`
+  // Register the new tokenHash in the relay allowlist (same path
+  // mint takes for the LAN-paired case) and emit a `relay_phone_allow`
   // so the DO updates its per-session allowlist before the phone
   // even tries to connect.
-  relayAllowlist.add(attach.tokenId, attach.token);
-  emitRelayAllowChange([attach.token]);
+  relayAllowlist.add(attach.tokenId, attach.record.tokenHash);
+  emitRelayAllowChange([attach.record.tokenHash]);
   // sessionId mirrors what `startRelayClient` uses — a stable per-
   // daemon routing key. The relay sessionId is opaque routing, not
   // load-bearing for security (see 2.d.1 walk-back); using the
@@ -5417,6 +5433,22 @@ export async function main() {
     // Phase 2.e: if a relay config is persisted, dial the Worker.
     // Independent of PUSHD_WS — the relay is the OUTBOUND path,
     // PUSHD_WS gates the INBOUND loopback listener.
+    //
+    // Hash-allowlist hardening: rebuild the in-process allowlist from
+    // the persisted attach-token store BEFORE starting the relay
+    // client. The relay client's first `onOpen` fires the full
+    // `relay_phone_allow` re-emit; if the registry hadn't been
+    // seeded yet, that re-emit would be empty and every paired phone
+    // would lose forwarding access across the restart.
+    try {
+      const seeded = await seedRelayAllowlistFromAttachTokens();
+      if (seeded > 0) {
+        process.stdout.write(`pushd-relay allowlist seeded from ${seeded} attach token(s)\n`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`pushd-relay allowlist seed failed: ${msg}\n`);
+    }
     try {
       const relayConfig = await readRelayConfig();
       if (relayConfig) {

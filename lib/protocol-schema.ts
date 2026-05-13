@@ -568,8 +568,10 @@ export function assertValidEvent(event: unknown): void {
  * relay-control messages exchanged between:
  *
  *   - pushd → relay: `relay_phone_allow`, `relay_phone_revoke`
- *     (the allowlist that gates pushd → phone forwarding; closes
- *     Codex #525 P1).
+ *     (the hash-keyed allowlist that gates pushd ↔ phone forwarding;
+ *     entries are `sha256(bearer)` as base64url, NOT bearer plaintext —
+ *     pushd persists only the hash, so the wire can only carry the
+ *     hash too).
  *
  *   - phone → relay: `relay_attach`
  *     (carries `lastSeq` for replay; consumed by the buffer in 2.d.2).
@@ -603,14 +605,23 @@ export type RelayEnvelopeKind = (typeof RELAY_ENVELOPE_KINDS)[number];
 export interface RelayPhoneAllowEnvelope {
   v: 'push.runtime.v1';
   kind: 'relay_phone_allow';
-  tokens: readonly string[];
+  /**
+   * `sha256(bearer)` base64url-encoded, one per phone the relay
+   * should accept forwarded traffic for. pushd persists attach
+   * tokens by hash only, so the wire vocabulary matches: bearer
+   * plaintext would have nowhere to come from on a fresh daemon
+   * boot. The relay computes the same hash on each phone's WS
+   * upgrade subprotocol bearer and compares set-membership.
+   */
+  tokenHashes: readonly string[];
   ts: number;
 }
 
 export interface RelayPhoneRevokeEnvelope {
   v: 'push.runtime.v1';
   kind: 'relay_phone_revoke';
-  tokens: readonly string[];
+  /** Same encoding as {@link RelayPhoneAllowEnvelope.tokenHashes}. */
+  tokenHashes: readonly string[];
   ts: number;
 }
 
@@ -686,18 +697,18 @@ export function validateRelayEnvelope(env: unknown): ValidationIssue[] {
   }
 
   if (kind === 'relay_phone_allow' || kind === 'relay_phone_revoke') {
-    if (!Array.isArray(env.tokens)) {
+    if (!Array.isArray(env.tokenHashes)) {
       issues.push({
-        path: 'tokens',
-        message: `expected array of strings, got ${JSON.stringify(env.tokens)}`,
+        path: 'tokenHashes',
+        message: `expected array of strings, got ${JSON.stringify(env.tokenHashes)}`,
       });
     } else {
-      for (let i = 0; i < env.tokens.length; i += 1) {
-        const token = env.tokens[i];
-        if (typeof token !== 'string' || token.length === 0) {
+      for (let i = 0; i < env.tokenHashes.length; i += 1) {
+        const hash = env.tokenHashes[i];
+        if (typeof hash !== 'string' || hash.length === 0) {
           issues.push({
-            path: `tokens[${i}]`,
-            message: `expected non-empty string, got ${JSON.stringify(token)}`,
+            path: `tokenHashes[${i}]`,
+            message: `expected non-empty string, got ${JSON.stringify(hash)}`,
           });
         }
       }

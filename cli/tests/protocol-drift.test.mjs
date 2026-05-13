@@ -461,9 +461,12 @@ describe('relay envelope schema', () => {
         v: 'push.runtime.v1',
         kind,
         ts: 1,
-        // Per-kind minimum-valid fields.
+        // Per-kind minimum-valid fields. The allow/revoke envelopes
+        // carry `tokenHashes`, NOT bearer plaintext — pushd persists
+        // attach tokens by hash only and the wire matches that shape
+        // so the daemon can reseed the allowlist on restart.
         ...(kind === 'relay_phone_allow' || kind === 'relay_phone_revoke'
-          ? { tokens: ['pushd_da_x'] }
+          ? { tokenHashes: ['c2hhMjU2X29mX2JlYXJlcg'] }
           : {}),
         ...(kind === 'relay_replay_unavailable' ? { reason: 'BUFFER_GAP' } : {}),
       };
@@ -500,7 +503,7 @@ describe('relay envelope schema', () => {
     assert.equal(isRelayEnvelope({ v: 'push.runtime.v1' }), false);
   });
 
-  it('rejects relay_phone_allow without tokens', () => {
+  it('rejects relay_phone_allow without tokenHashes', () => {
     const issues = validateRelayEnvelope({
       v: 'push.runtime.v1',
       kind: 'relay_phone_allow',
@@ -508,21 +511,21 @@ describe('relay envelope schema', () => {
     });
     assert.equal(issues.length > 0, true);
     assert.equal(
-      issues.some((i) => i.path === 'tokens'),
+      issues.some((i) => i.path === 'tokenHashes'),
       true,
     );
   });
 
-  it('rejects relay_phone_revoke whose token array contains a non-string entry', () => {
+  it('rejects relay_phone_revoke whose tokenHashes array contains a non-string entry', () => {
     const issues = validateRelayEnvelope({
       v: 'push.runtime.v1',
       kind: 'relay_phone_revoke',
-      tokens: ['pushd_da_x', 42],
+      tokenHashes: ['c2hhMjU2X29mX2JlYXJlcg', 42],
       ts: 1,
     });
     assert.equal(issues.length > 0, true);
     assert.equal(
-      issues.some((i) => i.path === 'tokens[1]'),
+      issues.some((i) => i.path === 'tokenHashes[1]'),
       true,
     );
   });

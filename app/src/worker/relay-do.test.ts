@@ -17,9 +17,10 @@
  * the test assertions.
  */
 
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DurableObjectState, WebSocket } from '@cloudflare/workers-types';
-import { RelaySessionDO } from './relay-do';
+import { RelaySessionDO, hashBearerForAllowlist } from './relay-do';
 import type { Env } from './worker-middleware';
 
 const RealResponse = globalThis.Response;
@@ -94,7 +95,16 @@ function makeDO(): RelaySessionDO {
 }
 
 const PHONE_BEARER_A = 'pushd_da_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const PHONE_BEARER_B = 'pushd_da_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+// Opaque "hash" strings stand in for `sha256(bearer)` base64url. The
+// allowlist set is keyed by these strings; the DO compares them
+// against `meta.bearerHash` (set at upgrade by the real fetch path
+// via `hashBearerForAllowlist`). The `acceptPhone` test seam takes
+// the hash directly so tests don't have to recompute SHA-256 to
+// exercise the forwarding semantics — that the fetch path produces
+// a non-empty hash from a bearer is covered separately in the fetch
+// upgrade tests below.
+const PHONE_HASH_A = 'hash-of-phone-bearer-a';
+const PHONE_HASH_B = 'hash-of-phone-bearer-b';
 
 function wsRequest(role?: 'pushd' | 'phone', phoneBearer = PHONE_BEARER_A): Request {
   const url = new URL('https://example.com/');
@@ -167,10 +177,10 @@ describe('RelaySessionDO accept*', () => {
     expect(doInstance.getRoleCounts()).toEqual({ pushd: 1, phone: 0 });
   });
 
-  it('acceptPhone registers a phone connection with its bearer', () => {
+  it('acceptPhone registers a phone connection with its tokenHash', () => {
     const doInstance = makeDO();
     const ws = new FakeWebSocket();
-    doInstance.acceptPhone(ws as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(ws as unknown as WebSocket, PHONE_HASH_A);
     expect(ws.readyState).toBe(1);
     expect(doInstance.getRoleCounts()).toEqual({ pushd: 0, phone: 1 });
   });
@@ -178,7 +188,7 @@ describe('RelaySessionDO accept*', () => {
   it('deregisters on close', () => {
     const doInstance = makeDO();
     const ws = new FakeWebSocket();
-    doInstance.acceptPhone(ws as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(ws as unknown as WebSocket, PHONE_HASH_A);
     ws.close();
     expect(doInstance.getConnectionCount()).toBe(0);
   });
@@ -199,12 +209,12 @@ describe('RelaySessionDO forwarding (pushd ↔ phones)', () => {
     const phoneA = new FakeWebSocket();
     const phoneB = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phoneA as unknown as WebSocket, PHONE_BEARER_A);
-    doInstance.acceptPhone(phoneB as unknown as WebSocket, PHONE_BEARER_B);
+    doInstance.acceptPhone(phoneA as unknown as WebSocket, PHONE_HASH_A);
+    doInstance.acceptPhone(phoneB as unknown as WebSocket, PHONE_HASH_B);
 
     // pushd allows only phone A.
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     const sendA = vi.spyOn(phoneA, 'send');
@@ -221,7 +231,7 @@ describe('RelaySessionDO forwarding (pushd ↔ phones)', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
 
     const sendPhone = vi.spyOn(phone, 'send');
 
@@ -235,9 +245,9 @@ describe('RelaySessionDO forwarding (pushd ↔ phones)', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     const sendPushd = vi.spyOn(pushd, 'send');
@@ -252,7 +262,7 @@ describe('RelaySessionDO forwarding (pushd ↔ phones)', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     // No relay_phone_allow sent — phone's bearer is not in allowlist.
 
     const sendPushd = vi.spyOn(pushd, 'send');
@@ -265,7 +275,7 @@ describe('RelaySessionDO forwarding (pushd ↔ phones)', () => {
   it('drops phone messages when no pushd is attached', () => {
     const doInstance = makeDO();
     const phone = new FakeWebSocket();
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
 
     const sendPhone = vi.spyOn(phone, 'send');
 
@@ -282,11 +292,11 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     doInstance.acceptPushd(pushd as unknown as WebSocket);
 
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A, PHONE_BEARER_B] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A, PHONE_HASH_B] }),
     });
 
-    expect([...doInstance.getAllowedPhoneBearers()].sort()).toEqual(
-      [PHONE_BEARER_A, PHONE_BEARER_B].sort(),
+    expect([...doInstance.getAllowedPhoneTokenHashes()].sort()).toEqual(
+      [PHONE_HASH_A, PHONE_HASH_B].sort(),
     );
   });
 
@@ -295,21 +305,21 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
 
     const closeSpy = vi.spyOn(phone, 'close');
 
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_revoke', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_revoke', { tokenHashes: [PHONE_HASH_A] }),
     });
 
-    expect(doInstance.getAllowedPhoneBearers()).toEqual([]);
+    expect(doInstance.getAllowedPhoneTokenHashes()).toEqual([]);
     // Assert the exact close args: 1008 = policy violation; reason
     // mirrors pushd's device-token revoke path.
-    expect(closeSpy).toHaveBeenCalledWith(1008, 'phone bearer revoked');
+    expect(closeSpy).toHaveBeenCalledWith(1008, 'phone token revoked');
     expect(phone.readyState).toBe(3);
   });
 
@@ -318,13 +328,13 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
 
     phone.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_B] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_B] }),
     });
 
-    expect(doInstance.getAllowedPhoneBearers()).toEqual([]);
+    expect(doInstance.getAllowedPhoneTokenHashes()).toEqual([]);
   });
 
   it('ignores relay_phone_revoke from a phone', () => {
@@ -332,17 +342,17 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     phone.dispatch('message', {
-      data: makeEnvelope('relay_phone_revoke', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_revoke', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     // Still allowed.
-    expect(doInstance.getAllowedPhoneBearers()).toEqual([PHONE_BEARER_A]);
+    expect(doInstance.getAllowedPhoneTokenHashes()).toEqual([PHONE_HASH_A]);
   });
 
   it('silently drops relay_attach (schema lands here; runtime is 2.d.2)', () => {
@@ -350,7 +360,7 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
 
     const sendPushd = vi.spyOn(pushd, 'send');
 
@@ -368,9 +378,9 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     const sendPhone = vi.spyOn(phone, 'send');
@@ -387,9 +397,9 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     const sendPhone = vi.spyOn(phone, 'send');
@@ -409,9 +419,9 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     const sendPhone = vi.spyOn(phone, 'send');
@@ -462,9 +472,9 @@ describe('RelaySessionDO — ring buffer (2.d.2)', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     // A response envelope (kind: 'response') — forwarded but not buffered.
@@ -501,9 +511,9 @@ describe('RelaySessionDO — ring buffer (2.d.2)', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     // Phone emits something that LOOKS like an event envelope. It
@@ -581,9 +591,9 @@ describe('RelaySessionDO — relay_attach replay (2.d.2)', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     // Buffer events 1..5.
@@ -612,9 +622,9 @@ describe('RelaySessionDO — relay_attach replay (2.d.2)', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     pushd.dispatch('message', { data: makeEventEnvelope(1) });
@@ -631,9 +641,9 @@ describe('RelaySessionDO — relay_attach replay (2.d.2)', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     pushd.dispatch('message', { data: makeEventEnvelope(1) });
@@ -651,9 +661,9 @@ describe('RelaySessionDO — relay_attach replay (2.d.2)', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     // Push 5 events with cap=3; buffer ends up holding seq 3, 4, 5.
@@ -678,9 +688,9 @@ describe('RelaySessionDO — relay_attach replay (2.d.2)', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     pushd.dispatch('message', { data: makeEventEnvelope(1) });
@@ -708,12 +718,12 @@ describe('RelaySessionDO — replay security boundary (2.d.2)', () => {
     const allowed = new FakeWebSocket();
     const notAllowed = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(allowed as unknown as WebSocket, PHONE_BEARER_A);
-    doInstance.acceptPhone(notAllowed as unknown as WebSocket, PHONE_BEARER_B);
+    doInstance.acceptPhone(allowed as unknown as WebSocket, PHONE_HASH_A);
+    doInstance.acceptPhone(notAllowed as unknown as WebSocket, PHONE_HASH_B);
 
-    // pushd allows ONLY PHONE_BEARER_A.
+    // pushd allows ONLY PHONE_HASH_A.
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
 
     // Buffer a few events.
@@ -740,9 +750,9 @@ describe('RelaySessionDO — replay security boundary (2.d.2)', () => {
     const pushd = new FakeWebSocket();
     const phone = new FakeWebSocket();
     doInstance.acceptPushd(pushd as unknown as WebSocket);
-    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_HASH_A);
     pushd.dispatch('message', {
-      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+      data: makeEnvelope('relay_phone_allow', { tokenHashes: [PHONE_HASH_A] }),
     });
     pushd.dispatch('message', { data: makeEventEnvelope(1) });
     pushd.dispatch('message', { data: makeEventEnvelope(2) });
@@ -790,5 +800,45 @@ describe('RelaySessionDO — env clamping (2.d.2)', () => {
       PUSH_RELAY_BUFFER_AGE_MS: String(60 * 60 * 1000),
     });
     expect(maxed.getBufferConfig()).toEqual({ count: 10_000, ageMs: 3_600_000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hash compatibility with pushd-attach-tokens
+// ---------------------------------------------------------------------------
+//
+// The DO hashes phone bearers via WebCrypto (`crypto.subtle.digest`)
+// at WS upgrade. pushd hashes attach-token bearers via node's
+// `createHash('sha256').digest('base64url')` at mint time. The
+// allowlist match works ONLY if both sides produce the byte-identical
+// string for the same input. This test pins that invariant — if
+// either side drifts (encoding change, algorithm swap, padding bug)
+// every paired phone silently fails to forward.
+// ---------------------------------------------------------------------------
+
+describe('hashBearerForAllowlist (cross-impl compatibility)', () => {
+  function nodeHash(bearer: string): string {
+    // Mirrors cli/pushd-attach-tokens.ts#hashToken exactly. If you
+    // edit one, edit both.
+    return createHash('sha256').update(bearer, 'utf8').digest('base64url');
+  }
+
+  it('produces the same output as node createHash(sha256).digest(base64url)', async () => {
+    for (const bearer of [
+      'pushd_da_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'pushd_da_short',
+      'pushd_da_with_special_/+=_chars',
+      '', // edge case — DO should still produce a deterministic digest
+    ]) {
+      const fromDO = await hashBearerForAllowlist(bearer);
+      expect(fromDO).toBe(nodeHash(bearer));
+    }
+  });
+
+  it('output has no base64 padding (`=`) and uses base64url alphabet', async () => {
+    const out = await hashBearerForAllowlist('pushd_da_test');
+    expect(out).not.toMatch(/=/);
+    expect(out).not.toMatch(/[+/]/);
+    expect(out).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 });

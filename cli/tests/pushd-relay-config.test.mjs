@@ -13,7 +13,10 @@ import {
   deleteRelayConfig,
   __test__,
 } from '../pushd-relay-config.ts';
-import { createRelayAllowlistRegistry } from '../pushd-relay-allowlist.ts';
+import {
+  createRelayAllowlistRegistry,
+  seedAllowlistFromAttachTokens,
+} from '../pushd-relay-allowlist.ts';
 
 let tmpDir;
 const originalEnv = process.env.PUSHD_RELAY_CONFIG_PATH;
@@ -95,30 +98,60 @@ describe('pushd-relay-config', () => {
 });
 
 describe('pushd-relay-allowlist', () => {
-  it('add / remove / allBearers roundtrip', () => {
+  // Hash test values are arbitrary opaque strings — the registry
+  // doesn't validate format. Production callers pass `sha256(bearer)`
+  // base64url-encoded (the same shape pushd-attach-tokens stores).
+  const HASH_A = 'hash-of-bearer-a';
+  const HASH_B = 'hash-of-bearer-b';
+
+  it('add / remove / allTokenHashes roundtrip', () => {
     const reg = createRelayAllowlistRegistry();
-    reg.add('pdat_a', 'pushd_da_aaa');
-    reg.add('pdat_b', 'pushd_da_bbb');
-    assert.deepEqual(reg.allBearers(), ['pushd_da_aaa', 'pushd_da_bbb']);
+    reg.add('pdat_a', HASH_A);
+    reg.add('pdat_b', HASH_B);
+    assert.deepEqual(reg.allTokenHashes(), [HASH_A, HASH_B]);
     assert.equal(reg.size(), 2);
-    assert.equal(reg.remove('pdat_a'), 'pushd_da_aaa');
+    assert.equal(reg.remove('pdat_a'), HASH_A);
     assert.equal(reg.remove('pdat_a'), null);
-    assert.deepEqual(reg.allBearers(), ['pushd_da_bbb']);
+    assert.deepEqual(reg.allTokenHashes(), [HASH_B]);
   });
 
-  it('removeMany returns only the bearers that were registered', () => {
+  it('removeMany returns only the tokenHashes that were registered', () => {
     const reg = createRelayAllowlistRegistry();
-    reg.add('pdat_a', 'pushd_da_aaa');
-    reg.add('pdat_b', 'pushd_da_bbb');
+    reg.add('pdat_a', HASH_A);
+    reg.add('pdat_b', HASH_B);
     const removed = reg.removeMany(['pdat_a', 'pdat_missing', 'pdat_b']);
-    assert.deepEqual(removed.sort(), ['pushd_da_aaa', 'pushd_da_bbb']);
+    assert.deepEqual(removed.sort(), [HASH_A, HASH_B].sort());
     assert.equal(reg.size(), 0);
   });
 
-  it('rejects empty tokenId / bearer', () => {
+  it('rejects empty tokenId / tokenHash', () => {
     const reg = createRelayAllowlistRegistry();
-    reg.add('', 'pushd_da_aaa');
+    reg.add('', HASH_A);
     reg.add('pdat_a', '');
+    assert.equal(reg.size(), 0);
+  });
+
+  it('seedAllowlistFromAttachTokens populates the registry from a list of records', async () => {
+    // The daemon-restart recovery path: pushd-attach-tokens persists
+    // (tokenId, tokenHash) on disk, listDeviceAttachTokens filters out
+    // expired records, and the seed walks the survivors into the
+    // in-memory registry before the relay client dials. Without this,
+    // the first `relay_phone_allow` re-emit after reboot would be
+    // empty and every paired phone would lose forwarding access.
+    const reg = createRelayAllowlistRegistry();
+    const records = [
+      { tokenId: 'pdat_a', tokenHash: HASH_A },
+      { tokenId: 'pdat_b', tokenHash: HASH_B },
+    ];
+    const seeded = await seedAllowlistFromAttachTokens(reg, async () => records);
+    assert.equal(seeded, 2);
+    assert.deepEqual(reg.allTokenHashes().sort(), [HASH_A, HASH_B].sort());
+  });
+
+  it('seedAllowlistFromAttachTokens returns 0 and no-ops when the store is empty', async () => {
+    const reg = createRelayAllowlistRegistry();
+    const seeded = await seedAllowlistFromAttachTokens(reg, async () => []);
+    assert.equal(seeded, 0);
     assert.equal(reg.size(), 0);
   });
 });
