@@ -1,9 +1,10 @@
 /**
- * LocalPcModelPicker — provider/model status chip for the local-pc
+ * DaemonModelPicker — provider/model status chip for the daemon-backed
  * chat input area. Phase 1.f deferred-polish item from the
- * Remote Sessions decision doc: before this, the local-pc chat
- * silently used whatever provider/model the user last picked on
- * the cloud surface, with no in-chat surface to see or change it.
+ * Remote Sessions decision doc; renamed from `LocalPcModelPicker` in
+ * Phase 2.i once the relay surface started using the same chip
+ * verbatim. Both `LocalPcChatScreen` and `RelayChatScreen` mount it
+ * via `DaemonChatBody`.
  *
  * Scope: a popover chip that
  *   - shows the current orchestrator provider + model,
@@ -13,10 +14,11 @@
  *     wiring is a sizable surface and lives there already; the chip
  *     is for "which backend am I using right now").
  *
- * Why "orchestrator" specifically: the local-pc chat doesn't expose
- * per-role model selection (no Reviewer / Auditor / Coder UI in the
- * input area); the orchestrator's model is what the user actually
- * talks to. The cloud chat's full per-role picker stays in Settings.
+ * Why "orchestrator" specifically: the daemon-backed chat doesn't
+ * expose per-role model selection (no Reviewer / Auditor / Coder UI
+ * in the input area); the orchestrator's model is what the user
+ * actually talks to. The cloud chat's full per-role picker stays in
+ * Settings.
  */
 import { ChevronDown, Cpu, ExternalLink } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -29,7 +31,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { AIProviderType } from '@/types';
 
-export interface LocalPcModelPickerProps {
+export interface DaemonModelPickerProps {
   /** Resolved orchestrator provider (from `getActiveProvider()` upstream). */
   activeProvider: AIProviderType;
   /**
@@ -64,7 +66,7 @@ export interface LocalPcModelPickerProps {
   className?: string;
 }
 
-export function LocalPcModelPicker({
+export function DaemonModelPicker({
   activeProvider,
   availableProviders,
   onSelectProvider,
@@ -73,7 +75,7 @@ export function LocalPcModelPicker({
   className,
   lockedProvider,
   isProviderLocked,
-}: LocalPcModelPickerProps) {
+}: DaemonModelPickerProps) {
   // When the chat has been locked to a specific provider (e.g. after
   // the first sendMessage), DISPLAY the locked one regardless of
   // the catalog's current preference — that's what the next turn
@@ -104,7 +106,7 @@ export function LocalPcModelPicker({
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label="Local PC model and provider"
+          aria-label="Daemon model and provider"
           title={titleHint}
           disabled={disabled}
           className={cn(
