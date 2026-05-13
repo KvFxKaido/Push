@@ -49,10 +49,11 @@ const useLocalDaemonState: {
     attempts: number;
     nextAttemptAt: number | null;
     exhausted: boolean;
+    maxAttempts: number;
   };
 } = {
   status: { state: 'open' },
-  reconnectInfo: { attempts: 0, nextAttemptAt: null, exhausted: false },
+  reconnectInfo: { attempts: 0, nextAttemptAt: null, exhausted: false, maxAttempts: 6 },
 };
 
 vi.mock('@/hooks/useLocalDaemon', () => ({
@@ -88,6 +89,7 @@ describe('LocalPcChatScreen', () => {
       attempts: 0,
       nextAttemptAt: null,
       exhausted: false,
+      maxAttempts: 6,
     };
   });
 
@@ -135,38 +137,55 @@ describe('LocalPcChatScreen', () => {
 
   it('shows a reconnecting banner with countdown while auto-retry is pending', () => {
     // Simulate the hook reporting an active backoff: status went
-    // unreachable after one failed open, the scheduler set a retry for
-    // ~2 seconds from now (post-1s-failure → 2s next-step in the
-    // ladder), and attempts=1. The banner should render with the
-    // attempt counter and a "Reconnecting in Xs" countdown.
+    // unreachable after one failed open, the scheduler queued retry
+    // #1 (1s into the future), and attempts=1 since the retry has
+    // been scheduled. The banner reads attempts directly — it's the
+    // retry number currently pending.
     useLocalDaemonState.status = { state: 'unreachable', code: 1006, reason: 'refused' };
     useLocalDaemonState.reconnectInfo = {
       attempts: 1,
-      nextAttemptAt: Date.now() + 2_000,
+      nextAttemptAt: Date.now() + 1_000,
       exhausted: false,
+      maxAttempts: 6,
     };
     const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
     expect(html).toMatch(/Reconnecting to local daemon in \ds/);
-    // Banner shows "attempt 2 of 5" — the displayed counter is
-    // 1-based: `attempts + 1` because `attempts` is the number of
-    // FAILED attempts so far and the next one is the (attempts+1)-th.
-    expect(html).toContain('attempt 2 of 5');
+    expect(html).toContain('attempt 1 of 6');
+  });
+
+  it('shows a reconnecting banner for post-open `closed` (mid-session drop)', () => {
+    // Pin the closed-state reconnect path (Phase 1.f review feedback):
+    // the most common drop is a successful open followed by a
+    // network/daemon failure — the adapter reports that as
+    // `state: 'closed'` with an abnormal code, NOT `unreachable`.
+    // The banner must still render the live retry countdown.
+    useLocalDaemonState.status = { state: 'closed', code: 1006, reason: 'abnormal closure' };
+    useLocalDaemonState.reconnectInfo = {
+      attempts: 2,
+      nextAttemptAt: Date.now() + 2_000,
+      exhausted: false,
+      maxAttempts: 6,
+    };
+    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    expect(html).toContain('Reconnecting to local daemon');
+    expect(html).toContain('attempt 2 of 6');
   });
 
   it('shows a Retry button once auto-reconnect is exhausted', () => {
-    // After 5 unreachables, the hook flips `exhausted: true` and clears
+    // After 6 unreachables, the hook flips `exhausted: true` and clears
     // the schedule. The banner surfaces a manual Retry button — the
     // mode chip alone wouldn't make the failure recoverable from the
     // chat surface.
     useLocalDaemonState.status = { state: 'unreachable', code: 1006, reason: 'refused' };
     useLocalDaemonState.reconnectInfo = {
-      attempts: 5,
+      attempts: 6,
       nextAttemptAt: null,
       exhausted: true,
+      maxAttempts: 6,
     };
     const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
     expect(html).toContain('aria-label="Retry connection"');
-    expect(html).toContain('after 5 attempts');
+    expect(html).toContain('after 6 attempts');
   });
 
   it('omits the reconnect banner while the WS is open', () => {

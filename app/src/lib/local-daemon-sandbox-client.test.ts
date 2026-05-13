@@ -650,6 +650,50 @@ describe('execLocalDaemon (Phase 1.f abortSignal)', () => {
     }
   });
 
+  it('rejects with AbortError when the signal fires before the WS opens', async () => {
+    // Pre-open abort path (#517 review): if the signal fires while
+    // the WS is still in `connecting`, the wrapper must close the
+    // connect attempt and reject with AbortError. Previously this
+    // surfaced as LocalDaemonUnreachableError because the abort
+    // listener was only wired after `open`.
+    //
+    // Use a wrong port so the connect attempt actually has time to
+    // sit in `connecting` — a normal stub would race the abort.
+    const controller = new AbortController();
+    const promise = execLocalDaemon(
+      { port: 1, token: VALID_TOKEN, boundOrigin: 'http://localhost:5173' },
+      'echo never',
+      { abortSignal: controller.signal, runId: 'run_test_pre_open' },
+    );
+    // Fire abort synchronously after kicking off the call — the
+    // binding is in `connecting` because the bogus port can't open.
+    controller.abort();
+    const caught = await promise.catch((e) => e);
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).name).toBe('AbortError');
+    expect(caught).not.toBeInstanceOf(LocalDaemonUnreachableError);
+  });
+
+  it('rejects with AbortError when the signal is already aborted at call time', async () => {
+    // Synchronous-aborted case: the signal has `aborted: true` before
+    // we even start. The wrapper must surface AbortError without
+    // hanging or surfacing the connection-failure path.
+    const controller = new AbortController();
+    controller.abort();
+    const cs = await startCancelObservingServer();
+    try {
+      const promise = execLocalDaemon(
+        { port: cs.port, token: VALID_TOKEN, boundOrigin: 'http://localhost:5173' },
+        'echo never',
+        { abortSignal: controller.signal, runId: 'run_test_already_aborted' },
+      );
+      const caught = await promise.catch((e) => e);
+      expect((caught as Error).name).toBe('AbortError');
+    } finally {
+      await cs.close();
+    }
+  });
+
   it('rejects with an AbortError (not LocalDaemonUnreachableError) when cancelled', async () => {
     // Callers in `sandbox-tools.ts` distinguish cancel from unreachable
     // on `err.name === 'AbortError'`. Pin the contract here so a future

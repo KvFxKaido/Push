@@ -186,7 +186,7 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
         <ReconnectBanner
           status={status.state}
           attempts={reconnectInfo.attempts}
-          maxAttempts={5}
+          maxAttempts={reconnectInfo.maxAttempts}
           nextAttemptAt={reconnectInfo.nextAttemptAt}
           exhausted={reconnectInfo.exhausted}
           now={now}
@@ -286,12 +286,16 @@ function ReconnectBanner({
     // flicker "Reconnecting in 0s" while the timer fires.
     const remainingMs = Math.max(0, nextAttemptAt - now);
     const seconds = Math.max(1, Math.ceil(remainingMs / 1000));
+    // `attempts` already counts the retry currently pending (1-based)
+    // — the hook increments it when the retry is scheduled, not after
+    // it completes — so "attempt N of M" reads directly without a
+    // `+1`. (#517 review off-by-one.)
     body = (
       <span className="text-amber-200/80">
-        Reconnecting to local daemon in {seconds}s (attempt {attempts + 1} of {maxAttempts})…
+        Reconnecting to local daemon in {seconds}s (attempt {attempts} of {maxAttempts})…
       </span>
     );
-  } else if (status === 'unreachable') {
+  } else if (status === 'unreachable' || status === 'closed') {
     // Adapter just transitioned to unreachable; the scheduling effect
     // hasn't populated `nextAttemptAt` for this render yet.
     body = <span className="text-amber-200/80">Reconnecting to local daemon…</span>;

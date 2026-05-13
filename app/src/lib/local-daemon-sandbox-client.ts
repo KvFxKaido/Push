@@ -346,6 +346,19 @@ export async function withTransientBinding<T>(
       if (handleRef) handleRef.close();
     };
 
+    const rejectAbort = () => {
+      if (outerSettled) return;
+      outerSettled = true;
+      if (openTimer) {
+        clearTimeout(openTimer);
+        openTimer = null;
+      }
+      detachAbort();
+      const err = new Error('The operation was aborted');
+      err.name = 'AbortError';
+      reject(err);
+    };
+
     const handle = createLocalDaemonBinding({
       port: binding.port,
       token: binding.token,
@@ -355,15 +368,12 @@ export async function withTransientBinding<T>(
         if (dispatched) return; // already routed past `open` or terminal
         if (status.state === 'open') {
           dispatched = true;
-          // Wire the abort listener AFTER `open` so we don't dispatch
-          // cancel_run on a half-built connection. The listener:
-          //   1. sends cancel_run on the same binding so the daemon
-          //      SIGTERMs its registered child;
-          //   2. rejects the outer promise with AbortError IMMEDIATELY
-          //      — we don't wait for the daemon's response because the
-          //      in-flight `fn` could resolve successfully first and
-          //      win the race, leaving the caller blocked on a value
-          //      it asked to abandon.
+          // Replace the pre-open abort listener (if any) with the
+          // post-open one. The post-open listener additionally sends
+          // a `cancel_run` envelope so the daemon SIGTERMs the
+          // registered child; pre-open the WS isn't authenticated yet
+          // so cancel_run has nowhere to land and we just reject.
+          detachAbort();
           if (opts.abortSignal && opts.runId) {
             const runId = opts.runId;
             const fireAbort = () => {
@@ -384,16 +394,7 @@ export async function withTransientBinding<T>(
                   timeoutMs: 5_000,
                 })
                 .catch(() => {});
-              if (outerSettled) return;
-              outerSettled = true;
-              if (openTimer) {
-                clearTimeout(openTimer);
-                openTimer = null;
-              }
-              detachAbort();
-              const err = new Error('The operation was aborted');
-              err.name = 'AbortError';
-              reject(err);
+              rejectAbort();
               // Defer the close until the cancel envelope has either
               // been acked or timed out — see comment above.
               void cancelPromise.then(() => {
@@ -431,11 +432,50 @@ export async function withTransientBinding<T>(
         // (browsers hide the upgrade response from JS); we honor that.
         dispatched = true;
         settleOuter(() => {
-          reject(new LocalDaemonUnreachableError(status.reason));
+          if (opts.abortSignal?.aborted) {
+            // The pre-open abort listener already closed the WS and
+            // triggered the terminal status. Reject as AbortError so
+            // callers can distinguish "user cancelled" from "daemon
+            // unreachable" on `err.name` (#517 review).
+            const aborted = new Error('The operation was aborted');
+            aborted.name = 'AbortError';
+            reject(aborted);
+          } else {
+            reject(new LocalDaemonUnreachableError(status.reason));
+          }
         });
       },
     });
     handleRef = handle;
+
+    // Pre-open abort handling. If the signal fires while the WS is
+    // still `connecting`, we don't have an authenticated socket to
+    // send `cancel_run` over, so the strategy is: close the WS
+    // (terminating the connection attempt) and reject the outer
+    // promise with AbortError. The post-open `onStatus` branch swaps
+    // this for the cancel_run-aware listener once authenticated.
+    // (#517 review: pre-open abort previously surfaced as
+    // LocalDaemonUnreachableError, masking the user's cancel intent.)
+    if (opts.abortSignal) {
+      const preOpenAbort = () => {
+        // If we've already advanced to `open`, the post-open listener
+        // owns the abort path (and has the runId/cancel-run context).
+        // The `dispatched` guard handles concurrent open + abort.
+        if (dispatched) return;
+        dispatched = true;
+        rejectAbort();
+        // Close the in-flight connect so the WS handshake doesn't
+        // keep going. rejectAbort intentionally doesn't close (the
+        // post-open path needs to defer close until cancel_run flushes
+        // — see fireAbort above), so we explicitly close here.
+        if (handleRef) handleRef.close();
+      };
+      abortListener = preOpenAbort;
+      opts.abortSignal.addEventListener('abort', preOpenAbort, { once: true });
+      if (opts.abortSignal.aborted) {
+        preOpenAbort();
+      }
+    }
 
     // Backstop: if neither `open` nor a terminal status fires within
     // OPEN_TIMEOUT_MS, treat it as unreachable. The adapter's own

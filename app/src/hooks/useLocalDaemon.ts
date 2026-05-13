@@ -5,21 +5,27 @@
  * Sibling under `app/src/hooks/`, intentionally NOT folded into
  * `useChat`: the chat hook is guarded by an ESLint `max-lines` rule
  * (see CLAUDE.md "New feature checklist"), and the Local PC transport
- * is its own concern. PR 3c will wire dispatch through this hook,
- * but the seam stays here, not inside useChat.
+ * is its own concern.
  *
- * PR 3b uses this hook only on the Local PC probe screen — the chat
- * round loop still runs against the cloud sandbox.
+ * Phase 1.f auto-reconnect: when the long-lived WS drops (either
+ * pre-open `unreachable` or post-open `closed` with an abnormal code),
+ * the hook schedules an exponential-backoff reconnect (1s/2s/4s/8s/
+ * 16s/30s) for up to RECONNECT_MAX_ATTEMPTS tries before giving up
+ * and waiting on a manual `reconnect()` call. Manual reconnect
+ * resets the counter. Surface fields (`reconnectInfo.attempts`,
+ * `nextAttemptAt`, `exhausted`, `maxAttempts`) let the UI banner
+ * render the live state.
  *
- * Phase 1.f (PR claude/remote-sessions-auto-reconnect): when the
- * long-lived WS transitions to `unreachable`, the hook schedules
- * exponential-backoff reconnects (1s/2s/4s/8s/16s capped at 30s) for
- * up to RECONNECT_MAX_ATTEMPTS tries before giving up and waiting on
- * a manual `reconnect()` call. Manual reconnect resets the counter.
- * Surface fields (`reconnect.attempts`, `nextAttemptAt`, `exhausted`)
- * let the UI banner render the live state.
+ * Architecture: two effects split the responsibilities so neither
+ * one performs side effects inside a `useState` updater:
+ *   1. Status-driven scheduler effect: watches `wsStatus`, decides
+ *      whether to schedule the next retry, and updates
+ *      `reconnectInfo` state (no timer here).
+ *   2. Timer effect: watches `reconnectInfo.nextAttemptAt` and
+ *      schedules the actual `setTimeout`. Cleanup clears it on
+ *      change/unmount.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import {
   type ConnectionStatus,
   type LocalDaemonBinding,
@@ -39,14 +45,27 @@ import type { LocalPcBinding } from '@/types';
 const EVENT_LOG_CAP = 50;
 
 /**
- * Backoff ladder for auto-reconnect after `unreachable`. Each entry
- * is the delay before the *next* attempt. After RECONNECT_MAX_ATTEMPTS
- * consecutive unreachables, auto-reconnect gives up and waits on a
- * manual `reconnect()` call. The ladder is fixed (not generated) so
- * the banner can read the exact wait time for the next attempt.
+ * Backoff ladder for auto-reconnect. Each entry is the delay before
+ * the corresponding retry (index 0 = 1st retry's delay, index 5 =
+ * 6th retry's delay). After RECONNECT_MAX_ATTEMPTS retries the hook
+ * gives up and waits on a manual `reconnect()` call. The ladder
+ * length and the cap match by construction so the 30s tier is
+ * actually reachable as the 6th and final retry; changing one
+ * without the other strands an entry.
  */
-const RECONNECT_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
-const RECONNECT_MAX_ATTEMPTS = 5;
+export const RECONNECT_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
+export const RECONNECT_MAX_ATTEMPTS = 6;
+
+/**
+ * Close codes we treat as "intentionally closed by us" and therefore
+ * NOT eligible for auto-reconnect. The adapter calls `ws.close(1000,
+ * 'client closing')` when its consumer drops the binding; pushd's
+ * graceful shutdown sends 1001 ("going away"), which IS reconnectable
+ * — the daemon will come back. Any code other than 1000 plus an
+ * `unreachable` state (= pre-open failure) routes to the backoff
+ * ladder.
+ */
+const CLIENT_INITIATED_CLOSE_CODE = 1000;
 
 /** A request that failed via `DaemonRequestError` or generic Error. */
 export interface DaemonRequestFailure {
@@ -55,10 +74,19 @@ export interface DaemonRequestFailure {
   retryable?: boolean;
 }
 
+/** Reducer action shape for the auto-reconnect state machine. */
+type ReconnectAction =
+  | { type: 'STATUS_OPEN' }
+  | { type: 'STATUS_DROPPED'; cap: number; schedule: readonly number[]; now: number }
+  | { type: 'MANUAL_RESET' };
+
 export interface ReconnectInfo {
   /**
-   * Number of consecutive auto-reconnect attempts since the last
-   * successful `open`. Reset to 0 on `open` or on manual reconnect.
+   * Number of retry attempts already scheduled since the last
+   * successful `open` (or since manual reconnect). The banner
+   * renders "attempt {attempts} of {maxAttempts}" — `attempts` is
+   * the retry number currently waiting to fire (1-based). Reset to
+   * 0 on `open` or manual reconnect.
    */
   attempts: number;
   /**
@@ -68,10 +96,16 @@ export interface ReconnectInfo {
    */
   nextAttemptAt: number | null;
   /**
-   * True once auto-reconnect has burned through RECONNECT_MAX_ATTEMPTS
-   * unreachables without an open. Cleared by a manual `reconnect()`.
+   * True once auto-reconnect has burned through `maxAttempts` retries
+   * without an open. Cleared by a manual `reconnect()`.
    */
   exhausted: boolean;
+  /**
+   * Effective max-retries cap so callers (banner UI) can render
+   * "attempt N of M" without duplicating the constant. Reflects the
+   * hook's option override if one was passed.
+   */
+  maxAttempts: number;
 }
 
 export interface UseLocalDaemonResult {
@@ -113,14 +147,70 @@ export function useLocalDaemon(
   binding: LocalPcBinding | null,
   options: UseLocalDaemonOptions = {},
 ): UseLocalDaemonResult {
+  const effectiveMaxAttempts = options.maxReconnectAttempts ?? RECONNECT_MAX_ATTEMPTS;
+  const effectiveBackoffSchedule = options.backoffScheduleMs ?? RECONNECT_BACKOFF_MS;
+
   const [wsStatus, setWsStatus] = useState<ConnectionStatus>({ state: 'connecting' });
   const [wsEvents, setWsEvents] = useState<SessionEvent[]>([]);
   const [localReconnectKey, setLocalReconnectKey] = useState(0);
-  const [reconnectInfo, setReconnectInfo] = useState<ReconnectInfo>({
+
+  // Reducer-driven reconnect bookkeeping. The reducer is the only
+  // place reconnectInfo is mutated, which lets the status-driven
+  // effect below dispatch atomic actions instead of calling setState
+  // inside an effect body (react-hooks/set-state-in-effect). Actions:
+  //   - { type: 'STATUS_OPEN' }    successful connection: zero out.
+  //   - { type: 'STATUS_DROPPED' } unreachable or abnormal close:
+  //                                schedule next retry or exhaust.
+  //   - { type: 'MANUAL_RESET' }   user hit Retry: clear and re-arm.
+  const reconnectReducer = useCallback(
+    (prev: ReconnectInfo, action: ReconnectAction): ReconnectInfo => {
+      switch (action.type) {
+        case 'STATUS_OPEN':
+          if (prev.attempts === 0 && !prev.exhausted && prev.nextAttemptAt === null) return prev;
+          return {
+            attempts: 0,
+            nextAttemptAt: null,
+            exhausted: false,
+            maxAttempts: prev.maxAttempts,
+          };
+        case 'STATUS_DROPPED': {
+          const cap = action.cap;
+          if (prev.attempts >= cap) {
+            if (prev.exhausted && prev.nextAttemptAt === null && prev.maxAttempts === cap) {
+              return prev;
+            }
+            return { ...prev, nextAttemptAt: null, exhausted: true, maxAttempts: cap };
+          }
+          const schedule = action.schedule;
+          // The Nth scheduled retry uses schedule[N-1]: 1st retry waits
+          // 1s, 6th waits 30s. Clamp at the last entry as a defensive
+          // guard if a future cap exceeds the schedule length.
+          const delayMs =
+            schedule[Math.min(prev.attempts, schedule.length - 1)] ?? schedule[schedule.length - 1];
+          return {
+            attempts: prev.attempts + 1,
+            nextAttemptAt: action.now + delayMs,
+            exhausted: false,
+            maxAttempts: cap,
+          };
+        }
+        case 'MANUAL_RESET':
+          return {
+            attempts: 0,
+            nextAttemptAt: null,
+            exhausted: false,
+            maxAttempts: prev.maxAttempts,
+          };
+      }
+    },
+    [],
+  );
+  const [reconnectInfo, dispatchReconnect] = useReducer(reconnectReducer, undefined, () => ({
     attempts: 0,
     nextAttemptAt: null,
     exhausted: false,
-  });
+    maxAttempts: effectiveMaxAttempts,
+  }));
 
   const bindingRef = useRef<LocalDaemonBinding | null>(null);
   const onMalformedRef = useRef(options.onMalformed);
@@ -132,31 +222,9 @@ export function useLocalDaemon(
     onMalformedRef.current = options.onMalformed;
   }, [options.onMalformed]);
 
-  // Test seams. Capture into refs so a change after mount doesn't
-  // force the connection effect to retear itself; the schedule is read
-  // synchronously inside the unreachable handler.
-  const backoffScheduleRef = useRef<readonly number[]>(
-    options.backoffScheduleMs ?? RECONNECT_BACKOFF_MS,
-  );
-  const maxAttemptsRef = useRef<number>(options.maxReconnectAttempts ?? RECONNECT_MAX_ATTEMPTS);
-  useEffect(() => {
-    backoffScheduleRef.current = options.backoffScheduleMs ?? RECONNECT_BACKOFF_MS;
-    maxAttemptsRef.current = options.maxReconnectAttempts ?? RECONNECT_MAX_ATTEMPTS;
-  }, [options.backoffScheduleMs, options.maxReconnectAttempts]);
-
   const effectiveKey = (options.reconnectKey ?? 0) + localReconnectKey;
   const port = binding?.port ?? null;
   const token = binding?.token ?? null;
-
-  // Active backoff timer; cleared on unmount or manual reconnect so a
-  // stale timer can't re-arm a fresh binding after the user re-paired.
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearReconnectTimer = () => {
-    if (reconnectTimerRef.current !== null) {
-      clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-  };
 
   // Connection lifecycle. Status transitions flow through onStatus —
   // the adapter starts in 'connecting' internally and only emits the
@@ -166,7 +234,6 @@ export function useLocalDaemon(
   useEffect(() => {
     if (port === null || token === null) {
       bindingRef.current = null;
-      clearReconnectTimer();
       return;
     }
     const handle = createLocalDaemonBinding({
@@ -175,61 +242,6 @@ export function useLocalDaemon(
       host: LOCAL_PC_HOST,
       onStatus: (next) => {
         setWsStatus(next);
-        if (next.state === 'open') {
-          // Successful open: clear any pending retry and zero the
-          // counter so the next failure starts the ladder over.
-          clearReconnectTimer();
-          setReconnectInfo({ attempts: 0, nextAttemptAt: null, exhausted: false });
-          return;
-        }
-        if (next.state === 'unreachable') {
-          // Browsers collapse all pre-open failure modes (TCP refused,
-          // bad bearer, origin mismatch, network error) into one
-          // `unreachable` state — the adapter intentionally can't
-          // distinguish them. Retry blindly: a daemon-restarted-too-
-          // fast case recovers, a permanent token-rejection case
-          // burns through the attempts cap and surfaces via the
-          // `exhausted` flag for the manual-retry banner.
-          //
-          // The scheduling itself goes through setReconnectInfo's
-          // updater form so we read the LATEST attempt count rather
-          // than racing the React closure: two `unreachable`s in
-          // quick succession (re-entrant terminal handlers) would
-          // otherwise both see `attempts: 0` and schedule the same
-          // 1s timer.
-          setReconnectInfo((prev) => {
-            const schedule = backoffScheduleRef.current;
-            const cap = maxAttemptsRef.current;
-            const nextAttempts = prev.attempts + 1;
-            if (nextAttempts > cap) {
-              // Cap reached — leave the timer cleared and flip
-              // `exhausted`. The user re-arms via manual reconnect.
-              clearReconnectTimer();
-              return { attempts: prev.attempts, nextAttemptAt: null, exhausted: true };
-            }
-            // Pick the delay at the CURRENT-attempt index so the
-            // first failure uses schedule[0], the second uses
-            // schedule[1], etc. The last entry repeats once the
-            // ladder is exhausted but the cap still allows retries.
-            const delayMs =
-              schedule[Math.min(prev.attempts, schedule.length - 1)] ??
-              schedule[schedule.length - 1];
-            clearReconnectTimer();
-            reconnectTimerRef.current = setTimeout(() => {
-              reconnectTimerRef.current = null;
-              setLocalReconnectKey((k) => k + 1);
-            }, delayMs);
-            return {
-              attempts: nextAttempts,
-              nextAttemptAt: Date.now() + delayMs,
-              exhausted: false,
-            };
-          });
-        }
-        // 'connecting' and 'closed' states leave the existing reconnect
-        // schedule untouched. A client-initiated 'closed' won't fire
-        // unreachable so we won't auto-retry it (correct — the user
-        // asked for the close).
       },
       onEvent: (event) => {
         setWsEvents((prev) => {
@@ -249,13 +261,46 @@ export function useLocalDaemon(
     };
   }, [port, token, effectiveKey]);
 
-  // Unmount-time cleanup: drop any pending retry timer regardless of
-  // whether the binding effect's own cleanup ran first.
+  // Scheduler effect: dispatch into the reducer whenever wsStatus
+  // changes. Effects-dispatching-actions is the canonical pattern
+  // for keeping React state in sync with an external system without
+  // running afoul of `react-hooks/set-state-in-effect` — the reducer
+  // is the single mutation point, and dispatch() doesn't trigger
+  // cascading renders the way a chain of `setState` calls would.
+  // (#517 chatgpt-codex review.)
   useEffect(() => {
-    return () => {
-      clearReconnectTimer();
-    };
-  }, []);
+    if (port === null || token === null) return;
+    if (wsStatus.state === 'connecting') return;
+    if (wsStatus.state === 'open') {
+      dispatchReconnect({ type: 'STATUS_OPEN' });
+      return;
+    }
+    const isReconnectable =
+      wsStatus.state === 'unreachable' ||
+      (wsStatus.state === 'closed' && wsStatus.code !== CLIENT_INITIATED_CLOSE_CODE);
+    if (!isReconnectable) return;
+    dispatchReconnect({
+      type: 'STATUS_DROPPED',
+      cap: effectiveMaxAttempts,
+      schedule: effectiveBackoffSchedule,
+      now: Date.now(),
+    });
+  }, [wsStatus, port, token, effectiveMaxAttempts, effectiveBackoffSchedule]);
+
+  // Timer effect: when `nextAttemptAt` is set, schedule a single
+  // setTimeout that bumps the reconnect key once the deadline lands.
+  // Cleared whenever `nextAttemptAt` changes (new deadline, reset,
+  // exhaustion) or the hook unmounts, so a stale retry from a
+  // prior status cycle can't fire against a current binding.
+  const nextAttemptAt = reconnectInfo.nextAttemptAt;
+  useEffect(() => {
+    if (nextAttemptAt === null) return;
+    const remainingMs = Math.max(0, nextAttemptAt - Date.now());
+    const timer = setTimeout(() => {
+      setLocalReconnectKey((k) => k + 1);
+    }, remainingMs);
+    return () => clearTimeout(timer);
+  }, [nextAttemptAt]);
 
   // Derive surface state from the binding presence + WS state. When
   // unbound, status is unconditionally "closed" with the no-binding
@@ -274,13 +319,12 @@ export function useLocalDaemon(
   }, []);
 
   const reconnect = useCallback(() => {
-    // Manual reconnect supersedes any auto-retry: clear the timer,
-    // reset the counter, and bump the key so the connection effect
-    // recreates the binding immediately. The new attempt starts a
-    // fresh `connecting` → `open`/`unreachable` cycle and the auto-
-    // retry ladder is back to step 0 if it goes wrong again.
-    clearReconnectTimer();
-    setReconnectInfo({ attempts: 0, nextAttemptAt: null, exhausted: false });
+    // Manual reconnect supersedes any auto-retry: reset the counter
+    // and bump the key so the connection effect recreates the binding
+    // immediately. Clearing `nextAttemptAt` causes the timer effect's
+    // cleanup to clear any in-flight timer on the next render — no
+    // stale retry will fire against the new binding.
+    dispatchReconnect({ type: 'MANUAL_RESET' });
     setLocalReconnectKey((k) => k + 1);
   }, []);
 
