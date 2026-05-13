@@ -265,6 +265,52 @@ describe('delegate.* taskExcerpt privacy', () => {
   });
 });
 
+describe('tool.sandbox_exec denial audit (#521 Codex P2)', () => {
+  it('emits an audit row when sandbox_exec is denied by PATH_NOT_ALLOWED', async () => {
+    // Pin the allowlist to a path that ISN'T the requested cwd so
+    // the handler hits the early-return PATH_NOT_ALLOWED branch
+    // BEFORE the try/finally that contains the normal audit
+    // emission. Without the new pre-denial emit, this attempt would
+    // silently disappear from the audit log.
+    const allowedDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pushd-audit-allowed-'));
+    const disallowedDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pushd-audit-disallowed-'));
+    const originalAllowlist = process.env.PUSHD_ALLOWLIST_PATH;
+    process.env.PUSHD_ALLOWLIST_PATH = path.join(tmpDir, 'pushd.allowlist');
+    try {
+      const { addAllowedPath } = await import('../pushd-allowlist.ts');
+      await addAllowedPath(allowedDir);
+      await handleRequest(
+        makeRequest('sandbox_exec', { command: 'true', cwd: disallowedDir }),
+        NOOP_EMIT,
+      );
+      await flushAuditQueue();
+      const events = await readAuditEvents({ type: 'tool.sandbox_exec' });
+      assert.equal(events.length, 1);
+      assert.equal(events[0].payload.ok, false);
+      assert.equal(events[0].payload.errorCode, 'PATH_NOT_ALLOWED');
+      assert.equal(events[0].payload.cwd, disallowedDir);
+    } finally {
+      if (originalAllowlist === undefined) delete process.env.PUSHD_ALLOWLIST_PATH;
+      else process.env.PUSHD_ALLOWLIST_PATH = originalAllowlist;
+      await fs.rm(allowedDir, { recursive: true, force: true }).catch(() => {});
+      await fs.rm(disallowedDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('emits an audit row when sandbox_exec is denied by INVALID_REQUEST', async () => {
+    // Empty command → early return BEFORE the try/finally. The
+    // structural denial row records the intent so an operator
+    // sees the attempt even when the request never reached the
+    // shell.
+    await handleRequest(makeRequest('sandbox_exec', {}), NOOP_EMIT);
+    await flushAuditQueue();
+    const events = await readAuditEvents({ type: 'tool.sandbox_exec' });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].payload.ok, false);
+    assert.equal(events[0].payload.errorCode, 'INVALID_REQUEST');
+  });
+});
+
 describe('approval.decision', () => {
   // submit_approval requires an active session WITH a pendingApproval
   // already in flight, which requires standing up the full session

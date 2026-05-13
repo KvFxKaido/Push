@@ -80,32 +80,53 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
   // transient bindings per tool call via `executeSandboxToolCall`'s
   // daemon fork; this binding is for events the daemon pushes
   // unsolicited.
+  // Drop a resolved approval from the local queue regardless of which
+  // client decided it. Without this, multi-client sessions stale-head
+  // their queues: clients that didn't click keep showing the prompt
+  // until the user clicks it and gets `APPROVAL_NOT_FOUND`, hiding
+  // every later approval behind a stale entry. #521 Codex P2.
+  const dropApproval = useCallback((approvalId: string) => {
+    setApprovalQueue((prev) => prev.filter((p) => p.approvalId !== approvalId));
+  }, []);
+
   const { status, reconnect, reconnectInfo, request } = useLocalDaemon(binding, {
     onEvent: (event) => {
-      if (event.type !== 'approval_required') return;
-      const payload = event.payload as
-        | {
-            approvalId?: unknown;
-            kind?: unknown;
-            title?: unknown;
-            summary?: unknown;
-            options?: unknown;
-          }
-        | undefined;
-      if (!payload || typeof payload.approvalId !== 'string') return;
-      enqueueApproval({
-        approvalId: payload.approvalId,
-        sessionId: event.sessionId,
-        runId: event.runId,
-        kind: typeof payload.kind === 'string' ? payload.kind : 'tool_execution',
-        title: typeof payload.title === 'string' ? payload.title : 'Approval required',
-        summary: typeof payload.summary === 'string' ? payload.summary : '',
-        options:
-          Array.isArray(payload.options) && payload.options.every((o) => typeof o === 'string')
-            ? (payload.options as string[])
-            : ['approve', 'deny'],
-        receivedAt: Date.now(),
-      });
+      if (event.type === 'approval_required') {
+        const payload = event.payload as
+          | {
+              approvalId?: unknown;
+              kind?: unknown;
+              title?: unknown;
+              summary?: unknown;
+              options?: unknown;
+            }
+          | undefined;
+        if (!payload || typeof payload.approvalId !== 'string') return;
+        enqueueApproval({
+          approvalId: payload.approvalId,
+          sessionId: event.sessionId,
+          runId: event.runId,
+          kind: typeof payload.kind === 'string' ? payload.kind : 'tool_execution',
+          title: typeof payload.title === 'string' ? payload.title : 'Approval required',
+          summary: typeof payload.summary === 'string' ? payload.summary : '',
+          options:
+            Array.isArray(payload.options) && payload.options.every((o) => typeof o === 'string')
+              ? (payload.options as string[])
+              : ['approve', 'deny'],
+          receivedAt: Date.now(),
+        });
+        return;
+      }
+      if (event.type === 'approval_received') {
+        // Daemon broadcasts approval_received to every attached
+        // client after any one of them answers (or the approval
+        // timed out). Drop the matching entry so the queue stays
+        // live across tabs / phones. #521 Codex P2.
+        const payload = event.payload as { approvalId?: unknown } | undefined;
+        if (payload && typeof payload.approvalId === 'string') {
+          dropApproval(payload.approvalId);
+        }
+      }
     },
   });
 

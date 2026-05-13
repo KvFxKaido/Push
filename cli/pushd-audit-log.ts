@@ -299,11 +299,16 @@ export interface ReadAuditOptions {
 
 /**
  * Read events from the live + rotated logs, applying filters. Returns
- * events sorted by `ts` ascending. NB: this loads the matched events
- * into memory; for very large logs callers should set `tail` to bound
- * the read. The decision doc's spec is "operator-grade inspection,"
- * not "streaming high-throughput export," so a single in-memory pass
- * is the right shape today.
+ * events sorted by `ts` ascending.
+ *
+ * NB: `tail` bounds the RETURNED results, not the bytes read — the
+ * implementation reads + JSON-parses every line in every visited
+ * file before slicing. The decision doc's spec is "operator-grade
+ * inspection" (10MB × 5 files max) not "streaming high-throughput
+ * export," and an `audit --tail 5` against a 60MB pile is still
+ * sub-second on local disk, so a single in-memory pass is the right
+ * shape today. A true tail-aware read (reverse-scan from EOF) would
+ * pay off only above ~1GB of audit data. #520 / #521 review.
  */
 export async function readAuditEvents(opts: ReadAuditOptions = {}): Promise<AuditEvent[]> {
   const livePath = getAuditLogPath();

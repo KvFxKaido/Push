@@ -3399,7 +3399,18 @@ const SANDBOX_EXEC_MAX_OUTPUT = 256_000;
 async function handleSandboxExec(req, _emitEvent, context) {
   const payload = req.payload || {};
   const command = typeof payload.command === 'string' ? payload.command : '';
+  // Pre-execution denial audits (#521 Codex P2). The original
+  // emission only fired from the try/finally below, so
+  // PATH_NOT_ALLOWED and INVALID_REQUEST early returns produced
+  // NO audit row — exactly the case operators most want to see
+  // ("which device tried to exec outside the allowlist?"). Emit a
+  // structural denial row before each early-return.
   if (!command) {
+    void appendAuditEvent({
+      type: 'tool.sandbox_exec',
+      ...auditProvenance(context),
+      payload: { ok: false, errorCode: 'INVALID_REQUEST' },
+    });
     return makeErrorResponse(
       req.requestId,
       'sandbox_exec',
@@ -3427,6 +3438,16 @@ async function handleSandboxExec(req, _emitEvent, context) {
   {
     const cwdSnapshot = await snapshotAllowlist(process.cwd());
     if (!isPathAllowed(path.resolve(cwd), cwdSnapshot)) {
+      // Audit the denial — this is exactly the "device tried to exec
+      // outside the allowlist" case the operator most needs to see.
+      // The denial happens BEFORE the try/finally below, so without
+      // this emission the audit log would silently drop the attempt.
+      // #521 Codex P2.
+      void appendAuditEvent({
+        type: 'tool.sandbox_exec',
+        ...auditProvenance(context),
+        payload: { ok: false, errorCode: 'PATH_NOT_ALLOWED', cwd },
+      });
       return makeErrorResponse(
         req.requestId,
         'sandbox_exec',
