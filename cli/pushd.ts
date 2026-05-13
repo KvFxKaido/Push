@@ -1089,7 +1089,7 @@ async function handleAttachSession(req, emitEvent) {
   });
 }
 
-async function handleSubmitApproval(req) {
+async function handleSubmitApproval(req, _emitEvent, context) {
   const { sessionId, approvalId, decision } = req.payload || {};
   if (!sessionId || !approvalId || !decision) {
     return makeErrorResponse(
@@ -1151,6 +1151,17 @@ async function handleSubmitApproval(req) {
     envelope.runId = approvalRunId;
   }
   broadcastEvent(sessionId, envelope);
+
+  // Phase 3 slice 4 audit. Records the decision alongside the
+  // requesting device's provenance — closes the audit-log
+  // "approval decisions identify surface/device" minimum-model item.
+  void appendAuditEvent({
+    type: 'approval.decision',
+    ...auditProvenance(context),
+    sessionId,
+    runId: typeof approvalRunId === 'string' ? approvalRunId : undefined,
+    payload: { approvalId, decision },
+  });
 
   return makeResponse(req.requestId, 'submit_approval', sessionId, true, {
     accepted: true,

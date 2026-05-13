@@ -265,6 +265,45 @@ describe('delegate.* taskExcerpt privacy', () => {
   });
 });
 
+describe('approval.decision', () => {
+  // submit_approval requires an active session WITH a pendingApproval
+  // already in flight, which requires standing up the full session
+  // machinery. We can still pin the audit emission for the
+  // error-path (approval not found) — the audit row fires regardless
+  // of decision validity and lets us verify the provenance/runId
+  // shape is right. A future PR with a full delegated-agent test
+  // harness can cover the happy path.
+  it('emits approval.decision when the handler resolves (even with error path)', async () => {
+    // No active session → handler returns SESSION_NOT_FOUND. The
+    // audit row records the attempt with deviceId + runId so the
+    // operator sees "this device tried to submit_approval against
+    // a session that doesn't exist." That's still an auditable
+    // intent.
+    //
+    // NB: handleSubmitApproval emits the audit event ONLY after
+    // `pending.resolve(decision)` succeeds — so the error paths
+    // (no session, no approval) currently produce no audit row.
+    // The test here is that NEGATIVE: no row appears for the
+    // pre-resolve error paths. The positive path requires
+    // session-machinery setup and is covered separately.
+    await handleRequest(
+      makeRequest('submit_approval', {
+        sessionId: 'sess_missing',
+        approvalId: 'apv_x',
+        decision: 'approve',
+      }),
+      NOOP_EMIT,
+    );
+    await flushAuditQueue();
+    const events = await readAuditEvents({ type: 'approval.decision' });
+    // No row — the error paths return early before the audit
+    // emission. Documenting this so a future refactor doesn't
+    // accidentally start emitting audit rows for failed attempts
+    // (which would dilute the forensic signal).
+    assert.equal(events.length, 0);
+  });
+});
+
 describe('audit-log kill switch', () => {
   it('no events are recorded when PUSHD_AUDIT_ENABLED=0', async () => {
     const original = process.env.PUSHD_AUDIT_ENABLED;

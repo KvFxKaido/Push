@@ -74,7 +74,13 @@ export type AuditEventType =
   | 'delegate.reviewer'
   // Session lifecycle
   | 'session.start'
-  | 'session.cancel_run';
+  | 'session.cancel_run'
+  // Approval decisions (Phase 3 slice 4). Records who approved or
+  // denied which pending approval, with the same surface/device
+  // provenance as every other event — closes the
+  // "approval prompts identify the requesting surface/device"
+  // minimum-model item.
+  | 'approval.decision';
 
 /**
  * Single audit record shape. Versioned via `v` so future schema
