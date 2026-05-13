@@ -228,7 +228,7 @@ describe('LocalPcChatScreen', () => {
     // last selection. The catalog mock pins `cloudflare` + the
     // `@cf/meta/llama-3-8b` model.
     const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
-    expect(html).toContain('aria-label="Local PC model and provider"');
+    expect(html).toContain('aria-label="Daemon model and provider"');
     expect(html).toContain('Cloudflare Workers AI');
     expect(html).toContain('llama-3-8b');
   });

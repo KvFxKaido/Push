@@ -1,5 +1,5 @@
 /**
- * LocalPcModelPicker.test.tsx — SSR-style coverage for the local-pc
+ * DaemonModelPicker.test.tsx — SSR-style coverage for the daemon
  * chat input's provider/model status chip.
  *
  * `getModelForRole` is mocked so the test doesn't depend on a fully
@@ -27,7 +27,7 @@ vi.mock('@/lib/providers', async (importOriginal) => {
   };
 });
 
-import { LocalPcModelPicker } from './LocalPcModelPicker';
+import { DaemonModelPicker } from './DaemonModelPicker';
 
 const PROVIDERS = [
   ['cloudflare', 'Cloudflare Workers AI', true],
@@ -35,10 +35,10 @@ const PROVIDERS = [
   ['ollama', 'Ollama', true],
 ] as const;
 
-describe('LocalPcModelPicker', () => {
+describe('DaemonModelPicker', () => {
   it('renders the active provider label and the model leaf in the chip', () => {
     const html = renderToStaticMarkup(
-      <LocalPcModelPicker
+      <DaemonModelPicker
         activeProvider="cloudflare"
         availableProviders={PROVIDERS}
         onSelectProvider={vi.fn()}
@@ -52,7 +52,7 @@ describe('LocalPcModelPicker', () => {
 
   it('omits the model leaf gracefully when no model is configured', () => {
     const html = renderToStaticMarkup(
-      <LocalPcModelPicker
+      <DaemonModelPicker
         activeProvider="ollama"
         availableProviders={PROVIDERS}
         onSelectProvider={vi.fn()}
@@ -70,7 +70,7 @@ describe('LocalPcModelPicker', () => {
     // `getModelForRole` mock returns the openrouter model for the
     // locked provider; that's the one the chip should render.
     const html = renderToStaticMarkup(
-      <LocalPcModelPicker
+      <DaemonModelPicker
         activeProvider="cloudflare"
         lockedProvider="openrouter"
         isProviderLocked
@@ -87,13 +87,13 @@ describe('LocalPcModelPicker', () => {
 
   it('surfaces an accessible label and a title hint for the chip', () => {
     const html = renderToStaticMarkup(
-      <LocalPcModelPicker
+      <DaemonModelPicker
         activeProvider="cloudflare"
         availableProviders={PROVIDERS}
         onSelectProvider={vi.fn()}
       />,
     );
-    expect(html).toContain('aria-label="Local PC model and provider"');
+    expect(html).toContain('aria-label="Daemon model and provider"');
     // The hover hint surfaces the full model id so power users can
     // disambiguate when multiple models share a leaf.
     expect(html).toContain('title=');
@@ -103,9 +103,9 @@ describe('LocalPcModelPicker', () => {
   // empty-state hint live inside a Radix Popover, which renders into
   // a portal that SSR `renderToStaticMarkup` does not include. Those
   // surfaces are covered by the runtime layer: the picker's reactive
-  // wiring is exercised through LocalPcChatScreen's integration tests,
-  // and the popover content's static structure is straightforward
-  // enough that a manual-smoke pass on a real DOM catches regressions.
-  // If the project later adds @testing-library/react, the popover
+  // wiring is exercised through chat-screen integration tests, and
+  // the popover content's static structure is straightforward enough
+  // that a manual-smoke pass on a real DOM catches regressions. If
+  // the project later adds @testing-library/react, the popover
   // assertions can be lifted here.
 });
