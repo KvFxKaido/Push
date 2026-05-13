@@ -29,6 +29,19 @@ export interface RemotePairBundle {
   sessionId: string;
   /** Attach-token bearer (`pushd_da_*`). */
   token: string;
+  /**
+   * Public attach tokenId (`pdat_*`). Not a secret — the daemon
+   * prints it to stdout for revocation guidance and the web pair
+   * panel surfaces it in the paired-device row. Optional for
+   * back-compat with bundles minted before this field landed.
+   */
+  attachTokenId?: string;
+  /**
+   * Parent device tokenId (`pdt_*`) the attach token was bound to.
+   * Same posture as `attachTokenId` — public, used for the
+   * `push daemon revoke <id>` hint. Optional for back-compat.
+   */
+  deviceTokenId?: string;
 }
 
 /**
@@ -51,6 +64,8 @@ export function encodeRemotePairBundle(input: RemotePairBundle): string {
     deploymentUrl: input.deploymentUrl,
     sessionId: input.sessionId,
     token: input.token,
+    ...(input.attachTokenId !== undefined ? { attachTokenId: input.attachTokenId } : {}),
+    ...(input.deviceTokenId !== undefined ? { deviceTokenId: input.deviceTokenId } : {}),
   });
   const encoded = Buffer.from(payload, 'utf8').toString('base64url');
   return `${PREFIX}${encoded}`;
@@ -99,6 +114,12 @@ export function decodeRemotePairBundle(raw: string): RemotePairBundle | null {
     deploymentUrl: obj.deploymentUrl,
     sessionId: obj.sessionId,
     token: obj.token,
+    ...(typeof obj.attachTokenId === 'string' && obj.attachTokenId.length > 0
+      ? { attachTokenId: obj.attachTokenId }
+      : {}),
+    ...(typeof obj.deviceTokenId === 'string' && obj.deviceTokenId.length > 0
+      ? { deviceTokenId: obj.deviceTokenId }
+      : {}),
   };
 }
 

@@ -106,11 +106,36 @@ interface PendingRequest {
   type: string;
 }
 
-function buildRelayUrl(deploymentUrl: string, sessionId: string): string {
-  let base = deploymentUrl.replace(/\/+$/, '');
-  if (base.startsWith('https://')) base = `wss://${base.slice('https://'.length)}`;
-  else if (base.startsWith('http://')) base = `ws://${base.slice('http://'.length)}`;
-  return `${base}/api/relay/v1/session/${encodeURIComponent(sessionId)}/connect`;
+export function buildRelayUrl(deploymentUrl: string, sessionId: string): string {
+  // Normalize via `URL` so the relay path joins relative to whatever
+  // base path the operator supplied. Operators run pushd against
+  // deployments like `https://example.com/api`; blindly appending
+  // `/api/relay/...` would double-up to `/api/api/relay/...` and
+  // 404. The approach: replace the URL's path with the relay route,
+  // keeping origin + scheme intact, then rewrite the scheme to ws(s).
+  //
+  // PR #530 Copilot review. Bare hostnames without a scheme tolerated
+  // via wss:// fallback before parsing.
+  let toParse = deploymentUrl.trim();
+  if (
+    !toParse.startsWith('http://') &&
+    !toParse.startsWith('https://') &&
+    !toParse.startsWith('ws://') &&
+    !toParse.startsWith('wss://')
+  ) {
+    toParse = `wss://${toParse}`;
+  }
+  const url = new URL(toParse);
+  url.pathname = `/api/relay/v1/session/${encodeURIComponent(sessionId)}/connect`;
+  url.search = '';
+  url.hash = '';
+  const scheme =
+    url.protocol === 'https:' || url.protocol === 'wss:'
+      ? 'wss:'
+      : url.protocol === 'http:' || url.protocol === 'ws:'
+        ? 'ws:'
+        : url.protocol;
+  return `${scheme}//${url.host}${url.pathname}`;
 }
 
 function extractHost(deploymentUrl: string): string | null {

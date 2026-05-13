@@ -102,6 +102,13 @@ export function RelayPairing({ onPaired, onCancel }: RelayPairingProps) {
 
     const decoded = parseRemotePairBundle(bundleInput);
     if (!decoded) {
+      // #530 Copilot review: token discipline says clear on
+      // success / failure / cancel — the malformed-bundle early
+      // return forgot to clear, leaving the bearer in component
+      // state. The user has to re-paste anyway because we can't
+      // tell them which field went wrong without leaking which
+      // check failed, so the clear is also UX-honest.
+      setBundleInput('');
       setState({
         kind: 'failed',
         reason:
@@ -116,39 +123,77 @@ export function RelayPairing({ onPaired, onCancel }: RelayPairingProps) {
       deploymentUrl: decoded.deploymentUrl,
       sessionId: decoded.sessionId,
       token: decoded.token,
+      attachTokenId: decoded.attachTokenId,
+      deviceTokenId: decoded.deviceTokenId,
     };
 
-    const handle = createRelayDaemonBinding({
-      deploymentUrl: binding.deploymentUrl,
-      sessionId: binding.sessionId,
-      token: binding.token,
-      onStatus: (status) => {
-        if (status.state === 'open') {
-          // Success — persist and notify.
-          const record: PairedRemoteRecord = {
-            id: mintPairedRemoteId(),
-            deploymentUrl: binding.deploymentUrl,
-            sessionId: binding.sessionId,
-            token: binding.token,
-            pairedAt: Date.now(),
-            lastUsedAt: Date.now(),
-          };
-          finishTest(handle, { kind: 'idle' }, { binding, record });
-        } else if (status.state === 'unreachable' || status.state === 'closed') {
-          // Pre-open / post-open terminal. Browsers hide WS upgrade
-          // status so we can't distinguish auth-fail from bad URL
-          // from network. Generic message + the user's actionable
-          // path is re-running pair on the PC.
-          finishTest(handle, {
-            kind: 'failed',
-            reason:
-              status.state === 'unreachable'
-                ? 'Could not reach the relay. Check that the daemon is running, the relay is enabled (`push daemon relay status`), and the bundle is fresh.'
-                : `Connection closed (code ${status.code}). Re-run \`push daemon pair --remote\` for a fresh bundle.`,
-          });
-        }
-      },
-    });
+    // #530 Copilot review: createRelayDaemonBinding can throw
+    // synchronously (loopback host refusal, invalid URL). Without
+    // this guard a bad bundle would crash the pairing screen
+    // instead of surfacing a recoverable error.
+    let handle: ReturnType<typeof createRelayDaemonBinding>;
+    try {
+      handle = createRelayDaemonBinding({
+        deploymentUrl: binding.deploymentUrl,
+        sessionId: binding.sessionId,
+        token: binding.token,
+        onStatus: (status) => {
+          if (status.state === 'open') {
+            // #530 Codex P2: WS `open` only proves the relay route
+            // accepted the bearer's SHAPE (it does a format-only
+            // check for `pushd_da_*`). Actual forwarding to pushd
+            // is gated on the DO's allowlist. A stale bundle, an
+            // allowlist-orphaned bundle, or a disconnected daemon
+            // will all let `open` succeed and then fail every
+            // subsequent request. Hit the daemon with a
+            // `daemon_identify` round-trip before persisting so
+            // pairing only "succeeds" when the relay is actually
+            // routing.
+            void handle
+              .request({ type: 'daemon_identify', timeoutMs: 5_000 })
+              .then(() => {
+                const record: PairedRemoteRecord = {
+                  id: mintPairedRemoteId(),
+                  deploymentUrl: binding.deploymentUrl,
+                  sessionId: binding.sessionId,
+                  token: binding.token,
+                  attachTokenId: binding.attachTokenId,
+                  deviceTokenId: binding.deviceTokenId,
+                  pairedAt: Date.now(),
+                  lastUsedAt: Date.now(),
+                };
+                finishTest(handle, { kind: 'idle' }, { binding, record });
+              })
+              .catch(() => {
+                finishTest(handle, {
+                  kind: 'failed',
+                  reason:
+                    "Relay accepted the connection but the daemon didn't answer. The bundle may be stale or the daemon may be offline — re-run `push daemon pair --remote` for a fresh bundle.",
+                });
+              });
+          } else if (status.state === 'unreachable' || status.state === 'closed') {
+            // Pre-open / post-open terminal. Browsers hide WS
+            // upgrade status so we can't distinguish auth-fail
+            // from bad URL from network. Generic message + the
+            // user's actionable path is re-running pair on the PC.
+            finishTest(handle, {
+              kind: 'failed',
+              reason:
+                status.state === 'unreachable'
+                  ? 'Could not reach the relay. Check that the daemon is running, the relay is enabled (`push daemon relay status`), and the bundle is fresh.'
+                  : `Connection closed (code ${status.code}). Re-run \`push daemon pair --remote\` for a fresh bundle.`,
+            });
+          }
+        },
+      });
+    } catch (err) {
+      // Sync throw before any handle existed; no timer set yet.
+      setState({
+        kind: 'failed',
+        reason: `Pair test failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    }
 
     const timer = setTimeout(() => {
       finishTest(handle, {
@@ -189,16 +234,21 @@ export function RelayPairing({ onPaired, onCancel }: RelayPairingProps) {
         <form onSubmit={handlePair} className="space-y-6">
           <label className="block">
             <span className="mb-2 block text-sm font-medium">Pairing bundle</span>
-            <textarea
+            <input
+              type="password"
               value={bundleInput}
               onChange={(e) => setBundleInput(e.target.value)}
               placeholder="push-remote.…"
               autoComplete="off"
               spellCheck={false}
-              rows={3}
               className="block w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               disabled={state.kind === 'testing'}
             />
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              The bundle is a single line that starts with{' '}
+              <code className="rounded bg-muted px-1 py-0.5 text-[10px]">push-remote.</code> — paste
+              it from the daemon's output.
+            </p>
           </label>
 
           {state.kind === 'failed' && (

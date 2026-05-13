@@ -173,49 +173,77 @@ export function useRelayDaemon(
       bindingRef.current = null;
       return;
     }
-    const handle = createRelayDaemonBinding({
-      deploymentUrl,
-      sessionId,
-      token,
-      lastSeq: lastSeqRef.current,
-      onStatus: (next) => {
-        setWsStatus(next);
-        if (next.state === 'open') {
-          // Successful reconnect — drop the lingering replay-
-          // unavailable signal so the chip stops flashing amber.
-          setReplayUnavailableAt(null);
-        }
-      },
-      onEvent: (event) => {
-        if (typeof event.seq === 'number' && Number.isFinite(event.seq)) {
-          const current = lastSeqRef.current;
-          if (current === null || event.seq > current) {
-            lastSeqRef.current = event.seq;
+    // #530 Copilot review: createRelayDaemonBinding can throw
+    // synchronously (invalid URL, loopback host without
+    // allowAnyHost, etc.). A corrupted IndexedDB record OR a bad
+    // bundle that somehow survived the pair flow would otherwise
+    // crash the whole chat screen on mount. Wrap and route the
+    // throw into a terminal `unreachable` so the ReconnectBanner
+    // surfaces a recoverable Retry button.
+    let handle: ReturnType<typeof createRelayDaemonBinding>;
+    try {
+      handle = createRelayDaemonBinding({
+        deploymentUrl,
+        sessionId,
+        token,
+        lastSeq: lastSeqRef.current,
+        onStatus: (next) => {
+          setWsStatus(next);
+          if (next.state === 'open') {
+            // Successful reconnect — drop the lingering replay-
+            // unavailable signal so the chip stops flashing amber.
+            setReplayUnavailableAt(null);
           }
-        }
-        setWsEvents((prev) => {
-          const next =
-            prev.length >= EVENT_LOG_CAP ? prev.slice(prev.length - EVENT_LOG_CAP + 1) : prev;
-          return [...next, event];
-        });
-        try {
-          onEventRef.current?.(event);
-        } catch {
-          // see useLocalDaemon for why consumer crashes are
-          // swallowed here.
-        }
-      },
-      onReplayUnavailable: () => {
-        // The chat-screen mode chip reads this timestamp to flash
-        // amber for ~3s. The relay's reason string is intentionally
-        // not surfaced — 2.f scope picked a lightweight signal
-        // (chip flash) over a banner, so we drop the reason here.
-        setReplayUnavailableAt(Date.now());
-      },
-      onMalformed: (raw, reason) => {
-        onMalformedRef.current?.(raw, reason);
-      },
-    });
+        },
+        onEvent: (event) => {
+          if (typeof event.seq === 'number' && Number.isFinite(event.seq)) {
+            const current = lastSeqRef.current;
+            if (current === null || event.seq > current) {
+              lastSeqRef.current = event.seq;
+            }
+          }
+          setWsEvents((prev) => {
+            const next =
+              prev.length >= EVENT_LOG_CAP ? prev.slice(prev.length - EVENT_LOG_CAP + 1) : prev;
+            return [...next, event];
+          });
+          try {
+            onEventRef.current?.(event);
+          } catch {
+            // see useLocalDaemon for why consumer crashes are
+            // swallowed here.
+          }
+        },
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        onReplayUnavailable: (_reason: string) => {
+          // The chat-screen mode chip reads this timestamp to flash
+          // amber for ~3s. The relay's reason string is intentionally
+          // not surfaced — 2.f scope picked a lightweight signal
+          // (chip flash) over a banner, so we drop the reason here.
+          // Param signature kept to match the interface contract
+          // (PR #530 Kilo review); `_`-prefix satisfies tsc's
+          // noUnusedParameters, the eslint-disable handles the
+          // `@typescript-eslint/no-unused-vars` rule which doesn't
+          // honor the prefix in this repo's config.
+          setReplayUnavailableAt(Date.now());
+        },
+        onMalformed: (raw, reason) => {
+          onMalformedRef.current?.(raw, reason);
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Defer the setState so it doesn't run synchronously inside
+      // the effect body — `react-hooks/set-state-in-effect` flags
+      // direct setState here. queueMicrotask lands the status
+      // update on the next microtask, indistinguishable from
+      // synchronous from the user's POV but satisfies the rule.
+      queueMicrotask(() => {
+        setWsStatus({ state: 'unreachable', code: 0, reason: message });
+      });
+      bindingRef.current = null;
+      return;
+    }
     bindingRef.current = handle;
     return () => {
       bindingRef.current = null;

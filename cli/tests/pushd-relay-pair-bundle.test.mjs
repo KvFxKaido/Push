@@ -77,4 +77,25 @@ describe('encode/decodeRemotePairBundle', () => {
     const encoded = `${__test__.PREFIX}${Buffer.from(payload, 'utf8').toString('base64url')}`;
     assert.equal(decodeRemotePairBundle(encoded), null);
   });
+
+  // PR #530 review: bundle carries the public ids so the web pair
+  // panel can show them for revocation guidance.
+  it('roundtrips attachTokenId + deviceTokenId when provided', () => {
+    const withIds = {
+      ...VALID_INPUT,
+      attachTokenId: 'pdat_abc123',
+      deviceTokenId: 'pdt_xyz789',
+    };
+    const encoded = encodeRemotePairBundle(withIds);
+    assert.deepEqual(decodeRemotePairBundle(encoded), withIds);
+  });
+
+  it('omits optional id fields when not provided (back-compat)', () => {
+    const encoded = encodeRemotePairBundle(VALID_INPUT);
+    const decoded = decodeRemotePairBundle(encoded);
+    assert.deepEqual(decoded, VALID_INPUT);
+    // Fields should be absent from the result, not present-as-undefined.
+    assert.equal('attachTokenId' in (decoded ?? {}), false);
+    assert.equal('deviceTokenId' in (decoded ?? {}), false);
+  });
 });

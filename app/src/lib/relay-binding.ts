@@ -61,7 +61,10 @@ export function isRelaySession(
  */
 export function parseRemotePairBundle(
   raw: string,
-): Pick<RelayBinding, 'deploymentUrl' | 'sessionId' | 'token'> | null {
+): Pick<
+  RelayBinding,
+  'deploymentUrl' | 'sessionId' | 'token' | 'attachTokenId' | 'deviceTokenId'
+> | null {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   if (!trimmed.startsWith(PAIR_BUNDLE_PREFIX)) return null;
@@ -93,6 +96,8 @@ export function parseRemotePairBundle(
     deploymentUrl?: unknown;
     sessionId?: unknown;
     token?: unknown;
+    attachTokenId?: unknown;
+    deviceTokenId?: unknown;
   };
   if (
     typeof obj.deploymentUrl !== 'string' ||
@@ -108,6 +113,12 @@ export function parseRemotePairBundle(
     deploymentUrl: obj.deploymentUrl,
     sessionId: obj.sessionId,
     token: obj.token,
+    ...(typeof obj.attachTokenId === 'string' && obj.attachTokenId.length > 0
+      ? { attachTokenId: obj.attachTokenId }
+      : {}),
+    ...(typeof obj.deviceTokenId === 'string' && obj.deviceTokenId.length > 0
+      ? { deviceTokenId: obj.deviceTokenId }
+      : {}),
   };
 }
 
