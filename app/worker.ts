@@ -300,6 +300,15 @@ function withRequestIdOnResponse(
   request?: Request,
   env?: Env,
 ): Response {
+  // WebSocket upgrade responses (101) carry Cloudflare's non-standard
+  // `webSocket` init prop on the underlying response. Rewrapping via
+  // `new Response(body, { status, headers })` drops that prop and
+  // breaks the upgrade silently. There is also no client-visible
+  // request-id surface on a WS upgrade — the headers we'd add don't
+  // reach the JS WebSocket client. Pass through unmodified.
+  if (response.status === 101) {
+    return response;
+  }
   const headers = new Headers(response.headers);
   headers.set(REQUEST_ID_HEADER, requestId);
   if (request && env) {

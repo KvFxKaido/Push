@@ -1,21 +1,27 @@
 /**
  * Unit tests for `RelaySessionDO` (Phase 2.b scaffold).
  *
- * Node doesn't ship a `WebSocketPair`, so we polyfill a minimal pair
- * that supports `accept()`, `addEventListener('message'|'close'|'error')`,
- * and a `simulateClose()` helper for the deregistration test.
+ * Node doesn't ship `WebSocketPair`, and node's DOM `Response` rejects
+ * status < 200 (the real Workers `Response` accepts 101 for WS
+ * upgrades). We patch both globals via `vi.stubGlobal` so they're
+ * auto-restored by `vi.unstubAllGlobals()` between tests — direct
+ * assignment to `globalThis` could leak across vitest workers that
+ * happen to run other files in parallel.
+ *
+ * The FakeWebSocket polyfill exposes `accept()`, `send()`, `close()`,
+ * `addEventListener()`, and a `dispatch(type, event)` helper that
+ * tests use to fire `message` / `close` / `error` events at the
+ * registered listeners. `WorkersStyleResponse` subclasses the real
+ * Response and overrides `status` so a DO returning 101 sees a node-
+ * legal underlying status (200) while exposing the original 101 to
+ * the test assertions.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DurableObjectState, WebSocket } from '@cloudflare/workers-types';
 import { RelaySessionDO } from './relay-do';
 import type { Env } from './worker-middleware';
 
-// Workers Response accepts status 101 for WS upgrades; DOM Response (node's
-// undici) does not and throws RangeError. Polyfill a subclass that records
-// the original status while constructing the underlying Response with a
-// node-legal status. The DO's body is unchanged; only the test runtime
-// sees the override.
 const RealResponse = globalThis.Response;
 class WorkersStyleResponse extends RealResponse {
   private readonly __statusOverride?: number;
@@ -32,13 +38,6 @@ class WorkersStyleResponse extends RealResponse {
     return this.__statusOverride ?? super.status;
   }
 }
-
-beforeAll(() => {
-  globalThis.Response = WorkersStyleResponse as unknown as typeof Response;
-});
-afterAll(() => {
-  globalThis.Response = RealResponse;
-});
 
 class FakeWebSocket {
   readyState = 0;
@@ -79,14 +78,13 @@ class FakeWebSocketPair {
   }
 }
 
-const originalWebSocketPair = (globalThis as { WebSocketPair?: unknown }).WebSocketPair;
-
 beforeEach(() => {
-  (globalThis as { WebSocketPair?: unknown }).WebSocketPair = FakeWebSocketPair;
+  vi.stubGlobal('Response', WorkersStyleResponse);
+  vi.stubGlobal('WebSocketPair', FakeWebSocketPair);
 });
 
 afterEach(() => {
-  (globalThis as { WebSocketPair?: unknown }).WebSocketPair = originalWebSocketPair;
+  vi.unstubAllGlobals();
 });
 
 function makeDO(): RelaySessionDO {

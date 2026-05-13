@@ -20,7 +20,7 @@
  * — 2.c will add the auth envelope at the WS-upgrade layer.
  */
 
-import type { Env } from './worker-middleware';
+import { getClientIp, validateOrigin, type Env } from './worker-middleware';
 
 const RELAY_PREFIX = '/api/relay/v1/';
 
@@ -64,6 +64,29 @@ export async function handleRelayRequest(
       'NOT_CONFIGURED',
       'RELAY_SESSIONS Durable Object binding is not present in this environment.',
       503,
+    );
+  }
+
+  // Origin + rate limiting mirror the /api/jobs/* pattern so the relay
+  // endpoint isn't a softer CSRF / abuse surface than the rest of /api/*.
+  // Browser PWA clients carry Origin; pushd's outbound dial in 2.e will
+  // NOT carry a browser Origin header, so this gate must be reworked
+  // alongside the 2.c auth model — most likely "auth token presence
+  // bypasses the Origin check, since pushd isn't a CSRF target."
+  const requestUrl = new URL(request.url);
+  const originCheck = validateOrigin(request, requestUrl, env);
+  if (!originCheck.ok) {
+    return jsonError('ORIGIN_REJECTED', originCheck.error ?? 'Origin not allowed', 403);
+  }
+
+  const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: getClientIp(request) });
+  if (!rateLimitOk) {
+    return new Response(
+      JSON.stringify({ error: 'RATE_LIMITED', message: 'Rate limit exceeded. Try again later.' }),
+      {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'Retry-After': '60' },
+      },
     );
   }
 
