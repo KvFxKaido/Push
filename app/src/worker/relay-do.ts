@@ -3,8 +3,16 @@
  *
  * Phase 2.b scaffold landed the WS accept; 2.c added bearer auth +
  * role-aware byte forwarding; 2.d.1 added envelope parsing + phone
- * allowlist; 2.d.2 (this slice) adds the ring buffer + replay runtime
- * that the `relay_attach` envelope schema was reserved for:
+ * allowlist; 2.d.2 added the ring buffer + replay runtime that the
+ * `relay_attach` envelope schema was reserved for. Post-2.f hardening
+ * (this revision) switched the allowlist from bearer plaintext to
+ * `sha256(bearer)` base64url-encoded: pushd persists attach tokens
+ * by hash only, so the wire vocabulary matches and a daemon restart
+ * can reseed the allowlist from disk without ever touching plaintext.
+ * The DO computes the hash once at WS upgrade and stores only the
+ * hash on the connection meta.
+ *
+ * Ring buffer + replay shape (2.d.2):
  *
  *   - Per-session ring buffer of recent pushd → phone event envelopes,
  *     keyed by `event.seq`. Bounded by both count (default 256) and
@@ -51,11 +59,36 @@ import {
   type RelayEnvelope,
 } from '@push/lib/protocol-schema';
 import { extractPhoneBearer } from './relay-routes';
+import { base64UrlEncodeBytes } from './worker-base64url';
 import type { Env } from './worker-middleware';
 
 export type RelayConnectionRole = 'pushd' | 'phone';
 
-type ConnectionMeta = { role: 'pushd' } | { role: 'phone'; bearer: string };
+type ConnectionMeta = { role: 'pushd' } | { role: 'phone'; bearerHash: string };
+
+/**
+ * SHA-256 of a phone bearer, base64url-encoded. Matches the hash
+ * format that `cli/pushd-attach-tokens.ts#hashToken` produces and
+ * that `relay_phone_allow.tokenHashes` carries on the wire — both
+ * sides MUST stay in lockstep.
+ *
+ * The DO computes this once at WS upgrade and stores only the hash
+ * on the connection meta. The plaintext bearer is never retained
+ * past upgrade, so a memory dump of a running DO instance carries
+ * the same identity surface as the persisted attach-token file on
+ * pushd (hashes only, no plaintext).
+ *
+ * Uses WebCrypto (`crypto.subtle.digest`) — available on Workers
+ * runtime and on Node 15+. base64url encoding is delegated to the
+ * shared `worker-base64url` helper so the relay can't drift from
+ * the other Worker-side base64url consumers (JWTs, etc.) on
+ * padding or alphabet replacement.
+ */
+export async function hashBearerForAllowlist(bearer: string): Promise<string> {
+  const bytes = new TextEncoder().encode(bearer);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return base64UrlEncodeBytes(digest);
+}
 
 /**
  * One buffered envelope. `data` is the original NDJSON text so
@@ -101,7 +134,14 @@ function parseClampedPositiveIntEnv(
 
 export class RelaySessionDO {
   private readonly connections = new Map<WebSocket, ConnectionMeta>();
-  private readonly allowedPhoneBearers = new Set<string>();
+  /**
+   * Allowlist keyed by `sha256(bearer)` base64url-encoded. Populated
+   * by `relay_phone_allow` envelopes; checked against each connection's
+   * `meta.bearerHash` at message-dispatch time. The wire never carries
+   * bearer plaintext and the DO never retains it past upgrade — both
+   * sides match purely on the hash.
+   */
+  private readonly allowedPhoneTokenHashes = new Set<string>();
   // Ring buffer of recent pushd-originated event envelopes, sorted by
   // insertion order (which IS seq order since seq is monotonic per
   // session). Eviction pops from the front; insertion pushes to the
@@ -150,19 +190,21 @@ export class RelaySessionDO {
       return new Response('Pushd already attached to this session', { status: 409 });
     }
 
-    // For phones, re-extract the bearer from the subprotocol so the
-    // DO can store it alongside the connection. The route handler
-    // already validated the bearer's format at upgrade — the DO
-    // trusts that decision but needs the value itself for the
-    // allowlist check on every outbound forward.
-    let phoneBearer: string | null = null;
+    // For phones, re-extract the bearer from the subprotocol and
+    // hash it once at upgrade. Only the hash is retained on the
+    // connection meta; the plaintext bearer goes out of scope as
+    // soon as `acceptPhone` returns. The route handler already
+    // validated the bearer's format — the DO trusts that decision
+    // but needs the hash for the per-frame allowlist check.
+    let phoneBearerHash: string | null = null;
     if (role === 'phone') {
-      phoneBearer = extractPhoneBearer(request.headers.get('Sec-WebSocket-Protocol'));
+      const phoneBearer = extractPhoneBearer(request.headers.get('Sec-WebSocket-Protocol'));
       if (!phoneBearer) {
         return new Response('Phone bearer missing — route handler must authenticate', {
           status: 500,
         });
       }
+      phoneBearerHash = await hashBearerForAllowlist(phoneBearer);
     }
 
     const pair = new (
@@ -174,7 +216,7 @@ export class RelaySessionDO {
     if (role === 'pushd') {
       this.acceptPushd(server);
     } else {
-      this.acceptPhone(server, phoneBearer!);
+      this.acceptPhone(server, phoneBearerHash!);
     }
 
     return new Response(null, {
@@ -192,10 +234,16 @@ export class RelaySessionDO {
     this.wireConnectionLifecycle(ws);
   }
 
-  /** Exposed for tests. */
-  acceptPhone(ws: WebSocket, bearer: string): void {
+  /**
+   * Exposed for tests. The second argument is `sha256(bearer)`
+   * base64url-encoded — the same shape `relay_phone_allow.tokenHashes`
+   * carries on the wire. Tests precompute this with WebCrypto (or
+   * via node's `createHash('sha256').digest('base64url')`, which
+   * produces the byte-identical encoding).
+   */
+  acceptPhone(ws: WebSocket, bearerHash: string): void {
     ws.accept();
-    this.connections.set(ws, { role: 'phone', bearer });
+    this.connections.set(ws, { role: 'phone', bearerHash });
     this.wireConnectionLifecycle(ws);
   }
 
@@ -269,19 +317,20 @@ export class RelaySessionDO {
         return;
       }
       if (envelope.kind === 'relay_phone_allow') {
-        for (const token of envelope.tokens) {
-          this.allowedPhoneBearers.add(token);
+        for (const hash of envelope.tokenHashes) {
+          this.allowedPhoneTokenHashes.add(hash);
         }
       } else {
-        const revokedTokens = new Set(envelope.tokens);
-        for (const token of revokedTokens) {
-          this.allowedPhoneBearers.delete(token);
+        const revokedHashes = new Set(envelope.tokenHashes);
+        for (const hash of revokedHashes) {
+          this.allowedPhoneTokenHashes.delete(hash);
         }
-        // Drop any currently-connected phone whose bearer was revoked.
-        // Close code 1008 mirrors the device-token revoke path in pushd.
+        // Drop any currently-connected phone whose tokenHash was
+        // revoked. Close code 1008 mirrors the device-token revoke
+        // path in pushd.
         for (const [ws, meta] of this.connections) {
-          if (meta.role === 'phone' && revokedTokens.has(meta.bearer)) {
-            ws.close(1008, 'phone bearer revoked');
+          if (meta.role === 'phone' && revokedHashes.has(meta.bearerHash)) {
+            ws.close(1008, 'phone token revoked');
           }
         }
       }
@@ -293,7 +342,7 @@ export class RelaySessionDO {
     // protocol violation and gets dropped here.
     if (envelope.kind === 'relay_attach') {
       if (senderMeta.role !== 'phone') return;
-      this.handleRelayAttach(sender, senderMeta.bearer, envelope.lastSeq);
+      this.handleRelayAttach(sender, senderMeta.bearerHash, envelope.lastSeq);
       return;
     }
 
@@ -306,7 +355,7 @@ export class RelaySessionDO {
    * `relay_replay_unavailable` if the gap exceeds the buffer.
    *
    * Cases:
-   *   - sender's bearer not in allowlist: silent no-op. This closes
+   *   - sender's tokenHash not in allowlist: silent no-op. This closes
    *     the symmetric flaw to `forwardData`'s gating — an un-allowlisted
    *     phone connecting and immediately sending `relay_attach` would
    *     otherwise siphon buffered session events. PR #528 Copilot + Codex
@@ -323,12 +372,16 @@ export class RelaySessionDO {
    *   - otherwise: send all buffered entries with seq > lastSeq in
    *     order. Eviction has already trimmed expired entries.
    */
-  private handleRelayAttach(phone: WebSocket, bearer: string, lastSeq: number | undefined): void {
+  private handleRelayAttach(
+    phone: WebSocket,
+    bearerHash: string,
+    lastSeq: number | undefined,
+  ): void {
     // Allowlist gate, symmetric with forwardData. Without this, the
     // ring buffer becomes a leak channel for any phone that knows the
     // sessionId and presents a well-shaped bearer. Closes Copilot +
     // Codex P1.
-    if (!this.allowedPhoneBearers.has(bearer)) return;
+    if (!this.allowedPhoneTokenHashes.has(bearerHash)) return;
     // typeof check first, then isFinite — `typeof NaN === 'number'` so
     // the type check alone is insufficient. Without the finite check a
     // crafted `lastSeq: NaN` would skip the up-to-date/gap conditions
@@ -389,13 +442,13 @@ export class RelaySessionDO {
     data: string | ArrayBuffer,
   ): void {
     if (senderMeta.role === 'pushd') {
-      // pushd → phones, gated on the phone's bearer being in the
+      // pushd → phones, gated on the phone's tokenHash being in the
       // pushd-controlled allowlist. Closes Codex #525 P1.
       for (const [ws, meta] of this.connections) {
         if (
           ws !== sender &&
           meta.role === 'phone' &&
-          this.allowedPhoneBearers.has(meta.bearer) &&
+          this.allowedPhoneTokenHashes.has(meta.bearerHash) &&
           ws.readyState === 1
         ) {
           ws.send(data as string | ArrayBuffer);
@@ -412,13 +465,13 @@ export class RelaySessionDO {
         this.tryBufferEvent(data);
       }
     } else {
-      // phone → pushd, also gated on the phone's bearer being in the
-      // allowlist (closes Codex #526 P1: pushd can't see the
-      // originating bearer on a forwarded frame, so the relay is the
-      // only place that can enforce this direction). Asymmetric
+      // phone → pushd, also gated on the phone's tokenHash being in
+      // the allowlist (closes Codex #526 P1: pushd can't see the
+      // originating identity on a forwarded frame, so the relay is
+      // the only place that can enforce this direction). Asymmetric
       // gating was the wrong call — both directions need the same
       // boundary.
-      if (!this.allowedPhoneBearers.has(senderMeta.bearer)) {
+      if (!this.allowedPhoneTokenHashes.has(senderMeta.bearerHash)) {
         return;
       }
       const pushd = this.getPushdConnection();
@@ -452,8 +505,8 @@ export class RelaySessionDO {
   }
 
   /** Visible for tests. */
-  getAllowedPhoneBearers(): readonly string[] {
-    return Array.from(this.allowedPhoneBearers);
+  getAllowedPhoneTokenHashes(): readonly string[] {
+    return Array.from(this.allowedPhoneTokenHashes);
   }
 
   /** Visible for tests — snapshot of the ring buffer in seq order. */

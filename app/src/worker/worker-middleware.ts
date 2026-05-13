@@ -25,6 +25,7 @@ import {
   createChildContext,
   type WorkerSpanContext,
 } from './worker-tracing';
+import { base64UrlEncodeBytes, base64UrlEncodeString } from './worker-base64url';
 
 // ---------------------------------------------------------------------------
 // Env interface
@@ -228,19 +229,6 @@ interface CachedGoogleAccessToken {
 }
 
 const googleAccessTokenCache = new Map<string, CachedGoogleAccessToken>();
-
-function base64UrlEncodeString(value: string): string {
-  return btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-function base64UrlEncodeBytes(bytes: ArrayBuffer): string {
-  let binary = '';
-  const view = new Uint8Array(bytes);
-  for (let i = 0; i < view.length; i += 1) {
-    binary += String.fromCharCode(view[i]);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
 
 function pemToArrayBuffer(pem: string): ArrayBuffer {
   const normalized = pem
