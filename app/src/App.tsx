@@ -8,9 +8,7 @@ import { toConversationIndex } from '@/lib/conversation-index';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import { perfMark, perfMeasure } from '@/lib/perf-marks';
-import { isLocalPcModeEnabled } from '@/lib/local-pc-binding';
 import { getPairedDevice } from '@/lib/local-pc-storage';
-import { isRelayModeEnabled } from '@/lib/relay-binding';
 import { getPairedRemote } from '@/lib/relay-storage';
 import type {
   ActiveRepo,
