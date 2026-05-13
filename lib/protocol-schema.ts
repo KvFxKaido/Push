@@ -556,3 +556,167 @@ export function assertValidEvent(event: unknown): void {
       `Full envelope: ${JSON.stringify(event)}`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Relay-control envelopes (Phase 2.d.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Envelopes the Worker-mediated relay parses out of the forwarded
+ * NDJSON stream. Unlike `kind: 'event'` envelopes (which are
+ * unidirectional broadcasts with seq/sessionId/etc), these are
+ * relay-control messages exchanged between:
+ *
+ *   - pushd → relay: `relay_phone_allow`, `relay_phone_revoke`
+ *     (the allowlist that gates pushd → phone forwarding; closes
+ *     Codex #525 P1).
+ *
+ *   - phone → relay: `relay_attach`
+ *     (carries `lastSeq` for replay; consumed by the buffer in 2.d.2).
+ *
+ *   - relay → phone: `relay_replay_unavailable`
+ *     (emitted when the reconnect gap is larger than the ring buffer;
+ *     consumed in 2.d.2).
+ *
+ * The schema lives in `lib/protocol-schema.ts` per the AGENTS.md "one
+ * source of truth per vocabulary" guardrail. Wire version stays
+ * `push.runtime.v1` — these are new kinds in the existing vocabulary,
+ * not a parallel relay-only vocabulary (per the decision doc's
+ * "Extend push.runtime.v1; do not invent a second remote-session
+ * vocabulary" implementation rule).
+ *
+ * The relay enforces these via `validateRelayEnvelope()`; the drift
+ * test in `cli/tests/protocol-drift.test.mjs` pins the kind list
+ * against `RELAY_ENVELOPE_KINDS` so adding a new kind without a
+ * validator update fails CI.
+ */
+
+export const RELAY_ENVELOPE_KINDS = [
+  'relay_phone_allow',
+  'relay_phone_revoke',
+  'relay_attach',
+  'relay_replay_unavailable',
+] as const;
+
+export type RelayEnvelopeKind = (typeof RELAY_ENVELOPE_KINDS)[number];
+
+export interface RelayPhoneAllowEnvelope {
+  v: 'push.runtime.v1';
+  kind: 'relay_phone_allow';
+  tokens: readonly string[];
+  ts: number;
+}
+
+export interface RelayPhoneRevokeEnvelope {
+  v: 'push.runtime.v1';
+  kind: 'relay_phone_revoke';
+  tokens: readonly string[];
+  ts: number;
+}
+
+export interface RelayAttachEnvelope {
+  v: 'push.runtime.v1';
+  kind: 'relay_attach';
+  lastSeq?: number;
+  ts: number;
+}
+
+export interface RelayReplayUnavailableEnvelope {
+  v: 'push.runtime.v1';
+  kind: 'relay_replay_unavailable';
+  reason: string;
+  ts: number;
+}
+
+export type RelayEnvelope =
+  | RelayPhoneAllowEnvelope
+  | RelayPhoneRevokeEnvelope
+  | RelayAttachEnvelope
+  | RelayReplayUnavailableEnvelope;
+
+/**
+ * Quick discriminator: returns true if the value is a plain object
+ * with a `kind` matching one of `RELAY_ENVELOPE_KINDS`. Use this
+ * before calling `validateRelayEnvelope` to differentiate relay
+ * control messages from forwardable runtime events.
+ */
+export function isRelayEnvelope(value: unknown): value is RelayEnvelope {
+  if (!isPlainObject(value)) return false;
+  const kind = value.kind;
+  return typeof kind === 'string' && (RELAY_ENVELOPE_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * Strict-mode validator. Returns issues if the envelope fails its
+ * per-kind contract. Returns an empty array on success.
+ *
+ * Intentionally permissive about extra fields — adding new optional
+ * fields on a relay envelope should not break validation for
+ * existing consumers.
+ */
+export function validateRelayEnvelope(env: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  if (!isPlainObject(env)) {
+    issues.push({ path: '', message: `expected plain object, got ${typeof env}` });
+    return issues;
+  }
+
+  if (env.v !== PROTOCOL_VERSION) {
+    issues.push({
+      path: 'v',
+      message: `expected "${PROTOCOL_VERSION}", got ${JSON.stringify(env.v)}`,
+    });
+  }
+
+  const kind = env.kind;
+  if (typeof kind !== 'string' || !(RELAY_ENVELOPE_KINDS as readonly string[]).includes(kind)) {
+    issues.push({
+      path: 'kind',
+      message: `expected one of ${RELAY_ENVELOPE_KINDS.join(' | ')}, got ${JSON.stringify(kind)}`,
+    });
+    return issues;
+  }
+
+  if (typeof env.ts !== 'number' || !Number.isFinite(env.ts) || env.ts < 0) {
+    issues.push({
+      path: 'ts',
+      message: `expected non-negative finite number (ms since epoch), got ${JSON.stringify(env.ts)}`,
+    });
+  }
+
+  if (kind === 'relay_phone_allow' || kind === 'relay_phone_revoke') {
+    if (!Array.isArray(env.tokens)) {
+      issues.push({
+        path: 'tokens',
+        message: `expected array of strings, got ${JSON.stringify(env.tokens)}`,
+      });
+    } else {
+      for (let i = 0; i < env.tokens.length; i += 1) {
+        const token = env.tokens[i];
+        if (typeof token !== 'string' || token.length === 0) {
+          issues.push({
+            path: `tokens[${i}]`,
+            message: `expected non-empty string, got ${JSON.stringify(token)}`,
+          });
+        }
+      }
+    }
+  } else if (kind === 'relay_attach') {
+    if ('lastSeq' in env && env.lastSeq !== undefined && !isFiniteNonNegativeInt(env.lastSeq)) {
+      issues.push({
+        path: 'lastSeq',
+        message: `expected non-negative integer or omitted, got ${JSON.stringify(env.lastSeq)}`,
+      });
+    }
+  } else if (kind === 'relay_replay_unavailable') {
+    if (!isNonEmptyString(env.reason)) {
+      issues.push({
+        path: 'reason',
+        message: `expected non-empty string, got ${JSON.stringify(env.reason)}`,
+      });
+    }
+  }
+
+  return issues;
+}
