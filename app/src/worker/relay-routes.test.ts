@@ -147,6 +147,39 @@ describe('handleRelayRequest', () => {
     expect(res.status).toBe(403);
   });
 
+  // Phase 2.e: pushd-bearer origin carve-out. pushd is a Node WS, not
+  // a browser, so it can't be CSRF'd; demanding an Origin header would
+  // block the legitimate outbound dial.
+  it('skips Origin gate when bearer is pushd_relay_* (no Origin header)', async () => {
+    const stubFetch = vi.fn(async () => new Response(null, { status: 200 }));
+    const { env, fetchSpy } = makeEnabledEnv(stubFetch);
+    const res = await handleRelayRequest(
+      new Request('https://example.com/api/relay/v1/session/s1/connect', {
+        headers: { Upgrade: 'websocket', 'Sec-WebSocket-Protocol': PUSHD_BEARER_HEADER },
+      }),
+      env,
+      { action: 'connect', sessionId: 's1' },
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // Symmetric-boundary check: the carve-out is bearer-prefix-scoped,
+  // NOT auth-presence-scoped. A phone bearer must still pass the
+  // origin gate (the phone IS a browser; widening the carve-out for
+  // it would re-introduce CSRF surface).
+  it('still rejects phone bearer when Origin is cross-origin', async () => {
+    const { env } = makeEnabledEnv();
+    const res = await handleRelayRequest(
+      wsRequest({ Origin: 'https://evil.example', 'Sec-WebSocket-Protocol': PHONE_BEARER_HEADER }),
+      env,
+      { action: 'connect', sessionId: 's1' },
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('ORIGIN_REJECTED');
+  });
+
   it('returns 429 RATE_LIMITED when the rate limiter rejects', async () => {
     const rateLimiter = {
       limit: vi.fn(async () => ({ success: false })),

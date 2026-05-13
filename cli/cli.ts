@@ -92,6 +92,10 @@ const KNOWN_OPTIONS = new Set([
   'delegate',
   'deep',
   'origin',
+  'tail',
+  'since',
+  'type',
+  'token',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -187,6 +191,9 @@ Usage:
                                 Mint a device token bound to an exact origin
   push daemon tokens            List device tokens (no secrets)
   push daemon revoke <tokenId>  Revoke a device token
+  push daemon relay enable      Enable outbound relay dial (requires --url + --token)
+  push daemon relay disable     Disable the outbound relay
+  push daemon relay status      Show persisted + live relay state
   push tui                       Start full-screen TUI
   push tui --session <id>        Resume session in TUI
   push attach <session-id>      Attach to a running daemon session
@@ -2047,8 +2054,12 @@ async function runDaemonSubcommand(values, positionals) {
     return runDaemonAudit(values);
   }
 
+  if (action === 'relay') {
+    return runDaemonRelay(positionals, values);
+  }
+
   throw new Error(
-    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep] | pair [--origin <url>] | revoke <tokenId> | tokens | allow <path> | deny <path> | allowlist | devices | attach-tokens | revoke-attach <tokenId> | audit [--tail N] [--since DATE] [--type TYPE] [--json]`,
+    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep] | pair [--origin <url>] | revoke <tokenId> | tokens | allow <path> | deny <path> | allowlist | devices | attach-tokens | revoke-attach <tokenId> | audit [--tail N] [--since DATE] [--type TYPE] [--json] | relay enable --url <url> --token <token> | relay disable | relay status`,
   );
 }
 
@@ -2428,6 +2439,158 @@ async function runDaemonAudit(values: Record<string, unknown>): Promise<number> 
   return 0;
 }
 
+async function runDaemonRelay(
+  positionals: string[],
+  values: Record<string, unknown>,
+): Promise<number> {
+  const sub = positionals[2];
+  if (sub === 'enable') {
+    const url = typeof values?.url === 'string' ? (values.url as string).trim() : '';
+    const token = typeof values?.token === 'string' ? (values.token as string).trim() : '';
+    if (!url || !token) {
+      process.stderr.write(
+        'Usage: push daemon relay enable --url <deployment-url> --token <pushd_relay_…>\n',
+      );
+      return 1;
+    }
+    if (!token.startsWith('pushd_relay_')) {
+      process.stderr.write('relay enable failed: token must start with pushd_relay_\n');
+      return 1;
+    }
+    // Try the live admin RPC first — change takes effect immediately
+    // without a daemon restart. If the daemon is offline, fall back
+    // to writing the file directly; the next daemon start picks it up.
+    const response = await sendDaemonAdminRequest({
+      type: 'relay_enable',
+      payload: { deploymentUrl: url, token },
+    });
+    if (response.ok) {
+      process.stdout.write(`relay enabled (deployment: ${url})\n`);
+      return 0;
+    }
+    if (response.code === 'DAEMON_OFFLINE') {
+      const { writeRelayConfig } = await import('./pushd-relay-config.js');
+      try {
+        await writeRelayConfig({ deploymentUrl: url, token });
+        process.stdout.write(
+          `relay config written (deployment: ${url}); start the daemon to dial.\n`,
+        );
+        return 0;
+      } catch (err) {
+        process.stderr.write(
+          `relay enable failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        return 1;
+      }
+    }
+    process.stderr.write(`relay enable failed: ${response.error ?? response.code ?? 'unknown'}\n`);
+    return 1;
+  }
+
+  if (sub === 'disable') {
+    const response = await sendDaemonAdminRequest({ type: 'relay_disable', payload: {} });
+    if (response.ok) {
+      const removed = Boolean(response.payload?.configRemoved);
+      const stopped = Boolean(response.payload?.clientStopped);
+      process.stdout.write(
+        `relay disabled${removed ? '' : ' (no config was present)'}${stopped ? ' (closed live connection)' : ''}\n`,
+      );
+      return 0;
+    }
+    if (response.code === 'DAEMON_OFFLINE') {
+      const { deleteRelayConfig } = await import('./pushd-relay-config.js');
+      try {
+        const removed = await deleteRelayConfig();
+        process.stdout.write(
+          `relay config ${removed ? 'removed' : 'was not set'} (daemon offline)\n`,
+        );
+        return 0;
+      } catch (err) {
+        process.stderr.write(
+          `relay disable failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        return 1;
+      }
+    }
+    process.stderr.write(`relay disable failed: ${response.error ?? response.code ?? 'unknown'}\n`);
+    return 1;
+  }
+
+  if (sub === 'status') {
+    // `relay status` always tries the live admin first because the
+    // operator usually wants the runtime view ("is it actually
+    // connected right now?"). When the daemon is offline we fall
+    // back to a config-only read so the operator still sees whether
+    // the file is present without having to start the daemon.
+    const response = await sendDaemonAdminRequest({ type: 'relay_status', payload: {} });
+    if (response.ok) {
+      const persisted = response.payload?.persisted as
+        | { deploymentUrl: string; enabledAt: number | null }
+        | null
+        | undefined;
+      const live = response.payload?.live as Record<string, unknown> | undefined;
+      if (values?.json) {
+        process.stdout.write(`${JSON.stringify(response.payload, null, 2)}\n`);
+        return 0;
+      }
+      if (!persisted) {
+        process.stdout.write('relay: disabled (no config)\n');
+        return 0;
+      }
+      process.stdout.write(`relay: enabled\n`);
+      process.stdout.write(`  deployment:  ${persisted.deploymentUrl}\n`);
+      if (persisted.enabledAt) {
+        process.stdout.write(`  enabled at:  ${new Date(persisted.enabledAt).toISOString()}\n`);
+      }
+      if (live && live.running) {
+        process.stdout.write(`  client:      running\n`);
+        process.stdout.write(`  state:       ${String(live.state)}\n`);
+        if (typeof live.attempt === 'number' && live.attempt > 0) {
+          process.stdout.write(`  attempt:     ${live.attempt}\n`);
+        }
+        if (live.exhausted) process.stdout.write(`  exhausted:   true\n`);
+        if (live.closeCode !== null && live.closeCode !== undefined) {
+          process.stdout.write(
+            `  last close:  ${live.closeCode} ${String(live.closeReason ?? '')}\n`,
+          );
+        }
+        if (typeof live.allowlistSize === 'number') {
+          process.stdout.write(`  allowlist:   ${live.allowlistSize} attach token(s)\n`);
+        }
+      } else {
+        process.stdout.write(`  client:      not running\n`);
+      }
+      return 0;
+    }
+    if (response.code === 'DAEMON_OFFLINE') {
+      const { readRelayConfig } = await import('./pushd-relay-config.js');
+      try {
+        const cfg = await readRelayConfig();
+        if (!cfg) {
+          process.stdout.write('relay: disabled (no config; daemon offline)\n');
+          return 0;
+        }
+        process.stdout.write(
+          `relay: config present (daemon offline)\n  deployment:  ${cfg.deploymentUrl}\n  enabled at:  ${new Date(cfg.enabledAt).toISOString()}\n`,
+        );
+        return 0;
+      } catch (err) {
+        process.stderr.write(
+          `relay status failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        return 1;
+      }
+    }
+    process.stderr.write(`relay status failed: ${response.error ?? response.code ?? 'unknown'}\n`);
+    return 1;
+  }
+
+  process.stderr.write(
+    `Unknown relay subcommand: ${sub ?? '(missing)'}. Use: push daemon relay enable --url <url> --token <token> | disable | status\n`,
+  );
+  return 1;
+}
+
 interface DaemonAttachTokenRow {
   tokenId: string;
   parentTokenId: string;
@@ -2783,6 +2946,9 @@ export async function main() {
       tail: { type: 'string' },
       since: { type: 'string' },
       type: { type: 'string' },
+      // Phase 2.e: `push daemon relay enable --url <…> --token <…>`.
+      // `--url` is already declared above for the cloud-side run path.
+      token: { type: 'string' },
     },
   });
 

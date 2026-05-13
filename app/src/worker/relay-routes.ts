@@ -34,10 +34,15 @@
  *   1. PUSH_RELAY_ENABLED === '1'   → otherwise 503 NOT_ENABLED
  *   2. env.RELAY_SESSIONS bound     → otherwise 503 NOT_CONFIGURED
  *   3. validateOrigin               → otherwise 403 ORIGIN_REJECTED
- *      (NOTE: pushd's outbound dial in 2.e won't carry a browser
- *      Origin header. This gate will need a carve-out then — likely
- *      "valid pushd bearer bypasses Origin check since pushd is not a
- *      CSRF target.")
+ *      Phase 2.e carve-out: a pre-parse of the bearer subprotocol
+ *      runs FIRST. If the bearer starts with `pushd_relay_`, the
+ *      origin gate is skipped — pushd's outbound dial is a Node
+ *      WebSocket, not a browser, and carries no `Origin` header.
+ *      The carve-out is bearer-prefix-scoped (not "any auth bypasses
+ *      origin"): phone bearers (`pushd_da_*`) still enforce the
+ *      origin check, because they ARE browser-originated and a CSRF
+ *      target. Without this discrimination the carve-out would
+ *      widen the CSRF surface for everyone.
  *   4. RATE_LIMITER                 → otherwise 429
  *   5. Upgrade: websocket           → otherwise 426
  *   6. Bearer parsing + validation  → otherwise 401
@@ -105,16 +110,27 @@ export async function handleRelayRequest(
     );
   }
 
-  // Origin + rate limiting mirror the /api/jobs/* pattern so the relay
-  // endpoint isn't a softer CSRF / abuse surface than the rest of /api/*.
-  // Browser PWA clients carry Origin; pushd's outbound dial in 2.e will
-  // NOT carry a browser Origin header, so this gate must be reworked
-  // alongside the 2.c auth model — most likely "auth token presence
-  // bypasses the Origin check, since pushd isn't a CSRF target."
+  // Phase 2.e: pre-parse the bearer so we can decide whether to run
+  // the origin gate. The origin check exists to block browser CSRF;
+  // a Node-side outbound WS (pushd) is not a CSRF vector and doesn't
+  // carry an Origin header in the first place. Skip the gate ONLY
+  // when the bearer is in the `pushd_relay_*` family — phone bearers
+  // (browser-originated) still go through the gate.
+  //
+  // This is bearer-prefix-scoped, not auth-presence-scoped: a phone
+  // bearer must still pass origin (the phone IS a browser). The
+  // distinction matters because a misshapen carve-out ("any valid
+  // auth bypasses origin") would silently widen the CSRF surface
+  // for phone clients too.
+  const preParsedBearer = parseBearerSubprotocol(request.headers.get('Sec-WebSocket-Protocol'));
+  const isPushdBearer = preParsedBearer?.bearer.startsWith(PUSHD_BEARER_PREFIX) ?? false;
+
   const requestUrl = new URL(request.url);
-  const originCheck = validateOrigin(request, requestUrl, env);
-  if (!originCheck.ok) {
-    return jsonError('ORIGIN_REJECTED', originCheck.error ?? 'Origin not allowed', 403);
+  if (!isPushdBearer) {
+    const originCheck = validateOrigin(request, requestUrl, env);
+    if (!originCheck.ok) {
+      return jsonError('ORIGIN_REJECTED', originCheck.error ?? 'Origin not allowed', 403);
+    }
   }
 
   const { success: rateLimitOk } = await env.RATE_LIMITER.limit({ key: getClientIp(request) });

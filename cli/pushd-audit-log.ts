@@ -80,7 +80,15 @@ export type AuditEventType =
   // provenance as every other event — closes the
   // "approval prompts identify the requesting surface/device"
   // minimum-model item.
-  | 'approval.decision';
+  | 'approval.decision'
+  // Relay lifecycle (Phase 2.e). Fires when the outbound WS to the
+  // Worker-mediated relay reaches `open` (`relay.connect`) or drops
+  // (`relay.disconnect` — both clean closes and auto-reconnect
+  // attempts). Payload carries the deployment URL + attempt counter
+  // but NEVER the bearer token; the audit log inherits the same
+  // posture as the rest of the daemon ("never log the secret").
+  | 'relay.connect'
+  | 'relay.disconnect';
 
 /**
  * Single audit record shape. Versioned via `v` so future schema
