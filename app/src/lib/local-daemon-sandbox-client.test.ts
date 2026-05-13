@@ -759,9 +759,19 @@ describe('isRelayBinding', () => {
 // ---------------------------------------------------------------------------
 
 describe('LiveDaemonBinding reuse path', () => {
-  function makeStubLive(
-    handler: <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>,
-  ): { binding: LiveDaemonBinding; calls: RequestOptions[] } {
+  // The handler is non-generic on the test surface so callers can pass
+  // plain `async () => ({...})` arrows. The wrapper inside `request`
+  // casts the returned response through to the generic T the caller
+  // requested — that's sound for tests because the stub controls the
+  // payload shape end-to-end. Typing the handler itself as
+  // `<T>(...) => Promise<SessionResponse<T>>` would force every caller
+  // to write a generic arrow, which TypeScript 5 cannot infer from a
+  // single-shape return.
+  type StubHandler = (opts: RequestOptions) => Promise<SessionResponse<unknown>>;
+  function makeStubLive(handler: StubHandler): {
+    binding: LiveDaemonBinding;
+    calls: RequestOptions[];
+  } {
     const calls: RequestOptions[] = [];
     const binding: LiveDaemonBinding = {
       // Closed port — if the helpers fell through to the transient path
@@ -773,9 +783,9 @@ describe('LiveDaemonBinding reuse path', () => {
         token: 'pushd_unused_in_reuse_path',
         boundOrigin: 'http://localhost:5173',
       } as LocalPcBinding,
-      request: <T = unknown>(opts: RequestOptions) => {
+      request: <T = unknown>(opts: RequestOptions): Promise<SessionResponse<T>> => {
         calls.push(opts);
-        return handler<T>(opts);
+        return handler(opts) as Promise<SessionResponse<T>>;
       },
     };
     return { binding, calls };
@@ -887,7 +897,12 @@ describe('LiveDaemonBinding reuse path', () => {
   it('runWithBinding fires cancel_run on abort and rejects with AbortError (no transient WS opened)', async () => {
     const controller = new AbortController();
     const seenTypes: string[] = [];
-    let resolveInner: (() => void) | null = null;
+    // Boxed in an object so TS keeps the field's declared union type
+    // across the makeStubLive callback boundary. A bare `let resolveInner:
+    // (() => void) | null = null` got narrowed to `null` because the
+    // assignment lives inside a nested executor TS doesn't track —
+    // surfaces at the call site as "type 'never' has no call signatures."
+    const resolveInner: { fn: (() => void) | null } = { fn: null };
     const { binding, calls } = makeStubLive((opts) => {
       seenTypes.push(opts.type);
       if (opts.type === 'cancel_run') {
@@ -906,7 +921,7 @@ describe('LiveDaemonBinding reuse path', () => {
       // must reject the outer promise instead. Resolve only as a
       // cleanup hatch in case the test fails.
       return new Promise<SessionResponse<unknown>>((res) => {
-        resolveInner = () => res({} as SessionResponse<unknown>);
+        resolveInner.fn = () => res({} as SessionResponse<unknown>);
       });
     });
 
@@ -927,6 +942,6 @@ describe('LiveDaemonBinding reuse path', () => {
     const cancel = calls.find((c) => c.type === 'cancel_run');
     expect((cancel?.payload as { runId?: string })?.runId).toBe('run_x');
     // Clean up the dangling inner promise so vitest doesn't warn.
-    resolveInner?.();
+    resolveInner.fn?.();
   });
 });
