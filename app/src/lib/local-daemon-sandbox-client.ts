@@ -229,7 +229,21 @@ async function runWithLiveBinding<T>(
     }
 
     fn(binding.request).then(
-      (response) => settle(() => resolve(response)),
+      (response) =>
+        settle(() => {
+          // Tie-breaker: if abort fired in the same tick the response
+          // landed (signal flipped before `settle` ran), respect the
+          // user's cancel intent instead of resolving a request they
+          // told us to drop. The error branch already does this; do
+          // the symmetric thing on success.
+          if (abortSignal.aborted) {
+            const aborted = new Error('The operation was aborted');
+            aborted.name = 'AbortError';
+            reject(aborted);
+          } else {
+            resolve(response);
+          }
+        }),
       (err) => {
         settle(() => {
           if (abortSignal.aborted) {
@@ -688,7 +702,18 @@ export async function withTransientBinding<T>(
           }
           void fn(handle)
             .then((response) => {
-              settleOuter(() => resolve(response));
+              settleOuter(() => {
+                // Tie-breaker mirrors the live-binding path: respect
+                // a same-tick abort even when the response itself
+                // landed successfully.
+                if (opts.abortSignal?.aborted) {
+                  const aborted = new Error('The operation was aborted');
+                  aborted.name = 'AbortError';
+                  reject(aborted);
+                } else {
+                  resolve(response);
+                }
+              });
             })
             .catch((err) => {
               settleOuter(() => {
