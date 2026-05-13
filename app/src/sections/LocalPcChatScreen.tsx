@@ -55,6 +55,16 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
   // listener they silently timed out after 60s. The queue is FIFO —
   // we render the head and surface a counter for the rest.
   const [approvalQueue, setApprovalQueue] = useState<PendingApproval[]>([]);
+  // Mirror of approvalQueue in a ref. decideApproval reads the head
+  // from here so the request() call lives OUTSIDE the setState
+  // updater — keeping the updater a pure function as React's
+  // concurrent/StrictMode contract requires. Without the mirror, the
+  // updater would have to extract the head AND fire the side-effect,
+  // which can double-dispatch under double-invocation. #521 review.
+  const approvalQueueRef = useRef<PendingApproval[]>([]);
+  useEffect(() => {
+    approvalQueueRef.current = approvalQueue;
+  }, [approvalQueue]);
   const enqueueApproval = useCallback((approval: PendingApproval) => {
     // Dedupe by approvalId — the daemon broadcasts to every attached
     // client, and if the same WS reconnects mid-approval the event
@@ -101,29 +111,31 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
 
   const decideApproval = useCallback(
     (decision: 'approve' | 'deny') => {
-      // Pop the head of the queue and dispatch the decision via the
-      // long-lived binding. If the daemon rejects (e.g.
-      // APPROVAL_NOT_FOUND because the approval timed out before we
-      // dispatched), we still drop the prompt — there's no recovery
-      // and the user already made their decision.
-      setApprovalQueue((prev) => {
-        if (prev.length === 0) return prev;
-        const [head, ...rest] = prev;
-        void request<{ accepted: boolean }>({
-          type: 'submit_approval',
+      // Read the current head from the ref (a synchronous mirror of
+      // approvalQueue) so the side-effect lives OUTSIDE the setState
+      // updater — React's concurrent/StrictMode contract requires
+      // updaters to be pure. Without this, double-invocation under
+      // StrictMode could double-dispatch the request.
+      const head = approvalQueueRef.current[0];
+      if (!head) return;
+      void request<{ accepted: boolean }>({
+        type: 'submit_approval',
+        sessionId: head.sessionId,
+        payload: {
           sessionId: head.sessionId,
-          payload: {
-            sessionId: head.sessionId,
-            approvalId: head.approvalId,
-            decision,
-          },
-        }).catch(() => {
-          // Errors are surfaced in the daemon's audit log; the user
-          // has already moved on UX-wise. A future polish PR could
-          // show a "decision failed to register" toast.
-        });
-        return rest;
+          approvalId: head.approvalId,
+          decision,
+        },
+      }).catch(() => {
+        // Errors are surfaced in the daemon's audit log; the user
+        // has already moved on UX-wise. A future polish PR could
+        // show a "decision failed to register" toast.
       });
+      // Pop the same approvalId we just dispatched against — defends
+      // against the race where the queue was rewritten between
+      // `head` capture and this updater running (e.g. a new approval
+      // arriving). #521 review.
+      setApprovalQueue((prev) => (prev[0]?.approvalId === head.approvalId ? prev.slice(1) : prev));
     },
     [request],
   );
