@@ -24,6 +24,7 @@
  * the chat hot path actually drives this.
  */
 import {
+  DaemonRequestError,
   type LocalDaemonBinding,
   type SessionResponse,
   createLocalDaemonBinding,
@@ -53,6 +54,27 @@ export interface LocalDaemonIdentity {
   boundOrigin: string;
   daemonVersion: string;
   protocolVersion: string;
+  /**
+   * Phase 3 slice 2: 'device' means the connection used the durable
+   * device token; 'attach' means a short-lived device-attach token.
+   * Optional for older daemons that don't yet emit this field.
+   */
+  authKind?: 'device' | 'attach';
+}
+
+/**
+ * Phase 3 slice 2: result shape of `mint_device_attach_token`. The
+ * secret `token` is exposed exactly once at mint time. The web
+ * pairing flow persists it in IndexedDB (replacing the durable
+ * device token) and uses it for subsequent WS upgrades.
+ */
+export interface LocalDaemonAttachTokenMintResult {
+  token: string;
+  tokenId: string;
+  /** Server-side TTL in ms. The web can plan a re-mint before expiry. */
+  ttlMs: number;
+  /** Device tokenId this attach token is bound to. */
+  parentTokenId: string;
 }
 
 export interface LocalDaemonExecOptions {
@@ -281,6 +303,43 @@ export async function identifyLocalDaemon(binding: LocalPcBinding): Promise<Loca
     handle.request<LocalDaemonIdentity>({ type: 'daemon_identify' }),
   );
   return response.payload;
+}
+
+/**
+ * Phase 3 slice 2: mint a device-attach token via the paired daemon.
+ * Requires a device-token-authenticated WS — the call MUST be made
+ * while the binding's bearer is still the durable device token. The
+ * caller is responsible for persisting the result (replacing the
+ * device token in the paired-device record) and discarding the
+ * device token afterwards.
+ *
+ * Returns null when the daemon refuses the mint (most commonly:
+ * the caller authed with an attach token already, which the daemon
+ * gates with `DEVICE_TOKEN_REQUIRED`). The caller treats null as
+ * "already upgraded, no-op."
+ */
+export async function mintAttachTokenViaDaemon(
+  binding: LocalPcBinding,
+): Promise<LocalDaemonAttachTokenMintResult | null> {
+  try {
+    const response = await withTransientBinding(binding, (handle) =>
+      handle.request<LocalDaemonAttachTokenMintResult>({ type: 'mint_device_attach_token' }),
+    );
+    return response.payload;
+  } catch (err) {
+    // DEVICE_TOKEN_REQUIRED — the binding's already on an attach
+    // token. That's a no-op from the caller's POV: pairing already
+    // upgraded. Other DaemonRequestError codes (UNSUPPORTED_VIA_
+    // TRANSPORT etc.) shouldn't reach here because we're calling
+    // over WS, but we collapse to null defensively.
+    if (
+      err instanceof DaemonRequestError &&
+      (err.code === 'DEVICE_TOKEN_REQUIRED' || err.code === 'UNSUPPORTED_VIA_TRANSPORT')
+    ) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 export interface WithTransientBindingOptions {

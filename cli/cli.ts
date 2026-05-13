@@ -2035,8 +2035,16 @@ async function runDaemonSubcommand(values, positionals) {
     return runDaemonDevices(values);
   }
 
+  if (action === 'attach-tokens') {
+    return runDaemonAttachTokens(values);
+  }
+
+  if (action === 'revoke-attach') {
+    return runDaemonRevokeAttach(positionals);
+  }
+
   throw new Error(
-    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep] | pair [--origin <url>] | revoke <tokenId> | tokens | allow <path> | deny <path> | allowlist | devices`,
+    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep] | pair [--origin <url>] | revoke <tokenId> | tokens | allow <path> | deny <path> | allowlist | devices | attach-tokens | revoke-attach <tokenId>`,
   );
 }
 
@@ -2236,16 +2244,121 @@ async function runDaemonDevices(values: Record<string, unknown>): Promise<number
   for (const d of devices) {
     const lastUsed = d.lastUsedAt ? new Date(d.lastUsedAt).toISOString() : 'never';
     process.stdout.write(
-      `${d.tokenId}  ${d.boundOrigin}  connections=${d.connections}  lastUsed=${lastUsed}\n`,
+      `${d.tokenId}  ${d.boundOrigin}  connections=${d.connections} (${d.attachConnections ?? 0} attach, ${d.deviceConnections ?? 0} device)  lastUsed=${lastUsed}\n`,
     );
   }
   return 0;
+}
+
+/**
+ * `push daemon attach-tokens` — list active device-attach tokens
+ * (Phase 3 slice 2). Falls back to direct file read when the daemon
+ * isn't running so an operator can still audit which tokens exist
+ * even after the daemon stops.
+ */
+async function runDaemonAttachTokens(values: Record<string, unknown>): Promise<number> {
+  const response = await sendDaemonAdminRequest({ type: 'list_attach_tokens', payload: {} });
+  if (!response.ok && response.code !== 'DAEMON_OFFLINE') {
+    process.stderr.write(`attach-tokens failed: ${response.error ?? response.code ?? 'unknown'}\n`);
+    return 1;
+  }
+  let tokens: DaemonAttachTokenRow[];
+  let ttlMs: number | undefined;
+  if (response.ok) {
+    tokens = (response.payload?.tokens as DaemonAttachTokenRow[]) ?? [];
+    ttlMs = response.payload?.ttlMs as number | undefined;
+  } else {
+    // Offline: read the file directly. lastUsedAt filtering matches
+    // the daemon's view (records older than TTL are hidden).
+    const { listDeviceAttachTokens, getAttachTokenTtlMs } = await import(
+      './pushd-attach-tokens.js'
+    );
+    const records = await listDeviceAttachTokens();
+    tokens = records.map((r) => ({
+      tokenId: r.tokenId,
+      parentTokenId: r.parentTokenId,
+      boundOrigin: String(r.boundOrigin),
+      createdAt: r.createdAt,
+      lastUsedAt: r.lastUsedAt,
+    }));
+    ttlMs = getAttachTokenTtlMs();
+  }
+  if (values?.json) {
+    process.stdout.write(`${JSON.stringify({ tokens, ttlMs }, null, 2)}\n`);
+    return 0;
+  }
+  if (tokens.length === 0) {
+    process.stdout.write('no active attach tokens\n');
+    return 0;
+  }
+  for (const t of tokens) {
+    const created = new Date(t.createdAt).toISOString();
+    const lastUsed = new Date(t.lastUsedAt).toISOString();
+    process.stdout.write(
+      `${t.tokenId}  parent=${t.parentTokenId}  ${t.boundOrigin}  created=${created}  lastUsed=${lastUsed}\n`,
+    );
+  }
+  return 0;
+}
+
+/**
+ * `push daemon revoke-attach <tokenId>` — revoke a single attach
+ * token by id. Phase 3 slice 2 surface. Routes through the daemon
+ * over its Unix socket so a live WS bearing the token also gets
+ * disconnected (code 1008). Falls back to file mutation if offline.
+ */
+async function runDaemonRevokeAttach(positionals: string[]): Promise<number> {
+  const tokenId = positionals[2];
+  if (!tokenId) {
+    process.stderr.write('Usage: push daemon revoke-attach <tokenId>\n');
+    return 1;
+  }
+  const daemonResponse = await sendDaemonAdminRequest({
+    type: 'revoke_device_attach_token',
+    payload: { tokenId },
+  });
+  if (daemonResponse.ok) {
+    const closed = (daemonResponse.payload?.closedConnections as number) ?? 0;
+    process.stdout.write(
+      `revoked ${tokenId}${closed > 0 ? ` (closed ${closed} live connection${closed === 1 ? '' : 's'})` : ''}\n`,
+    );
+    return 0;
+  }
+  if (daemonResponse.code === 'DAEMON_OFFLINE') {
+    const { revokeDeviceAttachToken } = await import('./pushd-attach-tokens.js');
+    const removed = await revokeDeviceAttachToken(tokenId);
+    if (removed) {
+      process.stdout.write(`revoked ${tokenId} (daemon offline, no live connections)\n`);
+      return 0;
+    }
+    process.stderr.write(`no such attach token: ${tokenId}\n`);
+    return 1;
+  }
+  if (daemonResponse.code === 'TOKEN_NOT_FOUND') {
+    process.stderr.write(`no such attach token: ${tokenId}\n`);
+    return 1;
+  }
+  process.stderr.write(
+    `revoke-attach failed: ${daemonResponse.error ?? daemonResponse.code ?? 'unknown'}\n`,
+  );
+  return 1;
+}
+
+interface DaemonAttachTokenRow {
+  tokenId: string;
+  parentTokenId: string;
+  boundOrigin: string;
+  createdAt: number;
+  lastUsedAt: number;
 }
 
 interface DaemonDeviceRow {
   tokenId: string;
   boundOrigin: string;
   connections: number;
+  /** Slice 2: split connections by auth kind. Optional for back-compat. */
+  attachConnections?: number;
+  deviceConnections?: number;
   lastUsedAt: number | null;
 }
 

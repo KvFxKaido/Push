@@ -28,8 +28,29 @@ export interface PairedDeviceRecord {
   /** Stable client-side id; not derived from the token. */
   id: string;
   port: number;
-  /** Bearer token. Never log, never copy outside this module. */
+  /**
+   * Bearer token used for WS upgrades. Phase 3 slice 2: after the
+   * pairing flow successfully mints a device-attach token, this field
+   * is REPLACED with the attach token (`pushd_da_...`) and the
+   * durable device token is wiped from IndexedDB. The two kinds are
+   * indistinguishable from the upgrade-header carrier's POV — both
+   * travel as `Authorization: Bearer <token>` or
+   * `Sec-WebSocket-Protocol: bearer.<token>`. The daemon's WS auth
+   * tries attach first, falls back to device. Storage doesn't need
+   * to differentiate.
+   *
+   * Never log, never copy outside this module.
+   */
   token: string;
+  /**
+   * Phase 3 slice 2: when `token` is a device-attach token, this is
+   * the matching attach tokenId (`pdat_...`). When `token` is still
+   * the durable device token (briefly, during the pairing window
+   * before the first mint), this is undefined. Lets a future UI
+   * surface "this device hasn't completed the security handoff yet"
+   * without inspecting the secret.
+   */
+  attachTokenId?: string;
   /**
    * Token id printed by `push daemon pair`. Optional in PR 3b — the
    * web pair flow doesn't have a way to fetch the matching id from
@@ -86,4 +107,26 @@ export async function touchLastUsed(id: string, ts: number = Date.now()): Promis
   const record = await get<PairedDeviceRecord>(STORE.pairedDevices, id);
   if (!record) return;
   await put(STORE.pairedDevices, { ...record, lastUsedAt: ts });
+}
+
+/**
+ * Phase 3 slice 2: replace the stored bearer with a device-attach
+ * token. Called after the chat layer's first successful WS open mints
+ * one. The durable device token is overwritten — that's intentional;
+ * the device token's only remaining purpose was bootstrapping this
+ * attach token, and keeping it around would defeat the slice's
+ * blast-radius reduction goal. If the attach token later expires or
+ * is revoked, the user re-pairs to get a fresh device token.
+ */
+export async function upgradeToAttachToken(
+  id: string,
+  opts: { token: string; attachTokenId: string },
+): Promise<void> {
+  const record = await get<PairedDeviceRecord>(STORE.pairedDevices, id);
+  if (!record) return;
+  await put(STORE.pairedDevices, {
+    ...record,
+    token: opts.token,
+    attachTokenId: opts.attachTokenId,
+  });
 }

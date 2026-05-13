@@ -36,6 +36,13 @@ import {
   listDeviceTokens,
   type DeviceTokenRecord,
 } from './pushd-device-tokens.js';
+import {
+  mintDeviceAttachToken,
+  revokeDeviceAttachToken,
+  revokeAttachTokensByParent,
+  listDeviceAttachTokens,
+  getAttachTokenTtlMs,
+} from './pushd-attach-tokens.js';
 
 // Module-scoped reference to the running WS handle. Set when startPushdWs
 // completes, nulled on shutdown. Daemon admin handlers (`revoke_device_token`,
@@ -3761,11 +3768,13 @@ async function handleSandboxDiff(req) {
 }
 
 async function handleDaemonIdentify(req, _emitEvent, context) {
-  const record = context?.record;
-  if (!record || typeof record.tokenId !== 'string') {
-    // Unix-socket clients have no authenticated record to identify;
-    // the request type is meaningful only over WS. Return a clear
-    // error rather than fabricating an identity.
+  // Phase 3 slice 2: identify reads from the auth principal so an
+  // attach-token-authed connection still sees its parent device's
+  // identity. Reporting the attach tokenId would defeat the purpose
+  // of the device-identity surface (the attach token rotates; the
+  // device identity is what other peers actually recognize).
+  const auth = context?.auth;
+  if (!auth) {
     return makeErrorResponse(
       req.requestId,
       'daemon_identify',
@@ -3774,10 +3783,19 @@ async function handleDaemonIdentify(req, _emitEvent, context) {
     );
   }
   return makeResponse(req.requestId, 'daemon_identify', null, true, {
-    tokenId: record.tokenId,
-    boundOrigin: record.boundOrigin,
+    tokenId: auth.parentDeviceTokenId,
+    boundOrigin: auth.boundOrigin,
     daemonVersion: VERSION,
     protocolVersion: PROTOCOL_VERSION,
+    /**
+     * Slice 2 addition. Lets clients verify their connection's auth
+     * kind without exposing the attach tokenId (which is private).
+     * 'attach' means the client is using a derived short-lived
+     * token; 'device' means it's still using the durable bearer
+     * (typically only seen during the brief pairing window before
+     * the first mint).
+     */
+    authKind: auth.kind,
   });
 }
 
@@ -3806,7 +3824,7 @@ function refuseFromWs(req, type) {
  * the decision doc.
  */
 async function handleRevokeDeviceToken(req, _emitEvent, context) {
-  if (context?.record) return refuseFromWs(req, 'revoke_device_token');
+  if (context?.record || context?.auth) return refuseFromWs(req, 'revoke_device_token');
   const tokenId = typeof req.payload?.tokenId === 'string' ? req.payload.tokenId : '';
   if (!tokenId) {
     return makeErrorResponse(
@@ -3825,12 +3843,127 @@ async function handleRevokeDeviceToken(req, _emitEvent, context) {
       `no such token: ${tokenId}`,
     );
   }
+  // Cascade: every attach token derived from this device token is
+  // now orphaned and must be invalidated alongside its parent.
+  // Otherwise a stolen attach token would continue to authenticate
+  // even after the user clicked "revoke this device." Phase 3
+  // slice 2 — the load-bearing piece of the cascade contract.
+  const revokedAttachIds = await revokeAttachTokensByParent(tokenId);
+  // disconnectByTokenId is now device-scoped (slice 2): it closes
+  // every WS bearing this parent device, regardless of whether each
+  // individual connection used the device token directly or one of
+  // its attach tokens. So one call handles both the device-direct
+  // connection and every child attach connection.
   const closedConnections = activeWsHandle
     ? activeWsHandle.disconnectByTokenId(tokenId, 'device token revoked')
     : 0;
   return makeResponse(req.requestId, 'revoke_device_token', null, true, {
     tokenId,
     closedConnections,
+    revokedAttachTokens: revokedAttachIds,
+  });
+}
+
+/**
+ * Mint a fresh device-attach token. Requires a device-token-
+ * authenticated WS context: the durable device token is the credential
+ * that BOOTSTRAPS attach tokens, so an attach-token-authed caller
+ * cannot ask for a new attach token (no privilege escalation /
+ * refresh-chaining). Web clients use this once at pairing time, then
+ * discard the device token; CLI tooling never calls it.
+ *
+ * Refusing the call when the caller authed with an attach token
+ * preserves the "device token = durable, attach token = short-lived"
+ * model. A future slice may add a separate `refresh_attach_token`
+ * surface that DOES accept an attach-authed caller and rotates it
+ * for a fresh one, but the current minimum-viable shape is "mint
+ * via device token only."
+ */
+async function handleMintDeviceAttachToken(req, _emitEvent, context) {
+  const auth = context?.auth;
+  if (!auth) {
+    return makeErrorResponse(
+      req.requestId,
+      'mint_device_attach_token',
+      'UNSUPPORTED_VIA_TRANSPORT',
+      'mint_device_attach_token is only available over the WebSocket transport.',
+    );
+  }
+  if (auth.kind !== 'device') {
+    return makeErrorResponse(
+      req.requestId,
+      'mint_device_attach_token',
+      'DEVICE_TOKEN_REQUIRED',
+      'mint_device_attach_token requires a device-token-authenticated connection.',
+    );
+  }
+  const result = await mintDeviceAttachToken({
+    parentTokenId: auth.tokenId,
+    boundOrigin: auth.boundOrigin as 'loopback' | string,
+  });
+  return makeResponse(req.requestId, 'mint_device_attach_token', null, true, {
+    token: result.token,
+    tokenId: result.tokenId,
+    ttlMs: result.ttlMs,
+    parentTokenId: auth.tokenId,
+  });
+}
+
+/**
+ * Revoke a single attach token by id. Unix-socket admin only (mirrors
+ * `revoke_device_token`'s posture). Cascade is unnecessary here —
+ * attach tokens have no children — but we DO close the corresponding
+ * live WS connection so an attacker who already attached doesn't
+ * keep their session alive past the revoke. `disconnectByAttachTokenId`
+ * is narrow: it does NOT close the parent device's other connections.
+ */
+async function handleRevokeDeviceAttachToken(req, _emitEvent, context) {
+  if (context?.record || context?.auth) return refuseFromWs(req, 'revoke_device_attach_token');
+  const tokenId = typeof req.payload?.tokenId === 'string' ? req.payload.tokenId : '';
+  if (!tokenId) {
+    return makeErrorResponse(
+      req.requestId,
+      'revoke_device_attach_token',
+      'INVALID_REQUEST',
+      'tokenId is required',
+    );
+  }
+  const removed = await revokeDeviceAttachToken(tokenId);
+  if (!removed) {
+    return makeErrorResponse(
+      req.requestId,
+      'revoke_device_attach_token',
+      'TOKEN_NOT_FOUND',
+      `no such attach token: ${tokenId}`,
+    );
+  }
+  const closedConnections = activeWsHandle
+    ? activeWsHandle.disconnectByAttachTokenId(tokenId, 'attach token revoked')
+    : 0;
+  return makeResponse(req.requestId, 'revoke_device_attach_token', null, true, {
+    tokenId,
+    closedConnections,
+  });
+}
+
+/**
+ * `list_attach_tokens` returns metadata for every non-expired attach
+ * token in the file. Token text is never returned. Like
+ * `list_devices`, this is a Unix-socket-only admin surface — a paired
+ * device can't enumerate other devices' attach tokens.
+ */
+async function handleListAttachTokens(req, _emitEvent, context) {
+  if (context?.record || context?.auth) return refuseFromWs(req, 'list_attach_tokens');
+  const records = await listDeviceAttachTokens();
+  return makeResponse(req.requestId, 'list_attach_tokens', null, true, {
+    tokens: records.map((r) => ({
+      tokenId: r.tokenId,
+      parentTokenId: r.parentTokenId,
+      boundOrigin: r.boundOrigin,
+      createdAt: r.createdAt,
+      lastUsedAt: r.lastUsedAt,
+    })),
+    ttlMs: getAttachTokenTtlMs(),
   });
 }
 
@@ -3842,7 +3975,7 @@ async function handleRevokeDeviceToken(req, _emitEvent, context) {
  * now," not "who has ever been paired."
  */
 async function handleListDevices(req, _emitEvent, context) {
-  if (context?.record) return refuseFromWs(req, 'list_devices');
+  if (context?.record || context?.auth) return refuseFromWs(req, 'list_devices');
   // If the WS listener never started (PUSHD_WS=0 or startup failure),
   // surface that explicitly rather than reporting an empty list — an
   // empty list under a disabled listener would be misleading.
@@ -3871,6 +4004,12 @@ async function handleListDevices(req, _emitEvent, context) {
       tokenId: row.tokenId,
       boundOrigin: row.boundOrigin,
       connections: row.connections,
+      // Slice 2: expose the split so CLI/UI consumers can flag
+      // "device token still in use" — that means pairing hasn't yet
+      // upgraded to an attach token and the durable bearer is still
+      // active in the browser.
+      attachConnections: row.attachConnections,
+      deviceConnections: row.deviceConnections,
       lastUsedAt: fileRecord?.lastUsedAt ?? row.lastUsedAt,
     };
   });
@@ -3906,6 +4045,9 @@ const HANDLERS = {
   daemon_identify: handleDaemonIdentify,
   revoke_device_token: handleRevokeDeviceToken,
   list_devices: handleListDevices,
+  mint_device_attach_token: handleMintDeviceAttachToken,
+  revoke_device_attach_token: handleRevokeDeviceAttachToken,
+  list_attach_tokens: handleListAttachTokens,
 };
 
 export async function handleRequest(req, emitEvent, context = null) {
