@@ -153,6 +153,67 @@ export function buildWorkspaceContext(
   return sections.join('\n');
 }
 
+/**
+ * Workspace description for a `kind: 'local-pc'` session.
+ *
+ * Without this block, the orchestrator's environment section is empty
+ * for local-pc and the model falls back to cloud-sandbox priors —
+ * `/workspace/` paths, GitHub repo exploration, Explorer-delegation
+ * reflexes. This block establishes the local-pc facts explicitly.
+ *
+ * NOTE: this block alone is not sufficient. The orchestrator also
+ * needs `LOCAL_PC_TOOL_PROTOCOL` (the local-pc-shaped tool protocol)
+ * in place of `SANDBOX_TOOL_PROTOCOL`, otherwise the cloud sandbox
+ * protocol — which mentions `/workspace` 9+ times and lists remote-
+ * bound tools (promote, push, prepare_commit) — fights this context
+ * for the model's attention. See `orchestrator.ts`'s mode branch.
+ *
+ * Smoke-tested 2026-05-13 after PR 3c.2: without this block the model
+ * rewrote `/tmp/foo` → `/workspace/foo` on writes and reflexively
+ * delegated Explorer to "trace auth flow in src/auth.ts" (which is
+ * literally the canonical example in the explorer tool registry —
+ * the model parrots it back when it has no other context).
+ */
+export function buildLocalPcWorkspaceContext(): string {
+  return [
+    'WORKSPACE — Paired Local PC (pushd daemon):',
+    '',
+    "You are connected to a local daemon (pushd) running on the user's machine.",
+    "The daemon's current working directory IS the workspace root — relative paths",
+    'resolve against it. Absolute paths are REAL host filesystem paths.',
+    '',
+    'PATH RULES (load-bearing):',
+    '• Do NOT rewrite absolute paths into a `/workspace/` prefix. `/tmp/foo` means',
+    '  `/tmp/foo` on the host, not `/workspace/foo`. There is no `/workspace/` here.',
+    "• The daemon enforces a repo allowlist: writes must land inside the daemon's",
+    '  cwd (or another configured allowed root). If a write to an absolute path',
+    '  outside the allowlist is rejected (`PATH_OUTSIDE_WORKSPACE`), retry with a',
+    '  relative path or surface the constraint to the user — do NOT invent a',
+    '  `/workspace/` path to substitute.',
+    '• Relative paths (`./src/foo.ts`, `package.json`) resolve against the cwd and',
+    '  are the simplest shape for most operations.',
+    '',
+    'NO GITHUB REPO is bound to this workspace.',
+    '• Do NOT delegate to the Explorer agent — its tooling depends on GitHub repo',
+    "  context that doesn't exist here. The Explorer summary will be confused or",
+    '  empty and the user will see a useless answer.',
+    '• Do NOT call `commit`, `push`, `pr`, `promote_to_github`, or remote-bound',
+    '  tools — there is no remote.',
+    '',
+    'AVAILABLE TOOLS for filesystem and command work (see the local-pc protocol',
+    'block below for the full signatures):',
+    '• `sandbox_exec` — run a shell command on the host (cwd = workspace root)',
+    '• `sandbox_read_file` — read a file by absolute or relative path',
+    '• `sandbox_write_file` — write a file by absolute or relative path',
+    '• `sandbox_list_dir` — list a directory',
+    '• `sandbox_get_diff` (alias `sandbox_diff`) — show git diff for the workspace',
+    '',
+    'When the user asks a simple one-shot question (e.g. "what\'s my pwd?"), call',
+    'ONE tool and answer with the result. Do not delegate or fan out exploration',
+    'for short questions.',
+  ].join('\n');
+}
+
 // ─── Session Diagnostics/Capabilities ───
 
 function parseDurationToMs(raw: string | null | undefined): number | null {
