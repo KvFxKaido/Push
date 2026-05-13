@@ -77,11 +77,43 @@ export interface PushdWsOptions {
   maxTokenLength?: number;
 }
 
+/**
+ * Live snapshot of one paired device's connection state, returned by
+ * `listConnectedDevices`. Aggregates all open WS connections that
+ * authenticated with the same device token — a single device may have
+ * more than one (e.g. two browser tabs to the same paired daemon).
+ */
+export interface ConnectedDeviceRow {
+  tokenId: string;
+  boundOrigin: string;
+  /** Number of currently-open WS connections bearing this tokenId. */
+  connections: number;
+  /** Most recent `lastUsedAt` observed across the connections. */
+  lastUsedAt: number | null;
+}
+
 export interface PushdWsHandle {
   /** Bound TCP port. */
   port: number;
   /** Stop the listener and close active connections. */
   close: () => Promise<void>;
+  /**
+   * Snapshot of currently-connected devices keyed by tokenId. Phase 3
+   * `list_devices` handler. Each row aggregates all open WS handles
+   * that authenticated with the same token, since one paired device
+   * can hold multiple WS connections to the same daemon.
+   */
+  listConnectedDevices: () => ConnectedDeviceRow[];
+  /**
+   * Close every open WS connection currently bearing `tokenId` with
+   * close code 1008 ("policy violation") and the given reason. Used
+   * by `revoke_device_token` to enforce a live disconnect — without
+   * this, revoke only affected future upgrades and an attacker
+   * holding a stolen bearer kept their session alive. Returns the
+   * number of connections that were closed; 0 means no live
+   * connection existed for that tokenId.
+   */
+  disconnectByTokenId: (tokenId: string, reason: string) => number;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -214,6 +246,22 @@ export async function startPushdWs(
       protocols.has(SUBPROTOCOL_SELECTOR) ? SUBPROTOCOL_SELECTOR : false,
   });
 
+  // Phase 3 connection registry. Per-tokenId set of live WS handles
+  // so we can (a) list connected devices for `push daemon devices`
+  // and (b) close every WS bearing a given tokenId when its owner
+  // revokes it. The map is updated synchronously on connection /
+  // close — there's no async race with the auth check above because
+  // both run on the same event-loop tick as the WS upgrade.
+  //
+  // We keep the `boundOrigin` / `lastUsedAt` on the entry so the list
+  // handler doesn't have to re-read the tokens file just to render a
+  // row (which would also race with concurrent revokes).
+  interface ConnectionRegistryEntry {
+    ws: WebSocket;
+    record: DeviceTokenRecord;
+  }
+  const connectionsByTokenId = new Map<string, Set<ConnectionRegistryEntry>>();
+
   httpServer.on('upgrade', async (req, socket, head) => {
     try {
       const rawOrigin = req.headers.origin as string | undefined;
@@ -268,6 +316,19 @@ export async function startPushdWs(
   wss.on('connection', (ws: WebSocket, _req: IncomingMessage, record: DeviceTokenRecord) => {
     // Update lastUsedAt out-of-band; never block the connection on it.
     touchLastUsed(record.tokenId).catch(() => {});
+
+    // Register this connection so `list_devices` can surface it and
+    // `revoke_device_token` can close it. The set is keyed by the
+    // device tokenId because that's the natural identity for a
+    // paired device — one device can hold multiple WS handles (e.g.
+    // two browser tabs) and revoke needs to close them all.
+    const registryEntry: ConnectionRegistryEntry = { ws, record };
+    let bucket = connectionsByTokenId.get(record.tokenId);
+    if (!bucket) {
+      bucket = new Set();
+      connectionsByTokenId.set(record.tokenId, bucket);
+    }
+    bucket.add(registryEntry);
 
     const attachedSessions = new Set<string>();
     // Per-connection state plumbed into every handler via the dispatcher
@@ -378,6 +439,14 @@ export async function startPushdWs(
         }
       }
       wsState.activeRuns.clear();
+      // Deregister from the per-tokenId connection bucket. If this was
+      // the last connection for the token, drop the (now empty) bucket
+      // so `listConnectedDevices` doesn't surface stale zero-rows.
+      const reg = connectionsByTokenId.get(record.tokenId);
+      if (reg) {
+        reg.delete(registryEntry);
+        if (reg.size === 0) connectionsByTokenId.delete(record.tokenId);
+      }
     };
     ws.on('close', cleanup);
     ws.on('error', cleanup);
@@ -424,6 +493,46 @@ export async function startPushdWs(
               });
             });
           }),
+        listConnectedDevices: () => {
+          const rows: ConnectedDeviceRow[] = [];
+          for (const [tokenId, bucket] of connectionsByTokenId) {
+            // The first entry's record carries the boundOrigin /
+            // lastUsedAt; all entries in a bucket share a tokenId so
+            // their record fields are identical (we revoke or rotate
+            // by tokenId, not per-connection).
+            const first = bucket.values().next().value;
+            if (!first) continue;
+            rows.push({
+              tokenId,
+              boundOrigin: String(first.record.boundOrigin),
+              connections: bucket.size,
+              lastUsedAt: first.record.lastUsedAt,
+            });
+          }
+          // Deterministic order so `push daemon devices` doesn't shuffle
+          // between invocations — sort by tokenId.
+          rows.sort((a, b) => a.tokenId.localeCompare(b.tokenId));
+          return rows;
+        },
+        disconnectByTokenId: (tokenId: string, reason: string) => {
+          const bucket = connectionsByTokenId.get(tokenId);
+          if (!bucket) return 0;
+          let closed = 0;
+          for (const entry of bucket) {
+            try {
+              // Code 1008 = "policy violation", the canonical close
+              // code for "server rejects this connection on policy
+              // grounds." Mirrors the close code an authenticated
+              // server uses to terminate sessions after a permission
+              // change.
+              entry.ws.close(1008, reason);
+              closed += 1;
+            } catch {
+              /* ignore — the close cleanup will deregister anyway */
+            }
+          }
+          return closed;
+        },
       });
     });
   });

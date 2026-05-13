@@ -2019,8 +2019,24 @@ async function runDaemonSubcommand(values, positionals) {
     return runDaemonTokens(values);
   }
 
+  if (action === 'allow') {
+    return runDaemonAllow(positionals);
+  }
+
+  if (action === 'deny') {
+    return runDaemonDeny(positionals);
+  }
+
+  if (action === 'allowlist') {
+    return runDaemonAllowlist(values);
+  }
+
+  if (action === 'devices') {
+    return runDaemonDevices(values);
+  }
+
   throw new Error(
-    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep] | pair [--origin <url>] | revoke <tokenId> | tokens`,
+    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep] | pair [--origin <url>] | revoke <tokenId> | tokens | allow <path> | deny <path> | allowlist | devices`,
   );
 }
 
@@ -2068,13 +2084,34 @@ async function runDaemonRevoke(positionals: string[]): Promise<number> {
     process.stderr.write('Usage: push daemon revoke <tokenId>\n');
     return 1;
   }
-  const { revokeDeviceToken } = await import('./pushd-device-tokens.js');
-  const removed = await revokeDeviceToken(tokenId);
-  if (removed) {
-    process.stdout.write(`revoked ${tokenId}\n`);
+  // Prefer routing through the running daemon — it mutates the tokens
+  // file AND closes any live WS connections that bear this token. If
+  // the daemon isn't running, fall back to direct file mutation;
+  // future upgrades will be rejected, and there's no live connection
+  // to kill anyway. Phase 3 (#517 follow-up): live disconnect closes
+  // the open-question #6 gap in the decision doc.
+  const daemonResponse = await sendDaemonAdminRequest({
+    type: 'revoke_device_token',
+    payload: { tokenId },
+  });
+  if (daemonResponse.ok) {
+    const closed = (daemonResponse.payload?.closedConnections as number) ?? 0;
+    process.stdout.write(
+      `revoked ${tokenId}${closed > 0 ? ` (closed ${closed} live connection${closed === 1 ? '' : 's'})` : ''}\n`,
+    );
     return 0;
   }
-  process.stderr.write(`no such token: ${tokenId}\n`);
+  if (daemonResponse.error === 'daemon not running') {
+    const { revokeDeviceToken } = await import('./pushd-device-tokens.js');
+    const removed = await revokeDeviceToken(tokenId);
+    if (removed) {
+      process.stdout.write(`revoked ${tokenId} (daemon offline, no live connections)\n`);
+      return 0;
+    }
+    process.stderr.write(`no such token: ${tokenId}\n`);
+    return 1;
+  }
+  process.stderr.write(`revoke failed: ${daemonResponse.error}\n`);
   return 1;
 }
 
@@ -2099,6 +2136,147 @@ async function runDaemonTokens(values: Record<string, unknown>): Promise<number>
     );
   }
   return 0;
+}
+
+async function runDaemonAllow(positionals: string[]): Promise<number> {
+  const rawPath = positionals[2];
+  if (!rawPath) {
+    process.stderr.write('Usage: push daemon allow <absolute-path>\n');
+    return 1;
+  }
+  const { addAllowedPath } = await import('./pushd-allowlist.js');
+  try {
+    const added = await addAllowedPath(rawPath);
+    if (added) process.stdout.write(`added ${rawPath}\n`);
+    else process.stdout.write(`already allowed: ${rawPath}\n`);
+    return 0;
+  } catch (err) {
+    process.stderr.write(`allow failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
+async function runDaemonDeny(positionals: string[]): Promise<number> {
+  const rawPath = positionals[2];
+  if (!rawPath) {
+    process.stderr.write('Usage: push daemon deny <absolute-path>\n');
+    return 1;
+  }
+  const { removeAllowedPath } = await import('./pushd-allowlist.js');
+  const removed = await removeAllowedPath(rawPath);
+  if (removed) {
+    process.stdout.write(`removed ${rawPath}\n`);
+    return 0;
+  }
+  process.stderr.write(`not in allowlist: ${rawPath}\n`);
+  return 1;
+}
+
+async function runDaemonAllowlist(values: Record<string, unknown>): Promise<number> {
+  const { listAllowedPaths, snapshotAllowlist } = await import('./pushd-allowlist.js');
+  const records = await listAllowedPaths();
+  if (values?.json) {
+    const snapshot = await snapshotAllowlist();
+    process.stdout.write(`${JSON.stringify({ entries: records, effective: snapshot }, null, 2)}\n`);
+    return 0;
+  }
+  if (records.length === 0) {
+    process.stdout.write(
+      `no explicit allowlist (implicit default: ${process.cwd()})\n` +
+        `add with: push daemon allow <absolute-path>\n`,
+    );
+    return 0;
+  }
+  for (const r of records) {
+    const added = new Date(r.addedAt).toISOString();
+    process.stdout.write(`${r.path}  added=${added}\n`);
+  }
+  return 0;
+}
+
+/**
+ * `push daemon devices` — connect to the running daemon's Unix socket
+ * and ask for the list of currently-attached WS connections (per-
+ * device). Falls back to listing the device-token records (without
+ * live status) if the daemon isn't running.
+ */
+async function runDaemonDevices(values: Record<string, unknown>): Promise<number> {
+  const response = await sendDaemonAdminRequest({ type: 'list_devices', payload: {} });
+  if (!response.ok) {
+    process.stderr.write(`devices failed: ${response.error}\n`);
+    return 1;
+  }
+  const devices = (response.payload?.devices as DaemonDeviceRow[]) ?? [];
+  if (values?.json) {
+    process.stdout.write(`${JSON.stringify(devices, null, 2)}\n`);
+    return 0;
+  }
+  if (devices.length === 0) {
+    process.stdout.write('no devices connected\n');
+    return 0;
+  }
+  for (const d of devices) {
+    const lastUsed = d.lastUsedAt ? new Date(d.lastUsedAt).toISOString() : 'never';
+    process.stdout.write(
+      `${d.tokenId}  ${d.boundOrigin}  connections=${d.connections}  lastUsed=${lastUsed}\n`,
+    );
+  }
+  return 0;
+}
+
+interface DaemonDeviceRow {
+  tokenId: string;
+  boundOrigin: string;
+  connections: number;
+  lastUsedAt: number | null;
+}
+
+interface DaemonAdminResponse {
+  ok: boolean;
+  payload?: Record<string, unknown>;
+  error?: string;
+}
+
+/**
+ * Open a one-shot connection to the daemon's Unix socket, send a
+ * single admin request, await the response, close. Used by CLI
+ * subcommands that need a *live* view or *live* mutation of daemon
+ * state — `push daemon devices` (read live WS connections) and
+ * `push daemon revoke` (close any live WS for a token in addition
+ * to mutating the tokens file).
+ *
+ * If the daemon socket isn't reachable, returns `{ ok: false,
+ * error: 'daemon not running' }` so the caller can fall back to a
+ * file-only path (existing `runDaemonRevoke` behavior).
+ */
+async function sendDaemonAdminRequest(opts: {
+  type: string;
+  payload: Record<string, unknown>;
+  timeoutMs?: number;
+}): Promise<DaemonAdminResponse> {
+  const { connect: connectDaemon } = await import('./daemon-client.js');
+  const socketPath = getSocketPath();
+  let client: Awaited<ReturnType<typeof connectDaemon>>;
+  try {
+    client = await connectDaemon(socketPath);
+  } catch {
+    return { ok: false, error: 'daemon not running' };
+  }
+  try {
+    const response = await client.request(opts.type, opts.payload, undefined, opts.timeoutMs);
+    return {
+      ok: Boolean(response.ok),
+      payload: (response.payload as Record<string, unknown>) ?? {},
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    try {
+      client.close();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /**

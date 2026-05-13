@@ -22,7 +22,7 @@ The shipped scope diverged from the original Phase 1 enumeration in one way: the
 | 1.f — Daemon-side mid-run cancellation | `pushd-ws.ts` maintains a per-WS `wsState.activeRuns: Map<runId, AbortController>` plumbed into `handleSandboxExec` via the dispatcher context. The exec handler registers an AbortController under the payload's `runId` and passes its signal to `runCommandInResolvedShell`; the SAME-connection `cancel_run` (sessionId omitted, runId required) aborts the child and returns `cancelled: true`. The web client mints a `runId` per call and, when the chat hook's `abortControllerRef.signal` fires, sends `cancel_run` on the same transient binding before rejecting with `AbortError`. Cross-WS cancel is refused on purpose — the active-runs map is connection-scoped, not global. | Shipped 2026-05-13 | claude/remote-sessions-auto-reconnect |
 | 1.f — Approval UI (submit_approval) | Surface pushd's `submit_approval` flow in the web UI. Not currently needed: the web side carries approval-gate state itself in `WebToolExecutionRuntime`. Lands when chat-attaches-to-an-existing-pushd-run becomes a real flow. | Deferred (no current consumer) | — |
 | 2 — Worker-mediated relay | Outbound-from-PC WebSocket to a Worker/DO that pairs phone client to daemon. Deferred — not on the current sprint. | Open | — |
-| 3 — Permission + audit model | Repo allowlist, per-session attach token, connected-device list, audit log with surface/device provenance. | Open | — |
+| 3 — Permission + audit model | Repo allowlist, per-session attach token, connected-device list, audit log with surface/device provenance. | **In progress** — slice 1 (allowlist + connected-device list + live revoke) landing on `claude/remote-sessions-phase3-allowlist`; submit_approval surface, attach token, audit log to follow. | claude/remote-sessions-phase3-allowlist |
 | 4 — Desktop wrapper | Tray/menu-bar packaging, `pushd` at login, pairing UI. Polish, not core. | Open | — |
 
 ### Notable architectural decisions captured during Phase 1.a–1.c
@@ -134,13 +134,13 @@ Remote file editing needs a stronger permission shape than "the app is open."
 
 Minimum model:
 
-- explicit pairing flow per device
-- repo/root allowlist on the PC
-- per-session attach token, separate from the deployment token
-- visible connected-device list in the desktop/daemon UI
-- approval prompts identify the requesting surface/device
-- audit log includes `surface`, `deviceId`, `sessionId`, `runId`, repo path, command/tool, and approval decision
-- revoke device/session from the PC side
+- explicit pairing flow per device ✓ shipped Phase 1.b
+- repo/root allowlist on the PC ✓ slice 1 — daemon-global allowlist at `~/.push/run/pushd.allowlist`, managed via `push daemon allow|deny|allowlist`; enforced by `resolveAndAuthorize` in `cli/pushd-allowlist.ts` for every `sandbox_read_file`/`sandbox_write_file`/`sandbox_list_dir`/`sandbox_diff` and as a cwd gate for `sandbox_exec`. Empty file → implicit-cwd default; any explicit entry switches to strict "only listed roots" mode. Documented limitation: `sandbox_exec` commands can still touch any file the daemon process can reach — chroot/namespace isolation is out of scope.
+- per-session attach token, separate from the deployment token (open — slice 2)
+- visible connected-device list in the desktop/daemon UI ✓ slice 1 — `push daemon devices` lists live WS connections per tokenId; pushd-ws tracks `connectionsByTokenId` and exposes `listConnectedDevices()`.
+- approval prompts identify the requesting surface/device (open — depends on `submit_approval` UI)
+- audit log includes `surface`, `deviceId`, `sessionId`, `runId`, repo path, command/tool, and approval decision (open — slice 3)
+- revoke device/session from the PC side ✓ slice 1 (live disconnect): `push daemon revoke <tokenId>` now routes through the daemon's Unix socket (with file-mutation fallback when offline). The handler mutates the tokens file AND calls `disconnectByTokenId(tokenId)` to close every WS bearing that token with close code 1008. Closes open question #6 below.
 
 ### Phase 4: Desktop Wrapper As Polish
 
@@ -187,7 +187,7 @@ Relay logging should be minimal. Protocol envelopes can contain file paths, comm
 3. ~~Protocol validation: move `cli/protocol-schema.ts` into `lib/` in Phase 1, or wait until web/mobile consumes the daemon protocol directly?~~ **Answered (PR #508)**: moved into `lib/protocol-schema.ts` during Phase 1 because the web adapter consumes it directly. `cli/session-store.ts` re-exports for back-compat. The `cli/tests/protocol-schema-canonical.test.mjs` drift guard scans `app/src/` for duplicate version literals or validator re-defs.
 4. ~~Local connector transport: browser-to-localhost WebSocket, native wrapper bridge, or both?~~ **Answered**: browser-to-localhost WebSocket. The browser's `WebSocket` constructor can't set arbitrary headers, so the bearer travels in `Sec-WebSocket-Protocol`. Native wrapper bridge is not on the current roadmap — Phase 4 desktop wrapper would still tunnel through the same WS, not introduce a parallel transport.
 5. ~~Workspace Hub UX: how does a user distinguish cloud sandbox workspaces from local-PC remote sessions?~~ **Answered (PR #510)**: dedicated "Local PC · Experimental" tile in both Onboarding and Hub (flag-gated by `VITE_LOCAL_PC_MODE`); paired workspace renders an always-visible amber `LocalPcModeChip` showing `Local PC · :<port> · <status>` in the header. Cloud sessions render no chip — absence is the affordance.
-6. Revocation: what is the exact PC-side UX for "kick this phone off now"? **Partially answered**: `push daemon revoke <tokenId>` exists on the CLI and the web "Unpair" button clears the IndexedDB record on the browser side. There's no live-disconnect surface yet — revoking a token affects future upgrades only, not an active socket. Phase 1.f or Phase 3 will close this.
+6. ~~Revocation: what is the exact PC-side UX for "kick this phone off now"?~~ **Answered (Phase 3 slice 1)**: `push daemon revoke <tokenId>` now routes through the daemon's Unix socket. The handler mutates the tokens file AND closes every live WS bearing that tokenId with close code 1008. The CLI prints the number of live connections closed (`revoked pdt_... (closed 2 live connections)`). If the daemon isn't running, the CLI falls back to direct file mutation — there's no live connection to kill anyway. Web side still clears the IndexedDB record on the browser's "Unpair" button.
 7. Network failure: how much local daemon work can continue when the phone disconnects? **Still open** — depends on Phase 1.d's chat-layer wiring (3c.2) shipping first.
 8. Diff/review payload shape across the relay: when a phone surface attaches to a remote `pushd` daemon and Reviewer/Auditor/Coder emit diff + annotations, what envelope rides the relay? **Tracked separately** in `docs/decisions/Diff and Annotation Envelope.md` (Draft, 2026-05-12). The decision there is to hand-roll the envelope in `lib/` and treat `@pierre/diffs` and `modem-dev/hunk` as design references only; this keeps remote sessions on `push.runtime.v1` without inventing a parallel vocabulary for review payloads.
 
