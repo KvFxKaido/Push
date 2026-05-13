@@ -45,6 +45,7 @@
 
 import type { DurableObjectState, WebSocket } from '@cloudflare/workers-types';
 import {
+  PROTOCOL_VERSION,
   isRelayEnvelope,
   validateRelayEnvelope,
   type RelayEnvelope,
@@ -69,18 +70,32 @@ interface BufferedEnvelope {
 
 const DEFAULT_BUFFER_COUNT = 256;
 const DEFAULT_BUFFER_AGE_MS = 60_000;
+// Upper bounds for env-driven config. A fat-fingered secret like
+// `PUSH_RELAY_BUFFER_COUNT=1000000` could pin gigabytes per DO instance;
+// a multi-day age cap could likewise outlast the DO's natural eviction
+// rhythm. Clamp to values that stay within sane DO memory budgets while
+// still leaving the operator real headroom over the defaults. PR #528
+// Copilot review.
+const MAX_BUFFER_COUNT = 10_000;
+const MAX_BUFFER_AGE_MS = 60 * 60 * 1000; // 1 hour
 
 /**
- * Parse an env-var string as a positive integer. Returns the default
- * for any input that isn't strictly a positive integer (empty, NaN,
- * negative, fractional, or non-integer string). Operators tuning a
- * Worker secret get the default rather than a confusing partial
- * config when they fat-finger the value.
+ * Parse an env-var string as a positive integer within [1, max].
+ * Returns the default for any input that isn't strictly a positive
+ * integer (empty, NaN, negative, fractional, non-integer string) AND
+ * for values that exceed `max`. Operators tuning a Worker secret get
+ * the default rather than a confusing partial config when they fat-
+ * finger the value, and absurd values can't OOM the DO.
  */
-function parsePositiveIntEnv(raw: string | undefined, fallback: number): number {
+function parseClampedPositiveIntEnv(
+  raw: string | undefined,
+  fallback: number,
+  max: number,
+): number {
   if (typeof raw !== 'string' || raw.length === 0) return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return fallback;
+  if (n > max) return fallback;
   return n;
 }
 
@@ -100,8 +115,16 @@ export class RelaySessionDO {
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     void this.state;
-    this.bufferCount = parsePositiveIntEnv(env.PUSH_RELAY_BUFFER_COUNT, DEFAULT_BUFFER_COUNT);
-    this.bufferAgeMs = parsePositiveIntEnv(env.PUSH_RELAY_BUFFER_AGE_MS, DEFAULT_BUFFER_AGE_MS);
+    this.bufferCount = parseClampedPositiveIntEnv(
+      env.PUSH_RELAY_BUFFER_COUNT,
+      DEFAULT_BUFFER_COUNT,
+      MAX_BUFFER_COUNT,
+    );
+    this.bufferAgeMs = parseClampedPositiveIntEnv(
+      env.PUSH_RELAY_BUFFER_AGE_MS,
+      DEFAULT_BUFFER_AGE_MS,
+      MAX_BUFFER_AGE_MS,
+    );
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -221,7 +244,7 @@ export class RelaySessionDO {
         return;
       }
       if (classified) {
-        this.handleRelayControl(senderMeta, classified);
+        this.handleRelayControl(sender, senderMeta, classified);
         return;
       }
     }
@@ -229,7 +252,11 @@ export class RelaySessionDO {
     this.forwardData(sender, senderMeta, data);
   }
 
-  private handleRelayControl(senderMeta: ConnectionMeta, envelope: RelayEnvelope): void {
+  private handleRelayControl(
+    sender: WebSocket,
+    senderMeta: ConnectionMeta,
+    envelope: RelayEnvelope,
+  ): void {
     // Allowlist mutations are pushd-only — a phone sending a
     // `relay_phone_allow` would otherwise be able to grant itself
     // access. Drop and log (defensive: pushd is the authority).
@@ -262,14 +289,11 @@ export class RelaySessionDO {
     }
 
     // Phase 2.d.2: `relay_attach` is consumed by the ring-buffer
-    // replay path. The caller knows which connection sent it because
-    // it routes through the same handler — we look it up by ConnectionMeta
-    // identity (the only phone-originated relay-control envelope).
+    // replay path. Only phones can send it; pushd emitting one is a
+    // protocol violation and gets dropped here.
     if (envelope.kind === 'relay_attach') {
-      // No-op when sent by anything other than a phone — pushd
-      // emitting a `relay_attach` is a protocol violation, drop.
       if (senderMeta.role !== 'phone') return;
-      this.handleRelayAttach(senderMeta, envelope.lastSeq);
+      this.handleRelayAttach(sender, senderMeta.bearer, envelope.lastSeq);
       return;
     }
 
@@ -282,31 +306,43 @@ export class RelaySessionDO {
    * `relay_replay_unavailable` if the gap exceeds the buffer.
    *
    * Cases:
-   *   - lastSeq undefined: phone is starting fresh, no replay needed.
-   *   - buffer empty: no events to replay; nothing to do (the client
-   *     either hasn't missed anything or the buffer aged out — we
-   *     can't distinguish, but emitting `relay_replay_unavailable`
-   *     here would be wrong on a fresh session, so we stay quiet).
+   *   - sender's bearer not in allowlist: silent no-op. This closes
+   *     the symmetric flaw to `forwardData`'s gating — an un-allowlisted
+   *     phone connecting and immediately sending `relay_attach` would
+   *     otherwise siphon buffered session events. PR #528 Copilot + Codex
+   *     P1 (independent flags on the same bug). Importantly we DROP
+   *     `relay_replay_unavailable` too — sending it would leak that
+   *     the bearer reached the DO at all.
+   *   - lastSeq undefined or non-finite: phone is starting fresh (or
+   *     misbehaving), no replay needed.
+   *   - buffer empty: no events to replay; nothing to do.
    *   - buffer's max seq <= lastSeq: client is up to date; no replay.
    *   - buffer's min seq > lastSeq + 1: gap is larger than buffered
-   *     window; emit `relay_replay_unavailable`. The client falls back
-   *     to `attach_session` for current state.
+   *     window; emit `relay_replay_unavailable` so the client falls
+   *     back to `attach_session` for current state.
    *   - otherwise: send all buffered entries with seq > lastSeq in
-   *     order. Eviction has already trimmed expired entries via
-   *     `evictExpired()`.
+   *     order. Eviction has already trimmed expired entries.
    */
-  private handleRelayAttach(senderMeta: ConnectionMeta, lastSeq: number | undefined): void {
-    if (senderMeta.role !== 'phone') return;
-    if (typeof lastSeq !== 'number') return;
+  private handleRelayAttach(phone: WebSocket, bearer: string, lastSeq: number | undefined): void {
+    // Allowlist gate, symmetric with forwardData. Without this, the
+    // ring buffer becomes a leak channel for any phone that knows the
+    // sessionId and presents a well-shaped bearer. Closes Copilot +
+    // Codex P1.
+    if (!this.allowedPhoneBearers.has(bearer)) return;
+    // typeof check first, then isFinite — `typeof NaN === 'number'` so
+    // the type check alone is insufficient. Without the finite check a
+    // crafted `lastSeq: NaN` would skip the up-to-date/gap conditions
+    // (all NaN comparisons are false) and fall through to the replay
+    // loop where `entry.seq <= NaN` is false → every buffered entry
+    // sent. Kilo flagged this on #528.
+    if (typeof lastSeq !== 'number' || !Number.isFinite(lastSeq)) return;
+    if (phone.readyState !== 1) return;
 
     // Evict expired entries before deciding replay vs. unavailable.
     // Without this, a stale entry could keep `min seq` artificially
     // low and skip the unavailable signal even though the phone
     // can't actually be brought up to date.
     this.evictExpired();
-
-    const phone = this.findConnectionByMeta(senderMeta);
-    if (!phone || phone.readyState !== 1) return;
 
     if (this.buffer.length === 0) return; // nothing to replay or signal
     const minSeq = this.buffer[0].seq;
@@ -318,7 +354,7 @@ export class RelaySessionDO {
       // Gap is larger than the ring buffer can cover. Tell the client
       // explicitly so it can fall back rather than silently missing.
       const unavailable = {
-        v: 'push.runtime.v1' as const,
+        v: PROTOCOL_VERSION,
         kind: 'relay_replay_unavailable' as const,
         reason: `buffer gap: oldest buffered seq=${minSeq}, requested replay from seq=${lastSeq + 1}`,
         ts: Date.now(),
@@ -345,13 +381,6 @@ export class RelaySessionDO {
         return;
       }
     }
-  }
-
-  private findConnectionByMeta(target: ConnectionMeta): WebSocket | null {
-    for (const [ws, meta] of this.connections) {
-      if (meta === target) return ws;
-    }
-    return null;
   }
 
   private forwardData(
