@@ -62,6 +62,7 @@ import { sanitizeUrlForLogging } from './src/worker/worker-log-utils';
 import { summarizeSnapshotIndex } from './src/worker/snapshot-index';
 import { handleAdminSnapshots } from './src/worker/admin-routes';
 import { handleJobsRoute, matchJobsRoute } from './src/worker/worker-coder-job';
+import { handleRelayRequest, matchRelayRoute } from './src/worker/relay-routes';
 import { handleStats } from './src/worker/worker-stats';
 import {
   handleArtifactsCreate,
@@ -78,6 +79,10 @@ export { Sandbox } from '@cloudflare/sandbox';
 
 // Background-jobs DO — Phase 1 of Background Coder Tasks.
 export { CoderJob } from './src/worker/coder-job-do';
+
+// Remote Sessions relay DO — Phase 2.b scaffold. Bound as `RELAY_SESSIONS`
+// in wrangler.jsonc; routes live in `relay-routes.ts`.
+export { RelaySessionDO } from './src/worker/relay-do';
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -142,6 +147,18 @@ export default {
       if (jobsMatch) {
         return withRequestIdOnResponse(
           await handleJobsRoute(requestWithId, env, jobsMatch),
+          requestId,
+          requestWithId,
+          env,
+        );
+      }
+
+      // Remote Sessions relay — Phase 2.b scaffold. Gated by
+      // PUSH_RELAY_ENABLED=1; otherwise the route returns 503 NOT_ENABLED.
+      const relayMatch = matchRelayRoute(url.pathname, request.method);
+      if (relayMatch) {
+        return withRequestIdOnResponse(
+          await handleRelayRequest(requestWithId, env, relayMatch),
           requestId,
           requestWithId,
           env,

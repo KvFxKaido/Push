@@ -160,6 +160,10 @@
       {
         "name": "CoderJob",
         "class_name": "CoderJob"
+      },
+      {
+        "name": "RELAY_SESSIONS",
+        "class_name": "RelaySessionDO"
       }
     ]
   },
@@ -171,6 +175,13 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["CoderJob"]
+    },
+    {
+      "tag": "v3",
+      // Remote Sessions relay (Phase 2.b). No SQLite — the relay DO is
+      // intentionally storage-less; see docs/decisions/Remote Sessions
+      // via pushd Relay.md Q#2. Use `new_classes`, NOT `new_sqlite_classes`.
+      "new_classes": ["RelaySessionDO"]
     }
   ],
   // Daily snapshot index walk — emits aggregate metrics so we can size the
