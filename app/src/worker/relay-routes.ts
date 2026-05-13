@@ -34,15 +34,18 @@
  *   1. PUSH_RELAY_ENABLED === '1'   → otherwise 503 NOT_ENABLED
  *   2. env.RELAY_SESSIONS bound     → otherwise 503 NOT_CONFIGURED
  *   3. validateOrigin               → otherwise 403 ORIGIN_REJECTED
- *      Phase 2.e carve-out: a pre-parse of the bearer subprotocol
- *      runs FIRST. If the bearer starts with `pushd_relay_`, the
- *      origin gate is skipped — pushd's outbound dial is a Node
- *      WebSocket, not a browser, and carries no `Origin` header.
- *      The carve-out is bearer-prefix-scoped (not "any auth bypasses
- *      origin"): phone bearers (`pushd_da_*`) still enforce the
- *      origin check, because they ARE browser-originated and a CSRF
- *      target. Without this discrimination the carve-out would
- *      widen the CSRF surface for everyone.
+ *      Phase 2.e carve-out (post-#529 Copilot review): skip the
+ *      origin gate when the request has NO `Origin` header at all.
+ *      pushd's outbound Node WS doesn't auto-add Origin; browsers
+ *      ALWAYS auto-add Origin on a WebSocket upgrade (even an
+ *      opaque-origin sandboxed iframe sends `Origin: null`). So
+ *      "Origin header is genuinely absent" is a property pushd can
+ *      satisfy and a browser CANNOT spoof — tighter than gating on
+ *      a `Sec-WebSocket-Protocol` bearer prefix, which a browser
+ *      could set arbitrarily (auth would still reject the bearer,
+ *      but the bypass widened the CSRF probe surface). Bearer
+ *      validation still runs after; this just controls whether
+ *      `validateOrigin` runs first.
  *   4. RATE_LIMITER                 → otherwise 429
  *   5. Upgrade: websocket           → otherwise 426
  *   6. Bearer parsing + validation  → otherwise 401
@@ -110,23 +113,23 @@ export async function handleRelayRequest(
     );
   }
 
-  // Phase 2.e: pre-parse the bearer so we can decide whether to run
-  // the origin gate. The origin check exists to block browser CSRF;
-  // a Node-side outbound WS (pushd) is not a CSRF vector and doesn't
-  // carry an Origin header in the first place. Skip the gate ONLY
-  // when the bearer is in the `pushd_relay_*` family — phone bearers
-  // (browser-originated) still go through the gate.
+  // Phase 2.e: skip the origin gate when the request has NO `Origin`
+  // header at all. Browser WS upgrades ALWAYS auto-add Origin (the
+  // spec doesn't let JS suppress it); pushd's Node WS doesn't add
+  // one. So absence of Origin is a property pushd can satisfy and a
+  // browser cannot spoof from JS. Gating on the bearer prefix
+  // instead would let a malicious cross-origin page set
+  // `Sec-WebSocket-Protocol: push.relay.v1, bearer.pushd_relay_xyz`
+  // to bypass the origin check; auth would still reject the bearer,
+  // but it'd weaken the boundary needlessly. PR #529 Copilot review.
   //
-  // This is bearer-prefix-scoped, not auth-presence-scoped: a phone
-  // bearer must still pass origin (the phone IS a browser). The
-  // distinction matters because a misshapen carve-out ("any valid
-  // auth bypasses origin") would silently widen the CSRF surface
-  // for phone clients too.
-  const preParsedBearer = parseBearerSubprotocol(request.headers.get('Sec-WebSocket-Protocol'));
-  const isPushdBearer = preParsedBearer?.bearer.startsWith(PUSHD_BEARER_PREFIX) ?? false;
-
+  // `Origin: null` (sandboxed iframes, opaque origins) still has a
+  // header present, so it goes through validateOrigin where the
+  // allowlist check rejects it the same way any other unallowed
+  // origin is rejected.
   const requestUrl = new URL(request.url);
-  if (!isPushdBearer) {
+  const hasOriginHeader = request.headers.get('Origin') !== null;
+  if (hasOriginHeader) {
     const originCheck = validateOrigin(request, requestUrl, env);
     if (!originCheck.ok) {
       return jsonError('ORIGIN_REJECTED', originCheck.error ?? 'Origin not allowed', 403);

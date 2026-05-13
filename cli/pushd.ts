@@ -343,7 +343,22 @@ function startRelayClient(config: RelayConfig): RelayClientHandle {
   return handle;
 }
 
-function stopRelayClient(): void {
+/**
+ * Tear down the running relay client. By default the in-process
+ * attach-bearer allowlist is PRESERVED — bearers are captured only
+ * at mint time (pushd-attach-tokens stores hashes), so clearing them
+ * would lock every already-paired phone out of the relay path on the
+ * next `relay.connect` until they re-pair. Only the explicit `relay
+ * disable` flow passes `clearAllowlist: true` (config gone → no
+ * relay → no allowlist needed).
+ *
+ * PR #529 Codex P1 + Copilot: `handleRelayEnable` calls this in its
+ * live-restart path; without the preserve default, a disable/enable
+ * cycle (or even a first enable with phones already paired locally
+ * before the relay token arrived) would re-emit an empty allowlist
+ * on the next connect.
+ */
+function stopRelayClient(opts: { clearAllowlist?: boolean } = {}): void {
   if (activeRelayClient) {
     try {
       activeRelayClient.close();
@@ -354,7 +369,9 @@ function stopRelayClient(): void {
   }
   activeRelayDeploymentUrl = null;
   activeRelayLastStatus = null;
-  relayAllowlist.clear();
+  if (opts.clearAllowlist) {
+    relayAllowlist.clear();
+  }
 }
 
 import { PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
@@ -4428,7 +4445,10 @@ async function handleRelayDisable(req, _emitEvent, context) {
     return makeErrorResponse(req.requestId, 'relay_disable', 'INTERNAL_ERROR', message);
   }
   const wasActive = activeRelayClient !== null;
-  stopRelayClient();
+  // Disable is the only path that intentionally drops the in-process
+  // allowlist: no relay means no need to keep bearers around. The
+  // live-restart inside `relay_enable` deliberately keeps them.
+  stopRelayClient({ clearAllowlist: true });
   return makeResponse(req.requestId, 'relay_disable', null, true, {
     configRemoved: removed,
     clientStopped: wasActive,

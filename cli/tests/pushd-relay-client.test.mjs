@@ -256,6 +256,64 @@ describe('pushd-relay-client', () => {
     }
   });
 
+  // PR #529 review fix (Copilot): post-open reconnect failures must
+  // report `state: 'closed'` (server reachable, just not right now),
+  // NOT `state: 'unreachable'`. The previous per-dial `everOpened`
+  // reset mis-classified them.
+  it('reports closed (not unreachable) after a successful open then drop', async () => {
+    // Server accepts once, then drops on every subsequent dial.
+    let dialsSeen = 0;
+    const httpServer = (await import('node:http')).createServer();
+    const wssMod = await import('ws');
+    const wss = new wssMod.WebSocketServer({ noServer: true });
+    httpServer.on('upgrade', (req, socket, head) => {
+      dialsSeen += 1;
+      if (dialsSeen === 1) {
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          // Close right after open so the client transitions to
+          // post-open then sees the drop.
+          setTimeout(() => ws.terminate(), 20);
+        });
+      } else {
+        socket.destroy();
+      }
+    });
+    await new Promise((r) => httpServer.listen(0, '127.0.0.1', r));
+    const port = httpServer.address().port;
+    try {
+      const statuses = [];
+      const client = startPushdRelayClient({
+        deploymentUrl: `ws://127.0.0.1:${port}`,
+        sessionId: 'sess-state',
+        token: RELAY_TOKEN,
+        backoffScheduleMs: [10, 10, 10],
+        maxReconnectAttempts: 3,
+        onStatus: (s) => statuses.push({ ...s }),
+      });
+      // Wait for the post-open drop reconnect cycle to play out and
+      // hit exhausted on the SECOND-AND-LATER dials. After the first
+      // success, every subsequent terminal status should be 'closed'
+      // (because hasEverOpened is true).
+      await awaitStatus(client, (s) => s.exhausted === true, 3000);
+      const postSuccessTerminals = statuses.filter(
+        (s) => (s.state === 'closed' || s.state === 'unreachable') && s.attempt > 0,
+      );
+      assert.ok(postSuccessTerminals.length > 0, 'expected at least one post-success terminal');
+      for (const s of postSuccessTerminals) {
+        assert.equal(
+          s.state,
+          'closed',
+          `post-open reconnect should report 'closed', got '${s.state}' (status=${JSON.stringify(s)})`,
+        );
+      }
+      client.close();
+    } finally {
+      for (const c of wss.clients) c.terminate();
+      wss.close();
+      httpServer.close();
+    }
+  });
+
   it('manual reconnect() resets attempt counter and re-dials', async () => {
     // Reject the first 5 so we hit exhaustion at maxAttempts=3, then
     // the manual reconnect should re-dial against a now-accepting

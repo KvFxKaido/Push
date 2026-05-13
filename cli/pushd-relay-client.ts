@@ -101,15 +101,19 @@ export interface RelayClientHandle {
   readonly status: RelayConnectionStatus;
   /**
    * Send a text frame. If the WS isn't open yet, the frame is queued
-   * (bounded FIFO, capacity SEND_QUEUE_MAX) and flushed on next
-   * open. Returns true if the frame was sent or queued, false if the
-   * queue was full and the frame was dropped.
+   * (bounded FIFO, capacity SEND_QUEUE_MAX) and flushed on next open.
+   * When the queue is at capacity, the OLDEST queued frame is dropped
+   * (with a single-line stderr) so the most recent control envelopes
+   * survive — losing a stale `relay_phone_allow` is worse than losing
+   * a fresh one. Always returns `true`; callers that need
+   * delivery-guaranteed semantics should layer their own retry.
    */
   send(frame: string): boolean;
   /**
    * Force a fresh dial. Resets the backoff counter and clears
-   * `exhausted`. Safe to call from any state; no-op if a connect is
-   * already in flight on this tick.
+   * `exhausted`. Safe to call from any state; idempotent within one
+   * tick — concurrent calls collapse via the `dialPending` flag so
+   * only one dial is in flight at a time.
    */
   reconnect(): void;
   /**
@@ -143,10 +147,29 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
 
   let currentStatus: RelayConnectionStatus = { state: 'connecting', attempt: 0 };
   let ws: WebSocket | null = null;
-  let everOpened = false;
+  // `hasEverOpened` is client-lifetime: set true on the first
+  // successful open and never reset. Used to classify the terminal
+  // state — a reconnect failure AFTER a previously successful
+  // connection reports `closed` (the server is reachable, just not
+  // right now), while a never-opened lifetime reports `unreachable`.
+  // PR #529 Copilot review: the previous per-dial `everOpened` reset
+  // mis-classified post-success reconnect failures as `unreachable`.
+  let hasEverOpened = false;
+  // `openedThisDial` tracks whether the CURRENT dial's WS reached
+  // 'open' — used only for internal flow (the open handler swaps a
+  // status without needing to query the socket). Reset at every dial
+  // start, set in the WS open handler.
+  let openedThisDial = false;
   let clientClosed = false;
   let attempt = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // True between scheduling a dial (via timer OR microtask) and the
+  // dial actually running. `reconnect()` checks this so back-to-back
+  // calls collapse to one dial; without the guard, two microtasks
+  // would each call `dial()` and the second would orphan the first's
+  // WebSocket (overlapping connections + competing event handlers).
+  // PR #529 Copilot review.
+  let dialPending = false;
   const sendQueue: string[] = [];
 
   const setStatus = (next: RelayConnectionStatus): void => {
@@ -172,7 +195,7 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
     // (1-based) uses schedule[N-1].
     if (attempt >= maxAttempts) {
       setStatus({
-        state: everOpened ? 'closed' : 'unreachable',
+        state: hasEverOpened ? 'closed' : 'unreachable',
         code: terminalCode,
         reason: terminalReason,
         attempt,
@@ -184,12 +207,13 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
     const delayMs = schedule[idx] ?? schedule[schedule.length - 1];
     attempt += 1;
     setStatus({
-      state: everOpened ? 'closed' : 'unreachable',
+      state: hasEverOpened ? 'closed' : 'unreachable',
       code: terminalCode,
       reason: terminalReason,
       attempt,
       exhausted: false,
     });
+    dialPending = true;
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       dial();
@@ -213,8 +237,9 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
   };
 
   const dial = (): void => {
+    dialPending = false;
     if (clientClosed) return;
-    everOpened = false;
+    openedThisDial = false;
     setStatus({ state: 'connecting', attempt });
 
     let socket: WebSocket;
@@ -231,7 +256,8 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
     ws = socket;
 
     socket.on('open', () => {
-      everOpened = true;
+      hasEverOpened = true;
+      openedThisDial = true;
       attempt = 0;
       setStatus({ state: 'open' });
       flushSendQueue();
@@ -265,7 +291,7 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
         // Caller-initiated close. Final status reflects intentional
         // closure; no reconnect.
         setStatus({
-          state: everOpened ? 'closed' : 'unreachable',
+          state: hasEverOpened ? 'closed' : 'unreachable',
           code,
           reason: reason || 'client closed',
           attempt,
@@ -273,7 +299,10 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
         });
         return;
       }
-      scheduleReconnect(code, reason || (everOpened ? 'connection closed' : 'connection failed'));
+      scheduleReconnect(
+        code,
+        reason || (openedThisDial ? 'connection closed' : 'connection failed'),
+      );
     };
 
     let terminalFired = false;
@@ -297,6 +326,7 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
   // handlers between construction and the first status callback.
   // Without this, a synchronous throw in the WebSocket constructor
   // would call `onStatus` before the caller has wired it up.
+  dialPending = true;
   queueMicrotask(() => {
     if (!clientClosed) dial();
   });
@@ -341,6 +371,14 @@ export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClien
           /* ignore */
         }
       }
+      // `dialPending` guard collapses back-to-back reconnect() calls:
+      // if a dial is already scheduled (microtask or timer), the
+      // second reconnect() reuses it instead of stacking another one.
+      // Without this, two reconnect() calls in one tick would create
+      // overlapping WebSockets — second microtask's dial() would
+      // orphan the first's socket.
+      if (dialPending) return;
+      dialPending = true;
       // queueMicrotask so the caller's status observer sees the
       // 'connecting' transition AFTER they've finished handling the
       // reconnect() call.
