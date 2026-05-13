@@ -88,6 +88,17 @@ export interface Env {
   // connection attempting a `pushd_relay_*` bearer is rejected by the
   // route (the relay flag alone is not enough — auth must be wired).
   PUSH_RELAY_TOKEN?: string;
+  // Phase 2.d.2 ring-buffer caps. The relay DO buffers recent pushd →
+  // phone event envelopes per session and replays them when a phone
+  // reattaches with `lastSeq` in its `relay_attach` envelope. The
+  // buffer is bounded by both count and age; whichever cap fires first
+  // evicts. Defaults match the decision-doc lock (Q#2): 256 envelopes
+  // / 60s. Operator can tune via:
+  //   wrangler secret put PUSH_RELAY_BUFFER_COUNT
+  //   wrangler secret put PUSH_RELAY_BUFFER_AGE_MS
+  // Values that don't parse as positive integers fall back to defaults.
+  PUSH_RELAY_BUFFER_COUNT?: string;
+  PUSH_RELAY_BUFFER_AGE_MS?: string;
   // Sibling-provider selector. Values: "modal" | "cloudflare". Unset or
   // anything else defaults to "modal" during coexistence.
   PUSH_SANDBOX_PROVIDER?: string;
