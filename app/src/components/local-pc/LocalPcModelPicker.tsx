@@ -41,6 +41,19 @@ export interface LocalPcModelPickerProps {
   /** Calls into `useModelCatalog().setPreferredProvider`. */
   onSelectProvider: (provider: PreferredProvider) => void;
   /**
+   * When the current chat has already sent a message, `useChat`
+   * locks the conversation to its original provider (see
+   * `lockedProvider` / `prepareSendContext`). The chip surfaces the
+   * locked provider AND disables the provider switch — without this
+   * the user would see the global preference change in the chip but
+   * the next `sendMessage` would still route through the
+   * conversation's lock, deceiving them about what the model is.
+   * Codex P2 on #522.
+   */
+  lockedProvider?: AIProviderType | null;
+  /** When true, switching providers from this chip is disabled. */
+  isProviderLocked?: boolean;
+  /**
    * Navigate to the Settings surface so the user can edit per-provider
    * model ids. Optional — when omitted the "Edit models in Settings"
    * row is hidden so the chip stays useful as a read-only display
@@ -58,20 +71,33 @@ export function LocalPcModelPicker({
   onOpenSettings,
   disabled,
   className,
+  lockedProvider,
+  isProviderLocked,
 }: LocalPcModelPickerProps) {
+  // When the chat has been locked to a specific provider (e.g. after
+  // the first sendMessage), DISPLAY the locked one regardless of
+  // the catalog's current preference — that's what the next turn
+  // will actually use. Switching is also disabled below so the user
+  // doesn't get a chip that lies about provider routing.
+  const displayedProvider = (lockedProvider as AIProviderType | undefined) ?? activeProvider;
   // Orchestrator model id — `getModelForRole` resolves the user-
   // configured model name via MODEL_NAME_GETTERS, so the chip's
   // display follows the same source of truth Settings writes to.
   // A missing model (e.g. provider configured but no model picked
   // yet) falls back to the bare provider label.
-  const modelEntry = getModelForRole(activeProvider, 'orchestrator');
+  const modelEntry = getModelForRole(displayedProvider, 'orchestrator');
   const modelId = modelEntry?.id ?? '';
+  // Slice 1.d: docstring promised "only ready providers shown"; the
+  // ready filter lives here so callers can safely pass the raw
+  // catalog tuple list. Github-actions + Copilot review on #522.
+  const readyProviders = availableProviders.filter(([, , isReady]) => isReady);
   const providerLabel =
-    availableProviders.find(([id]) => id === activeProvider)?.[1] ?? activeProvider;
-  const modelLeaf = modelId ? getModelDisplayLeafName(activeProvider, modelId) : null;
+    readyProviders.find(([id]) => id === displayedProvider)?.[1] ?? displayedProvider;
+  const modelLeaf = modelId ? getModelDisplayLeafName(displayedProvider, modelId) : null;
   const titleHint = modelId
-    ? `${providerLabel} · ${formatModelDisplayName(activeProvider, modelId)}`
+    ? `${providerLabel} · ${formatModelDisplayName(displayedProvider, modelId)}`
     : providerLabel;
+  const switchDisabled = disabled || isProviderLocked;
 
   return (
     <Popover>
@@ -106,18 +132,28 @@ export function LocalPcModelPicker({
         <div className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-push-fg-secondary/60">
           Provider
         </div>
-        <div role="radiogroup" aria-label="Provider">
-          {availableProviders.map(([id, label]) => {
-            const active = id === activeProvider;
+        {/*
+          aria-pressed (toggle-button semantics) rather than
+          role="radiogroup" + role="radio": the latter promises full
+          radiogroup keyboard navigation (Arrow keys, roving tabIndex)
+          which this list doesn't implement. Toggle-button semantics
+          accurately describe what we deliver — each row is a
+          clickable button whose pressed state reflects the active
+          provider. A future PR can swap in Radix RadioGroup for
+          proper keyboard nav; Copilot review on #522.
+        */}
+        <div aria-label="Provider">
+          {readyProviders.map(([id, label]) => {
+            const active = id === displayedProvider;
             return (
               <button
                 key={id}
                 type="button"
-                role="radio"
-                aria-checked={active}
+                aria-pressed={active}
                 onClick={() => onSelectProvider(id)}
+                disabled={switchDisabled}
                 className={cn(
-                  'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition',
+                  'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition disabled:cursor-not-allowed disabled:opacity-50',
                   active
                     ? 'bg-push-edge/50 text-push-fg'
                     : 'text-push-fg-secondary hover:bg-push-edge/30 hover:text-push-fg',
@@ -128,12 +164,17 @@ export function LocalPcModelPicker({
               </button>
             );
           })}
-          {availableProviders.length === 0 ? (
+          {readyProviders.length === 0 ? (
             <p className="px-2 py-2 text-xs text-push-fg-secondary/70">
               No providers configured. Add an API key in Settings.
             </p>
           ) : null}
         </div>
+        {isProviderLocked && readyProviders.length > 1 ? (
+          <p className="px-2 py-1.5 text-[10px] text-push-fg-secondary/60">
+            Locked to this conversation's original provider — start a new chat to switch.
+          </p>
+        ) : null}
         {onOpenSettings ? (
           <>
             <div className="my-1 border-t border-push-edge/30" />

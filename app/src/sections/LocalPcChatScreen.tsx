@@ -201,6 +201,13 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
     activeChatId,
     switchChat,
     createNewChat,
+    // Slice 1.d polish: once the active chat has sent its first
+    // message, useChat locks the conversation to its original
+    // provider. The picker reads these to render the locked
+    // provider and disable in-place switching, so the chip doesn't
+    // lie about what the next turn uses. Codex P2 on #522.
+    lockedProvider,
+    isProviderLocked,
   } = useChat(
     // No GitHub repo — local-pc sessions are bound to the daemon cwd,
     // not a remote repo.
@@ -349,6 +356,8 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
             activeProvider={catalog.activeProviderLabel}
             availableProviders={catalog.availableProviders}
             onSelectProvider={handleSelectProvider}
+            lockedProvider={lockedProvider}
+            isProviderLocked={isProviderLocked}
           />
         </div>
         <div className="flex items-end gap-2">

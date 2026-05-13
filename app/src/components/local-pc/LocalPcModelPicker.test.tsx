@@ -63,6 +63,28 @@ describe('LocalPcModelPicker', () => {
     expect(html).toContain('Ollama');
   });
 
+  it('chip displays lockedProvider when set, regardless of activeProvider', () => {
+    // Codex P2 on #522: once useChat locks a chat to its original
+    // provider, the chip MUST show the locked one — otherwise the
+    // chip lies about which provider the next turn will use.
+    // `getModelForRole` mock returns the openrouter model for the
+    // locked provider; that's the one the chip should render.
+    const html = renderToStaticMarkup(
+      <LocalPcModelPicker
+        activeProvider="cloudflare"
+        lockedProvider="openrouter"
+        isProviderLocked
+        availableProviders={PROVIDERS}
+        onSelectProvider={vi.fn()}
+      />,
+    );
+    expect(html).toContain('OpenRouter');
+    expect(html).toContain('llama-3.1-70b-instruct');
+    // The cloudflare model from the mock must NOT appear when locked
+    // to openrouter — that would be the deceiving behavior.
+    expect(html).not.toContain('llama-3-8b');
+  });
+
   it('surfaces an accessible label and a title hint for the chip', () => {
     const html = renderToStaticMarkup(
       <LocalPcModelPicker
