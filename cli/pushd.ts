@@ -31,6 +31,19 @@ import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 
 import { startPushdWs, type PushdWsHandle } from './pushd-ws.js';
+import {
+  revokeDeviceToken,
+  listDeviceTokens,
+  type DeviceTokenRecord,
+} from './pushd-device-tokens.js';
+
+// Module-scoped reference to the running WS handle. Set when startPushdWs
+// completes, nulled on shutdown. Daemon admin handlers (`revoke_device_token`,
+// `list_devices`) read this to invoke `disconnectByTokenId` / `listConnected-
+// Devices`. Plumbing through the dispatcher context was an option but every
+// handler signature would have grown — `wsHandle` is genuinely process-global
+// state and the module slot reflects that.
+let activeWsHandle: PushdWsHandle | null = null;
 
 import { PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
 import { createDaemonProviderStream } from './daemon-provider-stream.js';
@@ -66,6 +79,7 @@ import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runCoderAgent } from '../lib/coder-agent.ts';
 import { isSensitivePath as isDaemonSensitivePath } from '../lib/sensitive-paths.ts';
+import { isPathAllowed, snapshotAllowlist } from './pushd-allowlist.js';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
@@ -3239,6 +3253,27 @@ async function handleSandboxExec(req, _emitEvent, context) {
   const timeoutMs = Math.min(Math.max(rawTimeout, 1_000), SANDBOX_EXEC_MAX_TIMEOUT_MS);
   const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
 
+  // Phase 3 allowlist gate: refuse exec if its cwd sits outside every
+  // allowed root. NB: this only constrains the *working directory* —
+  // the shell command itself can still touch any file the daemon
+  // process can reach (`cat /etc/passwd`, etc.). Containing the
+  // command-surface requires chroot/namespace isolation and is
+  // explicitly out of scope for Phase 3; the allowlist is meaningful
+  // for `sandbox_read_file` / `sandbox_write_file` / `sandbox_list_dir`
+  // / `sandbox_diff` which DO route paths through `resolveAndAuthorize`.
+  // Documented in `docs/decisions/Remote Sessions via pushd Relay.md`.
+  {
+    const cwdSnapshot = await snapshotAllowlist(process.cwd());
+    if (!isPathAllowed(path.resolve(cwd), cwdSnapshot)) {
+      return makeErrorResponse(
+        req.requestId,
+        'sandbox_exec',
+        'PATH_NOT_ALLOWED',
+        `sandbox_exec cwd is not in the daemon allowlist: ${cwd}`,
+      );
+    }
+  }
+
   // Daemon-side mid-run cancellation (Phase 1.f): the web side may
   // include a `runId` in the payload and call `cancel_run` later to
   // abort the in-flight child. Register an AbortController in the
@@ -3392,6 +3427,27 @@ function isContainedIn(absChild, absParent) {
 }
 
 /**
+ * Phase 3 allowlist gate. Resolves the model's path against cwd
+ * conventions, then checks the resolved location against the
+ * daemon's effective allowlist (implicit-cwd default OR the
+ * explicit user-configured roots in ~/.push/run/pushd.allowlist).
+ *
+ * Returns the absolute path on success, or `null` if the path is
+ * malformed, traverses outside the workspace root, or sits outside
+ * every allowed root. Callers translate `null` into a soft error
+ * envelope with the existing `PATH_OUTSIDE_WORKSPACE` code so the
+ * model sees the same recovery hint regardless of which gate
+ * rejected — distinguishing them would only help an attacker
+ * probing the allowlist boundaries.
+ */
+async function resolveAndAuthorize(rawPath) {
+  const resolved = resolveDaemonPath(rawPath);
+  if (resolved === null || resolved === '') return null;
+  const snapshot = await snapshotAllowlist(process.cwd());
+  return isPathAllowed(resolved, snapshot) ? resolved : null;
+}
+
+/**
  * Build a "soft" error envelope for the file-op handlers that exposes
  * a code + a generic message + the model's original requested path
  * — but NOT the daemon's fully-resolved absolute host path. Node's
@@ -3439,7 +3495,7 @@ async function handleSandboxReadFile(req) {
       code: 'SENSITIVE_PATH',
     });
   }
-  const resolved = resolveDaemonPath(rawPath);
+  const resolved = await resolveAndAuthorize(rawPath);
   if (resolved === null) {
     return makeResponse(req.requestId, 'sandbox_read_file', null, true, {
       content: '',
@@ -3547,7 +3603,7 @@ async function handleSandboxWriteFile(req) {
       error: 'sensitive path refused by daemon',
     });
   }
-  const resolved = resolveDaemonPath(rawPath);
+  const resolved = await resolveAndAuthorize(rawPath);
   if (resolved === null) {
     return makeResponse(req.requestId, 'sandbox_write_file', null, true, {
       ok: false,
@@ -3580,7 +3636,7 @@ async function handleSandboxListDir(req) {
       error: 'sensitive path refused by daemon',
     });
   }
-  const resolved = resolveDaemonPath(rawPath);
+  const resolved = await resolveAndAuthorize(rawPath);
   if (resolved === null) {
     return makeResponse(req.requestId, 'sandbox_list_dir', null, true, {
       entries: [],
@@ -3638,6 +3694,20 @@ const GIT_EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 async function handleSandboxDiff(req) {
   const { runCommandInResolvedShell } = await import('./shell.js');
   const cwd = process.cwd();
+  // Phase 3 allowlist gate. `sandbox_diff` shells out `git` from
+  // cwd; if the user has tightened the allowlist to exclude cwd
+  // (intentional or accidental), surface a clear error instead of
+  // running git in a disallowed directory.
+  {
+    const cwdSnapshot = await snapshotAllowlist(cwd);
+    if (!isPathAllowed(cwd, cwdSnapshot)) {
+      return makeResponse(req.requestId, 'sandbox_diff', null, true, {
+        diff: '',
+        truncated: false,
+        error: `daemon cwd is not in the allowlist: ${cwd}`,
+      });
+    }
+  }
   // git diff HEAD: tracked-file working-copy changes vs the most recent
   // commit. Untracked-file presence is conveyed by `git status --porcelain`
   // below so the model has a complete picture. If HEAD doesn't exist
@@ -3711,6 +3781,105 @@ async function handleDaemonIdentify(req, _emitEvent, context) {
   });
 }
 
+// ─── Phase 3 device-admin handlers ───────────────────────────────
+//
+// These are intended for the Unix-socket-only `push daemon` CLI
+// surface. Exposing them over the WS would let a paired device
+// revoke OTHER paired devices, which the threat model doesn't
+// authorize — the WS is bound to a specific device's tokenId and
+// shouldn't grant cross-device admin authority. The handlers refuse
+// when the request context carries a WS-authenticated `record`.
+
+function refuseFromWs(req, type) {
+  return makeErrorResponse(
+    req.requestId,
+    type,
+    'UNSUPPORTED_VIA_TRANSPORT',
+    `${type} is only available over the Unix-socket admin transport.`,
+  );
+}
+
+/**
+ * Live device revoke. Mutates the tokens file AND closes every WS
+ * connection currently bearing the revoked tokenId. Closes the
+ * "revoke takes effect on next upgrade" gap from open question #6 in
+ * the decision doc.
+ */
+async function handleRevokeDeviceToken(req, _emitEvent, context) {
+  if (context?.record) return refuseFromWs(req, 'revoke_device_token');
+  const tokenId = typeof req.payload?.tokenId === 'string' ? req.payload.tokenId : '';
+  if (!tokenId) {
+    return makeErrorResponse(
+      req.requestId,
+      'revoke_device_token',
+      'INVALID_REQUEST',
+      'tokenId is required',
+    );
+  }
+  const removed = await revokeDeviceToken(tokenId);
+  if (!removed) {
+    return makeErrorResponse(
+      req.requestId,
+      'revoke_device_token',
+      'TOKEN_NOT_FOUND',
+      `no such token: ${tokenId}`,
+    );
+  }
+  const closedConnections = activeWsHandle
+    ? activeWsHandle.disconnectByTokenId(tokenId, 'device token revoked')
+    : 0;
+  return makeResponse(req.requestId, 'revoke_device_token', null, true, {
+    tokenId,
+    closedConnections,
+  });
+}
+
+/**
+ * `list_devices` returns one row per tokenId that currently has at
+ * least one open WS connection. Tokens with zero live connections
+ * still appear in `list_tokens` (the file-backed view) but are
+ * intentionally absent here — this surface is "who's connected right
+ * now," not "who has ever been paired."
+ */
+async function handleListDevices(req, _emitEvent, context) {
+  if (context?.record) return refuseFromWs(req, 'list_devices');
+  // If the WS listener never started (PUSHD_WS=0 or startup failure),
+  // surface that explicitly rather than reporting an empty list — an
+  // empty list under a disabled listener would be misleading.
+  if (!activeWsHandle) {
+    return makeResponse(req.requestId, 'list_devices', null, true, {
+      devices: [],
+      wsListenerActive: false,
+    });
+  }
+  const liveRows = activeWsHandle.listConnectedDevices();
+  // Cross-reference with the tokens file so we can render boundOrigin /
+  // lastUsedAt that may have been updated since the WS handshake (the
+  // `lastUsedAt` touch is async and the WS-side `record` is captured
+  // at connection time). This is best-effort; if the file read fails
+  // we fall back to the WS-side values.
+  let fileRecords: DeviceTokenRecord[] = [];
+  try {
+    fileRecords = await listDeviceTokens();
+  } catch {
+    // non-fatal
+  }
+  const fileByTokenId = new Map(fileRecords.map((r) => [r.tokenId, r]));
+  const devices = liveRows.map((row) => {
+    const fileRecord = fileByTokenId.get(row.tokenId);
+    return {
+      tokenId: row.tokenId,
+      boundOrigin: row.boundOrigin,
+      connections: row.connections,
+      lastUsedAt: fileRecord?.lastUsedAt ?? row.lastUsedAt,
+    };
+  });
+  return makeResponse(req.requestId, 'list_devices', null, true, {
+    devices,
+    wsListenerActive: true,
+  });
+}
+
 // ─── Request dispatcher ──────────────────────────────────────────
 
 const HANDLERS = {
@@ -3735,6 +3904,8 @@ const HANDLERS = {
   sandbox_list_dir: handleSandboxListDir,
   sandbox_diff: handleSandboxDiff,
   daemon_identify: handleDaemonIdentify,
+  revoke_device_token: handleRevokeDeviceToken,
+  list_devices: handleListDevices,
 };
 
 export async function handleRequest(req, emitEvent, context = null) {
@@ -4236,6 +4407,7 @@ export async function main() {
           },
           { portFilePath: getPortPath() },
         );
+        activeWsHandle = wsHandle;
         process.stdout.write(`pushd-ws listening on 127.0.0.1:${wsHandle.port}\n`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -4272,6 +4444,7 @@ export async function main() {
       } catch {
         /* ignore */
       }
+      activeWsHandle = null;
     }
 
     server.close();

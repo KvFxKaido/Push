@@ -287,4 +287,101 @@ describe('pushd-ws auth gate', () => {
       /non-loopback host/,
     );
   });
+
+  describe('listConnectedDevices + disconnectByTokenId (Phase 3)', () => {
+    // Helper: open a WS, wait for the upgrade to complete, return it.
+    async function openAndWaitOpen({ token, origin = 'http://localhost:5173' }) {
+      const ws = openWs({ token, origin });
+      await new Promise((resolve, reject) => {
+        ws.once('open', resolve);
+        ws.once('error', reject);
+      });
+      return ws;
+    }
+
+    it('listConnectedDevices includes a row per tokenId with the connection count', async () => {
+      const { token: tokenA, tokenId: idA } = await mintDeviceToken({ boundOrigin: 'loopback' });
+      const { token: tokenB, tokenId: idB } = await mintDeviceToken({ boundOrigin: 'loopback' });
+      const a1 = await openAndWaitOpen({ token: tokenA });
+      const a2 = await openAndWaitOpen({ token: tokenA });
+      const b1 = await openAndWaitOpen({ token: tokenB });
+      try {
+        const rows = handle.listConnectedDevices();
+        const byId = new Map(rows.map((r) => [r.tokenId, r]));
+        assert.equal(byId.get(idA)?.connections, 2, 'tokenA has two live connections');
+        assert.equal(byId.get(idB)?.connections, 1, 'tokenB has one live connection');
+      } finally {
+        await closeAndWait(a1);
+        await closeAndWait(a2);
+        await closeAndWait(b1);
+      }
+    });
+
+    it('drops rows when the last connection for a tokenId closes', async () => {
+      const { token, tokenId } = await mintDeviceToken({ boundOrigin: 'loopback' });
+      const ws = await openAndWaitOpen({ token });
+      assert.ok(handle.listConnectedDevices().some((r) => r.tokenId === tokenId));
+      await closeAndWait(ws);
+      // Give the WS close handler a tick to run.
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(
+        handle.listConnectedDevices().some((r) => r.tokenId === tokenId),
+        false,
+        'tokenId should be removed from the live list once its only connection closes',
+      );
+    });
+
+    it('disconnectByTokenId closes every WS bearing that tokenId with code 1008', async () => {
+      const { token, tokenId } = await mintDeviceToken({ boundOrigin: 'loopback' });
+      const ws1 = await openAndWaitOpen({ token });
+      const ws2 = await openAndWaitOpen({ token });
+      const closeP1 = new Promise((resolve) =>
+        ws1.once('close', (code, reason) =>
+          resolve({ code, reason: reason?.toString('utf8') ?? '' }),
+        ),
+      );
+      const closeP2 = new Promise((resolve) =>
+        ws2.once('close', (code, reason) =>
+          resolve({ code, reason: reason?.toString('utf8') ?? '' }),
+        ),
+      );
+      const closed = handle.disconnectByTokenId(tokenId, 'device token revoked');
+      assert.equal(closed, 2);
+      const [r1, r2] = await Promise.all([closeP1, closeP2]);
+      assert.equal(r1.code, 1008);
+      assert.equal(r2.code, 1008);
+      // Reason text rides through the close frame so the client can
+      // distinguish revocation from a generic policy refusal.
+      assert.match(r1.reason, /device token revoked/);
+    });
+
+    it('disconnectByTokenId returns 0 when the tokenId has no live connections', () => {
+      const closed = handle.disconnectByTokenId('pdt_does_not_exist', 'nope');
+      assert.equal(closed, 0);
+    });
+
+    it('does not affect connections bearing OTHER tokens', async () => {
+      const { token: tokenA, tokenId: idA } = await mintDeviceToken({ boundOrigin: 'loopback' });
+      const { token: tokenB, tokenId: idB } = await mintDeviceToken({ boundOrigin: 'loopback' });
+      const wsA = await openAndWaitOpen({ token: tokenA });
+      const wsB = await openAndWaitOpen({ token: tokenB });
+      try {
+        const closed = handle.disconnectByTokenId(idA, 'revoked');
+        assert.equal(closed, 1);
+        // Give the close handler a tick.
+        await new Promise((r) => setTimeout(r, 50));
+        const rows = handle.listConnectedDevices();
+        assert.equal(
+          rows.some((r) => r.tokenId === idA),
+          false,
+        );
+        assert.ok(
+          rows.some((r) => r.tokenId === idB),
+          'B unaffected',
+        );
+      } finally {
+        await closeAndWait(wsB);
+      }
+    });
+  });
 });
