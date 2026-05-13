@@ -246,7 +246,14 @@ describe('execLocalDaemon', () => {
       { port, token: VALID_TOKEN, boundOrigin: 'http://localhost:5173' },
       'pwd',
     );
-    expect(captured[0]).toEqual({ command: 'pwd' });
+    // Phase 1.f: every sandbox_exec payload now carries a runId so
+    // the daemon can register the child in its activeRuns map for
+    // mid-run cancellation. cwd/timeoutMs are still omitted when
+    // unset; the runId is the only new always-on field.
+    expect(captured[0]).toMatchObject({ command: 'pwd' });
+    expect(typeof (captured[0] as { runId?: unknown }).runId).toBe('string');
+    expect(captured[0]).not.toHaveProperty('cwd');
+    expect(captured[0]).not.toHaveProperty('timeoutMs');
     await new Promise<void>((r) => wss.close(() => r()));
   });
 
@@ -482,5 +489,187 @@ describe('identifyLocalDaemon', () => {
     await expect(identifyLocalDaemon(wrongBinding)).rejects.toBeInstanceOf(
       LocalDaemonUnreachableError,
     );
+  });
+});
+
+describe('execLocalDaemon (Phase 1.f abortSignal)', () => {
+  // The base stub server in this file always responds immediately to
+  // sandbox_exec; testing the cancel path needs a server that holds
+  // the response until the client sends cancel_run, so each case
+  // stands up its own dedicated WSS.
+
+  async function startCancelObservingServer(): Promise<{
+    port: number;
+    captured: { type: string; payload: Record<string, unknown> }[];
+    close: () => Promise<void>;
+  }> {
+    const captured: { type: string; payload: Record<string, unknown> }[] = [];
+    const wss = new WebSocketServer({
+      port: 0,
+      handleProtocols: (protocols) =>
+        protocols.has(SUBPROTOCOL_SELECTOR) ? SUBPROTOCOL_SELECTOR : false,
+      verifyClient: (info, cb) => {
+        const subproto = info.req.headers['sec-websocket-protocol'];
+        if (typeof subproto !== 'string') return cb(false, 401, 'missing protocol');
+        cb(true);
+      },
+    });
+    wss.on('connection', (ws) => {
+      // Holds the pending sandbox_exec response until the cancel
+      // envelope arrives, then replies to BOTH with the daemon's
+      // canonical "cancelled" shape for exec and an accepted shape
+      // for cancel_run.
+      let pendingExec: { requestId: string } | null = null;
+      ws.on('message', (data) => {
+        for (const line of data.toString('utf8').split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const parsed = JSON.parse(trimmed);
+          if (parsed.kind !== 'request') continue;
+          captured.push({ type: parsed.type, payload: parsed.payload });
+          if (parsed.type === 'sandbox_exec') {
+            pendingExec = { requestId: parsed.requestId };
+            // Do not reply yet — wait for cancel_run.
+            continue;
+          }
+          if (parsed.type === 'cancel_run' && pendingExec) {
+            ws.send(
+              `${JSON.stringify({
+                v: PROTOCOL_VERSION,
+                kind: 'response',
+                requestId: parsed.requestId,
+                type: 'cancel_run',
+                sessionId: null,
+                ok: true,
+                payload: { accepted: true, runId: parsed.payload.runId },
+                error: null,
+              })}\n`,
+            );
+            ws.send(
+              `${JSON.stringify({
+                v: PROTOCOL_VERSION,
+                kind: 'response',
+                requestId: pendingExec.requestId,
+                type: 'sandbox_exec',
+                sessionId: null,
+                ok: true,
+                payload: {
+                  stdout: '',
+                  stderr: '',
+                  exitCode: 124,
+                  durationMs: 1,
+                  truncated: false,
+                  cancelled: true,
+                },
+                error: null,
+              })}\n`,
+            );
+            pendingExec = null;
+          }
+        }
+      });
+    });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    const port = (wss.address() as AddressInfo).port;
+    return {
+      port,
+      captured,
+      close: () => new Promise<void>((r) => wss.close(() => r())),
+    };
+  }
+
+  it('includes a runId in every sandbox_exec payload', async () => {
+    // Even without an abortSignal the client mints a runId so the
+    // daemon can register the child uniformly. (Registration is cheap;
+    // the daemon clears the entry in its `finally`.) Use the default
+    // immediate-response server to verify the payload shape.
+    const captured: { type: string; payload: Record<string, unknown> }[] = [];
+    const wss = new WebSocketServer({
+      port: 0,
+      handleProtocols: (p) => (p.has(SUBPROTOCOL_SELECTOR) ? SUBPROTOCOL_SELECTOR : false),
+    });
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const parsed = JSON.parse(data.toString('utf8').trim());
+        captured.push({ type: parsed.type, payload: parsed.payload });
+        ws.send(
+          `${JSON.stringify({
+            v: PROTOCOL_VERSION,
+            kind: 'response',
+            requestId: parsed.requestId,
+            type: parsed.type,
+            sessionId: null,
+            ok: true,
+            payload: { stdout: '', stderr: '', exitCode: 0, durationMs: 0, truncated: false },
+            error: null,
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    const port = (wss.address() as AddressInfo).port;
+    try {
+      await execLocalDaemon(
+        { port, token: VALID_TOKEN, boundOrigin: 'http://localhost:5173' },
+        'echo hi',
+      );
+      const execEnv = captured.find((c) => c.type === 'sandbox_exec');
+      expect(execEnv).toBeDefined();
+      expect(typeof execEnv?.payload.runId).toBe('string');
+      expect((execEnv?.payload.runId as string).length).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((r) => wss.close(() => r()));
+    }
+  });
+
+  it('dispatches cancel_run with the matching runId when the abort signal fires', async () => {
+    const cs = await startCancelObservingServer();
+    try {
+      const controller = new AbortController();
+      const explicitRunId = 'run_test_abort_fires';
+      const promise = execLocalDaemon(
+        { port: cs.port, token: VALID_TOKEN, boundOrigin: 'http://localhost:5173' },
+        'sleep 30',
+        { abortSignal: controller.signal, runId: explicitRunId },
+      );
+      // Give the server a tick to see the exec, then abort.
+      await new Promise((r) => setTimeout(r, 50));
+      controller.abort();
+      await expect(promise).rejects.toThrow(/aborted/i);
+      // The outer promise rejects synchronously with AbortError, but
+      // the cancel_run frame is still in flight on the WS at that
+      // point. Give the loopback a tick to surface it on the server.
+      await new Promise((r) => setTimeout(r, 50));
+      const execEnv = cs.captured.find((c) => c.type === 'sandbox_exec');
+      const cancelEnv = cs.captured.find((c) => c.type === 'cancel_run');
+      expect(execEnv?.payload.runId).toBe(explicitRunId);
+      expect(cancelEnv).toBeDefined();
+      expect(cancelEnv?.payload.runId).toBe(explicitRunId);
+    } finally {
+      await cs.close();
+    }
+  });
+
+  it('rejects with an AbortError (not LocalDaemonUnreachableError) when cancelled', async () => {
+    // Callers in `sandbox-tools.ts` distinguish cancel from unreachable
+    // on `err.name === 'AbortError'`. Pin the contract here so a future
+    // refactor doesn't accidentally collapse them.
+    const cs = await startCancelObservingServer();
+    try {
+      const controller = new AbortController();
+      const promise = execLocalDaemon(
+        { port: cs.port, token: VALID_TOKEN, boundOrigin: 'http://localhost:5173' },
+        'sleep 30',
+        { abortSignal: controller.signal },
+      );
+      await new Promise((r) => setTimeout(r, 50));
+      controller.abort();
+      const caught = await promise.catch((e) => e);
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).name).toBe('AbortError');
+      expect(caught).not.toBeInstanceOf(LocalDaemonUnreachableError);
+    } finally {
+      await cs.close();
+    }
   });
 });

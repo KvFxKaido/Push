@@ -70,6 +70,7 @@ export async function executeSingleToolCall(
     lockedProvider,
     resolvedModel,
     abortRef,
+    abortControllerRef,
     sandboxIdRef,
     ensureSandboxRef,
     localDaemonBindingRef,
@@ -197,6 +198,7 @@ export async function executeSingleToolCall(
       defaultBranch: branchInfoRef.current?.defaultBranch,
       provider: lockedProvider,
       model: resolvedModel,
+      abortSignal: abortControllerRef.current?.signal,
     };
     singleRawResult = await executeTool(toolCall, singleCtx);
     toolExecResult = singleRawResult.raw;

@@ -16,7 +16,7 @@
  * affordances and tolerates the SSR-time state (no daemon connection,
  * no messages yet).
  */
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 // useChat / useLocalDaemon both touch storage (IndexedDB, conversation
@@ -39,12 +39,29 @@ vi.mock('@/hooks/useChat', () => ({
   }),
 }));
 
+// Mutable status holder so individual tests can override the default
+// `open` state (e.g. to exercise the reconnect banner). `vi.mock` runs
+// before imports, so the mock factory references the holder by name
+// at module level and reads it lazily inside the hook body.
+const useLocalDaemonState: {
+  status: { state: string; code?: number; reason?: string };
+  reconnectInfo: {
+    attempts: number;
+    nextAttemptAt: number | null;
+    exhausted: boolean;
+  };
+} = {
+  status: { state: 'open' },
+  reconnectInfo: { attempts: 0, nextAttemptAt: null, exhausted: false },
+};
+
 vi.mock('@/hooks/useLocalDaemon', () => ({
   useLocalDaemon: () => ({
-    status: { state: 'open', reason: null },
+    status: useLocalDaemonState.status,
     events: [],
     request: vi.fn(),
     reconnect: vi.fn(),
+    reconnectInfo: useLocalDaemonState.reconnectInfo,
   }),
 }));
 
@@ -62,6 +79,18 @@ const binding: LocalPcBinding = {
 };
 
 describe('LocalPcChatScreen', () => {
+  beforeEach(() => {
+    // Reset the shared hook state between cases — vi.mock is hoisted
+    // once per module, so a test that flips it (e.g. unreachable +
+    // banner) would leak into later cases without this reset.
+    useLocalDaemonState.status = { state: 'open' };
+    useLocalDaemonState.reconnectInfo = {
+      attempts: 0,
+      nextAttemptAt: null,
+      exhausted: false,
+    };
+  });
+
   it('renders the mode chip with the binding port', () => {
     const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
     // LocalPcModeChip renders the port — verify it's wired in.
@@ -102,5 +131,49 @@ describe('LocalPcChatScreen', () => {
     const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
     expect(html).not.toContain('FileBrowser');
     expect(html).not.toContain('Snapshot');
+  });
+
+  it('shows a reconnecting banner with countdown while auto-retry is pending', () => {
+    // Simulate the hook reporting an active backoff: status went
+    // unreachable after one failed open, the scheduler set a retry for
+    // ~2 seconds from now (post-1s-failure → 2s next-step in the
+    // ladder), and attempts=1. The banner should render with the
+    // attempt counter and a "Reconnecting in Xs" countdown.
+    useLocalDaemonState.status = { state: 'unreachable', code: 1006, reason: 'refused' };
+    useLocalDaemonState.reconnectInfo = {
+      attempts: 1,
+      nextAttemptAt: Date.now() + 2_000,
+      exhausted: false,
+    };
+    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    expect(html).toMatch(/Reconnecting to local daemon in \ds/);
+    // Banner shows "attempt 2 of 5" — the displayed counter is
+    // 1-based: `attempts + 1` because `attempts` is the number of
+    // FAILED attempts so far and the next one is the (attempts+1)-th.
+    expect(html).toContain('attempt 2 of 5');
+  });
+
+  it('shows a Retry button once auto-reconnect is exhausted', () => {
+    // After 5 unreachables, the hook flips `exhausted: true` and clears
+    // the schedule. The banner surfaces a manual Retry button — the
+    // mode chip alone wouldn't make the failure recoverable from the
+    // chat surface.
+    useLocalDaemonState.status = { state: 'unreachable', code: 1006, reason: 'refused' };
+    useLocalDaemonState.reconnectInfo = {
+      attempts: 5,
+      nextAttemptAt: null,
+      exhausted: true,
+    };
+    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    expect(html).toContain('aria-label="Retry connection"');
+    expect(html).toContain('after 5 attempts');
+  });
+
+  it('omits the reconnect banner while the WS is open', () => {
+    // Default `status: open` — no banner, no extra chrome. The header
+    // is the only thing above the chat container.
+    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    expect(html).not.toContain('Reconnecting to local daemon');
+    expect(html).not.toContain('aria-label="Retry connection"');
   });
 });

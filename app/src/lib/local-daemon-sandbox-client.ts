@@ -58,6 +58,25 @@ export interface LocalDaemonIdentity {
 export interface LocalDaemonExecOptions {
   cwd?: string;
   timeoutMs?: number;
+  /**
+   * Phase 1.f daemon-side mid-run cancellation. When supplied, the
+   * client generates a `runId`, includes it in the `sandbox_exec`
+   * payload, and — if the signal fires before the response arrives —
+   * sends a `cancel_run` request over the SAME WS binding (so it
+   * lands in the daemon's per-connection active-runs map). The
+   * outer `withTransientBinding` promise rejects with an `AbortError`
+   * once the cancel is dispatched; the daemon's eventual `cancelled:
+   * true` response is observed and ignored by the binding's pending-
+   * request cleanup. Absent signal preserves the legacy "best-effort"
+   * behaviour where the child runs to its own 60s timeout.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * Optional caller-supplied runId. Tests pass a deterministic value
+   * to assert the cancel envelope shape. Production callers leave
+   * this empty and the client generates a UUID-shaped id.
+   */
+  runId?: string;
 }
 
 /**
@@ -137,22 +156,40 @@ export async function execLocalDaemon(
   command: string,
   opts: LocalDaemonExecOptions = {},
 ): Promise<LocalDaemonExecResult> {
-  const payload: Record<string, unknown> = { command };
+  // Generate a per-call runId when the caller passes an abortSignal so
+  // the cancel envelope has a stable target on the daemon side. The id
+  // is also included in the exec payload so the daemon registers the
+  // child in its per-WS activeRuns map keyed by this id. Without a
+  // signal we still mint an id so any future cancel surface (e.g. a
+  // dropped connection cleanup) has something to address — registration
+  // is cheap and the daemon clears the entry in its `finally`.
+  const runId = opts.runId ?? generateRunId();
+  const payload: Record<string, unknown> = { command, runId };
   if (opts.cwd) payload.cwd = opts.cwd;
   if (opts.timeoutMs !== undefined) payload.timeoutMs = opts.timeoutMs;
 
-  const response = await withTransientBinding(binding, (handle) =>
-    handle.request<LocalDaemonExecResult>({
-      type: 'sandbox_exec',
-      payload,
-      // Give the WS request itself a slightly larger window than the
-      // command's own timeout so the daemon has time to surface a
-      // timeout-killed response without us beating it with a transport
-      // timeout. Default 60s command + 5s slack.
-      timeoutMs: (opts.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS) + 5_000,
-    }),
+  const response = await withTransientBinding(
+    binding,
+    (handle) =>
+      handle.request<LocalDaemonExecResult>({
+        type: 'sandbox_exec',
+        payload,
+        // Give the WS request itself a slightly larger window than the
+        // command's own timeout so the daemon has time to surface a
+        // timeout-killed response without us beating it with a transport
+        // timeout. Default 60s command + 5s slack.
+        timeoutMs: (opts.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS) + 5_000,
+      }),
+    { abortSignal: opts.abortSignal, runId },
   );
   return response.payload;
+}
+
+function generateRunId(): string {
+  const buf = new Uint8Array(8);
+  globalThis.crypto.getRandomValues(buf);
+  const hex = Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `run_${Date.now().toString(36)}_${hex}`;
 }
 
 /**
@@ -246,6 +283,21 @@ export async function identifyLocalDaemon(binding: LocalPcBinding): Promise<Loca
   return response.payload;
 }
 
+export interface WithTransientBindingOptions {
+  /**
+   * Phase 1.f daemon-side mid-run cancel. When supplied alongside a
+   * `runId`, an abort fired before the response arrives sends a
+   * `cancel_run` over the same binding to interrupt the daemon's
+   * registered child process, then rejects the outer promise with
+   * an `AbortError`. The cancel envelope is best-effort: if the
+   * connection drops mid-send, the daemon's WS-close cleanup aborts
+   * its active runs anyway.
+   */
+  abortSignal?: AbortSignal;
+  /** runId to send with the cancel envelope. Required when abortSignal is set. */
+  runId?: string;
+}
+
 /**
  * Open a binding, await it reaching `open`, run `fn`, and close.
  * Exported for tests so consumers can mock the transient lifecycle.
@@ -253,22 +305,45 @@ export async function identifyLocalDaemon(binding: LocalPcBinding): Promise<Loca
 export async function withTransientBinding<T>(
   binding: LocalPcBinding,
   fn: (handle: LocalDaemonBinding) => Promise<SessionResponse<T>>,
+  opts: WithTransientBindingOptions = {},
 ): Promise<SessionResponse<T>> {
   return new Promise<SessionResponse<T>>((resolve, reject) => {
-    let settled = false;
+    // Two phases of "settled":
+    //   - `dispatched`: the open/timeout/unreachable branch we took
+    //     after the binding stabilized. Guards against double-dispatch
+    //     of `fn` if multiple status transitions fire.
+    //   - `outerSettled`: the outer promise has resolved or rejected.
+    //     Guards against the race between `fn`'s normal completion and
+    //     a mid-flight abort — the first to land wins; the other is
+    //     swallowed. We also need this split because the abort path
+    //     needs to reject the outer promise WHILE the in-flight `fn`
+    //     is still awaiting the daemon response, which the previous
+    //     "finish once" model didn't allow.
+    let dispatched = false;
+    let outerSettled = false;
     let openTimer: ReturnType<typeof setTimeout> | null = null;
-    const finish = (handle: LocalDaemonBinding, fnArg: () => Promise<void>) => {
-      if (settled) return;
-      settled = true;
-      // Clear the backstop timer the moment we know the outcome —
-      // otherwise it lingers as a pending timer (slowing test exit
-      // and retaining a handle ref in long-lived app sessions). PR
-      // #511 review caught the leak.
+    let abortListener: (() => void) | null = null;
+    let handleRef: LocalDaemonBinding | null = null;
+
+    const detachAbort = () => {
+      if (abortListener && opts.abortSignal) {
+        opts.abortSignal.removeEventListener('abort', abortListener);
+      }
+      abortListener = null;
+    };
+    const settleOuter = (settler: () => void) => {
+      if (outerSettled) return;
+      outerSettled = true;
       if (openTimer) {
         clearTimeout(openTimer);
         openTimer = null;
       }
-      void fnArg().finally(() => handle.close());
+      detachAbort();
+      settler();
+      // Close the handle once after the outer promise has settled.
+      // Idempotent: createLocalDaemonBinding's close() guards against
+      // double-close itself.
+      if (handleRef) handleRef.close();
     };
 
     const handle = createLocalDaemonBinding({
@@ -277,15 +352,76 @@ export async function withTransientBinding<T>(
       host: LOCAL_PC_HOST,
       onStatus: (status) => {
         if (status.state === 'connecting') return;
+        if (dispatched) return; // already routed past `open` or terminal
         if (status.state === 'open') {
-          finish(handle, async () => {
-            try {
-              const response = await fn(handle);
-              resolve(response);
-            } catch (err) {
+          dispatched = true;
+          // Wire the abort listener AFTER `open` so we don't dispatch
+          // cancel_run on a half-built connection. The listener:
+          //   1. sends cancel_run on the same binding so the daemon
+          //      SIGTERMs its registered child;
+          //   2. rejects the outer promise with AbortError IMMEDIATELY
+          //      — we don't wait for the daemon's response because the
+          //      in-flight `fn` could resolve successfully first and
+          //      win the race, leaving the caller blocked on a value
+          //      it asked to abandon.
+          if (opts.abortSignal && opts.runId) {
+            const runId = opts.runId;
+            const fireAbort = () => {
+              // The cancel_run promise is observed only for its
+              // close-coordination side effect: we want the WS to stay
+              // open long enough for the cancel frame to leave the
+              // socket. Closing the handle synchronously alongside
+              // `reject(AbortError)` races the send buffer flush and
+              // can drop the frame before the daemon sees it. Tying
+              // the close to the cancel request's settlement (either
+              // its 5s timeout or the daemon's reply) is the simplest
+              // way to guarantee delivery without exposing a separate
+              // "flush" knob on the binding.
+              const cancelPromise = handle
+                .request<{ accepted: boolean; runId?: string }>({
+                  type: 'cancel_run',
+                  payload: { runId },
+                  timeoutMs: 5_000,
+                })
+                .catch(() => {});
+              if (outerSettled) return;
+              outerSettled = true;
+              if (openTimer) {
+                clearTimeout(openTimer);
+                openTimer = null;
+              }
+              detachAbort();
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
               reject(err);
+              // Defer the close until the cancel envelope has either
+              // been acked or timed out — see comment above.
+              void cancelPromise.then(() => {
+                if (handleRef) handleRef.close();
+              });
+            };
+            abortListener = fireAbort;
+            opts.abortSignal.addEventListener('abort', abortListener, { once: true });
+            if (opts.abortSignal.aborted) {
+              fireAbort();
+              return;
             }
-          });
+          }
+          void fn(handle)
+            .then((response) => {
+              settleOuter(() => resolve(response));
+            })
+            .catch((err) => {
+              settleOuter(() => {
+                if (opts.abortSignal?.aborted) {
+                  const aborted = new Error('The operation was aborted');
+                  aborted.name = 'AbortError';
+                  reject(aborted);
+                } else {
+                  reject(err);
+                }
+              });
+            });
           return;
         }
         // unreachable | closed before we sent — surface as a typed
@@ -293,18 +429,22 @@ export async function withTransientBinding<T>(
         // re-pair or fall back. The adapter intentionally collapses
         // auth-fail / wrong-port / network-error into "unreachable"
         // (browsers hide the upgrade response from JS); we honor that.
-        finish(handle, async () => {
+        dispatched = true;
+        settleOuter(() => {
           reject(new LocalDaemonUnreachableError(status.reason));
         });
       },
     });
+    handleRef = handle;
 
     // Backstop: if neither `open` nor a terminal status fires within
     // OPEN_TIMEOUT_MS, treat it as unreachable. The adapter's own
     // error events almost always fire faster than this, but a
     // pathological network state (SYN held by kernel) can hang it.
     openTimer = setTimeout(() => {
-      finish(handle, async () => {
+      if (dispatched) return;
+      dispatched = true;
+      settleOuter(() => {
         reject(new LocalDaemonUnreachableError('timed out before connection opened'));
       });
     }, OPEN_TIMEOUT_MS);

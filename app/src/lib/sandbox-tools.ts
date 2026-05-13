@@ -390,10 +390,13 @@ export async function executeSandboxToolCall(
         };
         if (options?.localDaemonBinding) {
           try {
+            const execOpts: Parameters<typeof execLocalDaemon>[2] = {};
+            if (normalizedWorkdir) execOpts.cwd = normalizedWorkdir;
+            if (options.abortSignal) execOpts.abortSignal = options.abortSignal;
             const localResult = await execLocalDaemon(
               options.localDaemonBinding,
               call.args.command,
-              normalizedWorkdir ? { cwd: normalizedWorkdir } : {},
+              execOpts,
             );
             result = {
               stdout: localResult.stdout,
@@ -403,6 +406,31 @@ export async function executeSandboxToolCall(
               timedOut: localResult.timedOut,
             };
           } catch (caught) {
+            // Mid-run cancel surfaces as an AbortError from the
+            // transient binding wrapper (the cancel_run envelope was
+            // dispatched, the daemon SIGTERM'd the child). Synthesize
+            // a clean tool-result envelope so the chat layer sees a
+            // "Cancelled by user" outcome rather than a tool-error.
+            // The caller's abortRef check immediately after will
+            // short-circuit the round loop; the synthesized result
+            // exists for the rare case the loop runs another tick
+            // before observing the ref. No structuredError — cancel
+            // is a user-initiated state, not an error class.
+            if (caught instanceof Error && caught.name === 'AbortError') {
+              const durationMs = Date.now() - start;
+              const cardData: SandboxCardData = {
+                command: call.args.command,
+                stdout: '',
+                stderr: '',
+                exitCode: 124,
+                truncated: false,
+                durationMs,
+              };
+              return {
+                text: `[Tool Result — sandbox_exec]\nCommand: ${call.args.command}\nExit code: 124\nCancelled by user.`,
+                card: { type: 'sandbox', data: cardData },
+              };
+            }
             if (caught instanceof LocalDaemonUnreachableError) {
               const durationMs = Date.now() - start;
               const unreachableErr = classifyError(
