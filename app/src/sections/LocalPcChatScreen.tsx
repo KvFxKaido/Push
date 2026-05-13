@@ -37,9 +37,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { LocalPcModeChip } from '@/components/LocalPcModeChip';
 import { ApprovalPrompt, type PendingApproval } from '@/components/local-pc/ApprovalPrompt';
+import { LocalPcModelPicker } from '@/components/local-pc/LocalPcModelPicker';
 import { useChat } from '@/hooks/useChat';
 import { useLocalDaemon } from '@/hooks/useLocalDaemon';
+import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { clearPairedDevice } from '@/lib/local-pc-storage';
+import { setPreferredProvider, type PreferredProvider } from '@/lib/providers';
 import type { Conversation, LocalPcBinding } from '@/types';
 
 interface LocalPcChatScreenProps {
@@ -49,6 +52,26 @@ interface LocalPcChatScreenProps {
 }
 
 export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps) {
+  // Model/provider picker (deferred 3c.2b polish item). Without this,
+  // the local-pc chat inherits whatever the user last picked on the
+  // cloud surface with no in-chat surface to see or change it. The
+  // catalog hook owns the reactive `activeBackend` state — the picker
+  // surfaces it, the select handler updates both the durable
+  // preference (via providers.ts) AND the catalog's reactive state
+  // so `getActiveProvider()` returns the new value on the next read.
+  const catalog = useModelCatalog();
+  const handleSelectProvider = useCallback(
+    (provider: PreferredProvider) => {
+      // Order matters: persist FIRST so a re-render mid-switch sees
+      // the same value the catalog is about to report. The catalog's
+      // setActiveBackend is what actually triggers the re-render —
+      // setPreferredProvider alone wouldn't.
+      setPreferredProvider(provider);
+      catalog.setActiveBackend(provider);
+    },
+    [catalog],
+  );
+
   // Phase 3 slice 4: queue of pending approvals from the daemon's
   // `approval_required` events. Daemon-side delegated agents (e.g.
   // delegate_coder) emit these when a sandbox guard fires; without a
@@ -321,6 +344,13 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
       />
 
       <div className="border-t border-push-edge/40 bg-[#000]/80 px-3 py-2 backdrop-blur safe-area-bottom">
+        <div className="mb-2 flex items-center">
+          <LocalPcModelPicker
+            activeProvider={catalog.activeProviderLabel}
+            availableProviders={catalog.availableProviders}
+            onSelectProvider={handleSelectProvider}
+          />
+        </div>
         <div className="flex items-end gap-2">
           <textarea
             value={composeText}

@@ -70,6 +70,31 @@ vi.mock('@/lib/local-pc-storage', () => ({
   clearPairedDevice: vi.fn(),
 }));
 
+// useModelCatalog touches storage + provider configs that aren't
+// available in the SSR test env. Return just the subset the local-pc
+// chat reads — `availableProviders`, `activeProviderLabel`, and
+// `setActiveBackend` — so the picker chip renders without booting
+// the full catalog.
+vi.mock('@/hooks/useModelCatalog', () => ({
+  useModelCatalog: () => ({
+    availableProviders: [
+      ['cloudflare', 'Cloudflare Workers AI', true],
+      ['openrouter', 'OpenRouter', true],
+    ] as const,
+    activeProviderLabel: 'cloudflare',
+    setActiveBackend: vi.fn(),
+  }),
+}));
+
+vi.mock('@/lib/providers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/providers')>();
+  return {
+    ...actual,
+    setPreferredProvider: vi.fn(),
+    getModelForRole: vi.fn(() => ({ id: '@cf/meta/llama-3-8b' })),
+  };
+});
+
 import { LocalPcChatScreen } from './LocalPcChatScreen';
 import type { LocalPcBinding } from '@/types';
 
@@ -194,6 +219,18 @@ describe('LocalPcChatScreen', () => {
     const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
     expect(html).not.toContain('Reconnecting to local daemon');
     expect(html).not.toContain('aria-label="Retry connection"');
+  });
+
+  it('renders the model picker chip in the input area with the active provider', () => {
+    // The chip is the surface that finally tells the user which
+    // provider + model they're talking to on local-pc — before this,
+    // the local-pc chat silently inherited the cloud orchestrator's
+    // last selection. The catalog mock pins `cloudflare` + the
+    // `@cf/meta/llama-3-8b` model.
+    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    expect(html).toContain('aria-label="Local PC model and provider"');
+    expect(html).toContain('Cloudflare Workers AI');
+    expect(html).toContain('llama-3-8b');
   });
 
   it('omits the approval prompt when no approval_required events have arrived', () => {
