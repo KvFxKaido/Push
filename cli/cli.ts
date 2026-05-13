@@ -2043,8 +2043,12 @@ async function runDaemonSubcommand(values, positionals) {
     return runDaemonRevokeAttach(positionals);
   }
 
+  if (action === 'audit') {
+    return runDaemonAudit(values);
+  }
+
   throw new Error(
-    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep] | pair [--origin <url>] | revoke <tokenId> | tokens | allow <path> | deny <path> | allowlist | devices | attach-tokens | revoke-attach <tokenId>`,
+    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep] | pair [--origin <url>] | revoke <tokenId> | tokens | allow <path> | deny <path> | allowlist | devices | attach-tokens | revoke-attach <tokenId> | audit [--tail N] [--since DATE] [--type TYPE] [--json]`,
   );
 }
 
@@ -2342,6 +2346,77 @@ async function runDaemonRevokeAttach(positionals: string[]): Promise<number> {
     `revoke-attach failed: ${daemonResponse.error ?? daemonResponse.code ?? 'unknown'}\n`,
   );
   return 1;
+}
+
+/**
+ * `push daemon audit [--tail N] [--since DATE] [--type TYPE] [--json]`
+ *
+ * Reads directly from the audit log files — no daemon round-trip
+ * needed. This means the command works even when the daemon is
+ * stopped, which is the most useful posture for incident response
+ * ("the daemon is down, let me see what happened"). Filters compose:
+ * --tail applies AFTER --since / --type, so `--tail 5 --type
+ * tool.sandbox_exec` returns the last 5 exec events, not the last 5
+ * events of any kind that happen to also be exec.
+ */
+async function runDaemonAudit(values: Record<string, unknown>): Promise<number> {
+  const { readAuditEvents, getAuditLogPath } = await import('./pushd-audit-log.js');
+  const tailRaw = typeof values?.tail === 'string' ? values.tail : null;
+  const sinceRaw = typeof values?.since === 'string' ? values.since : null;
+  const typeFilter = typeof values?.type === 'string' ? values.type : undefined;
+  let tail: number | undefined;
+  if (tailRaw !== null) {
+    const parsed = Number.parseInt(tailRaw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      process.stderr.write(`audit: invalid --tail value: ${tailRaw}\n`);
+      return 1;
+    }
+    tail = parsed;
+  }
+  let sinceMs: number | undefined;
+  if (sinceRaw !== null) {
+    const parsed = Date.parse(sinceRaw);
+    if (!Number.isFinite(parsed)) {
+      process.stderr.write(`audit: invalid --since value (expected ISO date): ${sinceRaw}\n`);
+      return 1;
+    }
+    sinceMs = parsed;
+  }
+  let events;
+  try {
+    events = await readAuditEvents({
+      tail,
+      sinceMs,
+      type: typeFilter as any,
+    });
+  } catch (err) {
+    process.stderr.write(
+      `audit: read failed (${err instanceof Error ? err.message : String(err)})\n` +
+        `audit: log path is ${getAuditLogPath()}\n`,
+    );
+    return 1;
+  }
+  if (values?.json) {
+    process.stdout.write(`${JSON.stringify(events, null, 2)}\n`);
+    return 0;
+  }
+  if (events.length === 0) {
+    process.stdout.write('no audit events match the filter\n');
+    return 0;
+  }
+  for (const e of events) {
+    const when = new Date(e.ts).toISOString();
+    const surface = e.surface;
+    const who = e.deviceId ? `device=${e.deviceId}` : 'device=-';
+    const auth = e.authKind ? ` auth=${e.authKind}` : '';
+    const session = e.sessionId ? ` session=${e.sessionId}` : '';
+    const run = e.runId ? ` run=${e.runId}` : '';
+    const payload = e.payload ? ` ${JSON.stringify(e.payload)}` : '';
+    process.stdout.write(
+      `${when}  ${e.type}  ${surface}  ${who}${auth}${session}${run}${payload}\n`,
+    );
+  }
+  return 0;
 }
 
 interface DaemonAttachTokenRow {

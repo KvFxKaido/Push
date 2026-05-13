@@ -25,6 +25,7 @@ import os from 'node:os';
 import { checkOrigin } from './pushd-origin.js';
 import { verifyDeviceToken, touchLastUsed, type DeviceTokenRecord } from './pushd-device-tokens.js';
 import { verifyDeviceAttachToken, type AttachTokenRecord } from './pushd-attach-tokens.js';
+import { appendAuditEvent } from './pushd-audit-log.js';
 
 /**
  * Per-WS-connection mutable state. Today it tracks AbortControllers
@@ -418,6 +419,19 @@ export async function startPushdWs(
     // lastUsedAt during the auth check above, so no extra write is
     // needed here.
     touchLastUsed(auth.parentDeviceTokenId).catch(() => {});
+
+    // Phase 3 slice 3: emit an `auth.upgrade` audit event so the
+    // operator's view of "who connected and when" matches the live
+    // connection registry. Fire-and-forget; audit failures never
+    // block the WS lifecycle.
+    void appendAuditEvent({
+      type: 'auth.upgrade',
+      surface: 'ws',
+      deviceId: auth.parentDeviceTokenId,
+      attachTokenId: auth.kind === 'attach' ? auth.tokenId : undefined,
+      authKind: auth.kind,
+      payload: { boundOrigin: auth.boundOrigin },
+    });
 
     // Register this connection. Phase 3 slice 2: indexed by parent
     // device tokenId so a single-device cascade revoke can find every

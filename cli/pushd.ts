@@ -43,6 +43,140 @@ import {
   listDeviceAttachTokens,
   getAttachTokenTtlMs,
 } from './pushd-attach-tokens.js';
+import {
+  appendAuditEvent,
+  shouldLogCommandText,
+  truncateForAudit,
+  type AuditSurface,
+  type AuditAuthKind,
+} from './pushd-audit-log.js';
+
+/**
+ * Slice-3 helper: extract the provenance fields the audit log
+ * expects from the dispatcher context. Handlers call this once and
+ * spread the result into `appendAuditEvent`. `surface` defaults to
+ * 'unix-socket' because handlers reachable from BOTH transports get
+ * called from the CLI's local Unix-socket path when no WS context
+ * is present.
+ */
+function auditProvenance(
+  context:
+    | { auth?: { kind: AuditAuthKind; parentDeviceTokenId: string; tokenId: string } }
+    | null
+    | undefined,
+): {
+  surface: AuditSurface;
+  deviceId?: string;
+  attachTokenId?: string;
+  authKind?: AuditAuthKind;
+} {
+  const auth = context?.auth;
+  if (!auth) return { surface: 'unix-socket' };
+  return {
+    surface: 'ws',
+    deviceId: auth.parentDeviceTokenId,
+    attachTokenId: auth.kind === 'attach' ? auth.tokenId : undefined,
+    authKind: auth.kind,
+  };
+}
+
+/**
+ * Dispatcher-level audit emission for request types whose handlers
+ * don't emit at a finer grain. Called from `handleRequest` after the
+ * handler resolves. Reads `req.payload` for the input fields (path,
+ * sessionId, runId) and the response for ok/error metadata. The
+ * mapping is intentionally narrow — types not in the switch produce
+ * no audit row, so types like `ping` and `hello` stay out of the
+ * log.
+ *
+ * Slice 3 covers: sandbox file ops, delegate.{coder|explorer|reviewer},
+ * session.start (start_session), session.cancel_run. The auth and
+ * sandbox_exec / mint / revoke handlers emit themselves because they
+ * carry context (exit code, closed-connection count, mintedTokenId)
+ * the dispatcher doesn't see.
+ */
+function emitDispatcherAudit(req: any, response: any, context: any): void {
+  if (!req || typeof req.type !== 'string') return;
+  // Handlers vary on whether sessionId rides in the top-level envelope
+  // or the payload. cancel_run / submit_approval place it in payload;
+  // attach_session / send_user_message use the envelope. Read both
+  // so the audit row records it consistently regardless of caller
+  // shape.
+  const sessionId =
+    typeof req.sessionId === 'string' && req.sessionId
+      ? req.sessionId
+      : typeof req.payload?.sessionId === 'string'
+        ? req.payload.sessionId
+        : undefined;
+  const ok = Boolean(response?.ok);
+  const errorCode =
+    response && response.error && typeof response.error.code === 'string'
+      ? response.error.code
+      : undefined;
+  const prov = auditProvenance(context);
+  switch (req.type) {
+    case 'sandbox_read_file':
+    case 'sandbox_write_file':
+    case 'sandbox_list_dir':
+    case 'sandbox_diff': {
+      void appendAuditEvent({
+        type: `tool.${req.type}` as any,
+        ...prov,
+        sessionId,
+        payload: {
+          path: typeof req.payload?.path === 'string' ? req.payload.path : undefined,
+          ok,
+          errorCode,
+        },
+      });
+      return;
+    }
+    case 'delegate_coder':
+    case 'delegate_explorer':
+    case 'delegate_reviewer': {
+      // delegate.* events are coarse — they fire as soon as the
+      // handler returns, regardless of how long the delegation
+      // itself runs. That's fine for "did this device kick off a
+      // delegation," which is the auditable surface. A future slice
+      // could emit a paired `delegate.complete` from the agent
+      // bindings when the run finishes.
+      const taskExcerpt =
+        typeof req.payload?.task === 'string' ? truncateForAudit(req.payload.task) : undefined;
+      const auditType = req.type.replace('delegate_', 'delegate.') as any;
+      void appendAuditEvent({
+        type: auditType,
+        ...prov,
+        sessionId,
+        payload: { ok, errorCode, taskExcerpt },
+      });
+      return;
+    }
+    case 'start_session': {
+      void appendAuditEvent({
+        type: 'session.start',
+        ...prov,
+        sessionId:
+          ok && response?.payload?.sessionId ? String(response.payload.sessionId) : sessionId,
+        payload: { ok, errorCode },
+      });
+      return;
+    }
+    case 'cancel_run': {
+      const runId =
+        typeof req.payload?.runId === 'string' && req.payload.runId ? req.payload.runId : undefined;
+      void appendAuditEvent({
+        type: 'session.cancel_run',
+        ...prov,
+        sessionId,
+        runId,
+        payload: { ok, errorCode },
+      });
+      return;
+    }
+    default:
+      return;
+  }
+}
 
 // Module-scoped reference to the running WS handle. Set when startPushdWs
 // completes, nulled on shutdown. Daemon admin handlers (`revoke_device_token`,
@@ -3299,6 +3433,16 @@ async function handleSandboxExec(req, _emitEvent, context) {
   const startedAt = Date.now();
   const { runCommandInResolvedShell } = await import('./shell.js');
 
+  // Phase 3 slice 3 audit emission. We build the payload incrementally
+  // from the actual outcome (exit code, duration, cancelled flag) and
+  // emit ONCE in the finally block so success and failure paths share
+  // a single record shape. Command text is opt-in via
+  // PUSHD_AUDIT_LOG_COMMANDS=1 — see pushd-audit-log.ts for the
+  // privacy rationale.
+  let auditExitCode = 0;
+  let auditCancelled = false;
+  let auditTimedOut = false;
+  let auditTruncated = false;
   // Non-zero exit codes are NOT errors at the RPC layer — they're a
   // normal result the model needs to see. We only set ok=false for
   // INVALID_REQUEST cases above. The caller reads `exitCode` for the
@@ -3341,6 +3485,10 @@ async function handleSandboxExec(req, _emitEvent, context) {
     const capturedTooLarge =
       (err?.stdout?.length ?? 0) > SANDBOX_EXEC_MAX_OUTPUT ||
       (err?.stderr?.length ?? 0) > SANDBOX_EXEC_MAX_OUTPUT;
+    auditExitCode = exitCode;
+    auditCancelled = wasAborted;
+    auditTimedOut = isTimeout;
+    auditTruncated = isMaxBufferOverflow || capturedTooLarge;
     return makeResponse(req.requestId, 'sandbox_exec', null, true, {
       stdout: truncateExecOutput(err?.stdout ?? ''),
       stderr: truncateExecOutput(err?.stderr ?? err?.message ?? ''),
@@ -3354,6 +3502,24 @@ async function handleSandboxExec(req, _emitEvent, context) {
     if (runId && wsState && wsState.activeRuns instanceof Map) {
       wsState.activeRuns.delete(runId);
     }
+    void appendAuditEvent({
+      type: 'tool.sandbox_exec',
+      ...auditProvenance(context),
+      runId: runId ?? undefined,
+      payload: {
+        cwd,
+        exitCode: auditExitCode,
+        durationMs: Date.now() - startedAt,
+        cancelled: auditCancelled,
+        timedOut: auditTimedOut,
+        truncated: auditTruncated,
+        // Privacy posture: command text is opt-in. The decision doc's
+        // minimum-model checklist names "command/tool" — the tool is
+        // always recorded (event type = `tool.sandbox_exec`); the
+        // command text rides on the env opt-in. See pushd-audit-log.ts.
+        command: shouldLogCommandText() ? truncateForAudit(command) : undefined,
+      },
+    });
   }
 }
 
@@ -3857,6 +4023,15 @@ async function handleRevokeDeviceToken(req, _emitEvent, context) {
   const closedConnections = activeWsHandle
     ? activeWsHandle.disconnectByTokenId(tokenId, 'device token revoked')
     : 0;
+  void appendAuditEvent({
+    type: 'auth.revoke_device',
+    ...auditProvenance(context),
+    payload: {
+      tokenId,
+      closedConnections,
+      revokedAttachTokens: revokedAttachIds,
+    },
+  });
   return makeResponse(req.requestId, 'revoke_device_token', null, true, {
     tokenId,
     closedConnections,
@@ -3901,6 +4076,15 @@ async function handleMintDeviceAttachToken(req, _emitEvent, context) {
     parentTokenId: auth.tokenId,
     boundOrigin: auth.boundOrigin as 'loopback' | string,
   });
+  void appendAuditEvent({
+    type: 'auth.mint_attach',
+    ...auditProvenance(context),
+    payload: {
+      mintedTokenId: result.tokenId,
+      parentTokenId: auth.tokenId,
+      ttlMs: result.ttlMs,
+    },
+  });
   return makeResponse(req.requestId, 'mint_device_attach_token', null, true, {
     token: result.token,
     tokenId: result.tokenId,
@@ -3940,6 +4124,11 @@ async function handleRevokeDeviceAttachToken(req, _emitEvent, context) {
   const closedConnections = activeWsHandle
     ? activeWsHandle.disconnectByAttachTokenId(tokenId, 'attach token revoked')
     : 0;
+  void appendAuditEvent({
+    type: 'auth.revoke_attach',
+    ...auditProvenance(context),
+    payload: { tokenId, closedConnections },
+  });
   return makeResponse(req.requestId, 'revoke_device_attach_token', null, true, {
     tokenId,
     closedConnections,
@@ -4079,12 +4268,26 @@ export async function handleRequest(req, emitEvent, context = null) {
     );
   }
 
+  let response;
   try {
-    return await handler(req, emitEvent, context);
+    response = await handler(req, emitEvent, context);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return makeErrorResponse(req.requestId, req.type, 'INTERNAL_ERROR', message);
+    response = makeErrorResponse(req.requestId, req.type, 'INTERNAL_ERROR', message);
   }
+  // Phase 3 slice 3: dispatcher-level audit emission for the
+  // request types whose handlers don't already emit themselves.
+  // The sandbox_exec / mint / revoke handlers emit at a finer
+  // grain (they know exit codes / closed-connection counts), so
+  // they're excluded here. Auth.upgrade is emitted in pushd-ws on
+  // connection. Everything else flows through this wrapper so we
+  // don't have to thread audit calls through every handler body.
+  try {
+    emitDispatcherAudit(req, response, context);
+  } catch {
+    // audit never throws into the response path
+  }
+  return response;
 }
 
 // ─── Connection handling ─────────────────────────────────────────
