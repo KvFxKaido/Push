@@ -178,10 +178,17 @@
     },
     {
       "tag": "v3",
-      // Remote Sessions relay (Phase 2.b). No SQLite — the relay DO is
-      // intentionally storage-less; see docs/decisions/Remote Sessions
-      // via pushd Relay.md Q#2. Use `new_classes`, NOT `new_sqlite_classes`.
-      "new_classes": ["RelaySessionDO"]
+      // Remote Sessions relay (Phase 2.b). Declared as
+      // `new_sqlite_classes` per Cloudflare's current requirement that
+      // all new DO namespaces use the SQLite storage backend (legacy
+      // `new_classes` is rejected at deploy validation). This does NOT
+      // contradict the "no durable storage" decision in Q#2 of
+      // docs/decisions/Remote Sessions via pushd Relay.md — the
+      // enforcement is in code (RelaySessionDO never calls
+      // state.storage.*), not in the migration flag. The flag only
+      // controls which storage API is available to the DO; whether
+      // that API is used is a code-level decision.
+      "new_sqlite_classes": ["RelaySessionDO"]
     }
   ],
   // Daily snapshot index walk — emits aggregate metrics so we can size the
