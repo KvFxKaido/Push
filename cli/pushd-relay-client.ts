@@ -123,16 +123,39 @@ export interface RelayClientHandle {
   close(): void;
 }
 
-function buildRelayUrl(deploymentUrl: string, sessionId: string): string {
-  // Normalize http(s) → ws(s); leave ws(s) intact. Trim a trailing
-  // slash so the path append doesn't double up. We deliberately don't
-  // validate the scheme strictly — operators may run on plain `ws://`
-  // for a local Worker dev loop, and the security gate is the bearer
-  // + the Worker's origin check, not the protocol.
-  let base = deploymentUrl.replace(/\/+$/, '');
-  if (base.startsWith('https://')) base = `wss://${base.slice('https://'.length)}`;
-  else if (base.startsWith('http://')) base = `ws://${base.slice('http://'.length)}`;
-  return `${base}/api/relay/v1/session/${encodeURIComponent(sessionId)}/connect`;
+export function buildRelayUrl(deploymentUrl: string, sessionId: string): string {
+  // Normalize via `URL` so the relay path joins relative to whatever
+  // base path the operator supplied. Operators run pushd against
+  // deployments like `https://example.com/api` or even a Workers
+  // route like `https://example.com/v1/api`; blindly appending
+  // `/api/relay/...` would double-up the prefix and 404. The
+  // approach: replace the URL's path with the relay route, keeping
+  // origin + scheme intact, then rewrite the scheme to ws(s).
+  //
+  // PR #530 Copilot review. Bare hostnames without a scheme
+  // (`example.com`) are tolerated — URL needs a scheme, so we
+  // fallback-prefix with `wss://` before parsing.
+  let toParse = deploymentUrl.trim();
+  if (
+    !toParse.startsWith('http://') &&
+    !toParse.startsWith('https://') &&
+    !toParse.startsWith('ws://') &&
+    !toParse.startsWith('wss://')
+  ) {
+    toParse = `wss://${toParse}`;
+  }
+  const url = new URL(toParse);
+  url.pathname = `/api/relay/v1/session/${encodeURIComponent(sessionId)}/connect`;
+  url.search = '';
+  url.hash = '';
+  // Rewrite scheme: http(s) → ws(s); ws(s) stays.
+  const scheme =
+    url.protocol === 'https:' || url.protocol === 'wss:'
+      ? 'wss:'
+      : url.protocol === 'http:' || url.protocol === 'ws:'
+        ? 'ws:'
+        : url.protocol;
+  return `${scheme}//${url.host}${url.pathname}`;
 }
 
 export function startPushdRelayClient(opts: PushdRelayClientOptions): RelayClientHandle {

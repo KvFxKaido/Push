@@ -21,6 +21,7 @@ import type {
   Conversation,
   CoderWorkingMemory,
   LocalPcBinding,
+  RelayBinding,
   ReasoningBlock,
   RunEventInput,
   ToolExecutionResult,
@@ -68,13 +69,18 @@ export interface SendLoopContext {
   sandboxIdRef: MutableRefObject<string | null>;
   ensureSandboxRef: MutableRefObject<(() => Promise<string | null>) | null>;
   /**
-   * Local-daemon binding for `kind: 'local-pc'` workspace sessions
-   * (Phase 1.d). When the active session is local-pc, this ref carries
-   * the paired bearer/port so sandbox tool calls can route through
-   * `pushd` instead of a cloud sandbox. `null` on cloud sessions; the
-   * sandbox dispatcher uses absence to fall back to `execInSandbox`.
+   * Local-daemon binding for `kind: 'local-pc'` OR `kind: 'relay'`
+   * workspace sessions (Phase 1.d / Phase 2.f). When the active
+   * session is one of those kinds, this ref carries the paired
+   * binding (loopback port+token, or relay deploymentUrl+sessionId+
+   * attach token) so sandbox tool calls route through `pushd`
+   * (directly or via the Worker relay) instead of a cloud sandbox.
+   * `null` on cloud sessions; the sandbox dispatcher uses absence
+   * to fall back to `execInSandbox`. Downstream helpers in
+   * `local-daemon-sandbox-client.ts` pick the WS adapter constructor
+   * by binding shape.
    */
-  localDaemonBindingRef: MutableRefObject<LocalPcBinding | null>;
+  localDaemonBindingRef: MutableRefObject<LocalPcBinding | RelayBinding | null>;
   scratchpadRef: MutableRefObject<ScratchpadHandlers | undefined>;
   todoRef: MutableRefObject<TodoHandlers | undefined>;
   usageHandlerRef: MutableRefObject<UsageHandler | undefined>;

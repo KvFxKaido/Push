@@ -174,9 +174,22 @@ export function buildWorkspaceContext(
  * literally the canonical example in the explorer tool registry —
  * the model parrots it back when it has no other context).
  */
-export function buildLocalPcWorkspaceContext(): string {
+/**
+ * Phase 2.f: relay sessions get the same workspace-context block as
+ * Local PC. The daemon's tool semantics are identical (relay just
+ * forwards envelopes); only the transport differs. We use a single
+ * builder with an optional transport label so the model can see
+ * "Remote (via relay)" vs "Local PC" in the workspace heading.
+ */
+export function buildLocalPcWorkspaceContext(
+  opts: { transport?: 'local-pc' | 'relay' } = {},
+): string {
+  const heading =
+    opts.transport === 'relay'
+      ? 'WORKSPACE — Paired Remote Computer (pushd daemon via relay):'
+      : 'WORKSPACE — Paired Local PC (pushd daemon):';
   return [
-    'WORKSPACE — Paired Local PC (pushd daemon):',
+    heading,
     '',
     "You are connected to a local daemon (pushd) running on the user's machine.",
     "The daemon's current working directory IS the workspace root — relative paths",

@@ -17,6 +17,7 @@ import { resolveToolName } from '@push/lib/tool-registry';
 
 import type {
   LocalPcBinding,
+  RelayBinding,
   StructuredToolError,
   ToolHookContext,
   ToolExecutionResult,
@@ -301,7 +302,10 @@ export class WebToolExecutionRuntime
           break;
 
         case 'sandbox': {
-          const localDaemonBinding = context.localDaemonBinding as LocalPcBinding | undefined;
+          const localDaemonBinding = context.localDaemonBinding as
+            | LocalPcBinding
+            | RelayBinding
+            | undefined;
           if (!context.sandboxId && !localDaemonBinding) {
             const err: StructuredToolError = {
               type: 'SANDBOX_UNREACHABLE',

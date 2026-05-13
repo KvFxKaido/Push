@@ -11,7 +11,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
-import { startPushdRelayClient } from '../pushd-relay-client.ts';
+import { buildRelayUrl, startPushdRelayClient } from '../pushd-relay-client.ts';
 
 const RELAY_TOKEN = 'pushd_relay_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
@@ -93,6 +93,49 @@ function awaitStatus(client, predicate, timeoutMs = 2000) {
     tick();
   });
 }
+
+// PR #530 review: buildRelayUrl used to blindly append /api/relay/...
+// which double-pathed when operator deploymentUrl already had /api.
+// New shape uses URL parsing + path replace.
+describe('buildRelayUrl (PR #530 normalization)', () => {
+  it('replaces the path on a bare https URL', () => {
+    assert.equal(
+      buildRelayUrl('https://example.com', 'sess-1'),
+      'wss://example.com/api/relay/v1/session/sess-1/connect',
+    );
+  });
+  it('replaces an existing /api path prefix (no double-up)', () => {
+    assert.equal(
+      buildRelayUrl('https://example.com/api', 'sess-1'),
+      'wss://example.com/api/relay/v1/session/sess-1/connect',
+    );
+  });
+  it('replaces an existing /v1/api path prefix', () => {
+    assert.equal(
+      buildRelayUrl('https://example.com/v1/api', 'sess-1'),
+      'wss://example.com/api/relay/v1/session/sess-1/connect',
+    );
+  });
+  it('rewrites http(s) → ws(s)', () => {
+    assert.equal(
+      buildRelayUrl('http://localhost:8787', 'sess-1'),
+      'ws://localhost:8787/api/relay/v1/session/sess-1/connect',
+    );
+  });
+  it('tolerates a bare hostname (defaults to wss)', () => {
+    assert.equal(
+      buildRelayUrl('relay.example.com', 'sess-1'),
+      'wss://relay.example.com/api/relay/v1/session/sess-1/connect',
+    );
+  });
+  it('encodes sessionId path component', () => {
+    assert.ok(
+      buildRelayUrl('https://example.com', 'pushd-host with spaces').endsWith(
+        '/session/pushd-host%20with%20spaces/connect',
+      ),
+    );
+  });
+});
 
 describe('pushd-relay-client', () => {
   it('opens an outbound WS and carries the bearer in Sec-WebSocket-Protocol', async () => {

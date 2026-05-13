@@ -10,11 +10,14 @@ import { lazyWithRecovery, toDefaultExport } from '@/lib/lazy-import';
 import { perfMark, perfMeasure } from '@/lib/perf-marks';
 import { isLocalPcModeEnabled } from '@/lib/local-pc-binding';
 import { getPairedDevice } from '@/lib/local-pc-storage';
+import { isRelayModeEnabled } from '@/lib/relay-binding';
+import { getPairedRemote } from '@/lib/relay-storage';
 import type {
   ActiveRepo,
   AppShellScreen,
   ConversationIndex,
   LocalPcBinding,
+  RelayBinding,
   RepoWithActivity,
   WorkspaceSession,
 } from '@/types';
@@ -94,6 +97,14 @@ function normalizeWorkspaceSession(
     return null;
   }
 
+  if (candidate.kind === 'relay') {
+    // Phase 2.f: same posture as local-pc. The relay attach-token
+    // bearer must not survive localStorage; forcing a re-click of the
+    // Remote tile re-hydrates from IndexedDB through the dedicated
+    // store, with no second persistence path to keep in sync.
+    return null;
+  }
+
   return activeRepo
     ? { id: crypto.randomUUID(), kind: 'repo', repo: activeRepo, sandboxId: null }
     : null;
@@ -140,6 +151,12 @@ const LocalPcPairing = lazyWithRecovery(
     (module) => module.LocalPcPairing,
   ),
 );
+const RelayPairing = lazyWithRecovery(
+  toDefaultExport(
+    () => import('@/sections/RelayPairing'),
+    (module) => module.RelayPairing,
+  ),
+);
 
 function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo, setCurrentBranch } = useActiveRepo();
@@ -159,6 +176,12 @@ function App() {
   // ref on every flow-changing handler lets the stale resolver detect
   // that it's been superseded and bail without committing state.
   const localPcGenRef = useRef(0);
+  // Phase 2.f: same pattern for the Remote (relay) entry point. The
+  // paired_remotes IDB lookup is async; bumping `relayGenRef` on
+  // every flow-changing handler keeps a slow resolver from teleporting
+  // the user into a relay session after they've moved on.
+  const [relayPairingActive, setRelayPairingActive] = useState(false);
+  const relayGenRef = useRef(0);
 
   const { resolveRepoAppearance, setRepoAppearance, clearRepoAppearance } = useRepoAppearance();
 
@@ -279,11 +302,58 @@ function App() {
     setWorkspaceSession(null);
   }, []);
 
+  const handleStartRelay = useCallback(async () => {
+    const myGen = ++relayGenRef.current;
+    setPendingResumeChatId(null);
+    clearActiveRepo();
+    setWorkspaceSession(null);
+
+    const record = await getPairedRemote();
+    if (relayGenRef.current !== myGen) return;
+
+    if (record) {
+      setRelayPairingActive(false);
+      setWorkspaceSession({
+        id: crypto.randomUUID(),
+        kind: 'relay',
+        binding: {
+          deploymentUrl: record.deploymentUrl,
+          sessionId: record.sessionId,
+          token: record.token,
+          attachTokenId: record.attachTokenId,
+          deviceTokenId: record.deviceTokenId,
+        },
+        sandboxId: null,
+      });
+    } else {
+      setRelayPairingActive(true);
+    }
+  }, [clearActiveRepo]);
+
+  const handleRelayPaired = useCallback((binding: RelayBinding) => {
+    relayGenRef.current += 1;
+    setRelayPairingActive(false);
+    setWorkspaceSession({
+      id: crypto.randomUUID(),
+      kind: 'relay',
+      binding,
+      sandboxId: null,
+    });
+  }, []);
+
+  const handleRelayPairingCancel = useCallback(() => {
+    relayGenRef.current += 1;
+    setRelayPairingActive(false);
+    setWorkspaceSession(null);
+  }, []);
+
   const handleEndWorkspace = useCallback(() => {
     localPcGenRef.current += 1;
+    relayGenRef.current += 1;
     setPendingResumeChatId(null);
     setWorkspaceSession(null);
     setLocalPcPairingActive(false);
+    setRelayPairingActive(false);
   }, []);
 
   const handleSelectRepo = useCallback(
@@ -380,29 +450,35 @@ function App() {
       safeStorageRemove(WORKSPACE_SESSION_STORAGE_KEY);
       return;
     }
-    // Local-pc sessions get stripped to a bearerless tombstone before
-    // serialization. The bearer token lives in IndexedDB (paired_devices)
-    // and is re-hydrated on the next tile click; persisting it here too
-    // would create a second exfiltration surface and a sync hazard.
+    // Local-pc / relay sessions get stripped to a bearerless tombstone
+    // before serialization. The bearer token lives in IndexedDB
+    // (`paired_devices` / `paired_remotes`) and is re-hydrated on the
+    // next tile click; persisting it here too would create a second
+    // exfiltration surface and a sync hazard.
     const persisted =
       workspaceSession.kind === 'local-pc'
         ? { id: workspaceSession.id, kind: 'local-pc' as const, sandboxId: null }
-        : workspaceSession;
+        : workspaceSession.kind === 'relay'
+          ? { id: workspaceSession.id, kind: 'relay' as const, sandboxId: null }
+          : workspaceSession;
     safeStorageSet(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify(persisted));
   }, [workspaceSession]);
 
   const screen: AppShellScreen = useMemo(() => {
-    // Local-pc paths short-circuit auth: the daemon-paired flow doesn't
-    // need GitHub creds, so a pairing interstitial or a `kind: 'local-pc'`
-    // workspace renders even when the user is signed out of GitHub.
+    // Local-pc / relay paths short-circuit auth: the daemon-paired
+    // flow doesn't need GitHub creds, so a pairing interstitial or a
+    // `kind: 'local-pc'` / `'relay'` workspace renders even when the
+    // user is signed out of GitHub.
     if (localPcPairingActive) return 'local-pc-pairing';
+    if (relayPairingActive) return 'relay-pairing';
     if (workspaceSession?.kind === 'local-pc') return 'workspace';
+    if (workspaceSession?.kind === 'relay') return 'workspace';
     if (workspaceSession?.kind === 'scratch') return 'workspace';
     if (workspaceSession?.kind === 'chat') return 'workspace';
     if (!authToken) return 'onboarding';
     if (workspaceSession?.kind === 'repo') return 'workspace';
     return 'home';
-  }, [authToken, workspaceSession, localPcPairingActive]);
+  }, [authToken, workspaceSession, localPcPairingActive, relayPairingActive]);
 
   const suspenseFallback = <div className="h-dvh bg-[#000]" />;
 
@@ -422,6 +498,7 @@ function App() {
             onStartWorkspace={handleStartScratchWorkspace}
             onStartChat={handleStartChatMode}
             onStartLocalPc={isLocalPcModeEnabled() ? handleStartLocalPc : undefined}
+            onStartRelay={isRelayModeEnabled() ? handleStartRelay : undefined}
             onInstallApp={installApp}
             onConnectInstallationId={setInstallationIdManually}
             loading={authLoading}
@@ -453,6 +530,7 @@ function App() {
             onStartWorkspace={handleStartScratchWorkspace}
             onStartChat={handleStartChatMode}
             onStartLocalPc={isLocalPcModeEnabled() ? handleStartLocalPc : undefined}
+            onStartRelay={isRelayModeEnabled() ? handleStartRelay : undefined}
             user={validatedUser}
           />
         </div>
@@ -464,6 +542,14 @@ function App() {
     return (
       <Suspense fallback={suspenseFallback}>
         <LocalPcPairing onPaired={handleLocalPcPaired} onCancel={handleLocalPcPairingCancel} />
+      </Suspense>
+    );
+  }
+
+  if (screen === 'relay-pairing') {
+    return (
+      <Suspense fallback={suspenseFallback}>
+        <RelayPairing onPaired={handleRelayPaired} onCancel={handleRelayPairingCancel} />
       </Suspense>
     );
   }
@@ -507,6 +593,7 @@ function App() {
           onStartScratchWorkspace: handleStartScratchWorkspace,
           onStartChat: handleStartChatMode,
           onStartLocalPc: handleStartLocalPc,
+          onStartRelay: isRelayModeEnabled() ? handleStartRelay : undefined,
           onEndWorkspace: handleEndWorkspace,
         }}
         homeBridge={{

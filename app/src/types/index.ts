@@ -55,7 +55,7 @@ export type { AuditVerdictCardData } from '@push/lib/auditor-agent';
 import type { UserProfile } from '@push/lib/user-identity';
 export type { UserProfile } from '@push/lib/user-identity';
 
-export type WorkspaceMode = 'repo' | 'scratch' | 'chat' | 'local-pc';
+export type WorkspaceMode = 'repo' | 'scratch' | 'chat' | 'local-pc' | 'relay';
 
 /**
  * Identity of a paired local pushd daemon, captured at pairing time.
@@ -90,6 +90,38 @@ export interface LocalPcBinding {
 }
 
 /**
+ * Identity of a paired remote pushd reached through the Worker
+ * relay. Phase 2.f sibling to `LocalPcBinding`. Carries the three
+ * pieces the relay WS dial needs (deploymentUrl, sessionId, attach
+ * token) plus diagnostic surface for the mode chip / paired-state
+ * UI.
+ *
+ * Discriminated from `LocalPcBinding` by the absence of `port` and
+ * the presence of `deploymentUrl`. Both flavors flow through the
+ * same chat-layer tool dispatch; the binding shape selects the
+ * adapter constructor.
+ */
+export interface RelayBinding {
+  deploymentUrl: string;
+  /** Opaque routing key chosen by pushd; shared via the pair bundle. */
+  sessionId: string;
+  /**
+   * Attach-token bearer (`pushd_da_*`). Never log, never copy
+   * outside the transport + storage modules.
+   */
+  token: string;
+  /**
+   * Phase 3 slice 2 attach tokenId (`pdat_*`). Optional because the
+   * web pair flow learns it via the bundle but a future protocol
+   * change may emit it post-attach instead. Shown in the paired-
+   * state UI for revocation guidance.
+   */
+  attachTokenId?: string;
+  /** Parent device tokenId, for `push daemon revoke <tokenId>`. */
+  deviceTokenId?: string;
+}
+
+/**
  * Workspace session identity for the active repo or scratch workspace.
  * `id` is a stable logical identity that survives sandbox restarts.
  * `sandboxId` is the runtime container id (null until the container starts).
@@ -103,7 +135,8 @@ export type WorkspaceSession =
   | { id: string; kind: 'scratch'; sandboxId: string | null }
   | { id: string; kind: 'repo'; repo: ActiveRepo; sandboxId: string | null }
   | { id: string; kind: 'chat'; sandboxId: null }
-  | { id: string; kind: 'local-pc'; binding: LocalPcBinding; sandboxId: null };
+  | { id: string; kind: 'local-pc'; binding: LocalPcBinding; sandboxId: null }
+  | { id: string; kind: 'relay'; binding: RelayBinding; sandboxId: null };
 
 /** Structured workspace context passed through the streaming pipeline to toLLMMessages. */
 export interface WorkspaceContext {
@@ -940,7 +973,12 @@ export type AppScreen = 'onboarding' | 'home' | 'chat' | 'file-browser';
  * 'workspace' replaces the 'chat' | 'file-browser' split — internal routing
  * between chat and file browser moves inside WorkspaceScreen.
  */
-export type AppShellScreen = 'onboarding' | 'home' | 'workspace' | 'local-pc-pairing';
+export type AppShellScreen =
+  | 'onboarding'
+  | 'home'
+  | 'workspace'
+  | 'local-pc-pairing'
+  | 'relay-pairing';
 
 // File browser types (re-exported from sandbox-client for convenience)
 export interface FileEntry {
@@ -1523,6 +1561,9 @@ export interface WorkspaceScreenNavigationProps {
   onStartScratchWorkspace: () => void;
   onStartChat: () => void;
   onStartLocalPc: () => void;
+  /** Phase 2.f Remote (relay) tile. Optional so a build without
+   * VITE_RELAY_MODE doesn't need to plumb a no-op handler. */
+  onStartRelay?: () => void;
   onEndWorkspace: () => void;
 }
 

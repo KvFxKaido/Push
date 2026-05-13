@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Lock, MessageSquare, Monitor, Palette, Plus, Search, Loader2 } from 'lucide-react';
+import { Globe, Lock, MessageSquare, Monitor, Palette, Plus, Search, Loader2 } from 'lucide-react';
 import {
   BranchWaveIcon,
   CommitPulseIcon,
@@ -116,6 +116,8 @@ interface RepoLauncherPanelProps {
    * doesn't require touching this component.
    */
   onStartLocalPc?: () => void;
+  /** Phase 2.f Remote tile. Undefined hides it (VITE_RELAY_MODE off). */
+  onStartRelay?: () => void;
   mode?: 'default' | 'chat';
 }
 
@@ -136,6 +138,7 @@ export function RepoLauncherPanel({
   onStartWorkspace,
   onStartChat,
   onStartLocalPc,
+  onStartRelay,
   mode = 'default',
 }: RepoLauncherPanelProps) {
   const [showAllRepos, setShowAllRepos] = useState(false);
@@ -663,6 +666,21 @@ export function RepoLauncherPanel({
             <Monitor className="relative z-10 h-4 w-4" />
             <span className="relative z-10">Local PC</span>
             <span className="relative z-10 text-[10px] uppercase tracking-wide text-amber-200/60">
+              Experimental
+            </span>
+          </button>
+        )}
+
+        {onStartRelay && (
+          <button
+            type="button"
+            onClick={onStartRelay}
+            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 w-full justify-center gap-2 px-3 text-sm font-medium text-sky-200`}
+          >
+            <HubControlGlow />
+            <Globe className="relative z-10 h-4 w-4" />
+            <span className="relative z-10">Remote</span>
+            <span className="relative z-10 text-[10px] uppercase tracking-wide text-sky-200/60">
               Experimental
             </span>
           </button>

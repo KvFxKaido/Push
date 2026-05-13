@@ -23,19 +23,26 @@ export interface SandboxExecutionOptions {
   auditorProviderOverride?: import('./orchestrator').ActiveProvider;
   auditorModelOverride?: string | null;
   /**
-   * When present, the active workspace is a `kind: 'local-pc'` session
-   * and the dispatcher routes whichever tool ops the local daemon
-   * supports through `local-daemon-sandbox-client` instead of the
-   * cloud sandbox. Absent means cloud sandbox (existing behaviour).
+   * When present, the active workspace is a `kind: 'local-pc'` OR
+   * `kind: 'relay'` session and the dispatcher routes whichever tool
+   * ops the daemon supports through `local-daemon-sandbox-client`
+   * instead of the cloud sandbox. Absent means cloud sandbox (existing
+   * behaviour).
    *
-   * PR 3c.1 routes only `sandbox_exec` through this seam; subsequent
-   * PRs (3c.2+) add read_file, write_file, etc. Tools that don't yet
-   * have a daemon implementation throw a structured "not implemented
-   * for local-pc" error rather than silently falling back to the
-   * cloud — that fallback would talk to a sandbox the user doesn't
-   * have and produce confusing errors.
+   * The union widened in Phase 2.f when the relay path joined. The
+   * downstream helpers in `local-daemon-sandbox-client.ts` pick the
+   * adapter constructor by structural narrowing (`'deploymentUrl' in
+   * binding` → relay, else loopback), so neither this type nor the
+   * tool helpers need a tag field.
+   *
+   * PR 3c.1 routed only `sandbox_exec` through this seam; subsequent
+   * PRs (3c.2+) added read_file, write_file, etc. Tools that don't
+   * yet have a daemon implementation throw a structured "not
+   * implemented for local-pc" error rather than silently falling back
+   * to the cloud — that fallback would talk to a sandbox the user
+   * doesn't have and produce confusing errors.
    */
-  localDaemonBinding?: import('@/types').LocalPcBinding;
+  localDaemonBinding?: import('@/types').LocalPcBinding | import('@/types').RelayBinding;
   /**
    * AbortSignal observed by daemon-routed tools that support mid-run
    * cancellation (today: `sandbox_exec`). When the signal fires while

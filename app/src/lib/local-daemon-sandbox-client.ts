@@ -29,8 +29,71 @@ import {
   type SessionResponse,
   createLocalDaemonBinding,
 } from './local-daemon-binding';
+import { createRelayDaemonBinding } from './relay-daemon-binding';
 import { LOCAL_PC_HOST } from './local-pc-binding';
-import type { LocalPcBinding } from '@/types';
+import type { LocalPcBinding, RelayBinding } from '@/types';
+
+/**
+ * Discriminated union of every daemon binding shape the chat-layer
+ * tool dispatch may carry. Phase 2.f introduced the second arm —
+ * the relay binding routes through the Worker rather than the
+ * loopback WS. The two shapes don't share a discriminator field, so
+ * call sites pick by structural narrowing (`'deploymentUrl' in
+ * binding` → relay, else local).
+ *
+ * Kept as a local alias instead of `LocalPcBinding | RelayBinding`
+ * inline so a future third transport (e.g. a desktop wrapper IPC
+ * shim from Phase 4) extends one type instead of every callsite's
+ * union literal.
+ */
+export type DaemonBinding = LocalPcBinding | RelayBinding;
+
+/** Shape-discriminator. Used by the per-call adapter factory and
+ * by chat-layer code that needs to gate on relay-vs-local without
+ * importing both binding types just for the check. */
+export function isRelayBinding(binding: DaemonBinding): binding is RelayBinding {
+  return 'deploymentUrl' in binding;
+}
+
+/**
+ * Build a WS adapter for whichever transport the binding describes.
+ * Centralises the structural discrimination so `withTransientBinding`
+ * stays binding-agnostic. Accepts the same callback set
+ * `createLocalDaemonBinding` does — both transports expose the same
+ * `LocalDaemonBinding` interface, so callers downstream don't care
+ * which kind opened the WS.
+ *
+ * Relay note: every tool call opens a new WS through the relay, the
+ * same pattern Phase 1 uses for loopback. Loopback's ~10ms handshake
+ * makes the per-call cost trivial; the relay path pays a real WAN
+ * round-trip + DO routing each time. A future PR may reuse the
+ * long-lived binding held by `useRelayDaemon` for chat-layer tool
+ * dispatch; for 2.f, parity with the existing pattern is the
+ * smaller change and isn't a regression from the loopback baseline.
+ */
+function createTransientAdapter(
+  binding: DaemonBinding,
+  callbacks: {
+    onStatus?: Parameters<typeof createLocalDaemonBinding>[0]['onStatus'];
+    onEvent?: Parameters<typeof createLocalDaemonBinding>[0]['onEvent'];
+    onMalformed?: Parameters<typeof createLocalDaemonBinding>[0]['onMalformed'];
+  } = {},
+): LocalDaemonBinding {
+  if (isRelayBinding(binding)) {
+    return createRelayDaemonBinding({
+      deploymentUrl: binding.deploymentUrl,
+      sessionId: binding.sessionId,
+      token: binding.token,
+      ...callbacks,
+    });
+  }
+  return createLocalDaemonBinding({
+    port: binding.port,
+    token: binding.token,
+    host: LOCAL_PC_HOST,
+    ...callbacks,
+  });
+}
 
 const OPEN_TIMEOUT_MS = 5_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
@@ -174,7 +237,7 @@ export class LocalDaemonUnreachableError extends Error {
  * those are normal results, not errors).
  */
 export async function execLocalDaemon(
-  binding: LocalPcBinding,
+  binding: DaemonBinding,
   command: string,
   opts: LocalDaemonExecOptions = {},
 ): Promise<LocalDaemonExecResult> {
@@ -222,7 +285,7 @@ function generateRunId(): string {
  * 1-based inclusive when provided.
  */
 export async function readFileLocalDaemon(
-  binding: LocalPcBinding,
+  binding: DaemonBinding,
   path: string,
   opts: LocalDaemonReadFileOptions = {},
 ): Promise<LocalDaemonReadFileResult> {
@@ -247,7 +310,7 @@ export async function readFileLocalDaemon(
  * the daemon side tracks per-path versions.
  */
 export async function writeFileLocalDaemon(
-  binding: LocalPcBinding,
+  binding: DaemonBinding,
   path: string,
   content: string,
 ): Promise<LocalDaemonWriteFileResult> {
@@ -266,7 +329,7 @@ export async function writeFileLocalDaemon(
  * defaults to the daemon's cwd.
  */
 export async function listDirLocalDaemon(
-  binding: LocalPcBinding,
+  binding: DaemonBinding,
   path?: string,
 ): Promise<LocalDaemonListDirResult> {
   const payload: Record<string, unknown> = {};
@@ -286,7 +349,7 @@ export async function listDirLocalDaemon(
  * Fetch `git diff HEAD` + `git status --porcelain` via the paired
  * pushd. The daemon shells out git in its cwd.
  */
-export async function getDiffLocalDaemon(binding: LocalPcBinding): Promise<LocalDaemonDiffResult> {
+export async function getDiffLocalDaemon(binding: DaemonBinding): Promise<LocalDaemonDiffResult> {
   const response = await withTransientBinding(binding, (handle) =>
     handle.request<LocalDaemonDiffResult>({
       type: 'sandbox_diff',
@@ -298,7 +361,7 @@ export async function getDiffLocalDaemon(binding: LocalPcBinding): Promise<Local
 }
 
 /** Fetch the daemon's identity for the authenticated bearer. */
-export async function identifyLocalDaemon(binding: LocalPcBinding): Promise<LocalDaemonIdentity> {
+export async function identifyLocalDaemon(binding: DaemonBinding): Promise<LocalDaemonIdentity> {
   const response = await withTransientBinding(binding, (handle) =>
     handle.request<LocalDaemonIdentity>({ type: 'daemon_identify' }),
   );
@@ -319,7 +382,7 @@ export async function identifyLocalDaemon(binding: LocalPcBinding): Promise<Loca
  * "already upgraded, no-op."
  */
 export async function mintAttachTokenViaDaemon(
-  binding: LocalPcBinding,
+  binding: DaemonBinding,
 ): Promise<LocalDaemonAttachTokenMintResult | null> {
   try {
     const response = await withTransientBinding(binding, (handle) =>
@@ -370,7 +433,7 @@ export interface WithTransientBindingOptions {
  * Exported for tests so consumers can mock the transient lifecycle.
  */
 export async function withTransientBinding<T>(
-  binding: LocalPcBinding,
+  binding: DaemonBinding,
   fn: (handle: LocalDaemonBinding) => Promise<SessionResponse<T>>,
   opts: WithTransientBindingOptions = {},
 ): Promise<SessionResponse<T>> {
@@ -426,10 +489,7 @@ export async function withTransientBinding<T>(
       reject(err);
     };
 
-    const handle = createLocalDaemonBinding({
-      port: binding.port,
-      token: binding.token,
-      host: LOCAL_PC_HOST,
+    const handle = createTransientAdapter(binding, {
       onStatus: (status) => {
         if (status.state === 'connecting') return;
         if (dispatched) return; // already routed past `open` or terminal

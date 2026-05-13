@@ -9,6 +9,7 @@ import type {
   ChatSendOptions,
   Conversation,
   LocalPcBinding,
+  RelayBinding,
   RunEvent,
   VerificationRuntimeState,
 } from '@/types';
@@ -152,7 +153,7 @@ export function useChat(
   // Local-PC paired daemon binding (Phase 1.d). Null on cloud sessions;
   // set by the workspace screen when a `kind: 'local-pc'` session is
   // active so a sandbox tool call this turn routes through `pushd`.
-  const localDaemonBindingRef = useRef<LocalPcBinding | null>(null);
+  const localDaemonBindingRef = useRef<LocalPcBinding | RelayBinding | null>(null);
 
   // --- Prop mirror refs (always up-to-date in callbacks) ---
   const repoRef = useRef(activeRepoFullName);
@@ -447,7 +448,7 @@ export function useChat(
     ensureSandboxRef.current = fn;
   }, []);
 
-  const setLocalDaemonBinding = useCallback((binding: LocalPcBinding | null) => {
+  const setLocalDaemonBinding = useCallback((binding: LocalPcBinding | RelayBinding | null) => {
     localDaemonBindingRef.current = binding;
   }, []);
 

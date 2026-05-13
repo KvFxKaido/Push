@@ -11,6 +11,7 @@ import type {
   ChatMessage,
   ChatCard,
   LocalPcBinding,
+  RelayBinding,
   ReasoningBlock,
   ToolExecutionResult,
 } from '@/types';
@@ -63,12 +64,15 @@ export interface ToolExecRunContext {
   chatId: string | null;
   sandboxId: string | null;
   /**
-   * Local-daemon binding for `kind: 'local-pc'` sessions. When set,
-   * sandbox tool calls route through `pushd` over the paired WebSocket
-   * instead of the cloud sandbox provider. `sandboxId` may be `null`
-   * when this is set — the dispatcher chooses the transport.
+   * Daemon binding for `kind: 'local-pc'` OR `kind: 'relay'` sessions.
+   * When set, sandbox tool calls route through `pushd` over the paired
+   * WebSocket (loopback or Worker-relayed) instead of the cloud
+   * sandbox provider. `sandboxId` may be `null` when this is set —
+   * the dispatcher chooses the transport. The shape discriminator
+   * (`'deploymentUrl' in binding` → relay, else local) is read by
+   * the downstream helpers in `local-daemon-sandbox-client.ts`.
    */
-  localDaemonBinding?: LocalPcBinding;
+  localDaemonBinding?: LocalPcBinding | RelayBinding;
   isMainProtected: boolean;
   defaultBranch: string | undefined;
   provider: ActiveProvider;
