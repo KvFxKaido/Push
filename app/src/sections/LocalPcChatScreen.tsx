@@ -33,9 +33,10 @@
  * replaces the previous `LocalPcWorkspace` probe-only surface.
  */
 import { MonitorOff, RefreshCw, Send, Square } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { LocalPcModeChip } from '@/components/LocalPcModeChip';
+import { ApprovalPrompt, type PendingApproval } from '@/components/local-pc/ApprovalPrompt';
 import { useChat } from '@/hooks/useChat';
 import { useLocalDaemon } from '@/hooks/useLocalDaemon';
 import { clearPairedDevice } from '@/lib/local-pc-storage';
@@ -48,10 +49,117 @@ interface LocalPcChatScreenProps {
 }
 
 export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps) {
-  // Long-lived binding for status display (mode chip). The actual
-  // chat dispatch opens its own transient binding per tool call via
-  // `executeSandboxToolCall`'s daemon fork.
-  const { status, reconnect, reconnectInfo } = useLocalDaemon(binding);
+  // Phase 3 slice 4: queue of pending approvals from the daemon's
+  // `approval_required` events. Daemon-side delegated agents (e.g.
+  // delegate_coder) emit these when a sandbox guard fires; without a
+  // listener they silently timed out after 60s. The queue is FIFO —
+  // we render the head and surface a counter for the rest.
+  const [approvalQueue, setApprovalQueue] = useState<PendingApproval[]>([]);
+  // Mirror of approvalQueue in a ref. decideApproval reads the head
+  // from here so the request() call lives OUTSIDE the setState
+  // updater — keeping the updater a pure function as React's
+  // concurrent/StrictMode contract requires. Without the mirror, the
+  // updater would have to extract the head AND fire the side-effect,
+  // which can double-dispatch under double-invocation. #521 review.
+  const approvalQueueRef = useRef<PendingApproval[]>([]);
+  useEffect(() => {
+    approvalQueueRef.current = approvalQueue;
+  }, [approvalQueue]);
+  const enqueueApproval = useCallback((approval: PendingApproval) => {
+    // Dedupe by approvalId — the daemon broadcasts to every attached
+    // client, and if the same WS reconnects mid-approval the event
+    // log can include the same id twice. Without dedupe the user
+    // sees duplicate prompts.
+    setApprovalQueue((prev) =>
+      prev.some((p) => p.approvalId === approval.approvalId) ? prev : [...prev, approval],
+    );
+  }, []);
+
+  // Long-lived binding for status display (mode chip) AND approval
+  // event subscription. The chat dispatch still opens its own
+  // transient bindings per tool call via `executeSandboxToolCall`'s
+  // daemon fork; this binding is for events the daemon pushes
+  // unsolicited.
+  // Drop a resolved approval from the local queue regardless of which
+  // client decided it. Without this, multi-client sessions stale-head
+  // their queues: clients that didn't click keep showing the prompt
+  // until the user clicks it and gets `APPROVAL_NOT_FOUND`, hiding
+  // every later approval behind a stale entry. #521 Codex P2.
+  const dropApproval = useCallback((approvalId: string) => {
+    setApprovalQueue((prev) => prev.filter((p) => p.approvalId !== approvalId));
+  }, []);
+
+  const { status, reconnect, reconnectInfo, request } = useLocalDaemon(binding, {
+    onEvent: (event) => {
+      if (event.type === 'approval_required') {
+        const payload = event.payload as
+          | {
+              approvalId?: unknown;
+              kind?: unknown;
+              title?: unknown;
+              summary?: unknown;
+              options?: unknown;
+            }
+          | undefined;
+        if (!payload || typeof payload.approvalId !== 'string') return;
+        enqueueApproval({
+          approvalId: payload.approvalId,
+          sessionId: event.sessionId,
+          runId: event.runId,
+          kind: typeof payload.kind === 'string' ? payload.kind : 'tool_execution',
+          title: typeof payload.title === 'string' ? payload.title : 'Approval required',
+          summary: typeof payload.summary === 'string' ? payload.summary : '',
+          options:
+            Array.isArray(payload.options) && payload.options.every((o) => typeof o === 'string')
+              ? (payload.options as string[])
+              : ['approve', 'deny'],
+          receivedAt: Date.now(),
+        });
+        return;
+      }
+      if (event.type === 'approval_received') {
+        // Daemon broadcasts approval_received to every attached
+        // client after any one of them answers (or the approval
+        // timed out). Drop the matching entry so the queue stays
+        // live across tabs / phones. #521 Codex P2.
+        const payload = event.payload as { approvalId?: unknown } | undefined;
+        if (payload && typeof payload.approvalId === 'string') {
+          dropApproval(payload.approvalId);
+        }
+      }
+    },
+  });
+
+  const decideApproval = useCallback(
+    (decision: 'approve' | 'deny') => {
+      // Read the current head from the ref (a synchronous mirror of
+      // approvalQueue) so the side-effect lives OUTSIDE the setState
+      // updater — React's concurrent/StrictMode contract requires
+      // updaters to be pure. Without this, double-invocation under
+      // StrictMode could double-dispatch the request.
+      const head = approvalQueueRef.current[0];
+      if (!head) return;
+      void request<{ accepted: boolean }>({
+        type: 'submit_approval',
+        sessionId: head.sessionId,
+        payload: {
+          sessionId: head.sessionId,
+          approvalId: head.approvalId,
+          decision,
+        },
+      }).catch(() => {
+        // Errors are surfaced in the daemon's audit log; the user
+        // has already moved on UX-wise. A future polish PR could
+        // show a "decision failed to register" toast.
+      });
+      // Pop the same approvalId we just dispatched against — defends
+      // against the race where the queue was rewritten between
+      // `head` capture and this updater running (e.g. a new approval
+      // arriving). #521 review.
+      setApprovalQueue((prev) => (prev[0]?.approvalId === head.approvalId ? prev.slice(1) : prev));
+    },
+    [request],
+  );
 
   const {
     messages,
@@ -193,6 +301,12 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
           onRetry={reconnect}
         />
       ) : null}
+
+      <ApprovalPrompt
+        pending={approvalQueue[0] ?? null}
+        queuedBehind={Math.max(0, approvalQueue.length - 1)}
+        onDecide={decideApproval}
+      />
 
       <ChatContainer
         messages={messages}

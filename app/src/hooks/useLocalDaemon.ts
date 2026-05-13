@@ -128,6 +128,18 @@ interface UseLocalDaemonOptions {
   /** Surface malformed frames to the caller for diagnostics. */
   onMalformed?: (raw: string, reason: string) => void;
   /**
+   * Phase 3 slice 4 (submit_approval UI): fire-once callback per
+   * valid incoming event. The hook still accumulates events in its
+   * internal log for the probe screen; this callback lets a chat-
+   * surface consumer react synchronously to specific event types
+   * (e.g. `approval_required`) without re-rendering on every event
+   * to scan the log. Treat as a side-channel: the consumer must NOT
+   * synchronously dispatch state updates that depend on
+   * `useLocalDaemon`'s own state during the callback — the binding
+   * adapter calls it inline from the WS message handler.
+   */
+  onEvent?: (event: SessionEvent) => void;
+  /**
    * Test seam: override the backoff schedule. The default is the
    * exported `RECONNECT_BACKOFF_MS` ladder; tests pass a compressed
    * schedule (e.g. `[5, 10, 20]`) so fake timers don't have to advance
@@ -214,13 +226,17 @@ export function useLocalDaemon(
 
   const bindingRef = useRef<LocalDaemonBinding | null>(null);
   const onMalformedRef = useRef(options.onMalformed);
+  const onEventRef = useRef(options.onEvent);
   // Refs may only be written outside render (react-hooks/refs). Mirror
   // the latest callback into the ref via an effect so the adapter's
-  // onMalformed hook can fire the freshest handler without forcing a
-  // reconnect when the consumer changes it mid-lifetime.
+  // onMalformed / onEvent hooks can fire the freshest handler without
+  // forcing a reconnect when the consumer changes it mid-lifetime.
   useEffect(() => {
     onMalformedRef.current = options.onMalformed;
   }, [options.onMalformed]);
+  useEffect(() => {
+    onEventRef.current = options.onEvent;
+  }, [options.onEvent]);
 
   const effectiveKey = (options.reconnectKey ?? 0) + localReconnectKey;
   const port = binding?.port ?? null;
@@ -249,6 +265,15 @@ export function useLocalDaemon(
             prev.length >= EVENT_LOG_CAP ? prev.slice(prev.length - EVENT_LOG_CAP + 1) : prev;
           return [...next, event];
         });
+        // Slice 4: forward to consumer callback for synchronous
+        // per-event reactions (e.g. an approval-prompt queue that
+        // needs to render BEFORE the next event arrives). Wrapped
+        // in try/catch so a consumer crash can't kill the binding.
+        try {
+          onEventRef.current?.(event);
+        } catch {
+          // see setStatus
+        }
       },
       onMalformed: (raw, reason) => {
         onMalformedRef.current?.(raw, reason);

@@ -195,4 +195,17 @@ describe('LocalPcChatScreen', () => {
     expect(html).not.toContain('Reconnecting to local daemon');
     expect(html).not.toContain('aria-label="Retry connection"');
   });
+
+  it('omits the approval prompt when no approval_required events have arrived', () => {
+    // Phase 3 slice 4: the prompt is dormant until the daemon emits
+    // `approval_required`. The mock useLocalDaemon doesn't replay
+    // events, so the queue stays empty and the prompt renders as
+    // null. A future test harness that drives a real onEvent
+    // callback would assert the populated path; SSR can't drive
+    // useState updates from outside the component tree.
+    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    expect(html).not.toContain('role="dialog"');
+    expect(html).not.toContain('aria-label="Approve"');
+    expect(html).not.toContain('aria-label="Deny"');
+  });
 });
