@@ -487,6 +487,7 @@ export async function executeAnyToolCall(
   approvalCallback?: (toolName: string, reason: string, recoveryPath: string) => Promise<boolean>,
   chatId?: string,
   localDaemonBinding?: LocalPcBinding,
+  abortSignal?: AbortSignal,
 ): Promise<ToolExecutionResult> {
   const runtime = new WebToolExecutionRuntime();
   return runtime.execute(toolCall, {
@@ -502,6 +503,7 @@ export async function executeAnyToolCall(
     approvalCallback,
     chatId,
     localDaemonBinding,
+    abortSignal,
   }) as Promise<ToolExecutionResult>;
 }
 

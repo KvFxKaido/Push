@@ -16,7 +16,7 @@
  * affordances and tolerates the SSR-time state (no daemon connection,
  * no messages yet).
  */
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 // useChat / useLocalDaemon both touch storage (IndexedDB, conversation
@@ -39,12 +39,30 @@ vi.mock('@/hooks/useChat', () => ({
   }),
 }));
 
+// Mutable status holder so individual tests can override the default
+// `open` state (e.g. to exercise the reconnect banner). `vi.mock` runs
+// before imports, so the mock factory references the holder by name
+// at module level and reads it lazily inside the hook body.
+const useLocalDaemonState: {
+  status: { state: string; code?: number; reason?: string };
+  reconnectInfo: {
+    attempts: number;
+    nextAttemptAt: number | null;
+    exhausted: boolean;
+    maxAttempts: number;
+  };
+} = {
+  status: { state: 'open' },
+  reconnectInfo: { attempts: 0, nextAttemptAt: null, exhausted: false, maxAttempts: 6 },
+};
+
 vi.mock('@/hooks/useLocalDaemon', () => ({
   useLocalDaemon: () => ({
-    status: { state: 'open', reason: null },
+    status: useLocalDaemonState.status,
     events: [],
     request: vi.fn(),
     reconnect: vi.fn(),
+    reconnectInfo: useLocalDaemonState.reconnectInfo,
   }),
 }));
 
@@ -62,6 +80,19 @@ const binding: LocalPcBinding = {
 };
 
 describe('LocalPcChatScreen', () => {
+  beforeEach(() => {
+    // Reset the shared hook state between cases — vi.mock is hoisted
+    // once per module, so a test that flips it (e.g. unreachable +
+    // banner) would leak into later cases without this reset.
+    useLocalDaemonState.status = { state: 'open' };
+    useLocalDaemonState.reconnectInfo = {
+      attempts: 0,
+      nextAttemptAt: null,
+      exhausted: false,
+      maxAttempts: 6,
+    };
+  });
+
   it('renders the mode chip with the binding port', () => {
     const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
     // LocalPcModeChip renders the port — verify it's wired in.
@@ -102,5 +133,66 @@ describe('LocalPcChatScreen', () => {
     const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
     expect(html).not.toContain('FileBrowser');
     expect(html).not.toContain('Snapshot');
+  });
+
+  it('shows a reconnecting banner with countdown while auto-retry is pending', () => {
+    // Simulate the hook reporting an active backoff: status went
+    // unreachable after one failed open, the scheduler queued retry
+    // #1 (1s into the future), and attempts=1 since the retry has
+    // been scheduled. The banner reads attempts directly — it's the
+    // retry number currently pending.
+    useLocalDaemonState.status = { state: 'unreachable', code: 1006, reason: 'refused' };
+    useLocalDaemonState.reconnectInfo = {
+      attempts: 1,
+      nextAttemptAt: Date.now() + 1_000,
+      exhausted: false,
+      maxAttempts: 6,
+    };
+    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    expect(html).toMatch(/Reconnecting to local daemon in \ds/);
+    expect(html).toContain('attempt 1 of 6');
+  });
+
+  it('shows a reconnecting banner for post-open `closed` (mid-session drop)', () => {
+    // Pin the closed-state reconnect path (Phase 1.f review feedback):
+    // the most common drop is a successful open followed by a
+    // network/daemon failure — the adapter reports that as
+    // `state: 'closed'` with an abnormal code, NOT `unreachable`.
+    // The banner must still render the live retry countdown.
+    useLocalDaemonState.status = { state: 'closed', code: 1006, reason: 'abnormal closure' };
+    useLocalDaemonState.reconnectInfo = {
+      attempts: 2,
+      nextAttemptAt: Date.now() + 2_000,
+      exhausted: false,
+      maxAttempts: 6,
+    };
+    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    expect(html).toContain('Reconnecting to local daemon');
+    expect(html).toContain('attempt 2 of 6');
+  });
+
+  it('shows a Retry button once auto-reconnect is exhausted', () => {
+    // After 6 unreachables, the hook flips `exhausted: true` and clears
+    // the schedule. The banner surfaces a manual Retry button — the
+    // mode chip alone wouldn't make the failure recoverable from the
+    // chat surface.
+    useLocalDaemonState.status = { state: 'unreachable', code: 1006, reason: 'refused' };
+    useLocalDaemonState.reconnectInfo = {
+      attempts: 6,
+      nextAttemptAt: null,
+      exhausted: true,
+      maxAttempts: 6,
+    };
+    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    expect(html).toContain('aria-label="Retry connection"');
+    expect(html).toContain('after 6 attempts');
+  });
+
+  it('omits the reconnect banner while the WS is open', () => {
+    // Default `status: open` — no banner, no extra chrome. The header
+    // is the only thing above the chat container.
+    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    expect(html).not.toContain('Reconnecting to local daemon');
+    expect(html).not.toContain('aria-label="Retry connection"');
   });
 });

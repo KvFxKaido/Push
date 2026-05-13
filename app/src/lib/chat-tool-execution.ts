@@ -82,6 +82,13 @@ export interface ToolExecRunContext {
    * behavior, only observability.
    */
   correlation?: CorrelationContext;
+  /**
+   * AbortSignal threaded into daemon-routed sandbox tools so mid-run
+   * cancellation can fire `cancel_run` over the same WS. Web's chat
+   * loop wires this from `abortControllerRef.current?.signal`. Tools
+   * that don't observe a signal ignore it.
+   */
+  abortSignal?: AbortSignal;
 }
 
 /** Raw result from executing a tool call (before building the ChatMessage). */
@@ -146,6 +153,7 @@ export async function executeTool(
           undefined,
           ctx.chatId ?? undefined,
           ctx.localDaemonBinding,
+          ctx.abortSignal,
         );
       }
 

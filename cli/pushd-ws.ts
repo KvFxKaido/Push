@@ -25,6 +25,21 @@ import os from 'node:os';
 import { checkOrigin } from './pushd-origin.js';
 import { verifyDeviceToken, touchLastUsed, type DeviceTokenRecord } from './pushd-device-tokens.js';
 
+/**
+ * Per-WS-connection mutable state. Today it tracks AbortControllers
+ * for in-flight `sandbox_exec` runs so `cancel_run` arriving on the
+ * SAME WS can kill the child mid-run (Phase 1.f daemon-side cancel).
+ *
+ * Scoping by connection — not globally — is deliberate: it guarantees
+ * a stolen-runId attempt from a different paired client can't reach
+ * across to abort someone else's run, even though the bearer would
+ * have authorized either upgrade. The map lives only for the
+ * connection's lifetime and is dropped on close.
+ */
+export interface PushdWsConnectionState {
+  activeRuns: Map<string, AbortController>;
+}
+
 export interface PushdWsAdapterDeps {
   /**
    * Existing pushd request dispatcher. Same fn the Unix socket uses,
@@ -36,7 +51,7 @@ export interface PushdWsAdapterDeps {
   handleRequest: (
     req: unknown,
     emitEvent: (event: unknown) => void,
-    context?: { record?: DeviceTokenRecord },
+    context?: { record?: DeviceTokenRecord; wsState?: PushdWsConnectionState },
   ) => Promise<unknown>;
   /** Existing add/remove session client hooks. */
   addSessionClient: (
@@ -255,6 +270,10 @@ export async function startPushdWs(
     touchLastUsed(record.tokenId).catch(() => {});
 
     const attachedSessions = new Set<string>();
+    // Per-connection state plumbed into every handler via the dispatcher
+    // context. Today: in-flight sandbox_exec AbortControllers so cancel_run
+    // on this connection can interrupt them. Cleaned up on ws close.
+    const wsState: PushdWsConnectionState = { activeRuns: new Map() };
     let capabilities: unknown = null;
 
     const emit = (event: unknown) => {
@@ -306,7 +325,9 @@ export async function startPushdWs(
           // Pass the authenticated record along so daemon_identify
           // (and any future WS-context-aware handler) can answer
           // without WS-specific state leaking into the dispatcher.
-          const response = (await deps.handleRequest(req, emit, { record })) as {
+          // `wsState` carries per-connection mutable state (e.g. the
+          // active-runs map for daemon-side mid-run cancellation).
+          const response = (await deps.handleRequest(req, emit, { record, wsState })) as {
             ok?: boolean;
             sessionId?: string;
             payload?: { sessionId?: string };
@@ -345,6 +366,18 @@ export async function startPushdWs(
     const cleanup = () => {
       for (const sid of attachedSessions) deps.removeSessionClient(sid, emit);
       attachedSessions.clear();
+      // Abort any in-flight sandbox_exec runs tied to this connection.
+      // Without this, a client that drops mid-run leaves the child
+      // burning CPU/disk until its 60s timeout fires. The signal lets
+      // `runCommandInResolvedShell` SIGTERM the child cleanly.
+      for (const controller of wsState.activeRuns.values()) {
+        try {
+          controller.abort();
+        } catch {
+          /* ignore */
+        }
+      }
+      wsState.activeRuns.clear();
     };
     ws.on('close', cleanup);
     ws.on('error', cleanup);

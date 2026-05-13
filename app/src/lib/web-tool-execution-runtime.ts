@@ -343,6 +343,7 @@ export class WebToolExecutionRuntime
             auditorProviderOverride: activeProvider,
             auditorModelOverride: context.activeModel,
             localDaemonBinding,
+            abortSignal: context.abortSignal,
           });
           break;
         }

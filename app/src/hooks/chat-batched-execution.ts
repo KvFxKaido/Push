@@ -62,6 +62,7 @@ export async function executeBatchedToolCalls(
     lockedProvider,
     resolvedModel,
     abortRef,
+    abortControllerRef,
     sandboxIdRef,
     ensureSandboxRef,
     localDaemonBindingRef,
@@ -148,6 +149,7 @@ export async function executeBatchedToolCalls(
     defaultBranch: branchInfoRef.current?.defaultBranch,
     provider: lockedProvider,
     model: resolvedModel,
+    abortSignal: abortControllerRef.current?.signal,
   };
 
   const parallelRawResults = await Promise.all(
@@ -277,6 +279,7 @@ export async function executeBatchedToolCalls(
       defaultBranch: branchInfoRef.current?.defaultBranch,
       provider: lockedProvider,
       model: resolvedModel,
+      abortSignal: abortControllerRef.current?.signal,
     };
 
     for (let i = 0; i < fileMutationBatch.length; i++) {
@@ -463,6 +466,7 @@ export async function executeBatchedToolCalls(
         defaultBranch: branchInfoRef.current?.defaultBranch,
         provider: lockedProvider,
         model: resolvedModel,
+        abortSignal: abortControllerRef.current?.signal,
       };
       mutRawResult = await executeToolWithChatHooks(mutCall, mutCtx, {
         scratchpadRef,

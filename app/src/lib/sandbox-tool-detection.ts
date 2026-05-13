@@ -36,6 +36,15 @@ export interface SandboxExecutionOptions {
    * have and produce confusing errors.
    */
   localDaemonBinding?: import('@/types').LocalPcBinding;
+  /**
+   * AbortSignal observed by daemon-routed tools that support mid-run
+   * cancellation (today: `sandbox_exec`). When the signal fires while
+   * the daemon child is running, the client sends a `cancel_run` over
+   * the same WS so the daemon SIGTERMs the child. Absent signal keeps
+   * the legacy behaviour where the in-flight child runs to its own
+   * timeout (Phase 1 had no mid-run cancel surface).
+   */
+  abortSignal?: AbortSignal;
 }
 
 export type SandboxPatchsetEdit =

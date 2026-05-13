@@ -992,15 +992,44 @@ async function handleSubmitApproval(req) {
   });
 }
 
-async function handleCancelRun(req) {
+async function handleCancelRun(req, _emitEvent, context) {
   const { sessionId, runId } = req.payload || {};
+
+  // Sessionless cancel path (Phase 1.f remote-sessions cancel): the
+  // web side may issue `cancel_run` with only a runId to abort an
+  // in-flight `sandbox_exec` registered against this connection's
+  // wsState. We accept this ONLY when the runId matches a registration
+  // on the same WS connection — that scoping keeps a stolen runId
+  // from a different paired client out of reach.
   if (!sessionId) {
-    return makeErrorResponse(
-      req.requestId,
-      'cancel_run',
-      'INVALID_REQUEST',
-      'sessionId is required',
-    );
+    if (!runId) {
+      return makeErrorResponse(
+        req.requestId,
+        'cancel_run',
+        'INVALID_REQUEST',
+        'sessionId or runId is required',
+      );
+    }
+    const wsState = context?.wsState;
+    const controller =
+      wsState && wsState.activeRuns instanceof Map ? wsState.activeRuns.get(runId) : null;
+    if (!controller) {
+      return makeErrorResponse(
+        req.requestId,
+        'cancel_run',
+        'NO_ACTIVE_RUN',
+        `No active run to cancel: ${runId}`,
+      );
+    }
+    try {
+      controller.abort();
+    } catch {
+      // ignore — handleSandboxExec's finally clears the map entry
+    }
+    return makeResponse(req.requestId, 'cancel_run', null, true, {
+      accepted: true,
+      runId,
+    });
   }
 
   const entry = activeSessions.get(sessionId);
@@ -3191,7 +3220,7 @@ const SANDBOX_EXEC_DEFAULT_TIMEOUT_MS = 60_000;
 const SANDBOX_EXEC_MAX_TIMEOUT_MS = 300_000;
 const SANDBOX_EXEC_MAX_OUTPUT = 256_000;
 
-async function handleSandboxExec(req) {
+async function handleSandboxExec(req, _emitEvent, context) {
   const payload = req.payload || {};
   const command = typeof payload.command === 'string' ? payload.command : '';
   if (!command) {
@@ -3210,6 +3239,21 @@ async function handleSandboxExec(req) {
   const timeoutMs = Math.min(Math.max(rawTimeout, 1_000), SANDBOX_EXEC_MAX_TIMEOUT_MS);
   const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
 
+  // Daemon-side mid-run cancellation (Phase 1.f): the web side may
+  // include a `runId` in the payload and call `cancel_run` later to
+  // abort the in-flight child. Register an AbortController in the
+  // per-WS active-runs map (passed via context.wsState) so cancel_run
+  // arriving on the same connection can find it. Unix-socket callers
+  // don't carry wsState — they skip registration and behave as before
+  // (cancellation isn't reachable there anyway).
+  const runId = typeof payload.runId === 'string' && payload.runId ? payload.runId : null;
+  const wsState = context?.wsState;
+  let abortController = null;
+  if (runId && wsState && wsState.activeRuns instanceof Map) {
+    abortController = new AbortController();
+    wsState.activeRuns.set(runId, abortController);
+  }
+
   const startedAt = Date.now();
   const { runCommandInResolvedShell } = await import('./shell.js');
 
@@ -3218,11 +3262,13 @@ async function handleSandboxExec(req) {
   // INVALID_REQUEST cases above. The caller reads `exitCode` for the
   // actual outcome.
   try {
-    const { stdout, stderr } = await runCommandInResolvedShell(command, {
+    const execOpts = {
       cwd,
       timeout: timeoutMs,
       maxBuffer: SANDBOX_EXEC_MAX_OUTPUT,
-    });
+    };
+    if (abortController) execOpts.signal = abortController.signal;
+    const { stdout, stderr } = await runCommandInResolvedShell(command, execOpts);
     // Success path can't actually carry truncated output: runCommand-
     // InResolvedShell enforces maxBuffer by rejecting once stdout+
     // stderr exceed it, so reaching here means both fit. Reporting
@@ -3235,14 +3281,18 @@ async function handleSandboxExec(req) {
       truncated: false,
     });
   } catch (err) {
+    // Abort path: distinguish a user-requested cancel from a timeout
+    // so the model gets the right `cancelled` flag and won't retry
+    // it as if it had timed out.
+    const wasAborted = err?.name === 'AbortError' || Boolean(abortController?.signal?.aborted);
     const killed = Boolean(err?.killed);
     // maxBuffer overflow surfaces as a string err.code AND
     // err.killed === true. Distinguish it from a timeout so the
     // model gets an accurate `truncated` and isn't misled into
     // "command timed out" when the real signal was "output too big."
     const isMaxBufferOverflow = err?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
-    const isTimeout = killed && !isMaxBufferOverflow;
-    const exitCode = typeof err?.code === 'number' ? err.code : killed ? 124 : 1;
+    const isTimeout = killed && !isMaxBufferOverflow && !wasAborted;
+    const exitCode = typeof err?.code === 'number' ? err.code : killed || wasAborted ? 124 : 1;
     // Defensive: also flag truncation if the captured output actually
     // exceeds the cap, even if Node didn't tag the error code (some
     // runtimes / future Node versions may shift the contract).
@@ -3256,7 +3306,12 @@ async function handleSandboxExec(req) {
       durationMs: Date.now() - startedAt,
       truncated: isMaxBufferOverflow || capturedTooLarge,
       timedOut: isTimeout,
+      cancelled: wasAborted,
     });
+  } finally {
+    if (runId && wsState && wsState.activeRuns instanceof Map) {
+      wsState.activeRuns.delete(runId);
+    }
   }
 }
 

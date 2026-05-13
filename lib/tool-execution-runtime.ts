@@ -138,6 +138,16 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
    * which transport handles the call.
    */
   localDaemonBinding?: unknown;
+  /**
+   * AbortSignal observed by daemon-routed tools that support mid-run
+   * cancellation (today: `sandbox_exec`). When the signal fires while
+   * the daemon child is running, the client dispatches a `cancel_run`
+   * over the same WS so the daemon SIGTERMs the child. Absent signal
+   * preserves the legacy "child runs to its own timeout" behaviour.
+   * Web's tool-runtime forwards `abortControllerRef.current?.signal`;
+   * CLI callers leave this undefined.
+   */
+  abortSignal?: AbortSignal;
 }
 
 // ---------------------------------------------------------------------------

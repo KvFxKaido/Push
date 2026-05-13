@@ -13,11 +13,11 @@
  *     `setLocalDaemonBinding(session.binding)` on mount and clears
  *     on unmount so chat tool calls route through the daemon.
  *   - Stop button in the header aborts the in-flight web round via
- *     `abortStream`. NB: there is no daemon-side mid-run cancellation
- *     today — the dispatch model is transient (one tool per WS), so
- *     any in-flight `sandbox_exec` runs to its own 60s timeout. Real
- *     daemon-side cancel needs a persistent session/runId abstraction
- *     and lands separately.
+ *     `abortStream`. Phase 1.f wires `abortControllerRef.signal`
+ *     through `executeSandboxToolCall` so an in-flight `sandbox_exec`
+ *     also has its daemon-side child SIGTERMed via a `cancel_run` on
+ *     the same WS (see `local-daemon-sandbox-client.withTransient-
+ *     Binding` and `cli/pushd.handleSandboxExec`'s active-runs map).
  *   - Unpair clears the paired-device record and exits the workspace.
  *
  * What this screen still does NOT do (deferred):
@@ -32,7 +32,7 @@
  * Routed from `WorkspaceScreen` for any `kind: 'local-pc'` session;
  * replaces the previous `LocalPcWorkspace` probe-only surface.
  */
-import { MonitorOff, Send, Square } from 'lucide-react';
+import { MonitorOff, RefreshCw, Send, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { LocalPcModeChip } from '@/components/LocalPcModeChip';
@@ -51,7 +51,7 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
   // Long-lived binding for status display (mode chip). The actual
   // chat dispatch opens its own transient binding per tool call via
   // `executeSandboxToolCall`'s daemon fork.
-  const { status } = useLocalDaemon(binding);
+  const { status, reconnect, reconnectInfo } = useLocalDaemon(binding);
 
   const {
     messages,
@@ -120,6 +120,18 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
     }
   }, [conversationsLoaded, conversations, activeChatId, switchChat, createNewChat]);
 
+  // Live countdown for the reconnect banner. When a retry is scheduled
+  // (`nextAttemptAt` is set), tick the clock every 500ms so the
+  // displayed "Reconnecting in Xs" updates. The interval is cleared
+  // when no retry is scheduled — we never tick in the idle/open path.
+  const [now, setNow] = useState(() => Date.now());
+  const hasPendingRetry = reconnectInfo.nextAttemptAt !== null;
+  useEffect(() => {
+    if (!hasPendingRetry) return;
+    const id = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(id);
+  }, [hasPendingRetry]);
+
   const [composeText, setComposeText] = useState('');
   const handleSend = () => {
     const text = composeText.trim();
@@ -170,6 +182,18 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
         </div>
       </header>
 
+      {status.state !== 'open' && status.state !== 'connecting' ? (
+        <ReconnectBanner
+          status={status.state}
+          attempts={reconnectInfo.attempts}
+          maxAttempts={reconnectInfo.maxAttempts}
+          nextAttemptAt={reconnectInfo.nextAttemptAt}
+          exhausted={reconnectInfo.exhausted}
+          now={now}
+          onRetry={reconnect}
+        />
+      ) : null}
+
       <ChatContainer
         messages={messages}
         agentStatus={agentStatus}
@@ -211,6 +235,80 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface ReconnectBannerProps {
+  status: 'unreachable' | 'closed';
+  attempts: number;
+  maxAttempts: number;
+  nextAttemptAt: number | null;
+  exhausted: boolean;
+  now: number;
+  onRetry: () => void;
+}
+
+/**
+ * Banner rendered when the long-lived daemon WS is in a non-open state
+ * (`unreachable` from a pre-open failure, or `closed` post-open). While
+ * the auto-reconnect ladder is running it shows the live countdown and
+ * the attempt counter; once exhausted it surfaces a manual Retry button
+ * the user can hit to re-arm the schedule.
+ */
+function ReconnectBanner({
+  status,
+  attempts,
+  maxAttempts,
+  nextAttemptAt,
+  exhausted,
+  now,
+  onRetry,
+}: ReconnectBannerProps) {
+  let body: React.ReactNode;
+  if (exhausted) {
+    body = (
+      <>
+        <span className="text-rose-200">Local daemon unreachable after {attempts} attempts.</span>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/40 px-2.5 py-1 text-xs text-rose-100 transition hover:border-rose-400/60 hover:bg-rose-400/10"
+          aria-label="Retry connection"
+        >
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>Retry</span>
+        </button>
+      </>
+    );
+  } else if (nextAttemptAt !== null) {
+    // Ceil so 0.4s rounds up to 1s in the UI — clamp at 1 so we never
+    // flicker "Reconnecting in 0s" while the timer fires.
+    const remainingMs = Math.max(0, nextAttemptAt - now);
+    const seconds = Math.max(1, Math.ceil(remainingMs / 1000));
+    // `attempts` already counts the retry currently pending (1-based)
+    // — the hook increments it when the retry is scheduled, not after
+    // it completes — so "attempt N of M" reads directly without a
+    // `+1`. (#517 review off-by-one.)
+    body = (
+      <span className="text-amber-200/80">
+        Reconnecting to local daemon in {seconds}s (attempt {attempts} of {maxAttempts})…
+      </span>
+    );
+  } else if (status === 'unreachable' || status === 'closed') {
+    // Adapter just transitioned to unreachable; the scheduling effect
+    // hasn't populated `nextAttemptAt` for this render yet.
+    body = <span className="text-amber-200/80">Reconnecting to local daemon…</span>;
+  } else {
+    body = <span className="text-push-fg-secondary">Local daemon connection closed.</span>;
+  }
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-center justify-between gap-3 border-b border-push-edge/40 bg-[#1a0b0b]/40 px-4 py-2 text-xs"
+    >
+      {body}
     </div>
   );
 }
