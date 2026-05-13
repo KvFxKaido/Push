@@ -25,7 +25,7 @@
  *      schedules the actual `setTimeout`. Cleanup clears it on
  *      change/unmount.
  */
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   type ConnectionStatus,
   type LocalDaemonBinding,
@@ -35,6 +35,7 @@ import {
   createLocalDaemonBinding,
 } from '@/lib/local-daemon-binding';
 import { LOCAL_PC_HOST } from '@/lib/local-pc-binding';
+import type { LiveDaemonBinding } from '@/lib/local-daemon-sandbox-client';
 import type { LocalPcBinding } from '@/types';
 
 /**
@@ -112,6 +113,19 @@ export interface UseLocalDaemonResult {
   status: ConnectionStatus;
   events: SessionEvent[];
   request: <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>;
+  /**
+   * Live tool-dispatch binding bound to the long-lived WS this hook
+   * owns. Chat-layer code passes this through `setLocalDaemonBinding`
+   * so each `sandbox_*` tool call reuses the same WebSocket instead
+   * of opening a transient one per call.
+   *
+   * Null until the binding's params are set AND the WS reaches `open`
+   * for the first time — early calls would race the hook's connect
+   * and fail noisily; surfacing null until then matches the chat
+   * dispatch's existing "not connected → fall through to cloud
+   * sandbox" guard.
+   */
+  liveBinding: LiveDaemonBinding | null;
   /** Force-close and recreate the binding (Retry button). Resets backoff. */
   reconnect: () => void;
   /** Live state of the auto-reconnect scheduler — for banner UI. */
@@ -343,6 +357,18 @@ export function useLocalDaemon(
     return handle.request<T>(opts);
   }, []);
 
+  // Live binding the chat-layer tool dispatch hands to per-tool
+  // helpers (see `local-daemon-sandbox-client.ts#runWithBinding`).
+  // Memoized on `binding + open-state` so a stable identity propagates
+  // through `setLocalDaemonBinding` and React's referential checks
+  // don't force a re-route on every render. Null until the WS opens
+  // at least once — see UseLocalDaemonResult.liveBinding doc.
+  const liveBinding = useMemo<LiveDaemonBinding | null>(() => {
+    if (!binding) return null;
+    if (wsStatus.state !== 'open') return null;
+    return { params: binding, request };
+  }, [binding, wsStatus.state, request]);
+
   const reconnect = useCallback(() => {
     // Manual reconnect supersedes any auto-retry: reset the counter
     // and bump the key so the connection effect recreates the binding
@@ -353,5 +379,5 @@ export function useLocalDaemon(
     setLocalReconnectKey((k) => k + 1);
   }, []);
 
-  return { status, events, request, reconnect, reconnectInfo };
+  return { status, events, request, liveBinding, reconnect, reconnectInfo };
 }

@@ -19,11 +19,15 @@ import {
   execLocalDaemon,
   getDiffLocalDaemon,
   identifyLocalDaemon,
+  isLiveDaemonBinding,
   isRelayBinding,
   listDirLocalDaemon,
   readFileLocalDaemon,
+  runWithBinding,
   writeFileLocalDaemon,
+  type LiveDaemonBinding,
 } from './local-daemon-sandbox-client';
+import type { RequestOptions, SessionResponse } from './local-daemon-binding';
 import type { LocalPcBinding, RelayBinding } from '@/types';
 
 if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === 'undefined') {
@@ -739,5 +743,190 @@ describe('isRelayBinding', () => {
       boundOrigin: 'http://localhost:5173',
     };
     expect(isRelayBinding(loop)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LiveDaemonBinding reuse path
+// ---------------------------------------------------------------------------
+// When chat-layer dispatch carries a LiveDaemonBinding (the hook-owned
+// long-lived WS adapter), the per-tool helpers MUST route through its
+// bound `request` fn instead of opening a transient WebSocket per call.
+// These tests stand in a stub `request` and assert (a) the stub is
+// called, and (b) no transient WS gets opened — verified indirectly by
+// using a binding whose `port` is closed (would hang or fail with
+// LocalDaemonUnreachableError if the transient path fired).
+// ---------------------------------------------------------------------------
+
+describe('LiveDaemonBinding reuse path', () => {
+  function makeStubLive(
+    handler: <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>,
+  ): { binding: LiveDaemonBinding; calls: RequestOptions[] } {
+    const calls: RequestOptions[] = [];
+    const binding: LiveDaemonBinding = {
+      // Closed port — if the helpers fell through to the transient path
+      // they'd hang on connect and the 5s open-timeout would fire. By
+      // pointing at a closed port we get a fast, observable failure
+      // shape that proves the live `request` is the only path taken.
+      params: {
+        port: 1,
+        token: 'pushd_unused_in_reuse_path',
+        boundOrigin: 'http://localhost:5173',
+      } as LocalPcBinding,
+      request: <T = unknown>(opts: RequestOptions) => {
+        calls.push(opts);
+        return handler<T>(opts);
+      },
+    };
+    return { binding, calls };
+  }
+
+  it('isLiveDaemonBinding discriminates live from params', () => {
+    const { binding } = makeStubLive(async () => ({ ok: true }) as never);
+    expect(isLiveDaemonBinding(binding)).toBe(true);
+    expect(
+      isLiveDaemonBinding({
+        port: 1,
+        token: 'pushd_xxx',
+        boundOrigin: 'http://localhost:5173',
+      } as LocalPcBinding),
+    ).toBe(false);
+  });
+
+  it('execLocalDaemon routes through binding.request without opening a transient WS', async () => {
+    const { binding, calls } = makeStubLive(
+      async () =>
+        ({
+          v: PROTOCOL_VERSION,
+          kind: 'response',
+          requestId: 'req_x',
+          type: 'sandbox_exec',
+          sessionId: null,
+          ok: true,
+          payload: {
+            stdout: 'hi\n',
+            stderr: '',
+            exitCode: 0,
+            durationMs: 1,
+            truncated: false,
+          },
+          error: null,
+        }) as SessionResponse<unknown>,
+    );
+
+    const result = await execLocalDaemon(binding, 'echo hi');
+
+    expect(result.stdout).toBe('hi\n');
+    expect(result.exitCode).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].type).toBe('sandbox_exec');
+    // runId is generated when no caller-supplied one is passed; assert
+    // shape rather than value.
+    expect(typeof (calls[0].payload as { runId?: unknown })?.runId).toBe('string');
+  });
+
+  it('readFileLocalDaemon / writeFileLocalDaemon / listDirLocalDaemon / getDiffLocalDaemon all route through the live request', async () => {
+    const responses: Record<string, unknown> = {
+      sandbox_read_file: { content: 'hello', truncated: false },
+      sandbox_write_file: { ok: true, bytesWritten: 5 },
+      sandbox_list_dir: { entries: [], truncated: false },
+      sandbox_diff: { diff: '', truncated: false },
+    };
+    const { binding, calls } = makeStubLive(
+      async (opts) =>
+        ({
+          v: PROTOCOL_VERSION,
+          kind: 'response',
+          requestId: 'req_x',
+          type: opts.type,
+          sessionId: null,
+          ok: true,
+          payload: responses[opts.type] ?? {},
+          error: null,
+        }) as SessionResponse<unknown>,
+    );
+
+    await readFileLocalDaemon(binding, '/some/path');
+    await writeFileLocalDaemon(binding, '/some/path', 'hello');
+    await listDirLocalDaemon(binding, '/some');
+    await getDiffLocalDaemon(binding);
+
+    expect(calls.map((c) => c.type)).toEqual([
+      'sandbox_read_file',
+      'sandbox_write_file',
+      'sandbox_list_dir',
+      'sandbox_diff',
+    ]);
+  });
+
+  it('identifyLocalDaemon routes through the live request', async () => {
+    const { binding, calls } = makeStubLive(
+      async () =>
+        ({
+          v: PROTOCOL_VERSION,
+          kind: 'response',
+          requestId: 'req_x',
+          type: 'daemon_identify',
+          sessionId: null,
+          ok: true,
+          payload: {
+            tokenId: 'pdt_xxx',
+            boundOrigin: 'http://localhost:5173',
+            daemonVersion: '0.0.0',
+            protocolVersion: PROTOCOL_VERSION,
+          },
+          error: null,
+        }) as SessionResponse<unknown>,
+    );
+
+    const result = await identifyLocalDaemon(binding);
+    expect(result.tokenId).toBe('pdt_xxx');
+    expect(calls.map((c) => c.type)).toEqual(['daemon_identify']);
+  });
+
+  it('runWithBinding fires cancel_run on abort and rejects with AbortError (no transient WS opened)', async () => {
+    const controller = new AbortController();
+    const seenTypes: string[] = [];
+    let resolveInner: (() => void) | null = null;
+    const { binding, calls } = makeStubLive((opts) => {
+      seenTypes.push(opts.type);
+      if (opts.type === 'cancel_run') {
+        return Promise.resolve({
+          v: PROTOCOL_VERSION,
+          kind: 'response',
+          requestId: 'req_cancel',
+          type: 'cancel_run',
+          sessionId: null,
+          ok: true,
+          payload: { accepted: true },
+          error: null,
+        } as SessionResponse<unknown>);
+      }
+      // The main request never resolves on its own — the abort path
+      // must reject the outer promise instead. Resolve only as a
+      // cleanup hatch in case the test fails.
+      return new Promise<SessionResponse<unknown>>((res) => {
+        resolveInner = () => res({} as SessionResponse<unknown>);
+      });
+    });
+
+    const promise = runWithBinding(
+      binding,
+      (request) =>
+        request({ type: 'sandbox_exec', payload: { command: 'sleep 60', runId: 'run_x' } }),
+      { abortSignal: controller.signal, runId: 'run_x' },
+    );
+
+    // Give the request fn a tick to be invoked before aborting.
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+    // cancel_run was dispatched on the same live binding.
+    expect(seenTypes).toContain('cancel_run');
+    const cancel = calls.find((c) => c.type === 'cancel_run');
+    expect((cancel?.payload as { runId?: string })?.runId).toBe('run_x');
+    // Clean up the dangling inner promise so vitest doesn't warn.
+    resolveInner?.();
   });
 });

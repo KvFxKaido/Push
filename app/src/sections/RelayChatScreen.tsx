@@ -69,9 +69,8 @@ export function RelayChatScreen({ binding, onUnpair }: RelayChatScreenProps) {
     setApprovalQueue((prev) => prev.filter((p) => p.approvalId !== approvalId));
   }, []);
 
-  const { status, reconnect, reconnectInfo, request, replayUnavailableAt } = useRelayDaemon(
-    binding,
-    {
+  const { status, reconnect, reconnectInfo, request, liveBinding, replayUnavailableAt } =
+    useRelayDaemon(binding, {
       onEvent: (event) => {
         if (event.type === 'approval_required') {
           const payload = event.payload as
@@ -106,8 +105,7 @@ export function RelayChatScreen({ binding, onUnpair }: RelayChatScreenProps) {
           }
         }
       },
-    },
-  );
+    });
 
   const decideApproval = useCallback(
     (decision: 'approve' | 'deny') => {
@@ -151,12 +149,17 @@ export function RelayChatScreen({ binding, onUnpair }: RelayChatScreenProps) {
     isProviderLocked,
   } = useChat(null);
 
+  // Prefer the hook-owned `liveBinding` (long-lived WS) over the raw
+  // params binding so every `sandbox_*` tool call reuses this WS
+  // rather than opening a transient one per call. Falls back to params
+  // until the WS reaches `open` for the first time — see the matching
+  // comment in LocalPcChatScreen for rationale.
   useEffect(() => {
-    setLocalDaemonBinding(binding);
+    setLocalDaemonBinding(liveBinding ?? binding);
     return () => {
       setLocalDaemonBinding(null);
     };
-  }, [binding, setLocalDaemonBinding]);
+  }, [binding, liveBinding, setLocalDaemonBinding]);
 
   setWorkspaceMode('relay');
 

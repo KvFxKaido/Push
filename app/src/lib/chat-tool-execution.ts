@@ -7,14 +7,8 @@
  * Pure-ish helpers with explicit parameters. No React hooks, no closures over hook state.
  */
 
-import type {
-  ChatMessage,
-  ChatCard,
-  LocalPcBinding,
-  RelayBinding,
-  ReasoningBlock,
-  ToolExecutionResult,
-} from '@/types';
+import type { ChatMessage, ChatCard, ReasoningBlock, ToolExecutionResult } from '@/types';
+import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
 import type { ApprovalGateRegistry } from '@/lib/approval-gates';
 import { createDefaultApprovalGates } from '@/lib/approval-gates';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
@@ -72,7 +66,7 @@ export interface ToolExecRunContext {
    * (`'deploymentUrl' in binding` → relay, else local) is read by
    * the downstream helpers in `local-daemon-sandbox-client.ts`.
    */
-  localDaemonBinding?: LocalPcBinding | RelayBinding;
+  localDaemonBinding?: ToolDispatchBinding;
   isMainProtected: boolean;
   defaultBranch: string | undefined;
   provider: ActiveProvider;

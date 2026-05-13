@@ -42,7 +42,7 @@ export interface SandboxExecutionOptions {
    * to the cloud — that fallback would talk to a sandbox the user
    * doesn't have and produce confusing errors.
    */
-  localDaemonBinding?: import('@/types').LocalPcBinding | import('@/types').RelayBinding;
+  localDaemonBinding?: import('@/lib/local-daemon-sandbox-client').ToolDispatchBinding;
   /**
    * AbortSignal observed by daemon-routed tools that support mid-run
    * cancellation (today: `sandbox_exec`). When the signal fires while
