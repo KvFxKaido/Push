@@ -1,4 +1,4 @@
-const CACHE_NAME = 'push-v6';
+const CACHE_NAME = 'push-v7';
 const urlsToCache = ['/', '/index.html', '/manifest.json'];
 
 self.addEventListener('install', (event) => {
@@ -55,19 +55,14 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      // Return cached, but also fetch fresh in background
-      const fetched = fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          }
-          return response;
-        })
-        .catch(() => cached);
-
-      return cached || fetched;
-    }),
+    fetch(request)
+      .then((response) => {
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+        }
+        return response;
+      })
+      .catch(() => caches.match(request)),
   );
 });
