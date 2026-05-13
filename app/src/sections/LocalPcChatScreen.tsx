@@ -43,6 +43,7 @@ import { useLocalDaemon } from '@/hooks/useLocalDaemon';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { clearPairedDevice } from '@/lib/local-pc-storage';
 import { setPreferredProvider, type PreferredProvider } from '@/lib/providers';
+import { buildLocalPcWorkspaceContext } from '@/lib/workspace-context';
 import type { Conversation, LocalPcBinding } from '@/types';
 
 interface LocalPcChatScreenProps {
@@ -195,6 +196,7 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
     dismissResume,
     handleCardAction,
     setLocalDaemonBinding,
+    setWorkspaceContext,
     setWorkspaceMode,
     conversations,
     conversationsLoaded,
@@ -233,6 +235,29 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
   // local-pc-scoped key rather than mixed into cloud chat history.
   // Codex C2 / Copilot on PR #516.
   setWorkspaceMode('local-pc');
+
+  // Push a local-pc-specific environment description into the system
+  // prompt. Without this, the orchestrator's environment section is
+  // empty for local-pc and the model falls back to cloud-sandbox
+  // priors — it rewrites `/tmp/foo` → `/workspace/foo` on writes and
+  // reflexively delegates Explorer with repo_read tasks.
+  //
+  // The orchestrator companion change in this PR also swaps the
+  // SANDBOX_TOOL_PROTOCOL block for LOCAL_PC_TOOL_PROTOCOL when the
+  // mode is 'local-pc', so the tool documentation the model reads
+  // matches the daemon's actual surface. `includeGitHubTools: false`
+  // additionally drops the GitHub `TOOL_PROTOCOL` block (which lists
+  // Explorer/Coder as delegation targets).
+  useEffect(() => {
+    setWorkspaceContext({
+      description: buildLocalPcWorkspaceContext(),
+      includeGitHubTools: false,
+      mode: 'local-pc',
+    });
+    return () => {
+      setWorkspaceContext(null);
+    };
+  }, [setWorkspaceContext]);
 
   // Conversation scope: useChatAutoSwitch only auto-creates when an
   // activeRepoFullName is set, which local-pc doesn't have. Without

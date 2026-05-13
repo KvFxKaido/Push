@@ -320,3 +320,86 @@ describe('IMPLEMENTED_SANDBOX_TOOLS', () => {
     }
   });
 });
+
+describe('LOCAL_PC_TOOL_PROTOCOL', () => {
+  it('does not advertise /workspace as a default workdir or repo root', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // The cloud protocol advertises `/workspace` as the default workdir
+    // (e.g. "default workdir: /workspace", "cloned to /workspace"). The
+    // local-pc variant must avoid those AFFIRMATIVE uses — negative
+    // mentions warning the model NOT to invent `/workspace` are fine
+    // and intentional. Test the specific cloud-pattern phrasings.
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/default workdir:\s*\/workspace/i);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/cloned to \/workspace/i);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/\(default:\s*\/workspace\)/i);
+  });
+
+  it('explicitly disclaims the /workspace prior', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // Because the model has a strong cloud-sandbox training prior that
+    // `/workspace` is the workspace root, an explicit disclaimer is
+    // load-bearing — not just an omission.
+    expect(LOCAL_PC_TOOL_PROTOCOL).toMatch(/no\s+`?\/workspace/i);
+  });
+
+  it('does not list cloud-only tools as part of the available tool surface', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // The original leak (PR #527 Copilot low-confidence #3) was
+    // interpolating `${SANDBOX_MUTATING_TOOL_NAMES}`, which expands to
+    // a comma list including the cloud-only tool public names
+    // (commit, push, draft, promote, create_branch, switch_branch,
+    // verify). The test must catch the *list-membership* pattern
+    // specifically — natural-language mentions like "`git push`" or
+    // "the user reviews diffs" are fine and shouldn't trip the guard.
+    //
+    // Pattern: tool name preceded by `, ` or `(` and followed by `,`,
+    // `)`, or end-of-list. This matches the original leak shape but
+    // not legitimate prose references.
+    const commaListLeak = (name: string) => new RegExp(`(?:^|[,(])\\s*${name}\\s*(?:[,)]|$)`, 'm');
+    for (const name of ['commit', 'push', 'draft', 'promote', 'create_branch', 'switch_branch']) {
+      expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(commaListLeak(name));
+    }
+    // Affirmative protocol entries: `${PROMOTE_TOOL}(...)` would show up
+    // as e.g. "- promote(repo_name, ...) — ..." in the cloud protocol.
+    // Pin against the leading-dash signature form.
+    for (const name of [
+      'commit',
+      'push',
+      'draft',
+      'promote',
+      'create_branch',
+      'switch_branch',
+      'verify',
+    ]) {
+      expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(new RegExp(`^- ${name}\\(`, 'm'));
+    }
+    // Canonical-name leaks (the longer names, less ambiguous in prose).
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_prepare_commit/);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_save_draft/);
+    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/promote_to_github/);
+  });
+
+  it('discourages Explorer/Coder delegation explicitly', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // Without this hint the model still reaches for Explorer from
+    // training priors even when the tool isn't in its surface. Stated
+    // explicitly so we're not relying on absence-of-instruction.
+    expect(LOCAL_PC_TOOL_PROTOCOL).toMatch(/NO DELEGATION|do not delegate.*Explorer/i);
+  });
+
+  it('keeps the JSON fenced-call convention', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // Wire-format compat with the rest of Push: the tool-call parser
+    // only looks for ```json ... ``` blocks.
+    expect(LOCAL_PC_TOOL_PROTOCOL).toContain('```json');
+  });
+
+  it('lists the core sandbox_* tool public names that the daemon services', async () => {
+    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    // Public tool names per the registry: exec / read / write / ls /
+    // diff. These are what the model emits in fenced JSON calls.
+    for (const tool of ['exec', 'read', 'write', 'ls']) {
+      expect(LOCAL_PC_TOOL_PROTOCOL).toContain(tool);
+    }
+  });
+});

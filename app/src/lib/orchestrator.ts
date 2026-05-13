@@ -1,7 +1,7 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import { formatVerificationPolicyBlock } from './verification-policy';
 import { TOOL_PROTOCOL } from './github-tools';
-import { getSandboxToolProtocol } from './sandbox-tools';
+import { LOCAL_PC_TOOL_PROTOCOL, getSandboxToolProtocol } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { TODO_TOOL_PROTOCOL } from './todo-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
@@ -201,6 +201,19 @@ export function toLLMMessages(
       builder.set('delegation', null);
     }
 
+    // Local-PC mode — strip the cloud delegation block. The base
+    // `delegation` section advertises delegate_coder / delegate_explorer
+    // with the literal "Trace the auth flow / src/auth.ts" example that
+    // the model was parroting verbatim in pwd-only conversations. The
+    // local-pc tool protocol (injected below) tells the model NOT to
+    // delegate, but the contradictory base block reduces the signal —
+    // strip it cleanly for local-pc, the same way chat does. Copilot
+    // flagged this as a low-confidence concern on PR #527; verified
+    // load-bearing on inspection.
+    if (workspaceContext?.mode === 'local-pc') {
+      builder.set('delegation', null);
+    }
+
     // User identity (name, bio) when configured
     const profile = getUserProfile();
     const identityBlock = buildUserIdentityBlock(profile);
@@ -261,7 +274,15 @@ export function toLLMMessages(
     } else {
       const baseToolInstructions = builder.get('tool_instructions') ?? '';
       const toolProtocols: string[] = [];
-      if (hasSandbox) {
+      // Local-pc sessions get a tailored tool protocol: no `/workspace`
+      // path prior, no remote-bound tools (commit/push/promote/draft),
+      // no Explorer/Coder delegation. The cloud SANDBOX_TOOL_PROTOCOL
+      // fights the workspace-context block otherwise — it mentions
+      // `/workspace` 9+ times and lists remote-bound tools that the
+      // daemon can't service. Smoke-tested 2026-05-13 in this PR.
+      if (workspaceContext?.mode === 'local-pc') {
+        toolProtocols.push(LOCAL_PC_TOOL_PROTOCOL);
+      } else if (hasSandbox) {
         toolProtocols.push(getSandboxToolProtocol());
       }
       toolProtocols.push(SCRATCHPAD_TOOL_PROTOCOL);
