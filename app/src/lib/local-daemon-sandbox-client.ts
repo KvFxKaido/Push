@@ -18,14 +18,22 @@
  *     revision, and cloud-side optimistic concurrency are not modeled
  *     yet; runtime callers treat the daemon return as authoritative.
  *
- * Transport: each call opens a transient binding. WS handshakes are
- * ~10ms on loopback so per-call cost is acceptable for proof-of-concept;
- * a future PR may reuse a long-lived binding for tighter latency once
- * the chat hot path actually drives this.
+ * Transport: two paths.
+ *   - `LiveDaemonBinding` (preferred when the hook layer is on-screen):
+ *     the per-tool helpers reuse the long-lived WebSocket owned by
+ *     `useLocalDaemon` / `useRelayDaemon` via the bundled `request`
+ *     fn. No per-call WS handshake; cancel_run routes through the
+ *     same connection on AbortSignal.
+ *   - Plain `DaemonBinding` (params only): each call opens a transient
+ *     WebSocket via `withTransientBinding` (the original 2.f shape).
+ *     Used by pairing-probe code paths (`identifyLocalDaemon` at
+ *     onboarding, attach-token mint) and any non-hook caller that
+ *     can't get to the live binding.
  */
 import {
   DaemonRequestError,
   type LocalDaemonBinding,
+  type RequestOptions,
   type SessionResponse,
   createLocalDaemonBinding,
 } from './local-daemon-binding';
@@ -53,6 +61,59 @@ export type DaemonBinding = LocalPcBinding | RelayBinding;
  * importing both binding types just for the check. */
 export function isRelayBinding(binding: DaemonBinding): binding is RelayBinding {
   return 'deploymentUrl' in binding;
+}
+
+/**
+ * Sandbox-client request signature, narrowed to what the tool
+ * helpers need. The hook layer's `useLocalDaemon.request` /
+ * `useRelayDaemon.request` already match this shape — they route
+ * through the long-lived WS owned by the hook. Decoupling here
+ * means a tool helper can be handed either the hook's bound
+ * `request` or a transient adapter's `request` without the
+ * helpers caring which side opened the connection.
+ */
+export type DaemonRequest = <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>;
+
+/**
+ * Live daemon binding: connection params plus a `request` fn bound
+ * to an already-open WebSocket. When chat-layer dispatch passes
+ * one of these, the per-tool helpers route through `request`
+ * directly instead of opening a transient WS per call.
+ *
+ * `params` is preserved so chat-layer code that still needs to
+ * differentiate relay-vs-local (e.g. session-card formatting) can
+ * keep using `isRelayBinding(live.params)` without a separate API.
+ *
+ * The fn is owned by the React hook layer (`useLocalDaemon` /
+ * `useRelayDaemon`). The hook closes the WS on unmount; passing
+ * a stale `LiveDaemonBinding` reference after the hook unmounts
+ * surfaces as "local daemon not connected" from the bound request
+ * fn — which is the same failure shape an in-flight transient
+ * adapter would surface mid-call.
+ */
+export interface LiveDaemonBinding {
+  params: DaemonBinding;
+  request: DaemonRequest;
+}
+
+/** Distinguishes a live (hook-bound) binding from a plain params
+ * binding. */
+export function isLiveDaemonBinding(
+  binding: DaemonBinding | LiveDaemonBinding,
+): binding is LiveDaemonBinding {
+  return 'request' in binding && typeof (binding as LiveDaemonBinding).request === 'function';
+}
+
+/** What chat-layer tool dispatch carries — either shape works. */
+export type ToolDispatchBinding = DaemonBinding | LiveDaemonBinding;
+
+/**
+ * Resolve a `ToolDispatchBinding` to the underlying connection
+ * params. Use this for callsites that only care about transport
+ * shape (e.g. "is this relay?") and don't need the request fn.
+ */
+export function bindingParams(binding: ToolDispatchBinding): DaemonBinding {
+  return isLiveDaemonBinding(binding) ? binding.params : binding;
 }
 
 /**
@@ -97,6 +158,106 @@ function createTransientAdapter(
 
 const OPEN_TIMEOUT_MS = 5_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+
+/**
+ * Run a one-shot daemon request against either transport. The
+ * single entry point for the per-tool helpers below:
+ *
+ *   - Live binding → call `binding.request` directly. The hook
+ *     layer owns the WS; we don't open or close anything.
+ *     AbortSignal handling fires a `cancel_run` envelope (via the
+ *     same long-lived WS) and rejects with `AbortError`, mirroring
+ *     `withTransientBinding`'s post-open semantics.
+ *   - Plain params → delegate to `withTransientBinding`, which
+ *     opens a fresh WS, awaits `open`, runs the fn, and closes.
+ */
+export async function runWithBinding<T>(
+  binding: ToolDispatchBinding,
+  fn: (request: DaemonRequest) => Promise<SessionResponse<T>>,
+  opts: WithTransientBindingOptions = {},
+): Promise<SessionResponse<T>> {
+  if (isLiveDaemonBinding(binding)) {
+    return runWithLiveBinding(binding, fn, opts);
+  }
+  return withTransientBinding(binding, (handle) => fn((reqOpts) => handle.request(reqOpts)), opts);
+}
+
+async function runWithLiveBinding<T>(
+  binding: LiveDaemonBinding,
+  fn: (request: DaemonRequest) => Promise<SessionResponse<T>>,
+  opts: WithTransientBindingOptions,
+): Promise<SessionResponse<T>> {
+  // Fast path: no abort signal. Just await the live request.
+  if (!opts.abortSignal) {
+    return fn(binding.request);
+  }
+  // Abort path: fire cancel_run on the same long-lived WS when the
+  // signal trips, reject the outer promise with AbortError. We do
+  // NOT close the WS — the hook owns its lifecycle.
+  const abortSignal = opts.abortSignal;
+  return new Promise<SessionResponse<T>>((resolve, reject) => {
+    let settled = false;
+    const settle = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      abortSignal.removeEventListener('abort', abortListener);
+      action();
+    };
+
+    const onAbort = () => {
+      if (settled) return;
+      if (opts.runId) {
+        // cancel_run is best-effort — the daemon's WS-close cleanup
+        // covers the case where the request never makes it. Catch
+        // and swallow so a cancel_run failure doesn't poison the
+        // outer rejection.
+        binding
+          .request({ type: 'cancel_run', payload: { runId: opts.runId }, timeoutMs: 5_000 })
+          .catch(() => {});
+      }
+      settle(() => {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        reject(err);
+      });
+    };
+    const abortListener = onAbort;
+    abortSignal.addEventListener('abort', abortListener, { once: true });
+    if (abortSignal.aborted) {
+      onAbort();
+      return;
+    }
+
+    fn(binding.request).then(
+      (response) =>
+        settle(() => {
+          // Tie-breaker: if abort fired in the same tick the response
+          // landed (signal flipped before `settle` ran), respect the
+          // user's cancel intent instead of resolving a request they
+          // told us to drop. The error branch already does this; do
+          // the symmetric thing on success.
+          if (abortSignal.aborted) {
+            const aborted = new Error('The operation was aborted');
+            aborted.name = 'AbortError';
+            reject(aborted);
+          } else {
+            resolve(response);
+          }
+        }),
+      (err) => {
+        settle(() => {
+          if (abortSignal.aborted) {
+            const aborted = new Error('The operation was aborted');
+            aborted.name = 'AbortError';
+            reject(aborted);
+          } else {
+            reject(err);
+          }
+        });
+      },
+    );
+  });
+}
 
 /**
  * Shape of the `sandbox_exec` response payload from pushd. Mirrors
@@ -237,7 +398,7 @@ export class LocalDaemonUnreachableError extends Error {
  * those are normal results, not errors).
  */
 export async function execLocalDaemon(
-  binding: DaemonBinding,
+  binding: ToolDispatchBinding,
   command: string,
   opts: LocalDaemonExecOptions = {},
 ): Promise<LocalDaemonExecResult> {
@@ -253,10 +414,10 @@ export async function execLocalDaemon(
   if (opts.cwd) payload.cwd = opts.cwd;
   if (opts.timeoutMs !== undefined) payload.timeoutMs = opts.timeoutMs;
 
-  const response = await withTransientBinding(
+  const response = await runWithBinding(
     binding,
-    (handle) =>
-      handle.request<LocalDaemonExecResult>({
+    (request) =>
+      request<LocalDaemonExecResult>({
         type: 'sandbox_exec',
         payload,
         // Give the WS request itself a slightly larger window than the
@@ -285,7 +446,7 @@ function generateRunId(): string {
  * 1-based inclusive when provided.
  */
 export async function readFileLocalDaemon(
-  binding: DaemonBinding,
+  binding: ToolDispatchBinding,
   path: string,
   opts: LocalDaemonReadFileOptions = {},
 ): Promise<LocalDaemonReadFileResult> {
@@ -293,8 +454,8 @@ export async function readFileLocalDaemon(
   if (opts.startLine !== undefined) payload.startLine = opts.startLine;
   if (opts.endLine !== undefined) payload.endLine = opts.endLine;
 
-  const response = await withTransientBinding(binding, (handle) =>
-    handle.request<LocalDaemonReadFileResult>({
+  const response = await runWithBinding(binding, (request) =>
+    request<LocalDaemonReadFileResult>({
       type: 'sandbox_read_file',
       payload,
       timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
@@ -310,12 +471,12 @@ export async function readFileLocalDaemon(
  * the daemon side tracks per-path versions.
  */
 export async function writeFileLocalDaemon(
-  binding: DaemonBinding,
+  binding: ToolDispatchBinding,
   path: string,
   content: string,
 ): Promise<LocalDaemonWriteFileResult> {
-  const response = await withTransientBinding(binding, (handle) =>
-    handle.request<LocalDaemonWriteFileResult>({
+  const response = await runWithBinding(binding, (request) =>
+    request<LocalDaemonWriteFileResult>({
       type: 'sandbox_write_file',
       payload: { path, content },
       timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
@@ -329,14 +490,14 @@ export async function writeFileLocalDaemon(
  * defaults to the daemon's cwd.
  */
 export async function listDirLocalDaemon(
-  binding: DaemonBinding,
+  binding: ToolDispatchBinding,
   path?: string,
 ): Promise<LocalDaemonListDirResult> {
   const payload: Record<string, unknown> = {};
   if (path) payload.path = path;
 
-  const response = await withTransientBinding(binding, (handle) =>
-    handle.request<LocalDaemonListDirResult>({
+  const response = await runWithBinding(binding, (request) =>
+    request<LocalDaemonListDirResult>({
       type: 'sandbox_list_dir',
       payload,
       timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
@@ -349,9 +510,11 @@ export async function listDirLocalDaemon(
  * Fetch `git diff HEAD` + `git status --porcelain` via the paired
  * pushd. The daemon shells out git in its cwd.
  */
-export async function getDiffLocalDaemon(binding: DaemonBinding): Promise<LocalDaemonDiffResult> {
-  const response = await withTransientBinding(binding, (handle) =>
-    handle.request<LocalDaemonDiffResult>({
+export async function getDiffLocalDaemon(
+  binding: ToolDispatchBinding,
+): Promise<LocalDaemonDiffResult> {
+  const response = await runWithBinding(binding, (request) =>
+    request<LocalDaemonDiffResult>({
       type: 'sandbox_diff',
       payload: {},
       timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
@@ -361,9 +524,11 @@ export async function getDiffLocalDaemon(binding: DaemonBinding): Promise<LocalD
 }
 
 /** Fetch the daemon's identity for the authenticated bearer. */
-export async function identifyLocalDaemon(binding: DaemonBinding): Promise<LocalDaemonIdentity> {
-  const response = await withTransientBinding(binding, (handle) =>
-    handle.request<LocalDaemonIdentity>({ type: 'daemon_identify' }),
+export async function identifyLocalDaemon(
+  binding: ToolDispatchBinding,
+): Promise<LocalDaemonIdentity> {
+  const response = await runWithBinding(binding, (request) =>
+    request<LocalDaemonIdentity>({ type: 'daemon_identify' }),
   );
   return response.payload;
 }
@@ -382,11 +547,11 @@ export async function identifyLocalDaemon(binding: DaemonBinding): Promise<Local
  * "already upgraded, no-op."
  */
 export async function mintAttachTokenViaDaemon(
-  binding: DaemonBinding,
+  binding: ToolDispatchBinding,
 ): Promise<LocalDaemonAttachTokenMintResult | null> {
   try {
-    const response = await withTransientBinding(binding, (handle) =>
-      handle.request<LocalDaemonAttachTokenMintResult>({ type: 'mint_device_attach_token' }),
+    const response = await runWithBinding(binding, (request) =>
+      request<LocalDaemonAttachTokenMintResult>({ type: 'mint_device_attach_token' }),
     );
     return response.payload;
   } catch (err) {
@@ -537,7 +702,18 @@ export async function withTransientBinding<T>(
           }
           void fn(handle)
             .then((response) => {
-              settleOuter(() => resolve(response));
+              settleOuter(() => {
+                // Tie-breaker mirrors the live-binding path: respect
+                // a same-tick abort even when the response itself
+                // landed successfully.
+                if (opts.abortSignal?.aborted) {
+                  const aborted = new Error('The operation was aborted');
+                  aborted.name = 'AbortError';
+                  reject(aborted);
+                } else {
+                  resolve(response);
+                }
+              });
             })
             .catch((err) => {
               settleOuter(() => {

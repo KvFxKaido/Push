@@ -13,6 +13,7 @@ import type { TodoItem } from '@/lib/todo-tools';
 import type { MigrationGuard } from '@/lib/chat-message';
 import type { RunEngineEvent } from '@/lib/run-engine';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
+import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
 import type {
   ActiveRepo,
   AgentStatus,
@@ -20,8 +21,6 @@ import type {
   ChatMessage,
   Conversation,
   CoderWorkingMemory,
-  LocalPcBinding,
-  RelayBinding,
   ReasoningBlock,
   RunEventInput,
   ToolExecutionResult,
@@ -76,11 +75,13 @@ export interface SendLoopContext {
    * attach token) so sandbox tool calls route through `pushd`
    * (directly or via the Worker relay) instead of a cloud sandbox.
    * `null` on cloud sessions; the sandbox dispatcher uses absence
-   * to fall back to `execInSandbox`. Downstream helpers in
-   * `local-daemon-sandbox-client.ts` pick the WS adapter constructor
-   * by binding shape.
+   * to fall back to `execInSandbox`. The ref carries either a plain
+   * params binding (legacy / pre-open transient path) or a
+   * `LiveDaemonBinding` (hook-owned long-lived WS, preferred): the
+   * dispatcher in `local-daemon-sandbox-client.ts#runWithBinding`
+   * branches by shape.
    */
-  localDaemonBindingRef: MutableRefObject<LocalPcBinding | RelayBinding | null>;
+  localDaemonBindingRef: MutableRefObject<ToolDispatchBinding | null>;
   scratchpadRef: MutableRefObject<ScratchpadHandlers | undefined>;
   todoRef: MutableRefObject<TodoHandlers | undefined>;
   usageHandlerRef: MutableRefObject<UsageHandler | undefined>;

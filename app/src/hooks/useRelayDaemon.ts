@@ -26,7 +26,7 @@
  * A future PR may make it relay-specific once real phone testing
  * shows what mobile networks actually need.
  */
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   type ConnectionStatus,
   type LocalDaemonBinding,
@@ -35,6 +35,7 @@ import {
   type SessionResponse,
 } from '@/lib/local-daemon-binding';
 import { createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
+import type { LiveDaemonBinding } from '@/lib/local-daemon-sandbox-client';
 import type { RelayBinding } from '@/types';
 
 const EVENT_LOG_CAP = 50;
@@ -64,6 +65,14 @@ export interface UseRelayDaemonResult {
   status: ConnectionStatus;
   events: SessionEvent[];
   request: <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>;
+  /**
+   * Live tool-dispatch binding bound to the long-lived relay WS this
+   * hook owns. Mirror of `UseLocalDaemonResult.liveBinding` — null
+   * until the WS reaches `open` for the first time; chat-layer
+   * dispatch reuses the same `request` for every `sandbox_*` tool
+   * call instead of opening a transient WS per call.
+   */
+  liveBinding: LiveDaemonBinding | null;
   /** Force-close and recreate the binding. Resets backoff. */
   reconnect: () => void;
   reconnectInfo: ReconnectInfo;
@@ -295,10 +304,16 @@ export function useRelayDaemon(
     return handle.request<T>(opts);
   }, []);
 
+  const liveBinding = useMemo<LiveDaemonBinding | null>(() => {
+    if (!binding) return null;
+    if (wsStatus.state !== 'open') return null;
+    return { params: binding, request };
+  }, [binding, wsStatus.state, request]);
+
   const reconnect = useCallback(() => {
     dispatchReconnect({ type: 'MANUAL_RESET' });
     setLocalReconnectKey((k) => k + 1);
   }, []);
 
-  return { status, events, request, reconnect, reconnectInfo, replayUnavailableAt };
+  return { status, events, request, liveBinding, reconnect, reconnectInfo, replayUnavailableAt };
 }

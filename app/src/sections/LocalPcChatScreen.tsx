@@ -113,7 +113,7 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
     setApprovalQueue((prev) => prev.filter((p) => p.approvalId !== approvalId));
   }, []);
 
-  const { status, reconnect, reconnectInfo, request } = useLocalDaemon(binding, {
+  const { status, reconnect, reconnectInfo, request, liveBinding } = useLocalDaemon(binding, {
     onEvent: (event) => {
       if (event.type === 'approval_required') {
         const payload = event.payload as
@@ -222,12 +222,21 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
   // Wire the binding into the chat's tool-dispatch context. The setter
   // mutates a ref synchronously; useEffect is right (not useMemo) so
   // the cleanup clears the ref when the user unpairs or navigates away.
+  //
+  // Prefer `liveBinding` (hook-owned long-lived WS) over the raw
+  // params binding: chat-layer tool dispatch reuses the same WebSocket
+  // for every `sandbox_*` call instead of opening a transient one per
+  // call. `liveBinding` is null until the WS reaches `open` for the
+  // first time; we fall back to the params binding in that window so
+  // the very first tool call still works through the transient adapter
+  // path rather than failing with "not connected" — once the WS is up,
+  // the next effect run swaps in the live binding.
   useEffect(() => {
-    setLocalDaemonBinding(binding);
+    setLocalDaemonBinding(liveBinding ?? binding);
     return () => {
       setLocalDaemonBinding(null);
     };
-  }, [binding, setLocalDaemonBinding]);
+  }, [binding, liveBinding, setLocalDaemonBinding]);
 
   // Tag local-pc as its own workspace mode (matches the union member
   // in @/types). `createNewChat` reads this ref synchronously when it

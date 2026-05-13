@@ -15,13 +15,8 @@ import type { ToolExecutionRuntime, ToolExecutionContext } from '@push/lib/tool-
 import { getToolCapabilities, ROLE_CAPABILITIES, roleCanUseTool } from '@push/lib/capabilities';
 import { resolveToolName } from '@push/lib/tool-registry';
 
-import type {
-  LocalPcBinding,
-  RelayBinding,
-  StructuredToolError,
-  ToolHookContext,
-  ToolExecutionResult,
-} from '@/types';
+import type { StructuredToolError, ToolHookContext, ToolExecutionResult } from '@/types';
+import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
 import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './tool-hooks';
 import type { ApprovalGateRegistry } from './approval-gates';
 import { executeToolCall } from './github-tools';
@@ -302,10 +297,14 @@ export class WebToolExecutionRuntime
           break;
 
         case 'sandbox': {
-          const localDaemonBinding = context.localDaemonBinding as
-            | LocalPcBinding
-            | RelayBinding
-            | undefined;
+          // The chat screens now pass `liveBinding ?? binding` through
+          // `setLocalDaemonBinding`, so the runtime value can be either
+          // a plain params binding or a `LiveDaemonBinding` wrapper.
+          // The `LOCAL_DAEMON_SUPPORTED_TOOLS` gate below cares only
+          // about presence (truthy / falsy), so this widening doesn't
+          // change behaviour — but it stops the cast from lying about
+          // the shape for any future code that wants to inspect it.
+          const localDaemonBinding = context.localDaemonBinding as ToolDispatchBinding | undefined;
           if (!context.sandboxId && !localDaemonBinding) {
             const err: StructuredToolError = {
               type: 'SANDBOX_UNREACHABLE',

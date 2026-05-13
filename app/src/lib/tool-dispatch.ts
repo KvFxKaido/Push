@@ -12,11 +12,10 @@ import type {
   AcceptanceCriterion,
   CoderDelegationArgs,
   ExplorerDelegationArgs,
-  LocalPcBinding,
-  RelayBinding,
   TaskGraphArgs,
 } from '@/types';
 import { type ToolHookRegistry } from './tool-hooks';
+import type { ToolDispatchBinding } from './local-daemon-sandbox-client';
 import type { ApprovalGateRegistry } from './approval-gates';
 import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
 import { detectToolCall, type ToolCall } from './github-tools';
@@ -487,7 +486,7 @@ export async function executeAnyToolCall(
   capabilityLedger?: import('./capabilities').CapabilityLedger,
   approvalCallback?: (toolName: string, reason: string, recoveryPath: string) => Promise<boolean>,
   chatId?: string,
-  localDaemonBinding?: LocalPcBinding | RelayBinding,
+  localDaemonBinding?: ToolDispatchBinding,
   abortSignal?: AbortSignal,
 ): Promise<ToolExecutionResult> {
   const runtime = new WebToolExecutionRuntime();
