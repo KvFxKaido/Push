@@ -79,6 +79,15 @@ export interface Env {
   // no auth and no protocol — 2.c and beyond turn this on). Set to "1"
   // to enable.
   PUSH_RELAY_ENABLED?: string;
+  // Deployment-scoped relay token (Phase 2.c). pushd's outbound dial
+  // presents this as `bearer.pushd_relay_<token>` in
+  // Sec-WebSocket-Protocol; the relay route compares it constant-time
+  // against this secret. Operator sets via
+  //   wrangler secret put PUSH_RELAY_TOKEN
+  // Optional so non-relay deployments still boot; when unset, any
+  // connection attempting a `pushd_relay_*` bearer is rejected by the
+  // route (the relay flag alone is not enough — auth must be wired).
+  PUSH_RELAY_TOKEN?: string;
   // Sibling-provider selector. Values: "modal" | "cloudflare". Unset or
   // anything else defaults to "modal" during coexistence.
   PUSH_SANDBOX_PROVIDER?: string;
@@ -397,7 +406,7 @@ function trimSecret(value: string | undefined): string {
   return value?.trim() ?? '';
 }
 
-function timingSafeEqual(a: string, b: string): boolean {
+export function timingSafeEqual(a: string, b: string): boolean {
   const aBytes = new TextEncoder().encode(a);
   const bBytes = new TextEncoder().encode(b);
   const max = Math.max(aBytes.length, bBytes.length);

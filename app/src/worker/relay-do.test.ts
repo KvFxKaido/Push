@@ -93,6 +93,12 @@ function makeDO(): RelaySessionDO {
   return new RelaySessionDO(state, env);
 }
 
+function wsRequest(role?: 'pushd' | 'phone'): Request {
+  const url = new URL('https://example.com/');
+  if (role) url.searchParams.set('role', role);
+  return new Request(url.toString(), { headers: { Upgrade: 'websocket' } });
+}
+
 describe('RelaySessionDO.fetch', () => {
   it('returns 426 when the request is not a WebSocket upgrade', async () => {
     const doInstance = makeDO();
@@ -101,31 +107,50 @@ describe('RelaySessionDO.fetch', () => {
     expect(doInstance.getConnectionCount()).toBe(0);
   });
 
-  it('returns 101 and registers a connection on WS upgrade', async () => {
+  it('returns 500 when role query param is missing (route handler must tag)', async () => {
     const doInstance = makeDO();
-    const res = await doInstance.fetch(
-      new Request('https://example.com/', { headers: { Upgrade: 'websocket' } }),
-    );
+    const res = await doInstance.fetch(wsRequest());
+    expect(res.status).toBe(500);
+    expect(doInstance.getConnectionCount()).toBe(0);
+  });
+
+  it('returns 101 and registers a phone connection on WS upgrade with role=phone', async () => {
+    const doInstance = makeDO();
+    const res = await doInstance.fetch(wsRequest('phone'));
     expect(res.status).toBe(101);
-    expect(doInstance.getConnectionCount()).toBe(1);
+    expect(res.headers.get('Sec-WebSocket-Protocol')).toBe('push.relay.v1');
+    expect(doInstance.getRoleCounts()).toEqual({ pushd: 0, phone: 1 });
+  });
+
+  it('returns 101 and registers a pushd connection on WS upgrade with role=pushd', async () => {
+    const doInstance = makeDO();
+    const res = await doInstance.fetch(wsRequest('pushd'));
+    expect(res.status).toBe(101);
+    expect(doInstance.getRoleCounts()).toEqual({ pushd: 1, phone: 0 });
+  });
+
+  it('returns 409 when a second pushd tries to attach to the same session', async () => {
+    const doInstance = makeDO();
+    await doInstance.fetch(wsRequest('pushd'));
+    const res = await doInstance.fetch(wsRequest('pushd'));
+    expect(res.status).toBe(409);
+    expect(doInstance.getRoleCounts()).toEqual({ pushd: 1, phone: 0 });
   });
 });
 
 describe('RelaySessionDO.acceptConnection', () => {
-  it('registers the WebSocket and calls accept()', () => {
+  it('registers the WebSocket with its role and calls accept()', () => {
     const doInstance = makeDO();
     const ws = new FakeWebSocket();
-    doInstance.acceptConnection(ws as unknown as WebSocket);
+    doInstance.acceptConnection(ws as unknown as WebSocket, 'phone');
     expect(ws.readyState).toBe(1);
-    expect(doInstance.getConnectionCount()).toBe(1);
+    expect(doInstance.getRoleCounts()).toEqual({ pushd: 0, phone: 1 });
   });
 
   it('deregisters the connection on close', () => {
     const doInstance = makeDO();
     const ws = new FakeWebSocket();
-    doInstance.acceptConnection(ws as unknown as WebSocket);
-    expect(doInstance.getConnectionCount()).toBe(1);
-
+    doInstance.acceptConnection(ws as unknown as WebSocket, 'phone');
     ws.close();
     expect(doInstance.getConnectionCount()).toBe(0);
   });
@@ -133,31 +158,85 @@ describe('RelaySessionDO.acceptConnection', () => {
   it('deregisters the connection on error', () => {
     const doInstance = makeDO();
     const ws = new FakeWebSocket();
-    doInstance.acceptConnection(ws as unknown as WebSocket);
+    doInstance.acceptConnection(ws as unknown as WebSocket, 'pushd');
     ws.dispatch('error', new Error('boom'));
     expect(doInstance.getConnectionCount()).toBe(0);
-  });
-
-  it('drops incoming messages (no protocol wired yet in 2.b)', () => {
-    const doInstance = makeDO();
-    const ws = new FakeWebSocket();
-    doInstance.acceptConnection(ws as unknown as WebSocket);
-    ws.dispatch('message', { data: 'should be ignored' });
-    expect(doInstance.getConnectionCount()).toBe(1);
   });
 
   it('tracks multiple independent connections', () => {
     const doInstance = makeDO();
     const wsA = new FakeWebSocket();
     const wsB = new FakeWebSocket();
-    doInstance.acceptConnection(wsA as unknown as WebSocket);
-    doInstance.acceptConnection(wsB as unknown as WebSocket);
-    expect(doInstance.getConnectionCount()).toBe(2);
+    doInstance.acceptConnection(wsA as unknown as WebSocket, 'pushd');
+    doInstance.acceptConnection(wsB as unknown as WebSocket, 'phone');
+    expect(doInstance.getRoleCounts()).toEqual({ pushd: 1, phone: 1 });
 
     wsA.close();
-    expect(doInstance.getConnectionCount()).toBe(1);
+    expect(doInstance.getRoleCounts()).toEqual({ pushd: 0, phone: 1 });
 
     wsB.close();
     expect(doInstance.getConnectionCount()).toBe(0);
+  });
+});
+
+describe('RelaySessionDO.forwardMessage', () => {
+  it('forwards pushd → all phones, but not back to pushd itself', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phoneA = new FakeWebSocket();
+    const phoneB = new FakeWebSocket();
+    doInstance.acceptConnection(pushd as unknown as WebSocket, 'pushd');
+    doInstance.acceptConnection(phoneA as unknown as WebSocket, 'phone');
+    doInstance.acceptConnection(phoneB as unknown as WebSocket, 'phone');
+
+    const sendA = vi.spyOn(phoneA, 'send');
+    const sendB = vi.spyOn(phoneB, 'send');
+    const sendPushd = vi.spyOn(pushd, 'send');
+
+    pushd.dispatch('message', { data: '{"kind":"hello"}' });
+
+    expect(sendA).toHaveBeenCalledWith('{"kind":"hello"}');
+    expect(sendB).toHaveBeenCalledWith('{"kind":"hello"}');
+    expect(sendPushd).not.toHaveBeenCalled();
+  });
+
+  it('forwards phone → pushd, but not back to phone itself', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptConnection(pushd as unknown as WebSocket, 'pushd');
+    doInstance.acceptConnection(phone as unknown as WebSocket, 'phone');
+
+    const sendPushd = vi.spyOn(pushd, 'send');
+    const sendPhone = vi.spyOn(phone, 'send');
+
+    phone.dispatch('message', { data: '{"kind":"submit_approval"}' });
+
+    expect(sendPushd).toHaveBeenCalledWith('{"kind":"submit_approval"}');
+    expect(sendPhone).not.toHaveBeenCalled();
+  });
+
+  it('drops phone messages when no pushd is attached', () => {
+    const doInstance = makeDO();
+    const phone = new FakeWebSocket();
+    doInstance.acceptConnection(phone as unknown as WebSocket, 'phone');
+
+    const sendPhone = vi.spyOn(phone, 'send');
+
+    phone.dispatch('message', { data: '{"kind":"hello"}' });
+
+    expect(sendPhone).not.toHaveBeenCalled();
+  });
+
+  it('drops pushd messages when no phones are attached', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    doInstance.acceptConnection(pushd as unknown as WebSocket, 'pushd');
+
+    const sendPushd = vi.spyOn(pushd, 'send');
+
+    pushd.dispatch('message', { data: '{"kind":"hello"}' });
+
+    expect(sendPushd).not.toHaveBeenCalled();
   });
 });
