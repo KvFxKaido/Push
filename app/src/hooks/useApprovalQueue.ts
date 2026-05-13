@@ -27,7 +27,7 @@
  * the event log can replay the same id. Without the dedupe the user
  * sees duplicate prompts.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 import type { SessionEvent } from '@/lib/local-daemon-binding';
 
@@ -102,8 +102,15 @@ export interface ApprovalQueueHandle {
 
 export function useApprovalQueue(): ApprovalQueueHandle {
   const [queue, setQueue] = useState<PendingApproval[]>([]);
+  // Mirror the queue into a ref via `useLayoutEffect`, not the
+  // standard `useEffect`. Layout effects run synchronously after
+  // commit but BEFORE the browser paints — meaning the user can't
+  // see the rendered prompt and click on it before the ref has
+  // been updated. With `useEffect`, the ref update is scheduled in
+  // a later task: a click landing between commit/paint and the
+  // effect would dispatch against a stale head. PR #533 Copilot.
   const headRef = useRef<PendingApproval[]>([]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     headRef.current = queue;
   }, [queue]);
 
