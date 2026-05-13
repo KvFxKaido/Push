@@ -65,6 +65,20 @@ export interface Env {
   // can still boot; /api/jobs/* fails closed with NOT_CONFIGURED when
   // missing so we don't half-accept background jobs that can't run.
   CoderJob?: DurableObjectNamespace;
+  // Remote Sessions relay — per-session DO holding the WS pair between
+  // pushd and the phone client (Phase 2.b scaffold). Optional binding so
+  // pre-migration deploys still boot; /api/relay/v1/* returns 503
+  // (NOT_CONFIGURED) when missing. The DO uses no durable storage by
+  // design (see docs/decisions/Remote Sessions via pushd Relay.md Q#2)
+  // and runs without the WebSocket Hibernation API so the in-memory
+  // ring buffer (2.d) can stay reliable for the WS lifetime.
+  RELAY_SESSIONS?: DurableObjectNamespace;
+  // Feature gate for the relay endpoint. Default unset → /api/relay/v1/*
+  // returns 503 even when the DO binding is wired, so a partially deployed
+  // env can't accept WS connections to an empty scaffold (2.b ships with
+  // no auth and no protocol — 2.c and beyond turn this on). Set to "1"
+  // to enable.
+  PUSH_RELAY_ENABLED?: string;
   // Sibling-provider selector. Values: "modal" | "cloudflare". Unset or
   // anything else defaults to "modal" during coexistence.
   PUSH_SANDBOX_PROVIDER?: string;
