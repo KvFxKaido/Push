@@ -13,6 +13,7 @@ import type {
   CoderDelegationArgs,
   ExplorerDelegationArgs,
   LocalPcBinding,
+  RelayBinding,
   TaskGraphArgs,
 } from '@/types';
 import { type ToolHookRegistry } from './tool-hooks';
@@ -486,7 +487,7 @@ export async function executeAnyToolCall(
   capabilityLedger?: import('./capabilities').CapabilityLedger,
   approvalCallback?: (toolName: string, reason: string, recoveryPath: string) => Promise<boolean>,
   chatId?: string,
-  localDaemonBinding?: LocalPcBinding,
+  localDaemonBinding?: LocalPcBinding | RelayBinding,
   abortSignal?: AbortSignal,
 ): Promise<ToolExecutionResult> {
   const runtime = new WebToolExecutionRuntime();

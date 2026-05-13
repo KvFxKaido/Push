@@ -19,11 +19,12 @@ import {
   execLocalDaemon,
   getDiffLocalDaemon,
   identifyLocalDaemon,
+  isRelayBinding,
   listDirLocalDaemon,
   readFileLocalDaemon,
   writeFileLocalDaemon,
 } from './local-daemon-sandbox-client';
-import type { LocalPcBinding } from '@/types';
+import type { LocalPcBinding, RelayBinding } from '@/types';
 
 if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === 'undefined') {
   (globalThis as unknown as { WebSocket: typeof WsClient }).WebSocket = WsClient;
@@ -715,5 +716,28 @@ describe('execLocalDaemon (Phase 1.f abortSignal)', () => {
     } finally {
       await cs.close();
     }
+  });
+});
+
+// Phase 2.f: binding-shape discriminator drives the polymorphic
+// transport pick in `createTransientAdapter`. The helper is the
+// only place sandbox-tools dispatch differentiates relay from
+// loopback, so the discriminator's shape contract is load-bearing.
+describe('isRelayBinding', () => {
+  it('returns true for a relay binding (has deploymentUrl)', () => {
+    const relay: RelayBinding = {
+      deploymentUrl: 'https://relay.example',
+      sessionId: 'sess',
+      token: 'pushd_da_xxx',
+    };
+    expect(isRelayBinding(relay)).toBe(true);
+  });
+  it('returns false for a loopback binding (has port)', () => {
+    const loop: LocalPcBinding = {
+      port: 49152,
+      token: 'pushd_xxx',
+      boundOrigin: 'http://localhost:5173',
+    };
+    expect(isRelayBinding(loop)).toBe(false);
   });
 });

@@ -96,6 +96,7 @@ const KNOWN_OPTIONS = new Set([
   'since',
   'type',
   'token',
+  'remote',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -194,6 +195,7 @@ Usage:
   push daemon relay enable      Enable outbound relay dial (requires --url + --token)
   push daemon relay disable     Disable the outbound relay
   push daemon relay status      Show persisted + live relay state
+  push daemon pair --remote     Mint a one-shot Remote pairing bundle (phone via relay)
   push tui                       Start full-screen TUI
   push tui --session <id>        Resume session in TUI
   push attach <session-id>      Attach to a running daemon session
@@ -2059,11 +2061,21 @@ async function runDaemonSubcommand(values, positionals) {
   }
 
   throw new Error(
-    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep] | pair [--origin <url>] | revoke <tokenId> | tokens | allow <path> | deny <path> | allowlist | devices | attach-tokens | revoke-attach <tokenId> | audit [--tail N] [--since DATE] [--type TYPE] [--json] | relay enable --url <url> --token <token> | relay disable | relay status`,
+    `Unknown daemon action: ${action}. Use: push daemon start|stop|restart|status [--deep] | pair [--origin <url> | --remote] | revoke <tokenId> | tokens | allow <path> | deny <path> | allowlist | devices | attach-tokens | revoke-attach <tokenId> | audit [--tail N] [--since DATE] [--type TYPE] [--json] | relay enable --url <url> --token <token> | relay disable | relay status`,
   );
 }
 
 async function runDaemonPair(values: Record<string, unknown>): Promise<number> {
+  // Phase 2.f: `--remote` short-circuits to the bundled-pairing flow
+  // for a phone connecting through the Worker relay. The remote case
+  // needs three pieces (deploymentUrl + sessionId + attach token)
+  // bundled into one paste string, and it routes through a running
+  // daemon (which holds the relay config) rather than the local file
+  // store. Keep the loopback `pair` path untouched.
+  if (values?.remote === true) {
+    return runDaemonPairRemote();
+  }
+
   const { normalizeOrigin, OriginNormalizationError } = await import('./pushd-origin.js');
   const { mintDeviceToken } = await import('./pushd-device-tokens.js');
 
@@ -2099,6 +2111,60 @@ async function runDaemonPair(values: Record<string, unknown>): Promise<number> {
   );
   process.stdout.write(`  push daemon revoke ${tokenId}\n`);
   return 0;
+}
+
+/**
+ * Phase 2.f: `push daemon pair --remote` — print a one-shot bundled
+ * pairing string for a phone connecting through the Worker relay.
+ *
+ * Always routes through the running daemon (the relay config and the
+ * in-process allowlist registry live in the daemon process; minting
+ * an attach token to a fresh device token AND emitting
+ * `relay_phone_allow` over the running relay client is a single
+ * server-side operation that the CLI can't replicate via direct file
+ * mutation). If the daemon isn't running, surface a clear "start the
+ * daemon first" error rather than falling back.
+ */
+async function runDaemonPairRemote(): Promise<number> {
+  const response = await sendDaemonAdminRequest({
+    type: 'mint_remote_pair_bundle',
+    payload: {},
+  });
+  if (response.ok) {
+    const payload = response.payload ?? {};
+    const bundle = String(payload.bundle ?? '');
+    const deviceTokenId = String(payload.deviceTokenId ?? '');
+    const attachTokenId = String(payload.attachTokenId ?? '');
+    const deploymentUrl = String(payload.deploymentUrl ?? '');
+    const sessionId = String(payload.sessionId ?? '');
+    process.stdout.write(`\nRemote pairing bundle minted.\n`);
+    process.stdout.write(`  device id:    ${deviceTokenId}\n`);
+    process.stdout.write(`  attach id:    ${attachTokenId}\n`);
+    process.stdout.write(`  deployment:   ${deploymentUrl}\n`);
+    process.stdout.write(`  sessionId:    ${sessionId}\n\n`);
+    process.stdout.write(
+      `Bundle (copy now — this is the only time the bearer is shown):\n\n  ${bundle}\n\n`,
+    );
+    process.stdout.write(
+      `Paste this bundle in the Push web app's "Remote" pairing flow on the phone.\n`,
+    );
+    process.stdout.write(`Revoke this phone with:\n  push daemon revoke ${deviceTokenId}\n`);
+    return 0;
+  }
+  if (response.code === 'DAEMON_OFFLINE') {
+    process.stderr.write(
+      `pair --remote failed: daemon is offline. Start it with \`push daemon start\` and re-run.\n`,
+    );
+    return 1;
+  }
+  if (response.code === 'RELAY_NOT_ENABLED') {
+    process.stderr.write(
+      `pair --remote failed: relay is not enabled.\nRun \`push daemon relay enable --url <…> --token <…>\` first.\n`,
+    );
+    return 1;
+  }
+  process.stderr.write(`pair --remote failed: ${response.error ?? response.code ?? 'unknown'}\n`);
+  return 1;
 }
 
 async function runDaemonRevoke(positionals: string[]): Promise<number> {
@@ -2949,6 +3015,9 @@ export async function main() {
       // Phase 2.e: `push daemon relay enable --url <…> --token <…>`.
       // `--url` is already declared above for the cloud-side run path.
       token: { type: 'string' },
+      // Phase 2.f: `push daemon pair --remote` switches to the
+      // relay-bundle pairing flow.
+      remote: { type: 'boolean' },
     },
   });
 

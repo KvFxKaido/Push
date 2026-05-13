@@ -34,6 +34,7 @@ import { startPushdWs, type PushdWsHandle } from './pushd-ws.js';
 import {
   revokeDeviceToken,
   listDeviceTokens,
+  mintDeviceToken,
   type DeviceTokenRecord,
 } from './pushd-device-tokens.js';
 import {
@@ -65,6 +66,7 @@ import {
   createRelayAllowlistRegistry,
   type RelayAllowlistRegistry,
 } from './pushd-relay-allowlist.js';
+import { encodeRemotePairBundle } from './pushd-relay-pair-bundle.js';
 
 /**
  * Slice-3 helper: extract the provenance fields the audit log
@@ -4508,6 +4510,90 @@ async function handleRelayStatus(req, _emitEvent, context) {
   });
 }
 
+/**
+ * Phase 2.f: mint a one-shot pairing bundle for a remote phone.
+ * Reads the relay config (errors if `relay enable` hasn't been run),
+ * mints a fresh device token + child attach token, populates the
+ * in-process relay allowlist with the new attach bearer (so the
+ * relay client's next emit covers it), and returns the bundled
+ * string the operator pastes into the phone.
+ *
+ * Each `pair --remote` invocation mints a NEW device token. That
+ * means each remote phone gets its own durable identity, revocable
+ * via `push daemon revoke <tokenId>` — and the cascade revoke kills
+ * the child attach token + closes any live relay forwarding for
+ * that phone in one shot (Phase 3 slice 2 cascade contract).
+ *
+ * Unix-socket admin only; WS callers are refused. The operator
+ * already has filesystem-level admin authority over the daemon
+ * config; the pair bundle conveys exactly that authority to one
+ * remote phone.
+ */
+async function handleMintRemotePairBundle(req, _emitEvent, context) {
+  if (context?.record || context?.auth) return refuseFromWs(req, 'mint_remote_pair_bundle');
+  const config = await readRelayConfig();
+  if (!config) {
+    return makeErrorResponse(
+      req.requestId,
+      'mint_remote_pair_bundle',
+      'RELAY_NOT_ENABLED',
+      'Relay is not enabled. Run `push daemon relay enable --url <…> --token <…>` first.',
+    );
+  }
+  // Mint a fresh device token first (durable identity for this
+  // remote phone), then a child attach token (the actual bearer the
+  // phone carries to the relay). Both writes go through the existing
+  // serialized stores so concurrent pair-remote calls don't collide.
+  // boundOrigin is 'loopback' because the relay phone never connects
+  // to the daemon's loopback WS listener — the relay does the actual
+  // origin enforcement on the phone's WS upgrade.
+  const device = await mintDeviceToken({ boundOrigin: 'loopback' });
+  const attach = await mintDeviceAttachToken({
+    parentTokenId: device.tokenId,
+    boundOrigin: 'loopback',
+  });
+  // Register the new bearer in the relay allowlist (same path mint
+  // takes for the LAN-paired case) and emit a `relay_phone_allow`
+  // so the DO updates its per-session allowlist before the phone
+  // even tries to connect.
+  relayAllowlist.add(attach.tokenId, attach.token);
+  emitRelayAllowChange([attach.token]);
+  // sessionId mirrors what `startRelayClient` uses — a stable per-
+  // daemon routing key. The relay sessionId is opaque routing, not
+  // load-bearing for security (see 2.d.1 walk-back); using the
+  // hostname-derived form keeps phone bundles routing to the same
+  // DO instance as the running relay client without coordinating a
+  // separate id.
+  const sessionId = `pushd-${os.hostname()}`;
+  const bundle = encodeRemotePairBundle({
+    deploymentUrl: config.deploymentUrl,
+    sessionId,
+    token: attach.token,
+  });
+  void appendAuditEvent({
+    type: 'auth.mint_attach',
+    surface: 'unix-socket',
+    payload: {
+      mintedTokenId: attach.tokenId,
+      parentTokenId: device.tokenId,
+      ttlMs: attach.ttlMs,
+      remote: true,
+    },
+  });
+  // Audit logs the tokenIds but NEVER the bundle (which carries the
+  // bearer in plaintext). The bundle is one-shot: it lives in the
+  // response payload to the CLI and then in the operator's terminal
+  // buffer — it must not land in the audit log too.
+  return makeResponse(req.requestId, 'mint_remote_pair_bundle', null, true, {
+    bundle,
+    deviceTokenId: device.tokenId,
+    attachTokenId: attach.tokenId,
+    sessionId,
+    deploymentUrl: config.deploymentUrl,
+    ttlMs: attach.ttlMs,
+  });
+}
+
 async function handleListAttachTokens(req, _emitEvent, context) {
   if (context?.record || context?.auth) return refuseFromWs(req, 'list_attach_tokens');
   const records = await listDeviceAttachTokens();
@@ -4607,6 +4693,7 @@ const HANDLERS = {
   relay_enable: handleRelayEnable,
   relay_disable: handleRelayDisable,
   relay_status: handleRelayStatus,
+  mint_remote_pair_bundle: handleMintRemotePairBundle,
 };
 
 export async function handleRequest(req, emitEvent, context = null) {

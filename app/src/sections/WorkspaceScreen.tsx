@@ -7,6 +7,9 @@ const WorkspaceSessionScreen = lazy(() =>
 const LocalPcChatScreen = lazy(() =>
   import('./LocalPcChatScreen').then((module) => ({ default: module.LocalPcChatScreen })),
 );
+const RelayChatScreen = lazy(() =>
+  import('./RelayChatScreen').then((module) => ({ default: module.RelayChatScreen })),
+);
 const workspaceFallback = <div className="h-dvh bg-[#000]" />;
 
 export function WorkspaceScreen(props: WorkspaceScreenProps) {
@@ -22,6 +25,21 @@ export function WorkspaceScreen(props: WorkspaceScreenProps) {
     return (
       <Suspense fallback={workspaceFallback}>
         <LocalPcChatScreen
+          binding={workspaceSession.binding}
+          onUnpair={props.navigation.onEndWorkspace}
+        />
+      </Suspense>
+    );
+  }
+
+  // Phase 2.f: relay sessions route through the Worker-mediated
+  // relay path. The chat shape is the same as local-pc (daemon
+  // binding + per-tool dispatch through `local-daemon-sandbox-
+  // client`); only the transport differs.
+  if (workspaceSession.kind === 'relay') {
+    return (
+      <Suspense fallback={workspaceFallback}>
+        <RelayChatScreen
           binding={workspaceSession.binding}
           onUnpair={props.navigation.onEndWorkspace}
         />

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, Github, Key, MessageSquare, Monitor } from 'lucide-react';
+import { Loader2, Github, Globe, Key, MessageSquare, Monitor } from 'lucide-react';
 import {
   HUB_MATERIAL_BUTTON_CLASS,
   HUB_MATERIAL_INPUT_CLASS,
@@ -23,6 +23,12 @@ interface OnboardingScreenProps {
    * hides the tile (VITE_LOCAL_PC_MODE off).
    */
   onStartLocalPc?: () => void;
+  /**
+   * Optional Remote (relay) entry. Same auth posture as Local PC —
+   * the relay path also bypasses GitHub auth. Undefined hides the
+   * tile (VITE_RELAY_MODE off).
+   */
+  onStartRelay?: () => void;
   onInstallApp: () => void;
   onConnectInstallationId: (installationId: string) => Promise<boolean>;
   loading: boolean;
@@ -37,6 +43,7 @@ export function OnboardingScreen({
   onStartWorkspace,
   onStartChat,
   onStartLocalPc,
+  onStartRelay,
   onInstallApp,
   onConnectInstallationId,
   loading,
@@ -288,6 +295,20 @@ export function OnboardingScreen({
                 <Monitor className="relative z-10 h-4 w-4" />
                 <span className="relative z-10">Local PC</span>
                 <span className="relative z-10 text-[10px] uppercase tracking-wide text-amber-200/60">
+                  Experimental
+                </span>
+              </button>
+            )}
+            {onStartRelay && (
+              <button
+                type="button"
+                onClick={onStartRelay}
+                className={`${onboardingButtonClass} mt-2 text-sky-200`}
+              >
+                <HubControlGlow />
+                <Globe className="relative z-10 h-4 w-4" />
+                <span className="relative z-10">Remote</span>
+                <span className="relative z-10 text-[10px] uppercase tracking-wide text-sky-200/60">
                   Experimental
                 </span>
               </button>

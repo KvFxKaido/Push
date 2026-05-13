@@ -7,7 +7,7 @@
  */
 
 const DB_NAME = 'push-app-db';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 export const STORE = {
   conversations: 'conversations',
@@ -17,6 +17,12 @@ export const STORE = {
   runJournal: 'run_journal',
   memoryRecords: 'memory_records',
   pairedDevices: 'paired_devices',
+  // Phase 2.f: paired remote daemons (relay-mediated). Separate
+  // store from `pairedDevices` because the record shapes diverge
+  // (port + token + boundOrigin vs deploymentUrl + sessionId +
+  // attach token), and mixing them would either force a discriminator
+  // on every read or force-fit both into one shape.
+  pairedRemotes: 'paired_remotes',
 } as const;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -117,6 +123,15 @@ function openDb(): Promise<IDBDatabase> {
       // only surfaces the first one.
       if (!db.objectStoreNames.contains(STORE.pairedDevices)) {
         db.createObjectStore(STORE.pairedDevices, { keyPath: 'id' });
+      }
+
+      // Phase 2.f: paired remote daemons (Worker relay). Separate
+      // store from pairedDevices so the record shape stays narrow
+      // — the relay binding's three pieces (deploymentUrl,
+      // sessionId, attach token) don't share a shape with the
+      // loopback binding's (port + token + boundOrigin).
+      if (!db.objectStoreNames.contains(STORE.pairedRemotes)) {
+        db.createObjectStore(STORE.pairedRemotes, { keyPath: 'id' });
       }
     };
 
