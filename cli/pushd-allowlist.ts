@@ -244,13 +244,54 @@ export interface AllowlistSnapshot {
   isImplicitDefault: boolean;
 }
 
+/**
+ * Per-request callers go through `snapshotAllowlist`, not
+ * `readAllowlistFile` directly. The snapshot wrapper catches any
+ * I/O error other than ENOENT (which the read already maps to the
+ * implicit default), logs once-per-error-code so a recurring fault
+ * doesn't spam stderr, and falls back to the implicit-cwd default.
+ *
+ * Rationale: the allowlist file is mode 0600 and owned by the user
+ * running the daemon, so a non-ENOENT read failure (EACCES, EISDIR,
+ * EMFILE, etc.) is overwhelmingly a setup error — not an attacker
+ * having tampered with the file (an attacker with write access to
+ * the file could just edit it). Failing closed (deny everything)
+ * would brick every request with a confusing PATH_OUTSIDE_WORKSPACE
+ * envelope. Failing open to cwd matches the behaviour the user had
+ * before configuring the allowlist, and the stderr warning gives
+ * them the diagnostic signal they need to fix the underlying issue.
+ * Kilo WARNING on PR #518.
+ */
+const snapshotErrorLogged = new Set<string>();
+function logSnapshotErrorOnce(code: string, message: string): void {
+  if (snapshotErrorLogged.has(code)) return;
+  snapshotErrorLogged.add(code);
+  process.stderr.write(
+    `pushd-allowlist: cannot read ${getAllowlistPath()} (${code}): ${message}.\n` +
+      `pushd-allowlist: falling back to implicit-cwd default; fix the file to restore your configured allowlist.\n`,
+  );
+}
+
 export async function snapshotAllowlist(cwd: string = process.cwd()): Promise<AllowlistSnapshot> {
-  const { entries, isImplicitDefault } = await readAllowlistFile();
-  if (isImplicitDefault) {
+  let result: ReadResult;
+  try {
+    result = await readAllowlistFile();
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+    const message = err instanceof Error ? err.message : String(err);
+    logSnapshotErrorOnce(code, message);
+    result = { entries: [], isImplicitDefault: true };
+  }
+  if (result.isImplicitDefault) {
     const resolved = path.resolve(cwd);
     return { allowed: [resolved], isImplicitDefault: true };
   }
-  return { allowed: entries.map((e) => e.path), isImplicitDefault: false };
+  return { allowed: result.entries.map((e) => e.path), isImplicitDefault: false };
+}
+
+/** Exposed for tests; resets the once-per-error log gating between cases. */
+function __resetSnapshotErrorGateForTests(): void {
+  snapshotErrorLogged.clear();
 }
 
 /**
@@ -277,4 +318,5 @@ export function isPathAllowed(absPath: string, snapshot: AllowlistSnapshot): boo
 /** Exposed for tests; do not call from production paths. */
 export const __test__ = {
   getAllowlistPath,
+  resetSnapshotErrorGate: __resetSnapshotErrorGateForTests,
 };

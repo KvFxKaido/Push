@@ -79,7 +79,7 @@ import { appendUserMessageWithFileReferences } from './file-references.js';
 import { runExplorerAgent } from '../lib/explorer-agent.ts';
 import { runCoderAgent } from '../lib/coder-agent.ts';
 import { isSensitivePath as isDaemonSensitivePath } from '../lib/sensitive-paths.ts';
-import { isPathAllowed, snapshotAllowlist, type AllowlistSnapshot } from './pushd-allowlist.js';
+import { isPathAllowed, snapshotAllowlist } from './pushd-allowlist.js';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';

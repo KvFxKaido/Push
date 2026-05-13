@@ -2101,7 +2101,7 @@ async function runDaemonRevoke(positionals: string[]): Promise<number> {
     );
     return 0;
   }
-  if (daemonResponse.error === 'daemon not running') {
+  if (daemonResponse.code === 'DAEMON_OFFLINE') {
     const { revokeDeviceToken } = await import('./pushd-device-tokens.js');
     const removed = await revokeDeviceToken(tokenId);
     if (removed) {
@@ -2111,7 +2111,16 @@ async function runDaemonRevoke(positionals: string[]): Promise<number> {
     process.stderr.write(`no such token: ${tokenId}\n`);
     return 1;
   }
-  process.stderr.write(`revoke failed: ${daemonResponse.error}\n`);
+  // Match the file-fallback UX for TOKEN_NOT_FOUND so a CLI consumer
+  // that scrapes the message gets the same string in both paths.
+  // Copilot review on PR #518.
+  if (daemonResponse.code === 'TOKEN_NOT_FOUND') {
+    process.stderr.write(`no such token: ${tokenId}\n`);
+    return 1;
+  }
+  process.stderr.write(
+    `revoke failed: ${daemonResponse.error ?? daemonResponse.code ?? 'unknown'}\n`,
+  );
   return 1;
 }
 
@@ -2203,7 +2212,16 @@ async function runDaemonAllowlist(values: Record<string, unknown>): Promise<numb
 async function runDaemonDevices(values: Record<string, unknown>): Promise<number> {
   const response = await sendDaemonAdminRequest({ type: 'list_devices', payload: {} });
   if (!response.ok) {
-    process.stderr.write(`devices failed: ${response.error}\n`);
+    if (response.code === 'DAEMON_OFFLINE') {
+      // No live state to report — the file-based token list is the
+      // only "who's paired" view available offline. Direct the user
+      // there rather than printing a confusing "devices failed".
+      process.stderr.write(
+        'daemon not running. Run `push daemon start` first, or `push daemon tokens` for the paired-device list.\n',
+      );
+      return 1;
+    }
+    process.stderr.write(`devices failed: ${response.error ?? response.code ?? 'unknown'}\n`);
     return 1;
   }
   const devices = (response.payload?.devices as DaemonDeviceRow[]) ?? [];
@@ -2234,7 +2252,17 @@ interface DaemonDeviceRow {
 interface DaemonAdminResponse {
   ok: boolean;
   payload?: Record<string, unknown>;
+  /** Human-readable error message; populated when `ok` is false. */
   error?: string;
+  /**
+   * Structured error code from the daemon's response envelope
+   * (TOKEN_NOT_FOUND, INVALID_REQUEST, etc.) or one of the synthetic
+   * codes this wrapper emits (`DAEMON_OFFLINE`). Lets CLI callers
+   * branch on the failure mode without parsing the message string —
+   * see `runDaemonRevoke`'s TOKEN_NOT_FOUND case for the canonical
+   * pattern. Copilot review on PR #518.
+   */
+  code?: string;
 }
 
 /**
@@ -2245,9 +2273,12 @@ interface DaemonAdminResponse {
  * `push daemon revoke` (close any live WS for a token in addition
  * to mutating the tokens file).
  *
- * If the daemon socket isn't reachable, returns `{ ok: false,
- * error: 'daemon not running' }` so the caller can fall back to a
- * file-only path (existing `runDaemonRevoke` behavior).
+ * If the daemon socket isn't reachable, returns `{ ok: false, code:
+ * 'DAEMON_OFFLINE', error: 'daemon not running' }` so the caller can
+ * fall back to a file-only path. When the daemon answers with
+ * ok=false the wrapper preserves the structured error code from the
+ * response envelope (TOKEN_NOT_FOUND etc.) so callers can produce
+ * the same UX the file-only path emits.
  */
 async function sendDaemonAdminRequest(opts: {
   type: string;
@@ -2260,7 +2291,7 @@ async function sendDaemonAdminRequest(opts: {
   try {
     client = await connectDaemon(socketPath);
   } catch {
-    return { ok: false, error: 'daemon not running' };
+    return { ok: false, code: 'DAEMON_OFFLINE', error: 'daemon not running' };
   }
   try {
     const response = await client.request(opts.type, opts.payload, undefined, opts.timeoutMs);
@@ -2269,7 +2300,16 @@ async function sendDaemonAdminRequest(opts: {
       payload: (response.payload as Record<string, unknown>) ?? {},
     };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    // daemon-client rejects with an Error whose `.code` carries the
+    // server-side error code (set in daemon-client.ts at the response
+    // dispatch site). Cast through `unknown` because the public Error
+    // type doesn't include `.code` but our requests always populate it.
+    const e = err as { message?: string; code?: string };
+    return {
+      ok: false,
+      code: typeof e.code === 'string' ? e.code : 'UNKNOWN',
+      error: e.message || String(err),
+    };
   } finally {
     try {
       client.close();

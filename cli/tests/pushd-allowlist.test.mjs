@@ -199,6 +199,33 @@ describe('isPathAllowed', () => {
   });
 });
 
+describe('snapshotAllowlist resilience (Kilo PR #518)', () => {
+  it('falls back to implicit-cwd default with a stderr warning when the file is unreadable', async () => {
+    // Drop a deliberately-broken file at the configured path. Setting
+    // mode 0o000 makes it unreadable as a non-root user, which simulates
+    // the EACCES case. If the test runs as root (some CI environments)
+    // this is a no-op and the test will fall through the happy path —
+    // node:fs honors process credentials, so root would still read it.
+    const allowlistPath = process.env.PUSHD_ALLOWLIST_PATH;
+    await fs.writeFile(allowlistPath, '{"path":"/foo","addedAt":1}\n', { mode: 0o000 });
+    // Capture stderr to verify the warning fires. We can't easily
+    // intercept process.stderr.write without a global shim; instead,
+    // assert that the snapshot fell back to implicit-default — that's
+    // the user-visible side effect we care about. The warning text
+    // pins to stderr but is best-effort.
+    const { __test__ } = await import('../pushd-allowlist.ts');
+    __test__.resetSnapshotErrorGate();
+    if (process.getuid && process.getuid() === 0) {
+      // Running as root — chmod 0 doesn't prevent reads. Skip the
+      // assertion; the test only matters in the EACCES regime.
+      return;
+    }
+    const snapshot = await snapshotAllowlist('/tmp/fixture-cwd');
+    assert.equal(snapshot.isImplicitDefault, true);
+    assert.deepEqual(snapshot.allowed, [path.resolve('/tmp/fixture-cwd')]);
+  });
+});
+
 describe('serial mutations under concurrency', () => {
   it('serializes concurrent adds without losing entries', async () => {
     // Fire several adds in parallel; the in-process write queue must
