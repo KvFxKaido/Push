@@ -2,47 +2,45 @@
  * Remote Sessions relay — per-session Durable Object.
  *
  * Phase 2.b scaffold landed the WS accept; 2.c added bearer auth +
- * role-aware byte forwarding; 2.d.1 (this slice) adds:
+ * role-aware byte forwarding; 2.d.1 added envelope parsing + phone
+ * allowlist; 2.d.2 (this slice) adds the ring buffer + replay runtime
+ * that the `relay_attach` envelope schema was reserved for:
  *
- *   - Envelope parsing on every incoming text frame. The relay reads
- *     just enough of `lib/protocol-schema.ts` to identify relay-
- *     control envelopes (`relay_phone_allow`, `relay_phone_revoke`)
- *     and consume them in-band. Everything else is forwarded
- *     unchanged — the relay stays dumb about provider routing, tool
- *     semantics, branch state, and approval policy (per the decision
- *     doc's Implementation Rules).
+ *   - Per-session ring buffer of recent pushd → phone event envelopes,
+ *     keyed by `event.seq`. Bounded by both count (default 256) and
+ *     age (default 60s); whichever cap fires first evicts oldest
+ *     entries. Only `kind: 'event'` envelopes with numeric `seq` get
+ *     buffered — responses / requests / relay-control envelopes are
+ *     forwarded but not replayable (responses tie to a specific
+ *     requestId, not a session-wide ordering).
  *
- *   - Per-session allowlist of phone bearer tokens. The DO maintains
- *     `Set<phoneBearer>` updated by pushd's `relay_phone_allow` /
- *     `relay_phone_revoke` envelopes. pushd → phone forwarding is
- *     gated on the receiving phone's bearer being in the allowlist.
- *     This closes Codex #525 P1: a client with a guessed sessionId
- *     and a well-shaped fake `pushd_da_*` token now sees nothing
- *     until pushd explicitly grants its token.
+ *   - Replay on `relay_attach`. When a phone sends a `relay_attach`
+ *     envelope with `lastSeq: N`, the relay sends every buffered
+ *     envelope where `seq > N` in seq order. If the gap is larger
+ *     than the buffer (buffer's earliest seq > N+1), the relay
+ *     emits `relay_replay_unavailable` instead so the client knows
+ *     to recover via `attach_session` rather than silently missing
+ *     events. A `relay_attach` with no `lastSeq` is treated as a
+ *     fresh session — no replay.
  *
- *   - Per-phone-connection bearer storage. The phone bearer (the
- *     `pushd_da_*` value extracted from `Sec-WebSocket-Protocol`) is
- *     stored alongside each phone connection so the allowlist match
- *     can run on every outbound forward.
- *
- *   - At most one pushd connection per session (carried from 2.c).
- *     Second-pushd attempts return HTTP 409 at the upgrade boundary.
- *
- * Still not in 2.d.1: ring buffer + replay (2.d.2; the `relay_attach`
- * envelope's `lastSeq` is parsed but currently ignored — the schema
- * lands here, the runtime lands in 2.d.2). Pushd outbound dial (2.e),
- * phone client adapter (2.f) also still open.
+ *   - Env overrides: `PUSH_RELAY_BUFFER_COUNT` and
+ *     `PUSH_RELAY_BUFFER_AGE_MS`. Values that don't parse as positive
+ *     integers fall back to the defaults.
  *
  * Constraints baked in here (see docs/decisions/Remote Sessions via
  * pushd Relay.md Q#2):
  *
  *   - No WebSocket Hibernation API. Plain `ws.accept()` keeps the DO
- *     instance pinned in memory for the WS lifetime; this is the
- *     reliability claim the in-memory buffer in 2.d.2 will rely on.
- *   - No `state.storage` writes. Connection state lives only in
- *     `this.connections`; loss across DO restart is intentional and
- *     the client recovers via `attach_session` (handled at the daemon
- *     end, not here).
+ *     instance pinned in memory for the WS lifetime — this is the
+ *     reliability claim the in-memory buffer relies on. With
+ *     hibernation the DO could be evicted while phones think the
+ *     buffer survives, silently dropping replay state.
+ *   - No `state.storage` writes. Buffer + connection state live only
+ *     in DO memory; loss across DO restart is intentional and the
+ *     client recovers via `relay_replay_unavailable` → `attach_session`.
+ *
+ * Still open after 2.d.2: pushd outbound dial (2.e), phone client
+ * adapter (2.f).
  */
 
 import type { DurableObjectState, WebSocket } from '@cloudflare/workers-types';
@@ -58,20 +56,52 @@ export type RelayConnectionRole = 'pushd' | 'phone';
 
 type ConnectionMeta = { role: 'pushd' } | { role: 'phone'; bearer: string };
 
+/**
+ * One buffered envelope. `data` is the original NDJSON text so
+ * replays go out byte-identical to the live forward — phones can't
+ * tell whether a frame was live or replayed except by the seq.
+ */
+interface BufferedEnvelope {
+  seq: number;
+  ts: number;
+  data: string;
+}
+
+const DEFAULT_BUFFER_COUNT = 256;
+const DEFAULT_BUFFER_AGE_MS = 60_000;
+
+/**
+ * Parse an env-var string as a positive integer. Returns the default
+ * for any input that isn't strictly a positive integer (empty, NaN,
+ * negative, fractional, or non-integer string). Operators tuning a
+ * Worker secret get the default rather than a confusing partial
+ * config when they fat-finger the value.
+ */
+function parsePositiveIntEnv(raw: string | undefined, fallback: number): number {
+  if (typeof raw !== 'string' || raw.length === 0) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return fallback;
+  return n;
+}
+
 export class RelaySessionDO {
   private readonly connections = new Map<WebSocket, ConnectionMeta>();
   private readonly allowedPhoneBearers = new Set<string>();
+  // Ring buffer of recent pushd-originated event envelopes, sorted by
+  // insertion order (which IS seq order since seq is monotonic per
+  // session). Eviction pops from the front; insertion pushes to the
+  // back. Array (not Map) because seq lookups are O(n) in either case
+  // for the replay walk, but insertion-order iteration matters more.
+  private readonly buffer: BufferedEnvelope[] = [];
+  private readonly bufferCount: number;
+  private readonly bufferAgeMs: number;
   private readonly state: DurableObjectState;
-  private readonly env: Env;
 
   constructor(state: DurableObjectState, env: Env) {
-    // 2.d.1 doesn't use either field; held for 2.d.2 (state may
-    // schedule waitUntil cleanup for the ring buffer). `void` keeps
-    // noUnusedLocals quiet without forcing a synthetic consumer.
     this.state = state;
-    this.env = env;
     void this.state;
-    void this.env;
+    this.bufferCount = parsePositiveIntEnv(env.PUSH_RELAY_BUFFER_COUNT, DEFAULT_BUFFER_COUNT);
+    this.bufferAgeMs = parsePositiveIntEnv(env.PUSH_RELAY_BUFFER_AGE_MS, DEFAULT_BUFFER_AGE_MS);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -231,15 +261,97 @@ export class RelaySessionDO {
       return;
     }
 
-    // `relay_attach` lands here in 2.d.1 but the buffer / replay
-    // runtime is 2.d.2. Drop with no side effect for now; the schema
-    // is pinned so 2.d.2 can flip it on without protocol drift.
+    // Phase 2.d.2: `relay_attach` is consumed by the ring-buffer
+    // replay path. The caller knows which connection sent it because
+    // it routes through the same handler — we look it up by ConnectionMeta
+    // identity (the only phone-originated relay-control envelope).
     if (envelope.kind === 'relay_attach') {
+      // No-op when sent by anything other than a phone — pushd
+      // emitting a `relay_attach` is a protocol violation, drop.
+      if (senderMeta.role !== 'phone') return;
+      this.handleRelayAttach(senderMeta, envelope.lastSeq);
       return;
     }
 
     // `relay_replay_unavailable` is server → client — if a client
     // ever sent it back, drop. Defensive only.
+  }
+
+  /**
+   * Replay buffered envelopes to a reconnecting phone, OR emit
+   * `relay_replay_unavailable` if the gap exceeds the buffer.
+   *
+   * Cases:
+   *   - lastSeq undefined: phone is starting fresh, no replay needed.
+   *   - buffer empty: no events to replay; nothing to do (the client
+   *     either hasn't missed anything or the buffer aged out — we
+   *     can't distinguish, but emitting `relay_replay_unavailable`
+   *     here would be wrong on a fresh session, so we stay quiet).
+   *   - buffer's max seq <= lastSeq: client is up to date; no replay.
+   *   - buffer's min seq > lastSeq + 1: gap is larger than buffered
+   *     window; emit `relay_replay_unavailable`. The client falls back
+   *     to `attach_session` for current state.
+   *   - otherwise: send all buffered entries with seq > lastSeq in
+   *     order. Eviction has already trimmed expired entries via
+   *     `evictExpired()`.
+   */
+  private handleRelayAttach(senderMeta: ConnectionMeta, lastSeq: number | undefined): void {
+    if (senderMeta.role !== 'phone') return;
+    if (typeof lastSeq !== 'number') return;
+
+    // Evict expired entries before deciding replay vs. unavailable.
+    // Without this, a stale entry could keep `min seq` artificially
+    // low and skip the unavailable signal even though the phone
+    // can't actually be brought up to date.
+    this.evictExpired();
+
+    const phone = this.findConnectionByMeta(senderMeta);
+    if (!phone || phone.readyState !== 1) return;
+
+    if (this.buffer.length === 0) return; // nothing to replay or signal
+    const minSeq = this.buffer[0].seq;
+    const maxSeq = this.buffer[this.buffer.length - 1].seq;
+
+    if (maxSeq <= lastSeq) return; // client already at or past tip
+
+    if (minSeq > lastSeq + 1) {
+      // Gap is larger than the ring buffer can cover. Tell the client
+      // explicitly so it can fall back rather than silently missing.
+      const unavailable = {
+        v: 'push.runtime.v1' as const,
+        kind: 'relay_replay_unavailable' as const,
+        reason: `buffer gap: oldest buffered seq=${minSeq}, requested replay from seq=${lastSeq + 1}`,
+        ts: Date.now(),
+      };
+      try {
+        phone.send(`${JSON.stringify(unavailable)}\n`);
+      } catch {
+        // connection may be closing
+      }
+      return;
+    }
+
+    // Replay in order. The buffer is already sorted by seq (insertion
+    // order matches seq order); just iterate and send the ones above
+    // lastSeq. Re-send the original `data` text byte-for-byte so the
+    // replayed frames are indistinguishable from live forwards apart
+    // from their (older) seq.
+    for (const entry of this.buffer) {
+      if (entry.seq <= lastSeq) continue;
+      try {
+        phone.send(entry.data);
+      } catch {
+        // connection may be closing — stop trying
+        return;
+      }
+    }
+  }
+
+  private findConnectionByMeta(target: ConnectionMeta): WebSocket | null {
+    for (const [ws, meta] of this.connections) {
+      if (meta === target) return ws;
+    }
+    return null;
   }
 
   private forwardData(
@@ -259,6 +371,16 @@ export class RelaySessionDO {
         ) {
           ws.send(data as string | ArrayBuffer);
         }
+      }
+      // Buffer event envelopes (kind: 'event', numeric seq) so a
+      // reconnecting phone can ask for them via `relay_attach`.
+      // Non-event envelopes (responses, requests) are forwarded but
+      // not buffered — responses tie to a specific requestId, not a
+      // session-wide ordering, so replaying them out-of-band would
+      // confuse correlation. Binary frames aren't buffered either
+      // — they don't carry a parseable seq.
+      if (typeof data === 'string') {
+        this.tryBufferEvent(data);
       }
     } else {
       // phone → pushd, also gated on the phone's bearer being in the
@@ -303,6 +425,55 @@ export class RelaySessionDO {
   /** Visible for tests. */
   getAllowedPhoneBearers(): readonly string[] {
     return Array.from(this.allowedPhoneBearers);
+  }
+
+  /** Visible for tests — snapshot of the ring buffer in seq order. */
+  getBufferSnapshot(): readonly BufferedEnvelope[] {
+    return this.buffer.slice();
+  }
+
+  /** Visible for tests — count + age caps after env parsing. */
+  getBufferConfig(): { count: number; ageMs: number } {
+    return { count: this.bufferCount, ageMs: this.bufferAgeMs };
+  }
+
+  /**
+   * Parse one NDJSON line; if it's a session event with numeric seq,
+   * push to the buffer and evict whichever cap fires first (count
+   * OR age). Anything else — non-event envelopes, malformed JSON,
+   * relay-control frames — is a no-op here.
+   */
+  private tryBufferEvent(data: string): void {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (!parsed || typeof parsed !== 'object') return;
+    const envelope = parsed as { kind?: unknown; seq?: unknown };
+    if (envelope.kind !== 'event') return;
+    if (typeof envelope.seq !== 'number' || !Number.isInteger(envelope.seq)) return;
+
+    this.buffer.push({ seq: envelope.seq, ts: Date.now(), data });
+    this.evictByCount();
+    this.evictExpired();
+  }
+
+  private evictByCount(): void {
+    // Shift from the front because seq is monotonic and the buffer
+    // stays in insertion (== seq) order. splice would also work but
+    // for the common case of overflow-by-one, shift is cheaper.
+    while (this.buffer.length > this.bufferCount) {
+      this.buffer.shift();
+    }
+  }
+
+  private evictExpired(): void {
+    const cutoff = Date.now() - this.bufferAgeMs;
+    while (this.buffer.length > 0 && this.buffer[0].ts < cutoff) {
+      this.buffer.shift();
+    }
   }
 }
 

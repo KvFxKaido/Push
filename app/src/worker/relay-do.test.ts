@@ -420,3 +420,277 @@ describe('RelaySessionDO allowlist control envelopes', () => {
     expect(sendPhone).toHaveBeenCalledWith('{not json');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 2.d.2 ring buffer + replay
+// ---------------------------------------------------------------------------
+
+function makeEventEnvelope(seq: number, extra: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    v: 'push.runtime.v1',
+    kind: 'event',
+    sessionId: 'sess_test',
+    seq,
+    ts: Date.now(),
+    type: 'test.event',
+    payload: { n: seq },
+    ...extra,
+  });
+}
+
+function makeDOWithEnv(env: Partial<Env>): RelaySessionDO {
+  const state = {} as DurableObjectState;
+  return new RelaySessionDO(state, env as Env);
+}
+
+describe('RelaySessionDO — ring buffer (2.d.2)', () => {
+  it('buffers pushd-originated event envelopes with numeric seq', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+
+    pushd.dispatch('message', { data: makeEventEnvelope(1) });
+    pushd.dispatch('message', { data: makeEventEnvelope(2) });
+    pushd.dispatch('message', { data: makeEventEnvelope(3) });
+
+    const snapshot = doInstance.getBufferSnapshot();
+    expect(snapshot.map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+
+  it('does NOT buffer non-event envelopes (responses, relay-control, etc.)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    // A response envelope (kind: 'response') — forwarded but not buffered.
+    pushd.dispatch('message', {
+      data: JSON.stringify({
+        v: 'push.runtime.v1',
+        kind: 'response',
+        requestId: 'req_x',
+        type: 'ping',
+        sessionId: 'sess_test',
+        ok: true,
+        payload: {},
+        error: null,
+      }),
+    });
+    // An event envelope without numeric seq — forwarded but not buffered.
+    pushd.dispatch('message', {
+      data: JSON.stringify({
+        v: 'push.runtime.v1',
+        kind: 'event',
+        sessionId: 'sess_test',
+        seq: 'not-a-number',
+        ts: Date.now(),
+        type: 'malformed',
+        payload: {},
+      }),
+    });
+
+    expect(doInstance.getBufferSnapshot()).toEqual([]);
+  });
+
+  it('does NOT buffer phone-originated frames (only pushd → phones is replayable)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    // Phone emits something that LOOKS like an event envelope. It
+    // would be malformed protocol, but the test asserts the relay
+    // doesn't accidentally buffer it just because it's a valid
+    // envelope shape — only pushd-originated forwards land in the
+    // replay buffer.
+    phone.dispatch('message', { data: makeEventEnvelope(99) });
+    expect(doInstance.getBufferSnapshot()).toEqual([]);
+  });
+
+  it('evicts oldest by count when the buffer overflows the cap', () => {
+    const doInstance = makeDOWithEnv({ PUSH_RELAY_BUFFER_COUNT: '3' });
+    const pushd = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+
+    for (let seq = 1; seq <= 5; seq++) {
+      pushd.dispatch('message', { data: makeEventEnvelope(seq) });
+    }
+    const snapshot = doInstance.getBufferSnapshot();
+    // With cap=3, the last 3 inserts (seq 3, 4, 5) survive; 1+2 evicted.
+    expect(snapshot.map((e) => e.seq)).toEqual([3, 4, 5]);
+  });
+
+  it('evicts by age when entries get stale', () => {
+    vi.useFakeTimers();
+    try {
+      const doInstance = makeDOWithEnv({ PUSH_RELAY_BUFFER_AGE_MS: '1000' });
+      const pushd = new FakeWebSocket();
+      doInstance.acceptPushd(pushd as unknown as WebSocket);
+
+      vi.setSystemTime(new Date('2026-05-13T12:00:00Z'));
+      pushd.dispatch('message', { data: makeEventEnvelope(1) });
+      pushd.dispatch('message', { data: makeEventEnvelope(2) });
+      // Advance past the age cap, then push another. Eviction runs on
+      // every insert; the two prior entries are now older than 1000ms
+      // and get dropped.
+      vi.setSystemTime(new Date('2026-05-13T12:00:01.500Z'));
+      pushd.dispatch('message', { data: makeEventEnvelope(3) });
+
+      expect(doInstance.getBufferSnapshot().map((e) => e.seq)).toEqual([3]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('honors PUSH_RELAY_BUFFER_COUNT and PUSH_RELAY_BUFFER_AGE_MS env overrides', () => {
+    const doInstance = makeDOWithEnv({
+      PUSH_RELAY_BUFFER_COUNT: '42',
+      PUSH_RELAY_BUFFER_AGE_MS: '500',
+    });
+    expect(doInstance.getBufferConfig()).toEqual({ count: 42, ageMs: 500 });
+  });
+
+  it('falls back to defaults when env values are malformed (negative, NaN, fractional)', () => {
+    expect(makeDOWithEnv({}).getBufferConfig()).toEqual({ count: 256, ageMs: 60_000 });
+    expect(
+      makeDOWithEnv({
+        PUSH_RELAY_BUFFER_COUNT: '-5',
+        PUSH_RELAY_BUFFER_AGE_MS: 'oops',
+      }).getBufferConfig(),
+    ).toEqual({ count: 256, ageMs: 60_000 });
+    expect(
+      makeDOWithEnv({
+        PUSH_RELAY_BUFFER_COUNT: '1.5',
+        PUSH_RELAY_BUFFER_AGE_MS: '0',
+      }).getBufferConfig(),
+    ).toEqual({ count: 256, ageMs: 60_000 });
+  });
+});
+
+describe('RelaySessionDO — relay_attach replay (2.d.2)', () => {
+  it('replays buffered envelopes after lastSeq to the reattaching phone', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    // Buffer events 1..5.
+    for (let seq = 1; seq <= 5; seq++) {
+      pushd.dispatch('message', { data: makeEventEnvelope(seq) });
+    }
+
+    const sendPhone = vi.spyOn(phone, 'send');
+    phone.dispatch('message', {
+      data: makeEnvelope('relay_attach', { lastSeq: 2 }),
+    });
+
+    // Replays seq 3, 4, 5 in order. FakeWebSocket.send is typed
+    // `(): void` so the spy's call-args tuple infers as `[]`; cast
+    // through unknown to read the first arg.
+    const calls = sendPhone.mock.calls as unknown as Array<[string]>;
+    const replayed = calls.map((args) => args[0]);
+    expect(replayed).toHaveLength(3);
+    expect(replayed[0]).toContain('"seq":3');
+    expect(replayed[1]).toContain('"seq":4');
+    expect(replayed[2]).toContain('"seq":5');
+  });
+
+  it('does not replay anything when relay_attach omits lastSeq (fresh-session shape)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    pushd.dispatch('message', { data: makeEventEnvelope(1) });
+    pushd.dispatch('message', { data: makeEventEnvelope(2) });
+
+    const sendPhone = vi.spyOn(phone, 'send');
+    phone.dispatch('message', { data: makeEnvelope('relay_attach') });
+
+    expect(sendPhone).not.toHaveBeenCalled();
+  });
+
+  it('does not replay when the phone is already past the tip', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    pushd.dispatch('message', { data: makeEventEnvelope(1) });
+    pushd.dispatch('message', { data: makeEventEnvelope(2) });
+
+    const sendPhone = vi.spyOn(phone, 'send');
+    // Phone claims to be at seq=10 (somehow ahead of the buffer's tip).
+    phone.dispatch('message', { data: makeEnvelope('relay_attach', { lastSeq: 10 }) });
+
+    expect(sendPhone).not.toHaveBeenCalled();
+  });
+
+  it('emits relay_replay_unavailable when the gap is larger than the buffer', () => {
+    const doInstance = makeDOWithEnv({ PUSH_RELAY_BUFFER_COUNT: '3' });
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    // Push 5 events with cap=3; buffer ends up holding seq 3, 4, 5.
+    for (let seq = 1; seq <= 5; seq++) {
+      pushd.dispatch('message', { data: makeEventEnvelope(seq) });
+    }
+
+    const sendPhone = vi.spyOn(phone, 'send');
+    // Phone last saw seq=1 — gap from 2 to (buffer's min seq=3) is
+    // larger than the buffer can replay. Expect `relay_replay_unavailable`.
+    phone.dispatch('message', { data: makeEnvelope('relay_attach', { lastSeq: 1 }) });
+
+    expect(sendPhone).toHaveBeenCalledTimes(1);
+    const calls = sendPhone.mock.calls as unknown as Array<[string]>;
+    const frame = calls[0][0];
+    expect(frame).toContain('"kind":"relay_replay_unavailable"');
+    expect(frame).toContain('"reason"');
+  });
+
+  it('ignores relay_attach sent by a pushd connection (protocol violation, no-op)', () => {
+    const doInstance = makeDO();
+    const pushd = new FakeWebSocket();
+    const phone = new FakeWebSocket();
+    doInstance.acceptPushd(pushd as unknown as WebSocket);
+    doInstance.acceptPhone(phone as unknown as WebSocket, PHONE_BEARER_A);
+    pushd.dispatch('message', {
+      data: makeEnvelope('relay_phone_allow', { tokens: [PHONE_BEARER_A] }),
+    });
+
+    pushd.dispatch('message', { data: makeEventEnvelope(1) });
+
+    const sendPhone = vi.spyOn(phone, 'send');
+    const sendPushd = vi.spyOn(pushd, 'send');
+    // pushd sending relay_attach is meaningless; relay drops silently.
+    pushd.dispatch('message', { data: makeEnvelope('relay_attach', { lastSeq: 0 }) });
+
+    expect(sendPhone).not.toHaveBeenCalled();
+    expect(sendPushd).not.toHaveBeenCalled();
+  });
+});
