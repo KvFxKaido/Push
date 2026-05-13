@@ -497,8 +497,8 @@ function App() {
             onConnectOAuth={connectApp}
             onStartWorkspace={handleStartScratchWorkspace}
             onStartChat={handleStartChatMode}
-            onStartLocalPc={isLocalPcModeEnabled() ? handleStartLocalPc : undefined}
-            onStartRelay={isRelayModeEnabled() ? handleStartRelay : undefined}
+            onStartLocalPc={handleStartLocalPc}
+            onStartRelay={handleStartRelay}
             onInstallApp={installApp}
             onConnectInstallationId={setInstallationIdManually}
             loading={authLoading}
@@ -529,8 +529,8 @@ function App() {
             onDisconnect={handleDisconnect}
             onStartWorkspace={handleStartScratchWorkspace}
             onStartChat={handleStartChatMode}
-            onStartLocalPc={isLocalPcModeEnabled() ? handleStartLocalPc : undefined}
-            onStartRelay={isRelayModeEnabled() ? handleStartRelay : undefined}
+            onStartLocalPc={handleStartLocalPc}
+            onStartRelay={handleStartRelay}
             user={validatedUser}
           />
         </div>
@@ -593,7 +593,7 @@ function App() {
           onStartScratchWorkspace: handleStartScratchWorkspace,
           onStartChat: handleStartChatMode,
           onStartLocalPc: handleStartLocalPc,
-          onStartRelay: isRelayModeEnabled() ? handleStartRelay : undefined,
+          onStartRelay: handleStartRelay,
           onEndWorkspace: handleEndWorkspace,
         }}
         homeBridge={{
