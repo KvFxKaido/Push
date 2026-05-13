@@ -155,9 +155,16 @@ export function getAuditMaxFiles(): number {
  * the value is partial. Used internally by callers that pass through
  * the `PUSHD_AUDIT_LOG_COMMANDS=1` opt-in path.
  */
+const AUDIT_TRUNCATION_MARKER = '…[truncated]';
+
 export function truncateForAudit(text: string): string {
   if (text.length <= AUDIT_COMMAND_MAX_LEN) return text;
-  return `${text.slice(0, AUDIT_COMMAND_MAX_LEN)}…[truncated]`;
+  // Reserve room for the marker so the returned string is bounded
+  // by `AUDIT_COMMAND_MAX_LEN` total, not `MAX_LEN + marker`. The
+  // previous shape "first 1024 chars + marker" silently allowed
+  // entries past the documented cap. #520 Copilot review.
+  const usable = AUDIT_COMMAND_MAX_LEN - AUDIT_TRUNCATION_MARKER.length;
+  return `${text.slice(0, usable)}${AUDIT_TRUNCATION_MARKER}`;
 }
 
 async function ensureAuditDir(): Promise<void> {
@@ -241,8 +248,13 @@ export async function appendAuditEvent(input: AuditEventInput): Promise<void> {
     ts: Date.now(),
     ...input,
   };
-  const line = `${JSON.stringify(event)}\n`;
   try {
+    // JSON.stringify lives INSIDE the try block so a caller that
+    // accidentally hands us a non-JSON-serializable payload (BigInt,
+    // circular structure, etc.) doesn't blow past the "audit never
+    // blocks" guarantee. Without this, the throw escapes to the
+    // event loop as an unhandled rejection. #520 Copilot review.
+    const line = `${JSON.stringify(event)}\n`;
     await serialize(async () => {
       await ensureAuditDir();
       await rotateIfNeeded();

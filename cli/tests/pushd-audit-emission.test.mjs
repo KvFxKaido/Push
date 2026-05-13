@@ -228,6 +228,43 @@ describe('session.{start,cancel_run}', () => {
   });
 });
 
+describe('delegate.* taskExcerpt privacy', () => {
+  // The delegate handlers themselves require a full daemon setup
+  // (sessions, providers, etc.) that's outside the scope of an
+  // emission-wiring test. Validate the privacy contract by asserting
+  // the audit row's payload directly: when PUSHD_AUDIT_LOG_COMMANDS
+  // is unset, `taskExcerpt` is undefined regardless of the input
+  // `task` field. When set, the truncated excerpt rides through.
+  // The handler returns an error (no real session) but the audit
+  // row is emitted via the dispatcher wrapper either way.
+  it('omits taskExcerpt by default', async () => {
+    await handleRequest(
+      makeRequest('delegate_coder', { task: 'task-with-secret-token' }),
+      NOOP_EMIT,
+    );
+    await flushAuditQueue();
+    const events = await readAuditEvents({ type: 'delegate.coder' });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].payload.taskExcerpt, undefined);
+  });
+
+  it('includes the truncated taskExcerpt when PUSHD_AUDIT_LOG_COMMANDS=1', async () => {
+    process.env.PUSHD_AUDIT_LOG_COMMANDS = '1';
+    try {
+      await handleRequest(
+        makeRequest('delegate_coder', { task: 'task-with-marker-XYZ' }),
+        NOOP_EMIT,
+      );
+      await flushAuditQueue();
+      const events = await readAuditEvents({ type: 'delegate.coder' });
+      assert.equal(events.length, 1);
+      assert.match(events[0].payload.taskExcerpt ?? '', /marker-XYZ/);
+    } finally {
+      delete process.env.PUSHD_AUDIT_LOG_COMMANDS;
+    }
+  });
+});
+
 describe('audit-log kill switch', () => {
   it('no events are recorded when PUSHD_AUDIT_ENABLED=0', async () => {
     const original = process.env.PUSHD_AUDIT_ENABLED;

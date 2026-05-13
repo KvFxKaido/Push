@@ -140,8 +140,18 @@ function emitDispatcherAudit(req: any, response: any, context: any): void {
       // delegation," which is the auditable surface. A future slice
       // could emit a paired `delegate.complete` from the agent
       // bindings when the run finishes.
+      //
+      // Privacy posture: the task string can contain bearer tokens,
+      // API keys, or other secrets when the model is asked to do
+      // work on credential-sensitive systems. Gate `taskExcerpt`
+      // behind the same `PUSHD_AUDIT_LOG_COMMANDS=1` opt-in that
+      // controls `sandbox_exec` command-text logging. Default leaves
+      // the structural shape (which agent kind was invoked, ok/error)
+      // without the free-form payload. #520 Copilot review.
       const taskExcerpt =
-        typeof req.payload?.task === 'string' ? truncateForAudit(req.payload.task) : undefined;
+        shouldLogCommandText() && typeof req.payload?.task === 'string'
+          ? truncateForAudit(req.payload.task)
+          : undefined;
       const auditType = req.type.replace('delegate_', 'delegate.') as any;
       void appendAuditEvent({
         type: auditType,

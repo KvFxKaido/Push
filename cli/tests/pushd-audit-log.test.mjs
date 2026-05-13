@@ -287,15 +287,56 @@ describe('env knobs', () => {
   });
 });
 
+describe('appendAuditEvent failure containment', () => {
+  it('does not throw when the payload is non-JSON-serializable (BigInt)', async () => {
+    // BigInt round-trip through JSON.stringify throws. The append
+    // must catch this and drop the event without propagating —
+    // "audit never blocks the operation being audited" is the
+    // load-bearing invariant. #520 Copilot review.
+    await assert.doesNotReject(
+      appendAuditEvent({
+        type: 'auth.upgrade',
+        surface: 'ws',
+        // @ts-expect-error: deliberate non-serializable for the test
+        payload: { huge: 1n },
+      }),
+    );
+    // No record should have been written (stringify failed).
+    const events = await readAuditEvents();
+    assert.equal(events.length, 0);
+  });
+
+  it('does not throw when the payload is circular', async () => {
+    const circular = { ref: null };
+    circular.ref = circular;
+    await assert.doesNotReject(
+      appendAuditEvent({
+        type: 'auth.upgrade',
+        surface: 'ws',
+        // @ts-expect-error: deliberate circular for the test
+        payload: { circular },
+      }),
+    );
+    const events = await readAuditEvents();
+    assert.equal(events.length, 0);
+  });
+});
+
 describe('truncateForAudit', () => {
   it('returns the input unchanged when under the cap', () => {
     assert.equal(truncateForAudit('short string'), 'short string');
   });
 
-  it('truncates at AUDIT_COMMAND_MAX_LEN with a stable marker', () => {
+  it('truncates at AUDIT_COMMAND_MAX_LEN including the marker (hard cap)', () => {
     const long = 'x'.repeat(__test__.AUDIT_COMMAND_MAX_LEN + 50);
     const truncated = truncateForAudit(long);
-    assert.ok(truncated.length <= __test__.AUDIT_COMMAND_MAX_LEN + 50);
+    // Hard cap: total length must NOT exceed MAX_LEN, marker
+    // included. The previous shape "first MAX_LEN chars + marker"
+    // exceeded the documented limit. #520 Copilot review.
+    assert.ok(
+      truncated.length <= __test__.AUDIT_COMMAND_MAX_LEN,
+      `truncated length ${truncated.length} should be <= ${__test__.AUDIT_COMMAND_MAX_LEN}`,
+    );
     assert.ok(truncated.endsWith('…[truncated]'));
   });
 });

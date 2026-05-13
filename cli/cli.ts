@@ -2407,7 +2407,16 @@ async function runDaemonAudit(values: Record<string, unknown>): Promise<number> 
   for (const e of events) {
     const when = new Date(e.ts).toISOString();
     const surface = e.surface;
-    const who = e.deviceId ? `device=${e.deviceId}` : 'device=-';
+    // Show the attach tokenId alongside the parent device when the
+    // connection authed via attach — operators investigating a
+    // specific session/tab need both ids to correlate. The parent
+    // device alone groups all that user's tabs together, the
+    // attach tokenId distinguishes them. #520 review.
+    const who = e.deviceId
+      ? e.attachTokenId
+        ? `device=${e.deviceId} attach=${e.attachTokenId}`
+        : `device=${e.deviceId}`
+      : 'device=-';
     const auth = e.authKind ? ` auth=${e.authKind}` : '';
     const session = e.sessionId ? ` session=${e.sessionId}` : '';
     const run = e.runId ? ` run=${e.runId}` : '';
@@ -2765,6 +2774,15 @@ export async function main() {
       version: { type: 'boolean', short: 'v' },
       deep: { type: 'boolean' },
       origin: { type: 'string' },
+      // Phase 3 slice 3 audit-log filters. Declared as string options
+      // so `--tail 5 --since 2026-05-01 --type tool.sandbox_exec` is
+      // parsed correctly. Without the explicit string type the
+      // `strict: false` mode treats unknown long options as boolean
+      // true and shifts the next argv into positionals, silently
+      // dropping the filter value. Codex P2 on #520.
+      tail: { type: 'string' },
+      since: { type: 'string' },
+      type: { type: 'string' },
     },
   });
 
