@@ -83,32 +83,60 @@ describe('sandbox_exec', () => {
 });
 
 describe('daemon_identify', () => {
-  it('returns the bound identity when the WS transport supplies a record', async () => {
-    const record = {
-      tokenId: 'pdt_test_12345',
-      boundOrigin: 'http://localhost:5173',
-      tokenHash: 'irrelevant',
-      createdAt: 0,
+  // Phase 3 slice 2 made daemon_identify read from the auth principal
+  // (which can be either a device or an attach token) rather than the
+  // legacy `record` field. The shape used to be `{ record }`; tests
+  // here now exercise `{ auth }`. The handler resolves the parent
+  // device tokenId so attach-token-authed clients see the device
+  // identity, not the rotating attach tokenId.
+  function deviceAuth(tokenId, boundOrigin = 'http://localhost:5173') {
+    return {
+      kind: 'device',
+      tokenId,
+      parentDeviceTokenId: tokenId,
+      boundOrigin,
       lastUsedAt: null,
+      deviceRecord: {
+        tokenId,
+        boundOrigin,
+        tokenHash: 'irrelevant',
+        createdAt: 0,
+        lastUsedAt: null,
+      },
     };
-    const res = await handleRequest(makeRequest('daemon_identify'), NOOP_EMIT, { record });
+  }
+
+  it('returns the bound identity for a device-token-authed WS', async () => {
+    const auth = deviceAuth('pdt_test_12345');
+    const res = await handleRequest(makeRequest('daemon_identify'), NOOP_EMIT, { auth });
     assert.equal(res.ok, true);
     assert.equal(res.payload.tokenId, 'pdt_test_12345');
     assert.equal(res.payload.boundOrigin, 'http://localhost:5173');
+    assert.equal(res.payload.authKind, 'device');
     assert.equal(typeof res.payload.daemonVersion, 'string');
     assert.equal(res.payload.protocolVersion, PROTOCOL_VERSION);
   });
 
-  it('refuses without a context record (Unix-socket transport)', async () => {
-    // The Unix-socket caller doesn't pass context. daemon_identify is
-    // meaningful only over an authenticated WS upgrade.
-    const res = await handleRequest(makeRequest('daemon_identify'), NOOP_EMIT);
-    assert.equal(res.ok, false);
-    assert.equal(res.error.code, 'UNSUPPORTED_VIA_TRANSPORT');
+  it('returns the PARENT device identity for an attach-token-authed WS', async () => {
+    const auth = {
+      kind: 'attach',
+      tokenId: 'pdat_caller',
+      parentDeviceTokenId: 'pdt_parent_1',
+      boundOrigin: 'http://localhost:5173',
+      lastUsedAt: null,
+      deviceRecord: null,
+    };
+    const res = await handleRequest(makeRequest('daemon_identify'), NOOP_EMIT, { auth });
+    assert.equal(res.ok, true);
+    // Attach-tokenId is intentionally NOT leaked — the surface is
+    // device-identity, not connection-identity. The client knows its
+    // own attach tokenId from the mint response.
+    assert.equal(res.payload.tokenId, 'pdt_parent_1');
+    assert.equal(res.payload.authKind, 'attach');
   });
 
-  it('refuses when context lacks a tokenId field', async () => {
-    const res = await handleRequest(makeRequest('daemon_identify'), NOOP_EMIT, { record: {} });
+  it('refuses without an auth context (Unix-socket transport)', async () => {
+    const res = await handleRequest(makeRequest('daemon_identify'), NOOP_EMIT);
     assert.equal(res.ok, false);
     assert.equal(res.error.code, 'UNSUPPORTED_VIA_TRANSPORT');
   });

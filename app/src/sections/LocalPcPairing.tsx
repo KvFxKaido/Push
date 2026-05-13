@@ -85,6 +85,23 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
     inFlight.handle.close();
     inFlightRef.current = null;
 
+    // Clear the password input to honor the component docstring
+    // contract ("the token is never logged, never echoed into error
+    // messages, and is cleared from local state on success or
+    // cancel"). For success the parent screen unmounts us almost
+    // immediately anyway, but the explicit clear costs nothing and
+    // removes a "if React keeps the component alive in a pool
+    // somewhere" footgun. For failure it ensures a mistyped token
+    // doesn't linger in the password field for the next attempt —
+    // the user has to re-paste, which is the safer default. We
+    // leave `portInput` populated on failure so the user only re-
+    // enters the secret (not the port they probably got right).
+    // #519 review.
+    setTokenInput('');
+    if (paired) {
+      setPortInput('');
+    }
+
     if (paired) {
       // Storage failure here is recoverable: if the put fails, the user
       // re-clicks Local PC on next boot and lands back on the pairing
@@ -117,21 +134,60 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
       onStatus: (status) => {
         if (status.state === 'connecting') return;
         if (status.state === 'open') {
-          const id = mintPairedDeviceId();
-          const binding: LocalPcBinding = {
-            port: portNum,
-            token,
-            boundOrigin: origin,
-          };
-          const record: PairedDeviceRecord = {
-            id,
-            port: portNum,
-            token,
-            boundOrigin: origin,
-            pairedAt: Date.now(),
-            lastUsedAt: Date.now(),
-          };
-          finishTest(handle, { kind: 'idle' }, { binding, record });
+          // Phase 3 slice 2: as soon as the WS proves the device
+          // token is valid, immediately mint a device-attach token
+          // on the SAME connection and persist THAT instead of the
+          // durable bearer. The durable token never reaches
+          // IndexedDB — the only place it ever was held is this
+          // function's local `token` variable, which the React
+          // controlled-input flow clears on success below.
+          //
+          // The mint is best-effort: older daemons that don't yet
+          // implement `mint_device_attach_token` reject the request
+          // with UNSUPPORTED_REQUEST_TYPE. We fall back to storing
+          // the device token directly so pairing still works against
+          // pre-slice-2 daemons. The CLI ships in lockstep, so this
+          // matters only for users running mixed versions during
+          // upgrade.
+          void (async () => {
+            const id = mintPairedDeviceId();
+            let bearer = token;
+            let attachTokenId: string | undefined;
+            try {
+              const mintResponse = await handle.request<{
+                token: string;
+                tokenId: string;
+                ttlMs: number;
+                parentTokenId: string;
+              }>({
+                type: 'mint_device_attach_token',
+                payload: {},
+                timeoutMs: 5_000,
+              });
+              bearer = mintResponse.payload.token;
+              attachTokenId = mintResponse.payload.tokenId;
+            } catch {
+              // Pre-slice-2 daemon, transient error, or the bearer
+              // is somehow already an attach token. Either way, fall
+              // back to the device-token-only path — pairing still
+              // works, just without the blast-radius reduction.
+            }
+            const binding: LocalPcBinding = {
+              port: portNum,
+              token: bearer,
+              boundOrigin: origin,
+            };
+            const record: PairedDeviceRecord = {
+              id,
+              port: portNum,
+              token: bearer,
+              attachTokenId,
+              boundOrigin: origin,
+              pairedAt: Date.now(),
+              lastUsedAt: Date.now(),
+            };
+            finishTest(handle, { kind: 'idle' }, { binding, record });
+          })();
           return;
         }
         // unreachable | closed — surface a generic reason. The

@@ -24,6 +24,7 @@ import os from 'node:os';
 
 import { checkOrigin } from './pushd-origin.js';
 import { verifyDeviceToken, touchLastUsed, type DeviceTokenRecord } from './pushd-device-tokens.js';
+import { verifyDeviceAttachToken, type AttachTokenRecord } from './pushd-attach-tokens.js';
 
 /**
  * Per-WS-connection mutable state. Today it tracks AbortControllers
@@ -40,6 +41,34 @@ export interface PushdWsConnectionState {
   activeRuns: Map<string, AbortController>;
 }
 
+/**
+ * Auth principal carried alongside every WS connection. Phase 3
+ * slice 2 introduced two kinds: durable device tokens (the original
+ * pairing bearer) and device-attach tokens (short-lived, minted from
+ * a parent device token). Both authorize the same operations on the
+ * WS surface — the distinction matters only for cascade revoke,
+ * provenance, and the `mint_device_attach_token` admin gate (only
+ * device-token principals can mint).
+ */
+export interface PushdWsAuthRecord {
+  kind: 'device' | 'attach';
+  /** tokenId of the bearer (attach tokenId for kind='attach', else device tokenId). */
+  tokenId: string;
+  /** Parent device tokenId — same as `tokenId` when kind='device'. Used for cascade. */
+  parentDeviceTokenId: string;
+  boundOrigin: string;
+  /** Best-effort lastUsedAt from the record at upgrade time. */
+  lastUsedAt: number | null;
+  /**
+   * For kind='device', the underlying DeviceTokenRecord — handlers
+   * that need the full record (e.g. `daemon_identify`) read it from
+   * here. For kind='attach', this is null because the daemon-identify
+   * surface intentionally reports the parent device, not the attach
+   * tokenId (the attach token rotates; the device identity doesn't).
+   */
+  deviceRecord: DeviceTokenRecord | null;
+}
+
 export interface PushdWsAdapterDeps {
   /**
    * Existing pushd request dispatcher. Same fn the Unix socket uses,
@@ -47,11 +76,22 @@ export interface PushdWsAdapterDeps {
    * `daemon_identify`) can read the authenticated device-token record
    * without leaking transport-specific state into every other handler.
    * Unix-socket callers pass nothing; the dispatcher tolerates absence.
+   *
+   * Phase 3 slice 2: `auth` is the resolved principal (either a
+   * device token or an attach token). `record` stays for back-compat
+   * — it's populated only when the connection authenticated with a
+   * device token directly. Handlers that need to distinguish (today
+   * just `mint_device_attach_token`, which requires device-token
+   * provenance) should read `auth.kind`.
    */
   handleRequest: (
     req: unknown,
     emitEvent: (event: unknown) => void,
-    context?: { record?: DeviceTokenRecord; wsState?: PushdWsConnectionState },
+    context?: {
+      record?: DeviceTokenRecord;
+      auth?: PushdWsAuthRecord;
+      wsState?: PushdWsConnectionState;
+    },
   ) => Promise<unknown>;
   /** Existing add/remove session client hooks. */
   addSessionClient: (
@@ -80,14 +120,24 @@ export interface PushdWsOptions {
 /**
  * Live snapshot of one paired device's connection state, returned by
  * `listConnectedDevices`. Aggregates all open WS connections that
- * authenticated with the same device token — a single device may have
- * more than one (e.g. two browser tabs to the same paired daemon).
+ * authenticated under the same parent device token — a single device
+ * may have more than one (e.g. two browser tabs each with their own
+ * attach token, plus possibly a direct device-token connection).
  */
 export interface ConnectedDeviceRow {
+  /** The parent device tokenId (stable identity across attach rotation). */
   tokenId: string;
   boundOrigin: string;
-  /** Number of currently-open WS connections bearing this tokenId. */
+  /** Total live connections for this device (device + attach tokens combined). */
   connections: number;
+  /**
+   * How many of those connections authenticated via an attach token
+   * versus the durable device token directly. Useful for surfaces
+   * that want to flag "device token still in use" (= pairing hasn't
+   * upgraded to attach yet).
+   */
+  attachConnections: number;
+  deviceConnections: number;
   /** Most recent `lastUsedAt` observed across the connections. */
   lastUsedAt: number | null;
 }
@@ -98,22 +148,30 @@ export interface PushdWsHandle {
   /** Stop the listener and close active connections. */
   close: () => Promise<void>;
   /**
-   * Snapshot of currently-connected devices keyed by tokenId. Phase 3
-   * `list_devices` handler. Each row aggregates all open WS handles
-   * that authenticated with the same token, since one paired device
-   * can hold multiple WS connections to the same daemon.
+   * Snapshot of currently-connected devices, one row per parent
+   * device tokenId. Phase 3 `list_devices` handler. Each row
+   * aggregates all open WS handles for that device — combining
+   * device-token connections and attach-token connections — since
+   * one paired device can hold multiple WS handles (different
+   * browser tabs, each with its own attach token).
    */
   listConnectedDevices: () => ConnectedDeviceRow[];
   /**
-   * Close every open WS connection currently bearing `tokenId` with
-   * close code 1008 ("policy violation") and the given reason. Used
-   * by `revoke_device_token` to enforce a live disconnect — without
-   * this, revoke only affected future upgrades and an attacker
-   * holding a stolen bearer kept their session alive. Returns the
-   * number of connections that were closed; 0 means no live
-   * connection existed for that tokenId.
+   * Close every open WS connection currently bound to the given
+   * device tokenId (whether the connection authenticated with the
+   * device token directly OR with an attach token derived from it).
+   * Phase 3 slice 2 made this device-scoped so a cascade revoke
+   * fans out across attach connections automatically. Returns the
+   * count of closed connections; 0 means none were live.
    */
   disconnectByTokenId: (tokenId: string, reason: string) => number;
+  /**
+   * Close every open WS connection currently authenticated with the
+   * given attach tokenId — and ONLY those. Used by
+   * `revoke_device_attach_token` so revoking one tab's token
+   * doesn't drop the user's other tabs.
+   */
+  disconnectByAttachTokenId: (attachTokenId: string, reason: string) => number;
 }
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -246,21 +304,22 @@ export async function startPushdWs(
       protocols.has(SUBPROTOCOL_SELECTOR) ? SUBPROTOCOL_SELECTOR : false,
   });
 
-  // Phase 3 connection registry. Per-tokenId set of live WS handles
-  // so we can (a) list connected devices for `push daemon devices`
-  // and (b) close every WS bearing a given tokenId when its owner
-  // revokes it. The map is updated synchronously on connection /
+  // Phase 3 connection registry. Slice 1 keyed entries by device
+  // tokenId; slice 2 introduces attach tokens, so the registry now
+  // tracks each connection's full `PushdWsAuthRecord` and indexes
+  // by `parentDeviceTokenId` for cascade-revoke and the connected-
+  // devices view. The map is updated synchronously on connection /
   // close — there's no async race with the auth check above because
   // both run on the same event-loop tick as the WS upgrade.
-  //
-  // We keep the `boundOrigin` / `lastUsedAt` on the entry so the list
-  // handler doesn't have to re-read the tokens file just to render a
-  // row (which would also race with concurrent revokes).
   interface ConnectionRegistryEntry {
     ws: WebSocket;
-    record: DeviceTokenRecord;
+    auth: PushdWsAuthRecord;
   }
-  const connectionsByTokenId = new Map<string, Set<ConnectionRegistryEntry>>();
+  // Keyed by the parent device tokenId. Multiple connections from
+  // the same device (each using its own attach token, plus possibly
+  // one direct device-token connection) collapse into one bucket so
+  // a single-device revoke can fan out cleanly.
+  const connectionsByDeviceTokenId = new Map<string, Set<ConnectionRegistryEntry>>();
 
   httpServer.on('upgrade', async (req, socket, head) => {
     try {
@@ -280,19 +339,55 @@ export async function startPushdWs(
         return writeUpgradeError(socket, 401, 'Missing or malformed bearer token.');
       }
 
-      let record: DeviceTokenRecord | null;
+      // Phase 3 slice 2: WS upgrade accepts either a device-attach
+      // token (the expected post-pairing case) or a durable device
+      // token (the pairing-time case + CLI tooling). Try attach
+      // first because:
+      //   1. After pairing, the web client stops sending the device
+      //      token entirely — virtually every browser-driven upgrade
+      //      bears an attach token, so the common path checks attach
+      //      first.
+      //   2. The two token kinds use distinct prefixes (`pushd_da_`
+      //      vs `pushd_`) and each verify short-circuits on the
+      //      wrong prefix, so the fallback is cheap when the token
+      //      is actually a device token.
+      let auth: PushdWsAuthRecord | null = null;
       try {
-        record = await verifyDeviceToken(token);
+        const attachRecord: AttachTokenRecord | null = await verifyDeviceAttachToken(token);
+        if (attachRecord) {
+          auth = {
+            kind: 'attach',
+            tokenId: attachRecord.tokenId,
+            parentDeviceTokenId: attachRecord.parentTokenId,
+            boundOrigin: String(attachRecord.boundOrigin),
+            lastUsedAt: attachRecord.lastUsedAt,
+            deviceRecord: null,
+          };
+        } else {
+          const deviceRecord: DeviceTokenRecord | null = await verifyDeviceToken(token);
+          if (deviceRecord) {
+            auth = {
+              kind: 'device',
+              tokenId: deviceRecord.tokenId,
+              parentDeviceTokenId: deviceRecord.tokenId,
+              boundOrigin: String(deviceRecord.boundOrigin),
+              lastUsedAt: deviceRecord.lastUsedAt,
+              deviceRecord,
+            };
+          }
+        }
       } catch {
         return writeUpgradeError(socket, 401, 'Token verification failed.');
       }
-      if (!record) {
-        // Identical error string to "bad token shape" so a probing
-        // attacker can't distinguish "unknown token" from "malformed".
+      if (!auth) {
+        // Identical error string regardless of which kind of token
+        // the caller intended — a probing attacker can't distinguish
+        // "wrong device token" from "expired attach token" from
+        // "malformed string".
         return writeUpgradeError(socket, 401, 'Missing or malformed bearer token.');
       }
 
-      const originCheck = checkOrigin(rawOrigin, record.boundOrigin);
+      const originCheck = checkOrigin(rawOrigin, auth.boundOrigin);
       if (!originCheck.ok) {
         return writeUpgradeError(socket, 403, originCheck.reason);
       }
@@ -300,8 +395,9 @@ export async function startPushdWs(
       // `handleProtocols` on the WSS constructor handles subprotocol
       // echo in the upgrade response — we don't need to inject
       // headers manually here.
+      const resolvedAuth = auth;
       wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit('connection', ws, req, record!);
+        wss.emit('connection', ws, req, resolvedAuth);
       });
     } catch (err) {
       // Anything unexpected in the auth path: refuse, do not leak.
@@ -313,20 +409,24 @@ export async function startPushdWs(
     }
   });
 
-  wss.on('connection', (ws: WebSocket, _req: IncomingMessage, record: DeviceTokenRecord) => {
-    // Update lastUsedAt out-of-band; never block the connection on it.
-    touchLastUsed(record.tokenId).catch(() => {});
+  wss.on('connection', (ws: WebSocket, _req: IncomingMessage, auth: PushdWsAuthRecord) => {
+    // Touch lastUsedAt on the device-token record best-effort. For
+    // attach-token principals we ALSO touch the parent device so
+    // listing it shows "this device was active recently" even when
+    // every connection currently uses attach tokens. For attach
+    // tokens themselves, `verifyDeviceAttachToken` already refreshed
+    // lastUsedAt during the auth check above, so no extra write is
+    // needed here.
+    touchLastUsed(auth.parentDeviceTokenId).catch(() => {});
 
-    // Register this connection so `list_devices` can surface it and
-    // `revoke_device_token` can close it. The set is keyed by the
-    // device tokenId because that's the natural identity for a
-    // paired device — one device can hold multiple WS handles (e.g.
-    // two browser tabs) and revoke needs to close them all.
-    const registryEntry: ConnectionRegistryEntry = { ws, record };
-    let bucket = connectionsByTokenId.get(record.tokenId);
+    // Register this connection. Phase 3 slice 2: indexed by parent
+    // device tokenId so a single-device cascade revoke can find every
+    // child attach connection too.
+    const registryEntry: ConnectionRegistryEntry = { ws, auth };
+    let bucket = connectionsByDeviceTokenId.get(auth.parentDeviceTokenId);
     if (!bucket) {
       bucket = new Set();
-      connectionsByTokenId.set(record.tokenId, bucket);
+      connectionsByDeviceTokenId.set(auth.parentDeviceTokenId, bucket);
     }
     bucket.add(registryEntry);
 
@@ -383,12 +483,18 @@ export async function startPushdWs(
           ) {
             capabilities = (req.payload as { capabilities?: unknown }).capabilities;
           }
-          // Pass the authenticated record along so daemon_identify
-          // (and any future WS-context-aware handler) can answer
-          // without WS-specific state leaking into the dispatcher.
-          // `wsState` carries per-connection mutable state (e.g. the
-          // active-runs map for daemon-side mid-run cancellation).
-          const response = (await deps.handleRequest(req, emit, { record, wsState })) as {
+          // Pass the authenticated principal + the device record (when
+          // available) so daemon_identify and `mint_device_attach_token`
+          // can answer without WS-specific state leaking into the
+          // dispatcher. `wsState` carries per-connection mutable state
+          // (e.g. the active-runs map for daemon-side mid-run cancel).
+          // `record` is preserved for back-compat — handlers that only
+          // ever ran over a device-token-authed WS still read it.
+          const response = (await deps.handleRequest(req, emit, {
+            record: auth.deviceRecord ?? undefined,
+            auth,
+            wsState,
+          })) as {
             ok?: boolean;
             sessionId?: string;
             payload?: { sessionId?: string };
@@ -439,13 +545,13 @@ export async function startPushdWs(
         }
       }
       wsState.activeRuns.clear();
-      // Deregister from the per-tokenId connection bucket. If this was
-      // the last connection for the token, drop the (now empty) bucket
+      // Deregister from the parent-device bucket. If this was the
+      // last connection for the device, drop the (now empty) bucket
       // so `listConnectedDevices` doesn't surface stale zero-rows.
-      const reg = connectionsByTokenId.get(record.tokenId);
+      const reg = connectionsByDeviceTokenId.get(auth.parentDeviceTokenId);
       if (reg) {
         reg.delete(registryEntry);
-        if (reg.size === 0) connectionsByTokenId.delete(record.tokenId);
+        if (reg.size === 0) connectionsByDeviceTokenId.delete(auth.parentDeviceTokenId);
       }
     };
     ws.on('close', cleanup);
@@ -495,27 +601,42 @@ export async function startPushdWs(
           }),
         listConnectedDevices: () => {
           const rows: ConnectedDeviceRow[] = [];
-          for (const [tokenId, bucket] of connectionsByTokenId) {
-            // The first entry's record carries the boundOrigin /
-            // lastUsedAt; all entries in a bucket share a tokenId so
-            // their record fields are identical (we revoke or rotate
-            // by tokenId, not per-connection).
-            const first = bucket.values().next().value;
-            if (!first) continue;
+          for (const [parentTokenId, bucket] of connectionsByDeviceTokenId) {
+            // All entries in a bucket share a parent device, so the
+            // boundOrigin is identical across entries. Mix `attach` /
+            // `device` counts so the CLI can show "1 attach, 1 device"
+            // (a device that hasn't finished the pairing upgrade yet).
+            let attachCount = 0;
+            let deviceCount = 0;
+            let maxLastUsed: number | null = null;
+            let boundOrigin = '';
+            for (const entry of bucket) {
+              if (entry.auth.kind === 'attach') attachCount += 1;
+              else deviceCount += 1;
+              boundOrigin = entry.auth.boundOrigin;
+              if (entry.auth.lastUsedAt !== null) {
+                if (maxLastUsed === null || entry.auth.lastUsedAt > maxLastUsed) {
+                  maxLastUsed = entry.auth.lastUsedAt;
+                }
+              }
+            }
             rows.push({
-              tokenId,
-              boundOrigin: String(first.record.boundOrigin),
+              tokenId: parentTokenId,
+              boundOrigin,
               connections: bucket.size,
-              lastUsedAt: first.record.lastUsedAt,
+              attachConnections: attachCount,
+              deviceConnections: deviceCount,
+              lastUsedAt: maxLastUsed,
             });
           }
-          // Deterministic order so `push daemon devices` doesn't shuffle
-          // between invocations — sort by tokenId.
           rows.sort((a, b) => a.tokenId.localeCompare(b.tokenId));
           return rows;
         },
         disconnectByTokenId: (tokenId: string, reason: string) => {
-          const bucket = connectionsByTokenId.get(tokenId);
+          // Phase 3 slice 2: `tokenId` is interpreted as the parent
+          // DEVICE tokenId, so a cascade revoke (`revoke_device_token`)
+          // can disconnect every attach-token-authed child too.
+          const bucket = connectionsByDeviceTokenId.get(tokenId);
           if (!bucket) return 0;
           let closed = 0;
           for (const entry of bucket) {
@@ -529,6 +650,27 @@ export async function startPushdWs(
               closed += 1;
             } catch {
               /* ignore — the close cleanup will deregister anyway */
+            }
+          }
+          return closed;
+        },
+        disconnectByAttachTokenId: (attachTokenId: string, reason: string) => {
+          // Walk every bucket but close only the entries whose
+          // auth.tokenId matches AND whose kind is 'attach'. This is
+          // the narrow surface for `revoke_device_attach_token` — it
+          // must NOT also close other attach tokens or the parent
+          // device token's direct connection.
+          let closed = 0;
+          for (const bucket of connectionsByDeviceTokenId.values()) {
+            for (const entry of bucket) {
+              if (entry.auth.kind === 'attach' && entry.auth.tokenId === attachTokenId) {
+                try {
+                  entry.ws.close(1008, reason);
+                  closed += 1;
+                } catch {
+                  /* ignore */
+                }
+              }
             }
           }
           return closed;
