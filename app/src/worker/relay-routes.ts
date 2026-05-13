@@ -16,14 +16,18 @@
  *
  * The token's prefix determines the connection role:
  *
- *   `pushd_relay_*`  → pushd outbound dial. The token after the prefix
- *                       is compared constant-time against
- *                       `env.PUSH_RELAY_TOKEN` (Worker secret).
- *   `pushd_da_*`     → phone attach (Phase 3 slice 2 token shape). The
- *                       relay does NOT cryptographically verify these —
- *                       pushd holds the token store and rejects bogus
- *                       tokens at the protocol layer in later phases.
- *                       The relay enforces format only (prefix + length).
+ *   `pushd_relay_*`  → pushd outbound dial. The FULL prefixed bearer
+ *                       (e.g. `pushd_relay_<random-hex>`) is compared
+ *                       constant-time against `env.PUSH_RELAY_TOKEN`.
+ *                       Operator stores the prefixed form so the
+ *                       prefix is a structural check too — an
+ *                       unprefixed value can't accidentally match.
+ *   `pushd_da_*`     → phone attach (Phase 3 slice 2 token shape).
+ *                       ⚠️ 2.c only enforces format (prefix + length).
+ *                       2.d will add an envelope-aware allowlist
+ *                       (pushd emits `phone_allow` envelopes; relay
+ *                       only forwards pushd → allowed phones). The
+ *                       endpoint stays feature-flagged off until then.
  *
  * Per-route gates (same order as /api/jobs/*):
  *   1. PUSH_RELAY_ENABLED === '1'   → otherwise 503 NOT_ENABLED
@@ -42,6 +46,7 @@
  * The DO does the rest (role tracking + forwarding).
  */
 
+import type { RelayConnectionRole } from './relay-do';
 import { getClientIp, timingSafeEqual, validateOrigin, type Env } from './worker-middleware';
 
 const RELAY_PREFIX = '/api/relay/v1/';
@@ -55,8 +60,6 @@ const PHONE_BEARER_PREFIX = 'pushd_da_';
 // tokens.
 const MIN_TOKEN_BODY_LEN = 16;
 const MAX_TOKEN_BODY_LEN = 256;
-
-export type RelayConnectionRole = 'pushd' | 'phone';
 
 export interface RelayRouteMatch {
   action: 'connect';
@@ -177,7 +180,12 @@ function authenticateBearer(request: Request, env: Env): AuthResult | AuthError 
   const { bearer } = parsed;
 
   if (bearer.startsWith(PUSHD_BEARER_PREFIX)) {
-    const expected = env.PUSH_RELAY_TOKEN ?? '';
+    // Trim trailing whitespace/newlines — `echo ... | wrangler secret
+    // put PUSH_RELAY_TOKEN` is a common operator pattern and leaves
+    // a trailing `\n` that would otherwise cause silent
+    // BEARER_REJECTED (matches PUSH_DEPLOYMENT_TOKEN's trimSecret
+    // path in worker-middleware.ts).
+    const expected = (env.PUSH_RELAY_TOKEN ?? '').trim();
     if (expected.length === 0) {
       return {
         error: {
@@ -186,8 +194,9 @@ function authenticateBearer(request: Request, env: Env): AuthResult | AuthError 
         },
       };
     }
-    // Compare the full bearer (prefix + body) so an attacker can't
-    // distinguish prefix-match vs body-match via timing.
+    // Compare the FULL prefixed bearer against the stored secret. The
+    // operator stores `pushd_relay_<random>` so the prefix is a
+    // structural check: any unprefixed value can't accidentally match.
     if (!timingSafeEqual(bearer, expected)) {
       return {
         error: { code: 'BEARER_REJECTED', message: 'Invalid relay bearer.' },
@@ -203,10 +212,13 @@ function authenticateBearer(request: Request, env: Env): AuthResult | AuthError 
         error: { code: 'BEARER_REJECTED', message: 'Attach token format invalid.' },
       };
     }
-    // No crypto verification at the relay — pushd's token store is the
-    // source of truth, and pushd rejects unknown attach tokens at the
-    // protocol layer (envelope inspection). The relay enforces shape
-    // only so malformed garbage doesn't tie up a DO instance.
+    // ⚠️ 2.c gap (Codex #525 P1): format check only. Until 2.d wires
+    // an envelope-aware allowlist (pushd emits `phone_allow`
+    // envelopes naming which attach tokens may join a session), a
+    // client with a well-shaped fake token can attach and receive
+    // pushd → phone frames. The endpoint stays feature-flagged off
+    // (`PUSH_RELAY_ENABLED`) until 2.d closes the gap; no pushd
+    // outbound dial exists yet (2.e), so no real traffic flows.
     return { role: 'phone' };
   }
 

@@ -248,6 +248,20 @@ describe('handleRelayRequest', () => {
     expect(body.error).toBe('BEARER_REJECTED');
   });
 
+  it('accepts a pushd bearer when PUSH_RELAY_TOKEN has trailing whitespace (operator put via echo |)', async () => {
+    const stubFetch = vi.fn(async () => new Response(null, { status: 200 }));
+    const { env, fetchSpy } = makeEnabledEnv(stubFetch, {
+      PUSH_RELAY_TOKEN: `${VALID_RELAY_TOKEN}\n`,
+    });
+    const res = await handleRelayRequest(
+      wsRequest({ 'Sec-WebSocket-Protocol': PUSHD_BEARER_HEADER }),
+      env,
+      { action: 'connect', sessionId: 's1' },
+    );
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('forwards a valid phone bearer to the DO with role=phone', async () => {
     const stubFetch = vi.fn(async () => new Response(null, { status: 200 }));
     const { env, idFromName, fetchSpy } = makeEnabledEnv(stubFetch);

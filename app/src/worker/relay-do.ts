@@ -12,10 +12,11 @@
  *     decision doc's "forward NDJSON envelopes unchanged" rule, the
  *     relay validates that the protocol surface exists (bearer auth +
  *     role gating) but does not interpret semantics.
- *   - At most one pushd connection per session. A second pushd arrival
- *     closes the new connection with code 4001 — the old pushd stays
- *     authoritative. (Reconnect path: old WS closes first, then new
- *     pushd opens.)
+ *   - At most one pushd connection per session. A second pushd
+ *     upgrade attempt is rejected with HTTP 409 from the DO BEFORE
+ *     the WebSocketPair is created (no WS exists yet, so there is no
+ *     close code to send); the old pushd stays authoritative.
+ *     Reconnect path: old WS closes first, then new pushd opens.
  *
  * Still not in 2.c: envelope parsing (2.d, where the buffer needs seq
  * numbers from envelopes), persistent state (Q#2 forbids it), pushd
@@ -73,8 +74,10 @@ export class RelaySessionDO {
     const role = roleParam;
 
     if (role === 'pushd' && this.getPushdConnection() !== null) {
-      // Reject the second pushd. Close code 4001 = "pushd already
-      // attached." The first pushd stays authoritative.
+      // Reject the second pushd at the upgrade boundary — no WS pair
+      // has been created yet, so we return an HTTP 409 (not a close
+      // code). The first pushd stays authoritative; reconnect path is
+      // "old WS closes, then new pushd opens."
       return new Response('Pushd already attached to this session', { status: 409 });
     }
 
@@ -127,17 +130,30 @@ export class RelaySessionDO {
       return;
     }
     if (senderMeta.role === 'pushd') {
-      // pushd → all phones
+      // pushd → all phones.
+      //
+      // ⚠️ Phase 2.c known gap (Codex #525 P1): the relay only checks
+      // the phone bearer's format, not whether the attach token is
+      // actually paired with this session. Until 2.d wires an
+      // envelope-aware allowlist (pushd emits `phone_allow` envelopes
+      // identifying which attach tokens may join the session, and the
+      // relay only forwards pushd traffic to those tokens), a client
+      // that learns or guesses a sessionId can attach with a well-
+      // shaped fake `pushd_da_*` token and receive pushd's outbound
+      // frames. The endpoint stays feature-flagged off
+      // (`PUSH_RELAY_ENABLED`) until 2.d closes the gap — no real
+      // pushd traffic flows through here yet (no pushd outbound dial
+      // until 2.e). Tracked as the 2.d acceptance criterion.
       for (const [ws, meta] of this.connections) {
         if (ws !== sender && meta.role === 'phone' && ws.readyState === 1) {
-          ws.send(data as string);
+          ws.send(data as string | ArrayBuffer);
         }
       }
     } else {
       // phone → the pushd
       const pushd = this.getPushdConnection();
       if (pushd && pushd !== sender && pushd.readyState === 1) {
-        pushd.send(data as string);
+        pushd.send(data as string | ArrayBuffer);
       }
       // If no pushd is attached, drop. Phone messages with no
       // counterparty are not buffered in 2.c — 2.d adds the ring
