@@ -327,14 +327,22 @@ export async function mintAttachTokenViaDaemon(
     );
     return response.payload;
   } catch (err) {
-    // DEVICE_TOKEN_REQUIRED — the binding's already on an attach
-    // token. That's a no-op from the caller's POV: pairing already
-    // upgraded. Other DaemonRequestError codes (UNSUPPORTED_VIA_
-    // TRANSPORT etc.) shouldn't reach here because we're calling
-    // over WS, but we collapse to null defensively.
+    // Collapse the "already upgraded / not supported here" failure
+    // modes to null so the pairing flow's "fall back to device
+    // token" branch sees a clean no-op:
+    //   - DEVICE_TOKEN_REQUIRED: caller is already on an attach
+    //     token (re-pair after a manual upgrade attempt). No-op.
+    //   - UNSUPPORTED_VIA_TRANSPORT: shouldn't reach here because
+    //     we're calling over WS, but collapse defensively.
+    //   - UNSUPPORTED_REQUEST_TYPE: a pre-slice-2 daemon (the
+    //     dispatcher's default branch for unknown request types).
+    //     This is the mixed-version case the pairing flow's
+    //     fallback exists for. #519 review.
     if (
       err instanceof DaemonRequestError &&
-      (err.code === 'DEVICE_TOKEN_REQUIRED' || err.code === 'UNSUPPORTED_VIA_TRANSPORT')
+      (err.code === 'DEVICE_TOKEN_REQUIRED' ||
+        err.code === 'UNSUPPORTED_VIA_TRANSPORT' ||
+        err.code === 'UNSUPPORTED_REQUEST_TYPE')
     ) {
       return null;
     }

@@ -85,6 +85,23 @@ export function LocalPcPairing({ onPaired, onCancel }: LocalPcPairingProps) {
     inFlight.handle.close();
     inFlightRef.current = null;
 
+    // Clear the password input to honor the component docstring
+    // contract ("the token is never logged, never echoed into error
+    // messages, and is cleared from local state on success or
+    // cancel"). For success the parent screen unmounts us almost
+    // immediately anyway, but the explicit clear costs nothing and
+    // removes a "if React keeps the component alive in a pool
+    // somewhere" footgun. For failure it ensures a mistyped token
+    // doesn't linger in the password field for the next attempt —
+    // the user has to re-paste, which is the safer default. We
+    // leave `portInput` populated on failure so the user only re-
+    // enters the secret (not the port they probably got right).
+    // #519 review.
+    setTokenInput('');
+    if (paired) {
+      setPortInput('');
+    }
+
     if (paired) {
       // Storage failure here is recoverable: if the put fails, the user
       // re-clicks Local PC on next boot and lands back on the pairing
