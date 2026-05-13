@@ -124,11 +124,14 @@ describe('pushd-relay-allowlist', () => {
     assert.equal(reg.size(), 0);
   });
 
-  it('rejects empty tokenId / tokenHash', () => {
+  it('rejects empty tokenId / tokenHash and returns false from add', () => {
     const reg = createRelayAllowlistRegistry();
-    reg.add('', HASH_A);
-    reg.add('pdat_a', '');
+    assert.equal(reg.add('', HASH_A), false);
+    assert.equal(reg.add('pdat_a', ''), false);
     assert.equal(reg.size(), 0);
+    // Valid pair returns true.
+    assert.equal(reg.add('pdat_a', HASH_A), true);
+    assert.equal(reg.size(), 1);
   });
 
   it('seedAllowlistFromAttachTokens populates the registry from a list of records', async () => {
@@ -153,5 +156,22 @@ describe('pushd-relay-allowlist', () => {
     const seeded = await seedAllowlistFromAttachTokens(reg, async () => []);
     assert.equal(seeded, 0);
     assert.equal(reg.size(), 0);
+  });
+
+  it('seedAllowlistFromAttachTokens reports actual additions, not record count', async () => {
+    // listDeviceAttachTokens only type-checks fields, so a record
+    // with an empty-string tokenId / tokenHash can reach the seed.
+    // The return value should reflect what actually got allowlisted,
+    // not what was on disk, so the startup log isn't misleading.
+    const reg = createRelayAllowlistRegistry();
+    const records = [
+      { tokenId: 'pdat_a', tokenHash: HASH_A },
+      { tokenId: '', tokenHash: HASH_B }, // malformed: empty tokenId
+      { tokenId: 'pdat_c', tokenHash: '' }, // malformed: empty hash
+    ];
+    const seeded = await seedAllowlistFromAttachTokens(reg, async () => records);
+    assert.equal(seeded, 1);
+    assert.equal(reg.size(), 1);
+    assert.deepEqual(reg.allTokenHashes(), [HASH_A]);
   });
 });

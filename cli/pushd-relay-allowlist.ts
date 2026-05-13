@@ -36,8 +36,15 @@ export interface RelayAllowlistRegistry {
    * Record that the bearer whose `sha256` is `tokenHash` is currently
    * valid for the relay path. `tokenHash` should be the same digest
    * the attach-token store persists (sha256 → base64url).
+   *
+   * Returns true when the entry was actually written; false when
+   * the call was a no-op because `tokenId` or `tokenHash` was empty.
+   * The seed path uses this to report the number of records it
+   * actually allowlisted rather than the number it read, so a
+   * malformed-on-disk record (empty hash, etc.) doesn't inflate the
+   * startup log.
    */
-  add(tokenId: string, tokenHash: string): void;
+  add(tokenId: string, tokenHash: string): boolean;
   /** Remove an entry by attach tokenId. Returns the tokenHash that was
    * removed (so the caller can include it in a `relay_phone_revoke`
    * envelope), or null if no entry existed. */
@@ -70,8 +77,11 @@ export async function seedAllowlistFromAttachTokens(
   list: () => Promise<readonly { tokenId: string; tokenHash: string }[]>,
 ): Promise<number> {
   const records = await list();
-  for (const r of records) registry.add(r.tokenId, r.tokenHash);
-  return records.length;
+  let added = 0;
+  for (const r of records) {
+    if (registry.add(r.tokenId, r.tokenHash)) added += 1;
+  }
+  return added;
 }
 
 export function createRelayAllowlistRegistry(): RelayAllowlistRegistry {
@@ -82,9 +92,10 @@ export function createRelayAllowlistRegistry(): RelayAllowlistRegistry {
 
   return {
     add(tokenId, tokenHash) {
-      if (typeof tokenId !== 'string' || tokenId.length === 0) return;
-      if (typeof tokenHash !== 'string' || tokenHash.length === 0) return;
+      if (typeof tokenId !== 'string' || tokenId.length === 0) return false;
+      if (typeof tokenHash !== 'string' || tokenHash.length === 0) return false;
       byTokenId.set(tokenId, tokenHash);
+      return true;
     },
     remove(tokenId) {
       const existing = byTokenId.get(tokenId);

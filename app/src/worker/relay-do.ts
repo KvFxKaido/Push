@@ -59,6 +59,7 @@ import {
   type RelayEnvelope,
 } from '@push/lib/protocol-schema';
 import { extractPhoneBearer } from './relay-routes';
+import { base64UrlEncodeBytes } from './worker-base64url';
 import type { Env } from './worker-middleware';
 
 export type RelayConnectionRole = 'pushd' | 'phone';
@@ -78,19 +79,15 @@ type ConnectionMeta = { role: 'pushd' } | { role: 'phone'; bearerHash: string };
  * pushd (hashes only, no plaintext).
  *
  * Uses WebCrypto (`crypto.subtle.digest`) — available on Workers
- * runtime and on Node 15+. The base64url encoding mirrors Node's
- * `digest('base64url')`: standard base64 with `+ → -`, `/ → _`, and
- * trailing `=` stripped.
+ * runtime and on Node 15+. base64url encoding is delegated to the
+ * shared `worker-base64url` helper so the relay can't drift from
+ * the other Worker-side base64url consumers (JWTs, etc.) on
+ * padding or alphabet replacement.
  */
 export async function hashBearerForAllowlist(bearer: string): Promise<string> {
   const bytes = new TextEncoder().encode(bearer);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
-  const view = new Uint8Array(digest);
-  let binary = '';
-  for (let i = 0; i < view.length; i += 1) {
-    binary += String.fromCharCode(view[i]);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return base64UrlEncodeBytes(digest);
 }
 
 /**
