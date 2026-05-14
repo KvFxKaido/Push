@@ -49,7 +49,7 @@ Per-surface:
 
 | Surface | Lint | Typecheck | Test | Build |
 |---|---|---|---|---|
-| Root (CLI + MCP wiring) | `npm run format:check` (Biome) | `npm run typecheck:tsgo` | `npm run test:cli` | `npm run build:cli` |
+| Root (CLI + MCP wiring) | `npm run lint` (delegates to app ESLint) / `npm run format:check` (Biome format) | `npm run typecheck:tsgo` | `npm run test:cli` | `npm run build:cli` |
 | `app/` | `npm run lint` (ESLint) | `npm run typecheck` | `npm test` (vitest) / `npm run test:watch` | `npm run build` |
 | `mcp/github-server/` | — | `npm run typecheck` | `npm test` | `npm run build` |
 

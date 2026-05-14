@@ -373,6 +373,25 @@ describe('loadRepoCommands', () => {
     assert.equal(commands.typecheck?.command, 'npm run typecheck');
   });
 
+  it('does not let an empty ancestor .git eclipse a nearer command root', async (t) => {
+    const outer = await fs.mkdtemp(path.join(os.tmpdir(), 'push-repo-commands-outer-'));
+    t.after(async () => {
+      await fs.rm(outer, { recursive: true, force: true });
+    });
+    await fs.mkdir(path.join(outer, '.git'), { recursive: true });
+    const root = path.join(outer, 'fixture');
+    await fs.mkdir(path.join(root, 'src'), { recursive: true });
+    await fs.writeFile(
+      path.join(root, 'package.json'),
+      JSON.stringify({ scripts: { test: 'vitest run' } }),
+      'utf8',
+    );
+
+    const commands = await loadRepoCommands(path.join(root, 'src'));
+    assert.equal(commands.test?.command, 'npm run test');
+    assert.equal(commands.test?.source, 'package-script');
+  });
+
   it('returns derived commands end-to-end', async (t) => {
     const root = await makeFixture(t, {
       'package.json': JSON.stringify({

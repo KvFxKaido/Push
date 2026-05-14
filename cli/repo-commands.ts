@@ -25,6 +25,11 @@ import type { CoderWorkingMemory } from '../lib/working-memory.ts';
  * its hints take precedence over CLAUDE.md when both define the same kind.
  */
 const HINT_FILES: readonly string[] = ['AGENTS.md', 'CLAUDE.md'];
+const COMMAND_ROOT_MARKERS: readonly string[] = [
+  'package.json',
+  ...HINT_FILES,
+  ...KNOWN_CONFIG_FILES,
+];
 
 async function readPackageScripts(repoRoot: string): Promise<Record<string, string> | undefined> {
   try {
@@ -78,6 +83,27 @@ async function collectAgentsMdHints(repoRoot: string): Promise<AgentsMdHint[]> {
   return hints;
 }
 
+async function hasFileMarker(dir: string, filenames: readonly string[]): Promise<boolean> {
+  for (const filename of filenames) {
+    try {
+      const stat = await fs.stat(path.join(dir, filename));
+      if (stat.isFile()) return true;
+    } catch {
+      // Keep looking; missing/unreadable markers are simply absent.
+    }
+  }
+  return false;
+}
+
+async function hasGitMarker(dir: string): Promise<boolean> {
+  try {
+    await fs.access(path.join(dir, '.git'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Build a snapshot from disk for `deriveRepoCommands`. Exposed so tests and
  * future callers (e.g. the web bundle's Node-side discovery path) can reuse
@@ -98,8 +124,10 @@ export async function buildRepoCommandsSnapshot(repoRoot: string): Promise<RepoC
 
 /**
  * Walk up from `start` looking for a `.git` entry (directory or file — the
- * latter handles git worktrees). Returns the first ancestor that has one,
- * or `start` itself if no `.git` is found anywhere on the path.
+ * latter handles git worktrees). Returns the first git root that also carries
+ * command-discovery markers, or the nearest marker-bearing directory if an
+ * empty ancestor `.git` would otherwise eclipse it. Falls back to `start`
+ * when neither signal exists.
  *
  * This makes `loadRepoCommands` robust to the CLI being launched from a
  * subdirectory: we still read package.json / AGENTS.md / config files from
@@ -107,15 +135,21 @@ export async function buildRepoCommandsSnapshot(repoRoot: string): Promise<RepoC
  */
 async function resolveRepoRoot(start: string): Promise<string> {
   let current = path.resolve(start);
+  let nearestCommandRoot: string | null = null;
   while (true) {
-    try {
-      await fs.access(path.join(current, '.git'));
-      return current;
-    } catch {
-      // Keep walking up.
+    const hasCommandRootSignal = await hasFileMarker(current, COMMAND_ROOT_MARKERS);
+    if (hasCommandRootSignal && !nearestCommandRoot) {
+      nearestCommandRoot = current;
     }
+
+    if (await hasGitMarker(current)) {
+      if (hasCommandRootSignal) return current;
+      if (nearestCommandRoot) return nearestCommandRoot;
+      return current;
+    }
+
     const parent = path.dirname(current);
-    if (parent === current) return path.resolve(start);
+    if (parent === current) return nearestCommandRoot ?? path.resolve(start);
     current = parent;
   }
 }
