@@ -350,7 +350,15 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
   // in the failure path) as `cf_sandbox_create_timing` so we can see whether
   // clone or cache-populate dominates cold start before deciding what to
   // optimize next. All values are millisecond wall clock from Date.now().
+  //
+  // `repo` is hashed (first 12 hex of sha256) so the log is correlatable —
+  // grep for the hash of a known repo to find its sessions — without
+  // exposing owner/repo strings to wherever Worker logs end up. `branch` is
+  // omitted entirely: it carries little signal without the repo and shares
+  // the same leakage concern. `sandbox_id` remains the primary correlation
+  // key. Hashing happens once up front so the finally block stays cheap.
   const createStart = Date.now();
+  const repoHash = repo ? await sha256Hex(repo, 12) : '';
   const phases = {
     git_identity: 0,
     clone: 0,
@@ -491,14 +499,24 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
   } finally {
     wlog('info', 'cf_sandbox_create_timing', {
       sandbox_id: sandboxId,
-      repo,
-      branch,
+      repo_hash: repoHash,
       has_repo: Boolean(repo && repo.length > 0),
       phases_ms: phases,
       total_ms: Date.now() - createStart,
       ...(failedPhase ? { failed_phase: failedPhase } : {}),
     });
   }
+}
+
+async function sha256Hex(input: string, hexChars: number): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  const bytes = new Uint8Array(digest);
+  const byteCount = Math.ceil(hexChars / 2);
+  let out = '';
+  for (let i = 0; i < byteCount; i++) {
+    out += bytes[i].toString(16).padStart(2, '0');
+  }
+  return out.slice(0, hexChars);
 }
 
 async function routeConnect(env: Env, body: Json): Promise<Response> {
