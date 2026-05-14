@@ -14,7 +14,7 @@ PR #546 promoted the role-capability check into the dispatch kernel as part of t
 
 The **web Coder path** doesn't go through either. `buildCoderToolExec` in `lib/coder-agent-bindings.ts` dispatches directly to `executeSandboxToolCall` / `executeWebSearch` from the services bag. PR #546 closed the role-check loophole by inlining `enforceRoleCapability('coder', ...)` at the top of the closure, but the broader question — *why does Coder bypass the runtime at all?* — was punted to this doc.
 
-This doc captures the answer: **the bypass is intentional**, the inline check is the right size of defense, and unifying the Coder path through `WebToolExecutionRuntime` would change behavior in ways we don't want.
+This doc captures the answer: **the bypass is intentional** because Coder's autonomy contract conflicts with the runtime's interactive pipeline. The inline `enforceRoleCapability` is an explicit two-site invariant — accepted with drift-test mitigation, not framed as the cleanest possible shape. **One caveat to flag up front:** the bypass leaves a real Protect Main gap on the Coder path that this doc identifies but does not fix; see [Open work](#open-work) for the proposed shape.
 
 ## What the runtime does that Coder doesn't want
 
@@ -46,10 +46,10 @@ The pipeline items conflict with that contract:
 | **`localDaemonBinding` routing** | Coder runs against a managed sandbox (cloud Cloudflare Sandbox or Modal). Local-PC daemon binding is a different transport entirely. |
 | **Capability ledger** | Coder uses `CapabilityLedger` to track *declared-vs-used* capabilities for delegation audit — a contract the runtime doesn't have a slot for. |
 
-The runtime's pipeline is correct for the orchestrator chat path because that's the contract it was built for. Re-using it for Coder would either:
+The runtime's pipeline is correct for the orchestrator chat path because that's the contract it was built for. The runtime already supports conditional injection — `if (context.approvalGates)`, no-op hook registries, omitted `localDaemonBinding` — so "Coder uses the runtime with everything off" is *technically* available. The real blocker is item 2: Coder's `TurnPolicyRegistry` is phase-aware in ways `ToolHookRegistry` isn't, and there's no slot in the runtime for the `CapabilityLedger` either. Routing Coder through the runtime would mean:
 
-- **Force-disable items 2–4** (configure no hooks / no gates / no Protect Main) — a Pyrrhic refactor that adds an indirection without any semantic gain.
-- **Inherit items 2–4** — a behavior change that breaks autonomous delegation.
+- **Inherit items 2–7** — a behavior change that breaks autonomous delegation (interactive prompts inside background jobs, hooks that don't understand Coder phases).
+- **Force-disable items 2–7** — pass `undefined` for everything except sandbox dispatch. The runtime collapses to a switch over `call.source`, which is what the bindings layer already is. Coder's policy + ledger machinery still has to live on Coder's side because the runtime has no slot for them, so the "unification" doesn't actually consolidate anything.
 
 ## What the bypass keeps
 
@@ -70,11 +70,13 @@ Items 2, 3, 4, 6, 7 are Coder-specific concerns the orchestrator pipeline doesn'
 
 `app/src/worker/coder-job-do.ts` (background Coder jobs) consumes `buildCoderToolExec` from `lib/coder-agent-bindings.ts` and supplies its own services bag (`buildCoderJobServices` in `coder-job-services.ts`). The DO bypasses the runtime *more strongly* than Web — it has no `WebToolExecutionRuntime` at all, no `ToolHookRegistry`, no `ApprovalGateRegistry`, and no chat-side UI.
 
-Unifying Web's Coder path through `WebToolExecutionRuntime` would create an asymmetry: Web routes through a runtime the DO doesn't have, so the kernel invariant lives in two places anyway. Keeping both surfaces on the bindings layer is what makes Coder genuinely surface-portable — and the inline `enforceRoleCapability` check covers both at once (it's in `lib/`, called from the shared closure).
+Today, Web and DO share `buildCoderToolExec` because they call the same `lib/` function — not because the bindings layer is inherently more portable than a runtime. But that shared call site is what lets the inline `enforceRoleCapability` check cover both surfaces from one place. Unifying Web's Coder path through `WebToolExecutionRuntime` would split that: Web Coder would route through the runtime, DO Coder wouldn't, and the kernel invariant would need to live in both the runtime *and* the bindings layer. Keeping both surfaces on the bindings layer is what keeps the invariant single-sourced. **This is contingent, not architectural** — if the DO grows enough infrastructure to host its own runtime (see revisit trigger #3 below), the symmetry argument flips.
 
 ## The hard rule
 
-**Coder does not go through `WebToolExecutionRuntime`. Capability enforcement is inlined at the top of `buildCoderToolExec` and runs on both Web and DO surfaces. The runtime's interactive-pipeline features (approval gates, Protect Main, pre/post hooks, `localDaemonBinding` routing) are deliberately not available to autonomous delegations.**
+**Coder does not go through `WebToolExecutionRuntime`. Capability enforcement is inlined at the top of `buildCoderToolExec` and runs on both Web and DO surfaces. The runtime's interactive-pipeline features (approval gates, pre/post hooks, `localDaemonBinding` routing) are deliberately not available to autonomous delegations.**
+
+*Caveat on Protect Main:* it was grouped with the runtime's interactive features in earlier drafts, but unlike approval gates or `localDaemonBinding`, Protect Main is a correctness invariant the user expects globally — not an interactive affordance. The Coder path's lack of Protect Main is a gap to close, not a feature of the bypass. See [Open work](#open-work).
 
 If a future feature needs Coder to integrate with one of those pipeline items, the right move is to extend the bindings layer with a parallel adapter (matching what the DO surface does), **not** to fold Coder into the runtime.
 
@@ -91,9 +93,11 @@ Revisit if any of these become true:
 2. **The kernel invariant gains a third call site.** If a new tool-execution surface (e.g. a server-side auditor that's neither orchestrator nor Coder) appears, this doc should be revisited to confirm whether the bindings layer is the right home for cross-surface invariants or whether `WebToolExecutionRuntime`'s scope should expand.
 3. **The DO surface gains a runtime.** If background Coder jobs grow enough infrastructure that a `DOToolExecutionRuntime` makes sense, Web routing through `WebToolExecutionRuntime` becomes symmetric with DO, and the bypass becomes the odd one out. Until then, both surfaces sharing the same bindings layer is the simplest shape.
 
+Of these, **trigger #3 is the most plausible near-term shift.** Background Coder is already non-trivial infrastructure (DO + services bag + job state machine), and a `DOToolExecutionRuntime` is a credible refactor target. This doc captures the right shape *for the current state of the DO surface* and explicitly opts into being revisited — it should not be cited as permanent doctrine.
+
 ## Open work
 
-- **Protect Main for the Coder path.** The bypass leaves a gap: when Protect Main is on and the active branch is the default branch, the Coder kernel sees the flag as workspace-context text only, with no code-level refusal to delegate and no Coder-side enforcement at `sandbox_prepare_commit` / `sandbox_push`. Two reasonable fix shapes:
+- **Protect Main for the Coder path** (correctness gap, not nice-to-have). The bypass means Protect Main — which today refuses `sandbox_prepare_commit` / `sandbox_push` from the orchestrator path via `PROTECTED_MAIN_TOOLS` in `web-tool-execution-runtime.ts` — doesn't gate the Coder path. A user with Protect Main on can produce a commit-to-`main` via `delegate_coder` that they would not have been allowed to produce directly. Coder sees the flag as `[WORKSPACE CONTEXT]` prompt text (`lib/coder-agent.ts`, `lib/explorer-agent.ts`, `lib/deep-reviewer-agent.ts`), which a cooperating model honors but a non-cooperating model can ignore. Per the "Behavior lives in code, not prompts" convention, this belongs in code. Two reasonable fix shapes:
   1. **Orchestrator-side refusal.** Block `delegate_coder` (and the task-graph `plan_tasks` equivalent) when `branchContext.protectMain && activeBranch === defaultBranch`. Cheap, but loses the "Coder is *how* you produce a commit" affordance — the user would need to switch branches before delegating at all.
   2. **Coder-side enforcement.** Mirror `PROTECTED_MAIN_TOOLS` inside `buildCoderToolExec` so commit/push tools deny when on `main` even though the runtime is bypassed. The role gate already runs at the same seam in `buildCoderToolExec`; Protect Main slots in alongside it. Preserves the "delegate, then commit on a feature branch" UX.
 
