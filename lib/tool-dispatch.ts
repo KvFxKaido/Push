@@ -43,13 +43,22 @@ import { recoverNamespacedToolCalls } from './tool-call-namespaced-recovery.js';
  * the text. Duplicates (same tool + same stable-key serialized args)
  * are collapsed.
  *
- * `malformed` captures parse or shape failures observed on text that
- * explicitly signalled tool-call shape — specifically, content inside a
- * code fence tagged `json`/`tool` that contains a `"tool":` key but
- * doesn't parse or doesn't match the expected shape. Bare-object scans
- * do NOT contribute to `malformed`; they are a best-effort fallback for
- * models that forget the fences, and reporting every prose-embedded
- * `{...}` as malformed would be noise.
+ * `malformed` captures parse/shape failures and unknown-tool reports.
+ * Three contributing paths:
+ *
+ *   - Fenced blocks (` ```json … ``` ` / ` ```tool … ``` `) that contain
+ *     a `"tool":` key but fail JSON parsing, shape validation, or whose
+ *     tool name isn't claimed by any registered source.
+ *   - Bare `{tool, args}` objects outside any fence that pass the
+ *     conservative `isBareBlockEligible` gate AND parse correctly but
+ *     whose tool name isn't claimed by any source. Prose-embedded
+ *     examples are rejected by the eligibility gate, so these reports
+ *     are not noise.
+ *   - Namespaced fallback traces (`functions.<name>:<id> <args>`) that
+ *     either fail source match in the zero-fenced-candidates fallback
+ *     path, OR that appear alongside fenced/bare candidates AND are
+ *     NOT duplicates of an executing call (mixed-shape silent-drop
+ *     diagnostic, PR #542).
  */
 export interface ToolDispatchResult<TCall> {
   calls: TCall[];
@@ -242,11 +251,18 @@ export function createToolDispatcher<TCall>(
       //       fallback for outputs like Kimi-via-Blackbox that emit
       //       OpenAI-style function-call traces instead of fenced JSON.
       //   (b) Phases 1+2 produced candidates AND namespaced traces also
-      //       exist — surface those traces as `unknown_tool` malformed
-      //       reports. Before this branch they were silently dropped,
-      //       which fits the OpenCode silent-failure shape: the model
-      //       emitted two callable things, the harness executed one and
-      //       discarded the other without telling the model.
+      //       exist — surface NON-DUPLICATE traces as `unknown_tool`
+      //       malformed reports. Before this branch they were silently
+      //       dropped, which fit the OpenCode silent-failure shape:
+      //       the model emitted two callable things, the harness
+      //       executed one and discarded the other without telling
+      //       the model. Duplicate-suppression is critical: if the
+      //       same `(tool, args)` is emitted as both a fenced call
+      //       and a namespaced trace, the fenced version executes
+      //       and reporting the namespaced copy as malformed would
+      //       trigger a spurious `[TOOL_CALL_PARSE_ERROR]` correction
+      //       round for a call that wasn't actually dropped. Codex P2
+      //       + Copilot on PR #542.
       const namespacedRecoveries = recoverNamespacedToolCalls(text);
       if (candidates.length === 0) {
         for (const recovered of namespacedRecoveries) {
@@ -262,7 +278,17 @@ export function createToolDispatcher<TCall>(
           });
         }
       } else {
+        const existingKeys = new Set<string>();
+        for (const c of candidates) {
+          existingKeys.add(canonicalKey(c.parsed));
+        }
         for (const recovered of namespacedRecoveries) {
+          const parsed: ParsedToolObject = {
+            tool: recovered.tool,
+            args: recovered.args,
+            raw: { tool: recovered.tool, args: recovered.args },
+          };
+          if (existingKeys.has(canonicalKey(parsed))) continue;
           malformed.push({
             reason: 'unknown_tool',
             sample: truncateSample(
@@ -287,21 +313,21 @@ export function createToolDispatcher<TCall>(
           calls.push(matched.call);
           continue;
         }
-        // Fenced or bare object parsed as a tool-shaped invocation but
-        // no source claimed the tool name. Report as malformed so the
-        // caller can surface a "this tool name isn't recognized" hint
-        // to the model. Bare candidates only reach this point after
-        // `isBareBlockEligible` filtered out prose-embedded examples,
-        // so reporting them is not spammy — the eligibility gate is
-        // what protects this branch from amplifying documentation.
-        if (candidate.kind === 'fenced' || candidate.kind === 'bare') {
+        // Fenced, bare, or namespaced object parsed as a tool-shaped
+        // invocation but no source claimed the tool name. Report as
+        // malformed so the caller can surface a "this tool name isn't
+        // recognized" hint to the model. Bare and namespaced
+        // candidates only reach this point after strict eligibility
+        // gates (`isBareBlockEligible` / `hasRecoverableTrailingContext`),
+        // so reporting them is not spammy — the gates protect this
+        // branch from amplifying documentation/prose examples.
+        if (
+          candidate.kind === 'fenced' ||
+          candidate.kind === 'bare' ||
+          candidate.kind === 'namespaced'
+        ) {
           malformed.push({ reason: 'unknown_tool', sample: truncateSample(candidate.sample) });
         }
-        // `namespaced` candidates only enter this loop on the
-        // zero-phases-1+2 fallback path; if they fail source match
-        // there, treat them as recovery noise and stay quiet (the
-        // namespaced-as-malformed diagnostic from the else branch
-        // above covers the silent-drop case).
       }
 
       return { calls, malformed };

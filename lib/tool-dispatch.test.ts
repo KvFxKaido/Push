@@ -760,12 +760,12 @@ describe('createToolDispatcher — namespaced fallback diagnostics', () => {
   });
 
   it('reports namespaced traces as malformed when fenced candidates also exist', () => {
-    // Mix-shape emission: the model produced a clean fenced call AND
-    // a namespaced trace. Before PR #542 the dispatcher silently
-    // dropped the namespaced one — the OpenCode shape where the
-    // harness executes one call and discards the other without
-    // telling the model. Surface the dropped trace as malformed so
-    // the model sees the divergence.
+    // Mixed-shape emission: the model produced a clean fenced call AND
+    // a namespaced trace with a DIFFERENT canonical key. Before PR #542
+    // the dispatcher silently dropped the namespaced one — the OpenCode
+    // shape where the harness executes one call and discards the other
+    // without telling the model. Surface the dropped trace as malformed
+    // so the model sees the divergence.
     const text = [
       '```json',
       '{"tool":"read_file","args":{"path":"primary.txt"}}',
@@ -778,5 +778,43 @@ describe('createToolDispatcher — namespaced fallback diagnostics', () => {
     expect(result.malformed).toHaveLength(1);
     expect(result.malformed[0].reason).toBe('unknown_tool');
     expect(result.malformed[0].sample).toContain('functions.write_file');
+  });
+
+  it('suppresses duplicate namespaced traces when the canonical call already executes', () => {
+    // Mixed-shape duplicate: the model emitted the SAME tool+args as
+    // both a fenced call AND a namespaced trace. The fenced call
+    // executes; reporting the namespaced copy as malformed would
+    // trigger a spurious `[TOOL_CALL_PARSE_ERROR]` correction round
+    // for a call that wasn't actually dropped. Codex P2 + Copilot on
+    // PR #542 — must suppress the report when canonical keys match.
+    const text = [
+      '```json',
+      '{"tool":"read_file","args":{"path":"a.txt"}}',
+      '```',
+      'functions.read_file:1 {"path":"a.txt"}',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toEqual({ tool: 'read_file', args: { path: 'a.txt' } });
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('reports namespaced unknown-tool traces in the namespaced-only fallback path', () => {
+    // Path A of the namespaced phase-3 logic: phases 1+2 produced
+    // nothing, namespaced trace is promoted to a candidate, but no
+    // source claims the tool name. Before the bare/namespaced
+    // unknown_tool unification on PR #542 this was silent — fits the
+    // same silent-failure shape the bare-unknown fix closed.
+    const rejectAllSource: ToolSource<unknown> = {
+      name: 'reject-all',
+      detect: () => null,
+    };
+    const strictDispatcher = createToolDispatcher([rejectAllSource]);
+    const text = 'functions.mystery_tool:1 {"path":"x"}';
+    const result = strictDispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([]);
+    expect(result.malformed).toHaveLength(1);
+    expect(result.malformed[0].reason).toBe('unknown_tool');
+    expect(result.malformed[0].sample).toContain('functions.mystery_tool');
   });
 });
