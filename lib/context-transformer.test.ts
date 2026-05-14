@@ -4,6 +4,7 @@ import {
   type TransformContextOptions,
   type TransformableMessage,
 } from './context-transformer';
+import type { UserGoalAnchor } from './user-goal-anchor';
 
 interface FakeMsg extends TransformableMessage {
   role: string;
@@ -420,6 +421,8 @@ describe('transformContextBeforeLLM — snapshots', () => {
     `);
   });
 
+  // (see injectUserGoal stage tests below for goal-anchor coverage)
+
   it('produces a stable wire-format snapshot when serialized to {role, content} pairs', () => {
     const messages: FakeMsg[] = [
       sample({ role: 'system', content: 'sys' }),
@@ -455,5 +458,136 @@ describe('transformContextBeforeLLM — snapshots', () => {
         },
       ]
     `);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// injectUserGoal stage
+//
+// The goal anchor is injected just before the last message whenever
+// compaction is in play. "In play" means either an upstream stage rewrote
+// this turn (rewriteApplied flows in) OR a prior turn left the durable
+// `[CONTEXT DIGEST]` marker. Below the threshold + no marker = no anchor,
+// keeping short chats unaffected.
+// ---------------------------------------------------------------------------
+
+describe('transformContextBeforeLLM — injectUserGoal stage', () => {
+  const anchor: UserGoalAnchor = { initialAsk: 'ship the anchor feature' };
+  const createGoalMessage = (content: string): FakeMsg => ({ role: 'user', content });
+
+  const goalBlock = ['[USER_GOAL]', 'Initial ask: ship the anchor feature', '[/USER_GOAL]'].join(
+    '\n',
+  );
+
+  it('does not inject when no anchor is configured', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'assistant', content: '[CONTEXT DIGEST] earlier turns dropped' }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, baseOptions);
+    expect(out.messages.some((m) => m.content === goalBlock)).toBe(false);
+  });
+
+  it('does not inject when compaction never happened (no rewrite, no marker)', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'assistant', content: 'reply' }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      userGoalAnchor: anchor,
+      createGoalMessage,
+    });
+    expect(out.messages).toEqual(messages);
+    expect(out.rewriteApplied).toBe(false);
+  });
+
+  it('injects when an upstream stage rewrote this turn', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'assistant', content: 'reply' }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      manageContext: (msgs) => ({
+        messages: [
+          msgs[0],
+          sample({ role: 'user', content: '[CONTEXT DIGEST] dropped' }),
+          ...msgs.slice(1),
+        ],
+        compactionApplied: true,
+      }),
+      userGoalAnchor: anchor,
+      createGoalMessage,
+    });
+    expect(out.rewriteApplied).toBe(true);
+    expect(out.messages[out.messages.length - 2].content).toBe(goalBlock);
+    expect(out.messages[out.messages.length - 1].content).toBe('now');
+  });
+
+  it('injects when a prior turn left the [CONTEXT DIGEST] marker (no rewrite this turn)', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'user', content: '[CONTEXT DIGEST] prior compaction' }),
+      sample({ role: 'assistant', content: 'reply' }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      userGoalAnchor: anchor,
+      createGoalMessage,
+    });
+    expect(out.rewriteApplied).toBe(true);
+    expect(out.messages[out.messages.length - 2].content).toBe(goalBlock);
+    expect(out.messages[out.messages.length - 1].content).toBe('now');
+  });
+
+  it('is idempotent — does not double-inject when an identical anchor is already present', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'user', content: '[CONTEXT DIGEST] prior compaction' }),
+      sample({ role: 'user', content: goalBlock }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      userGoalAnchor: anchor,
+      createGoalMessage,
+    });
+    const anchorCount = out.messages.filter((m) => m.content === goalBlock).length;
+    expect(anchorCount).toBe(1);
+  });
+
+  it('shifts cacheBreakpointIndex forward by one when injecting before the last user turn', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'user', content: '[CONTEXT DIGEST] prior compaction' }),
+      sample({ role: 'assistant', content: 'reply' }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      userGoalAnchor: anchor,
+      createGoalMessage,
+    });
+    // Last user message ("now") was at index 3 pre-injection; anchor lands at 3
+    // pushing "now" to 4.
+    expect(out.cacheBreakpointIndex).toBe(4);
+    expect(out.messages[out.cacheBreakpointIndex].content).toBe('now');
+  });
+
+  it('determinism: identical input + options produces identical output', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'user', content: '[CONTEXT DIGEST] prior compaction' }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const opts = { ...baseOptions, userGoalAnchor: anchor, createGoalMessage };
+    const out1 = transformContextBeforeLLM(messages, opts);
+    const out2 = transformContextBeforeLLM(messages, opts);
+    expect(out1).toEqual(out2);
   });
 });
