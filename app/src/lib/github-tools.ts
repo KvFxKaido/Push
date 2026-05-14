@@ -905,14 +905,15 @@ export async function executePostPRReview(
 
 /**
  * Fetch project instruction files from a GitHub repo via the REST API.
- * Tries AGENTS.md first, then CLAUDE.md, then GEMINI.md as fallbacks.
- * Returns content + filename, or null if none of those files exist.
+ * Tries PUSH.md first (Push-specific override), then AGENTS.md, CLAUDE.md,
+ * and GEMINI.md as fallbacks. Returns content + filename, or null if none
+ * of those files exist. Matches the CLI loader in `cli/workspace-context.ts`.
  */
 export async function fetchProjectInstructions(
   repo: string,
   branch?: string,
 ): Promise<{ content: string; filename: string } | null> {
-  const FILES_TO_TRY = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
+  const FILES_TO_TRY = ['PUSH.md', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
   const headers = getGitHubHeaders();
 
   for (const filename of FILES_TO_TRY) {

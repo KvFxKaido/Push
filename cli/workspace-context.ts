@@ -197,12 +197,11 @@ export async function loadMemory(cwd: string): Promise<string | null> {
 
 // ─── loadProjectInstructions ──────────────────────────────
 
-const INSTRUCTION_FILES: readonly string[] = [
-  '.push/instructions.md',
-  'AGENTS.md',
-  'CLAUDE.md',
-  'GEMINI.md',
-];
+// PUSH.md is the Push-specific override that wins over the standard
+// AGENTS.md → CLAUDE.md → GEMINI.md chain. Matches the web loader in
+// `app/src/lib/github-tools.ts`. Tracked at repo root (unlike the prior
+// gitignored `.push/instructions.md` override, which was silent).
+const INSTRUCTION_FILES: readonly string[] = ['PUSH.md', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'];
 
 export async function loadProjectInstructions(cwd: string): Promise<ProjectInstructions | null> {
   for (const relPath of INSTRUCTION_FILES) {

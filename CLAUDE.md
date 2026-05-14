@@ -139,7 +139,7 @@ Three guardrails from the 2026-04 Big Four extraction; apply before adding cross
 
 ### Project instructions loading
 
-Loader order is `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first found wins). Caps differ per surface: the **web/repo** loader (`fetchProjectInstructions` in `app/src/lib/github-tools.ts`) fetches via GitHub REST and truncates at **5,000 chars** with a marker, then re-reads from the sandbox once it's ready (two-phase, not strictly first-found-wins end-to-end). The **CLI/shared** loader (`lib/project-instructions.ts`, `cli/workspace-context.ts`) caps at **8,000 chars**. The CLI additionally honors `.push/instructions.md` as a higher-priority local override, then falls back to the same chain. CLI workspace context injects the result as a `[PROJECT_INSTRUCTIONS]` block alongside a workspace snapshot (git branch, dirty files, top-level tree, manifest summary).
+Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first found wins). `PUSH.md` is the Push-specific override and applies on both surfaces. Caps differ per surface: the **web/repo** loader (`fetchProjectInstructions` in `app/src/lib/github-tools.ts`) fetches via GitHub REST and truncates at **5,000 chars** with a marker, then re-reads from the sandbox once it's ready (two-phase, not strictly first-found-wins end-to-end). The **CLI/shared** loader (`lib/project-instructions.ts`, `cli/workspace-context.ts`) caps at **8,000 chars**. CLI workspace context injects the result as a `[PROJECT_INSTRUCTIONS]` block alongside a workspace snapshot (git branch, dirty files, top-level tree, manifest summary).
 
 ## Pointers
 

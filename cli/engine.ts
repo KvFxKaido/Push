@@ -37,8 +37,12 @@ import {
   distillContext,
   estimateContextTokens,
   getContextBudget,
+  isToolResultMessage,
+  isParseErrorMessage,
 } from './context-manager.js';
 import { transformContextBeforeLLM, type DistillResult } from '../lib/context-transformer.ts';
+import { deriveUserGoalAnchor } from '../lib/user-goal-anchor.ts';
+import { loadUserGoalFile, seedUserGoalFile, extractDigestBody } from './user-goal-file.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { buildMalformedToolCallEvents, summarizeToolResultPreview } from '../lib/run-events.ts';
@@ -996,6 +1000,23 @@ export async function runAssistantLoop(
       );
     let capturedDistill: DistillResult<Message> | null = null;
     let capturedTrim: TrimResult | null = null;
+    // First non-tool-result, non-parse-error user turn — the seed for the
+    // `[USER_GOAL]` anchor that gets injected near the tail after
+    // compaction. See `lib/user-goal-anchor.ts` for the format pin.
+    const firstUserTurn = (state.messages as Message[]).find(
+      (m) =>
+        m.role === 'user' &&
+        !isToolResultMessage(m as { role: string; content: string }) &&
+        !isParseErrorMessage(m as { role: string; content: string }),
+    )?.content;
+    const firstUserTurnStr = typeof firstUserTurn === 'string' ? firstUserTurn : null;
+    // v2: prefer a user-owned `.push/goal.md` when present. Falls back to
+    // verbatim derivation when the file is absent or unparseable so the
+    // anchor still injects on first compaction (auto-seed below catches
+    // up on the next turn).
+    const goalFileAnchor = await loadUserGoalFile(state.cwd);
+    const userGoalAnchor =
+      goalFileAnchor ?? deriveUserGoalAnchor({ firstUserTurn: firstUserTurnStr }) ?? undefined;
     const transformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
       surface: 'cli',
       enableFilterVisible: false,
@@ -1010,6 +1031,8 @@ export async function runAssistantLoop(
         capturedTrim = result;
         return { messages: result.messages, compactionApplied: result.trimmed };
       },
+      userGoalAnchor,
+      createGoalMessage: (content): Message => ({ role: 'user', content }),
     });
     // Cast through the closure-mutable ref. TS narrows `capturedDistill`
     // to its declared null because it doesn't track the synchronous
@@ -1038,6 +1061,25 @@ export async function runAssistantLoop(
         phase: 'context_trimming',
         detail: `${trimResult.beforeTokens} → ${trimResult.afterTokens} tokens (${trimResult.removedCount} msgs removed)`,
       });
+    }
+
+    // v2 auto-seed: write `.push/goal.md` once on the first compaction in a
+    // session where no file exists yet. Fire-and-forget — the write is
+    // best-effort and must not block the LLM call. Idempotent against an
+    // existing file via O_EXCL inside `seedUserGoalFile`, so concurrent
+    // rounds + double-fires are safe.
+    if (transformed.rewriteApplied && !goalFileAnchor && firstUserTurnStr) {
+      const digestMsg = transformed.messages.find(
+        (m) => typeof m.content === 'string' && m.content.includes('[CONTEXT DIGEST]'),
+      );
+      const workingGoalSeed =
+        digestMsg && typeof digestMsg.content === 'string'
+          ? extractDigestBody(digestMsg.content)
+          : '';
+      void seedUserGoalFile(state.cwd, {
+        firstUserTurn: firstUserTurnStr,
+        workingGoalSeed,
+      }).catch(() => {});
     }
 
     // After the per-hop transform, refresh the round-scoped metrics that

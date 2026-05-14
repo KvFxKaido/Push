@@ -23,6 +23,13 @@
  * array; the public API stays the same.
  */
 
+import {
+  formatUserGoalBlock,
+  USER_GOAL_COMPACTION_MARKER,
+  USER_GOAL_HEADER,
+  type UserGoalAnchor,
+} from './user-goal-anchor.ts';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -67,6 +74,17 @@ export interface TransformContextOptions<M extends TransformableMessage> {
   enableManageContext?: boolean;
   /** Pre-bound compaction function. Must be a pure function of its input. */
   manageContext?: (messages: M[]) => ManageContextResult<M>;
+  /** Optional user-goal anchor. When provided alongside `createGoalMessage`,
+   *  a `[USER_GOAL]` block is injected just before the last message whenever
+   *  compaction has run — this turn (`rewriteApplied` upstream) or in a
+   *  prior turn (durable `[CONTEXT DIGEST]` marker in the transcript). The
+   *  anchor stage is a no-op when no compaction has happened, so short
+   *  chats keep the natural first-user-turn position. */
+  userGoalAnchor?: UserGoalAnchor;
+  /** Factory for the synthetic message that carries the goal-anchor text.
+   *  Surface-specific (web `ChatMessage` vs CLI `Message`); mirrors the
+   *  pattern used by `createDigestMessage` in the manager. */
+  createGoalMessage?: (content: string) => M;
 }
 
 export interface TransformedContext<M extends TransformableMessage> {
@@ -103,10 +121,17 @@ interface StageResult<M extends TransformableMessage> {
   rewriteApplied: boolean;
 }
 
+/** Accumulated state visible to subsequent stages. Lets a stage condition
+ *  its behaviour on upstream rewrites (e.g. the goal-anchor stage only
+ *  fires when compaction also ran). */
+interface PipelineState {
+  rewriteApplied: boolean;
+}
+
 interface Stage<M extends TransformableMessage> {
   name: string;
   isEnabled: (options: TransformContextOptions<M>) => boolean;
-  run: (messages: M[], options: TransformContextOptions<M>) => StageResult<M>;
+  run: (messages: M[], options: TransformContextOptions<M>, state: PipelineState) => StageResult<M>;
 }
 
 function filterVisibleStage<M extends TransformableMessage>(): Stage<M> {
@@ -144,10 +169,72 @@ function manageContextStage<M extends TransformableMessage>(): Stage<M> {
   };
 }
 
+function readContent<M extends TransformableMessage>(msg: M): string {
+  const content = (msg as { content?: unknown }).content;
+  return typeof content === 'string' ? content : '';
+}
+
+function hasCompactionMarker<M extends TransformableMessage>(messages: M[]): boolean {
+  return messages.some((m) => readContent(m).includes(USER_GOAL_COMPACTION_MARKER));
+}
+
+function hasExistingGoalAnchor<M extends TransformableMessage>(
+  messages: M[],
+  blockContent: string,
+): boolean {
+  // Match on the header + initial-ask line so adjacent unrelated content
+  // (e.g. a digest that happens to mention `[USER_GOAL]` in prose) doesn't
+  // false-positive, while a re-derived anchor with identical seed is
+  // recognized even if a v2 surface adds optional trailing fields.
+  const askLine = blockContent.split('\n').find((line) => line.startsWith('Initial ask:'));
+  if (!askLine) return false;
+  return messages.some((m) => {
+    const content = readContent(m);
+    return content.startsWith(USER_GOAL_HEADER) && content.includes(askLine);
+  });
+}
+
+function injectUserGoalStage<M extends TransformableMessage>(): Stage<M> {
+  return {
+    name: 'injectUserGoal',
+    isEnabled: (o) => Boolean(o.userGoalAnchor && o.createGoalMessage),
+    run: (messages, options, state) => {
+      // Inject only when compaction is in play. Two signals: (a) an upstream
+      // stage rewrote this turn, (b) a prior turn left the durable digest
+      // marker. (b) keeps the anchor present in subsequent turns even if
+      // none of them individually crosses the summarize threshold.
+      const compactionDetected = state.rewriteApplied || hasCompactionMarker(messages);
+      if (!compactionDetected) return { messages, rewriteApplied: false };
+
+      const blockContent = formatUserGoalBlock(options.userGoalAnchor!);
+      if (hasExistingGoalAnchor(messages, blockContent)) {
+        return { messages, rewriteApplied: false };
+      }
+
+      const goalMessage = options.createGoalMessage!(blockContent);
+      if (messages.length === 0) {
+        return { messages: [goalMessage], rewriteApplied: true };
+      }
+      // Anchor lands just before the last message — typically the latest
+      // user turn or tool result the model is about to read. Maximum
+      // recency without disturbing the trailing slot.
+      const insertIdx = messages.length - 1;
+      const result = [...messages.slice(0, insertIdx), goalMessage, ...messages.slice(insertIdx)];
+      return { messages: result, rewriteApplied: true };
+    },
+  };
+}
+
 // Order is fixed: filter (drop hidden) → distill (preserve essentials) →
-// manageContext (compact for budget). Callers cannot reorder.
+// manageContext (compact for budget) → injectUserGoal (anchor goal near
+// tail iff compaction ran). Callers cannot reorder.
 function buildPipeline<M extends TransformableMessage>(): Stage<M>[] {
-  return [filterVisibleStage<M>(), distillStage<M>(), manageContextStage<M>()];
+  return [
+    filterVisibleStage<M>(),
+    distillStage<M>(),
+    manageContextStage<M>(),
+    injectUserGoalStage<M>(),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +251,7 @@ export function transformContextBeforeLLM<M extends TransformableMessage>(
 
   for (const stage of buildPipeline<M>()) {
     if (!stage.isEnabled(options)) continue;
-    const result = stage.run(working, options);
+    const result = stage.run(working, options, { rewriteApplied });
     working = result.messages;
     if (result.rewriteApplied) rewriteApplied = true;
   }

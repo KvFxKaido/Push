@@ -19,6 +19,7 @@ import {
 } from './orchestrator-prompt-builder';
 import { manageContext } from './message-context-manager';
 import { transformContextBeforeLLM } from '@push/lib/context-transformer';
+import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
 import { getZenGoTransport } from './zen-go';
 import { getVertexModelTransport } from './vertex-provider';
 
@@ -200,6 +201,18 @@ interface LLMMessage {
   content: string | LLMMessageContent[];
   intentHint?: string | null;
   reasoning_blocks?: LLMReasoningBlock[];
+}
+
+/** djb2 over the goal-anchor content keeps the synthetic id stable across
+ *  calls so the transform stays a pure function of (messages, options).
+ *  Mirrors `digestIdHash` in `message-context-manager.ts`; not factored out
+ *  to keep the wire-facing wrapper modules dependency-free. */
+function goalIdHash(content: string): string {
+  let hash = 5381;
+  for (let i = 0; i < content.length; i++) {
+    hash = ((hash << 5) + hash + content.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function isNonEmptyContent(content: string | LLMMessageContent[]): boolean {
@@ -420,6 +433,12 @@ export function toLLMMessages(
   // fixed inside the transformer; we cannot reorder filter vs. compaction
   // from this call site.
   const contextBudget = getContextBudget(providerType, providerModel);
+  // Anchor the user's goal near the recent tail whenever compaction has
+  // happened. v1 seeds the anchor from the first non-tool-result user turn;
+  // null when there's no usable seed (e.g., empty transcript on first send).
+  // See `lib/user-goal-anchor.ts` for the format pin.
+  const firstUserTurn = messages.find((m) => m.role === 'user' && !m.isToolResult)?.content;
+  const userGoalAnchor = deriveUserGoalAnchor({ firstUserTurn }) ?? undefined;
   const transformed = transformContextBeforeLLM<ChatMessage>(messages, {
     surface: 'web',
     manageContext: (msgs) => {
@@ -432,6 +451,17 @@ export function toLLMMessages(
         result.length !== msgs.length || result.some((m, i) => m !== msgs[i]);
       return { messages: result, compactionApplied };
     },
+    userGoalAnchor,
+    createGoalMessage: (content): ChatMessage => ({
+      id: `user-goal-anchor-${goalIdHash(content)}`,
+      role: 'user',
+      content,
+      timestamp: 0,
+      status: 'done',
+      // Hidden in the UI; still sent to the model. Same trick as the
+      // digest message factory in `message-context-manager.ts`.
+      isToolResult: true,
+    }),
   });
   const windowedMessages = transformed.messages;
 
