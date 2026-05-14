@@ -141,9 +141,11 @@ describe('createTheme', () => {
   });
 
   it('fg returns truecolor escape for known token', () => {
-    const theme = createTheme({ tier: 'truecolor' });
+    // Pin the theme explicitly — this test is about the truecolor
+    // escape mechanism, not the runtime default theme.
+    const theme = createTheme({ tier: 'truecolor', name: 'default' });
     const esc = theme.fg('state.error');
-    // #ef4444 -> rgb(239, 68, 68)
+    // default state.error = #ef4444 → rgb(239, 68, 68)
     assert.ok(esc.includes('239'));
     assert.ok(esc.includes('68'));
   });
@@ -186,12 +188,12 @@ describe('createTheme', () => {
     assert.ok(result.includes('test'));
   });
 
-  it('defaults theme name to "default"', () => {
+  it('defaults theme name to "mono"', () => {
     const prev = process.env.PUSH_THEME;
     delete process.env.PUSH_THEME;
     try {
       const theme = createTheme();
-      assert.equal(theme.name, 'default');
+      assert.equal(theme.name, 'mono');
     } finally {
       if (prev !== undefined) process.env.PUSH_THEME = prev;
     }
@@ -207,13 +209,15 @@ describe('createTheme', () => {
     assert.ok(esc.includes('214'));
   });
 
-  it('falls back to default for unknown theme name', () => {
-    const theme = createTheme({ name: 'not-a-real-theme', tier: 'truecolor' });
-    assert.equal(theme.name, 'default');
-    const esc = theme.fg('accent.primary');
-    // default accent.primary = #0070f3 → rgb(0, 112, 243)
-    assert.ok(esc.includes('112'));
-    assert.ok(esc.includes('243'));
+  it('falls back to mono for unknown theme name', () => {
+    const prev = process.env.PUSH_THEME;
+    delete process.env.PUSH_THEME;
+    try {
+      const theme = createTheme({ name: 'not-a-real-theme', tier: 'truecolor' });
+      assert.equal(theme.name, 'mono');
+    } finally {
+      if (prev !== undefined) process.env.PUSH_THEME = prev;
+    }
   });
 
   it('theme variants produce different escapes for accent.primary', () => {
@@ -303,11 +307,11 @@ describe('isThemeName', () => {
 });
 
 describe('detectThemeName', () => {
-  it('returns "default" when PUSH_THEME unset', () => {
+  it('returns "mono" when PUSH_THEME unset', () => {
     const prev = process.env.PUSH_THEME;
     delete process.env.PUSH_THEME;
     try {
-      assert.equal(detectThemeName(), 'default');
+      assert.equal(detectThemeName(), 'mono');
     } finally {
       if (prev !== undefined) process.env.PUSH_THEME = prev;
     }
@@ -328,7 +332,7 @@ describe('detectThemeName', () => {
     const prev = process.env.PUSH_THEME;
     process.env.PUSH_THEME = 'not-a-real-theme';
     try {
-      assert.equal(detectThemeName(), 'default');
+      assert.equal(detectThemeName(), 'mono');
     } finally {
       if (prev === undefined) delete process.env.PUSH_THEME;
       else process.env.PUSH_THEME = prev;

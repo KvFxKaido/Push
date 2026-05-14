@@ -364,7 +364,7 @@ export function isThemeName(value: unknown): value is ThemeName {
 export function detectThemeName(): ThemeName {
   const env = (process.env.PUSH_THEME || '').toLowerCase().trim();
   if (isThemeName(env)) return env;
-  return 'default';
+  return 'mono';
 }
 
 // ── Glyph sets ──────────────────────────────────────────────────────

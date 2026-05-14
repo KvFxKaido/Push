@@ -83,8 +83,6 @@ import {
   osc52Copy,
 } from './tui-renderer.js';
 import {
-  detectLayoutMode,
-  isLayoutMode,
   makeBadge,
   pushWrappedLines,
   renderAssistantEntryLines,
@@ -258,15 +256,11 @@ function createTUIState() {
     // `resultPreview` on transcript tool_calls is truncated; this holds the
     // untruncated payload dispatched on the live event.
     lastToolResult: null, // { name, text, isError } | null
-    // Visual layout mode for the transcript ('standard' | 'quiet').
-    // Resolved at startup from PUSH_TUI_LAYOUT / config.layout; default
-    // 'standard'. The framer dispatch reads this on every render.
-    layout: 'standard',
     // Wall-clock ms when the current turn started (idle → running).
     // Cleared on running → idle. Preserved across awaiting_* ↔ running
     // since those are continuations of the same turn (e.g. user
-    // approving a tool). Null when idle. Used by the quiet-layout
-    // running indicator to show elapsed time.
+    // approving a tool). Null when idle. Used by the running indicator
+    // to show elapsed time.
     turnStartedAt: null,
   };
 }
@@ -308,19 +302,7 @@ function renderHeader(
   buf,
   layout,
   theme,
-  {
-    provider,
-    model,
-    session,
-    sessionName,
-    cwd,
-    runState,
-    branch,
-    animation,
-    spinner,
-    activity,
-    layoutMode = 'standard',
-  },
+  { provider, model, session, sessionName, cwd, runState, branch, animation, spinner, activity },
 ) {
   const { glyphs } = theme;
   const { top, left, width } = layout.header;
@@ -340,13 +322,11 @@ function renderHeader(
         : theme.style('state.success', glyphs.statusDot);
   // Verb sits next to the spinner glyph while running (thinking,
   // replying, or a tool verb). Falls through to runState otherwise so
-  // 'idle' / 'awaiting_approval' still read clearly. In quiet layout,
-  // when there's no activity-specific verb yet, swap the mechanical
-  // 'running' for a deterministic mood verb (roosting / brewing / …)
-  // seeded by sessionId — softer than a status code, stable per session.
-  const fallbackRunningVerb = layoutMode === 'quiet' ? moodVerb(session) : 'running';
-  const verb =
-    runState === 'running' ? (verbForActivity(activity) ?? fallbackRunningVerb) : runState;
+  // 'idle' / 'awaiting_approval' still read clearly. When there's no
+  // activity-specific verb yet, swap the mechanical 'running' for a
+  // deterministic mood verb (roosting / brewing / …) seeded by
+  // sessionId — softer than a status code, stable per session.
+  const verb = runState === 'running' ? (verbForActivity(activity) ?? moodVerb(session)) : runState;
 
   const sep = theme.style('fg.dim', '·');
   const stateLabel = theme.style('fg.dim', verb);
@@ -356,57 +336,12 @@ function renderHeader(
   const shortCwd = homeDir && cwd.startsWith(homeDir) ? '~' + cwd.slice(homeDir.length) : cwd;
   const branchPart = branch ? ` ${sep} ${theme.style('accent.link', branch)}` : '';
 
-  if (layoutMode === 'quiet') {
-    // Single dim row: `● state · provider · model · ~/dir · branch`.
-    // No box, no session line — the bottom status bar already carries
-    // session/git context, so trade chrome for transcript real estate.
-    const cwdStr = theme.style('fg.dim', truncate(shortCwd, Math.floor(width * 0.35)));
-    const row = `${stateDot} ${stateLabel} ${sep} ${providerStr} ${sep} ${modelStr} ${sep} ${cwdStr}${branchPart}`;
-    buf.writeLine(top, left, padTo(row, width));
-    return;
-  }
-
-  // ── Top border: ┌─ ⬡ Push ──...──┐ ────────────────────────────
-  // Fixed chars: ┌─ (2) + space (1) + ⬡ (1) + space (1) + Push (4) + space (1) + fill + ┐ (1) = 11 + fill = width
-  const topFill = glyphs.horizontal.repeat(Math.max(0, width - 11));
-  const titleRaw = 'Push';
-  const title =
-    animation && animation.effect !== 'off'
-      ? theme.bold(animateText(titleRaw, animation.effect, animation.tick, theme.tier))
-      : theme.bold(theme.style('fg.primary', titleRaw));
-  const topBorder =
-    theme.style('fg.dim', `${glyphs.topLeft}${glyphs.horizontal} `) +
-    theme.style('accent.link', '\u2B21') +
-    ' ' +
-    title +
-    theme.style('fg.dim', ` ${topFill}${glyphs.topRight}`);
-  buf.writeLine(top, left, topBorder);
-
-  // ── Content row: │  ● state  provider · model   ~/dir · branch  │ ──
-  const leftInner = `${stateDot} ${stateLabel}  ${providerStr} ${sep} ${modelStr}`;
-  const rightInner =
-    theme.style('fg.secondary', truncate(shortCwd, Math.floor(width * 0.35))) + branchPart;
-
-  // │  leftInner[gap]rightInner  │  — inner content width = width - 6
-  const gapLen = Math.max(1, width - 6 - visibleWidth(leftInner) - visibleWidth(rightInner));
-  const contentRow =
-    theme.style('fg.dim', glyphs.vertical) +
-    `  ${leftInner}${' '.repeat(gapLen)}${rightInner}  ` +
-    theme.style('fg.dim', glyphs.vertical);
-  buf.writeLine(top + 1, left, contentRow);
-
-  // ── Bottom border: └──...──┘ ─────────────────────────────────
-  const bottomBorder = theme.style(
-    'fg.dim',
-    `${glyphs.bottomLeft}${glyphs.horizontal.repeat(width - 2)}${glyphs.bottomRight}`,
-  );
-  buf.writeLine(top + 2, left, bottomBorder);
-
-  // ── Session line (indented to align with box inner content) ───
-  const sessDisplay = sessionName ? `${sessionName} (${session})` : session;
-  const sessLabel = theme.style('fg.dim', `session: ${sessDisplay}`);
-  const hint = theme.style('accent.link', 'Ctrl+R sessions');
-  buf.writeLine(top + 3, left, padTo(`  ${sessLabel}  ${hint}`, width));
+  // Single dim row: `● state · provider · model · ~/dir · branch`.
+  // No box, no session line — the bottom status bar already carries
+  // session/git context, so trade chrome for transcript real estate.
+  const cwdStr = theme.style('fg.dim', truncate(shortCwd, Math.floor(width * 0.35)));
+  const row = `${stateDot} ${stateLabel} ${sep} ${providerStr} ${sep} ${modelStr} ${sep} ${cwdStr}${branchPart}`;
+  buf.writeLine(top, left, padTo(row, width));
 }
 
 function findFirstIntersectingTranscriptBlock(entryBlocks, targetLine) {
@@ -444,7 +379,6 @@ function renderTranscript(buf, layout, theme, tuiState) {
     tuiState.payloadInspectorOpen ? 1 : 0,
     tuiState.payloadCursorId || '',
     expandedPayloadIdsKey,
-    tuiState.layout,
   ].join('::');
 
   let cached = tuiState.transcriptRenderCache;
@@ -469,7 +403,6 @@ function renderTranscript(buf, layout, theme, tuiState) {
         expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
         entryKey: `${entry.timestamp ?? 0}:${entryIndex}`,
         payloadUI,
-        layout: tuiState.layout,
       });
 
       const blockStartLine = totalLines;
@@ -490,22 +423,13 @@ function renderTranscript(buf, layout, theme, tuiState) {
 
   const streamingLines = [];
 
-  // Add streaming buffer if assistant is currently streaming. In quiet
-  // layout, swap the AI badge for the same bullet the assistant framer
-  // uses so the in-progress response matches finished entries.
+  // Add streaming buffer if assistant is currently streaming. Same
+  // bullet prefix the assistant framer uses; renderAssistantEntryLines
+  // applies it internally now that the badge-led layout is gone.
   if (tuiState.streamBuf) {
-    const quietPrefix =
-      tuiState.layout === 'quiet'
-        ? {
-            firstPrefix: `${theme.style('fg.muted', theme.unicode ? '•' : '*')} `,
-            nextPrefix: '  ',
-          }
-        : null;
     renderAssistantEntryLines(streamingLines, tuiState.streamBuf, width, theme, {
-      streaming: true,
       expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
       payloadUI: null,
-      ...(quietPrefix ? { prefixOverride: quietPrefix } : {}),
     });
   }
 
@@ -636,15 +560,15 @@ function renderToolPane(buf, layout, theme, tuiState) {
 }
 
 /**
- * Quiet-layout running indicator. Lives in the gap row directly above
- * the composer (composer.top - 1 — that row is otherwise blank). Format:
+ * Running indicator. Lives in the gap row directly above the composer
+ * (composer.top - 1 — that row is otherwise blank). Format:
  *
  *   * roosting… (4m 5s · 4.1k tokens)
  *
- * Only renders in quiet layout while running. In every other state we
- * emit a blank padded line so the screen-buffer diff drops the row;
- * without that the previous frame's content would linger because the
- * buffer doesn't auto-clear unwritten rows (see tui-renderer.ts).
+ * Only renders while running. In every other state we emit a blank
+ * padded line so the screen-buffer diff drops the row; without that
+ * the previous frame's content would linger because the buffer
+ * doesn't auto-clear unwritten rows (see tui-renderer.ts).
  *
  * Called every animation tick (10 FPS) while running, so elapsed time
  * updates roughly once per second of wall clock.
@@ -653,10 +577,7 @@ function renderActivityIndicator(buf, layout, theme, tuiState, tokens, sessionId
   const top = layout.composer.top - 1;
   if (top < 1) return; // tiny terminal — gap row collapsed
 
-  const visible =
-    tuiState.layout === 'quiet' &&
-    tuiState.runState === 'running' &&
-    typeof tuiState.turnStartedAt === 'number';
+  const visible = tuiState.runState === 'running' && typeof tuiState.turnStartedAt === 'number';
 
   if (!visible) {
     // Clear the row so a previous frame's indicator doesn't linger.
@@ -681,37 +602,12 @@ function renderActivityIndicator(buf, layout, theme, tuiState, tokens, sessionId
 function renderComposer(buf, layout, theme, composer, tuiState, tabState) {
   const { top, left, width, height } = layout.composer;
   const { glyphs } = theme;
-  const quiet = tuiState.layout === 'quiet';
-
-  if (quiet) {
-    // Quiet: dim divider with no embedded label. Run-state already shows
-    // in the header row and the bottom status bar; the composer doesn't
-    // need to repeat it. Tab-hint still shows on the candidates row below.
-    const divider = theme.style('fg.dim', glyphs.horizontal.repeat(width));
-    buf.writeLine(top, left, divider);
-  } else {
-    // Standard: top border with label embedded.
-    const stateLabel =
-      tuiState.runState === 'running'
-        ? theme.style('state.warn', ' streaming... ')
-        : tuiState.runState === 'awaiting_approval'
-          ? theme.style('state.error', ' approval required ')
-          : tuiState.runState === 'awaiting_user_question'
-            ? theme.style('accent.primary', ' ? question ')
-            : theme.style('fg.muted', ' message ');
-    const tabHint = tabState ? tabState.hint : null;
-    const label = tabHint ? stateLabel + theme.style('accent.primary', ` ${tabHint} `) : stateLabel;
-
-    const borderChar = glyphs.horizontal;
-    const labelWidth = visibleWidth(label);
-    const borderLeft = borderChar.repeat(2);
-    const borderRight = borderChar.repeat(Math.max(0, width - 2 - labelWidth - 2));
-    const topBorder =
-      theme.style('border.default', borderLeft) +
-      label +
-      theme.style('border.default', borderRight);
-    buf.writeLine(top, left, topBorder);
-  }
+  // Composer divider: dim horizontal rule with no embedded label.
+  // Run-state shows in the header row and the bottom status bar;
+  // the composer doesn't need to repeat it. Tab-hint still shows on
+  // the candidates row below.
+  const divider = theme.style('fg.dim', glyphs.horizontal.repeat(width));
+  buf.writeLine(top, left, divider);
 
   // Candidates bar (when tab completion is active — preview or cycling)
   let candidateRowUsed = false;
@@ -1314,22 +1210,13 @@ export async function runTUI(options = {}) {
   // restarting the TUI. Renderers receive `theme` as a parameter on every
   // frame, so reassigning this closure variable propagates to the next draw.
   //
-  // Quiet layout pairs to the `mono` palette by default — only when the
-  // user hasn't expressed a theme preference (no PUSH_THEME env, no
-  // config.theme). An explicit theme always wins. Same precedence rule
-  // /theme <name> + /animate use.
-  // Capture the layout env *before* any in-session /layout set/unpin
-  // mutates it. Without this, a TUI launched with `PUSH_TUI_LAYOUT=quiet`
-  // and then toggled via /layout would lose the env preference forever:
-  // /layout unpin would delete env and fall through to the default rather
-  // than honour the value the user originally launched with.
-  const originalEnvLayout = (process.env.PUSH_TUI_LAYOUT || '').trim() || null;
-  const initialLayout = detectLayoutMode();
-  const explicitTheme = (process.env.PUSH_THEME || '').trim();
-  const pairedThemeName = initialLayout === 'quiet' && !explicitTheme ? 'mono' : undefined;
-  let theme = createTheme(pairedThemeName ? { name: pairedThemeName } : {});
+  // The runtime fallback (see `detectThemeName` in `tui-theme.ts`) is
+  // `mono`, which pairs with the reserved bullet-led TUI rendering.
+  // `applyConfigToEnv` above seeds `PUSH_THEME` from `config.theme` if
+  // pinned, so a user preference wins over the default with no extra
+  // logic here.
+  let theme = createTheme({});
   const tuiState = createTUIState();
-  tuiState.layout = initialLayout;
   const composer = createComposer();
   const keybinds = createKeybindMap();
   const screenBuf = createScreenBuffer();
@@ -1629,16 +1516,21 @@ export async function runTUI(options = {}) {
   // runState === 'running' on Unicode-capable terminals). The interval
   // itself stays alive while any consumer is *eligible*, so the first
   // frame of a new run paints immediately.
-  // The quiet-layout activity row needs the ticker to fire while running
-  // so its elapsed-time display advances. Eligibility = active consumer;
+  // The activity row needs the ticker to fire while running so its
+  // elapsed-time display advances. Eligibility = active consumer;
   // visibility = "would the next frame look different from this one".
-  const activityRowVisible = () => tuiState.layout === 'quiet' && tuiState.runState === 'running';
+  //
+  // `animation.effect` is *not* a consumer today — its previous home
+  // was the boxed-header title which was deleted in the reserved-layout
+  // cleanup (PR #552). The `/animate` slash command still flips the
+  // field, but until something visible consumes it again the ticker
+  // shouldn't fire on its behalf. Copilot review on PR #552 — the dead
+  // 10 FPS redraws were a measurable cost.
+  const activityRowVisible = () => tuiState.runState === 'running';
   const anyConsumerVisible = () =>
-    animation.effect !== 'off' ||
     (spinner.name !== 'off' && tuiState.runState === 'running' && theme.unicode) ||
     activityRowVisible();
-  const anyConsumerEligible = () =>
-    animation.effect !== 'off' || spinner.name !== 'off' || activityRowVisible();
+  const anyConsumerEligible = () => spinner.name !== 'off' || activityRowVisible();
   const startAnimationTicker = () => {
     if (animationInterval) return;
     animationInterval = setInterval(() => {
@@ -1776,8 +1668,8 @@ export async function runTUI(options = {}) {
     }
 
     const composerLines = composer.getLines().length;
-    const headerHeight = tuiState.layout === 'quiet' ? 1 : 4;
-    const layoutKey = `${rows}x${cols}:${tuiState.toolPaneOpen ? 1 : 0}:${composerLines}:${tuiState.layout}`;
+    const headerHeight = 1;
+    const layoutKey = `${rows}x${cols}:${tuiState.toolPaneOpen ? 1 : 0}:${composerLines}`;
     let layout = layoutCache?.key === layoutKey ? layoutCache.layout : null;
     if (!layout) {
       layout = computeLayout(rows, cols, {
@@ -1819,18 +1711,10 @@ export async function runTUI(options = {}) {
         animation: { effect: animation.effect, tick: animation.tick },
         spinner: { name: spinner.name, tick: animation.tick },
         activity: tuiState.activity,
-        layoutMode: tuiState.layout,
       });
-      // Standard layout has its own boxed bottom border; quiet mode skips
-      // the divider too — the gap row above the transcript is enough
-      // visual separation, and the line is what makes the screen feel busy.
-      if (tuiState.layout !== 'quiet') {
-        screenBuf.writeLine(
-          layout.header.top + layout.header.height,
-          layout.innerLeft,
-          drawDivider(layout.innerWidth, theme.glyphs, theme),
-        );
-      }
+      // No divider under the header — the gap row above the transcript
+      // is enough visual separation; the line is what makes the screen
+      // feel busy.
     };
 
     const renderFooterRegion = () => {
@@ -3687,101 +3571,6 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
-  async function handleLayoutCommand(arg) {
-    const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
-    const sub = (parts[0] || '').toLowerCase();
-    const layouts = ['standard', 'quiet'];
-
-    if (!sub || sub === 'show') {
-      const pinned = isLayoutMode(config.layout) ? ' (pinned)' : '';
-      addTranscriptEntry(tuiState, 'status', `layout: ${tuiState.layout}${pinned}`);
-      scheduler.flush();
-      return;
-    }
-
-    if (sub === 'list') {
-      const lines = layouts.map((name) => {
-        const marker = name === tuiState.layout ? '*' : ' ';
-        const desc =
-          name === 'quiet'
-            ? 'reserved bullet-led shape; no badges, no boxed header'
-            : 'default badge-led shape with boxed header';
-        return `  ${marker} ${name.padEnd(10)}  ${desc}`;
-      });
-      addTranscriptEntry(tuiState, 'status', ['Layouts:', ...lines].join('\n'));
-      scheduler.flush();
-      return;
-    }
-
-    const sub0 = ((sub === 'set' ? parts[1] : sub) || '').toLowerCase().trim();
-    if (sub0 === 'unpin') {
-      delete config.layout;
-      // Restore the env that the TUI was launched with (if any) instead
-      // of nuking it. detectLayoutMode reads env first, so this lets
-      // unpin honour an externally-set PUSH_TUI_LAYOUT — matches what
-      // the help text promises ("revert to env or default").
-      if (originalEnvLayout) {
-        process.env.PUSH_TUI_LAYOUT = originalEnvLayout;
-      } else {
-        delete process.env.PUSH_TUI_LAYOUT;
-      }
-      await saveConfig(config);
-      tuiState.layout = detectLayoutMode();
-      // Layout swap moves pane regions and changes framer tables; invalidate
-      // both layout and transcript caches so the next frame rebuilds clean.
-      let unpinNote = '';
-      const explicitThemeUnpin = (process.env.PUSH_THEME || '').trim();
-      if (!explicitThemeUnpin) {
-        const targetThemeName = tuiState.layout === 'quiet' ? 'mono' : 'default';
-        if (theme.name !== targetThemeName) {
-          theme = createTheme({ tier: theme.tier, unicode: theme.unicode, name: targetThemeName });
-          unpinNote = `, theme → ${targetThemeName}`;
-        }
-      }
-      invalidateTranscriptRenderCache(tuiState);
-      tuiState.dirty.add('all');
-      addTranscriptEntry(tuiState, 'status', `layout: ${tuiState.layout} (unpinned)${unpinNote}`);
-      scheduler.flush();
-      return;
-    }
-
-    if (!isLayoutMode(sub0)) {
-      addTranscriptEntry(
-        tuiState,
-        'warning',
-        `Unknown layout: ${sub0 || '(missing)'}. Available: ${layouts.join(', ')}. Use 'unpin' to clear.`,
-      );
-      scheduler.flush();
-      return;
-    }
-
-    tuiState.layout = sub0;
-    config.layout = sub0;
-    process.env.PUSH_TUI_LAYOUT = sub0;
-    await saveConfig(config);
-
-    // Re-pair theme to layout when the user hasn't expressed a theme
-    // preference. Going quiet → switch to mono; going standard → revert
-    // to detected default. We only rebuild the theme runtime; we never
-    // persist this into config.theme, so the user can flip back without
-    // residue. An explicit theme (set via /theme or PUSH_THEME) always
-    // wins — same rule as initial pairing.
-    let pairedNote = '';
-    const explicitTheme2 = (process.env.PUSH_THEME || '').trim();
-    if (!explicitTheme2) {
-      const targetThemeName = sub0 === 'quiet' ? 'mono' : 'default';
-      if (theme.name !== targetThemeName) {
-        theme = createTheme({ tier: theme.tier, unicode: theme.unicode, name: targetThemeName });
-        pairedNote = `, theme → ${targetThemeName}`;
-      }
-    }
-
-    invalidateTranscriptRenderCache(tuiState);
-    tuiState.dirty.add('all');
-    addTranscriptEntry(tuiState, 'status', `layout: ${sub0} (saved)${pairedNote}`);
-    scheduler.flush();
-  }
-
   function handleDebugCommand(arg) {
     const sub = (arg || '').trim();
     if (!sub) {
@@ -3858,10 +3647,6 @@ export async function runTUI(options = {}) {
         await handleSpinnerCommand(arg || null);
         return true;
 
-      case 'layout':
-        await handleLayoutCommand(arg || null);
-        return true;
-
       case 'debug':
         handleDebugCommand(arg || null);
         return true;
@@ -3886,7 +3671,7 @@ export async function runTUI(options = {}) {
             '  /theme               Show current theme',
             '  /theme list          List available themes',
             '  /theme preview [<name>]  Preview theme swatches (all themes if omitted)',
-            '  /theme <name>        Switch theme live and persist (default|neon|metallic|mono|solarized|forest)',
+            '  /theme <name>        Switch theme live and persist (mono|default|neon|metallic|solarized|forest)',
             '  /animate             Show current animation effect (pinned / following theme)',
             '  /animate list        List animation effects',
             '  /animate <effect>    Pin header animation (off|pulse|shimmer|rainbow); saved to config',
@@ -3895,10 +3680,6 @@ export async function runTUI(options = {}) {
             '  /spinner list        List Braille spinners (with frame previews)',
             '  /spinner <name>      Pin a spinner (off|braille|orbit|breathe|pulse|helix)',
             '  /spinner unpin       Unpin: revert to static status dot',
-            '  /layout              Show current TUI layout (standard|quiet)',
-            '  /layout list         List available layouts',
-            '  /layout <name>       Switch layout live and persist (standard|quiet)',
-            '  /layout unpin        Unpin: revert to env or default (standard)',
             '  /debug runtime       Show runtime path/provider/session diagnostics',
             '  /skills              List available skills',
             '  /skills reload       Reload workspace + Claude skills',

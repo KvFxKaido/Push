@@ -1,8 +1,8 @@
 /**
  * tui-status-format.test.mjs — formatElapsed + formatTokenCount.
  *
- * Both are pure formatting helpers used by the quiet-layout running
- * indicator and the status bar. Tested here separately from
+ * Both are pure formatting helpers used by the running indicator and
+ * the status bar. Tested here separately from
  * renderStatusBar so the format conventions are pinned without
  * needing a screen buffer.
  */

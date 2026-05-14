@@ -208,7 +208,7 @@ Usage:
   push theme                    Show current TUI theme
   push theme list               List available TUI themes
   push theme preview [<name>]   Preview swatches for a theme (all themes if omitted)
-  push theme set <name>         Set TUI theme (default|neon|metallic|mono|solarized|forest)
+  push theme set <name>         Set TUI theme (mono|default|neon|metallic|solarized|forest)
   push animate                  Show pinned TUI animation (or "follow-theme")
   push animate list             List animation effects
   push animate set <name>       Pin TUI animation (off|pulse|shimmer|rainbow)
@@ -1611,9 +1611,15 @@ async function runConfigSubcommand(values, positionals) {
 }
 
 async function runThemeSubcommand(positionals) {
-  const { THEME_NAMES, VARIANTS, isThemeName, renderThemePreview } = await import('./tui-theme.js');
+  const { THEME_NAMES, VARIANTS, isThemeName, detectThemeName, renderThemePreview } = await import(
+    './tui-theme.js'
+  );
   const config = await loadConfig();
-  const current = isThemeName(config.theme) ? config.theme : 'default';
+  // Match the runtime fallback chain: config.theme → PUSH_THEME →
+  // detectThemeName() default. Hardcoding `'default'` here drifted out
+  // of sync when the runtime default flipped to `'mono'`. Copilot
+  // review on PR #552.
+  const current = isThemeName(config.theme) ? config.theme : detectThemeName();
   const action = (positionals[1] || 'show').toLowerCase();
 
   if (action === 'show') {

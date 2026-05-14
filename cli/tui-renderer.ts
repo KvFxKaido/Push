@@ -491,8 +491,7 @@ export interface LayoutOptions {
   toolPaneOpen?: boolean;
   composerLines?: number;
   /**
-   * Override the fixed header pane height. Default 4 (boxed header with
-   * session line). Quiet layout passes 1 to render a single content row.
+   * Override the fixed header pane height. Default 1 (single content row).
    */
   headerHeight?: number;
 }
@@ -532,7 +531,7 @@ export function computeLayout(
   const innerWidth = cols - outerMarginCol * 2;
   const innerLeft = outerMarginCol + 1; // 1-indexed for ANSI
 
-  const headerHeight = Math.max(1, headerHeightOverride ?? 4); // standard: boxed; quiet: 1-row
+  const headerHeight = Math.max(1, headerHeightOverride ?? 1); // single content row
   const footerHeight = 2; // status bar + keybind hints
   const composerHeight = Math.max(3, Math.min(7, composerLines + 2)); // +2 for border
 

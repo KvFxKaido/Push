@@ -19,7 +19,6 @@ export interface PushConfig {
   theme?: string;
   animation?: string;
   spinner?: string;
-  layout?: string;
   // Tool name allow/deny lists (CLI tool names from `cli/tools.ts` — e.g.
   // `exec`, `exec_start`, `write_file`). `disabledTools` blocks at dispatch;
   // `alwaysAllow` waives approval for the listed tools (today only `exec`
@@ -100,7 +99,6 @@ export function applyConfigToEnv(config: PushConfig): void {
   setEnvIfMissing('PUSH_THEME', config.theme);
   setEnvIfMissing('PUSH_ANIMATION', config.animation);
   setEnvIfMissing('PUSH_SPINNER', config.spinner);
-  setEnvIfMissing('PUSH_TUI_LAYOUT', config.layout);
 
   // Forward tool allow/deny lists as comma-separated env vars so child
   // processes (notably the pushd daemon's delegated tool executors) see
