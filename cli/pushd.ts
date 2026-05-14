@@ -2169,6 +2169,27 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleE
     {
       onStatus: () => {},
       signal,
+      // Forward the per-delegation prompt snapshot onto the daemon
+      // event stream so a connected client (TUI / CLI / relay
+      // consumer) sees the same audit trail the web orchestrator
+      // already emits per turn. `appendSessionEvent` manages
+      // persistence + seq; `broadcastEvent` fans out to live
+      // listeners using the same envelope shape as the rest of the
+      // daemon's emit sites.
+      onRunEvent: (event) => {
+        const { type, ...payload } = event;
+        void appendSessionEvent(entry.state, type, payload, null).then(() => {
+          broadcastEvent(sessionId, {
+            v: PROTOCOL_VERSION,
+            kind: 'event',
+            sessionId,
+            seq: entry.state.eventSeq,
+            ts: Date.now(),
+            type,
+            payload,
+          });
+        });
+      },
     },
   );
 
@@ -2279,6 +2300,21 @@ async function runCoderForTaskGraph(
     {
       onStatus: () => {},
       signal,
+      onRunEvent: (event) => {
+        const { type, ...payload } = event;
+        void appendSessionEvent(entry.state, type, payload, parentRunId ?? null).then(() => {
+          broadcastEvent(sessionId, {
+            v: PROTOCOL_VERSION,
+            kind: 'event',
+            sessionId,
+            ...(parentRunId ? { runId: parentRunId } : {}),
+            seq: entry.state.eventSeq,
+            ts: Date.now(),
+            type,
+            payload,
+          });
+        });
+      },
     },
   );
 
@@ -3384,6 +3420,21 @@ async function handleDelegateCoder(req) {
             // Quiet for now — later slices can emit agent_status events here.
           },
           signal: abortController.signal,
+          onRunEvent: (event) => {
+            const { type, ...payload } = event;
+            void appendSessionEvent(entry.state, type, payload, childRunId ?? null).then(() => {
+              broadcastEvent(sessionId, {
+                v: PROTOCOL_VERSION,
+                kind: 'event',
+                sessionId,
+                ...(childRunId ? { runId: childRunId } : {}),
+                seq: entry.state.eventSeq,
+                ts: Date.now(),
+                type,
+                payload,
+              });
+            });
+          },
         },
       );
 

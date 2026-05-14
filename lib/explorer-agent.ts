@@ -27,6 +27,7 @@
  */
 
 import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
+import type { RunEventInput } from './runtime-contract.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText } from './stream-utils.js';
 import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
@@ -211,6 +212,15 @@ export function buildExplorerSystemPrompt(
 export interface ExplorerAgentCallbacks {
   onStatus: (phase: string, detail?: string) => void;
   signal?: AbortSignal;
+  /**
+   * Optional run-event sink. When set, the kernel emits an
+   * `assistant.prompt_snapshot` event once after the system prompt is
+   * built so a debug surface can answer "what went to the Explorer
+   * on this delegation?" without re-running the build. The event is
+   * tagged with `round: 0` because Explorer builds its prompt once
+   * per delegation and reuses it across the inner loop.
+   */
+  onRunEvent?: (event: RunEventInput) => void;
 }
 
 /**
@@ -414,6 +424,20 @@ export async function runExplorerAgent<TCall, TCard>(
   }
 
   const systemPrompt = builder.build();
+
+  // Emit the per-delegation prompt snapshot. Hashes + sizes only; no
+  // section content on the event. See `coder-agent.ts` for the round-0
+  // tagging rationale.
+  callbacks.onRunEvent?.({
+    type: 'assistant.prompt_snapshot',
+    round: 0,
+    role: 'explorer',
+    totalChars: systemPrompt.length,
+    sections: builder.snapshot() as Record<
+      string,
+      { hash: number; size: number; volatile: boolean }
+    >,
+  });
 
   const messages: LlmMessage[] = [
     {

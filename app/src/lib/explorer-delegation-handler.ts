@@ -199,6 +199,7 @@ export async function handleExplorerDelegation(
               );
             },
             signal: ctx.abortControllerRef.current?.signal,
+            onRunEvent: (event) => ctx.appendRunEvent(chatId, event),
           },
         );
         setSpanAttributes(span, {

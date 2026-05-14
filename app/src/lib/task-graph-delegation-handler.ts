@@ -461,6 +461,7 @@ export async function handleTaskGraphDelegation(
                   harnessSettings: harnessSettings || undefined,
                   verificationPolicy,
                   correlation: nodeCorrelation,
+                  onRunEvent: (event) => ctx.appendRunEvent(chatId, event),
                 },
               );
               setSpanAttributes(span, {

@@ -514,24 +514,28 @@ export async function buildSystemPrompt(workspaceRoot: string): Promise<string> 
 
 /**
  * Ensure the system prompt is fully enriched with workspace context.
- * No-op for resumed sessions or already-enriched prompts.
- * Returns the enrichment promise (safe to call multiple times — deduped per state).
+ * No-op for resumed sessions or already-enriched prompts. Returns the
+ * snapshot of the enriched prompt for downstream emission (e.g. the
+ * `assistant.prompt_snapshot` run event), or null when no enrichment
+ * ran. The promise itself is deduped per-state so concurrent callers
+ * see the same outcome.
  */
-const _enrichmentMap: WeakMap<SessionState, Promise<void>> = new WeakMap();
-export function ensureSystemPromptReady(state: SessionState): Promise<void> {
+const _enrichmentMap: WeakMap<SessionState, Promise<PromptSnapshot | null>> = new WeakMap();
+export function ensureSystemPromptReady(state: SessionState): Promise<PromptSnapshot | null> {
   const sysMsg = (state.messages as Message[])[0];
   if (
     !sysMsg ||
     sysMsg.role !== 'system' ||
     !(sysMsg.content as string).includes(NEEDS_ENRICHMENT)
   ) {
-    return Promise.resolve();
+    return Promise.resolve(null);
   }
   if (_enrichmentMap.has(state)) return _enrichmentMap.get(state)!;
-  const promise: Promise<void> = buildEnrichedCliPrompt(state.cwd).then(
-    ({ prompt }: { prompt: string; snapshot: PromptSnapshot }): void => {
+  const promise: Promise<PromptSnapshot | null> = buildEnrichedCliPrompt(state.cwd).then(
+    ({ prompt, snapshot }: { prompt: string; snapshot: PromptSnapshot }): PromptSnapshot => {
       sysMsg.content = prompt;
       _enrichmentMap.delete(state);
+      return snapshot;
     },
   );
   _enrichmentMap.set(state, promise);
@@ -667,7 +671,32 @@ export async function runAssistantLoop(
 
   // Lazily enrich system prompt with workspace context (git status,
   // project instructions, memory) if it hasn't been loaded yet.
-  await ensureSystemPromptReady(state);
+  // Emit `assistant.prompt_snapshot` exactly once per session when a
+  // fresh enrichment ran, so an operator can answer "what went to the
+  // CLI orchestrator on this session?" from the run-event journal.
+  // Resumed sessions return null here (the prompt is preserved across
+  // reload but the snapshot for that build is not reconstructable —
+  // skipping emission is preferable to forging a fake hash). The CLI
+  // prompt is built once and reused across rounds, so the event is
+  // tagged with `round: 0`; per-turn granularity belongs to the web
+  // orchestrator where the prompt rebuilds on each round.
+  const enrichmentSnapshot = await ensureSystemPromptReady(state);
+  if (enrichmentSnapshot) {
+    const sysMsg = (state.messages as Message[])[0];
+    const totalChars = sysMsg && typeof sysMsg.content === 'string' ? sysMsg.content.length : 0;
+    await appendSessionEvent(
+      state,
+      'assistant.prompt_snapshot',
+      { round: 0, role: 'orchestrator', totalChars, sections: enrichmentSnapshot },
+      runId,
+    );
+    dispatchEvent('assistant.prompt_snapshot', {
+      round: 0,
+      role: 'orchestrator',
+      totalChars,
+      sections: enrichmentSnapshot,
+    });
+  }
   // Long-session distillation now runs through the per-round pipeline
   // below (see the `length > 40` clause). state.messages is no longer
   // mutated at session entry — distillation is a per-hop transformation,

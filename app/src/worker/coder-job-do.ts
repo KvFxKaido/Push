@@ -648,6 +648,12 @@ export class CoderJob {
     const result = await runCoderAgentLib(options, {
       onStatus: () => {},
       signal,
+      // Forward the per-delegation prompt snapshot onto the job's SSE
+      // event stream so a foreground watcher can answer "what went to
+      // the background Coder for this job?" without re-running the build.
+      onRunEvent: (event) => {
+        void this.appendEvent(input.jobId, event);
+      },
     });
 
     return { summary: result.summary };

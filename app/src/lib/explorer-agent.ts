@@ -221,6 +221,7 @@ export async function runExplorerAgent(
   const result = await runExplorerAgentLib(libOptions, {
     onStatus: callbacks.onStatus,
     signal: callbacks.signal,
+    onRunEvent: callbacks.onRunEvent,
   });
 
   return {

@@ -17,7 +17,7 @@
  */
 
 import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
-import type { MemoryScope } from './runtime-contract.js';
+import type { MemoryScope, RunEventInput } from './runtime-contract.js';
 import type { AuditorPromptContext } from './role-context.js';
 import { formatCoderState, type CoderWorkingMemory } from './working-memory.js';
 import { asRecord, iteratePushStreamText } from './stream-utils.js';
@@ -59,6 +59,14 @@ export interface AuditorRunOptions {
   hookResult?: HookResult | null;
   fileContexts?: AuditorFileContext[];
   resolveRuntimeContext: ResolveAuditorRuntimeContextFn;
+  /**
+   * Optional run-event sink. When set, the kernel emits an
+   * `assistant.prompt_snapshot` event once after the auditor's system
+   * prompt is built so a debug surface can answer "what went to the
+   * Auditor for this gate?" without re-running the build. Tagged with
+   * `round: 0` (single-shot — Auditor doesn't loop).
+   */
+  onRunEvent?: (event: RunEventInput) => void;
 }
 
 export type ResolveAuditorRuntimeContextFn = (
@@ -291,10 +299,22 @@ async function runAuditorCore(
     };
   }
   const contextBlock = runtimeContext ?? '';
-  const systemPrompt = new SystemPromptBuilder()
+  const promptBuilder = new SystemPromptBuilder()
     .set('identity', AUDITOR_SYSTEM_PROMPT)
-    .set('environment', contextBlock)
-    .build();
+    .set('environment', contextBlock);
+  const systemPrompt = promptBuilder.build();
+
+  // Single-shot prompt snapshot for Auditor. Hashes + sizes only.
+  options.onRunEvent?.({
+    type: 'assistant.prompt_snapshot',
+    round: 0,
+    role: 'auditor',
+    totalChars: systemPrompt.length,
+    sections: promptBuilder.snapshot() as Record<
+      string,
+      { hash: number; size: number; volatile: boolean }
+    >,
+  });
 
   onStatus('Auditor reviewing...');
 

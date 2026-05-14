@@ -1383,6 +1383,12 @@ export interface ExplorerDelegationEnvelope extends DelegationBriefFields {
 export interface ExplorerCallbacks {
   onStatus: (phase: string, detail?: string) => void;
   signal?: AbortSignal;
+  /**
+   * Optional run-event sink. Forwarded to the lib kernel so the
+   * `assistant.prompt_snapshot` event reaches the chat run-event stream
+   * for this delegation. When unset, no event is emitted.
+   */
+  onRunEvent?: (event: import('@push/lib/runtime-contract').RunEventInput) => void;
 }
 
 export interface ExplorerResult {

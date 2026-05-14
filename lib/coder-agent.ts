@@ -46,7 +46,7 @@
  */
 
 import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
-import type { AcceptanceCriterion } from './runtime-contract.js';
+import type { AcceptanceCriterion, RunEventInput } from './runtime-contract.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText, asRecord } from './stream-utils.js';
 import { detectToolFromText } from './tool-call-parsing.js';
@@ -441,6 +441,15 @@ export interface CoderAgentCallbacks {
    * so the Orchestrator has a compact hint of what changed.
    */
   fetchSandboxStateSummary?: () => Promise<string>;
+  /**
+   * Optional run-event sink. When set, the kernel emits an
+   * `assistant.prompt_snapshot` event once after the system prompt is
+   * built so a debug surface can answer "what went to the Coder on
+   * this delegation?" without re-running the build. The event is
+   * tagged with `round: 0` because the prompt is built once per
+   * delegation and reused across the inner loop's rounds.
+   */
+  onRunEvent?: (event: RunEventInput) => void;
 }
 
 /**
@@ -658,6 +667,23 @@ export async function runCoderAgent<TCall, TCard>(
   }
 
   const systemPrompt = promptBuilder.build();
+
+  // Emit the per-delegation prompt snapshot so a debug surface can
+  // reconstruct what went to the Coder for this delegation. Hashes +
+  // sizes only — section content is never on the event. Tagged with
+  // `round: 0` because the Coder builds its prompt once and reuses it
+  // across the inner loop; per-round granularity belongs to the
+  // orchestrator surface where the prompt rebuilds each turn.
+  callbacks.onRunEvent?.({
+    type: 'assistant.prompt_snapshot',
+    round: 0,
+    role: 'coder',
+    totalChars: systemPrompt.length,
+    sections: promptBuilder.snapshot() as Record<
+      string,
+      { hash: number; size: number; volatile: boolean }
+    >,
+  });
 
   // Compose the agent-level cancellation signal with iteratePushStreamText's
   // own activity-timeout controller. Mirrors how the legacy callback path
