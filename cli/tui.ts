@@ -259,8 +259,8 @@ function createTUIState() {
     // Wall-clock ms when the current turn started (idle → running).
     // Cleared on running → idle. Preserved across awaiting_* ↔ running
     // since those are continuations of the same turn (e.g. user
-    // approving a tool). Null when idle. Used by the quiet-layout
-    // running indicator to show elapsed time.
+    // approving a tool). Null when idle. Used by the running indicator
+    // to show elapsed time.
     turnStartedAt: null,
   };
 }
@@ -423,18 +423,13 @@ function renderTranscript(buf, layout, theme, tuiState) {
 
   const streamingLines = [];
 
-  // Add streaming buffer if assistant is currently streaming. The
-  // assistant framer uses a bullet prefix; the in-progress response
-  // mirrors that so streaming and finished entries align.
+  // Add streaming buffer if assistant is currently streaming. Same
+  // bullet prefix the assistant framer uses; renderAssistantEntryLines
+  // applies it internally now that the badge-led layout is gone.
   if (tuiState.streamBuf) {
     renderAssistantEntryLines(streamingLines, tuiState.streamBuf, width, theme, {
-      streaming: true,
       expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
       payloadUI: null,
-      prefixOverride: {
-        firstPrefix: `${theme.style('fg.muted', theme.unicode ? '•' : '*')} `,
-        nextPrefix: '  ',
-      },
     });
   }
 
@@ -565,15 +560,15 @@ function renderToolPane(buf, layout, theme, tuiState) {
 }
 
 /**
- * Quiet-layout running indicator. Lives in the gap row directly above
- * the composer (composer.top - 1 — that row is otherwise blank). Format:
+ * Running indicator. Lives in the gap row directly above the composer
+ * (composer.top - 1 — that row is otherwise blank). Format:
  *
  *   * roosting… (4m 5s · 4.1k tokens)
  *
- * Only renders in quiet layout while running. In every other state we
- * emit a blank padded line so the screen-buffer diff drops the row;
- * without that the previous frame's content would linger because the
- * buffer doesn't auto-clear unwritten rows (see tui-renderer.ts).
+ * Only renders while running. In every other state we emit a blank
+ * padded line so the screen-buffer diff drops the row; without that
+ * the previous frame's content would linger because the buffer
+ * doesn't auto-clear unwritten rows (see tui-renderer.ts).
  *
  * Called every animation tick (10 FPS) while running, so elapsed time
  * updates roughly once per second of wall clock.
@@ -1215,10 +1210,11 @@ export async function runTUI(options = {}) {
   // restarting the TUI. Renderers receive `theme` as a parameter on every
   // frame, so reassigning this closure variable propagates to the next draw.
   //
-  // Quiet layout pairs to the `mono` palette by default — only when the
-  // user hasn't expressed a theme preference (no PUSH_THEME env, no
-  // config.theme). An explicit theme always wins. Same precedence rule
-  // /theme <name> + /animate use.
+  // The runtime fallback (see `detectThemeName` in `tui-theme.ts`) is
+  // `mono`, which pairs with the reserved bullet-led TUI rendering.
+  // `applyConfigToEnv` above seeds `PUSH_THEME` from `config.theme` if
+  // pinned, so a user preference wins over the default with no extra
+  // logic here.
   let theme = createTheme({});
   const tuiState = createTUIState();
   const composer = createComposer();
@@ -1523,13 +1519,18 @@ export async function runTUI(options = {}) {
   // The activity row needs the ticker to fire while running so its
   // elapsed-time display advances. Eligibility = active consumer;
   // visibility = "would the next frame look different from this one".
+  //
+  // `animation.effect` is *not* a consumer today — its previous home
+  // was the boxed-header title which was deleted in the reserved-layout
+  // cleanup (PR #552). The `/animate` slash command still flips the
+  // field, but until something visible consumes it again the ticker
+  // shouldn't fire on its behalf. Copilot review on PR #552 — the dead
+  // 10 FPS redraws were a measurable cost.
   const activityRowVisible = () => tuiState.runState === 'running';
   const anyConsumerVisible = () =>
-    animation.effect !== 'off' ||
     (spinner.name !== 'off' && tuiState.runState === 'running' && theme.unicode) ||
     activityRowVisible();
-  const anyConsumerEligible = () =>
-    animation.effect !== 'off' || spinner.name !== 'off' || activityRowVisible();
+  const anyConsumerEligible = () => spinner.name !== 'off' || activityRowVisible();
   const startAnimationTicker = () => {
     if (animationInterval) return;
     animationInterval = setInterval(() => {
@@ -3670,7 +3671,7 @@ export async function runTUI(options = {}) {
             '  /theme               Show current theme',
             '  /theme list          List available themes',
             '  /theme preview [<name>]  Preview theme swatches (all themes if omitted)',
-            '  /theme <name>        Switch theme live and persist (default|neon|metallic|mono|solarized|forest)',
+            '  /theme <name>        Switch theme live and persist (mono|default|neon|metallic|solarized|forest)',
             '  /animate             Show current animation effect (pinned / following theme)',
             '  /animate list        List animation effects',
             '  /animate <effect>    Pin header animation (off|pulse|shimmer|rainbow); saved to config',

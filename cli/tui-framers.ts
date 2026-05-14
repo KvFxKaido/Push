@@ -143,16 +143,9 @@ export interface PayloadUI {
 }
 
 export interface AssistantRenderOptions {
-  streaming?: boolean;
   expandToolJsonPayloads?: boolean;
   entryKey?: string | null;
   payloadUI?: PayloadUI | null;
-  /**
-   * Override the leading prefix and continuation indent. The framer
-   * dispatch passes a bullet here so the assistant entry reads as a
-   * flowing line of prose instead of a label.
-   */
-  prefixOverride?: { firstPrefix: string; nextPrefix: string };
 }
 
 export function renderAssistantEntryLines(
@@ -162,27 +155,18 @@ export function renderAssistantEntryLines(
   theme: Theme,
   opts: AssistantRenderOptions = {},
 ): void {
-  const {
-    streaming = false,
-    expandToolJsonPayloads = false,
-    entryKey = null,
-    payloadUI = null,
-    prefixOverride = null,
-  } = opts;
+  const { expandToolJsonPayloads = false, entryKey = null, payloadUI = null } = opts;
 
-  let firstPrefix: string;
-  let nextPrefix: string;
-  if (prefixOverride) {
-    firstPrefix = prefixOverride.firstPrefix;
-    nextPrefix = prefixOverride.nextPrefix;
-  } else {
-    const badge = makeBadge(theme, streaming ? 'AI *' : 'AI', {
-      fg: 'bg.base',
-      bg: 'accent.primary',
-    });
-    firstPrefix = `${badge} `;
-    nextPrefix = ' '.repeat(Math.max(2, visibleWidth(firstPrefix)));
-  }
+  // Single bullet prefix — same shape `assistantFramer` and the
+  // streaming render path use. Earlier versions accepted a
+  // `prefixOverride` so the badge-led layout could pass an `AI` badge
+  // instead; that layout was dropped in PR #552. Inlining the prefix
+  // here keeps the renderer honest and prevents a future caller from
+  // accidentally re-introducing the deleted styling by omitting the
+  // override.
+  const bullet = bulletGlyph(theme);
+  const firstPrefix = `${theme.style('fg.muted', bullet)} `;
+  const nextPrefix = '  ';
   let canUseFirstPrefix = true;
   let jsonFenceOrdinal = 0;
 
@@ -403,14 +387,10 @@ const userFramer: EntryFramer = {
 
 const assistantFramer: EntryFramer = {
   render(out, entry, width, theme, ctx) {
-    const bullet = bulletGlyph(theme);
-    const firstPrefix = `${theme.style('fg.muted', bullet)} `;
-    const nextPrefix = '  ';
     renderAssistantEntryLines(out, String(entry.text ?? ''), width, theme, {
       expandToolJsonPayloads: ctx.expandToolJsonPayloads,
       entryKey: ctx.entryKey,
       payloadUI: ctx.payloadUI,
-      prefixOverride: { firstPrefix, nextPrefix },
     });
   },
 };

@@ -46,8 +46,8 @@ export function formatTokenCount(tokens: number): string {
  * Format an elapsed duration as `Ys` for < 60s, otherwise `Xm Ys`.
  * Negative or NaN inputs are clamped to 0.
  *
- * Used by the quiet-layout running indicator to show how long the
- * current turn has been in progress. We deliberately don't show
+ * Used by the running indicator to show how long the current turn
+ * has been in progress. We deliberately don't show
  * sub-second precision — the row updates ~10×/s via the animation
  * ticker, but seconds-resolution is the right grain for "is the agent
  * stuck or making progress" reading.

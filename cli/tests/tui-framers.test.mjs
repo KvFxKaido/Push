@@ -48,6 +48,32 @@ describe('renderEntryLines: user / assistant', () => {
       '  const x = 1;',
     ]);
   });
+
+  it('renders JSON tool-call fence as collapsed payload header + summary', () => {
+    // The collapsed-payload path lives in renderAssistantEntryLines; the
+    // pre-cleanup version had a snapshot for it under the badge-led
+    // standard layout. Copilot review on PR #552: this assertion was lost
+    // in the deletion. Pinning under the bullet-led renderer keeps the
+    // JSON-fence path covered.
+    const lines = render({
+      role: 'assistant',
+      text: '```json\n{"tool":"Read","args":{"path":"a.ts"}}\n```',
+    });
+    assert.deepEqual(lines, ['• ▸ JSON payload · 1 tool call · collapsed', '  → Read  a.ts']);
+  });
+
+  it('wraps long user text with bullet on first line, 2-space continuation indent', () => {
+    // The earlier badge-led test pinned wrap behavior via the 6-space
+    // continuation indent for the ` YOU ` badge. Bullet-led continuation
+    // is 2 spaces; this snapshot pins that under the surviving renderer.
+    const long = 'a '.repeat(50).trim(); // 99 chars; wraps under 80-col window
+    const lines = render({ role: 'user', text: long });
+    assert.ok(lines.length >= 2, 'expected wrap to produce 2+ lines');
+    assert.ok(lines[0].startsWith('•'));
+    for (let i = 1; i < lines.length; i++) {
+      assert.ok(lines[i].startsWith('  '), `line ${i} should have 2-space indent`);
+    }
+  });
 });
 
 describe('renderEntryLines: tool_call', () => {
