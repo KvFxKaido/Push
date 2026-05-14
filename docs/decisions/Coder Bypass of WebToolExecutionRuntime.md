@@ -7,7 +7,7 @@ Code: [`lib/coder-agent-bindings.ts`](../../lib/coder-agent-bindings.ts), [`app/
 
 ## Why this exists
 
-PR #546 promoted the role-capability check into the dispatch kernel as part of the OpenCode silent-failure audit (#3). Every web/CLI tool path routes through one of two seams that now enforces `enforceRoleCapability` unconditionally:
+PR #546 promoted the role-capability check into the dispatch kernel as part of the OpenCode silent-failure audit (#3). Every web/CLI tool path routes through one of two seams that now enforce `enforceRoleCapability` unconditionally:
 
 - **Web orchestrator / Explorer / deep-reviewer:** `WebToolExecutionRuntime.execute`
 - **CLI engine + daemon (Coder, Explorer, Reviewer):** `cli/tools.ts:executeToolCall`
@@ -42,7 +42,7 @@ The pipeline items conflict with that contract:
 |---|---|
 | **Pre/post hooks** | Web hooks are policy-shaped (`ToolHookRegistry`). Coder uses its own `TurnPolicyRegistry` with phase-aware semantics (`createCoderPolicy()`) that the bindings invoke directly via `evaluateBeforeTool` / `evaluateAfterTool`. Routing through `ToolHookRegistry` would require translating Coder policies into hooks, or running both, or losing the phase-awareness. |
 | **Approval gates** | Approval gates open `ask_user` flows. Coder is supposed to be autonomous — interrupting a delegation with a UI prompt defeats the purpose. The background DO surface has no UI at all; an approval gate would hang the job. |
-| **Protect Main** | Coder is the role that creates commits and pushes. Blocking it on the default branch would be a circular constraint — Coder is *how* you produce a commit; the `Protect Main` decision belongs at orchestrator-level (refuse to delegate to Coder when on `main`). |
+| **Protect Main** | Coder is the role that creates commits and pushes. Blocking those tools at the runtime layer (the way `WebToolExecutionRuntime` does for the orchestrator path) would be a circular constraint — Coder is *how* a Protect-Main-respecting commit gets produced. **Known gap:** today the Coder path receives `branchContext.protectMain` only as `[WORKSPACE CONTEXT]` prompt text (see `lib/coder-agent.ts`, `lib/explorer-agent.ts`, `lib/deep-reviewer-agent.ts`); there is no code-level orchestrator-side refusal to delegate when on `main`, nor a Coder-side `sandbox_prepare_commit` / `sandbox_push` gate. Surface enforcement today is the orchestrator's runtime check on its own `sandbox_prepare_commit` / `sandbox_push` calls (`PROTECTED_MAIN_TOOLS` in `web-tool-execution-runtime.ts`), which Coder bypasses. Real enforcement for the Coder path needs a separate decision — see the "Open work" section below. |
 | **`localDaemonBinding` routing** | Coder runs against a managed sandbox (cloud Cloudflare Sandbox or Modal). Local-PC daemon binding is a different transport entirely. |
 | **Capability ledger** | Coder uses `CapabilityLedger` to track *declared-vs-used* capabilities for delegation audit — a contract the runtime doesn't have a slot for. |
 
@@ -90,6 +90,14 @@ Revisit if any of these become true:
 1. **Coder needs interactive approval.** If a future Coder run must pause for user approval mid-delegation (e.g. for explicitly opt-in dangerous operations), the bindings layer would need an approval seam. At that point, sharing the runtime's `approvalCallback` plumbing may be cheaper than reinventing it — but the decision should be driven by the new feature, not by code-shape symmetry.
 2. **The kernel invariant gains a third call site.** If a new tool-execution surface (e.g. a server-side auditor that's neither orchestrator nor Coder) appears, this doc should be revisited to confirm whether the bindings layer is the right home for cross-surface invariants or whether `WebToolExecutionRuntime`'s scope should expand.
 3. **The DO surface gains a runtime.** If background Coder jobs grow enough infrastructure that a `DOToolExecutionRuntime` makes sense, Web routing through `WebToolExecutionRuntime` becomes symmetric with DO, and the bypass becomes the odd one out. Until then, both surfaces sharing the same bindings layer is the simplest shape.
+
+## Open work
+
+- **Protect Main for the Coder path.** The bypass leaves a gap: when Protect Main is on and the active branch is the default branch, the Coder kernel sees the flag as workspace-context text only, with no code-level refusal to delegate and no Coder-side enforcement at `sandbox_prepare_commit` / `sandbox_push`. Two reasonable fix shapes:
+  1. **Orchestrator-side refusal.** Block `delegate_coder` (and the task-graph `plan_tasks` equivalent) when `branchContext.protectMain && activeBranch === defaultBranch`. Cheap, but loses the "Coder is *how* you produce a commit" affordance — the user would need to switch branches before delegating at all.
+  2. **Coder-side enforcement.** Mirror `PROTECTED_MAIN_TOOLS` inside `buildCoderToolExec` so commit/push tools deny when on `main` even though the runtime is bypassed. The role gate already runs at the same seam in `buildCoderToolExec`; Protect Main slots in alongside it. Preserves the "delegate, then commit on a feature branch" UX.
+
+  Option 2 is the right shape — the orchestrator can still hand the task off, and Coder denies the commit at the bottom of the stack the same way the runtime denies it for non-Coder paths. Tracking as a follow-up; not landing in the same change as this doc because it's a code change, not a decision.
 
 ## Related work
 
