@@ -180,4 +180,7 @@ export function getContextMetrics(): ContextMetrics {
 
 export function resetContextMetrics(): void {
   metrics = emptyMetrics();
+  // Clear the drain buffer too so tests that reset between cases can't
+  // observe stale entries from prior cases. Copilot on PR #545.
+  _pendingContextMetrics.length = 0;
 }
