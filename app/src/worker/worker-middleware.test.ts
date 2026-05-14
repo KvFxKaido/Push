@@ -294,6 +294,50 @@ describe('requireDeploymentTokenForApi', () => {
     ).toBe(null);
   });
 
+  it('allows relay WebSocket upgrades through to relay auth without a deployment-token header', () => {
+    const request = makeRequest('https://push.example.test/api/relay/v1/session/s1/connect', {
+      method: 'GET',
+      headers: {
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Protocol': 'push.relay.v1, bearer.pushd_da_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      },
+    });
+    expect(
+      requireDeploymentTokenForApi(request, makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' })),
+    ).toBe(null);
+  });
+
+  it('keeps non-WebSocket relay requests behind the deployment-token gate', async () => {
+    const request = makeRequest('https://push.example.test/api/relay/v1/session/s1/connect', {
+      method: 'GET',
+      headers: { 'Sec-WebSocket-Protocol': 'push.relay.v1' },
+    });
+    const response = requireDeploymentTokenForApi(
+      request,
+      makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' }),
+    );
+    expect(response?.status).toBe(401);
+    const body = (await response!.json()) as { code?: string };
+    expect(body.code).toBe(DEPLOYMENT_AUTH_REQUIRED_CODE);
+  });
+
+  it('keeps WebSocket upgrades without the relay protocol behind the deployment-token gate', async () => {
+    const request = makeRequest('https://push.example.test/api/relay/v1/session/s1/connect', {
+      method: 'GET',
+      headers: {
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Protocol': 'bearer.pushd_da_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      },
+    });
+    const response = requireDeploymentTokenForApi(
+      request,
+      makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' }),
+    );
+    expect(response?.status).toBe(401);
+    const body = (await response!.json()) as { code?: string };
+    expect(body.code).toBe(DEPLOYMENT_AUTH_REQUIRED_CODE);
+  });
+
   it('rejects a protected API request with a missing or wrong deployment token', async () => {
     const request = makeRequest('https://push.example.test/api/sandbox/create', {
       method: 'POST',

@@ -20,7 +20,8 @@
   // PRs. Flip back with: `npx wrangler deploy --var PUSH_SANDBOX_PROVIDER:modal`
   // or edit this file and redeploy.
   "vars": {
-    "PUSH_SANDBOX_PROVIDER": "cloudflare"
+    "PUSH_SANDBOX_PROVIDER": "cloudflare",
+    "PUSH_RELAY_ENABLED": "1"
   },
   // Optional private-deployment gate for personal production testing. Do not
   // put the value in vars; set it as a secret:
@@ -66,10 +67,12 @@
     "import.meta.env.VITE_GITHUB_TOKEN": "\"\"",
     "import.meta.env.VITE_GITHUB_TOOL_BACKEND": "\"\"",
     "import.meta.env.VITE_KILOCODE_API_KEY": "\"\"",
+    "import.meta.env.VITE_LOCAL_PC_MODE": "\"\"",
     "import.meta.env.VITE_NVIDIA_API_KEY": "\"\"",
     "import.meta.env.VITE_OLLAMA_API_KEY": "\"\"",
     "import.meta.env.VITE_OPENADAPTER_API_KEY": "\"\"",
     "import.meta.env.VITE_OPENROUTER_API_KEY": "\"\"",
+    "import.meta.env.VITE_RELAY_MODE": "\"\"",
     "import.meta.env.VITE_TAVILY_API_KEY": "\"\"",
     "import.meta.env.VITE_VERTEX_API_KEY": "\"\"",
     "import.meta.env.VITE_VERTEX_BASE_URL": "\"\"",

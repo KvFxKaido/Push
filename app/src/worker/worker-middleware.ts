@@ -424,6 +424,18 @@ export function isDeploymentTokenExemptPath(pathname: string): boolean {
   return pathname === '/api/health';
 }
 
+function isRelayWebSocketUpgrade(request: Request, requestUrl: URL): boolean {
+  if (!requestUrl.pathname.startsWith('/api/relay/v1/')) return false;
+  if (request.method !== 'GET') return false;
+  if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return false;
+
+  const protocols = request.headers
+    .get('Sec-WebSocket-Protocol')
+    ?.split(',')
+    .map((entry) => entry.trim());
+  return protocols?.includes('push.relay.v1') ?? false;
+}
+
 export function requireDeploymentTokenForApi(
   request: Request,
   env: Env,
@@ -432,6 +444,12 @@ export function requireDeploymentTokenForApi(
   if (request.method === 'OPTIONS') return null;
   if (!requestUrl.pathname.startsWith('/api/')) return null;
   if (isDeploymentTokenExemptPath(requestUrl.pathname)) return null;
+  // Browser WebSockets cannot attach X-Push-Deployment-Token. Let
+  // relay upgrades reach relay-routes.ts, where pushd_relay_ /
+  // pushd_da_ bearers, origin checks, and the DO allowlist enforce
+  // the remote-session boundary. Non-WS relay requests remain covered
+  // by the private deployment gate.
+  if (isRelayWebSocketUpgrade(request, requestUrl)) return null;
 
   const expected = trimSecret(env.PUSH_DEPLOYMENT_TOKEN);
   if (!expected) return null;
