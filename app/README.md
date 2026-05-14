@@ -35,6 +35,26 @@ VITE_GITHUB_APP_REDIRECT_URI=...  # Optional — exact OAuth callback URL (GitHu
 
 Without any AI key the app prompts for one on first use.
 
+### Experimental mode flags
+
+Two tiles on the launcher (`Local PC` and `Remote`) are gated by build-time flags. They default OFF so experimental paths don't ship into mainline builds.
+
+```env
+VITE_LOCAL_PC_MODE=1    # Surfaces the Local PC tile on onboarding, home, and the in-workspace launcher sheet
+VITE_RELAY_MODE=1       # Surfaces the Remote (pushd relay) tile on the same surfaces
+```
+
+Truthy values: `1`, `true`, `yes`, `on` (case-insensitive). Anything else — including unset — hides the tile.
+
+**These are inlined by Vite at `vite build` time** (`import.meta.env.VITE_*` becomes a literal string in the bundle). They are **not** runtime vars — setting them in the browser, in `wrangler.jsonc` `vars`, or via `wrangler secret put` has no effect, because the JS the PWA loads was already compiled with whatever value the flag had at build time.
+
+| Surface | Where to set | Trigger |
+|---|---|---|
+| Local dev | `app/.env.local` (gitignored) | `npm run dev` picks it up automatically |
+| Cloudflare Workers Builds | Dashboard → Workers & Pages → `push` → Settings → **Build → Variables and Secrets** (separate from runtime vars further down the page) | Push any commit, or **Retry deployment** on the latest build |
+
+To verify a deployed build picked them up, open DevTools → Sources, find the hashed `App-*.js`, and search for the flag name — you won't find it, because Vite has already replaced it with the literal string value.
+
 Worker secrets (set via `wrangler secret put`):
 
 - `PUSH_DEPLOYMENT_TOKEN` — optional private-deployment API gate. When set, every `/api/*` route except `/api/health` requires `X-Push-Deployment-Token`. Open the app once with `#push_token=<token>` to store it in the browser.
