@@ -568,7 +568,7 @@ function renderToolPane(buf, layout, theme, tuiState) {
  * the previous frame's content would linger because the buffer
  * doesn't auto-clear unwritten rows (see tui-renderer.ts).
  *
- * Called every animation tick (10 FPS) while running, so elapsed time
+ * Called every frame tick (10 FPS) while running, so elapsed time
  * updates roughly once per second of wall clock.
  */
 function renderActivityIndicator(buf, layout, theme, tuiState, tokens, sessionId) {
@@ -1535,8 +1535,8 @@ export async function runTUI(options = {}) {
   // Single point that mutates runState. Manages the turn-start timestamp
   // (idle → running starts the clock; running → idle clears it; awaiting_*
   // ↔ running preserves it because a tool-approval round-trip is part of
-  // the same turn) and wakes the animation ticker so the activity row
-  // can update its elapsed-time display while running.
+  // the same turn) and wakes the frame ticker so the activity row can
+  // update its elapsed-time display while running.
   const setRunState = (next) => {
     const prev = tuiState.runState;
     // Start the turn-clock on any leave-from-idle, not only idle → running.
@@ -3405,9 +3405,9 @@ export async function runTUI(options = {}) {
       delete config.spinner;
       delete process.env.PUSH_SPINNER;
       await saveConfig(config);
-      // The unpinned default is always 'off' — unlike animation, which
-      // falls back to `VARIANTS[theme].defaultAnimation`, spinner has no
-      // per-theme bundling yet.
+      // The unpinned default is always 'off' — spinner has no per-theme
+      // bundling, and the only motion the TUI carries today is the
+      // running-state spinner, so 'off' is the resting state.
       const next = 'off';
       spinner.name = next;
       refreshTicker();
