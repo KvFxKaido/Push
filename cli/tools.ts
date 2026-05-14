@@ -16,6 +16,7 @@ import { CliFlatJsonArtifactStore } from './artifacts-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { roleCanUseTool } from '../lib/capabilities.ts';
 import type { AgentRole } from '../lib/runtime-contract.ts';
+import { TOOL_REGISTRY_SCHEMA_VERSION } from '../lib/tool-registry.ts';
 
 const KNOWN_AGENT_ROLES = new Set<AgentRole>([
   'orchestrator',
@@ -798,7 +799,9 @@ export function isReadOnlyToolCall(call) {
  * `daemon-integration.test.mjs` sync test enforces that every
  * advertised tool IS Explorer-callable per the capability grant.
  */
-export const READ_ONLY_TOOL_PROTOCOL = `TOOL PROTOCOL (read-only)
+export const READ_ONLY_TOOL_PROTOCOL = `[Tool schema version: ${TOOL_REGISTRY_SCHEMA_VERSION}]
+
+TOOL PROTOCOL (read-only)
 
 When you need tools, output one or more fenced JSON blocks:
 \`\`\`json
@@ -825,7 +828,9 @@ Rules:
 - Prefer search_files before large file reads to locate evidence.
 - Do not describe tool calls in prose. Emit only JSON blocks for tool calls.`;
 
-export const TOOL_PROTOCOL = `TOOL PROTOCOL
+export const TOOL_PROTOCOL = `[Tool schema version: ${TOOL_REGISTRY_SCHEMA_VERSION}]
+
+TOOL PROTOCOL
 
 When you need tools, output one or more fenced JSON blocks:
 \`\`\`json

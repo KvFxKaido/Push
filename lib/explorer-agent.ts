@@ -30,7 +30,11 @@ import type { AIProviderType, LlmMessage, PushStream } from './provider-contract
 import type { RunEventInput } from './runtime-contract.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText } from './stream-utils.js';
-import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
+import {
+  getToolPublicName,
+  getToolPublicNames,
+  TOOL_REGISTRY_SCHEMA_VERSION,
+} from './tool-registry.js';
 import { detectUnimplementedToolCall, diagnoseToolCallFailure } from './tool-call-diagnosis.js';
 import {
   buildToolCallParseErrorBlock,
@@ -186,10 +190,11 @@ export function buildExplorerBaseBuilder(
   sandboxToolProtocol?: string,
 ): SystemPromptBuilder {
   const toolProtocol = sandboxToolProtocol ?? EXPLORER_TOOL_PROTOCOL;
+  const versionHeader = `[Tool schema version: ${TOOL_REGISTRY_SCHEMA_VERSION}]`;
   return new SystemPromptBuilder()
     .set('identity', EXPLORER_IDENTITY)
     .set('guidelines', EXPLORER_GUIDELINES)
-    .set('tool_instructions', toolProtocol + '\n\n' + webSearchToolProtocol);
+    .set('tool_instructions', `${versionHeader}\n\n${toolProtocol}\n\n${webSearchToolProtocol}`);
 }
 
 export function buildExplorerSystemPrompt(

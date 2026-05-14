@@ -61,7 +61,7 @@ import {
   SHARED_OPERATIONAL_CONSTRAINTS,
   CODER_CODE_DISCIPLINE,
 } from './system-prompt-sections.js';
-import { getToolPublicName } from './tool-registry.js';
+import { getToolPublicName, TOOL_REGISTRY_SCHEMA_VERSION } from './tool-registry.js';
 import type { DetectedToolCalls } from './deep-reviewer-agent.js';
 import { buildContextSummaryBlock, normalizeTrimmedRoleAlternation } from './coder-context-trim.js';
 import {
@@ -619,7 +619,10 @@ export async function runCoderAgent<TCall, TCard>(
     .set('guidelines', buildCoderGuidelines())
     .append('guidelines', SHARED_OPERATIONAL_CONSTRAINTS)
     .append('guidelines', CODER_CODE_DISCIPLINE)
-    .set('tool_instructions', sandboxToolProtocol);
+    .set(
+      'tool_instructions',
+      `[Tool schema version: ${TOOL_REGISTRY_SCHEMA_VERSION}]\n\n${sandboxToolProtocol}`,
+    );
 
   // User identity (name, bio)
   const identityBlock = buildUserIdentityBlock(userProfile ?? undefined);
