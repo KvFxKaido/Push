@@ -143,4 +143,114 @@ describe('runPlannerCore (PushStream consumer)', () => {
 
     expect(plan?.features).toHaveLength(1);
   });
+
+  // ---------------------------------------------------------------------------
+  // Goal-anchor support — CLI parity with the web runtime gate (PR #550 follow-up).
+  // ---------------------------------------------------------------------------
+
+  it('omits the [USER_GOAL] block from the user message when no goal is provided', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      { type: 'text_delta', text: '{"approach":"x","features":[{"id":"a","description":"b"}]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runPlannerCore({
+      task: 'Fix the auth flow',
+      files: [],
+      stream,
+      provider: 'openrouter',
+      modelId: 'planner-model',
+    });
+
+    const req = capturedRequest.current as { messages: Array<{ content: string }> };
+    expect(req.messages[0].content).not.toContain('[USER_GOAL]');
+  });
+
+  it('prepends a [USER_GOAL] block to the user message when a goal is provided', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      { type: 'text_delta', text: '{"approach":"x","features":[{"id":"a","description":"b"}]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runPlannerCore({
+      task: 'Fix the auth flow',
+      files: [],
+      stream,
+      provider: 'openrouter',
+      modelId: 'planner-model',
+      goal: {
+        initialAsk: 'restore the auth flow regression',
+        currentWorkingGoal: 'narrow to session refresh',
+      },
+    });
+
+    const req = capturedRequest.current as { messages: Array<{ content: string }> };
+    expect(req.messages[0].content).toContain('[USER_GOAL]');
+    expect(req.messages[0].content).toContain('Initial ask: restore the auth flow regression');
+    expect(req.messages[0].content).toContain('Current working goal: narrow to session refresh');
+    // Goal block must appear before the task body so the planner reads
+    // the constraint first.
+    const goalIdx = req.messages[0].content.indexOf('[USER_GOAL]');
+    const taskIdx = req.messages[0].content.indexOf('Decompose this coding task');
+    expect(taskIdx).toBeGreaterThan(goalIdx);
+  });
+
+  it('documents the addresses field in the planner system prompt', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      { type: 'text_delta', text: '{"approach":"x","features":[{"id":"a","description":"b"}]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runPlannerCore({
+      task: 'Fix the auth flow',
+      files: [],
+      stream,
+      provider: 'openrouter',
+      modelId: 'planner-model',
+    });
+
+    const req = capturedRequest.current as { systemPromptOverride?: string };
+    expect(req.systemPromptOverride).toContain('addresses');
+    expect(req.systemPromptOverride).toContain('[USER_GOAL]');
+  });
+
+  it('parses an addresses field per feature when the planner emits it', async () => {
+    const { stream } = makePushStream([
+      {
+        type: 'text_delta',
+        text: '{"approach":"x","features":[{"id":"a","description":"b","addresses":"Initial ask"}]}',
+      },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    const plan = await runPlannerCore({
+      task: 'Fix the auth flow',
+      files: [],
+      stream,
+      provider: 'openrouter',
+      modelId: 'planner-model',
+    });
+
+    expect(plan?.features[0].addresses).toBe('Initial ask');
+  });
+
+  it('drops whitespace-only addresses rather than passing them downstream', async () => {
+    const { stream } = makePushStream([
+      {
+        type: 'text_delta',
+        text: '{"approach":"x","features":[{"id":"a","description":"b","addresses":"   \\n  "}]}',
+      },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    const plan = await runPlannerCore({
+      task: 'Fix the auth flow',
+      files: [],
+      stream,
+      provider: 'openrouter',
+      modelId: 'planner-model',
+    });
+
+    expect(plan?.features[0].addresses).toBeUndefined();
+  });
 });

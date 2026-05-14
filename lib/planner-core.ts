@@ -9,6 +9,7 @@
 
 import type { AIProviderType, LlmMessage, PushStream } from './provider-contract.js';
 import { asRecord, iteratePushStreamText } from './stream-utils.js';
+import { formatUserGoalBlock, type UserGoalAnchor } from './user-goal-anchor.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,6 +21,14 @@ export interface PlannerFeature {
   files?: string[];
   verifyCommand?: string;
   dependsOn?: string[];
+  /**
+   * Short rationale tying this feature back to the user's goal. Mirrors
+   * `TaskGraphNode.addresses`. Populated by the planner when a user goal
+   * is provided via `PlannerCoreOptions.goal`; flows downstream into the
+   * generated `TaskGraphNode.addresses` for runtime validation by
+   * `validateTaskGraphAgainstGoal`.
+   */
+  addresses?: string;
 }
 
 export interface PlannerFeatureList {
@@ -47,6 +56,17 @@ export interface PlannerCoreOptions {
   onStatus?: (phase: string) => void;
   /** Activity-based timeout (resets on each event). Defaults to 45s. */
   timeoutMs?: number;
+  /**
+   * Optional user-goal anchor. When provided, the planner sees the
+   * formatted `[USER_GOAL]` block in the user-task message and is asked
+   * to populate `addresses` on every feature naming which part of the
+   * goal it advances. The downstream `validateTaskGraphAgainstGoal`
+   * check in `cli/delegation-entry.ts` then enforces that the conversion
+   * produced nodes with `addresses` populated; on miss, the CLI falls
+   * back to the non-delegated loop (one-shot fail-open contract — see
+   * docs/decisions/Goal-Anchored Task Graph Layering.md).
+   */
+  goal?: UserGoalAnchor;
 }
 
 export const PLANNER_TIMEOUT_MS = 45_000;
@@ -68,7 +88,8 @@ Schema:
       "description": "What to investigate and then implement in this step. Start with the reads/searches the coder must perform before producing any output.",
       "files": ["path/to/existing/source.ts"],
       "verifyCommand": "optional shell command that verifies real work (e.g. 'npm test -- --filter auth', 'npm run typecheck'). Never 'test -f' for a file the plan will create.",
-      "dependsOn": ["other-feature-id"]
+      "dependsOn": ["other-feature-id"],
+      "addresses": "short rationale tying this feature to the user goal — required when a [USER_GOAL] block appears in the task context, omit otherwise"
     }
   ]
 }
@@ -82,6 +103,7 @@ Guidelines:
 - Include 'verifyCommand' only when a natural existing check applies (a test filter, a typecheck, a lint command). Do not fabricate verify commands that depend on files the plan will create.
 - Keep the total number of features reasonable (2-8 for most tasks). If the task is already small/focused enough for a single feature, return exactly one feature.
 - File paths should use the /workspace/ prefix convention when the Coder runs in a sandbox; otherwise use workspace-relative paths that the Coder's tools will accept.
+- 'addresses' is required on every feature whenever the task context includes a [USER_GOAL] block. The string should reference one section of the goal — "Initial ask", "Current working goal" (when present), or a specific named Constraint — and briefly say how the feature advances that section. Omit the field when no goal block is present.
 - Focus on the implementation plan, not on explaining the task back.`;
 
 // ---------------------------------------------------------------------------
@@ -99,6 +121,7 @@ export async function runPlannerCore(
     modelId = null,
     onStatus,
     timeoutMs = PLANNER_TIMEOUT_MS,
+    goal,
   } = options;
 
   onStatus?.('Planning task...');
@@ -106,11 +129,17 @@ export async function runPlannerCore(
   const fileContext =
     files.length > 0 ? `\n\nRelevant files:\n${files.map((f) => `- ${f}`).join('\n')}` : '';
 
+  // Surface the user-goal anchor at the *start* of the message so the
+  // planner reads it before the task description. Same shape the
+  // orchestrator's `[USER_GOAL]` injection uses, so the model encounters
+  // identical vocabulary across surfaces.
+  const goalContext = goal ? `${formatUserGoalBlock(goal)}\n\n` : '';
+
   const messages: LlmMessage[] = [
     {
       id: 'planner-task',
       role: 'user',
-      content: `Decompose this coding task into implementable features:\n\n${task}${fileContext}`,
+      content: `${goalContext}Decompose this coding task into implementable features:\n\n${task}${fileContext}`,
       timestamp: Date.now(),
     },
   ];
@@ -175,6 +204,9 @@ export function parsePlannerResponse(raw: string): PlannerFeatureList | null {
           feature.dependsOn = (feat.dependsOn as unknown[]).filter(
             (v): v is string => typeof v === 'string',
           );
+        }
+        if (typeof feat.addresses === 'string' && feat.addresses.trim()) {
+          feature.addresses = feat.addresses.trim();
         }
         return feature;
       })
