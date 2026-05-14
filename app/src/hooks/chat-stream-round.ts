@@ -13,6 +13,7 @@
  */
 
 import { streamChat, peekLastPromptSnapshot } from '@/lib/orchestrator';
+import { drainRecentContextMetrics } from '@/lib/context-metrics';
 import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
 import { buildTodoContext } from '@/lib/todo-tools';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
@@ -188,6 +189,25 @@ export async function streamAssistantRound(
       role: 'orchestrator',
       totalChars: snapshotEntry.totalChars,
       sections: snapshotEntry.snapshot,
+    });
+  }
+
+  // Drain any context-compaction events that fired during this turn's
+  // prompt build (token-budget trimming, tool-output summarization,
+  // digest-grouping). Before this event existed, compaction was a
+  // silent operation — the model saw a context different from prior
+  // turns and couldn't tell why. Audit item #8 from the OpenCode
+  // silent-failure inventory.
+  for (const metric of drainRecentContextMetrics()) {
+    appendRunEvent(chatId, {
+      type: 'context.compaction',
+      round,
+      phase: metric.phase,
+      beforeTokens: metric.beforeTokens,
+      afterTokens: metric.afterTokens,
+      messagesDropped: metric.messagesDropped ?? 0,
+      ...(metric.provider ? { provider: metric.provider } : {}),
+      ...(metric.cause ? { cause: metric.cause } : {}),
     });
   }
 

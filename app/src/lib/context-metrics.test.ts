@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getContextMetrics, recordContextMetric, resetContextMetrics } from './context-metrics';
+import {
+  drainRecentContextMetrics,
+  getContextMetrics,
+  recordContextMetric,
+  resetContextMetrics,
+} from './context-metrics';
 
 describe('context-metrics', () => {
   beforeEach(() => {
@@ -165,5 +170,39 @@ describe('context-metrics', () => {
     const snapshot = getContextMetrics();
     expect(snapshot.totalTokensSaved).toBe(0);
     expect(snapshot.largestReduction).toBe(0);
+  });
+
+  describe('drainRecentContextMetrics', () => {
+    beforeEach(() => {
+      // Reset both the in-memory metrics and the drain buffer between tests.
+      drainRecentContextMetrics();
+    });
+
+    it('returns recorded metrics in insertion order and empties the buffer', () => {
+      recordContextMetric({
+        phase: 'summarization',
+        beforeTokens: 90_000,
+        afterTokens: 60_000,
+        provider: 'openrouter',
+        cause: 'tool_output',
+      });
+      recordContextMetric({
+        phase: 'hard_trim',
+        beforeTokens: 100_000,
+        afterTokens: 88_000,
+        messagesDropped: 4,
+      });
+
+      const drained = drainRecentContextMetrics();
+      expect(drained).toHaveLength(2);
+      expect(drained[0].phase).toBe('summarization');
+      expect(drained[1].phase).toBe('hard_trim');
+      // Buffer is empty after a drain — consume-on-peek semantics.
+      expect(drainRecentContextMetrics()).toEqual([]);
+    });
+
+    it('returns an empty array when nothing has been recorded', () => {
+      expect(drainRecentContextMetrics()).toEqual([]);
+    });
   });
 });

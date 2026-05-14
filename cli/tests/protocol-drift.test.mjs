@@ -76,6 +76,7 @@ describe('protocol drift characterization — schema surface', () => {
   it('pins the current set of schema-validated event types', () => {
     assert.deepEqual([...SCHEMA_VALIDATED_EVENT_TYPES].sort(), [
       'assistant.prompt_snapshot',
+      'context.compaction',
       'subagent.completed',
       'subagent.failed',
       'subagent.started',
@@ -157,6 +158,60 @@ describe('protocol drift characterization — assistant lifecycle family', () =>
         role: 'orchestrator',
         totalChars: 20888,
         sections: { identity: { hash: 1234567, size: 191, volatile: 'yes' } },
+      }),
+    );
+  });
+});
+
+describe('protocol drift characterization — context.compaction', () => {
+  installStrictModeHooks();
+
+  it('accepts a well-formed context.compaction envelope in strict mode', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('context.compaction', {
+        round: 3,
+        phase: 'summarization',
+        beforeTokens: 90_000,
+        afterTokens: 60_000,
+        messagesDropped: 0,
+        provider: 'openrouter',
+        cause: 'tool_output',
+      }),
+    );
+  });
+
+  it('accepts context.compaction with optional fields omitted', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('context.compaction', {
+        round: 5,
+        phase: 'hard_trim',
+        beforeTokens: 100_000,
+        afterTokens: 88_000,
+        messagesDropped: 4,
+      }),
+    );
+  });
+
+  it('rejects context.compaction with an unknown phase in strict mode', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('context.compaction', {
+        round: 3,
+        phase: 'mystery_phase',
+        beforeTokens: 100,
+        afterTokens: 50,
+        messagesDropped: 0,
+      }),
+    );
+  });
+
+  it('rejects context.compaction with negative token counts', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('context.compaction', {
+        round: 3,
+        phase: 'summarization',
+        beforeTokens: -1,
+        afterTokens: 50,
+        messagesDropped: 0,
       }),
     );
   });
