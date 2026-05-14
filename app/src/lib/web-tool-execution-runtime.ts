@@ -12,7 +12,7 @@
  */
 
 import type { ToolExecutionRuntime, ToolExecutionContext } from '@push/lib/tool-execution-runtime';
-import { getToolCapabilities, ROLE_CAPABILITIES, roleCanUseTool } from '@push/lib/capabilities';
+import { enforceRoleCapability, formatRoleCapabilityDenial } from '@push/lib/capabilities';
 import { resolveToolName } from '@push/lib/tool-registry';
 
 import type { StructuredToolError, ToolHookContext, ToolExecutionResult } from '@/types';
@@ -167,32 +167,32 @@ export class WebToolExecutionRuntime
     const startTime = Date.now();
 
     try {
-      // --- Runtime invariant: role capability check (step 6 of the
-      // Architecture Remediation Plan) ---
+      // --- Runtime invariant: role capability check ---
       //
-      // When the caller has declared a role on the context, enforce the
-      // role's capability grant at the runtime layer — *before* hooks,
-      // approval gates, or Protect Main run. The point of this check is
-      // that it fires even when the policy-shaped hook was not registered
-      // and when the prompt-side tool registry is wrong: the runtime is
-      // the last line of defense, and the "Explorer cannot mutate"
-      // invariant stops being a convention that depends on every caller
-      // wiring it correctly.
+      // Enforces the role's capability grant at the runtime layer —
+      // *before* hooks, approval gates, or Protect Main run. The check
+      // is unconditional: a binding that fails to declare a role on the
+      // context gets denied with `ROLE_REQUIRED` rather than silently
+      // bypassing enforcement. This is the kernel invariant that closes
+      // audit item #3 from the OpenCode silent-failure inventory.
       //
-      // Fail-open for unknown tools so forward-compat stays intact
-      // (`roleCanUseTool` already does this under the hood; the explicit
-      // canonical-name resolve here protects against aliases and public
-      // names reaching the check).
-      if (context.role) {
+      // The type system enforces this for TypeScript callers
+      // (`ToolExecutionContext.role` is required); the runtime check
+      // catches stragglers from JS callers (CLI) and provides a
+      // structured `ROLE_REQUIRED` error if anyone slips through.
+      //
+      // Fail-open for unmapped tools (forward-compat) is preserved by
+      // `enforceRoleCapability` — only the missing-role branch is
+      // fail-closed.
+      {
         const canonicalName = resolveToolName(toolName) ?? toolName;
-        if (!roleCanUseTool(context.role, canonicalName)) {
-          const required = getToolCapabilities(canonicalName);
-          const granted = Array.from(ROLE_CAPABILITIES[context.role] ?? []);
+        const check = enforceRoleCapability(context.role, canonicalName);
+        if (!check.ok) {
           const err: StructuredToolError = {
-            type: 'ROLE_CAPABILITY_DENIED',
+            type: check.type,
             retryable: false,
-            message: `Role "${context.role}" is not allowed to use tool "${toolName}".`,
-            detail: `Required: ${required.join(', ') || '(none)'} | Granted: ${granted.join(', ') || '(none)'}`,
+            message: check.message,
+            detail: check.detail,
           };
           // Pair the start event with a matching complete event so any
           // attached observer sees the block as a terminal tool lifecycle
@@ -207,7 +207,7 @@ export class WebToolExecutionRuntime
             error: { type: err.type, message: err.message, retryable: err.retryable },
           });
           return {
-            text: `[Tool Blocked — ${toolName}] ${err.message}\n\n${err.detail}`,
+            text: formatRoleCapabilityDenial(toolName, check),
             structuredError: err,
           };
         }
@@ -421,7 +421,7 @@ export class WebToolExecutionRuntime
           };
           const author: ArtifactAuthor = {
             surface: 'web',
-            role: context.role ?? 'orchestrator',
+            role: context.role,
             createdAt: Date.now(),
           };
           result = await executeArtifactToolCall(toolCall.call.args, scope, author);

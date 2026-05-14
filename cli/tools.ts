@@ -14,7 +14,11 @@ import {
 import type { ArtifactAuthor, ArtifactScope } from '../lib/artifacts/types.ts';
 import { CliFlatJsonArtifactStore } from './artifacts-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
-import { roleCanUseTool } from '../lib/capabilities.ts';
+import {
+  enforceRoleCapability,
+  formatRoleCapabilityDenial,
+  roleCanUseTool,
+} from '../lib/capabilities.ts';
 import type { AgentRole } from '../lib/runtime-contract.ts';
 import { deriveProtocolVersion } from '../lib/tool-registry.ts';
 
@@ -1483,6 +1487,40 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         retryable: false,
       },
     };
+  }
+
+  // Kernel-level role capability check. Mirrors the web runtime's
+  // `WebToolExecutionRuntime.execute` gate so capability enforcement
+  // is binding-independent on both surfaces. The previous arrangement
+  // had the Explorer-side check in `cli/pushd.ts:makeDaemonExplorerToolExec`
+  // (binding-side); the engine's main loop had no kernel role check at
+  // all, which meant a future binding could silently skip enforcement.
+  // Closes audit item #3 from the OpenCode silent-failure inventory.
+  //
+  // Three fail-closed branches surface from `enforceRoleCapability`:
+  //   - ROLE_REQUIRED when options.role is missing entirely.
+  //   - ROLE_INVALID when options.role is supplied but isn't a
+  //     recognized AgentRole (e.g. typo from a JS caller).
+  //   - ROLE_CAPABILITY_DENIED when the role's grant doesn't cover the
+  //     tool. Fail-open for unmapped tool names is preserved.
+  // The Explorer-side `makeDaemonExplorerToolExec` 3-layer gate stays
+  // as defense-in-depth. Raw `options.role` is passed through (not
+  // coerced to undefined) so the helper can distinguish missing from
+  // invalid and surface the right diagnostic.
+  {
+    const canonicalForCheck = callCanonical || (typeof call?.tool === 'string' ? call.tool : '');
+    const check = enforceRoleCapability(options.role, canonicalForCheck);
+    if (!check.ok) {
+      return {
+        ok: false,
+        text: formatRoleCapabilityDenial(call?.tool ?? '(unknown)', check),
+        structuredError: {
+          code: check.type,
+          message: check.message,
+          retryable: false,
+        },
+      };
+    }
   }
   // Forward a canonicalized `alwaysAllow` set into the per-case guard via
   // options so command guards see the same set without re-resolving env on

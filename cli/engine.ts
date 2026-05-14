@@ -832,6 +832,12 @@ export async function runAssistantLoop(
     const rawResult = awarenessBlock
       ? awarenessBlock
       : await executeToolCall(call, state.cwd, {
+          // The CLI engine's main loop runs as orchestrator. Required
+          // by `executeToolCall`'s kernel-level role check so the
+          // capability gate fires unconditionally (audit item #3).
+          // Delegated paths (Coder/Explorer/Reviewer in cli/pushd.ts)
+          // pass their own role.
+          role: 'orchestrator',
           approvalFn,
           askUserFn,
           signal,

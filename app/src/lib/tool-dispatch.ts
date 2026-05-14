@@ -27,6 +27,7 @@ import { detectAskUserToolCall, type AskUserToolCall } from './ask-user-tools';
 import { detectArtifactToolCall, type ArtifactToolCall } from './artifact-tools';
 import { type ActiveProvider } from './orchestrator';
 import { ALL_CAPABILITIES, type Capability } from './capabilities';
+import type { AgentRole } from '@push/lib/runtime-contract';
 import { asRecord, detectToolFromText, extractBareToolJsonObjects } from './utils';
 import {
   getToolCanonicalNames,
@@ -477,6 +478,7 @@ export async function executeAnyToolCall(
   toolCall: AnyToolCall,
   allowedRepo: string,
   sandboxId: string | null,
+  role: AgentRole,
   isMainProtected?: boolean,
   defaultBranch?: string,
   activeProvider?: ActiveProvider,
@@ -493,6 +495,7 @@ export async function executeAnyToolCall(
   return runtime.execute(toolCall, {
     allowedRepo,
     sandboxId,
+    role,
     isMainProtected: isMainProtected ?? false,
     defaultBranch,
     activeProvider: activeProvider,

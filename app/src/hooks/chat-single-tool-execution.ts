@@ -193,6 +193,7 @@ export async function executeSingleToolCall(
       repoFullName: repoRef.current,
       chatId,
       sandboxId: sandboxIdRef.current,
+      role: 'orchestrator',
       localDaemonBinding: localDaemonBindingRef.current ?? undefined,
       isMainProtected: isMainProtectedRef.current,
       defaultBranch: branchInfoRef.current?.defaultBranch,

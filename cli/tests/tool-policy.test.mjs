@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { executeToolCall } from '../tools.ts';
+import { executeToolCall as _rawExecuteToolCall } from '../tools.ts';
+
+// Default `role: 'coder'` so the kernel role check admits these
+// direct-executor unit tests; overridden per call where a specific
+// role is under test.
+const executeToolCall = (call, root, opts = {}) =>
+  _rawExecuteToolCall(call, root, { role: 'coder', ...opts });
 
 let workspace;
 const SAVED_ENV = {};

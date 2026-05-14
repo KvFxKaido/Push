@@ -16,8 +16,15 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { executeToolCall } from '../tools.ts';
+import { executeToolCall as _rawExecuteToolCall } from '../tools.ts';
 import { CliFlatJsonArtifactStore } from '../artifacts-store.ts';
+
+// The kernel role check in `executeToolCall` now fail-closes when
+// `options.role` is missing. Default to `orchestrator` for these tests
+// since they cover the orchestrator-emit path; per-test overrides keep
+// the coder/explorer/reviewer scenarios intact.
+const executeToolCall = (call, root, opts = {}) =>
+  _rawExecuteToolCall(call, root, { role: 'orchestrator', ...opts });
 
 let tempArtifactsDir;
 let tempWorkspace;
@@ -173,9 +180,13 @@ describe('executeToolCall(create_artifact)', () => {
     assert.equal(loaded.author.runId, 'run_coder');
   });
 
-  it('denies explorer/reviewer/auditor with CAPABILITY_DENIED (defense in depth)', async () => {
-    // These roles never had artifacts:write and shouldn't get past
-    // the dispatch role gate. Explorer in particular reaches
+  it('denies explorer/reviewer/auditor at the kernel-level role gate', async () => {
+    // These roles never had artifacts:write and now get refused at the
+    // kernel `enforceRoleCapability` gate *before* the per-tool defense
+    // check. The kernel error code is `ROLE_CAPABILITY_DENIED`; the
+    // legacy artifact-specific `CAPABILITY_DENIED` remains as
+    // defense-in-depth but is unreachable for these roles via the
+    // CLI executor (kernel runs first). Explorer in particular reaches
     // executeToolCall via makeDaemonExplorerToolExec, so the gate is
     // load-bearing for the read-only invariant.
     for (const role of ['explorer', 'reviewer', 'auditor']) {
@@ -189,15 +200,21 @@ describe('executeToolCall(create_artifact)', () => {
       );
 
       assert.equal(result.ok, false, `role=${role} should be denied`);
-      assert.equal(result.structuredError.code, 'CAPABILITY_DENIED');
-      assert.match(result.structuredError.message, /artifacts:write/);
+      assert.equal(result.structuredError.code, 'ROLE_CAPABILITY_DENIED');
+      assert.match(result.structuredError.message, /create_artifact/);
     }
   });
 
-  it('treats an unknown role string as orchestrator-default (fail-safe)', async () => {
-    // Garbage role values shouldn't break the dispatch — fall through
-    // to the orchestrator default so a misconfigured caller still
-    // produces a usable artifact rather than an opaque crash.
+  it('denies an unknown role string with ROLE_INVALID (distinct from missing-role case)', async () => {
+    // Garbage role values used to fall through to an orchestrator
+    // default in the artifact-specific check. The kernel role gate now
+    // distinguishes:
+    //   - role missing entirely → ROLE_REQUIRED
+    //   - role present but not a known AgentRole → ROLE_INVALID
+    // The previous shape (mapping unknown strings to undefined and
+    // surfacing ROLE_REQUIRED) was misleading because the caller did
+    // declare a value; it just wasn't recognized. Codex/Copilot review
+    // on PR #546.
     const result = await executeToolCall(
       {
         tool: 'create_artifact',
@@ -207,10 +224,10 @@ describe('executeToolCall(create_artifact)', () => {
       { role: 'wat-is-this' },
     );
 
-    assert.equal(result.ok, true);
-    const store = new CliFlatJsonArtifactStore();
-    const loaded = await store.get(result.meta.scope, result.meta.artifactId);
-    assert.equal(loaded.author.role, 'orchestrator');
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError.code, 'ROLE_INVALID');
+    assert.match(result.structuredError.message, /"wat-is-this"/);
+    assert.equal(result.meta, undefined);
   });
 
   it('returns ARTIFACT_PERSIST_FAILED when the store throws', async () => {

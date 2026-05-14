@@ -23,7 +23,11 @@
  * a mechanical lift of the same logic with the call boundary named.
  */
 
-import { type CapabilityLedger } from './capabilities.js';
+import {
+  type CapabilityLedger,
+  enforceRoleCapability,
+  formatRoleCapabilityDenial,
+} from './capabilities.js';
 import {
   correlationToSpanAttributes,
   EMPTY_CORRELATION_CONTEXT,
@@ -339,6 +343,35 @@ export function buildCoderToolExec<
       return {
         kind: 'denied',
         reason: `Coder can only execute sandbox and web_search tools. "${call.call.tool}" is not available to Coder.`,
+      };
+    }
+
+    // --- Kernel role-capability check ---
+    //
+    // The Coder web path bypasses `WebToolExecutionRuntime` entirely
+    // (the tool-exec closure dispatches directly to
+    // `executeSandboxToolCall` / `executeWebSearch`). Without this
+    // inline check, the kernel role gate that fires elsewhere on the
+    // web surface — and on the CLI — would skip Coder, leaving
+    // capability enforcement binding-dependent for this path. Closes
+    // the remaining loophole from audit item #3 in the OpenCode
+    // silent-failure inventory.
+    //
+    // `coder` is hardcoded because this binding is single-role by
+    // construction (the builder is only instantiated from
+    // `runCoderAgent`). Fail-open for unmapped tool names is preserved
+    // by `enforceRoleCapability` so a new sandbox/web-search tool that
+    // hasn't been added to TOOL_CAPABILITIES yet doesn't break the
+    // delegation.
+    const roleCheck = enforceRoleCapability('coder', call.call.tool);
+    if (!roleCheck.ok) {
+      // Use the shared formatter so the denial body matches byte-for-byte
+      // what the web runtime and CLI kernel emit. The Coder result shape
+      // surfaces this as `reason` rather than a structured tool result,
+      // but the model still sees the same denial envelope across surfaces.
+      return {
+        kind: 'denied',
+        reason: formatRoleCapabilityDenial(call.call.tool, roleCheck),
       };
     }
 

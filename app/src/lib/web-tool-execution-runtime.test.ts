@@ -355,19 +355,23 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
     });
   });
 
-  describe('no role opts out of the runtime invariant', () => {
-    it('leaves mutation unblocked when context.role is undefined (backward compatibility)', async () => {
-      // Callers that have not opted in (deep-reviewer today, and every
-      // pre-step-6 call site) must not see a behavior change.
+  describe('missing role triggers the kernel invariant', () => {
+    it('refuses execution with ROLE_REQUIRED when context.role is undefined (drift detector)', async () => {
+      // The kernel role check now fails closed: a binding that
+      // constructs a context without a role gets ROLE_REQUIRED rather
+      // than silently bypassing enforcement (closes audit item #3 from
+      // the OpenCode silent-failure inventory). The TS type makes this
+      // unreachable from compiled call sites — the cast here simulates
+      // a JS caller that slipped through.
       const result = await runtime.execute(mutationCall(), {
         allowedRepo: 'owner/repo',
         sandboxId: 'sb-1',
         isMainProtected: false,
-        // role: undefined
-      });
+        // role: undefined — simulates a forgetful binding.
+      } as unknown as Parameters<typeof runtime.execute>[1]);
 
-      expect(result.structuredError).toBeUndefined();
-      expect(vi.mocked(sandboxTools.executeSandboxToolCall)).toHaveBeenCalledTimes(1);
+      expect(result.structuredError?.type).toBe('ROLE_REQUIRED');
+      expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
     });
   });
 
@@ -432,6 +436,7 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
       {
         allowedRepo: 'owner/repo',
         sandboxId: null,
+        role: 'coder',
         isMainProtected: false,
         localDaemonBinding: binding,
       },
@@ -461,6 +466,7 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
       {
         allowedRepo: 'owner/repo',
         sandboxId: null,
+        role: 'coder',
         isMainProtected: false,
         localDaemonBinding: binding,
       },
@@ -479,6 +485,7 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
       {
         allowedRepo: 'owner/repo',
         sandboxId: null,
+        role: 'coder',
         isMainProtected: false,
       },
     );
@@ -498,6 +505,7 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
       {
         allowedRepo: 'owner/repo',
         sandboxId: 'sb-cloud-1',
+        role: 'coder',
         isMainProtected: false,
       },
     );
@@ -534,6 +542,7 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
         {
           allowedRepo: 'owner/repo',
           sandboxId: null,
+          role: 'coder',
           isMainProtected: false,
           localDaemonBinding: binding,
         },
@@ -561,6 +570,7 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
         {
           allowedRepo: 'owner/repo',
           sandboxId: null,
+          role: 'coder',
           isMainProtected: false,
           localDaemonBinding: binding,
         },
@@ -582,6 +592,7 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
         {
           allowedRepo: 'owner/repo',
           sandboxId: 'sb-cloud-1',
+          role: 'orchestrator',
           isMainProtected: false,
           localDaemonBinding: binding,
         },

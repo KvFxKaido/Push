@@ -92,7 +92,7 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
     }
     expect(detected.call.tool).toBe('sandbox_search_replace');
 
-    const result = await executeAnyToolCall(detected, 'KvFxKaido/Push', 'sb-123');
+    const result = await executeAnyToolCall(detected, 'KvFxKaido/Push', 'sb-123', 'coder');
 
     expect(result.text).toContain('Edited /workspace/src/app.ts');
     // 2 calls: initial search_replace read + post-write verification
@@ -146,6 +146,7 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
       detected,
       'KvFxKaido/Push',
       'sb-123',
+      'coder',
       false,
       'main',
       'openrouter',
@@ -191,6 +192,7 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
       },
       'KvFxKaido/Push',
       null,
+      'orchestrator',
       false,
       'main',
       undefined,
@@ -229,6 +231,7 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
       },
       'KvFxKaido/Push',
       null,
+      'orchestrator',
       false,
       'main',
       undefined,
@@ -263,6 +266,7 @@ describe('tool-dispatch smoke -- sandbox_search_replace', () => {
       },
       'KvFxKaido/Push',
       null,
+      'orchestrator',
       false,
       'main',
       undefined,
@@ -296,6 +300,7 @@ describe('tool-dispatch -- approval callback seam (Phase 4)', () => {
       destructiveCall,
       'KvFxKaido/Push',
       'sb-123',
+      'coder',
       false,
       'main',
       undefined,
@@ -321,6 +326,7 @@ describe('tool-dispatch -- approval callback seam (Phase 4)', () => {
       destructiveCall,
       'KvFxKaido/Push',
       'sb-123',
+      'coder',
       false,
       'main',
       undefined,
@@ -350,6 +356,7 @@ describe('tool-dispatch -- approval callback seam (Phase 4)', () => {
       destructiveCall,
       'KvFxKaido/Push',
       'sb-123',
+      'coder',
       false,
       'main',
       undefined,

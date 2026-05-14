@@ -160,6 +160,7 @@ describe('executeTool -- correlation span attributes', () => {
       repoFullName: 'owner/repo',
       chatId: 'c-test',
       sandboxId: 'sb-1',
+      role: 'orchestrator',
       isMainProtected: false,
       defaultBranch: 'main',
       provider: 'openrouter',
@@ -193,6 +194,7 @@ describe('executeTool -- correlation span attributes', () => {
       repoFullName: 'owner/repo',
       chatId: null,
       sandboxId: 'sb-1',
+      role: 'orchestrator',
       isMainProtected: false,
       defaultBranch: 'main',
       provider: 'openrouter',
@@ -217,6 +219,7 @@ describe('executeTool -- correlation span attributes', () => {
       repoFullName: null,
       chatId: 'c-only',
       sandboxId: null,
+      role: 'orchestrator',
       isMainProtected: false,
       defaultBranch: undefined,
       provider: 'openrouter',
@@ -316,7 +319,7 @@ describe('executeReadOnlyTool -- correlation span attributes', () => {
     expect(attrs['push.agent.role']).toBe('explorer');
   });
 
-  it('preserves the default explorer role label when role is omitted', async () => {
+  it('reports the explicit role on the span (required field, no default)', async () => {
     await executeReadOnlyTool(
       makeReadToolCall(),
       'owner/repo',
@@ -325,6 +328,7 @@ describe('executeReadOnlyTool -- correlation span attributes', () => {
       'claude-opus-4-6',
       fakeHooks,
       {
+        role: 'explorer',
         correlation: makeCorrelation(),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         runtime: fakeRuntime as any,

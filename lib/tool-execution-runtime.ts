@@ -100,23 +100,23 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
   approvalCallback?: ApprovalCallback;
   emit?: ToolEventEmitter;
   /**
-   * The agent role making the call, when known.
+   * The agent role making the call.
    *
-   * When set, the runtime adapter is expected to enforce a capability-based
-   * refusal for any tool the role cannot use — independent of whether
-   * hooks or approval gates are registered, and independent of how the
+   * Required: the runtime adapter enforces a capability-based refusal
+   * for any tool the role cannot use — independent of whether hooks or
+   * approval gates are registered, and independent of how the
    * prompt-side tool registry was built. This is the runtime-hard
-   * backstop behind the policy-shaped hook layer: the "Explorer cannot
-   * mutate" guarantee (and the equivalent for any future read-only
-   * role) stops relying on the call site being correctly wired.
+   * backstop behind the policy-shaped hook layer.
    *
-   * Left `undefined` by call sites that have not yet opted in. Opt-in
-   * is intentional: Web-runtime enforcement lands against the Explorer
-   * path first (see `app/src/lib/agent-loop-utils.ts:executeReadOnlyTool`)
-   * and extends to Coder / Deep Reviewer / Auditor in later PRs as each
-   * role's capability grant is audited.
+   * Promoted from optional to required to close audit item #3 from the
+   * OpenCode silent-failure inventory: when `role` was optional, a
+   * binding that forgot to set it would silently bypass the kernel
+   * check. The required type makes tsgo the drift-detector for TS call
+   * sites; the runtime additionally emits `ROLE_REQUIRED` if the field
+   * arrives undefined from a JS caller (see `enforceRoleCapability`
+   * in `lib/capabilities.ts`).
    */
-  role?: AgentRole;
+  role: AgentRole;
   /**
    * Web-only chat identifier. Threaded through so artifact creation can
    * file records under the durable `repoFullName + branch + chatId`
