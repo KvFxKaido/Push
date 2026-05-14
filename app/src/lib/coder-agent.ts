@@ -208,6 +208,16 @@ export async function runCoderAgent(
      * stream for this delegation. When unset, no event is emitted.
      */
     onRunEvent?: (event: import('@push/lib/runtime-contract').RunEventInput) => void;
+    /**
+     * Orchestrator-level user goal anchor. When present, rendered as a
+     * `[USER_GOAL]` block at the top of the Coder's task preamble so the
+     * delegated agent sees the same goal constraint the orchestrator was
+     * bound by. See `lib/user-goal-anchor.ts` for the format.
+     */
+    userGoal?: import('@push/lib/user-goal-anchor').UserGoalAnchor;
+    /** Per-task rationale from `TaskGraphNode.addresses`. Rendered as
+     *  `Addresses: <text>` alongside the user-goal block. */
+    addresses?: string;
   },
 ): Promise<CoderResult> {
   // --- Normalise: envelope-based call → unified locals ---
@@ -307,6 +317,8 @@ export async function runCoderAgent(
     deliverable: effectiveDelegationContext?.deliverable,
     knownContext: effectiveDelegationContext?.knownContext,
     constraints: effectiveDelegationContext?.constraints,
+    userGoal: effectiveDelegationContext?.userGoal,
+    addresses: effectiveDelegationContext?.addresses,
     provider: activeProvider,
     model: coderModelId,
   } as DelegationEnvelope);

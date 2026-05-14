@@ -682,6 +682,7 @@ function detectDelegationTool(text: string): AnyToolCall | null {
           acceptanceCriteria: nodeAcceptanceCriteria,
           knownContext: asTrimmedStringArray(t.knownContext),
           constraints: asTrimmedStringArray(t.constraints),
+          addresses: asTrimmedString(t.addresses),
         });
       }
       if (parsedTasks.length >= 1) {

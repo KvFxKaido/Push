@@ -20,6 +20,8 @@ export function buildCoderDelegationBrief(envelope: DelegationEnvelope): string 
     constraints: envelope.constraints,
     files: envelope.files,
     acceptanceCriteria: envelope.acceptanceCriteria,
+    userGoal: envelope.userGoal,
+    addresses: envelope.addresses,
     targetRole: 'coder',
   });
 }
@@ -32,6 +34,8 @@ export function buildExplorerDelegationBrief(envelope: ExplorerDelegationEnvelop
     knownContext: envelope.knownContext,
     constraints: envelope.constraints,
     files: envelope.files,
+    userGoal: envelope.userGoal,
+    addresses: envelope.addresses,
     targetRole: 'explorer',
   });
 }

@@ -7,6 +7,7 @@
 
 import { ROLE_CAPABILITIES, formatCapabilities } from './capabilities.js';
 import type { AcceptanceCriterion, AgentRole } from './runtime-contract.js';
+import { formatUserGoalBlock, type UserGoalAnchor } from './user-goal-anchor.ts';
 
 export interface DelegationBriefInput {
   task: string;
@@ -25,6 +26,23 @@ export interface DelegationBriefInput {
    * to hallucinate tools they aren't allowed to use.
    */
   targetRole?: AgentRole;
+  /**
+   * The orchestrator-level user goal that motivated this delegation. When
+   * present, the brief renders the formatted `[USER_GOAL]` block ahead of
+   * the per-node task description so Coder / Explorer see the same goal
+   * constraint the orchestrator was bound by. Without this, delegated
+   * agents see only their slice and the layering (goal -> task-graph ->
+   * delegation) stops being load-bearing at the boundary.
+   */
+  userGoal?: UserGoalAnchor;
+  /**
+   * The orchestrator's per-task rationale from the `addresses` field on
+   * the source `TaskGraphNode`. Rendered alongside `userGoal` so the
+   * delegated agent can see *why* this slice was chosen, not just *what*
+   * the slice is. Soft-fails (omits the line) when absent so legacy
+   * callers without `addresses` keep working.
+   */
+  addresses?: string;
 }
 
 export function formatAcceptanceCriteria(criteria?: AcceptanceCriterion[]): string[] {
@@ -37,7 +55,22 @@ export function formatAcceptanceCriteria(criteria?: AcceptanceCriterion[]): stri
 }
 
 export function buildDelegationBrief(input: DelegationBriefInput): string {
-  const lines = [`Task: ${input.task}`];
+  const lines: string[] = [];
+
+  // User goal is rendered first so the delegated agent reads it before
+  // the per-node task description — same proximity story the
+  // orchestrator-level anchor solves, applied one layer down.
+  if (input.userGoal) {
+    lines.push(formatUserGoalBlock(input.userGoal));
+    lines.push('');
+  }
+
+  lines.push(`Task: ${input.task}`);
+
+  const addresses = input.addresses?.trim();
+  if (addresses) {
+    lines.push('', `Addresses: ${addresses}`);
+  }
 
   if (input.targetRole) {
     const grant = ROLE_CAPABILITIES[input.targetRole];

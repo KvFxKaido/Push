@@ -74,7 +74,14 @@ import { runCoderAgent } from '@/lib/coder-agent';
 import { runExplorerAgent } from '@/lib/explorer-agent';
 import { runAuditorEvaluation, type EvaluationResult } from '@/lib/auditor-agent';
 import { resolveHarnessSettings } from '@/lib/model-capabilities';
-import { validateTaskGraph, executeTaskGraph, type TaskExecutor } from '@/lib/task-graph';
+import {
+  validateTaskGraph,
+  validateTaskGraphAgainstGoal,
+  formatGoalRejection,
+  executeTaskGraph,
+  type TaskExecutor,
+} from '@/lib/task-graph';
+import type { UserGoalAnchor } from '@push/lib/user-goal-anchor';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import {
   buildDelegationResultCard,
@@ -195,6 +202,16 @@ export interface HandleTaskGraphDelegationInput {
   lockedProviderForChat: ActiveProvider;
   resolvedModelForChat: string | undefined;
   verificationPolicy: VerificationPolicy;
+  /**
+   * The user-goal anchor derived from the conversation's first user turn.
+   * When present, every task node is required to carry an `addresses`
+   * field; emissions that don't comply receive a structured tool-result
+   * error sent back to the model on its next turn (mirrors the existing
+   * `formatRoleCapabilityDenial` rejection pattern). When absent (no
+   * usable first-user-turn seed), validation is skipped — the layering
+   * only activates when a real goal exists.
+   */
+  userGoalAnchor?: UserGoalAnchor;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +229,7 @@ export async function handleTaskGraphDelegation(
     lockedProviderForChat,
     resolvedModelForChat,
     verificationPolicy,
+    userGoalAnchor,
   } = input;
 
   const executionId = createId();
@@ -231,6 +249,20 @@ export async function handleTaskGraphDelegation(
     if (validationErrors.length > 0) {
       const errorMessages = validationErrors.map((e) => `- ${e.message}`).join('\n');
       return { text: `[Tool Error] Invalid task graph:\n${errorMessages}`, originBranch };
+    }
+
+    // Goal-alignment gate: when the conversation has a user goal, every
+    // task must reference which part of it the task advances. Structured
+    // rejection routes back to the model so it re-emits with `addresses`
+    // populated, without an extra runtime LLM call. Mirrors the
+    // `formatRoleCapabilityDenial` shape used by capability denials.
+    if (userGoalAnchor) {
+      const goalErrors = validateTaskGraphAgainstGoal(graphArgs.tasks, {
+        anchor: userGoalAnchor,
+      });
+      if (goalErrors.length > 0) {
+        return { text: formatGoalRejection(goalErrors, userGoalAnchor), originBranch };
+      }
     }
 
     const currentSandboxId = ctx.sandboxIdRef.current;
@@ -322,6 +354,8 @@ export async function handleTaskGraphDelegation(
                   deliverable: node.deliverable,
                   knownContext: memoryEnrichedContext,
                   constraints: node.constraints,
+                  userGoal: userGoalAnchor,
+                  addresses: node.addresses,
                   branchContext: ctx.branchInfoRef.current?.currentBranch
                     ? {
                         activeBranch: ctx.branchInfoRef.current.currentBranch,
@@ -450,6 +484,8 @@ export async function handleTaskGraphDelegation(
                   deliverable: node.deliverable,
                   knownContext: memoryEnrichedContext,
                   constraints: node.constraints,
+                  userGoal: userGoalAnchor,
+                  addresses: node.addresses,
                   branchContext: ctx.branchInfoRef.current?.currentBranch
                     ? {
                         activeBranch: ctx.branchInfoRef.current.currentBranch,

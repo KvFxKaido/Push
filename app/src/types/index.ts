@@ -1288,6 +1288,22 @@ export interface DelegationBriefFields {
   deliverable?: string;
   knownContext?: string[];
   constraints?: string[];
+  /**
+   * The orchestrator-level user goal that motivated this delegation. The
+   * Coder/Explorer brief renders it as a `[USER_GOAL]` block so delegated
+   * agents see the same goal constraint the orchestrator was bound by —
+   * making the goal load-bearing at every layer, not just at the
+   * orchestrator boundary. Plumbed via task-graph node + delegation
+   * envelope; absent on legacy non-graph delegations.
+   */
+  userGoal?: import('@push/lib/user-goal-anchor').UserGoalAnchor;
+  /**
+   * Per-task rationale copied from the source `TaskGraphNode.addresses`.
+   * Renders as `Addresses: ...` in the brief alongside `userGoal`. Soft
+   * field — omitted when the orchestrator didn't populate it (no goal
+   * loaded, or pre-`addresses` emission path).
+   */
+  addresses?: string;
 }
 
 export interface CoderDelegationArgs extends DelegationBriefFields {
