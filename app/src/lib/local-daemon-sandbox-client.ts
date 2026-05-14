@@ -124,13 +124,15 @@ export function bindingParams(binding: ToolDispatchBinding): DaemonBinding {
  * `LocalDaemonBinding` interface, so callers downstream don't care
  * which kind opened the WS.
  *
- * Relay note: every tool call opens a new WS through the relay, the
- * same pattern Phase 1 uses for loopback. Loopback's ~10ms handshake
- * makes the per-call cost trivial; the relay path pays a real WAN
- * round-trip + DO routing each time. A future PR may reuse the
- * long-lived binding held by `useRelayDaemon` for chat-layer tool
- * dispatch; for 2.f, parity with the existing pattern is the
- * smaller change and isn't a regression from the loopback baseline.
+ * This is the FALLBACK path. The chat-layer dispatch entry point is
+ * `runWithBinding`, which prefers `runWithLiveBinding` when the
+ * caller passes a hook-bound `LiveDaemonBinding` (the React hooks
+ * already hold one long-lived WS open). `createTransientAdapter`
+ * runs only when the hook hasn't connected yet OR a caller passes a
+ * raw `DaemonBinding` without the hook layer — same loopback
+ * pattern Phase 1 used. Loopback's ~10ms handshake makes the
+ * per-call cost trivial; the relay path's WAN round-trip + DO
+ * routing each call is avoided in the hot path by the live binding.
  */
 function createTransientAdapter(
   binding: DaemonBinding,
