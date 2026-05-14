@@ -308,6 +308,72 @@ export function roleCanUseTool(role: AgentRole, canonicalToolName: string): bool
   return required.every((cap) => granted.has(cap));
 }
 
+/**
+ * Structured outcome of a kernel-level role capability check. Returned by
+ * `enforceRoleCapability` so per-surface bindings can map the two failure
+ * shapes onto their own envelope types (Web's `StructuredToolError` with
+ * `type`, CLI's `structuredError` with `code`) without re-deriving the
+ * required/granted formatting.
+ */
+export type RoleCapabilityCheck =
+  | { ok: true }
+  | {
+      ok: false;
+      type: 'ROLE_REQUIRED' | 'ROLE_CAPABILITY_DENIED';
+      message: string;
+      detail: string;
+    };
+
+/**
+ * The kernel-level role enforcement primitive. Two failure modes:
+ *
+ *   - `ROLE_REQUIRED` — the binding constructed an execution context
+ *     without declaring a role. The runtime refuses execution rather
+ *     than silently skipping the capability check, which is the
+ *     binding-dependent failure mode the OpenCode silent-failure audit
+ *     called out (#3 in the inventory). Previously `context.role` was
+ *     optional and a forgetful binding would bypass enforcement
+ *     entirely; this is the fix that makes the check a kernel
+ *     invariant.
+ *
+ *   - `ROLE_CAPABILITY_DENIED` — role is declared but the role's grant
+ *     does not include the tool's required capabilities. Returns the
+ *     same `required` / `granted` detail the inline web/CLI denials
+ *     already format, so per-surface error envelopes stay consistent.
+ *
+ * Callers pass the canonical tool name (post-`resolveToolName`). Unmapped
+ * tool names follow `roleCanUseTool`'s fail-open semantics for
+ * forward-compat — only `ROLE_REQUIRED` is fail-closed because the
+ * "binding forgot to wire role" diagnosis cannot be made for any
+ * specific tool. Surfaces that want stricter behavior (e.g. the CLI
+ * daemon Explorer gate) compose `isCapabilityMapped` separately.
+ */
+export function enforceRoleCapability(
+  role: AgentRole | undefined,
+  canonicalToolName: string,
+): RoleCapabilityCheck {
+  if (!role) {
+    return {
+      ok: false,
+      type: 'ROLE_REQUIRED',
+      message: `Tool "${canonicalToolName}" denied: no role declared on the tool-execution context.`,
+      detail:
+        'Every tool-execution context must declare a role (orchestrator|coder|explorer|reviewer|auditor). The runtime kernel refuses execution when role is missing so capability enforcement cannot silently skip.',
+    };
+  }
+  if (!roleCanUseTool(role, canonicalToolName)) {
+    const required = getToolCapabilities(canonicalToolName);
+    const granted = Array.from(ROLE_CAPABILITIES[role] ?? []);
+    return {
+      ok: false,
+      type: 'ROLE_CAPABILITY_DENIED',
+      message: `Role "${role}" is not allowed to use tool "${canonicalToolName}".`,
+      detail: `Required: ${required.join(', ') || '(none)'} | Granted: ${granted.join(', ') || '(none)'}`,
+    };
+  }
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // Human-readable capability labels (for approval UI)
 // ---------------------------------------------------------------------------

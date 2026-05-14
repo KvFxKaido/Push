@@ -10,6 +10,7 @@ import {
   isCapabilityMapped,
   formatCapabilities,
   CapabilityLedger,
+  enforceRoleCapability,
   type Capability,
 } from './capabilities';
 import { getAllToolSpecs } from './tool-registry';
@@ -116,6 +117,68 @@ describe('roleCanUseTool', () => {
 
   it('returns true for unknown tools (fail-open)', () => {
     expect(roleCanUseTool('coder', 'totally_unknown_tool')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enforceRoleCapability — kernel-level gate
+// ---------------------------------------------------------------------------
+
+describe('enforceRoleCapability', () => {
+  it('returns ROLE_REQUIRED when role is undefined', () => {
+    // Closes audit item #3: a binding that constructs a tool-execution
+    // context without a role used to silently skip capability
+    // enforcement. The helper now turns that into an explicit refusal
+    // surfaced as a structured ROLE_REQUIRED error to the model.
+    const check = enforceRoleCapability(undefined, 'sandbox_read_file');
+    expect(check.ok).toBe(false);
+    if (check.ok) return;
+    expect(check.type).toBe('ROLE_REQUIRED');
+    expect(check.message).toContain('sandbox_read_file');
+    expect(check.detail).toMatch(/role/i);
+  });
+
+  it('returns ROLE_CAPABILITY_DENIED when role lacks required capability', () => {
+    const check = enforceRoleCapability('explorer', 'sandbox_write_file');
+    expect(check.ok).toBe(false);
+    if (check.ok) return;
+    expect(check.type).toBe('ROLE_CAPABILITY_DENIED');
+    expect(check.message).toContain('explorer');
+    expect(check.message).toContain('sandbox_write_file');
+    expect(check.detail).toContain('Required: repo:write');
+    expect(check.detail).toContain('Granted:');
+  });
+
+  it('returns ok when role grants the tool', () => {
+    expect(enforceRoleCapability('coder', 'sandbox_write_file')).toEqual({ ok: true });
+    expect(enforceRoleCapability('explorer', 'sandbox_read_file')).toEqual({ ok: true });
+    expect(enforceRoleCapability('orchestrator', 'web_search')).toEqual({ ok: true });
+  });
+
+  it('fail-open for unmapped tool names when role is present (forward-compat)', () => {
+    // Mirrors `roleCanUseTool`'s documented fail-open semantics —
+    // unmapped tools are admitted because future tools may not yet have
+    // a capability entry. Only the ROLE_REQUIRED branch is fail-closed.
+    expect(enforceRoleCapability('explorer', 'totally_unknown_tool')).toEqual({ ok: true });
+  });
+
+  it('ROLE_REQUIRED fires before the unmapped-tool fail-open', () => {
+    // The two fail modes have priority: missing role denies even for
+    // unmapped tool names. A forgetful binding cannot bypass via an
+    // unknown name.
+    const check = enforceRoleCapability(undefined, 'totally_unknown_tool');
+    expect(check.ok).toBe(false);
+    if (check.ok) return;
+    expect(check.type).toBe('ROLE_REQUIRED');
+  });
+
+  it('denial detail reports the granted capability set for the role', () => {
+    const check = enforceRoleCapability('auditor', 'sandbox_write_file');
+    expect(check.ok).toBe(false);
+    if (check.ok) return;
+    // Auditor only grants repo:read — that's what the detail should
+    // surface so the model sees what it can do.
+    expect(check.detail).toContain('Granted: repo:read');
   });
 });
 
