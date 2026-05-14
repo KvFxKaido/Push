@@ -41,7 +41,7 @@ import {
 import { transformContextBeforeLLM, type DistillResult } from '../lib/context-transformer.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
-import { summarizeToolResultPreview } from '../lib/run-events.ts';
+import { buildMalformedToolCallEvents, summarizeToolResultPreview } from '../lib/run-events.ts';
 import { assertReadyForAssistantTurn } from '../lib/llm-message-invariants.ts';
 import {
   SystemPromptBuilder,
@@ -1113,22 +1113,35 @@ export async function runAssistantLoop(
     const detected: DetectedToolCalls = detectAllToolCalls(assistantText);
 
     if (detected.malformed.length > 0) {
-      for (const malformed of detected.malformed) {
-        recordMalformedToolCall(malformed.reason, state.sessionId);
+      // Single source of truth for the malformed report → run-event mapping
+      // lives in `buildMalformedToolCallEvents`. Reuse it instead of
+      // open-coding the same loop, so a new caller can't drift on
+      // preview-slicing or forget to emit a report.
+      //
+      // Contract change vs. the pre-2026-05 inline loop: the in-process
+      // `dispatchEvent` now receives the same 500-char-truncated preview
+      // that gets persisted, where it previously received the full
+      // `malformed.sample`. Today's consumers (`cli/cli.ts`,
+      // `cli/tui.ts`) only display `reason`, so this is harmless. If a
+      // future consumer needs the full sample, plumb it through the
+      // helper rather than reintroducing a divergent dispatch payload.
+      const malformedEvents = buildMalformedToolCallEvents(detected.malformed, turnIndex);
+      for (const event of malformedEvents) {
+        recordMalformedToolCall(event.reason, state.sessionId);
         await appendSessionEvent(
           state,
           'tool.call_malformed',
           {
-            round: turnIndex,
-            reason: malformed.reason,
-            preview: malformed.sample.slice(0, 500),
+            round: event.round,
+            reason: event.reason,
+            preview: event.preview,
           },
           runId,
         );
         dispatchEvent('tool.call_malformed', {
-          round: turnIndex,
-          reason: malformed.reason,
-          preview: malformed.sample,
+          round: event.round,
+          reason: event.reason,
+          preview: event.preview,
         });
       }
       await appendSessionEvent(

@@ -12,7 +12,7 @@
  * checkpoint after the round resolves.
  */
 
-import { streamChat } from '@/lib/orchestrator';
+import { streamChat, peekLastPromptSnapshot } from '@/lib/orchestrator';
 import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
 import { buildTodoContext } from '@/lib/todo-tools';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
@@ -40,6 +40,7 @@ export async function streamAssistantRound(
     setConversations,
     updateAgentStatus,
     emitRunEngineEvent,
+    appendRunEvent,
   } = ctx;
 
   processedContentRef.current.clear();
@@ -168,6 +169,30 @@ export async function streamAssistantRound(
       },
     );
   });
+
+  // Emit a per-turn prompt-snapshot run event so a debug surface can answer
+  // "what exactly went to the model on turn N?" without re-running the build.
+  // The snapshot is populated by `toLLMMessages` inside the PushStream's
+  // async-generator prelude (a microtask after streamChat() is called), so
+  // peeking is only safe AFTER streamChat resolves. Hashes + sizes only —
+  // the section content itself never leaves `_lastPromptSnapshots`, so this
+  // is safe even when sections include sensitive context.
+  const snapshotEntry = peekLastPromptSnapshot(
+    apiMessages,
+    workspaceContextRef.current ?? undefined,
+  );
+  if (snapshotEntry) {
+    appendRunEvent(chatId, {
+      type: 'assistant.prompt_snapshot',
+      round,
+      role: 'orchestrator',
+      totalChars: snapshotEntry.totalChars,
+      sections: snapshotEntry.snapshot as Record<
+        string,
+        { hash: number; size: number; volatile: boolean }
+      >,
+    });
+  }
 
   // Safety net: some providers (observed on Workers AI / GLM-4.7-flash) emit a
   // round's entire output on the reasoning channel — either via native

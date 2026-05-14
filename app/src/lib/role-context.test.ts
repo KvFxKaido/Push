@@ -110,14 +110,23 @@ describe('delegation brief builders', () => {
     expect(block).toContain('tests: Auth tests pass');
   });
 
-  it('builds an explorer brief that keeps the first line compact when no extras exist', () => {
+  it('builds an explorer brief that surfaces the role capability grant', () => {
+    // The brief includes a `Capabilities:` line derived from
+    // `ROLE_CAPABILITIES.explorer` so the delegated Explorer sees its
+    // grant in its system prompt rather than only learning by hitting
+    // ROLE_CAPABILITY_DENIED. The line must mention `read code`
+    // (the explorer's defining grant) and must NOT mention `edit files`
+    // (which belongs to the coder).
     const block = buildExplorerDelegationBrief({
       task: 'Trace the auth flow',
       files: [],
       provider: 'openrouter',
     });
 
-    expect(block).toBe('Task: Trace the auth flow');
+    expect(block).toContain('Task: Trace the auth flow');
+    expect(block).toContain('Capabilities:');
+    expect(block).toContain('read code');
+    expect(block).not.toContain('edit files');
   });
 
   it('preserves multiline retrieved-memory blocks in known context', () => {

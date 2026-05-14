@@ -75,6 +75,7 @@ function assertStrictBroadcastFail(event, type = event.type) {
 describe('protocol drift characterization — schema surface', () => {
   it('pins the current set of schema-validated event types', () => {
     assert.deepEqual([...SCHEMA_VALIDATED_EVENT_TYPES].sort(), [
+      'assistant.prompt_snapshot',
       'subagent.completed',
       'subagent.failed',
       'subagent.started',
@@ -122,6 +123,42 @@ describe('protocol drift characterization — assistant lifecycle family', () =>
     const event = makeEnvelope('assistant_done', { messageId: 'asst_123' });
     delete event.payload;
     assertStrictBroadcastFail(event);
+  });
+
+  it('accepts a well-formed assistant.prompt_snapshot envelope in strict mode', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('assistant.prompt_snapshot', {
+        round: 3,
+        role: 'orchestrator',
+        totalChars: 20888,
+        sections: {
+          identity: { hash: 1234567, size: 191, volatile: false },
+          memory: { hash: 7654321, size: 540, volatile: true },
+        },
+      }),
+    );
+  });
+
+  it('rejects assistant.prompt_snapshot with an unknown role in strict mode', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('assistant.prompt_snapshot', {
+        round: 3,
+        role: 'mystery-role',
+        totalChars: 20888,
+        sections: {},
+      }),
+    );
+  });
+
+  it('rejects assistant.prompt_snapshot with a non-boolean section.volatile in strict mode', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('assistant.prompt_snapshot', {
+        round: 3,
+        role: 'orchestrator',
+        totalChars: 20888,
+        sections: { identity: { hash: 1234567, size: 191, volatile: 'yes' } },
+      }),
+    );
   });
 });
 

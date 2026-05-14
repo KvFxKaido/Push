@@ -496,7 +496,68 @@ function validateTaskGraphGraphCompleted(payload: unknown, basePath: string): Va
   return issues;
 }
 
+const PROMPT_SNAPSHOT_ROLES = ['orchestrator', 'explorer', 'coder', 'reviewer', 'auditor'] as const;
+
+function validateAssistantPromptSnapshot(payload: unknown, basePath: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isPlainObject(payload)) {
+    issues.push({ path: basePath, message: `expected plain object, got ${typeof payload}` });
+    return issues;
+  }
+  if (!isFiniteNonNegativeInt(payload.round)) {
+    issues.push({
+      path: `${basePath}.round`,
+      message: `expected non-negative integer, got ${JSON.stringify(payload.round)}`,
+    });
+  }
+  const r = expectAgentValue(payload, 'role', basePath, PROMPT_SNAPSHOT_ROLES);
+  if (r) issues.push(r);
+  if (!isFiniteNonNegativeInt(payload.totalChars)) {
+    issues.push({
+      path: `${basePath}.totalChars`,
+      message: `expected non-negative integer, got ${JSON.stringify(payload.totalChars)}`,
+    });
+  }
+  if (!isPlainObject(payload.sections)) {
+    issues.push({
+      path: `${basePath}.sections`,
+      message: `expected plain object, got ${typeof payload.sections}`,
+    });
+  } else {
+    for (const [sectionId, entry] of Object.entries(payload.sections)) {
+      const sectionPath = `${basePath}.sections.${sectionId}`;
+      if (!isPlainObject(entry)) {
+        issues.push({
+          path: sectionPath,
+          message: `expected plain object, got ${typeof entry}`,
+        });
+        continue;
+      }
+      if (typeof entry.hash !== 'number' || !Number.isFinite(entry.hash)) {
+        issues.push({
+          path: `${sectionPath}.hash`,
+          message: `expected finite number, got ${JSON.stringify(entry.hash)}`,
+        });
+      }
+      if (!isFiniteNonNegativeInt(entry.size)) {
+        issues.push({
+          path: `${sectionPath}.size`,
+          message: `expected non-negative integer, got ${JSON.stringify(entry.size)}`,
+        });
+      }
+      if (typeof entry.volatile !== 'boolean') {
+        issues.push({
+          path: `${sectionPath}.volatile`,
+          message: `expected boolean, got ${JSON.stringify(entry.volatile)}`,
+        });
+      }
+    }
+  }
+  return issues;
+}
+
 const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
+  'assistant.prompt_snapshot': validateAssistantPromptSnapshot,
   'subagent.started': validateSubagentStarted,
   'subagent.completed': validateSubagentCompleted,
   'subagent.failed': validateSubagentFailed,

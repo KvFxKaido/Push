@@ -5,7 +5,8 @@
  * work to a sub-agent. Reviewer/Auditor context blocks remain shell-local.
  */
 
-import type { AcceptanceCriterion } from './runtime-contract.js';
+import { ROLE_CAPABILITIES, formatCapabilities } from './capabilities.js';
+import type { AcceptanceCriterion, AgentRole } from './runtime-contract.js';
 
 export interface DelegationBriefInput {
   task: string;
@@ -15,6 +16,15 @@ export interface DelegationBriefInput {
   constraints?: string[];
   files?: string[];
   acceptanceCriteria?: AcceptanceCriterion[];
+  /**
+   * Role the brief is being addressed to. When set, the brief includes
+   * an explicit `Capabilities:` line derived from `ROLE_CAPABILITIES`,
+   * so the delegated agent sees its grant in its system prompt rather
+   * than only learning its limits by hitting `ROLE_CAPABILITY_DENIED`
+   * at runtime — the silent-failure mode that drives delegated agents
+   * to hallucinate tools they aren't allowed to use.
+   */
+  targetRole?: AgentRole;
 }
 
 export function formatAcceptanceCriteria(criteria?: AcceptanceCriterion[]): string[] {
@@ -28,6 +38,13 @@ export function formatAcceptanceCriteria(criteria?: AcceptanceCriterion[]): stri
 
 export function buildDelegationBrief(input: DelegationBriefInput): string {
   const lines = [`Task: ${input.task}`];
+
+  if (input.targetRole) {
+    const grant = ROLE_CAPABILITIES[input.targetRole];
+    if (grant && grant.size > 0) {
+      lines.push('', `Capabilities: ${formatCapabilities(grant)}`);
+    }
+  }
 
   if (input.intent?.trim()) {
     lines.push('', `Intent: ${input.intent.trim()}`);

@@ -89,12 +89,51 @@ export {
 export const ORCHESTRATOR_SYSTEM_PROMPT = buildOrchestratorBasePrompt();
 
 /**
- * Dev-only: previous prompt snapshots for diffing between turns.
- * Keyed by a conversation-ish snapshot key so multi-chat sessions do not
- * compare unrelated prompts against each other in the console.
- * Only read/written inside `import.meta.env.DEV` guards.
+ * Last prompt snapshot per conversation-ish key. Two readers:
+ *
+ *   - The dev-only diff log inside `toLLMMessages` (previous-vs-current
+ *     section-level diff, console-printed).
+ *   - The `peekLastPromptSnapshot` accessor used by `chat-stream-round`
+ *     to emit an `assistant.prompt_snapshot` run event per turn so a
+ *     debug surface can answer "what exactly went to the model on turn
+ *     N?" without re-running the prompt build. The accessor is the
+ *     production wire — gating the populate behind `import.meta.env.DEV`
+ *     would silently leave production turns without an audit trail.
+ *
+ * `consumed` prevents stale-snapshot misattribution: if a round resolved
+ * without rebuilding the prompt (stream aborted before the PushStream
+ * prelude ran, or a future `systemPromptOverride` mid-conversation),
+ * `peekLastPromptSnapshot` would otherwise return the *previous* turn's
+ * snapshot and the caller would emit it tagged with the wrong round.
+ * Consume-on-peek closes that gap: the first peek after a populate
+ * returns the entry and flips it consumed; subsequent peeks return null
+ * until the next populate.
+ *
+ * `MAX_ENTRIES` caps process-lifetime growth. The Map is insertion-
+ * ordered so iterating `keys()` gives FIFO and we evict the oldest
+ * conversation when the cap is hit. 64 entries is enough to keep diff
+ * context across multi-chat sessions while bounding worst-case
+ * retention to a handful of KB of hash/size metadata.
  */
-const _lastPromptSnapshots = new Map<string, PromptSnapshot>();
+const MAX_PROMPT_SNAPSHOT_ENTRIES = 64;
+
+interface PromptSnapshotEntry {
+  snapshot: PromptSnapshot;
+  totalChars: number;
+  consumed: boolean;
+}
+
+const _lastPromptSnapshots = new Map<string, PromptSnapshotEntry>();
+
+function recordPromptSnapshot(key: string, snapshot: PromptSnapshot, totalChars: number): void {
+  if (_lastPromptSnapshots.has(key)) {
+    _lastPromptSnapshots.delete(key);
+  } else if (_lastPromptSnapshots.size >= MAX_PROMPT_SNAPSHOT_ENTRIES) {
+    const oldestKey = _lastPromptSnapshots.keys().next().value;
+    if (oldestKey !== undefined) _lastPromptSnapshots.delete(oldestKey);
+  }
+  _lastPromptSnapshots.set(key, { snapshot, totalChars, consumed: false });
+}
 
 function getPromptSnapshotKey(
   messages: ChatMessage[],
@@ -110,6 +149,28 @@ function getPromptSnapshotKey(
     return `workspace:${workspaceContext.mode}:${workspaceContext.description}`;
   }
   return 'global';
+}
+
+/**
+ * Read back the most recent system-prompt snapshot for the conversation
+ * keyed by `(messages, workspaceContext)`. Used by `chat-stream-round`
+ * to emit `assistant.prompt_snapshot` events without re-running the
+ * prompt build. Returns null when no snapshot has been captured yet
+ * (e.g. the caller passed a `systemPromptOverride` so the orchestrator
+ * builder was skipped), or when the latest snapshot has already been
+ * peeked. Consume-on-peek prevents stale snapshots from being
+ * misattributed to a later turn when the orchestrator prompt build
+ * was skipped this round.
+ */
+export function peekLastPromptSnapshot(
+  messages: ChatMessage[],
+  workspaceContext?: WorkspaceContext,
+): { snapshot: PromptSnapshot; totalChars: number } | null {
+  const key = getPromptSnapshotKey(messages, workspaceContext);
+  const entry = _lastPromptSnapshots.get(key);
+  if (!entry || entry.consumed) return null;
+  entry.consumed = true;
+  return { snapshot: entry.snapshot, totalChars: entry.totalChars };
 }
 
 // Multimodal content types (OpenAI-compatible)
@@ -311,6 +372,15 @@ export function toLLMMessages(
 
     systemContent = builder.build();
 
+    // Always capture the snapshot (dev + prod). The accessor
+    // `peekLastPromptSnapshot` reads this entry to emit per-turn
+    // `assistant.prompt_snapshot` run events for debug surfaces.
+    // Read the previous entry *before* recordPromptSnapshot overwrites
+    // it so the DEV diff log still shows previous-vs-current sections.
+    const currentSnap = builder.snapshot();
+    const previousEntry = _lastPromptSnapshots.get(promptSnapshotKey);
+    recordPromptSnapshot(promptSnapshotKey, currentSnap, systemContent.length);
+
     // --- Log prompt-size breakdown and section diffs (dev only) ---
     if (import.meta.env.DEV) {
       const fmt = (n: number) => n.toLocaleString();
@@ -320,14 +390,11 @@ export function toLLMMessages(
         .join(' ');
       console.log(`[Context Budget] System prompt: ${fmt(systemContent.length)} chars (${parts})`);
 
-      const currentSnap = builder.snapshot();
-      const previousSnap = _lastPromptSnapshots.get(promptSnapshotKey);
-      if (previousSnap) {
-        const diff = diffSnapshots(previousSnap, currentSnap);
+      if (previousEntry) {
+        const diff = diffSnapshots(previousEntry.snapshot, currentSnap);
         const diffStr = formatSnapshotDiff(diff);
         if (diffStr) console.log(diffStr);
       }
-      _lastPromptSnapshots.set(promptSnapshotKey, currentSnap);
     }
   }
 
