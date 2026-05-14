@@ -25,6 +25,7 @@ import type {
   TaskGraphProgressEvent,
   TaskGraphResult,
 } from './runtime-contract.js';
+import { formatUserGoalBlock, type UserGoalAnchor } from './user-goal-anchor.ts';
 
 const MAX_MEMORY_SUMMARY_CHARS = 220;
 const MAX_MEMORY_CHECKS = 5;
@@ -37,6 +38,20 @@ const MAX_SUPPLEMENTAL_MEMORY_ENTRIES = 2;
 
 export interface TaskGraphValidationError {
   type: 'duplicate_id' | 'missing_dependency' | 'cycle' | 'empty_graph' | 'invalid_agent';
+  message: string;
+}
+
+/**
+ * A per-node failure when the goal-alignment check rejects an emission.
+ * Distinct from `TaskGraphValidationError` because the surface that owns
+ * the rejection (web orchestrator turn, CLI planner pass) wants to
+ * resurface this to the model with goal-specific guidance, not collapse
+ * it into a generic "graph invalid" message.
+ */
+export interface TaskGraphGoalValidationError {
+  type: 'missing_addresses';
+  nodeId: string;
+  task: string;
   message: string;
 }
 
@@ -88,6 +103,80 @@ export function validateTaskGraph(nodes: TaskGraphNode[]): TaskGraphValidationEr
   }
 
   return errors;
+}
+
+/**
+ * Validate that every node in the graph references the user's goal via
+ * its `addresses` field. The check is gated on the caller passing an
+ * anchor — surfaces without a loaded goal (no `goal.md`, no first user
+ * turn) skip it gracefully and the field stays optional.
+ *
+ * Rejection is intentionally per-node so the structured error can name
+ * the offending tasks. Callers feed the result into `formatGoalRejection`
+ * to build the tool-result body sent back to the model.
+ */
+export function validateTaskGraphAgainstGoal(
+  nodes: readonly TaskGraphNode[],
+  options: { anchor: UserGoalAnchor },
+): TaskGraphGoalValidationError[] {
+  const errors: TaskGraphGoalValidationError[] = [];
+  // Build the per-node guidance once. Names the valid references the
+  // model can fill in — keeps `formatGoalRejection`'s body focused on
+  // the goal text while the per-error `message` is precise about what
+  // shape the model should re-emit.
+  const validReferences = describeValidAddresses(options.anchor);
+  for (const node of nodes) {
+    const addresses = node.addresses?.trim();
+    if (!addresses) {
+      errors.push({
+        type: 'missing_addresses',
+        nodeId: node.id,
+        task: node.task,
+        message: `Task "${node.id}" is missing the \`addresses\` field — name which part of the user goal this task advances (${validReferences}).`,
+      });
+    }
+  }
+  return errors;
+}
+
+function describeValidAddresses(anchor: UserGoalAnchor): string {
+  const parts: string[] = ['"Initial ask"'];
+  if (anchor.currentWorkingGoal) parts.push('"Current working goal"');
+  if (anchor.constraints && anchor.constraints.length > 0) {
+    parts.push('a specific Constraint');
+  }
+  return parts.join(', ');
+}
+
+/**
+ * Render the goal-alignment failures into a tool-result body the model
+ * will see on its next turn. Mirrors `formatRoleCapabilityDenial` in
+ * `lib/capabilities.ts` — a structured, model-facing error that pushes
+ * the retry path back into prompt space without an extra LLM call from
+ * the runtime side.
+ */
+export function formatGoalRejection(
+  errors: readonly TaskGraphGoalValidationError[],
+  anchor: UserGoalAnchor,
+): string {
+  const lines: string[] = ['[Goal Alignment Required]'];
+  lines.push(
+    'The task graph cannot be dispatched: one or more tasks are missing the `addresses` field.',
+  );
+  lines.push('Each task must name which section of the user goal it advances.');
+  lines.push('');
+  lines.push('Offending tasks:');
+  for (const err of errors) {
+    lines.push(`- ${err.nodeId} ("${err.task}"): missing \`addresses\``);
+  }
+  lines.push('');
+  lines.push('Current user goal:');
+  lines.push(formatUserGoalBlock(anchor));
+  lines.push('');
+  lines.push(
+    'Re-emit `plan_tasks` with `addresses` populated on every task — reference one of "Initial ask", "Current working goal", or a specific Constraint from the goal above.',
+  );
+  return lines.join('\n');
 }
 
 function detectCycle(nodes: TaskGraphNode[]): TaskGraphValidationError | null {

@@ -82,6 +82,16 @@ export interface TaskGraphNode {
   acceptanceCriteria?: AcceptanceCriterion[];
   knownContext?: string[];
   constraints?: string[];
+  /**
+   * Short rationale for why this node advances the user's goal. Free-form
+   * but expected to reference a specific section of `goal.md` (or its
+   * runtime-derived equivalent) — e.g. "Initial ask", "Current working
+   * goal", or one of the named Constraints. Optional in the type so
+   * pre-goal-aware emitters keep validating; `validateTaskGraphAgainstGoal`
+   * (in `task-graph.ts`) promotes this to a hard requirement whenever a
+   * `[USER_GOAL]` anchor is loaded for the conversation.
+   */
+  addresses?: string;
 }
 
 /** Graph-scoped memory written by a completed task and injected into later tasks. */
