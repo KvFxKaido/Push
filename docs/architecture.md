@@ -56,6 +56,7 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 - **Harness reliability** — adaptive hashline edits, patchset transactions, resumable sessions, and active branch handling
 - **GitHub flow** — PR merge flow, branch-scoped chats, commit/push, and workspace publish-to-GitHub
 - **Project instructions** — loading order on both surfaces: `PUSH.md` (Push-specific override) → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`
+- **User goal** — `<cwd>/.push/goal.md` (CLI) or runtime-derived first user turn (web). Injected as a `[USER_GOAL]` block near the recent tail on every compaction. The Orchestrator's `plan_tasks` emissions require a per-node `addresses` field naming which goal section each task advances (web runtime check); delegated Coder/Explorer briefs also carry the goal so the layering is load-bearing end-to-end. Distinct from the **scratchpad** (free-form notes, agent-writable, `[SCRATCHPAD]` block) — `goal.md` is structured user intent, scratchpad is prose memory. If content has a `## Initial ask` shape, it belongs in `goal.md`, not scratchpad.
 
 ## Repo / Session Model
 
