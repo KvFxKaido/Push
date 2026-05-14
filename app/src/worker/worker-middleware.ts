@@ -428,6 +428,17 @@ function isRelayWebSocketUpgrade(request: Request, requestUrl: URL): boolean {
   if (!requestUrl.pathname.startsWith('/api/relay/v1/')) return false;
   if (request.method !== 'GET') return false;
   if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return false;
+  // RFC 6455 requires `Connection: Upgrade` alongside `Upgrade:
+  // websocket` for a real handshake. The header is comma-separated and
+  // each token is case-insensitive — match on the `upgrade` token so a
+  // shaped-but-bogus request (Upgrade header + subprotocol but no
+  // Connection upgrade) doesn't slip past the deployment gate.
+  const connectionTokens = request.headers
+    .get('Connection')
+    ?.toLowerCase()
+    .split(',')
+    .map((entry) => entry.trim());
+  if (!connectionTokens?.includes('upgrade')) return false;
 
   const protocols = request.headers
     .get('Sec-WebSocket-Protocol')
