@@ -19,6 +19,7 @@ import type {
   ReviewComment,
   ReviewResult,
 } from './provider-contract.js';
+import type { RunEventInput } from './runtime-contract.js';
 import type { ReviewerPromptContext } from './role-context.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import { asRecord, iteratePushStreamText } from './stream-utils.js';
@@ -310,6 +311,15 @@ export interface ReviewerOptions {
   resolveRuntimeContext: ResolveReviewerRuntimeContextFn;
   /** Optional symbol reader. When absent (or sandboxId absent) file-structure fetch is skipped. */
   readSymbols?: ReadSymbolsFn;
+  /**
+   * Optional run-event sink. When set, the kernel emits an
+   * `assistant.prompt_snapshot` event once after the reviewer's
+   * system prompt is built so a debug surface can answer "what went
+   * to the Reviewer for this advisory review?" without re-running
+   * the build. Tagged with `round: 0` (single-shot — Reviewer doesn't
+   * loop).
+   */
+  onRunEvent?: (event: RunEventInput) => void;
 }
 
 export async function runReviewer(
@@ -378,12 +388,24 @@ async function runReviewerCore(
     fileStructureBlock = await fetchFileStructure(chunkedDiff, sandboxId, readSymbols);
   }
 
-  const systemPrompt = new SystemPromptBuilder()
+  const promptBuilder = new SystemPromptBuilder()
     .set('identity', REVIEWER_IDENTITY)
     .set('guidelines', REVIEWER_GUIDELINES)
     .set('environment', runtimeContext)
-    .set('custom', fileStructureBlock ? REVIEWER_FILE_STRUCTURE_NOTE : null)
-    .build();
+    .set('custom', fileStructureBlock ? REVIEWER_FILE_STRUCTURE_NOTE : null);
+  const systemPrompt = promptBuilder.build();
+
+  // Single-shot prompt snapshot for Reviewer. Hashes + sizes only.
+  options.onRunEvent?.({
+    type: 'assistant.prompt_snapshot',
+    round: 0,
+    role: 'reviewer',
+    totalChars: systemPrompt.length,
+    sections: promptBuilder.snapshot() as Record<
+      string,
+      { hash: number; size: number; volatile: boolean }
+    >,
+  });
 
   onStatus('Reviewer reading diff…');
   const reviewPreamble = fileStructureBlock ? `${fileStructureBlock}\n\n` : '';

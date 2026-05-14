@@ -342,7 +342,13 @@ describe('CoderJob DO — end-to-end', () => {
     await Promise.all(waitUntilPromises);
 
     const eventTypes = storage.events.map((e) => e.type);
-    expect(eventTypes).toEqual(['job.started', 'job.completed']);
+    // The DO now forwards the Coder kernel's per-delegation
+    // `assistant.prompt_snapshot` onto its SSE journal between
+    // `job.started` and `job.completed`. This is the audit-trail
+    // parity the OpenCode follow-up bundle introduced — the prompt
+    // snapshot makes "what went to this background Coder?"
+    // answerable from the journal.
+    expect(eventTypes).toEqual(['job.started', 'assistant.prompt_snapshot', 'job.completed']);
 
     const started = JSON.parse(storage.events[0]!.payload_json) as {
       type: string;
@@ -351,7 +357,7 @@ describe('CoderJob DO — end-to-end', () => {
     expect(started.type).toBe('job.started');
     expect(started.role).toBe('coder');
 
-    const completed = JSON.parse(storage.events[1]!.payload_json) as {
+    const completed = JSON.parse(storage.events[2]!.payload_json) as {
       type: string;
       role: string;
       summary: string;
@@ -402,8 +408,12 @@ describe('CoderJob DO — end-to-end', () => {
     await Promise.all(waitUntilPromises);
 
     const eventTypes = storage.events.map((e) => e.type);
-    expect(eventTypes).toEqual(['job.started', 'job.failed']);
-    const failed = JSON.parse(storage.events[1]!.payload_json) as {
+    // Prompt snapshot fires before the stream errors because the
+    // emit is inside the kernel's prompt-build phase, which runs
+    // synchronously before any stream consumption. See the parity
+    // bundle that introduced the DO-side `onRunEvent` wiring.
+    expect(eventTypes).toEqual(['job.started', 'assistant.prompt_snapshot', 'job.failed']);
+    const failed = JSON.parse(storage.events[2]!.payload_json) as {
       type: string;
       role: string;
       error: string;
@@ -535,7 +545,8 @@ describe('CoderJob DO — end-to-end', () => {
       lastEventAt: number | null;
     };
     expect(snapshot.status).toBe('completed');
-    expect(snapshot.eventCount).toBe(2);
+    // `job.started`, `assistant.prompt_snapshot`, `job.completed`.
+    expect(snapshot.eventCount).toBe(3);
     expect(typeof snapshot.lastEventAt).toBe('number');
   });
 

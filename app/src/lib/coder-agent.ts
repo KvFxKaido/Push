@@ -202,6 +202,12 @@ export async function runCoderAgent(
      * Never alters tool behavior — see `lib/correlation-context.ts`.
      */
     correlation?: CorrelationContext;
+    /**
+     * Optional run-event sink. Forwarded to the lib kernel so the
+     * `assistant.prompt_snapshot` event reaches the chat run-event
+     * stream for this delegation. When unset, no event is emitted.
+     */
+    onRunEvent?: (event: import('@push/lib/runtime-contract').RunEventInput) => void;
   },
 ): Promise<CoderResult> {
   // --- Normalise: envelope-based call → unified locals ---
@@ -415,6 +421,7 @@ export async function runCoderAgent(
       };
     },
     fetchSandboxStateSummary: () => fetchSandboxStateSummary(sandboxId),
+    onRunEvent: effectiveDelegationContext?.onRunEvent,
   });
 
   // --- Attach capability snapshot at the shell boundary ---

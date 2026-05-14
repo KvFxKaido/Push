@@ -141,4 +141,34 @@ describe('runExplorerAgent (PushStream consumer)', () => {
     const result = await runExplorerAgent(baseOptions({ stream }), { onStatus: () => {} });
     expect(result.summary).toBe('Summary:\nFinished.');
   });
+
+  it('emits exactly one assistant.prompt_snapshot run event tagged with the explorer role', async () => {
+    // Wire-through guard: a future refactor that drops the emit
+    // silently breaks the per-delegation audit trail.
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: 'Summary:\nDone.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const events: Array<{ type: string }> = [];
+
+    await runExplorerAgent(baseOptions({ stream }), {
+      onStatus: () => {},
+      onRunEvent: (event) => events.push(event),
+    });
+
+    const snapshots = events.filter((e) => e.type === 'assistant.prompt_snapshot');
+    expect(snapshots).toHaveLength(1);
+    const snap = snapshots[0] as {
+      round: number;
+      role: string;
+      totalChars: number;
+      sections: Record<string, { hash: number; size: number; volatile: boolean }>;
+    };
+    expect(snap.round).toBe(0);
+    expect(snap.role).toBe('explorer');
+    expect(snap.totalChars).toBeGreaterThan(0);
+    expect(Object.keys(snap.sections).length).toBeGreaterThan(0);
+  });
 });

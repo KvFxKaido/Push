@@ -2127,6 +2127,70 @@ export function makeDaemonExplorerToolExec({ entry, signal }) {
  * semantics — both call sites share the same `makeDaemonExplorerToolExec`
  * factory.
  */
+
+/**
+ * Builds an `onRunEvent` handler for role-agent kernels (Coder /
+ * Explorer / Reviewer / Auditor) running on the CLI daemon.
+ *
+ * Two race-safety properties:
+ *
+ *   1. Seq capture is synchronous. `appendSessionEvent` increments
+ *      `state.eventSeq` before its filesystem await resolves, so we
+ *      read the seq immediately after starting the append, BEFORE
+ *      awaiting. Reading inside `.then()` would race with concurrent
+ *      emits (e.g. task-graph `task_completed`) that bump `eventSeq`
+ *      before this promise resolves, causing the live envelope to
+ *      reuse a later seq than the persisted record — and break clients
+ *      that reconcile/replay by seq. Codex P2 on PR #540.
+ *
+ *   2. Broadcast is gated on persistence success. If the filesystem
+ *      append fails the broadcast is skipped, so the wire stream never
+ *      contains an envelope that has no persisted counterpart. Errors
+ *      surface via the `error` event channel so an operator sees the
+ *      gap rather than silent loss.
+ */
+function emitRoleAgentRunEvent(sessionId, entry, runId) {
+  return (event) => {
+    const { type, ...payload } = event;
+    const writePromise = appendSessionEvent(entry.state, type, payload, runId);
+    // Synchronous capture — `state.eventSeq` was bumped by
+    // appendSessionEvent before its first await.
+    const seq = entry.state.eventSeq;
+    writePromise
+      .then(() => {
+        broadcastEvent(sessionId, {
+          v: PROTOCOL_VERSION,
+          kind: 'event',
+          sessionId,
+          ...(runId ? { runId } : {}),
+          seq,
+          ts: Date.now(),
+          type,
+          payload,
+        });
+      })
+      .catch((err) => {
+        // Persistence failed — skip the broadcast (don't ship a wire
+        // envelope without a journal record) and surface a structured
+        // warning so the gap is visible to operators.
+        const message = err instanceof Error ? err.message : String(err);
+        broadcastEvent(sessionId, {
+          v: PROTOCOL_VERSION,
+          kind: 'event',
+          sessionId,
+          ...(runId ? { runId } : {}),
+          seq,
+          ts: Date.now(),
+          type: 'warning',
+          payload: {
+            code: 'PROMPT_SNAPSHOT_PERSIST_FAILED',
+            message: `Failed to persist ${type}: ${message}`,
+          },
+        });
+      });
+  };
+}
+
 async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleExtras = []) {
   const startedAt = Date.now();
   const { provider, model } = resolveRoleRouting(entry, 'explorer');
@@ -2169,6 +2233,26 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleE
     {
       onStatus: () => {},
       signal,
+      // Forward the per-delegation prompt snapshot onto the daemon
+      // event stream so a connected client (TUI / CLI / relay
+      // consumer) sees the same audit trail the web orchestrator
+      // already emits per turn. `appendSessionEvent` manages
+      // persistence + seq; `broadcastEvent` fans out to live
+      // listeners using the same envelope shape as the rest of the
+      // daemon's emit sites.
+      //
+      // Seq capture: `appendSessionEvent` increments `state.eventSeq`
+      // synchronously before its filesystem await resolves, so we read
+      // the seq IMMEDIATELY after starting the append. Reading it
+      // inside `.then()` would race with concurrent emits (e.g.
+      // task-graph `task_completed`) that bump `eventSeq` before this
+      // promise resolves, causing the live envelope to reuse a later
+      // seq than the persisted record. Codex P2 on PR #540.
+      //
+      // Error handling: if the filesystem append fails the broadcast
+      // is skipped — sending a live envelope that has no persisted
+      // counterpart would diverge the journal from the wire.
+      onRunEvent: emitRoleAgentRunEvent(sessionId, entry, null),
     },
   );
 
@@ -2279,6 +2363,7 @@ async function runCoderForTaskGraph(
     {
       onStatus: () => {},
       signal,
+      onRunEvent: emitRoleAgentRunEvent(sessionId, entry, parentRunId ?? null),
     },
   );
 
@@ -3384,6 +3469,7 @@ async function handleDelegateCoder(req) {
             // Quiet for now — later slices can emit agent_status events here.
           },
           signal: abortController.signal,
+          onRunEvent: emitRoleAgentRunEvent(sessionId, entry, childRunId ?? null),
         },
       );
 

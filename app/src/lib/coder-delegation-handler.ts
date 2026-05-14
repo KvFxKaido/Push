@@ -567,6 +567,7 @@ export async function handleCoderDelegation(
               verificationPolicy,
               declaredCapabilities: delegateArgs.declaredCapabilities,
               correlation: coderCorrelation,
+              onRunEvent: (event) => ctx.appendRunEvent(chatId, event),
             },
           );
           setSpanAttributes(span, {

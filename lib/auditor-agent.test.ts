@@ -231,6 +231,34 @@ describe('runAuditor (PushStream consumer)', () => {
     expect(result.verdict).toBe('safe');
     expect(result.card.summary).toBe('OK');
   });
+
+  it('emits exactly one assistant.prompt_snapshot run event tagged with the auditor role', async () => {
+    // Wire-through guard mirroring the coder/explorer/reviewer tests.
+    const { stream } = makePushStream([
+      { type: 'text_delta', text: '{"verdict":"safe","summary":"OK","risks":[]}' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const events: Array<{ type: string }> = [];
+
+    await runAuditor(
+      makeAddedFileDiff('src/app.ts', 'const x = 1;'),
+      {
+        provider: 'openrouter',
+        modelId: 'test-model',
+        stream,
+        resolveRuntimeContext: noopRuntime,
+        onRunEvent: (event) => events.push(event),
+      },
+      () => {},
+    );
+
+    const snapshots = events.filter((e) => e.type === 'assistant.prompt_snapshot');
+    expect(snapshots).toHaveLength(1);
+    const snap = snapshots[0] as { round: number; role: string; totalChars: number };
+    expect(snap.round).toBe(0);
+    expect(snap.role).toBe('auditor');
+    expect(snap.totalChars).toBeGreaterThan(0);
+  });
 });
 
 describe('runAuditorEvaluation (PushStream consumer)', () => {

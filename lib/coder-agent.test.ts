@@ -161,4 +161,32 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(result.summary).toBe('done');
     expect(result.rounds).toBe(1);
   });
+
+  it('emits exactly one assistant.prompt_snapshot run event tagged with the coder role', async () => {
+    // Wire-through guard: the lib kernel must invoke `onRunEvent` once
+    // with a snapshot of the assembled system prompt. If a future
+    // refactor drops the emit, this test fails and the audit trail
+    // silently breaks — exactly the silent-failure shape the OpenCode
+    // audit closed elsewhere.
+    const { stream } = makePushStream([[{ type: 'done', finishReason: 'stop' }]]);
+    const events: Array<{ type: string }> = [];
+
+    await runCoderAgent(baseCoderOptions({ stream }), {
+      onStatus: () => {},
+      onRunEvent: (event) => events.push(event),
+    });
+
+    const snapshots = events.filter((e) => e.type === 'assistant.prompt_snapshot');
+    expect(snapshots).toHaveLength(1);
+    const snap = snapshots[0] as {
+      round: number;
+      role: string;
+      totalChars: number;
+      sections: Record<string, { hash: number; size: number; volatile: boolean }>;
+    };
+    expect(snap.round).toBe(0);
+    expect(snap.role).toBe('coder');
+    expect(snap.totalChars).toBeGreaterThan(0);
+    expect(Object.keys(snap.sections).length).toBeGreaterThan(0);
+  });
 });
