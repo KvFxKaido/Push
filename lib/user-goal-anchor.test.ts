@@ -231,6 +231,25 @@ describe('formatUserGoalMarkdown / parseUserGoalMarkdown', () => {
     expect(parseUserGoalMarkdown('not even markdown')).toBeNull();
   });
 
+  it('returns null when Initial ask is present but whitespace-only', () => {
+    // Copilot review on PR #549: without trim-before-null-check the parser
+    // returned `{ initialAsk: '' }`, blocking the v1 runtime fallback and
+    // emitting an empty `[USER_GOAL]` block. Trim first, null on empty.
+    expect(parseUserGoalMarkdown('# Goal\n\n## Initial ask\n\n   \n\n')).toBeNull();
+    expect(parseUserGoalMarkdown('# Goal\n\n## Initial ask\n\n')).toBeNull();
+    expect(parseUserGoalMarkdown('# Goal\n\n## Initial ask\n\n\t\n')).toBeNull();
+  });
+
+  it('caps parsed initialAsk at the same budget as runtime derivation', () => {
+    // Codex review on PR #549: an uncapped value in goal.md was bypassing
+    // the 500-char cap when re-read on subsequent rounds.
+    const long = 'x'.repeat(2000);
+    const md = `# Goal\n\n## Initial ask\n\n${long}\n`;
+    const parsed = parseUserGoalMarkdown(md);
+    expect(parsed?.initialAsk).toHaveLength(USER_GOAL_MAX_INITIAL_ASK_CHARS);
+    expect(parsed?.initialAsk.endsWith('...')).toBe(true);
+  });
+
   it('handles CRLF line endings (cross-platform editors)', () => {
     const md = '# Goal\r\n\r\n## Initial ask\r\n\r\nhelp with X\r\n';
     expect(parseUserGoalMarkdown(md)).toEqual({ initialAsk: 'help with X' });

@@ -195,6 +195,52 @@ describe('seedUserGoalFile', () => {
       await rmrf(cwd);
     }
   });
+
+  it('caps the seeded initial ask at the runtime budget', async () => {
+    // Codex review on PR #549: without a cap on the write path, a pasted
+    // log as the first user turn would be persisted raw and then
+    // re-injected uncapped by subsequent rounds via loadUserGoalFile.
+    const cwd = await makeTempCwd();
+    try {
+      const long = 'x'.repeat(2000);
+      const result = await seedUserGoalFile(cwd, {
+        firstUserTurn: long,
+        refreshedAt: '2026-05-14T11:45:00Z',
+      });
+      assert.equal(result.wrote, true);
+      const anchor = await loadUserGoalFile(cwd);
+      assert.ok(anchor, 'expected parsed anchor');
+      assert.ok(
+        anchor.initialAsk.length < long.length,
+        'initialAsk should have been truncated before write',
+      );
+      assert.ok(anchor.initialAsk.endsWith('...'), 'truncation marker present');
+    } finally {
+      await rmrf(cwd);
+    }
+  });
+
+  it('returns wrote: false (does not throw) when mkdir cannot create parent', async () => {
+    // Copilot review on PR #549: fs.mkdir was outside the try, so
+    // EACCES/ENOSPC during directory creation rejected from
+    // seedUserGoalFile despite the documented best-effort contract.
+    const cwd = await makeTempCwd();
+    try {
+      // Create a *file* named `.push` so mkdir cannot create a directory
+      // at the same path. Forces an ENOTDIR / EEXIST class failure on
+      // the mkdir call itself — exactly the situation Copilot flagged.
+      await fs.writeFile(path.join(cwd, '.push'), 'not a directory', 'utf8');
+
+      const result = await seedUserGoalFile(cwd, {
+        firstUserTurn: 'help with X',
+        refreshedAt: '2026-05-14T11:45:00Z',
+      });
+      assert.equal(result.wrote, false);
+      assert.equal(result.path, resolveGoalFilePath(cwd));
+    } finally {
+      await rmrf(cwd);
+    }
+  });
 });
 
 describe('extractDigestBody', () => {

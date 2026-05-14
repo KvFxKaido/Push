@@ -183,11 +183,18 @@ export function formatUserGoalMarkdown(anchor: UserGoalAnchor): string {
  */
 export function parseUserGoalMarkdown(content: string): UserGoalAnchor | null {
   const sections = splitMarkdownSections(content);
-  const initialAsk = sections.get(GOAL_FILE_SECTION_TITLES.initialAsk);
-  if (!initialAsk) return null;
+  const initialAskRaw = sections.get(GOAL_FILE_SECTION_TITLES.initialAsk);
+  // A present but whitespace-only `## Initial ask` section parses as ''
+  // after collapse — null out so callers fall back to the v1 runtime
+  // derivation instead of emitting an empty `[USER_GOAL]` block.
+  const initialAskTrimmed = initialAskRaw ? collapseProseBody(initialAskRaw) : '';
+  if (!initialAskTrimmed) return null;
 
+  // Apply the same cap to file-parsed seeds that runtime derivation
+  // applies, so a user-edited `goal.md` (or stale auto-seed from before
+  // the cap was enforced) can't blow the anchor budget.
   const anchor: UserGoalAnchor = {
-    initialAsk: collapseProseBody(initialAsk),
+    initialAsk: truncateInitialAsk(initialAskTrimmed),
   };
 
   const currentWorkingGoal = sections.get(GOAL_FILE_SECTION_TITLES.currentWorkingGoal);
@@ -217,7 +224,13 @@ export function parseUserGoalMarkdown(content: string): UserGoalAnchor | null {
   return anchor;
 }
 
-function truncateInitialAsk(seed: string): string {
+/**
+ * Cap an initial-ask string to `USER_GOAL_MAX_INITIAL_ASK_CHARS`, appending
+ * an ellipsis when truncation occurs. Shared between runtime derivation,
+ * file parsing, and file seeding so every code path that produces an
+ * `initialAsk` honours the same budget.
+ */
+export function truncateInitialAsk(seed: string): string {
   if (seed.length <= USER_GOAL_MAX_INITIAL_ASK_CHARS) return seed;
   const sliceLen = USER_GOAL_MAX_INITIAL_ASK_CHARS - ELLIPSIS.length;
   return seed.slice(0, sliceLen).trimEnd() + ELLIPSIS;

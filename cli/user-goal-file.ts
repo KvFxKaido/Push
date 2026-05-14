@@ -22,6 +22,7 @@ import nodePath from 'node:path';
 import {
   formatUserGoalMarkdown,
   parseUserGoalMarkdown,
+  truncateInitialAsk,
   type UserGoalAnchor,
 } from '../lib/user-goal-anchor.ts';
 
@@ -86,8 +87,12 @@ export async function seedUserGoalFile(
     return { wrote: false, path };
   }
 
+  // Cap the seeded initial ask. Without this the on-disk file holds the
+  // raw user turn, and the next round's `loadUserGoalFile` would emit an
+  // uncapped `[USER_GOAL]` block — pasted logs / large specs would blow
+  // the recent-tail budget. Same cap as runtime derivation.
   const anchor: UserGoalAnchor = {
-    initialAsk: firstUserTurn,
+    initialAsk: truncateInitialAsk(firstUserTurn),
     lastRefreshedAt: inputs.refreshedAt ?? new Date().toISOString(),
   };
   const workingGoalSeed = inputs.workingGoalSeed?.trim();
@@ -95,19 +100,19 @@ export async function seedUserGoalFile(
 
   const content = formatUserGoalMarkdown(anchor);
 
-  await fs.mkdir(nodePath.dirname(path), { recursive: true });
+  // mkdir + write share one try so the function's "best-effort, never
+  // throws" contract holds even when the parent `.push/` directory is
+  // unwritable. Caller (`engine.ts`) fire-and-forgets this anyway, but
+  // the contract docs promise `{ wrote: false }` on permission failure.
   try {
+    await fs.mkdir(nodePath.dirname(path), { recursive: true });
     await fs.writeFile(path, content, { encoding: 'utf8', flag: 'wx' });
     return { wrote: true, path };
-  } catch (err: unknown) {
-    // EEXIST is the expected path when goal.md is already user-owned —
-    // never overwrite. Other errors (EACCES, ENOSPC, etc.) surface as
-    // "didn't seed" without throwing: a non-load-bearing best-effort
-    // write shouldn't take down the turn.
-    const code = (err as { code?: string } | null)?.code;
-    if (code === 'EEXIST' || code === 'EACCES' || code === 'ENOSPC') {
-      return { wrote: false, path };
-    }
+  } catch {
+    // EEXIST (file already owns the slot), EACCES, ENOSPC, EROFS, etc.
+    // all collapse to "didn't seed". The next round either reads the
+    // existing file or falls back to runtime derivation — neither path
+    // is load-bearing on the seed succeeding.
     return { wrote: false, path };
   }
 }

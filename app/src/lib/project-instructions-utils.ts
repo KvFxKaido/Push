@@ -1,6 +1,11 @@
 import { readFromSandbox } from '@/lib/sandbox-client';
 
+// Phase B (sandbox re-read) order must match the Phase A (GitHub REST)
+// order in `github-tools.ts:fetchProjectInstructions`. If they diverge,
+// a repo carrying both PUSH.md and AGENTS.md would load PUSH.md initially
+// and then have it overwritten by AGENTS.md once the sandbox is ready.
 export const PROJECT_INSTRUCTION_PATHS = [
+  '/workspace/PUSH.md',
   '/workspace/AGENTS.md',
   '/workspace/CLAUDE.md',
   '/workspace/GEMINI.md',
