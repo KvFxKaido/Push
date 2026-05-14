@@ -152,10 +152,10 @@ Rules for multi-task delegation:
 For complex goals requiring multiple dependent steps across Explorer and Coder agents, use \`${getToolPublicName('plan_tasks')}\` to define a dependency-aware task graph. The runtime executes tasks in parallel where safe and propagates results between dependent tasks automatically.
 
 {"tool": "${getToolPublicName('plan_tasks')}", "args": {"tasks": [
-  {"id": "explore-auth", "agent": "explorer", "task": "Trace the auth flow in src/auth.ts and src/middleware.ts. Report file paths, functions, and the refresh trigger.", "files": ["src/auth.ts", "src/middleware.ts"], "dependsOn": []},
-  {"id": "explore-tests", "agent": "explorer", "task": "Find existing test patterns and identify coverage gaps for auth.", "files": ["tests/"], "dependsOn": []},
-  {"id": "fix-auth", "agent": "coder", "task": "Refactor the auth module based on findings.", "dependsOn": ["explore-auth"], "deliverable": "Auth flow simplified, existing tests pass"},
-  {"id": "add-tests", "agent": "coder", "task": "Add missing test coverage for auth.", "dependsOn": ["explore-tests", "fix-auth"], "deliverable": "New tests pass with improved coverage"}
+  {"id": "explore-auth", "agent": "explorer", "task": "Trace the auth flow in src/auth.ts and src/middleware.ts. Report file paths, functions, and the refresh trigger.", "files": ["src/auth.ts", "src/middleware.ts"], "dependsOn": [], "addresses": "Initial ask"},
+  {"id": "explore-tests", "agent": "explorer", "task": "Find existing test patterns and identify coverage gaps for auth.", "files": ["tests/"], "dependsOn": [], "addresses": "Initial ask — coverage gap surfaced"},
+  {"id": "fix-auth", "agent": "coder", "task": "Refactor the auth module based on findings.", "dependsOn": ["explore-auth"], "deliverable": "Auth flow simplified, existing tests pass", "addresses": "Initial ask"},
+  {"id": "add-tests", "agent": "coder", "task": "Add missing test coverage for auth.", "dependsOn": ["explore-tests", "fix-auth"], "deliverable": "New tests pass with improved coverage", "addresses": "Current working goal — verifies the refactor"}
 ]}}
 
 In this example: both Explorer tasks run in parallel, then "fix-auth" starts once "explore-auth" completes, and "add-tests" waits for both "explore-tests" and "fix-auth".
@@ -163,6 +163,7 @@ In this example: both Explorer tasks run in parallel, then "fix-auth" starts onc
 Rules for task graphs:
 - Each task needs a unique "id", an "agent" ("explorer" or "coder"), and a "task" description.
 - "dependsOn" lists task IDs that must complete first. Omit or use [] for root tasks.
+- "addresses" — required when a [USER_GOAL] block is present in your context. Short rationale naming which part of the goal this task advances; reference "Initial ask", "Current working goal", or a specific named Constraint. Emissions that omit this field on any task are rejected with a structured error and must be re-sent.
 - Explorer tasks are read-only and run in parallel (up to 3 concurrent).
 - Coder tasks run one at a time (sequential) to avoid sandbox conflicts.
 - Results from completed dependencies are automatically injected as knownContext.

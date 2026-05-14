@@ -32,6 +32,7 @@ import {
 import { writeCoderMemory, invalidateMemoryForChangedFiles } from '@/lib/context-memory';
 import { runContextMemoryBestEffort } from '@/lib/memory-context-helpers';
 import { type CorrelationContext } from '@push/lib/correlation-context';
+import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
 import type { RunEngineEvent } from '@/lib/run-engine';
 import type { VerificationPolicy } from '@/lib/verification-policy';
 import type {
@@ -633,6 +634,13 @@ export function useAgentDelegation({
           });
         }
       } else if (toolCall.call.tool === 'plan_tasks') {
+        // Derive the user-goal anchor from the conversation's first
+        // non-tool-result user turn. Matches `orchestrator.ts:toLLMMessages`
+        // so the gate uses the same seed the orchestrator was shown.
+        const firstUserTurn = apiMessages.find(
+          (m) => m.role === 'user' && !m.isToolResult,
+        )?.content;
+        const userGoalAnchor = deriveUserGoalAnchor({ firstUserTurn }) ?? undefined;
         toolExecResult = await handleTaskGraphDelegation(buildTaskGraphContext(), {
           chatId,
           toolCall: toolCall as TaskGraphToolCall,
@@ -640,6 +648,7 @@ export function useAgentDelegation({
           lockedProviderForChat,
           resolvedModelForChat,
           verificationPolicy,
+          userGoalAnchor,
         });
       }
 
