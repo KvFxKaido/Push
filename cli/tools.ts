@@ -16,6 +16,7 @@ import { CliFlatJsonArtifactStore } from './artifacts-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { roleCanUseTool } from '../lib/capabilities.ts';
 import type { AgentRole } from '../lib/runtime-contract.ts';
+import { deriveProtocolVersion } from '../lib/tool-registry.ts';
 
 const KNOWN_AGENT_ROLES = new Set<AgentRole>([
   'orchestrator',
@@ -798,7 +799,11 @@ export function isReadOnlyToolCall(call) {
  * `daemon-integration.test.mjs` sync test enforces that every
  * advertised tool IS Explorer-callable per the capability grant.
  */
-export const READ_ONLY_TOOL_PROTOCOL = `TOOL PROTOCOL (read-only)
+// CLI-native protocol body: the marker is derived from this string so
+// any change to the inline tool list bumps the version, even when the
+// lib `TOOL_SPECS` registry is unchanged (which it would be — these
+// names are CLI-only). Codex P2 on PR #544.
+const READ_ONLY_TOOL_PROTOCOL_BODY = `TOOL PROTOCOL (read-only)
 
 When you need tools, output one or more fenced JSON blocks:
 \`\`\`json
@@ -825,7 +830,16 @@ Rules:
 - Prefer search_files before large file reads to locate evidence.
 - Do not describe tool calls in prose. Emit only JSON blocks for tool calls.`;
 
-export const TOOL_PROTOCOL = `TOOL PROTOCOL
+export const READ_ONLY_TOOL_PROTOCOL = `[Tool schema version: ${deriveProtocolVersion(READ_ONLY_TOOL_PROTOCOL_BODY)}]
+
+${READ_ONLY_TOOL_PROTOCOL_BODY}`;
+
+// CLI full-protocol body: lists CLI-native tools that are NOT in the
+// lib `TOOL_SPECS` registry (`exec_start`, `exec_poll`, `edit_file`,
+// `git_create_branch`, `undo_edit`, `save_memory`, etc.), so its
+// marker is derived from this body — not from the registry hash.
+// Codex P2 on PR #544.
+const TOOL_PROTOCOL_BODY = `TOOL PROTOCOL
 
 When you need tools, output one or more fenced JSON blocks:
 \`\`\`json
@@ -869,6 +883,10 @@ Rules:
 - Prefer read_symbol over read_file when you know which function/class you need — it returns only that symbol's body.
 - Check the ledger in [meta] for files with high relevance scores — those appeared most in search results and are likely the best read targets.
 - The readBudget in [meta] shows chars read this turn. Use it to pace reads — prefer targeted reads (read_symbol, ranged read_file) over full-file reads when budget is high.`;
+
+export const TOOL_PROTOCOL = `[Tool schema version: ${deriveProtocolVersion(TOOL_PROTOCOL_BODY)}]
+
+${TOOL_PROTOCOL_BODY}`;
 
 export function truncateText(text, max = MAX_TOOL_OUTPUT_CHARS) {
   if (text.length <= max) return text;

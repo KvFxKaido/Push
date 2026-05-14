@@ -693,6 +693,31 @@ export function escapeToolNameForRegex(name: string): string {
 export { getToolCapabilities as getToolRequiredCapabilities } from './capabilities.js';
 
 /**
+ * djb2 hash of an arbitrary string, returned as an 8-char zero-padded
+ * hex. Exported so callers can derive their own protocol-version
+ * markers from inline protocol body text (e.g. the CLI tool protocol,
+ * which lists CLI-native tools — `exec_start`, `git_create_branch`,
+ * `edit_file`, `list_dir` — that aren't part of `TOOL_SPECS`).
+ *
+ * Stable across processes for the same input, byte-identical to the
+ * algorithm used by `system-prompt-builder.ts` and
+ * `computeRegistrySchemaVersion()`. Operators reading event logs see
+ * the same hex format regardless of which protocol the marker came
+ * from.
+ *
+ * Codex P2 on PR #544: registry-version-only markers can mislead when
+ * the CLI protocol changes without touching `TOOL_SPECS`. Deriving
+ * each surface's marker from its own protocol body closes that gap.
+ */
+export function deriveProtocolVersion(text: string): string {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
  * Content-derived schema version for the tool registry. Computed once
  * at module load from a canonical stringification of each tool's
  * source, names, and protocol-facing fields (signature / description /
@@ -707,8 +732,12 @@ export { getToolCapabilities as getToolRequiredCapabilities } from './capabiliti
  * shape?" can grep their logs for the version and match it to a
  * commit.
  *
- * djb2-style hash (same as `system-prompt-builder.ts`). Returned as
- * an 8-char zero-padded hex string for compact display.
+ * Note: this marker covers the lib registry only. Surfaces that
+ * advertise CLI-native tools NOT in `TOOL_SPECS` should derive their
+ * own marker via `deriveProtocolVersion(body)` instead. Agent kernels
+ * (Coder/Explorer) detect an existing `[Tool schema version: …]`
+ * prefix on `sandboxToolProtocol` and skip re-prepending, so the
+ * model never sees a double-header.
  */
 function computeRegistrySchemaVersion(): string {
   // Sort by canonicalName before stringifying so reordering specs in
@@ -733,11 +762,14 @@ function computeRegistrySchemaVersion(): string {
       ex: spec.exampleJson,
     })),
   );
-  let hash = 5381;
-  for (let i = 0; i < stable.length; i++) {
-    hash = ((hash << 5) + hash + stable.charCodeAt(i)) | 0;
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
+  return deriveProtocolVersion(stable);
 }
+
+/**
+ * Conventional prefix used by every Push tool-protocol block. Agent
+ * kernels test for this string to avoid double-prepending when a
+ * caller-supplied protocol already carries its own marker.
+ */
+export const TOOL_SCHEMA_VERSION_PREFIX = '[Tool schema version:';
 
 export const TOOL_REGISTRY_SCHEMA_VERSION = computeRegistrySchemaVersion();
