@@ -11,6 +11,7 @@ import type { ChatMessage, ChatCard, ReasoningBlock, ToolExecutionResult } from 
 import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
 import type { ApprovalGateRegistry } from '@/lib/approval-gates';
 import type { AgentRole } from '@push/lib/runtime-contract';
+import type { ExecutionMode } from '@push/lib/capabilities';
 import { createDefaultApprovalGates } from '@/lib/approval-gates';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { executeAnyToolCall } from '@/lib/tool-dispatch';
@@ -77,6 +78,14 @@ export interface ToolExecRunContext {
    * the downstream helpers in `local-daemon-sandbox-client.ts`.
    */
   localDaemonBinding?: ToolDispatchBinding;
+  /**
+   * Resolved execution mode for capability checks — populated at the
+   * round-loop seam from `workspaceContext.mode` via
+   * `workspaceModeToExecutionMode`. Forwarded into the runtime
+   * `ToolExecutionContext` so the prompt builder and the capability
+   * gate read the same input.
+   */
+  executionMode?: ExecutionMode;
   isMainProtected: boolean;
   defaultBranch: string | undefined;
   provider: ActiveProvider;
@@ -163,6 +172,7 @@ export async function executeTool(
           ctx.chatId ?? undefined,
           ctx.localDaemonBinding,
           ctx.abortSignal,
+          ctx.executionMode,
         );
       }
 

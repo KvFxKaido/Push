@@ -253,12 +253,16 @@ export function isCapabilityMapped(canonicalName: string): boolean {
  * Defaults to `'cloud'` everywhere so existing callers stay correct without
  * a churn pass.
  *
- * Surfaces derive the mode at the runtime edge — web via
- * `getExecutionMode(context)` in `tool-execution-runtime.ts` (keying off
- * `context.localDaemonBinding`); CLI via a local constant in
- * `cli/tools.ts` since pushd is the daemon by definition today. That seam
- * is where a future cloud-backed CLI path would change one value to opt
- * into the cloud grant.
+ * Surfaces resolve the mode at a single seam — web via
+ * `getExecutionMode(context)` in `tool-execution-runtime.ts` (which
+ * reads `context.executionMode` populated by the round loop from
+ * `workspaceContext.mode`); CLI via a local constant in `cli/tools.ts`
+ * since pushd is the daemon by definition today.
+ *
+ * `workspaceModeToExecutionMode` is the canonical mapping from
+ * `WorkspaceMode` to `ExecutionMode`. Prompt builder and runtime both
+ * funnel through it; the drift-detector tests in
+ * `capabilities.test.ts` pin that single source of truth.
  *
  * Why named-mode and not raw binding-presence: the policy input must be a
  * named contract, not "did something happen to set a binding." Future
@@ -266,6 +270,20 @@ export function isCapabilityMapped(canonicalName: string): boolean {
  * orchestrator's grant.
  */
 export type ExecutionMode = 'cloud' | 'local-daemon';
+
+/**
+ * Canonical mapping from a workspace mode (`'repo' | 'scratch' | 'chat'
+ * | 'local-pc' | 'relay'`) to the `ExecutionMode` policy input.
+ *
+ * Kept here, in the capability layer, so the prompt builder and the
+ * runtime context cannot drift: both call this and get the same answer
+ * for the same input. The string union is intentionally loose so this
+ * file does not pull in the web-only `WorkspaceMode` type; the
+ * drift-detector test in `capabilities.test.ts` pins the full enum.
+ */
+export function workspaceModeToExecutionMode(mode: string | null | undefined): ExecutionMode {
+  return mode === 'local-pc' || mode === 'relay' ? 'local-daemon' : 'cloud';
+}
 
 /**
  * Capabilities orchestrator picks up in `local-daemon` mode. Mirrors the
