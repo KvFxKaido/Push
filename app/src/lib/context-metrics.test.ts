@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getContextMetrics, recordContextMetric, resetContextMetrics } from './context-metrics';
+import {
+  drainRecentContextMetrics,
+  getContextMetrics,
+  recordContextMetric,
+  resetContextMetrics,
+} from './context-metrics';
 
 describe('context-metrics', () => {
   beforeEach(() => {
@@ -165,5 +170,81 @@ describe('context-metrics', () => {
     const snapshot = getContextMetrics();
     expect(snapshot.totalTokensSaved).toBe(0);
     expect(snapshot.largestReduction).toBe(0);
+  });
+
+  describe('drainRecentContextMetrics', () => {
+    beforeEach(() => {
+      // Reset both the in-memory metrics and the drain buffer between tests.
+      drainRecentContextMetrics();
+    });
+
+    it('returns recorded metrics in insertion order and empties the buffer', () => {
+      recordContextMetric({
+        phase: 'summarization',
+        beforeTokens: 90_000,
+        afterTokens: 60_000,
+        provider: 'openrouter',
+        cause: 'tool_output',
+      });
+      recordContextMetric({
+        phase: 'hard_trim',
+        beforeTokens: 100_000,
+        afterTokens: 88_000,
+        messagesDropped: 4,
+      });
+
+      const drained = drainRecentContextMetrics();
+      expect(drained).toHaveLength(2);
+      expect(drained[0].phase).toBe('summarization');
+      expect(drained[1].phase).toBe('hard_trim');
+      // Buffer is empty after a drain — consume-on-peek semantics.
+      expect(drainRecentContextMetrics()).toEqual([]);
+    });
+
+    it('returns an empty array when nothing has been recorded', () => {
+      expect(drainRecentContextMetrics()).toEqual([]);
+    });
+
+    it('discards the oldest entries when the FIFO cap is exceeded', () => {
+      // The buffer is capped at MAX_PENDING_CONTEXT_METRICS (64). If a
+      // consumer never drains, new entries displace the oldest rather
+      // than growing without bound. Verify by overflowing the buffer
+      // and asserting the surviving order is contiguous from the
+      // overflow start. Copilot low-confidence on PR #545.
+      const OVERFLOW = 80;
+      for (let i = 0; i < OVERFLOW; i++) {
+        recordContextMetric({
+          phase: 'summarization',
+          beforeTokens: 1000 + i,
+          afterTokens: 500,
+          cause: 'tool_output',
+        });
+      }
+      const drained = drainRecentContextMetrics();
+      expect(drained.length).toBeLessThanOrEqual(64);
+      // The retained entries are the most recent ones — the oldest
+      // (lowest beforeTokens) got shifted off.
+      const firstBefore = drained[0].beforeTokens;
+      const lastBefore = drained[drained.length - 1].beforeTokens;
+      expect(lastBefore).toBe(1000 + OVERFLOW - 1);
+      // Order is preserved within the retained window.
+      expect(firstBefore).toBeLessThan(lastBefore);
+      // Subsequent drains start empty.
+      expect(drainRecentContextMetrics()).toEqual([]);
+    });
+
+    it('is cleared by resetContextMetrics', () => {
+      // resetContextMetrics() must clear the drain buffer too — otherwise
+      // tests that reset metrics between cases can still observe stale
+      // compaction entries from before the reset.
+      recordContextMetric({
+        phase: 'summarization',
+        beforeTokens: 90_000,
+        afterTokens: 60_000,
+        cause: 'tool_output',
+      });
+      resetContextMetrics();
+      expect(drainRecentContextMetrics()).toEqual([]);
+    });
   });
 });

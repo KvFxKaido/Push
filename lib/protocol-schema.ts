@@ -556,8 +556,56 @@ function validateAssistantPromptSnapshot(payload: unknown, basePath: string): Va
   return issues;
 }
 
+const COMPACTION_PHASES = ['summarization', 'digest_drop', 'hard_trim'] as const;
+const COMPACTION_CAUSES = ['tool_output', 'long_message', 'mixed'] as const;
+
+function validateContextCompaction(payload: unknown, basePath: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isPlainObject(payload)) {
+    issues.push({ path: basePath, message: `expected plain object, got ${typeof payload}` });
+    return issues;
+  }
+  if (!isFiniteNonNegativeInt(payload.round)) {
+    issues.push({
+      path: `${basePath}.round`,
+      message: `expected non-negative integer, got ${JSON.stringify(payload.round)}`,
+    });
+  }
+  const ph = expectAgentValue(payload, 'phase', basePath, COMPACTION_PHASES);
+  if (ph) issues.push(ph);
+  if (!isFiniteNonNegativeInt(payload.beforeTokens)) {
+    issues.push({
+      path: `${basePath}.beforeTokens`,
+      message: `expected non-negative integer, got ${JSON.stringify(payload.beforeTokens)}`,
+    });
+  }
+  if (!isFiniteNonNegativeInt(payload.afterTokens)) {
+    issues.push({
+      path: `${basePath}.afterTokens`,
+      message: `expected non-negative integer, got ${JSON.stringify(payload.afterTokens)}`,
+    });
+  }
+  if (!isFiniteNonNegativeInt(payload.messagesDropped)) {
+    issues.push({
+      path: `${basePath}.messagesDropped`,
+      message: `expected non-negative integer, got ${JSON.stringify(payload.messagesDropped)}`,
+    });
+  }
+  const p = expectOptionalString(payload, 'provider', basePath);
+  if (p) issues.push(p);
+  // `cause` is optional. When present it must be one of the documented
+  // values. Use `expectAgentValue` with the cause enum; tolerate
+  // omission by checking field presence first.
+  if (payload.cause !== undefined) {
+    const c = expectAgentValue(payload, 'cause', basePath, COMPACTION_CAUSES);
+    if (c) issues.push(c);
+  }
+  return issues;
+}
+
 const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   'assistant.prompt_snapshot': validateAssistantPromptSnapshot,
+  'context.compaction': validateContextCompaction,
   'subagent.started': validateSubagentStarted,
   'subagent.completed': validateSubagentCompleted,
   'subagent.failed': validateSubagentFailed,

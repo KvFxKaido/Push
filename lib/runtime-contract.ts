@@ -278,6 +278,26 @@ export type RunEventInput =
       sections: PromptSnapshot;
     }
   | {
+      // Per-turn context-compaction event. Emitted when the message
+      // history is rewritten to fit a token budget — summarization of
+      // verbose tool results, digest-grouping of older messages, or
+      // hard-trimming. Before this event existed, compaction was a
+      // silent operation: the model saw a context different from what
+      // appeared on previous turns and could not tell why. Carries
+      // token counts before/after and a `cause` for summarization
+      // calls. `messagesDropped` is the count of messages collapsed
+      // into a digest (zero for summarization-only passes that rewrite
+      // in place).
+      type: 'context.compaction';
+      round: number;
+      phase: 'summarization' | 'digest_drop' | 'hard_trim';
+      beforeTokens: number;
+      afterTokens: number;
+      messagesDropped: number;
+      provider?: string;
+      cause?: 'tool_output' | 'long_message' | 'mixed';
+    }
+  | {
       type: 'tool.execution_start';
       round: number;
       executionId: string;

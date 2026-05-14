@@ -89,10 +89,43 @@ function phaseForInput(phase: ContextPhase): 'summarization' | 'digestDrop' | 'h
   return 'summarization';
 }
 
+/**
+ * FIFO buffer of recent compaction events, drained by
+ * `chat-stream-round` after each assistant turn so they can be
+ * surfaced as `context.compaction` run events. Two notes:
+ *
+ *   - Module-level (not per-chat). The same buffer collects events
+ *     from all concurrent chats. `chat-stream-round` drains it once
+ *     per turn, attributing whatever's there to the current chat.
+ *     Cross-chat misattribution is bounded and only happens when two
+ *     chats stream concurrently AND one of them triggers compaction
+ *     between the other's `streamChat` call and drain — rare enough
+ *     that the per-chat plumbing it'd require isn't worth the
+ *     complexity for this audit-trail use case.
+ *   - The buffer is capped to prevent unbounded growth if a consumer
+ *     never drains. New events past the cap displace the oldest.
+ */
+const MAX_PENDING_CONTEXT_METRICS = 64;
+const _pendingContextMetrics: ContextMetricInput[] = [];
+
+export function drainRecentContextMetrics(): ContextMetricInput[] {
+  if (_pendingContextMetrics.length === 0) return [];
+  const out = _pendingContextMetrics.slice();
+  _pendingContextMetrics.length = 0;
+  return out;
+}
+
 export function recordContextMetric(input: ContextMetricInput): void {
   const provider = normalizeProvider(input.provider);
   const saved = Math.max(0, input.beforeTokens - input.afterTokens);
   const dropped = input.messagesDropped ?? 0;
+
+  // Push onto the drain buffer. `chat-stream-round` reads it after
+  // each turn and emits a `context.compaction` run event per entry.
+  _pendingContextMetrics.push(input);
+  if (_pendingContextMetrics.length > MAX_PENDING_CONTEXT_METRICS) {
+    _pendingContextMetrics.shift();
+  }
 
   metrics.totalEvents++;
   metrics.totalTokensSaved += saved;
@@ -147,4 +180,7 @@ export function getContextMetrics(): ContextMetrics {
 
 export function resetContextMetrics(): void {
   metrics = emptyMetrics();
+  // Clear the drain buffer too so tests that reset between cases can't
+  // observe stale entries from prior cases. Copilot on PR #545.
+  _pendingContextMetrics.length = 0;
 }

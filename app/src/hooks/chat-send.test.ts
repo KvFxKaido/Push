@@ -17,6 +17,11 @@ vi.mock('@/lib/orchestrator', async () => {
 });
 
 import { processAssistantTurn, streamAssistantRound, type SendLoopContext } from './chat-send';
+import {
+  drainRecentContextMetrics,
+  recordContextMetric,
+  resetContextMetrics,
+} from '@/lib/context-metrics';
 
 function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -158,6 +163,64 @@ describe('chat-send', () => {
     expect(lastAccumulated.text).toBe('Hello world');
     expect(lastAccumulated.thinking).toBe('Need to inspect');
     expect(usageHandler.trackUsage).toHaveBeenCalledWith('k2p5', 11, 7);
+  });
+
+  it('drains context-compaction metrics into appendRunEvent after the stream resolves', async () => {
+    // End-to-end coverage for the drain → run-event mapping in
+    // chat-stream-round. If the loop stops emitting `context.compaction`
+    // events or maps fields incorrectly, this test fails. Copilot on
+    // PR #545.
+    resetContextMetrics();
+    const conversationsRef = { current: makeConversation([makeMessage()]) };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    mockStreamChat.mockImplementation((_messages, _onToken, onDone) => {
+      // Simulate compaction firing during the prompt build inside the
+      // PushStream. The drain happens after `streamChat` resolves.
+      recordContextMetric({
+        phase: 'summarization',
+        beforeTokens: 90_000,
+        afterTokens: 60_000,
+        provider: 'openrouter',
+        cause: 'tool_output',
+      });
+      onDone({ inputTokens: 1, outputTokens: 1 });
+    });
+
+    await streamAssistantRound(
+      3,
+      [makeMessage({ id: 'user-1', role: 'user', content: 'Hi', status: 'done' })],
+      ctx,
+    );
+
+    const appendRunEvent = ctx.appendRunEvent as ReturnType<typeof vi.fn>;
+    const compactionCalls = appendRunEvent.mock.calls.filter(
+      (call) => (call[1] as { type: string }).type === 'context.compaction',
+    );
+    expect(compactionCalls).toHaveLength(1);
+    const chatId = compactionCalls[0][0] as string;
+    const event = compactionCalls[0][1] as {
+      type: string;
+      round: number;
+      phase: string;
+      beforeTokens: number;
+      afterTokens: number;
+      messagesDropped: number;
+      provider?: string;
+      cause?: string;
+    };
+    expect(chatId).toBe('chat-1');
+    expect(event.round).toBe(3);
+    expect(event.phase).toBe('summarization');
+    expect(event.beforeTokens).toBe(90_000);
+    expect(event.afterTokens).toBe(60_000);
+    expect(event.messagesDropped).toBe(0);
+    expect(event.provider).toBe('openrouter');
+    expect(event.cause).toBe('tool_output');
+
+    // Buffer is drained — a subsequent peek returns nothing.
+    expect(drainRecentContextMetrics()).toEqual([]);
   });
 
   it('promotes reasoning to content when the stream emits only thinking tokens', async () => {
