@@ -700,12 +700,18 @@ describe('send_user_message delegation parity', needsLoopback, () => {
           id: 'task-a',
           description: 'Inspect lib/task-graph.ts exports.',
           files: ['lib/task-graph.ts'],
+          // `addresses` is required by the goal-alignment gate when the
+          // planner sees a user goal (derived from userText when no
+          // `goal.md` exists). See cli/delegation-entry.ts goal-invalid
+          // fallback.
+          addresses: 'Initial ask',
         },
         {
           id: 'task-b',
           description: 'Inspect lib/planner-core.ts exports.',
           files: ['lib/planner-core.ts'],
           dependsOn: ['task-a'],
+          addresses: 'Initial ask',
         },
       ],
     });

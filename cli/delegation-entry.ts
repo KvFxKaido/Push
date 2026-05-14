@@ -36,7 +36,11 @@
  */
 
 import process from 'node:process';
-import { executeTaskGraph, validateTaskGraph } from '../lib/task-graph.js';
+import {
+  executeTaskGraph,
+  validateTaskGraph,
+  validateTaskGraphAgainstGoal,
+} from '../lib/task-graph.js';
 import type { TaskGraphNode } from '../lib/runtime-contract.js';
 import type { CorrelationContext } from '../lib/correlation-context.js';
 import { extendCorrelation } from '../lib/correlation-context.js';
@@ -45,6 +49,8 @@ import {
   formatPlannerBrief,
   type PlannerFeatureList,
 } from '../lib/planner-core.js';
+import { loadUserGoalFile } from './user-goal-file.ts';
+import { deriveUserGoalAnchor, type UserGoalAnchor } from '../lib/user-goal-anchor.ts';
 import type { LlmMessage, PushStream } from '../lib/provider-contract.js';
 import { normalizeReasoning } from '../lib/reasoning-tokens.js';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.js';
@@ -124,8 +130,31 @@ function planToTaskGraph(plan: PlannerFeatureList): TaskGraphNode[] {
       task: parts.join('\n'),
       files: f.files,
       dependsOn: f.dependsOn,
+      // Propagate addresses from the planner. When the planner saw a
+      // user goal, every feature should carry this; the downstream
+      // `validateTaskGraphAgainstGoal` check enforces it. When no goal
+      // was provided to the planner, the field is omitted and the
+      // validator is bypassed by the caller.
+      addresses: f.addresses,
     };
   });
+}
+
+/**
+ * Best-effort load of the user-goal anchor for delegation. Tries the
+ * persisted `goal.md` first, then falls back to the verbatim-first-turn
+ * derivation. Symmetrical with the web orchestrator's `toLLMMessages`
+ * derivation and the CLI engine's per-round anchor load. Returns null
+ * when neither yields a usable seed — callers treat null as "skip the
+ * goal-alignment gate" rather than failing.
+ */
+async function loadDelegationGoalAnchor(
+  cwd: string,
+  firstUserTurn: string | null,
+): Promise<UserGoalAnchor | null> {
+  const fileAnchor = await loadUserGoalFile(cwd);
+  if (fileAnchor) return fileAnchor;
+  return deriveUserGoalAnchor({ firstUserTurn });
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +188,12 @@ export async function runDelegatedHeadless(
     executionId,
   };
 
+  // Load the user goal once before planning. The planner gets it
+  // through PlannerCoreOptions.goal; the post-planner validator + each
+  // per-node brief share the same anchor object. Best-effort; null when
+  // no goal exists, which short-circuits the alignment gate.
+  const goalAnchor = await loadDelegationGoalAnchor(state.cwd, task);
+
   try {
     // 1. Plan
     const plannerStream = buildPlannerPushStream(providerConfig, apiKey, ac.signal);
@@ -171,6 +206,7 @@ export async function runDelegatedHeadless(
       onStatus: (phase) => {
         if (!jsonOutput) process.stderr.write(`${fmt.dim(`[planner] ${phase}`)}\n`);
       },
+      goal: goalAnchor ?? undefined,
     });
 
     await appendSessionEvent(
@@ -254,6 +290,50 @@ export async function runDelegatedHeadless(
       );
     }
 
+    // 3a. Goal-alignment check (CLI-side parity with the web runtime gate
+    // in `app/src/lib/task-graph-delegation-handler.ts`). When the planner
+    // had a user goal but produced features without `addresses`, fall
+    // back to the non-delegated loop rather than running graph nodes
+    // that may drift from the user's intent. CLI's planner is one-shot
+    // by design — no in-band model retry — so this is graceful
+    // degradation, not the web-style "bounce + re-emit" mechanism. The
+    // decision doc (Goal-Anchored Task Graph Layering.md) names this
+    // explicitly as the CLI parity contract.
+    if (goalAnchor) {
+      const goalErrors = validateTaskGraphAgainstGoal(nodes, { anchor: goalAnchor });
+      if (goalErrors.length > 0) {
+        if (!jsonOutput) {
+          process.stderr.write(
+            `${fmt.warn('[delegation]')} Planner output is not goal-aligned (${goalErrors.length} node(s) missing \`addresses\`); falling back.\n`,
+          );
+        }
+        await appendSessionEvent(
+          state,
+          'delegation.goal_invalid',
+          { ...graphCtx, missingNodes: goalErrors.map((e) => e.nodeId) },
+          runId,
+        );
+        return runNonDelegatedFallback(
+          state,
+          providerConfig,
+          apiKey,
+          task,
+          maxRounds,
+          jsonOutput,
+          acceptanceChecks,
+          {
+            allowExec,
+            safeExecPatterns,
+            execMode,
+            disabledTools,
+            alwaysAllow,
+            signal: ac.signal,
+            runId,
+          },
+        );
+      }
+    }
+
     await appendSessionEvent(
       state,
       'delegation.graph_started',
@@ -329,7 +409,10 @@ export async function runDelegatedHeadless(
         workingMemory: undefined,
       };
 
-      const preamble = buildHeadlessTaskBrief(node.task, acceptanceChecks);
+      const preamble = buildHeadlessTaskBrief(node.task, acceptanceChecks, {
+        userGoal: goalAnchor ?? undefined,
+        addresses: node.addresses,
+      });
 
       // Retrieve typed memory scoped to this node (cross-session
       // persistent records) alongside the existing graph-internal
@@ -647,6 +730,11 @@ export async function runUserTurnWithDelegation(
   const plannerAc = signal ? undefined : new AbortController();
   const plannerSignal = signal ?? plannerAc!.signal;
 
+  // Load the user goal once for this turn. Same loader the headless
+  // path uses; downstream the planner sees it, the goal-alignment gate
+  // uses it, and each per-node brief renders it.
+  const goalAnchor = await loadDelegationGoalAnchor(state.cwd, userText);
+
   let plan: PlannerFeatureList | null = null;
   try {
     const plannerStream = buildPlannerPushStream(providerConfig, apiKey, plannerSignal);
@@ -657,6 +745,7 @@ export async function runUserTurnWithDelegation(
       provider: providerConfig.id,
       modelId: state.model || providerConfig.defaultModel,
       onStatus: () => {},
+      goal: goalAnchor ?? undefined,
     });
   } catch (err) {
     dispatch('subagent.failed', {
@@ -700,6 +789,28 @@ export async function runUserTurnWithDelegation(
       runId,
     );
     return { delegated: false };
+  }
+
+  // Goal-alignment check — CLI-side parity with the web runtime gate.
+  // When the planner had a user goal but produced features without
+  // `addresses`, degrade to single-agent rather than dispatching nodes
+  // that may drift. See decision doc (Goal-Anchored Task Graph
+  // Layering.md) and the headless-path equivalent above.
+  if (goalAnchor) {
+    const goalErrors = validateTaskGraphAgainstGoal(nodes, { anchor: goalAnchor });
+    if (goalErrors.length > 0) {
+      dispatch('warning', {
+        code: 'PLAN_GOAL_INVALID',
+        message: `Planner output is not goal-aligned (${goalErrors.length} node(s) missing \`addresses\`); falling back to single-agent.`,
+      });
+      await appendSessionEvent(
+        state,
+        'delegation.goal_invalid',
+        { ...graphCtx, missingNodes: goalErrors.map((e) => e.nodeId) },
+        runId,
+      );
+      return { delegated: false };
+    }
   }
 
   await appendSessionEvent(
@@ -760,7 +871,10 @@ export async function runUserTurnWithDelegation(
       workingMemory: undefined,
     };
 
-    const preamble = buildHeadlessTaskBrief(node.task, undefined);
+    const preamble = buildHeadlessTaskBrief(node.task, undefined, {
+      userGoal: goalAnchor ?? undefined,
+      addresses: node.addresses,
+    });
     const retrievedBlock = await buildTypedMemoryBlockForNode({
       node,
       scope: graphMemoryScope,

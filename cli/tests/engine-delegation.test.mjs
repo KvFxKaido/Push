@@ -148,12 +148,18 @@ describe('runAssistantTurn — multi-feature delegation event sequence', needsLo
             id: 'inspect-cli-provider',
             description: 'Read cli/provider.ts and note provider URLs.',
             files: ['cli/provider.ts'],
+            // `addresses` is required when the planner sees a user goal
+            // (which it does here — the goal is derived from userText
+            // when no `goal.md` exists). Without it the goal-alignment
+            // gate rejects and the run falls back to single-agent.
+            addresses: 'Initial ask',
           },
           {
             id: 'inspect-worker-providers',
             description: 'Read app/src/worker/worker-providers.ts and note URLs.',
             files: ['app/src/worker/worker-providers.ts'],
             dependsOn: ['inspect-cli-provider'],
+            addresses: 'Initial ask',
           },
         ],
       });
@@ -330,3 +336,82 @@ describe(
     });
   },
 );
+
+describe('runAssistantTurn — goal-alignment fallback (CLI parity)', needsLoopback, () => {
+  it('falls back to single-agent when planner emits multi-feature plan without addresses', async () => {
+    await withTempSessionDir(async (sessionDir) => {
+      // 2-feature plan with NO addresses on either feature. With a
+      // user goal derivable from userText, the goal-alignment gate
+      // (validateTaskGraphAgainstGoal in cli/delegation-entry.ts)
+      // flags this and CLI falls back gracefully.
+      const plannerPayload = JSON.stringify({
+        approach: 'Investigate both files',
+        features: [
+          {
+            id: 'feature-a',
+            description: 'Inspect file A.',
+            files: ['cli/provider.ts'],
+          },
+          {
+            id: 'feature-b',
+            description: 'Inspect file B.',
+            files: ['cli/cli.ts'],
+            dependsOn: ['feature-a'],
+          },
+        ],
+      });
+
+      const server = await startSequencedProviderServer([
+        { tokens: [plannerPayload] },
+        { tokens: ['Single-agent fallback reply.'] },
+      ]);
+
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(sessionDir);
+        const emitted = [];
+
+        const result = await runAssistantTurn(
+          state,
+          providerConfig,
+          'mock-key',
+          'Inspect both files and compare them',
+          5,
+          {
+            emit: (event) => emitted.push(event),
+          },
+        );
+
+        assert.equal(result.outcome, 'success');
+
+        const eventTypes = emitted.map((e) => e.type);
+
+        // Planner ran (subagent.* envelopes) but the gate triggered
+        // a fallback — no task_graph.* envelopes.
+        assert.ok(eventTypes.includes('subagent.started'));
+        assert.ok(eventTypes.includes('subagent.completed'));
+        assert.ok(
+          !eventTypes.some((t) => t.startsWith('task_graph.')),
+          `task_graph.* emitted despite missing addresses (got ${eventTypes.join(', ')})`,
+        );
+
+        // Warning envelope surfaces the misalignment to the TUI.
+        const warning = emitted.find(
+          (e) => e.type === 'warning' && e.payload?.code === 'PLAN_GOAL_INVALID',
+        );
+        assert.ok(
+          warning,
+          `missing PLAN_GOAL_INVALID warning (got types ${eventTypes.join(', ')})`,
+        );
+
+        // Persisted delegation.goal_invalid session event for
+        // post-hoc observability via aggregateStats / session log.
+        const persisted = await loadSessionEvents(state.sessionId);
+        const goalInvalid = persisted.find((e) => e.type === 'delegation.goal_invalid');
+        assert.ok(goalInvalid, 'missing delegation.goal_invalid session event');
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+});
