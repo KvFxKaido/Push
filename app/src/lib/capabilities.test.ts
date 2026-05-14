@@ -11,6 +11,7 @@ import {
   formatCapabilities,
   CapabilityLedger,
   enforceRoleCapability,
+  formatRoleCapabilityDenial,
   type Capability,
 } from './capabilities';
 import { getAllToolSpecs } from './tool-registry';
@@ -125,17 +126,40 @@ describe('roleCanUseTool', () => {
 // ---------------------------------------------------------------------------
 
 describe('enforceRoleCapability', () => {
-  it('returns ROLE_REQUIRED when role is undefined', () => {
+  it('returns ROLE_REQUIRED when role is undefined / null / empty', () => {
     // Closes audit item #3: a binding that constructs a tool-execution
     // context without a role used to silently skip capability
     // enforcement. The helper now turns that into an explicit refusal
     // surfaced as a structured ROLE_REQUIRED error to the model.
-    const check = enforceRoleCapability(undefined, 'sandbox_read_file');
+    for (const empty of [undefined, null, '']) {
+      const check = enforceRoleCapability(empty, 'sandbox_read_file');
+      expect(check.ok).toBe(false);
+      if (check.ok) return;
+      expect(check.type).toBe('ROLE_REQUIRED');
+      expect(check.message).toContain('sandbox_read_file');
+      expect(check.detail).toMatch(/role/i);
+    }
+  });
+
+  it('returns ROLE_INVALID when role is a non-empty unrecognized value', () => {
+    // Distinguished from ROLE_REQUIRED so the diagnostic is accurate:
+    // the caller DID declare a value; it just wasn't a known AgentRole.
+    // Typo-from-JS-caller is the common cause (Codex/Copilot review on
+    // PR #546).
+    const check = enforceRoleCapability('wat-is-this', 'sandbox_read_file');
     expect(check.ok).toBe(false);
     if (check.ok) return;
-    expect(check.type).toBe('ROLE_REQUIRED');
-    expect(check.message).toContain('sandbox_read_file');
-    expect(check.detail).toMatch(/role/i);
+    expect(check.type).toBe('ROLE_INVALID');
+    expect(check.message).toContain('"wat-is-this"');
+    expect(check.detail).toContain('orchestrator');
+  });
+
+  it('reports a non-string invalid role with a useful sample', () => {
+    const check = enforceRoleCapability({ not: 'a-role' }, 'sandbox_read_file');
+    expect(check.ok).toBe(false);
+    if (check.ok) return;
+    expect(check.type).toBe('ROLE_INVALID');
+    expect(check.message).toContain('[object Object]');
   });
 
   it('returns ROLE_CAPABILITY_DENIED when role lacks required capability', () => {
@@ -179,6 +203,32 @@ describe('enforceRoleCapability', () => {
     // Auditor only grants repo:read — that's what the detail should
     // surface so the model sees what it can do.
     expect(check.detail).toContain('Granted: repo:read');
+  });
+});
+
+describe('formatRoleCapabilityDenial', () => {
+  // The shared formatter is the single source of truth for denial body
+  // text across the web runtime, CLI kernel, and Coder bindings. Before
+  // its extraction, each surface stitched the body by hand and drifted
+  // (Coder used a single space; CLI used `\n\n`). Pinning the shape
+  // here flags any future regression that lets surfaces drift again.
+  it('produces a stable [Tool Blocked] body for ROLE_REQUIRED', () => {
+    const check = enforceRoleCapability(undefined, 'sandbox_read_file');
+    expect(check.ok).toBe(false);
+    if (check.ok) return;
+    const body = formatRoleCapabilityDenial('sandbox_read_file', check);
+    expect(body).toMatch(/^\[Tool Blocked — sandbox_read_file\] /);
+    expect(body).toContain('\n\n');
+  });
+
+  it('produces a stable [Tool Blocked] body for ROLE_CAPABILITY_DENIED', () => {
+    const check = enforceRoleCapability('explorer', 'sandbox_write_file');
+    expect(check.ok).toBe(false);
+    if (check.ok) return;
+    const body = formatRoleCapabilityDenial('sandbox_write_file', check);
+    expect(body).toContain('[Tool Blocked — sandbox_write_file]');
+    expect(body).toContain('Required: repo:write');
+    expect(body).toContain('Granted:');
   });
 });
 

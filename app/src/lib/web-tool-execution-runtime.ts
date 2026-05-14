@@ -12,7 +12,7 @@
  */
 
 import type { ToolExecutionRuntime, ToolExecutionContext } from '@push/lib/tool-execution-runtime';
-import { enforceRoleCapability } from '@push/lib/capabilities';
+import { enforceRoleCapability, formatRoleCapabilityDenial } from '@push/lib/capabilities';
 import { resolveToolName } from '@push/lib/tool-registry';
 
 import type { StructuredToolError, ToolHookContext, ToolExecutionResult } from '@/types';
@@ -207,7 +207,7 @@ export class WebToolExecutionRuntime
             error: { type: err.type, message: err.message, retryable: err.retryable },
           });
           return {
-            text: `[Tool Blocked — ${toolName}] ${err.message}\n\n${err.detail}`,
+            text: formatRoleCapabilityDenial(toolName, check),
             structuredError: err,
           };
         }

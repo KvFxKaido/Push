@@ -17,7 +17,7 @@
  * runtime.
  */
 
-import { after, before, describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -37,20 +37,42 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
 const SCAN_TARGETS = ['cli/engine.ts', 'cli/pushd.ts'];
 
 /**
- * Per-file allowlist of substrings that must appear on the same line
- * as `executeToolCall(`. If any substring matches, the call site is
- * exempt — used for doc references, imports, and the function
- * declaration itself.
+ * Per-line allowlist patterns. A line is exempt if ANY of these
+ * regexes matches it. Regex (not `String.includes`) so substring
+ * collisions can't silently swallow real call sites — e.g. an inlined
+ * call list `[..., executeToolCall, ...]` on the same line as a real
+ * invocation would have evaded the includes-based check (Copilot review
+ * on PR #546). Word boundaries / anchored shapes keep each pattern
+ * tight to its intended context.
  */
-const LINE_ALLOWLIST = [
-  '* `executeToolCall',
-  '// `executeToolCall',
-  '`executeToolCall`',
-  'export async function executeToolCall',
-  'executeToolCall,',
-  'import { executeToolCall',
-  '.executeToolCall',
+const LINE_ALLOWLIST_PATTERNS = [
+  // Doc/comment references to the tool name (single backticks or `* `
+  // prefix at the start of a JSDoc continuation).
+  /^\s*\*\s.*`executeToolCall/,
+  /^\s*\/\/.*`executeToolCall/,
+  // Bare backtick-quoted references in any prose line.
+  /`executeToolCall`/,
+  // The function declaration itself.
+  /^\s*export\s+async\s+function\s+executeToolCall\b/,
+  // Named import lines — must be inside an `import { ... }` block.
+  /^\s*import\s*\{[^}]*\bexecuteToolCall\b[^}]*\}\s*from/,
+  // Property access (member call, never the direct executor): `.executeToolCall(`.
+  /\.executeToolCall\s*\(/,
 ];
+
+/**
+ * Determine whether the given source position is part of a property
+ * access (`obj.executeToolCall(...)`) rather than a direct call. The
+ * static call we care about starts at the `e` of `executeToolCall`;
+ * if the character immediately before is `.` (with optional
+ * whitespace), it's a member access on some other receiver and not
+ * the imported `executeToolCall` we're auditing.
+ */
+function isPropertyAccessAt(source, idx) {
+  let j = idx - 1;
+  while (j >= 0 && (source[j] === ' ' || source[j] === '\t')) j--;
+  return j >= 0 && source[j] === '.';
+}
 
 /**
  * Find the matching close paren for `executeToolCall(` starting at
@@ -134,22 +156,24 @@ describe('kernel role-capability drift detector', () => {
       const full = path.join(REPO_ROOT, rel);
       const src = await fs.readFile(full, 'utf8');
 
+      // Match `executeToolCall(` with a non-identifier character (or
+      // start of string) immediately before — protects against partial
+      // matches like `myExecuteToolCall(` or `nottheExecuteToolCall(`.
+      const callRegex = /(^|[^A-Za-z0-9_$])executeToolCall\s*\(/g;
       const issues = [];
-      let cursor = 0;
-      while (cursor < src.length) {
-        const idx = src.indexOf('executeToolCall(', cursor);
-        if (idx === -1) break;
-        cursor = idx + 'executeToolCall('.length;
+      let match;
+      while ((match = callRegex.exec(src)) !== null) {
+        // `idx` points at the `e` of `executeToolCall`.
+        const idx = match.index + match[1].length;
         const lineText = findLineText(src, idx);
 
-        // Skip allowlisted forms (doc references, wrapper definitions).
-        if (LINE_ALLOWLIST.some((s) => lineText.includes(s))) continue;
-        // Skip wrapper invocations that pass through to `_rawExecuteToolCall`.
-        if (lineText.includes('_rawExecuteToolCall')) continue;
-        // Skip member-access usage (e.g., `obj.executeToolCall(`).
-        if (idx > 0 && src[idx - 1] === '.') continue;
+        if (isPropertyAccessAt(src, idx)) continue;
+        if (LINE_ALLOWLIST_PATTERNS.some((re) => re.test(lineText))) continue;
 
-        const closeIdx = findMatchingClose(src, idx + 'executeToolCall'.length);
+        // `(` is the last char of the match; the call body starts
+        // right after it.
+        const openIdx = match.index + match[0].length;
+        const closeIdx = findMatchingClose(src, openIdx - 1);
         if (closeIdx === -1) {
           issues.push({
             line: lineForOffset(src, idx),
@@ -159,7 +183,7 @@ describe('kernel role-capability drift detector', () => {
           continue;
         }
 
-        const callBody = src.slice(idx + 'executeToolCall('.length, closeIdx);
+        const callBody = src.slice(openIdx, closeIdx);
         if (!/\brole\s*:/.test(callBody)) {
           issues.push({
             line: lineForOffset(src, idx),
@@ -184,19 +208,30 @@ describe('kernel role-capability drift detector', () => {
     // Belt-and-braces: even if the static scan above misses a caller,
     // the runtime kernel in `cli/tools.ts:executeToolCall` returns a
     // structured ROLE_REQUIRED error rather than admitting the call.
-    // Pin that behavior by exercising the executor directly.
+    // Pin that behavior by exercising the executor directly. The kernel
+    // role check fires before any filesystem access, so REPO_ROOT is
+    // fine as the workspace argument — no tempdir needed.
     const { executeToolCall } = await import('../tools.ts');
-    const workspaceRoot = await fs.mkdtemp(path.join(REPO_ROOT, '.drift-'));
-    try {
-      const result = await executeToolCall(
-        { tool: 'read_file', args: { path: 'package.json' } },
-        REPO_ROOT,
-        {}, // no role
-      );
-      assert.equal(result.ok, false, 'kernel must refuse when role is missing');
-      assert.equal(result.structuredError?.code, 'ROLE_REQUIRED');
-    } finally {
-      await fs.rm(workspaceRoot, { recursive: true, force: true });
-    }
+    const result = await executeToolCall(
+      { tool: 'read_file', args: { path: 'package.json' } },
+      REPO_ROOT,
+      {}, // no role
+    );
+    assert.equal(result.ok, false, 'kernel must refuse when role is missing');
+    assert.equal(result.structuredError?.code, 'ROLE_REQUIRED');
+  });
+
+  it('the CLI kernel returns ROLE_INVALID when given an unknown role string', async () => {
+    // Companion to the ROLE_REQUIRED pin above. The kernel now
+    // distinguishes "no role" from "role declared but unknown" so the
+    // diagnostic is accurate. Both branches fail-closed.
+    const { executeToolCall } = await import('../tools.ts');
+    const result = await executeToolCall(
+      { tool: 'read_file', args: { path: 'package.json' } },
+      REPO_ROOT,
+      { role: 'definitely-not-a-real-role' },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError?.code, 'ROLE_INVALID');
   });
 });

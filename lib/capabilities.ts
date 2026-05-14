@@ -317,7 +317,7 @@ export function roleCanUseTool(role: AgentRole, canonicalToolName: string): bool
 
 /**
  * Structured outcome of a kernel-level role capability check. Returned by
- * `enforceRoleCapability` so per-surface bindings can map the two failure
+ * `enforceRoleCapability` so per-surface bindings can map the three failure
  * shapes onto their own envelope types (Web's `StructuredToolError` with
  * `type`, CLI's `structuredError` with `code`) without re-deriving the
  * required/granted formatting.
@@ -326,46 +326,73 @@ export type RoleCapabilityCheck =
   | { ok: true }
   | {
       ok: false;
-      type: 'ROLE_REQUIRED' | 'ROLE_CAPABILITY_DENIED';
+      type: 'ROLE_REQUIRED' | 'ROLE_INVALID' | 'ROLE_CAPABILITY_DENIED';
       message: string;
       detail: string;
     };
 
+const KNOWN_AGENT_ROLES: ReadonlySet<AgentRole> = new Set<AgentRole>(
+  Object.keys(ROLE_CAPABILITIES) as AgentRole[],
+);
+
+function isKnownAgentRole(value: unknown): value is AgentRole {
+  return typeof value === 'string' && KNOWN_AGENT_ROLES.has(value as AgentRole);
+}
+
 /**
- * The kernel-level role enforcement primitive. Two failure modes:
+ * The kernel-level role enforcement primitive. Three failure modes:
  *
  *   - `ROLE_REQUIRED` — the binding constructed an execution context
- *     without declaring a role. The runtime refuses execution rather
- *     than silently skipping the capability check, which is the
- *     binding-dependent failure mode the OpenCode silent-failure audit
- *     called out (#3 in the inventory). Previously `context.role` was
- *     optional and a forgetful binding would bypass enforcement
- *     entirely; this is the fix that makes the check a kernel
- *     invariant.
+ *     without declaring a role at all (undefined / null / empty
+ *     string). The runtime refuses execution rather than silently
+ *     skipping the capability check, which is the binding-dependent
+ *     failure mode the OpenCode silent-failure audit called out
+ *     (#3 in the inventory).
  *
- *   - `ROLE_CAPABILITY_DENIED` — role is declared but the role's grant
- *     does not include the tool's required capabilities. Returns the
- *     same `required` / `granted` detail the inline web/CLI denials
- *     already format, so per-surface error envelopes stay consistent.
+ *   - `ROLE_INVALID` — a value WAS supplied but it's not a known
+ *     `AgentRole`. Distinguished from `ROLE_REQUIRED` so the diagnostic
+ *     surfaced to operators and the model is accurate: the caller
+ *     declared something, it just wasn't recognized. Common cause is
+ *     a JS caller passing a malformed string the type system couldn't
+ *     catch.
+ *
+ *   - `ROLE_CAPABILITY_DENIED` — role is a valid `AgentRole` but the
+ *     role's grant does not include the tool's required capabilities.
+ *     Returns the same `required` / `granted` detail the inline web/CLI
+ *     denials already format, so per-surface error envelopes stay
+ *     consistent.
  *
  * Callers pass the canonical tool name (post-`resolveToolName`). Unmapped
  * tool names follow `roleCanUseTool`'s fail-open semantics for
- * forward-compat — only `ROLE_REQUIRED` is fail-closed because the
- * "binding forgot to wire role" diagnosis cannot be made for any
- * specific tool. Surfaces that want stricter behavior (e.g. the CLI
- * daemon Explorer gate) compose `isCapabilityMapped` separately.
+ * forward-compat — only `ROLE_REQUIRED` / `ROLE_INVALID` are fail-closed
+ * because the "binding wired the wrong thing" diagnosis is independent
+ * of the specific tool. Surfaces that want stricter behavior (e.g. the
+ * CLI daemon Explorer gate) compose `isCapabilityMapped` separately.
+ *
+ * Accepts `unknown` for `role` so JS callers and untrusted external
+ * input can be validated by the helper rather than by every binding —
+ * keeps the "single source of truth" invariant.
  */
 export function enforceRoleCapability(
-  role: AgentRole | undefined,
+  role: unknown,
   canonicalToolName: string,
 ): RoleCapabilityCheck {
-  if (!role) {
+  if (role === undefined || role === null || role === '') {
     return {
       ok: false,
       type: 'ROLE_REQUIRED',
       message: `Tool "${canonicalToolName}" denied: no role declared on the tool-execution context.`,
       detail:
         'Every tool-execution context must declare a role (orchestrator|coder|explorer|reviewer|auditor). The runtime kernel refuses execution when role is missing so capability enforcement cannot silently skip.',
+    };
+  }
+  if (!isKnownAgentRole(role)) {
+    const sample = typeof role === 'string' ? `"${role}"` : Object.prototype.toString.call(role);
+    return {
+      ok: false,
+      type: 'ROLE_INVALID',
+      message: `Tool "${canonicalToolName}" denied: declared role ${sample} is not a recognized agent role.`,
+      detail: `Recognized roles: ${Array.from(KNOWN_AGENT_ROLES).join(', ')}. A typo or stale enum value in a JS caller usually causes this; TypeScript callers are protected by the AgentRole type.`,
     };
   }
   if (!roleCanUseTool(role, canonicalToolName)) {
@@ -379,6 +406,25 @@ export function enforceRoleCapability(
     };
   }
   return { ok: true };
+}
+
+/**
+ * Format a `RoleCapabilityCheck` denial into the canonical "[Tool
+ * Blocked]" text envelope that surfaces to the model. Pulled into the
+ * helper so all surfaces (web runtime, CLI kernel, Coder bindings)
+ * emit byte-identical denial bodies — the original goal of extracting
+ * `enforceRoleCapability` was a single source of truth, and a
+ * per-surface format-by-hand step undermined that. Codex/Copilot
+ * review on the initial PR caught the drift.
+ *
+ * Returns the full denial text only; callers stitch the structured
+ * error envelope around it.
+ */
+export function formatRoleCapabilityDenial(
+  toolName: string,
+  check: Exclude<RoleCapabilityCheck, { ok: true }>,
+): string {
+  return `[Tool Blocked — ${toolName}] ${check.message}\n\n${check.detail}`;
 }
 
 // ---------------------------------------------------------------------------

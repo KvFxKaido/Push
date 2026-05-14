@@ -205,13 +205,16 @@ describe('executeToolCall(create_artifact)', () => {
     }
   });
 
-  it('denies an unknown role string with ROLE_REQUIRED (fail-closed kernel)', async () => {
+  it('denies an unknown role string with ROLE_INVALID (distinct from missing-role case)', async () => {
     // Garbage role values used to fall through to an orchestrator
-    // default in the artifact-specific check. Now the kernel role gate
-    // runs first: an unrecognized role string is treated as missing,
-    // so the call gets ROLE_REQUIRED rather than admitted via the
-    // default. Closes audit item #3 — a misconfigured caller can no
-    // longer silently bypass enforcement.
+    // default in the artifact-specific check. The kernel role gate now
+    // distinguishes:
+    //   - role missing entirely → ROLE_REQUIRED
+    //   - role present but not a known AgentRole → ROLE_INVALID
+    // The previous shape (mapping unknown strings to undefined and
+    // surfacing ROLE_REQUIRED) was misleading because the caller did
+    // declare a value; it just wasn't recognized. Codex/Copilot review
+    // on PR #546.
     const result = await executeToolCall(
       {
         tool: 'create_artifact',
@@ -222,7 +225,8 @@ describe('executeToolCall(create_artifact)', () => {
     );
 
     assert.equal(result.ok, false);
-    assert.equal(result.structuredError.code, 'ROLE_REQUIRED');
+    assert.equal(result.structuredError.code, 'ROLE_INVALID');
+    assert.match(result.structuredError.message, /"wat-is-this"/);
     assert.equal(result.meta, undefined);
   });
 

@@ -23,7 +23,11 @@
  * a mechanical lift of the same logic with the call boundary named.
  */
 
-import { type CapabilityLedger, enforceRoleCapability } from './capabilities.js';
+import {
+  type CapabilityLedger,
+  enforceRoleCapability,
+  formatRoleCapabilityDenial,
+} from './capabilities.js';
 import {
   correlationToSpanAttributes,
   EMPTY_CORRELATION_CONTEXT,
@@ -361,9 +365,13 @@ export function buildCoderToolExec<
     // delegation.
     const roleCheck = enforceRoleCapability('coder', call.call.tool);
     if (!roleCheck.ok) {
+      // Use the shared formatter so the denial body matches byte-for-byte
+      // what the web runtime and CLI kernel emit. The Coder result shape
+      // surfaces this as `reason` rather than a structured tool result,
+      // but the model still sees the same denial envelope across surfaces.
       return {
         kind: 'denied',
-        reason: `${roleCheck.message} ${roleCheck.detail}`,
+        reason: formatRoleCapabilityDenial(call.call.tool, roleCheck),
       };
     }
 

@@ -14,7 +14,11 @@ import {
 import type { ArtifactAuthor, ArtifactScope } from '../lib/artifacts/types.ts';
 import { CliFlatJsonArtifactStore } from './artifacts-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
-import { enforceRoleCapability, roleCanUseTool } from '../lib/capabilities.ts';
+import {
+  enforceRoleCapability,
+  formatRoleCapabilityDenial,
+  roleCanUseTool,
+} from '../lib/capabilities.ts';
 import type { AgentRole } from '../lib/runtime-contract.ts';
 import { deriveProtocolVersion } from '../lib/tool-registry.ts';
 
@@ -1493,19 +1497,23 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
   // all, which meant a future binding could silently skip enforcement.
   // Closes audit item #3 from the OpenCode silent-failure inventory.
   //
-  // Fail-closed when `options.role` is missing (`ROLE_REQUIRED`) so a
-  // forgetful caller is denied at the kernel rather than admitted by
-  // implicit orchestrator. Fail-open semantics for unmapped tool names
-  // are preserved by `enforceRoleCapability`. The Explorer-side
-  // `makeDaemonExplorerToolExec` 3-layer gate stays as defense-in-depth.
+  // Three fail-closed branches surface from `enforceRoleCapability`:
+  //   - ROLE_REQUIRED when options.role is missing entirely.
+  //   - ROLE_INVALID when options.role is supplied but isn't a
+  //     recognized AgentRole (e.g. typo from a JS caller).
+  //   - ROLE_CAPABILITY_DENIED when the role's grant doesn't cover the
+  //     tool. Fail-open for unmapped tool names is preserved.
+  // The Explorer-side `makeDaemonExplorerToolExec` 3-layer gate stays
+  // as defense-in-depth. Raw `options.role` is passed through (not
+  // coerced to undefined) so the helper can distinguish missing from
+  // invalid and surface the right diagnostic.
   {
-    const role = isAgentRole(options.role) ? options.role : undefined;
     const canonicalForCheck = callCanonical || (typeof call?.tool === 'string' ? call.tool : '');
-    const check = enforceRoleCapability(role, canonicalForCheck);
+    const check = enforceRoleCapability(options.role, canonicalForCheck);
     if (!check.ok) {
       return {
         ok: false,
-        text: `[Tool Blocked — ${call?.tool ?? '(unknown)'}] ${check.message}\n\n${check.detail}`,
+        text: formatRoleCapabilityDenial(call?.tool ?? '(unknown)', check),
         structuredError: {
           code: check.type,
           message: check.message,
