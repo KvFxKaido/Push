@@ -328,10 +328,8 @@ interface TuiState {
   runState: RunState;
   payloadInspectorOpen: boolean;
   toolJsonPayloadsExpanded: boolean;
-  layout?: 'standard' | 'quiet';
-  // Session id used by the quiet layout to seed the mood-verb pick when
-  // running without an activity-specific verb. Optional: standard layout
-  // doesn't need it.
+  // Session id used to seed the mood-verb pick when running without an
+  // activity-specific verb.
   session?: string;
 }
 
@@ -348,10 +346,9 @@ export function renderKeybindHints(
   const { top, left, width } = layout.footer;
   const line = top + 1;
 
-  // Quiet layout uses the muted token for the keys themselves so the
-  // whole hint row sits closer to the divider, matching Claude Code's
-  // bottom strip. Standard keeps the link-coloured keys it shipped with.
-  const keyToken = tuiState.layout === 'quiet' ? 'fg.muted' : 'accent.link';
+  // Muted token for the key labels so the whole hint row sits close to
+  // the divider — matches the reserved bullet-led shape used elsewhere.
+  const keyToken = 'fg.muted';
 
   // Left: keybind hints
   let leftHints: string;
@@ -389,10 +386,9 @@ export function renderKeybindHints(
     ].join('  ');
   }
 
-  // Right: state indicator. Quiet layout swaps the mechanical 'running'
-  // for the same mood verb the header picks, so both ends of the screen
-  // agree.
-  const runningLabel = tuiState.layout === 'quiet' ? moodVerb(tuiState.session) : 'running';
+  // Right: state indicator. Swaps the mechanical 'running' for the same
+  // mood verb the header picks, so both ends of the screen agree.
+  const runningLabel = moodVerb(tuiState.session);
   const stateLabel =
     tuiState.runState === 'running'
       ? theme.style('state.warn', runningLabel)

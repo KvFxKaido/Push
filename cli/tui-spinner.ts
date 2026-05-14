@@ -259,9 +259,9 @@ export function verbForActivity(activity: SpinnerActivity): string | null {
 }
 
 /**
- * Quiet-layout mood verbs — picked once per session for the running state
- * when no activity-specific verb is available. Fixed pool, deterministic
- * by seed, so the verb stays stable across renders within a session
+ * Mood verbs — picked once per session for the running state when no
+ * activity-specific verb is available. Fixed pool, deterministic by
+ * seed, so the verb stays stable across renders within a session
  * instead of flickering between frames.
  *
  * Length cap: ≤8 chars so the verb fits the narrow header at small
@@ -280,8 +280,8 @@ export const MOOD_VERBS: readonly string[] = [
 
 /**
  * Pick a mood verb deterministically from `seed`. Same seed → same verb.
- * Empty/missing seed falls back to the first entry. Used by the quiet
- * layout to soften the running-state label without per-frame churn.
+ * Empty/missing seed falls back to the first entry. Softens the running-
+ * state label without per-frame churn.
  */
 export function moodVerb(seed: string | null | undefined): string {
   const s = String(seed || '');

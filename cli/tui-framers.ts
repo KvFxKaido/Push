@@ -4,11 +4,17 @@
  * Each transcript entry (user / assistant / tool_call / status / error /
  * warning / reasoning / verdict / divider) gets a small `EntryFramer` that
  * pushes display lines into a caller-owned array. `renderEntryLines`
- * dispatches by role through the `standardFramers` table.
+ * dispatches by role through the `framers` table.
  *
- * Adding a new layout (e.g. a quiet/reserved variant) means defining a
- * second framer table and selecting between them at the dispatch site —
- * no new branching inside the renderer.
+ * Reserved, bullet-led shape inspired by Claude Code's transcript: no
+ * colored-background badges, single-glyph role markers, indented branch
+ * line for tool-call result previews. The intent is a flowing
+ * conversational read instead of a sequence of labels.
+ *
+ * (Earlier versions of this file carried a second "standard" framer
+ * table with boxed badges + a `LayoutMode` dispatch. That alternative
+ * was dropped when we committed to the reserved look as the only
+ * rendering — see git history for the prior shape if needed.)
  */
 import type { Theme, TokenName } from './tui-theme.js';
 import { truncate, visibleWidth, wordWrap } from './tui-renderer.js';
@@ -142,9 +148,9 @@ export interface AssistantRenderOptions {
   entryKey?: string | null;
   payloadUI?: PayloadUI | null;
   /**
-   * Override the leading prefix and continuation indent. Defaults to the
-   * standard ` AI ` badge. Quiet layout passes a bullet here so the
-   * assistant framer reads as a flowing line of prose instead of a label.
+   * Override the leading prefix and continuation indent. The framer
+   * dispatch passes a bullet here so the assistant entry reads as a
+   * flowing line of prose instead of a label.
    */
   prefixOverride?: { firstPrefix: string; nextPrefix: string };
 }
@@ -325,31 +331,6 @@ export function renderAssistantEntryLines(
   if (fenceLang != null) flushFence();
 }
 
-// ── Layout modes ────────────────────────────────────────────────────
-
-/**
- * Visual layout mode for the transcript. `standard` is the default
- * badge-led rendering; `quiet` is a reserved bullet-led variant aimed at
- * a less-robotic feel. Layouts diverge only in the framer table; all
- * downstream wrapping/scrolling logic is the same.
- */
-export type LayoutMode = 'standard' | 'quiet';
-
-export function isLayoutMode(value: unknown): value is LayoutMode {
-  return value === 'standard' || value === 'quiet';
-}
-
-/**
- * Resolve layout mode from `PUSH_TUI_LAYOUT`, falling back to standard.
- * Mirrors `detectThemeName` so the env-then-config-then-default
- * precedence is consistent across UI knobs.
- */
-export function detectLayoutMode(): LayoutMode {
-  const env = (process.env.PUSH_TUI_LAYOUT || '').toLowerCase().trim();
-  if (isLayoutMode(env)) return env;
-  return 'standard';
-}
-
 // ── Per-role framers ────────────────────────────────────────────────
 
 export type Role =
@@ -367,11 +348,6 @@ export interface FramerContext {
   expandToolJsonPayloads?: boolean;
   entryKey?: string | null;
   payloadUI?: PayloadUI | null;
-  /**
-   * Selects the framer table. Defaults to 'standard'. Set per-render so
-   * the transcript can change layout without rebuilding the cache.
-   */
-  layout?: LayoutMode;
 }
 
 // Loose shape — each framer reads only the fields it needs. Kept open
@@ -401,27 +377,40 @@ export interface EntryFramer {
   ): void;
 }
 
+function bulletGlyph(theme: Theme): string {
+  return theme.unicode ? '•' : '*';
+}
+
+function branchGlyph(theme: Theme): string {
+  // ASCII fallback follows GNU `tree -A`'s corner glyph: `+--`. The
+  // earlier `'L  '` sat awkwardly between letter and tree-corner; +--
+  // reads unambiguously as a branch in non-Unicode terminals.
+  return theme.unicode ? '└─ ' : '+--';
+}
+
 const userFramer: EntryFramer = {
   render(out, entry, width, theme) {
-    const prefix = makeBadge(theme, 'YOU', { fg: 'bg.base', bg: 'accent.secondary' }) + ' ';
-    const nextPrefix = ' '.repeat(Math.max(2, visibleWidth(prefix)));
-    const wrapped = wordWrap(String(entry.text ?? ''), Math.max(1, width - visibleWidth(prefix)));
-    for (let i = 0; i < wrapped.length; i++) {
-      out.push(
-        i === 0
-          ? prefix + theme.style('fg.primary', wrapped[i])
-          : nextPrefix + theme.style('fg.primary', wrapped[i]),
-      );
-    }
+    const bullet = bulletGlyph(theme);
+    const firstPrefix = `${theme.style('accent.primary', bullet)} `;
+    const nextPrefix = '  ';
+    pushWrappedLines(out, String(entry.text ?? ''), width, {
+      firstPrefix,
+      nextPrefix,
+      styleFn: (s) => theme.style('fg.primary', s),
+    });
   },
 };
 
 const assistantFramer: EntryFramer = {
   render(out, entry, width, theme, ctx) {
+    const bullet = bulletGlyph(theme);
+    const firstPrefix = `${theme.style('fg.muted', bullet)} `;
+    const nextPrefix = '  ';
     renderAssistantEntryLines(out, String(entry.text ?? ''), width, theme, {
       expandToolJsonPayloads: ctx.expandToolJsonPayloads,
       entryKey: ctx.entryKey,
       payloadUI: ctx.payloadUI,
+      prefixOverride: { firstPrefix, nextPrefix },
     });
   },
 };
@@ -435,169 +424,7 @@ const toolCallFramer: EntryFramer = {
       : entry.error
         ? theme.style('state.error', glyphs.cross_mark || 'ERR')
         : theme.style('state.success', glyphs.check || 'OK');
-    const badge = makeBadge(theme, 'TOOL', { fg: 'bg.base', bg: 'border.hover', bold: false });
-    const dur = entry.duration ? theme.style('fg.dim', ` ${entry.duration}ms`) : '';
-    const prefix = `${badge} `;
-    const argsHint = summarizeToolArgs(entry.args, Math.max(10, width - 40));
-    const argsStr = argsHint ? theme.style('fg.dim', ` ${argsHint}`) : '';
-    const base = `${status} ${entry.text ?? ''}${argsStr}${dur}`;
-    pushWrappedLines(out, base, width, {
-      firstPrefix: prefix,
-      nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-      styleFn: (s) => theme.style('fg.secondary', s),
-    });
-    if (entry.resultPreview && !pending) {
-      const nextPad = ' '.repeat(Math.max(2, visibleWidth(prefix)));
-      const previewLine = String(entry.resultPreview).split('\n')[0].trim();
-      if (previewLine) {
-        const previewStr = truncate(previewLine, Math.max(10, width - visibleWidth(nextPad) - 4));
-        pushWrappedLines(out, previewStr, width, {
-          firstPrefix: nextPad,
-          nextPrefix: nextPad,
-          styleFn: (s) => theme.style('fg.dim', s),
-        });
-      }
-    }
-  },
-};
-
-const statusFramer: EntryFramer = {
-  render(out, entry, width, theme) {
-    const badge = makeBadge(theme, 'INFO', {
-      fg: 'bg.base',
-      bg: 'border.default',
-      bold: false,
-    });
-    const prefix = `${badge} `;
-    pushWrappedLines(out, String(entry.text ?? ''), width, {
-      firstPrefix: prefix,
-      nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-      styleFn: (s) => theme.style('fg.dim', s),
-    });
-  },
-};
-
-const errorFramer: EntryFramer = {
-  render(out, entry, width, theme) {
-    const badge = makeBadge(theme, 'ERR', { fg: 'fg.primary', bg: 'state.error' });
-    const prefix = `${badge} `;
-    pushWrappedLines(out, String(entry.text ?? ''), width, {
-      firstPrefix: prefix,
-      nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-      styleFn: (s) => theme.style('state.error', s),
-    });
-  },
-};
-
-const warningFramer: EntryFramer = {
-  render(out, entry, width, theme) {
-    const badge = makeBadge(theme, 'WARN', { fg: 'bg.base', bg: 'state.warn' });
-    const prefix = `${badge} `;
-    pushWrappedLines(out, String(entry.text ?? ''), width, {
-      firstPrefix: prefix,
-      nextPrefix: ' '.repeat(Math.max(2, visibleWidth(prefix))),
-      styleFn: (s) => theme.style('state.warn', s),
-    });
-  },
-};
-
-const reasoningFramer: EntryFramer = {
-  render(out, _entry, _width, theme) {
-    out.push(
-      `${makeBadge(theme, 'THINK', { fg: 'bg.base', bg: 'border.default', bold: false })} ` +
-        theme.style('fg.dim', 'thinking'),
-    );
-  },
-};
-
-const verdictFramer: EntryFramer = {
-  render(out, entry, width, theme) {
-    const { glyphs } = theme;
-    const isApproved = entry.verdict === 'APPROVED';
-    const icon = isApproved ? glyphs.check : glyphs.cross_mark;
-    const label = isApproved
-      ? makeBadge(theme, `${icon} APPROVED`, { fg: 'fg.primary', bg: 'state.success' })
-      : makeBadge(theme, `${icon} DENIED`, { fg: 'fg.primary', bg: 'state.error' });
-    const kindStr = entry.kind ? theme.style('fg.dim', ` ${entry.kind}`) : '';
-    const summaryStr = entry.summary
-      ? theme.style('fg.muted', '  ' + truncate(String(entry.summary), width - 20))
-      : '';
-    out.push(`  ${label}${kindStr}${summaryStr}`);
-  },
-};
-
-const dividerFramer: EntryFramer = {
-  render(out, _entry, width, theme) {
-    out.push(theme.style('fg.dim', theme.glyphs.horizontal.repeat(Math.min(width, 40))));
-  },
-};
-
-export const standardFramers: Record<Role, EntryFramer> = {
-  user: userFramer,
-  assistant: assistantFramer,
-  tool_call: toolCallFramer,
-  status: statusFramer,
-  error: errorFramer,
-  warning: warningFramer,
-  reasoning: reasoningFramer,
-  verdict: verdictFramer,
-  divider: dividerFramer,
-};
-
-// ── Quiet layout framers ────────────────────────────────────────────
-// Reserved, bullet-led shapes inspired by Claude Code's transcript:
-// no colored-background badges, single-glyph role markers, indented
-// branch line for tool-call result previews. The intent is a flowing
-// conversational read instead of a sequence of labels.
-
-function quietBullet(theme: Theme): string {
-  return theme.unicode ? '•' : '*';
-}
-
-function quietBranch(theme: Theme): string {
-  // ASCII fallback follows GNU `tree -A`'s corner glyph: `+--`. The
-  // earlier `'L  '` sat awkwardly between letter and tree-corner; +--
-  // reads unambiguously as a branch in non-Unicode terminals.
-  return theme.unicode ? '└─ ' : '+--';
-}
-
-const quietUserFramer: EntryFramer = {
-  render(out, entry, width, theme) {
-    const bullet = quietBullet(theme);
-    const firstPrefix = `${theme.style('accent.primary', bullet)} `;
-    const nextPrefix = '  ';
-    pushWrappedLines(out, String(entry.text ?? ''), width, {
-      firstPrefix,
-      nextPrefix,
-      styleFn: (s) => theme.style('fg.primary', s),
-    });
-  },
-};
-
-const quietAssistantFramer: EntryFramer = {
-  render(out, entry, width, theme, ctx) {
-    const bullet = quietBullet(theme);
-    const firstPrefix = `${theme.style('fg.muted', bullet)} `;
-    const nextPrefix = '  ';
-    renderAssistantEntryLines(out, String(entry.text ?? ''), width, theme, {
-      expandToolJsonPayloads: ctx.expandToolJsonPayloads,
-      entryKey: ctx.entryKey,
-      payloadUI: ctx.payloadUI,
-      prefixOverride: { firstPrefix, nextPrefix },
-    });
-  },
-};
-
-const quietToolCallFramer: EntryFramer = {
-  render(out, entry, width, theme) {
-    const { glyphs } = theme;
-    const pending = entry.error !== true && !entry.duration;
-    const status = pending
-      ? theme.style('accent.secondary', '…')
-      : entry.error
-        ? theme.style('state.error', glyphs.cross_mark || 'ERR')
-        : theme.style('state.success', glyphs.check || 'OK');
-    const bullet = quietBullet(theme);
+    const bullet = bulletGlyph(theme);
     const firstPrefix = `${theme.style('fg.muted', bullet)} `;
     const nextPrefix = '  ';
     const verb = theme.bold(theme.style('fg.primary', String(entry.text ?? '')));
@@ -611,7 +438,7 @@ const quietToolCallFramer: EntryFramer = {
       styleFn: (s) => s, // segments already pre-styled
     });
     if (entry.resultPreview && !pending) {
-      const branch = quietBranch(theme);
+      const branch = branchGlyph(theme);
       const trailerPrefix = `  ${theme.style('fg.dim', branch)}`;
       const trailerCont = ' '.repeat(visibleWidth(trailerPrefix));
       const previewLine = String(entry.resultPreview).split('\n')[0].trim();
@@ -630,7 +457,7 @@ const quietToolCallFramer: EntryFramer = {
   },
 };
 
-const quietStatusFramer: EntryFramer = {
+const statusFramer: EntryFramer = {
   render(out, entry, width, theme) {
     const firstPrefix = `${theme.style('fg.dim', '*')} `;
     pushWrappedLines(out, String(entry.text ?? ''), width, {
@@ -641,9 +468,9 @@ const quietStatusFramer: EntryFramer = {
   },
 };
 
-const quietErrorFramer: EntryFramer = {
+const errorFramer: EntryFramer = {
   render(out, entry, width, theme) {
-    const bullet = quietBullet(theme);
+    const bullet = bulletGlyph(theme);
     const firstPrefix = `${theme.style('state.error', bullet)} `;
     pushWrappedLines(out, String(entry.text ?? ''), width, {
       firstPrefix,
@@ -653,9 +480,9 @@ const quietErrorFramer: EntryFramer = {
   },
 };
 
-const quietWarningFramer: EntryFramer = {
+const warningFramer: EntryFramer = {
   render(out, entry, width, theme) {
-    const bullet = quietBullet(theme);
+    const bullet = bulletGlyph(theme);
     const firstPrefix = `${theme.style('state.warn', bullet)} `;
     pushWrappedLines(out, String(entry.text ?? ''), width, {
       firstPrefix,
@@ -665,13 +492,13 @@ const quietWarningFramer: EntryFramer = {
   },
 };
 
-const quietReasoningFramer: EntryFramer = {
+const reasoningFramer: EntryFramer = {
   render(out, _entry, _width, theme) {
     out.push(`${theme.style('fg.dim', '*')} ${theme.style('fg.muted', 'thinking')}`);
   },
 };
 
-const quietVerdictFramer: EntryFramer = {
+const verdictFramer: EntryFramer = {
   render(out, entry, width, theme) {
     const { glyphs } = theme;
     const isApproved = entry.verdict === 'APPROVED';
@@ -686,28 +513,28 @@ const quietVerdictFramer: EntryFramer = {
   },
 };
 
-export const quietFramers: Record<Role, EntryFramer> = {
-  user: quietUserFramer,
-  assistant: quietAssistantFramer,
-  tool_call: quietToolCallFramer,
-  status: quietStatusFramer,
-  error: quietErrorFramer,
-  warning: quietWarningFramer,
-  reasoning: quietReasoningFramer,
-  verdict: quietVerdictFramer,
-  divider: dividerFramer, // shared — divider is already minimal
+const dividerFramer: EntryFramer = {
+  render(out, _entry, width, theme) {
+    out.push(theme.style('fg.dim', theme.glyphs.horizontal.repeat(Math.min(width, 40))));
+  },
 };
 
-const FRAMER_TABLES: Record<LayoutMode, Record<Role, EntryFramer>> = {
-  standard: standardFramers,
-  quiet: quietFramers,
+export const framers: Record<Role, EntryFramer> = {
+  user: userFramer,
+  assistant: assistantFramer,
+  tool_call: toolCallFramer,
+  status: statusFramer,
+  error: errorFramer,
+  warning: warningFramer,
+  reasoning: reasoningFramer,
+  verdict: verdictFramer,
+  divider: dividerFramer,
 };
 
 /**
  * Dispatch a transcript entry to its framer. Unknown roles produce no
  * output (matching prior behavior — the transcript renderer treats
- * unrecognized roles as no-ops). Layout selects which framer table to
- * use; default is standard.
+ * unrecognized roles as no-ops).
  */
 export function renderEntryLines(
   out: string[],
@@ -716,8 +543,6 @@ export function renderEntryLines(
   theme: Theme,
   ctx: FramerContext = {},
 ): void {
-  const layout: LayoutMode = isLayoutMode(ctx.layout) ? ctx.layout : 'standard';
-  const table = FRAMER_TABLES[layout];
-  const framer = table[entry.role as Role];
+  const framer = framers[entry.role as Role];
   if (framer) framer.render(out, entry, width, theme, ctx);
 }

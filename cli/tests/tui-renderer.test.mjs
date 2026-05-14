@@ -193,9 +193,9 @@ describe('computeLayout', () => {
     assert.ok(layout.transcript.height > 0, `transcript height: ${layout.transcript.height}`);
   });
 
-  it('header has 4 rows', () => {
+  it('header has 1 row (reserved single-line shape)', () => {
     const layout = computeLayout(24, 80);
-    assert.equal(layout.header.height, 4);
+    assert.equal(layout.header.height, 1);
   });
 
   it('footer has 2 rows', () => {
