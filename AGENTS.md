@@ -1,6 +1,6 @@
 # Push — Agent Context
 
-This is the **required entry doc** for Push. Repo instruction loaders read `AGENTS.md` before `CLAUDE.md` and `GEMINI.md`, so this file must be self-sufficient. The CLI may still prefer a local `.push/instructions.md` override when present.
+This is the **required entry doc** for Push. Repo instruction loaders read `PUSH.md` first (Push-specific override) and fall back to `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`, so this file must remain self-sufficient when no `PUSH.md` is present.
 
 [`docs/architecture.md`](docs/architecture.md) is the deeper canonical reference for architecture and implementation details, but this file carries the minimum contract Push agents need at startup.
 

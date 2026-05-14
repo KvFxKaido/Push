@@ -144,24 +144,23 @@ describe('loadProjectInstructions', () => {
     }
   });
 
-  it('prefers .push/instructions.md over AGENTS.md, CLAUDE.md, and GEMINI.md', async () => {
+  it('prefers PUSH.md over AGENTS.md, CLAUDE.md, and GEMINI.md', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
     try {
-      await fs.mkdir(path.join(tmpDir, '.push'));
-      await fs.writeFile(path.join(tmpDir, '.push', 'instructions.md'), 'push instructions');
+      await fs.writeFile(path.join(tmpDir, 'PUSH.md'), 'push instructions');
       await fs.writeFile(path.join(tmpDir, 'AGENTS.md'), 'agents file');
       await fs.writeFile(path.join(tmpDir, 'CLAUDE.md'), 'claude file');
       await fs.writeFile(path.join(tmpDir, 'GEMINI.md'), 'gemini file');
 
       const result = await loadProjectInstructions(tmpDir);
-      assert.equal(result.file, '.push/instructions.md');
+      assert.equal(result.file, 'PUSH.md');
       assert.equal(result.content, 'push instructions');
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it('falls back to AGENTS.md when .push/instructions.md is missing', async () => {
+  it('falls back to AGENTS.md when PUSH.md is missing', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
     try {
       await fs.writeFile(path.join(tmpDir, 'AGENTS.md'), 'agents content');

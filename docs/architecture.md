@@ -55,7 +55,7 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 - **Review sources** — Branch diff, Last commit, Working tree
 - **Harness reliability** — adaptive hashline edits, patchset transactions, resumable sessions, and active branch handling
 - **GitHub flow** — PR merge flow, branch-scoped chats, commit/push, and workspace publish-to-GitHub
-- **Project instructions** — web/repo loading order: `AGENTS.md`, then `CLAUDE.md`, then `GEMINI.md`; CLI also supports `.push/instructions.md` as a higher-priority local override
+- **Project instructions** — loading order on both surfaces: `PUSH.md` (Push-specific override) → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`
 
 ## Repo / Session Model
 
