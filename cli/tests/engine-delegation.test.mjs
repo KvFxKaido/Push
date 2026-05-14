@@ -337,6 +337,88 @@ describe(
   },
 );
 
+describe(
+  'runAssistantTurn — anchor seed resolution across turns (PR #551 review)',
+  needsLoopback,
+  () => {
+    it('derives the goal anchor from the first user turn in state.messages, not the current turn', async () => {
+      // Multi-turn TUI / daemon sessions: the original goal sits in
+      // state.messages and the *current* userText is a follow-up.
+      // Before the Codex P2 + Copilot review on PR #551, the planner
+      // was anchored on the current turn, validating `addresses`
+      // against the wrong goal. This test pins the fix by inspecting
+      // the planner's request body to see which `[USER_GOAL]` it
+      // actually saw.
+      await withTempSessionDir(async (sessionDir) => {
+        const plannerPayload = JSON.stringify({
+          approach: 'Skip — return one feature so we fall back fast.',
+          features: [
+            {
+              id: 'lone',
+              description: 'single feature, falls back to single-agent',
+            },
+          ],
+        });
+
+        const server = await startSequencedProviderServer([
+          { tokens: [plannerPayload] },
+          { tokens: ['single-agent reply'] },
+        ]);
+
+        try {
+          const providerConfig = makeProviderConfig(server.url);
+          // Seed state with an original goal turn; the current turn
+          // arriving via runAssistantTurn is a follow-up.
+          const state = makeState(sessionDir, {
+            messages: [
+              { role: 'system', content: 'You are a helpful assistant.' },
+              {
+                role: 'user',
+                content: 'Fix the auth retry loop in src/auth/refresh.ts',
+              },
+              { role: 'assistant', content: "Sure, I'll start by reading the file." },
+            ],
+          });
+
+          await runAssistantTurn(
+            state,
+            providerConfig,
+            'mock-key',
+            'Now also document the change in the README',
+            5,
+            { emit: () => {} },
+          );
+
+          // First server request is the planner. Inspect the user
+          // message to confirm the [USER_GOAL] block was anchored on
+          // the original goal, not the current follow-up turn.
+          const plannerRequest = server.requests[0];
+          assert.ok(plannerRequest, 'expected at least one captured planner request');
+          const userMsg = plannerRequest.messages.find((m) => m.role === 'user');
+          assert.ok(userMsg, 'planner request must have a user message');
+          assert.ok(
+            userMsg.content.includes('[USER_GOAL]'),
+            'planner request should include a [USER_GOAL] block',
+          );
+          assert.ok(
+            userMsg.content.includes('Fix the auth retry loop in src/auth/refresh.ts'),
+            `planner [USER_GOAL] should carry the original goal, got: ${userMsg.content.slice(
+              0,
+              400,
+            )}`,
+          );
+          assert.ok(
+            !userMsg.content.includes('Initial ask: Now also document the change in the README'),
+            'planner [USER_GOAL] should NOT anchor on the current follow-up turn',
+          );
+        } finally {
+          await server.stop();
+        }
+      });
+    });
+  },
+);
+
 describe('runAssistantTurn — goal-alignment fallback (CLI parity)', needsLoopback, () => {
   it('falls back to single-agent when planner emits multi-feature plan without addresses', async () => {
     await withTempSessionDir(async (sessionDir) => {

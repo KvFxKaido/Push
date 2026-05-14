@@ -51,6 +51,7 @@ import {
 } from '../lib/planner-core.js';
 import { loadUserGoalFile } from './user-goal-file.ts';
 import { deriveUserGoalAnchor, type UserGoalAnchor } from '../lib/user-goal-anchor.ts';
+import { isToolResultMessage, isParseErrorMessage } from './context-manager.js';
 import type { LlmMessage, PushStream } from '../lib/provider-contract.js';
 import { normalizeReasoning } from '../lib/reasoning-tokens.js';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.js';
@@ -141,6 +142,31 @@ function planToTaskGraph(plan: PlannerFeatureList): TaskGraphNode[] {
 }
 
 /**
+ * Resolve the seed text for runtime derivation: the first non-tool-result
+ * user message in `state.messages`, falling back to the caller's
+ * just-arrived turn when the transcript is empty. Mirrors the engine's
+ * own derivation (`cli/engine.ts:1006`) so the gate, the planner, and
+ * each per-node `runAssistantLoop` agree on which user message is the
+ * goal seed. Before this helper, multi-turn TUI/daemon sessions could
+ * anchor against the *latest* turn rather than the *first*, validating
+ * `addresses` against the wrong goal — Codex P2 + Copilot review on
+ * PR #551.
+ */
+function resolveFirstUserTurn(
+  state: { messages?: ReadonlyArray<{ role: string; content: string }> },
+  fallbackTurn: string,
+): string {
+  const messages = state.messages ?? [];
+  for (const msg of messages) {
+    if (msg.role !== 'user') continue;
+    if (isToolResultMessage(msg)) continue;
+    if (isParseErrorMessage(msg)) continue;
+    return msg.content;
+  }
+  return fallbackTurn;
+}
+
+/**
  * Best-effort load of the user-goal anchor for delegation. Tries the
  * persisted `goal.md` first, then falls back to the verbatim-first-turn
  * derivation. Symmetrical with the web orchestrator's `toLLMMessages`
@@ -191,8 +217,10 @@ export async function runDelegatedHeadless(
   // Load the user goal once before planning. The planner gets it
   // through PlannerCoreOptions.goal; the post-planner validator + each
   // per-node brief share the same anchor object. Best-effort; null when
-  // no goal exists, which short-circuits the alignment gate.
-  const goalAnchor = await loadDelegationGoalAnchor(state.cwd, task);
+  // no goal exists, which short-circuits the alignment gate. Seed is
+  // resolved from state.messages first so resumed sessions anchor on
+  // their original goal, not on the current `--task` argument.
+  const goalAnchor = await loadDelegationGoalAnchor(state.cwd, resolveFirstUserTurn(state, task));
 
   try {
     // 1. Plan
@@ -732,8 +760,15 @@ export async function runUserTurnWithDelegation(
 
   // Load the user goal once for this turn. Same loader the headless
   // path uses; downstream the planner sees it, the goal-alignment gate
-  // uses it, and each per-node brief renders it.
-  const goalAnchor = await loadDelegationGoalAnchor(state.cwd, userText);
+  // uses it, and each per-node brief renders it. Seed is resolved from
+  // state.messages (the first non-tool-result user message) before
+  // falling back to the just-arrived `userText`. In multi-turn TUI /
+  // daemon sessions this preserves the original goal across turns
+  // rather than re-anchoring on each new user message.
+  const goalAnchor = await loadDelegationGoalAnchor(
+    state.cwd,
+    resolveFirstUserTurn(state, userText),
+  );
 
   let plan: PlannerFeatureList | null = null;
   try {

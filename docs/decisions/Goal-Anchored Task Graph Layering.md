@@ -69,8 +69,9 @@ CLI parity uses the same shared validator (`validateTaskGraphAgainstGoal`) and t
 
 1. `runPlannerCore` learns `goal?: UserGoalAnchor`. When provided, the planner sees the formatted `[USER_GOAL]` block at the top of its user message and is asked (via the planner system prompt) to populate `addresses` on every feature.
 2. `PlannerFeature.addresses?` is propagated through `planToTaskGraph` onto `TaskGraphNode.addresses`.
-3. After `validateTaskGraph` (structural), `validateTaskGraphAgainstGoal` runs. On miss the CLI emits a `delegation.goal_invalid` session event + a `[delegation]` warning, then falls back to the existing non-delegated single-agent loop. Matches the existing `delegation.graph_invalid` pattern for structural validation failures (`cli/delegation-entry.ts:228`).
+3. After `validateTaskGraph` (structural), `validateTaskGraphAgainstGoal` runs. On miss the CLI emits a `delegation.goal_invalid` session event + a `[delegation]` warning, then falls back to the existing non-delegated single-agent loop. Matches the existing `delegation.graph_invalid` pattern for structural validation failures — both flow into the same `runNonDelegatedFallback` helper in `cli/delegation-entry.ts`.
 4. Each per-node delegation brief carries `userGoal` + `node.addresses`, same as the web task-graph executor.
+5. The single-agent fallback inherits the same goal through convergent derivation rather than explicit threading. `runAssistantLoop` (via `cli/engine.ts`) reads `<cwd>/.push/goal.md` and, when absent, derives an anchor from `state.messages` using the same first-non-tool-result-user-message rule the delegation entry uses. So a `.push/goal.md` that triggered rejection still appears in the fallback's compaction-time `[USER_GOAL]` injection, and a derived anchor reproduces from the same seed.
 
 ### Why graceful degradation not retry on CLI
 

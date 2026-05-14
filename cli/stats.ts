@@ -21,6 +21,15 @@ interface ProviderStats {
   malformedCalls: number;
   malformedReasons: Record<string, number>;
   outcomes: Record<string, number>;
+  /** Delegations that bailed to single-agent because the model produced
+   *  a structurally invalid graph (cycles, duplicate ids, dangling deps). */
+  delegationGraphInvalid: number;
+  /** Delegations that bailed to single-agent because the planner output
+   *  was not goal-aligned (one or more nodes missing `addresses` when a
+   *  `[USER_GOAL]` anchor was loaded). Tracks the CLI side of the
+   *  goal-alignment gate documented in
+   *  docs/decisions/Goal-Anchored Task Graph Layering.md. */
+  delegationGoalInvalid: number;
 }
 
 interface TotalStats {
@@ -30,6 +39,8 @@ interface TotalStats {
   toolCalls: number;
   toolErrors: number;
   malformedCalls: number;
+  delegationGraphInvalid: number;
+  delegationGoalInvalid: number;
 }
 
 interface AggregateResult {
@@ -68,6 +79,8 @@ export async function aggregateStats(filter: StatsFilter = {}): Promise<Aggregat
     toolCalls: 0,
     toolErrors: 0,
     malformedCalls: 0,
+    delegationGraphInvalid: 0,
+    delegationGoalInvalid: 0,
   };
 
   for (const session of sessions) {
@@ -94,6 +107,8 @@ export async function aggregateStats(filter: StatsFilter = {}): Promise<Aggregat
         malformedCalls: 0,
         malformedReasons: {},
         outcomes: {},
+        delegationGraphInvalid: 0,
+        delegationGoalInvalid: 0,
       };
     }
     const p = providers[key];
@@ -141,6 +156,16 @@ export async function aggregateStats(filter: StatsFilter = {}): Promise<Aggregat
             p.toolErrors++;
             totals.toolErrors++;
           }
+          break;
+        }
+        case 'delegation.graph_invalid': {
+          p.delegationGraphInvalid++;
+          totals.delegationGraphInvalid++;
+          break;
+        }
+        case 'delegation.goal_invalid': {
+          p.delegationGoalInvalid++;
+          totals.delegationGoalInvalid++;
           break;
         }
       }
