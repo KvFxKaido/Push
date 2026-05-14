@@ -1,9 +1,11 @@
 # Background Coder Tasks — Phase 1
 
 Date: 2026-04-21
-Status: **planned** (scoped, not started)
+Status: **shipped** (PRs #358-#361; superseded operationally by `AgentJob Foundation.md`)
 Owner: Push
 Supersedes status only of: `docs/runbooks/Background Coder Tasks Plan.md` — that doc remains the multi-phase design reference; this doc is the concrete Phase 1 implementation sketch.
+
+This file preserves the original implementation sketch and scoped constraints. For the newer main-chat background branch and role-aware contract, see `docs/runbooks/AgentJob Foundation.md`.
 
 ## Goal
 

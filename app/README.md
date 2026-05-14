@@ -25,12 +25,24 @@ VITE_ZEN_API_KEY=...              # Optional — OpenCode Zen
 VITE_BLACKBOX_API_KEY=...         # Optional — Blackbox AI
 VITE_NVIDIA_API_KEY=...           # Optional — Nvidia NIM
 VITE_KILOCODE_API_KEY=...         # Optional — Kilo Code
+VITE_OPENADAPTER_API_KEY=...      # Optional — OpenAdapter
+VITE_AZURE_OPENAI_API_KEY=...     # Optional — Azure OpenAI (experimental)
+VITE_AZURE_OPENAI_BASE_URL=...    # Optional — Azure/OpenAI-compatible base URL
+VITE_AZURE_OPENAI_MODEL=...       # Optional — Azure deployment/model name
+VITE_BEDROCK_API_KEY=...          # Optional — AWS Bedrock OpenAI-compatible endpoint
+VITE_BEDROCK_BASE_URL=...         # Optional — Bedrock OpenAI-compatible base URL
+VITE_BEDROCK_MODEL=...            # Optional — Bedrock model/deployment name
+VITE_VERTEX_SERVICE_ACCOUNT_JSON=... # Optional — Google Vertex service account JSON
+VITE_VERTEX_REGION=...            # Optional — Google Vertex region
+VITE_VERTEX_MODEL=...             # Optional — Google Vertex model
 VITE_TAVILY_API_KEY=...           # Optional — Tavily web search
 VITE_GITHUB_TOKEN=...             # Optional — higher GitHub rate limits
 VITE_GITHUB_CLIENT_ID=...         # Optional — enables OAuth login
 VITE_GITHUB_OAUTH_PROXY=...       # Optional — required for OAuth token exchange
 VITE_GITHUB_REDIRECT_URI=...      # Optional — exact OAuth callback URL (OAuth App/PAT flow)
 VITE_GITHUB_APP_REDIRECT_URI=...  # Optional — exact OAuth callback URL (GitHub App flow)
+VITE_GITHUB_TOOL_BACKEND=...      # Optional — GitHub tool transport override
+VITE_API_BASE_URL=...             # Optional — API base when the app is served separately
 ```
 
 Without any AI key the app prompts for one on first use.
@@ -55,9 +67,11 @@ Truthy values: `1`, `true`, `yes`, `on` (case-insensitive). Anything else — in
 
 To verify a deployed build picked them up, open DevTools → Sources, find the hashed `App-*.js`, and search for the flag name — you won't find it, because Vite has already replaced it with the literal string value.
 
-Worker secrets (set via `wrangler secret put`):
+Worker runtime vars/secrets:
 
 - `PUSH_DEPLOYMENT_TOKEN` — optional private-deployment API gate. When set, every `/api/*` route except `/api/health` requires `X-Push-Deployment-Token`. Open the app once with `#push_token=<token>` to store it in the browser.
+- `PUSH_RELAY_ENABLED` / `PUSH_RELAY_TOKEN` — enable the Remote session relay route and set the deployment-scoped `pushd_relay_*` bearer used by `push daemon relay enable`. Keep the token in a Worker secret.
+- `PUSH_RELAY_BUFFER_COUNT` / `PUSH_RELAY_BUFFER_AGE_MS` — optional replay-buffer tuning for the relay Durable Object.
 - `MODAL_SANDBOX_BASE_URL` — only needed when `PUSH_SANDBOX_PROVIDER=modal`. Modal app base URL (e.g. `https://youruser--push-sandbox`).
 
 For production phone testing, prefer putting the whole hostname behind Cloudflare Access. `PUSH_DEPLOYMENT_TOKEN` is a repo-side backstop/fallback, not a substitute for a real edge access policy. See [Private Cloudflare Deployment](../docs/runbooks/Private%20Cloudflare%20Deployment.md).

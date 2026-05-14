@@ -45,6 +45,7 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 
 - **Tool protocol** — multi-tool dispatch and structured error reporting
 - **Sandbox execution** — scratch workspaces and web search tools via a pluggable `SandboxProvider` interface (`lib/sandbox-provider.ts`); Cloudflare Sandbox SDK and Modal coexist as sibling providers, both reached through the same `/api/sandbox/*` Worker route with server-side dispatch on `PUSH_SANDBOX_PROVIDER`
+- **Daemon-backed sessions** — experimental Local PC and Remote modes pair the web app to `pushd` over loopback or the Worker relay; chat `sandbox_*` calls route through the hook-owned daemon WebSocket for `sandbox_exec`, file read/write/list, and diff
 - **Delegation and orchestration** — direct Explorer/Coder delegation plus dependency-aware task graphs via `plan_tasks`
 - **Context and memory** — staged compaction, Coder working memory, graph-scoped task memory, typed retrieval/invalidation, and sectioned prompt packing
 - **Shared runtime contract** — canonical task-graph, memory, delegation-brief, role-context, and run-event semantics live in root `lib/` and are consumed by both web and CLI
@@ -78,6 +79,7 @@ Role-based agent system. Models are replaceable. Roles are locked. Backend/model
 
 - **Repo-backed mode** — repo-locked context, branch-scoped chats, GitHub-backed review/commit/push flows
 - **Scratch workspace mode** — sandbox-only workspace for quick experiments without repo auth
+- **Local PC / Remote modes** — flag-gated daemon-backed chat surfaces (`VITE_LOCAL_PC_MODE`, `VITE_RELAY_MODE`) that drive a paired `pushd`; they intentionally omit cloud-sandbox and GitHub repo affordances
 - **Workspace publish flow** — scratch work can be promoted into a user-owned GitHub repo from inside the app, with explicit `Private`/`Public` visibility
 
 ## Shared Runtime Shape
@@ -108,7 +110,7 @@ The web app and CLI still keep shell-specific coordinators local. The target is 
 
 ## CLI
 
-Local coding agent for the terminal. It shares the same role-based architecture and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination local. Current terminal work is focused on transcript-first CLI ergonomics and TUI-lite improvements; the full-screen TUI remains available as an experimental shell rather than the product north star. The target is a stronger shared runtime contract across web and CLI, not identical UX across surfaces.
+Local coding agent for the terminal. It shares the same role-based architecture and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination local. Current terminal work is focused on transcript-first CLI ergonomics and TUI-lite improvements; the `push` wrapper still enables the full-screen TUI by default today, while `PUSH_TUI_ENABLED=0 ./push` runs the transcript REPL. The target is a stronger shared runtime contract across web and CLI, not identical UX across surfaces.
 
 ## Android
 

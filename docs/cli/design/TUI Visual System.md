@@ -19,7 +19,7 @@ It focuses on the **current shipped TUI**. Where a pattern is aspirational/futur
 
 ## Color System
 
-### Tokens (from tui-theme.mjs)
+### Tokens (from tui-theme.ts)
 
 | Token | Hex | ANSI Fallback | Usage |
 |-------|-----|---------------|-------|
@@ -79,7 +79,7 @@ The TUI supports four color tiers based on terminal capabilities:
 ### Layout Computations
 
 ```javascript
-// From tui-renderer.mjs
+// From tui-renderer.ts
 const headerHeight = 4;    // Product line, state, session hint
 const footerHeight = 2;    // Status bar + keybind hints
 const composerHeight = Math.max(3, Math.min(7, lines + 2));
@@ -211,7 +211,7 @@ main +2 │ ~/path │ 8 msgs · 2.1k        ● LIVE
 | Context | `{msgs} msgs · {tokens}tk` | `8 msgs · 2.1k` |
 | Live | `● LIVE` (when streaming) | `● LIVE` |
 
-Note: `tui-status.mjs` supports optional glyph icons (branch/folder), but current theme glyph sets do not define them, so the shipped display is text-first.
+Note: `tui-status.ts` supports optional glyph icons (branch/folder), but current theme glyph sets do not define them, so the shipped display is text-first.
 
 ### Keybind Hints (Line 2)
 
@@ -393,13 +393,13 @@ When Unicode not available (LANG without UTF-8):
 
 ```
 cli/
-├── tui.mjs              # Main TUI entry point (~3,750 lines)
-├── tui-renderer.mjs     # Rendering primitives (~430 lines)
-├── tui-theme.mjs        # Design tokens (~220 lines)
-├── tui-input.mjs        # Input handling (~430 lines)
-├── tui-status.mjs       # Status bar (~270 lines)
-├── tui-fuzzy.mjs        # Fuzzy filtering (~150 lines)
-├── tui-completer.mjs    # Tab completion (~280 lines)
+├── tui.ts               # Main TUI entry point (~5,250 lines)
+├── tui-renderer.ts      # Rendering primitives (~710 lines)
+├── tui-theme.ts         # Design tokens (~550 lines)
+├── tui-input.ts         # Input handling (~770 lines)
+├── tui-status.ts        # Status bar (~410 lines)
+├── tui-fuzzy.ts         # Fuzzy filtering (~210 lines)
+├── tui-completer.ts     # Tab completion (~430 lines)
 └── tests/
     ├── tui-input.test.mjs
     ├── tui-renderer.test.mjs

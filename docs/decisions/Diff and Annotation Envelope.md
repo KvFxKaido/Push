@@ -15,7 +15,7 @@ Diff rendering shows up on every Push surface that touches change-review:
 
 Two forcing functions push the question past "leave it alone":
 
-1. **Remote sessions** (`Remote Sessions via pushd Relay.md`, Partially shipped). When a phone PWA/APK attaches to a `pushd` session whose daemon executes against a PC checkout, the diff has to travel as a stable envelope across the relay. The current shape is web-component-internal.
+1. **Remote sessions** (`Remote Sessions via pushd Relay.md`, Phases 1-3 shipped). When a phone PWA/APK attaches to a `pushd` session whose daemon executes against a PC checkout, the diff has to travel as a stable envelope across the relay. The current shape is web-component-internal.
 2. **Reviewer feedback round-trip.** PR-backed branch-diff reviews can be posted back to GitHub; that flow needs an annotation taxonomy that survives serialization, not just CSS classes on a `DiffLine`.
 
 Two external projects scoped this problem and are useful as **inspiration only**:

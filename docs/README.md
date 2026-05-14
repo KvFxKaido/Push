@@ -1,6 +1,6 @@
 # Docs Index
 
-Status reviewed: 2026-04-16
+Status reviewed: 2026-05-14
 
 Use this file to navigate active design/planning docs versus historical references.
 `docs/` is the canonical documentation home for this repo.
@@ -32,15 +32,16 @@ Use this file to navigate active design/planning docs versus historical referenc
 Detailed per-doc status lives in [`decisions/README.md`](decisions/README.md). Summary by role:
 
 - **Shipped design references** — `Agent Experience Wishlist.md`, `Resumable Sessions Design.md`, `Sectioned System Prompts.md`, `CLI Prompt Builder Convergence.md`, `Hashline System Review.md`.
-- **Current working designs** — `AgentScope Architecture Review.md`, `Architecture Remediation Plan — Defusing the Big Four.md`, `Context Memory and Retrieval Architecture.md`, `CorrelationContext Contract.md`, `Copilot SDK Research.md`, `Harness Friction — Agent Self-Report.md`, `Duplication and Structural Symmetry Analysis.md`, `Vercel Open Agents Review.md`, `Web and CLI Runtime Contract.md`.
-- **Draft / in-motion** — `Modal Sandbox Snapshots Design.md`, `Rerank Before Prompt Packing.md`, `phase-5-tool-runtime-brief.md`, `push-runtime-v2.md`, `Tool-Call Parser Convergence Gap.md`.
+- **Current working designs** — `AgentScope Architecture Review.md`, `Architecture Remediation Plan — Defusing the Big Four.md`, `Coder Bypass of WebToolExecutionRuntime.md`, `Context Memory and Retrieval Architecture.md`, `CorrelationContext Contract.md`, `Copilot SDK Research.md`, `Harness Friction — Agent Self-Report.md`, `Duplication and Structural Symmetry Analysis.md`, `Sandbox Policy Seam.md`, `Vercel Open Agents Review.md`, `Web and CLI Runtime Contract.md`.
+- **Shipped / historical design references** — `Cloudflare AI Gateway Integration.md`, `Cloudflare Sandbox Provider Design.md`, `phase-5-tool-runtime-brief.md`, `PushStream Gateway Migration.md`, `Remote Sessions via pushd Relay.md`, `push-runtime-v2.md`.
+- **Draft / in-motion** — `Diff and Annotation Envelope.md`, `Modal Sandbox Snapshots Design.md`, `Rerank Before Prompt Packing.md`, `Streaming UI Deltas.md`, `Tool-Call Parser Convergence Gap.md`.
 - **Reference / comparative** — `Agent Tool Patterns — Claude Code Cross-Reference.md`, `Architecture Rating Snapshot.md`, `External Resource Review — Harness Engineering and Ralph Loop.md`, `Multi-Agent Orchestration Research — open-multi-agent.md`, `Oh My OpenAgent Review.md`, `OpenAI Agents SDK Evolution Review.md`.
 
 ## Runbooks
 
 Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Summary by role:
 
-- **Current** — `Chat Surface Evolution Plan.md` (Track C remaining), `Test Coverage Plan.md` (Phase 1 shipped, Phases 2–6 outlined), `Workspace Publish to GitHub Plan.md` (follow-through), `Workspace Route Follow-up Plan.md` (measurement only), `Web-CLI Parity Plan.md` (foundation shipped).
+- **Current** — `Chat Surface Evolution Plan.md` (Track C remaining), `Private Cloudflare Deployment.md`, `Provider Stats Endpoint.md`, `Test Coverage Plan.md` (Phases 1–5 shipped, Phase 6 outlined), `Workspace Publish to GitHub Plan.md` (follow-through), `Workspace Route Follow-up Plan.md` (measurement only), `Web-CLI Parity Plan.md` (foundation shipped).
 - **Draft spikes** — `Tiered Orchestrator Routing Spike.md`, `Canonical SOP Playbooks Spike.md`, `Hashline Effectiveness Metric.md`.
 - **Deferred reference** — `Background Coder Tasks Plan.md`, `UX Nice-to-Haves Plan.md`.
 
@@ -71,7 +72,7 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
 - `cli/runbooks/Push CLI Plan.md`
   - Status: Superseded baseline; core phases shipped. ROADMAP now drives CLI priorities directly.
 - `cli/design/Push Runtime Protocol.md`
-  - Status: Implemented baseline; protocol version/envelopes and the `cli/protocol-schema.ts` runtime validator are in code.
+  - Status: Implemented baseline; protocol version/envelopes and the `lib/protocol-schema.ts` runtime validator are in code.
 - `cli/design/Push CLI TUI Visual Language Spec.md`
   - Status: Shipped baseline for the experimental TUI visual language.
 - `cli/design/TUI Architecture.md`
@@ -79,7 +80,7 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
 - `cli/design/TUI Visual System.md`
   - Status: Detailed visual reference for the TUI implementation now in code.
 - `cli/design/Machine-Readable Output and CLI-Web Bridge.md`
-  - Status: Mixed design/reference; event protocol pieces are in code, richer headless/web bridge work remains future-facing.
+  - Status: Historical for the web bridge; the shipped bridge uses loopback WebSocket and Worker relay. Headless NDJSON streaming remains an optional future CLI improvement.
 - `cli/schemas/` (see `cli/schemas/README.md`)
   - Status: Active JSON Schema artifacts for runtime protocol envelopes/payloads.
 

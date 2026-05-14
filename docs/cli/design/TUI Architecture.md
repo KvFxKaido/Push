@@ -4,7 +4,7 @@ This document describes the architecture of the Push CLI's full-screen terminal 
 
 ## Overview
 
-The Push TUI is a custom-built, zero-dependency terminal interface implemented in ~3,000 lines of JavaScript. It provides:
+The Push TUI is a custom-built, zero-dependency terminal interface implemented in TypeScript. It provides:
 
 - Full-screen alternate buffer interface
 - Real-time streaming content display
@@ -31,7 +31,7 @@ The Push TUI is a custom-built, zero-dependency terminal interface implemented i
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                           Main Loop (tui.mjs)                        │
+│                           Main Loop (tui.ts)                         │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │
 │  │   Input     │→ │   State     │→ │   Render    │→ │   Output    │ │
 │  │  Handling   │  │   Update    │  │   Pipeline  │  │   Flush     │ │
@@ -47,15 +47,15 @@ The Push TUI is a custom-built, zero-dependency terminal interface implemented i
 
 | Module | Responsibility | Lines |
 |--------|----------------|-------|
-| `tui.mjs` | Main event loop, state management, modal handling | ~3,750 |
-| `tui-renderer.mjs` | Screen buffer, layout computation, ANSI escapes | ~430 |
-| `tui-theme.mjs` | Color tier detection, design tokens, styling | ~220 |
-| `tui-input.mjs` | Key parsing, input history, text composer | ~430 |
-| `tui-status.mjs` | Git status, token estimation, status bar | ~270 |
-| `tui-fuzzy.mjs` | Fuzzy filtering for session picker | ~150 |
-| `tui-modal-input.mjs` | Reusable modal list navigation + single-line edit helpers | ~150 |
-| `tui-widgets.mjs` | Composable modal box + list-window render helpers | ~60 |
-| `tui-completer.mjs` | Tab completion for commands | ~280 |
+| `tui.ts` | Main event loop, state management, modal handling | ~5,250 |
+| `tui-renderer.ts` | Screen buffer, layout computation, ANSI escapes | ~710 |
+| `tui-theme.ts` | Color tier detection, design tokens, styling | ~550 |
+| `tui-input.ts` | Key parsing, input history, text composer | ~770 |
+| `tui-status.ts` | Git status, token estimation, status bar | ~410 |
+| `tui-fuzzy.ts` | Fuzzy filtering for session picker | ~210 |
+| `tui-modal-input.ts` | Reusable modal list navigation + single-line edit helpers | ~200 |
+| `tui-widgets.ts` | Composable modal box + list-window render helpers | ~130 |
+| `tui-completer.ts` | Tab completion for commands | ~430 |
 
 ### Data Flow
 

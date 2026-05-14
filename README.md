@@ -35,6 +35,7 @@ It gives you a chat-first workflow anchored to a real repo, real branch state, r
 - **Android app (experimental)** — Capacitor wrapper around the web app for native Android testing and sideloaded debug builds
 - **CLI** — local terminal use with interactive and headless task execution
 - **Sandbox execution** — ephemeral Linux workspaces backed by Cloudflare Sandbox (default) or Modal, selected per-deploy via `PUSH_SANDBOX_PROVIDER`
+- **Daemon-backed sessions (experimental)** — flag-gated Local PC and Remote modes drive a paired `pushd` through loopback or the Worker relay
 - **GitHub-backed repo mode** plus **scratch workspace mode** when you don't need auth
 
 ## Repo map
@@ -84,7 +85,7 @@ On Windows, run the Gradle wrapper as `.\gradlew installDebug` from `app\android
 ```bash
 npm install
 ./push config init
-./push
+./push # full-screen TUI today; use PUSH_TUI_ENABLED=0 ./push for the transcript REPL
 ./push run --task "Implement X and run tests"
 ```
 
@@ -100,7 +101,7 @@ npm install
 
 ## Current direction
 
-Push is actively improving CLI ergonomics and hardening the experimental Android app path. See [ROADMAP.md](ROADMAP.md) for what's next.
+Push is actively improving CLI ergonomics, daemon-backed Local PC/Remote sessions, and the experimental Android app path. See [ROADMAP.md](ROADMAP.md) for what's next.
 
 ## License
 

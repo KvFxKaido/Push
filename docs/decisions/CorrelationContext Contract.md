@@ -49,7 +49,7 @@ A `CorrelationContext` is **passive observability metadata only**. The fields on
 
 1. alter tool call arguments or results,
 2. alter prompt text or system-prompt composition,
-3. alter pushd wire payloads beyond the existing envelope fields (`sessionId`, optional `runId`) that `cli/protocol-schema.ts` already defines,
+3. alter pushd wire payloads beyond the existing envelope fields (`sessionId`, optional `runId`) that `lib/protocol-schema.ts` already defines,
 4. alter sandbox commands, filesystem state, or workspace behavior,
 5. gate branches in business logic (policy, permission, approval).
 
@@ -141,7 +141,7 @@ Written on 2026-04-14 as step 1 of the Architecture Remediation Plan. The field 
 - `lib/runtime-contract.ts` — `MemoryScope` (line 163), `RunEvent` arms for `subagent.*` and `task_graph.*` (line 268 onward)
 - `lib/run-engine-contract.ts` — `RUN_STARTED.runId` / `RUN_STARTED.chatId` (line 14)
 - `lib/tool-execution-runtime.ts` — `ToolExecutionStartEvent.toolCallId` (line 38)
-- `cli/protocol-schema.ts` — `SessionEvent` envelope fields (lines 108–165)
+- `lib/protocol-schema.ts` — `SessionEvent` envelope fields
 - `app/src/hooks/useAgentDelegation.ts` — existing `push.*` span attribute call sites (lines 279–844)
 - `app/src/lib/tracing.ts` — `withActiveSpan` (line 229), `push.cancelled` convention (line 218)
 

@@ -1,8 +1,8 @@
 # Machine-Readable Output and CLI↔Web Bridge
 
-Design document. Current state + two-phase architecture.
+Design document. Current state + historical bridge sketch.
 
-Status: Mixed — core runtime/event envelope pieces are in code; richer headless streaming output and a true CLI↔web bridge remain future work.
+Status: Historical for the web bridge. The local/remote web bridge shipped through loopback WebSocket and Worker relay adapters, not the HTTP/SSE shape below. The headless NDJSON streaming idea remains a future CLI option if we still want script-consumable real-time events.
 
 ---
 
@@ -10,7 +10,7 @@ Status: Mixed — core runtime/event envelope pieces are in code; richer headles
 
 The foundation is largely built. Understanding it prevents duplication.
 
-**`push.runtime.v1` event protocol** — `session-store.mjs` and `pushd.mjs` define a shared envelope:
+**`push.runtime.v1` event protocol** — `session-store.ts`, `pushd.ts`, and `lib/protocol-schema.ts` define a shared envelope:
 
 ```json
 {
@@ -25,9 +25,9 @@ The foundation is largely built. Understanding it prevents duplication.
 }
 ```
 
-**pushd already streams this protocol** — `pushd.mjs:handleSendUserMessage` passes an `emit` function to `runAssistantLoop` that wraps each internal engine event in the `push.runtime.v1` envelope and writes it as NDJSON to the connected Unix socket client.
+**pushd already streams this protocol** — `pushd.ts:handleSendUserMessage` passes an `emit` function to `runAssistantLoop` that wraps each internal engine event in the `push.runtime.v1` envelope and writes it as NDJSON to connected Unix-socket clients. The same envelopes also ride the paired loopback WebSocket and Worker relay transports.
 
-**Headless mode drops all events** — `cli.mjs:runHeadless` passes `emit: null` to `runAssistantLoop`. All streaming events (tool calls, tokens, results) are silently discarded during execution. A single JSON summary blob is emitted at the end via `--json`. There is no real-time machine-readable output.
+**Headless mode drops all events** — `cli.ts:runHeadless` passes `emit: null` to `runAssistantLoop`. All streaming events (tool calls, tokens, results) are silently discarded during execution. A single JSON summary blob is emitted at the end via `--json`. There is no real-time machine-readable output.
 
 **Session files are the audit trail** — `~/.push/sessions/<id>/events.jsonl` contains every `appendSessionEvent` call as NDJSON. These are persistence events (session lifecycle, user messages, acceptance results), not the real-time engine events.
 
@@ -35,7 +35,7 @@ The foundation is largely built. Understanding it prevents duplication.
 
 ## Event Schema Reference
 
-Internal engine events (the `emit` callback in `engine.mjs`):
+Internal engine events (the `emit` callback in `engine.ts`):
 
 | `type` | `payload` fields |
 |---|---|
@@ -50,15 +50,15 @@ Internal engine events (the `emit` callback in `engine.mjs`):
 | `error` | `message` |
 | `run_complete` | `outcome`, `summary`, `rounds` |
 
-These are wrapped in the `push.runtime.v1` envelope by `pushd.mjs:handleSendUserMessage`. The same wrapping needs to happen in headless mode.
+These are wrapped in the `push.runtime.v1` envelope by `pushd.ts:handleSendUserMessage`. The same wrapping still needs to happen in headless mode if we add NDJSON streaming there.
 
 ---
 
 ## Phase 1: NDJSON Streaming to Stdout
 
-**The gap:** `emit: null` in `cli.mjs:runHeadless`.
+**The gap:** `emit: null` in `cli.ts:runHeadless`.
 
-**The fix:** Add `makeNDJSONEventHandler()` to `cli.mjs` as a parallel to `makeCLIEventHandler()`. Instead of formatting events as human-readable text, it writes each event as a `push.runtime.v1`-envelope NDJSON line to stdout.
+**The fix:** Add `makeNDJSONEventHandler()` to `cli.ts` as a parallel to `makeCLIEventHandler()`. Instead of formatting events as human-readable text, it writes each event as a `push.runtime.v1`-envelope NDJSON line to stdout.
 
 ```js
 function makeNDJSONEventHandler(sessionId, runId) {
@@ -85,57 +85,36 @@ Pass it to `runAssistantLoop` when `--json` is set in headless mode. The existin
 
 ---
 
-## Phase 2: HTTP/SSE Bridge in pushd
+## Phase 2: Web Bridge (Superseded)
 
-The web app cannot connect to a Unix socket directly. The daemon needs an HTTP surface.
+The shipped bridge did not use HTTP/SSE. It uses:
 
-**Add a local HTTP server to `pushd.mjs`** alongside the Unix socket:
+- `cli/pushd-ws.ts` for loopback-only WebSocket access to the same `handleRequest` dispatcher as the Unix socket.
+- `app/src/lib/local-daemon-binding.ts` for Local PC clients.
+- `cli/pushd-relay-client.ts`, `app/src/worker/relay-routes.ts`, and `app/src/worker/relay-do.ts` for the Worker/Durable Object relay path.
+- `app/src/lib/relay-daemon-binding.ts` for Remote clients.
 
-```
-pushd
-├── Unix socket (~/.push/run/pushd.sock) — existing, for CLI attach
-└── HTTP server (localhost:PORT, default 47821) — new, for web app
-    ├── POST /sessions              → start_session
-    ├── POST /sessions/:id/messages → send_user_message
-    └── GET  /sessions/:id/stream  → SSE event stream
-```
-
-Port is configurable via `PUSHD_HTTP_PORT` env or `~/.push/config.json`. Bound to `127.0.0.1` only — never exposed to network.
-
-**SSE stream** at `/sessions/:id/stream`:
-- Client subscribes with `EventSource`
-- Server pushes `push.runtime.v1` events as SSE `data:` lines
-- Same event format as the Unix socket — identical envelope, identical types
-- `Last-Event-ID` header for reconnect gap recovery (maps to `seq`)
-
-**Auth:** `attachToken` issued at `start_session`, required as `Authorization: Bearer <token>` on all subsequent requests. Same token mechanism already in `pushd.mjs`.
-
-**Port discovery:** The web app needs to find the daemon's HTTP port. Options:
-- Well-known fixed default (`47821`)
-- Port written to `~/.push/run/pushd.port` on start (web app reads it on connect)
-- Fallback: try default port, handle connection refused as "daemon not running"
+The exact remote topology and remaining packaging work live in `docs/decisions/Remote Sessions via pushd Relay.md`.
 
 ---
 
 ## Web App Integration
 
-The web app (React PWA) connects to the local daemon via a **bridge layer** in the service worker or a dedicated hook.
+The web app (React PWA) now connects to daemon-backed sessions through a dedicated binding layer.
 
 ```
 Web App (browser)
-    └── usePushdBridge hook
-          ├── GET http://127.0.0.1:47821/sessions → list sessions
-          ├── POST /sessions → start new session
-          └── EventSource /sessions/:id/stream → live events
+    ├── createLocalDaemonBinding() → ws://127.0.0.1:<port>
+    └── createRelayDaemonBinding() → wss://<deployment>/api/relay/v1/session/<id>/connect
 ```
 
-`usePushdBridge` subscribes to SSE and dispatches events into the same message pipeline that the web app's existing sandbox/LLM responses flow through. The web app already knows how to render `tool_call`, `assistant_token`, `run_complete` — it just needs a new event source.
+Both bindings dispatch `push.runtime.v1` envelopes into the daemon chat surface (`DaemonChatBody`) and route sandbox tool requests through the paired daemon.
 
 **Connection states:**
 - `unavailable` — connection refused (daemon not running)
-- `connecting` — EventSource opening
+- `connecting` — WebSocket opening
 - `live` — streaming
-- `reconnecting` — EventSource auto-reconnects with `Last-Event-ID`
+- `reconnecting` — hook-managed reconnect/backoff
 
 Show a "Local agent connected" indicator when a pushd session is active. No UI changes needed to render events — the existing chat pipeline handles them.
 
@@ -144,17 +123,11 @@ Show a "Local agent connected" indicator when a pushd session is active. No UI c
 ## What Not to Build Yet
 
 - **MCP bridge** — wait for the ecosystem to mature; token overhead is unresolved
-- **Bidirectional web→CLI commands** — read-only event streaming first; sending messages from the web app to a running CLI session is a later extension of `send_user_message`
-- **Tunnel/ngrok for remote access** — local-only is the right scope for v1; remote access has significant auth surface
+- **Direct public WebSocket exposure from a user's PC** — the shipped remote topology uses the Worker relay instead.
 
 ---
 
 ## Build Order
 
-1. `makeNDJSONEventHandler()` in `cli.mjs` — wire to `runHeadless` under `--stream` flag
-2. Stabilize and document the event schema (all `type` values and their `payload` shapes)
-3. HTTP server in `pushd.mjs` with SSE `/sessions/:id/stream`
-4. `usePushdBridge` hook in the web app
-5. "Local agent" indicator in the web app UI
-
-Steps 1–2 are self-contained CLI work. Steps 3–5 require both CLI and web app to be in sync on the event schema, which is why documenting it (step 2) is the gate.
+1. Optional: `makeNDJSONEventHandler()` in `cli.ts` — wire to `runHeadless` under a separate streaming flag.
+2. Optional: keep the JSON Schema artifacts in `docs/cli/schemas/` synchronized with the active `lib/protocol-schema.ts` validator, or retire the artifacts.

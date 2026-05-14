@@ -110,12 +110,12 @@ This lines up with the existing protocol note that a secondary remote app bridge
 
 `Web and CLI Runtime Contract.md` remains the boundary rule: shared agent semantics belong in `lib/`, shell transport and UX stay shell-local.
 
-This remote-session design does not mean "make web run through pushd immediately." The Phase 7 Web-as-daemon-client migration in `push-runtime-v2.md` is still future work. Remote sessions are the product case that can justify that migration when it is ready.
+This remote-session design did not mean migrating the standard cloud-sandbox web chat through `pushd`. That remains true: normal web sessions still run the web shell against the sandbox provider, while the Local PC and Remote modes are the shipped daemon-backed paths.
 
 The important distinction:
 
-- **Current web app:** web shell runs its own chat/runtime binding against the sandbox provider.
-- **Remote session future:** web/mobile shell attaches to a `pushd` session whose local daemon executes against the PC checkout.
+- **Standard web app:** web shell runs its own chat/runtime binding against the sandbox provider.
+- **Local PC / Remote sessions:** web/mobile shell attaches to a `pushd` session whose local daemon executes against the PC checkout.
 - **Desktop wrapper:** optional shell around the same daemon and web UI, not a new runtime path.
 
 ## Phases

@@ -84,13 +84,13 @@ A surprising amount of the machinery is already in place. The audit that motivat
 
 ### Runtime schema validation
 
-Shipped 2026-04-14 in `cli/protocol-schema.ts`. The module is the canonical runtime validator for the envelope contract above and for the per-type payload shapes of the nine delegation events in the `RunEventInput` union (`subagent.started`/`completed`/`failed` + six `task_graph.*` variants).
+Shipped 2026-04-14 in `cli/protocol-schema.ts`, then moved to `lib/protocol-schema.ts` during the Remote Sessions work once the web Local PC / Remote adapters began consuming daemon envelopes directly. The module is the canonical runtime validator for the envelope contract above and for the per-type payload shapes of delegation events in the `RunEventInput` union (`subagent.started`/`completed`/`failed` + six `task_graph.*` variants).
 
 - **`validateEventEnvelope(event)`** checks the envelope layer against the `SessionEvent` contract in `cli/session-store.ts`. Rejects missing required fields, wrong types, `runId: null`, and `payload: undefined` (which `JSON.stringify` would silently drop, leaving the wire envelope missing its payload key).
 - **`validateRunEventPayload(type, payload)`** layers per-type payload checks on top. Covers the nine delegation event types where we have explicit shape contracts. Daemon-specific events (`session_started`, `approval_required`, `error`, `run_complete`, `run_recovered`, `recovery_skipped`, `delegation_interrupted`) get envelope-only validation — their shapes still live in `cli/pushd.ts` and are deliberately out of scope for this tranche.
 - **`assertValidEvent(event)`** throws a formatted error with the full envelope on violation.
 - **`broadcastEvent()`** at `cli/pushd.ts` calls `assertValidEvent()` when `isStrictModeEnabled()` returns true, gated on the `PUSH_PROTOCOL_STRICT=1` env var. Production defaults to off (zero per-event overhead); the daemon-integration test harness flips it on in a `before`/`after` hook so every handler test validates its outgoing events as a side effect.
-- **Drift guard-rails** in `cli/tests/protocol-schema.test.mjs` re-extract the delegation event literals, `RunEventSubagent` roles, and `TaskGraphNode.agent` values from `lib/runtime-contract.ts` source text at test time. Adding a new variant to any of those types without a matching entry in `cli/protocol-schema.ts` fails the test with a clear drift message.
+- **Drift guard-rails** in `cli/tests/protocol-schema.test.mjs` and `cli/tests/protocol-drift.test.mjs` re-extract the delegation event literals, `RunEventSubagent` roles, and `TaskGraphNode.agent` values from `lib/runtime-contract.ts` source text at test time. Adding a new variant to any of those types without a matching entry in `lib/protocol-schema.ts` fails the test with a clear drift message.
 
 ### Capability Negotiation (v2 additions)
 

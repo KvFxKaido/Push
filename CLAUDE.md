@@ -20,7 +20,7 @@ npx wrangler dev --port 8787              # in a second terminal, from repo root
 ```bash
 npm install
 ./push config init        # interactive provider/model/key setup → ~/.push/config.json (chmod 0600)
-./push                    # TUI by default; PUSH_TUI_ENABLED=0 ./push for transcript REPL
+./push                    # full-screen TUI today; PUSH_TUI_ENABLED=0 ./push for transcript REPL
 ./push run --task "..."   # headless single-task mode
 ```
 
@@ -111,7 +111,7 @@ Both backends implement `SandboxProvider` and route through the same `/api/sandb
 
 ### Tool protocol
 
-Prompt-engineered tool calls (fenced JSON in the model's content stream). `lib/tool-call-parsing.ts` only scans `content`, **not** reasoning tokens — relevant when teaching models that emit thinking blocks. **Read/mutate split:** multiple read-only tools may run in parallel per turn, but only one mutating tool is allowed per turn (extras are rejected with a structured error). All tool dispatch is unified through `lib/tool-dispatch.ts`.
+Tool calls normalize to the same text-dispatch path: fenced/bare JSON in the model's `content` stream, plus OpenAI-native `tool_calls` that `lib/openai-sse-pump.ts` flushes back into fenced JSON. `lib/tool-call-parsing.ts` only scans `content`, **not** reasoning tokens — relevant when teaching models that emit thinking blocks. **Per-turn budget:** read-only calls run in parallel (cap 6), pure file mutations run sequentially as one batch (cap 8), and at most one trailing side-effecting call (`sandbox_exec`, commit/push, delegation, workflow dispatch, etc.) is allowed. Ordering violations and extra side effects are rejected with structured errors. Web grouping lives in `app/src/lib/tool-dispatch.ts`; the shared CLI detection kernel lives in `lib/tool-dispatch.ts`.
 
 ### Surface-specific landmarks
 

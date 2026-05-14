@@ -4,11 +4,12 @@ These JSON Schema files define the MVP wire protocol documented in `docs/cli/des
 
 ## Current Status
 
-These schemas are currently **spec artifacts/documentation** for the proposed runtime protocol.
+These schemas are currently **spec artifacts/documentation** for the runtime protocol.
 
 - They are referenced by design docs and planning docs.
-- They are **not** currently loaded by Push runtime code or enforced in CLI/app tests.
-- A future `pushd` implementation may add optional or required schema validation using these files.
+- They are **not** loaded directly by Push runtime code.
+- Runtime strict-mode validation is implemented separately in `lib/protocol-schema.ts`, which hand-validates the active `push.runtime.v1` event envelope and selected run-event payloads.
+- A future cleanup can either wire these JSON Schema files into tests/runtime validation or retire them in favor of the hand-rolled validator.
 
 ## Files
 

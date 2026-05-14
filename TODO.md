@@ -27,7 +27,7 @@
 
 ## Phase 2: Mutation Family — DONE
 
-Phase 1 dropped ~484 lines; dispatcher is currently 2807 lines. The mutation family is the remaining concentration: five case arms totalling ~2169 lines. Splitting into 2a + 2b so each sub-phase lands as its own green commit.
+At Phase 2 kickoff, Phase 1 had dropped ~484 lines and the dispatcher was 2807 lines. The mutation family was the remaining concentration: five case arms totalling ~2169 lines. Splitting into 2a + 2b let each sub-phase land as its own green commit.
 
 ### Step 2.1 — Coupling-mapping recon → DONE
 
@@ -56,4 +56,4 @@ Explorer-agent pass over the five arms (edit_file @ 572, edit_range @ 1130, sear
 
 ### Target — ACHIEVED
 
-`sandbox-tools.ts` is now 475 lines: detection/validation re-exports, five small context-builder helpers (`buildVerificationContext`, `buildGitReleaseContext`, `buildReadOnlyInspectionContext`, `buildEditContext`, `buildWriteContext`), and the `executeSandboxToolCall` dispatcher itself — most of whose case arms are one-line delegations to extracted handler modules. The "dispatcher as router" shape the Big Four Extraction Track was aimed at is in place.
+At extraction close, `sandbox-tools.ts` was 475 lines: detection/validation re-exports, five small context-builder helpers (`buildVerificationContext`, `buildGitReleaseContext`, `buildReadOnlyInspectionContext`, `buildEditContext`, `buildWriteContext`), and the `executeSandboxToolCall` dispatcher itself — most case arms delegated to extracted handler modules. Later Local PC/Remote daemon work grew the file again (971 lines on 2026-05-14), but the "dispatcher as router" shape the Big Four Extraction Track aimed for is still in place.

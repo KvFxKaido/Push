@@ -27,7 +27,7 @@ The CLI already has several things the web app needed to build from scratch — 
 
 **Implementation sketch:**
 ```js
-// In engine.mjs or a new workspace-context.mjs
+// In engine.ts or a new workspace-context.ts
 async function buildWorkspaceSnapshot(cwd) {
   const tree = await execFileAsync('find', ['.', '-maxdepth', '2', '-not', '-path', '*/node_modules/*', '-not', '-path', '*/.git/*'], { cwd });
   const gitStatus = await execFileAsync('git', ['status', '--short', '--branch'], { cwd }).catch(() => null);
@@ -132,7 +132,7 @@ Return previews in the tool result text alongside the success message.
 
 **Implementation sketch:**
 ```js
-// In engine.mjs, executeOneToolCall — accept a flag
+// In engine.ts, executeOneToolCall — accept a flag
 async function executeOneToolCall(call, round, includeMemory = true) {
   // ...
   const metaEnvelope = {
@@ -159,7 +159,7 @@ async function executeOneToolCall(call, round, includeMemory = true) {
 
 **Implementation sketch:**
 ```js
-// In hashline.mjs, applyHashlineEdits — replace_line case
+// In hashline.ts, applyHashlineEdits — replace_line case
 if (op === 'replace_line') {
   if (typeof edit.content !== 'string') throw new Error('replace_line requires string content');
   const newLines = edit.content.split('\n');
@@ -177,13 +177,13 @@ Same pattern for `insert_after` and `insert_before`.
 
 ### 7. Read Symbols Tool
 
-**The problem:** The agent can `read_file` (lines) and `search_files` (grep). But "show me all the functions in this file" requires reading the entire file and mentally parsing it. The web app has `sandbox_read_symbols` (AST/regex extraction). The CLI has nothing.
+**The problem:** The agent can `read_file` (lines) and `search_files` (grep). But "show me all the functions in this file" requires reading the entire file and mentally parsing it. The web app has `sandbox_read_symbols` (AST/regex extraction). At the time, the CLI had nothing.
 
 **What I'd want:** A `read_symbols` tool that extracts function/class/method/export declarations from a file. Even a regex-based approach works — it doesn't need a real parser.
 
 **Implementation sketch:**
 ```js
-// In tools.mjs
+// In tools.ts
 case 'read_symbols': {
   const filePath = ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'));
   const content = await fs.readFile(filePath, 'utf8');
@@ -221,7 +221,7 @@ case 'read_symbols': {
 
 **Implementation sketch (minimal):**
 ```js
-// In engine.mjs, before each streamCompletion call
+// In engine.ts, before each streamCompletion call
 const contextChars = state.messages.reduce((sum, m) => sum + (m.content?.length || 0), 0);
 // Include in meta envelope
 const metaEnvelope = { runId, round, contextChars, contextBudget: 120000, ... };
@@ -262,7 +262,7 @@ For actual trimming, port the web app's rolling-window logic from `useChat.ts` �
 
 **Implementation sketch:**
 ```js
-// In tools.mjs, before write/edit
+// In tools.ts, before write/edit
 const backupDir = path.join(workspaceRoot, '.push', 'backups', state.sessionId);
 await fs.mkdir(backupDir, { recursive: true });
 await fs.copyFile(filePath, path.join(backupDir, `${path.basename(filePath)}.${Date.now()}`));
@@ -276,13 +276,13 @@ await fs.copyFile(filePath, path.join(backupDir, `${path.basename(filePath)}.${D
 
 | CLI Wishlist Item | Web App Equivalent | Status |
 |---|---|---|
-| Workspace snapshot (#1) | `workspace-context.ts` | Shipped in web app, missing in CLI |
-| Project instructions (#2) | `fetchProjectInstructions()` | Shipped in web app, missing in CLI |
-| File paths in ledger (#3) | `file-awareness-ledger.ts` | Web app has full ledger; CLI has counts only |
-| Edit confirmation (#4) | `sandbox_edit_file` diff output | Shipped in web app, missing in CLI |
-| Working memory dedup (#5) | N/A (web app injects differently) | CLI-specific issue |
-| Multi-line edits (#6) | `sandbox_apply_patchset` | Web app has patchset tool; CLI hashline is line-only |
-| Read symbols (#7) | `sandbox_read_symbols` | Shipped in web app, missing in CLI |
-| Context budget (#8) | Rolling-window trimming in `useChat.ts` | Shipped in web app, missing in CLI |
-| Git tools (#9) | GitHub tools in `github-tools.ts` | Web app uses GitHub API; CLI needs local git |
-| File backup (#10) | Sandbox snapshots | Web app has snapshots; CLI has nothing |
+| Workspace snapshot (#1) | `workspace-context.ts` | Shipped in CLI (`cli/workspace-context.ts`) |
+| Project instructions (#2) | `fetchProjectInstructions()` | Shipped in CLI (`.push/instructions.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`) |
+| File paths in ledger (#3) | `file-awareness-ledger.ts` | Shipped in CLI prompt ledger + awareness ledger |
+| Edit confirmation (#4) | `sandbox_edit_file` diff output | Shipped in CLI edit context preview |
+| Working memory dedup (#5) | N/A (web app injects differently) | Shipped in CLI once-per-round injection |
+| Multi-line edits (#6) | `sandbox_apply_patchset` | Shipped in CLI hashline edits |
+| Read symbols (#7) | `sandbox_read_symbols` | Shipped in CLI as `read_symbols` / `read_symbol` |
+| Context budget (#8) | Rolling-window trimming in `useChat.ts` | Shipped in CLI via context transform/trim and `contextChars` meta |
+| Git tools (#9) | GitHub tools in `github-tools.ts` | Shipped in CLI as local `git_status`, `git_diff`, `git_commit` |
+| File backup (#10) | Sandbox snapshots | Shipped in CLI via `.push/backups` and `undo_edit` |

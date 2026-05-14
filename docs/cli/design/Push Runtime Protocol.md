@@ -1,12 +1,12 @@
 # Push Runtime Protocol (MVP)
 
 Date: 2026-02-19  
-Status: Implemented baseline — the wire protocol is in code/tests, but JSON Schema validation remains optional/future  
+Status: Implemented baseline — the wire protocol is in code/tests; JSON Schema artifacts remain optional/future
 Owner: Push
 
 ## Purpose
 
-Define the protocol between Push clients (`push` interactive REPL, `push run --headless`, future app remote client) and the runtime daemon (`pushd`).
+Define the protocol between Push clients (`push` interactive REPL, `push run --headless`, Local PC / Remote web clients) and the runtime daemon (`pushd`).
 
 This protocol is interactive-first and supports:
 - streaming model output
@@ -34,8 +34,9 @@ Concrete JSON Schemas for this protocol live in `docs/cli/schemas/`:
 Current implementation status:
 - These schema files are maintained as protocol/spec artifacts.
 - The runtime and tests already use the protocol version and envelope shape (`session-store.ts`, `pushd.ts`, `daemon-client.ts`, daemon/session-store tests).
-- JSON Schema validation is not currently wired into runtime request/event validation.
-- Schema-validation integration remains a future implementation step (see CLI bootstrap plan notes).
+- The JSON Schema files are not wired directly into runtime request/event validation.
+- Runtime strict-mode validation lives in `lib/protocol-schema.ts`; it hand-validates the active event envelope and selected run-event payloads.
+- Future schema work should either wire the JSON Schema artifacts into tests/runtime validation or retire them in favor of the hand-rolled validator.
 
 ## Non-Goals (MVP)
 
@@ -721,4 +722,4 @@ Recommended exit mapping:
 ## Open Follow-Ups
 
 1. Decide default event retention depth/time for replay.
-2. Resolve the exact remote bridge mechanics under `docs/decisions/Remote Sessions via pushd Relay.md`; the current draft favors a worker-mediated relay, with direct public WebSocket exposure out of scope.
+2. Decide whether the JSON Schema artifacts should become executable tests/runtime validation or be retired now that `lib/protocol-schema.ts` is the active validator.
