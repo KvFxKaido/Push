@@ -187,10 +187,7 @@ export async function streamAssistantRound(
       round,
       role: 'orchestrator',
       totalChars: snapshotEntry.totalChars,
-      sections: snapshotEntry.snapshot as Record<
-        string,
-        { hash: number; size: number; volatile: boolean }
-      >,
+      sections: snapshotEntry.snapshot,
     });
   }
 

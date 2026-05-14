@@ -310,10 +310,7 @@ async function runAuditorCore(
     round: 0,
     role: 'auditor',
     totalChars: systemPrompt.length,
-    sections: promptBuilder.snapshot() as Record<
-      string,
-      { hash: number; size: number; volatile: boolean }
-    >,
+    sections: promptBuilder.snapshot(),
   });
 
   onStatus('Auditor reviewing...');
