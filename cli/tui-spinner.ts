@@ -20,7 +20,22 @@
  * activity → verb, with no dependency on the renderer or the engine.
  */
 
-import { isReducedMotion } from './tui-animator.js';
+/**
+ * Returns true when the user has asked for reduced motion via env. Gates
+ * the spinner — when on, the spinner stays as a static dot regardless of
+ * configured Braille animation. Lives here because the spinner is the
+ * sole runtime consumer; the standalone `push spinner` CLI command and
+ * the TUI's `/spinner` handler both import this same helper so they
+ * share one source of truth.
+ */
+export function isReducedMotion(): boolean {
+  for (const key of ['PUSH_REDUCED_MOTION', 'REDUCED_MOTION'] as const) {
+    const value = (process.env[key] || '').toLowerCase().trim();
+    if (value === '' || value === '0' || value === 'false' || value === 'no') continue;
+    return true;
+  }
+  return false;
+}
 
 export type SpinnerName = 'off' | 'braille' | 'orbit' | 'breathe' | 'pulse' | 'helix';
 

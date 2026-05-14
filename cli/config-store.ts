@@ -17,7 +17,6 @@ export interface PushConfig {
   webSearchBackend?: string;
   execMode?: string;
   theme?: string;
-  animation?: string;
   spinner?: string;
   // Tool name allow/deny lists (CLI tool names from `cli/tools.ts` — e.g.
   // `exec`, `exec_start`, `write_file`). `disabledTools` blocks at dispatch;
@@ -97,7 +96,6 @@ export function applyConfigToEnv(config: PushConfig): void {
   setEnvIfMissing('PUSH_WEB_SEARCH_BACKEND', config.webSearchBackend);
   setEnvIfMissing('PUSH_EXEC_MODE', config.execMode);
   setEnvIfMissing('PUSH_THEME', config.theme);
-  setEnvIfMissing('PUSH_ANIMATION', config.animation);
   setEnvIfMissing('PUSH_SPINNER', config.spinner);
 
   // Forward tool allow/deny lists as comma-separated env vars so child

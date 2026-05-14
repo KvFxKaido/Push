@@ -16,7 +16,6 @@ import {
   listReferencePathCompletionsSync,
 } from './path-completion.js';
 import { THEME_NAMES } from './tui-theme.js';
-import { ANIMATION_EFFECTS } from './tui-animator.js';
 import { SPINNER_NAMES } from './tui-spinner.js';
 
 export interface TabResult {
@@ -195,33 +194,6 @@ export function createTabCompleter({
         const resolved = (THEME_NAMES as readonly string[])
           .filter((t: string) => t.startsWith(rest))
           .map((t: string) => subPrefix + t);
-        lastResolvedText = text;
-        lastResolvedCandidates = resolved;
-        return resolved;
-      }
-      lastResolvedText = text;
-      lastResolvedCandidates = [];
-      return [];
-    }
-
-    if (cmd === 'animate') {
-      const parts = arg.split(' ');
-      if (parts.length <= 1) {
-        const opts = ['list', 'set ', 'follow-theme', ...ANIMATION_EFFECTS];
-        const resolved = opts
-          .filter((s: string) => s.startsWith(arg))
-          .map((s: string) => prefix + s);
-        lastResolvedText = text;
-        lastResolvedCandidates = resolved;
-        return resolved;
-      }
-      const sub = parts[0];
-      const rest = parts.slice(1).join(' ');
-      const subPrefix = prefix + sub + ' ';
-      if (sub === 'set') {
-        const resolved = (ANIMATION_EFFECTS as readonly string[])
-          .filter((n: string) => n.startsWith(rest))
-          .map((n: string) => subPrefix + n);
         lastResolvedText = text;
         lastResolvedCandidates = resolved;
         return resolved;

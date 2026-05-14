@@ -35,7 +35,6 @@ export const RESERVED_COMMANDS: Set<string> = new Set([
   'compact',
   'copy',
   'theme',
-  'animate',
   'spinner',
   'checkpoint',
 ]);
