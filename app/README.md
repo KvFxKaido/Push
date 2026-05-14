@@ -50,7 +50,7 @@ Truthy values: `1`, `true`, `yes`, `on` (case-insensitive). Anything else — in
 
 | Surface | Where to set | Trigger |
 |---|---|---|
-| Local dev | `app/.env.local` (gitignored) | `npm run dev` picks it up automatically |
+| Local dev | `.env.local` (gitignored) | `npm run dev` picks it up automatically |
 | Cloudflare Workers Builds | Dashboard → Workers & Pages → `push` → Settings → **Build → Variables and Secrets** (separate from runtime vars further down the page) | Push any commit, or **Retry deployment** on the latest build |
 
 To verify a deployed build picked them up, open DevTools → Sources, find the hashed `App-*.js`, and search for the flag name — you won't find it, because Vite has already replaced it with the literal string value.
