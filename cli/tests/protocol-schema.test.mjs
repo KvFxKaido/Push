@@ -426,14 +426,21 @@ describe('validateRunEventPayload — task_graph events', () => {
   it('covers every delegation variant declared in RunEventInput', async () => {
     // This is the real drift guard: parse `lib/runtime-contract.ts` to
     // find the `RunEventInput` discriminated union, extract every
-    // `type: '...'` literal inside its body, and filter to the
-    // delegation-event subset (`subagent.*` and `task_graph.*`). The
-    // result is the authoritative list of types any CLI/Web client
-    // should expect on the wire. `SCHEMA_VALIDATED_EVENT_TYPES` must
-    // equal that list — otherwise a new delegation variant has landed
-    // in the shared runtime contract without a matching schema, and a
-    // strict-mode broadcast of it would slip through this PR's
-    // validator entirely.
+    // `type: '...'` literal inside its body, and assert two
+    // invariants:
+    //
+    //   1. Every delegation variant (`subagent.*` / `task_graph.*`)
+    //      has a registered payload validator in
+    //      `SCHEMA_VALIDATED_EVENT_TYPES`. Otherwise a new variant
+    //      slips through strict-mode validation silently.
+    //   2. Every type in `SCHEMA_VALIDATED_EVENT_TYPES` corresponds
+    //      to a real RunEventInput variant. Otherwise an orphan
+    //      validator is registered for a removed/renamed event type.
+    //
+    // The set of types we choose to schema-validate is broader than
+    // delegation today — `assistant.prompt_snapshot` is also pinned
+    // (added by the OpenCode silent-failure audit) — so the
+    // assertion is a pair of subset checks, not a single equality.
     //
     // Reading source text is brittler than importing a runtime const,
     // but the RunEvent union is TypeScript-only (erased at runtime) and
@@ -476,20 +483,32 @@ describe('validateRunEventPayload — task_graph events', () => {
       `expected RunEventInput to declare at least one type literal, got ${JSON.stringify([...allTypes])}`,
     );
 
-    // Filter to the delegation-event subset we want to schema-validate.
-    // The other RunEvent types (assistant.*, tool.*, user.*) are left
-    // to envelope-only validation per this PR's scope.
+    // Invariant 1: every delegation variant has a validator.
     const delegationTypes = [...allTypes]
       .filter((t) => t.startsWith('subagent.') || t.startsWith('task_graph.'))
       .sort();
-
+    const validatedSet = new Set(SCHEMA_VALIDATED_EVENT_TYPES);
+    const missingValidators = delegationTypes.filter((t) => !validatedSet.has(t));
     assert.deepEqual(
-      [...SCHEMA_VALIDATED_EVENT_TYPES].sort(),
-      delegationTypes,
-      `SCHEMA_VALIDATED_EVENT_TYPES drifted from RunEventInput's delegation variants.\n` +
+      missingValidators,
+      [],
+      `Delegation variants in RunEventInput without a payload validator.\n` +
         `If you just added a new \`subagent.*\` or \`task_graph.*\` variant to ` +
         `lib/runtime-contract.ts, you also need to register a payload validator ` +
-        `in cli/protocol-schema.ts (see the PAYLOAD_VALIDATORS map).`,
+        `in lib/protocol-schema.ts (see the PAYLOAD_VALIDATORS map).`,
+    );
+
+    // Invariant 2: no orphan validators — every validated type must
+    // correspond to a real RunEventInput variant.
+    const orphanValidators = [...SCHEMA_VALIDATED_EVENT_TYPES]
+      .filter((t) => !allTypes.has(t))
+      .sort();
+    assert.deepEqual(
+      orphanValidators,
+      [],
+      `Payload validators registered for types that do not exist in RunEventInput.\n` +
+        `If you renamed or removed a RunEventInput variant, also drop its entry ` +
+        `from PAYLOAD_VALIDATORS in lib/protocol-schema.ts.`,
     );
   });
 
