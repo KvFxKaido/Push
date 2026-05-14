@@ -433,10 +433,7 @@ export async function runExplorerAgent<TCall, TCard>(
     round: 0,
     role: 'explorer',
     totalChars: systemPrompt.length,
-    sections: builder.snapshot() as Record<
-      string,
-      { hash: number; size: number; volatile: boolean }
-    >,
+    sections: builder.snapshot(),
   });
 
   const messages: LlmMessage[] = [

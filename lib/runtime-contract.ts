@@ -7,6 +7,7 @@
  */
 
 import type { ReviewResult } from './provider-contract.js';
+import type { PromptSnapshot } from './system-prompt-builder.js';
 
 // ---------------------------------------------------------------------------
 // Agent roles
@@ -274,7 +275,7 @@ export type RunEventInput =
       round: number;
       role: AgentRole;
       totalChars: number;
-      sections: Record<string, { hash: number; size: number; volatile: boolean }>;
+      sections: PromptSnapshot;
     }
   | {
       type: 'tool.execution_start';

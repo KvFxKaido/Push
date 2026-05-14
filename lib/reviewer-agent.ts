@@ -401,10 +401,7 @@ async function runReviewerCore(
     round: 0,
     role: 'reviewer',
     totalChars: systemPrompt.length,
-    sections: promptBuilder.snapshot() as Record<
-      string,
-      { hash: number; size: number; volatile: boolean }
-    >,
+    sections: promptBuilder.snapshot(),
   });
 
   onStatus('Reviewer reading diff…');

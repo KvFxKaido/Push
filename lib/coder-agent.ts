@@ -679,10 +679,7 @@ export async function runCoderAgent<TCall, TCard>(
     round: 0,
     role: 'coder',
     totalChars: systemPrompt.length,
-    sections: promptBuilder.snapshot() as Record<
-      string,
-      { hash: number; size: number; volatile: boolean }
-    >,
+    sections: promptBuilder.snapshot(),
   });
 
   // Compose the agent-level cancellation signal with iteratePushStreamText's
