@@ -257,10 +257,12 @@ describe('computeTranscriptViewport', () => {
     assert.equal(after.startIdx - before.startIdx, 5);
   });
 
-  it('streaming-while-scrolled-up: window does NOT follow new lines', () => {
-    // The user has scrolled up by 30 lines. New streamed lines extend the
-    // tail but should not shift what the user is reading — the visible
-    // window stays anchored to the same content.
+  it('streaming-while-scrolled-up: window slides with the tail (offset is tail-relative)', () => {
+    // scrollOffset is measured from the tail, not anchored to a content
+    // line. So while the user is scrolled up by 30, new streamed lines
+    // shift the visible window by the same amount — the content under
+    // the cursor changes. UI code that wants anchor-to-content semantics
+    // has to convert the offset before calling this helper.
     const before = computeTranscriptViewport({
       totalLineCount: 100,
       viewportHeight: 20,
@@ -271,13 +273,35 @@ describe('computeTranscriptViewport', () => {
       viewportHeight: 20,
       scrollOffset: 30,
     });
-    // scrollOffset 30 with maxScroll 80 → startIdx 50; with maxScroll 85
-    // → startIdx 55. The window slides by exactly the number of new lines.
-    // This is the documented behavior: scrollOffset is measured from the
-    // tail, not anchored to a content line. UI code that wants
-    // anchor-to-content semantics has to convert the offset before
-    // calling this helper.
+    // maxScroll 80 → startIdx 50; maxScroll 85 → startIdx 55.
     assert.equal(before.startIdx, 50);
     assert.equal(after.startIdx, 55);
+  });
+
+  it('exposes effectiveOffset (callers use it for the scroll indicator)', () => {
+    // Regression guard: tui.ts:renderTranscript reads effectiveOffset to
+    // draw the "[+N lines]" overlay. Dropping it from the return type
+    // would crash with a ReferenceError on every render, but TS can't
+    // catch it because tui.ts is @ts-nocheck — so pin the shape here.
+    const pinned = computeTranscriptViewport({
+      totalLineCount: 100,
+      viewportHeight: 20,
+      scrollOffset: 0,
+    });
+    assert.equal(pinned.effectiveOffset, 0);
+
+    const scrolled = computeTranscriptViewport({
+      totalLineCount: 100,
+      viewportHeight: 20,
+      scrollOffset: 30,
+    });
+    assert.equal(scrolled.effectiveOffset, 30);
+
+    const overshoot = computeTranscriptViewport({
+      totalLineCount: 100,
+      viewportHeight: 20,
+      scrollOffset: 9999,
+    });
+    assert.equal(overshoot.effectiveOffset, 80);
   });
 });

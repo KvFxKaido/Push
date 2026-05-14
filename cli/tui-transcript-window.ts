@@ -16,9 +16,12 @@ export type TranscriptBlockBounds = {
  * target line. Returns `blocks.length` when every block ends at or before
  * the target.
  *
- * Treats a block with a non-finite `endLine` as if it ended at line 0
- * (matches the historical `?? 0` fallback in tui.ts: corrupt blocks fall
- * to the left of any positive target so the search continues rightward).
+ * Treats a block with a nullish (`undefined` / `null`) `endLine` as if it
+ * ended at line 0 — matches the historical `?? 0` fallback in tui.ts:
+ * corrupt blocks fall to the left of any positive target so the search
+ * continues rightward. NaN / Infinity are not normalized; the comparison
+ * does whatever IEEE-754 ordering produces (NaN compares false either
+ * way, so the search behaves as if the block ended past the target).
  */
 export function findFirstIntersectingBlock(
   blocks: readonly TranscriptBlockBounds[],

@@ -420,7 +420,7 @@ function renderTranscript(buf, layout, theme, tuiState) {
   }
 
   // Take the last `height` lines (scroll to bottom), adjusted by scrollOffset.
-  const { startIdx, endIdxExclusive } = computeTranscriptViewport({
+  const { effectiveOffset, startIdx, endIdxExclusive } = computeTranscriptViewport({
     totalLineCount: (cached.totalLines || 0) + streamingLines.length,
     viewportHeight: height,
     scrollOffset: tuiState.scrollOffset,
