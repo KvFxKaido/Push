@@ -114,6 +114,11 @@ import { createTabCompleter } from './tui-completer.js';
 import { createFileLedger, updateFileLedger, getLedgerSummary } from './file-ledger.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { compactContext } from './context-manager.js';
+import {
+  computeTranscriptViewport,
+  findFirstBlockStartingAtOrAfter,
+  findFirstIntersectingBlock,
+} from './tui-transcript-window.js';
 
 // ── TUI state ───────────────────────────────────────────────────────
 
@@ -342,27 +347,10 @@ function renderHeader(
   buf.writeLine(top, left, padTo(row, width));
 }
 
-function findFirstIntersectingTranscriptBlock(entryBlocks, targetLine) {
-  let lo = 0;
-  let hi = entryBlocks.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if ((entryBlocks[mid]?.endLine ?? 0) <= targetLine) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-}
-
-function findFirstTranscriptBlockStartingAtOrAfter(entryBlocks, targetLine) {
-  let lo = 0;
-  let hi = entryBlocks.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if ((entryBlocks[mid]?.startLine ?? 0) < targetLine) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-}
+// Aliases kept so the existing call sites read naturally; the implementations
+// live in tui-transcript-window.ts where they can be unit-tested.
+const findFirstIntersectingTranscriptBlock = findFirstIntersectingBlock;
+const findFirstTranscriptBlockStartingAtOrAfter = findFirstBlockStartingAtOrAfter;
 
 function renderTranscript(buf, layout, theme, tuiState) {
   const { top, left, width, height } = layout.transcript;
@@ -431,12 +419,12 @@ function renderTranscript(buf, layout, theme, tuiState) {
     });
   }
 
-  // Take the last `height` lines (scroll to bottom), adjusted by scrollOffset
-  const totalLineCount = (cached.totalLines || 0) + streamingLines.length;
-  const maxScroll = Math.max(0, totalLineCount - height);
-  const effectiveOffset = Math.min(tuiState.scrollOffset, maxScroll);
-  const startIdx = Math.max(0, maxScroll - effectiveOffset);
-  const endIdxExclusive = startIdx + height;
+  // Take the last `height` lines (scroll to bottom), adjusted by scrollOffset.
+  const { effectiveOffset, startIdx, endIdxExclusive } = computeTranscriptViewport({
+    totalLineCount: (cached.totalLines || 0) + streamingLines.length,
+    viewportHeight: height,
+    scrollOffset: tuiState.scrollOffset,
+  });
 
   const slice = [];
   const payloadBlocks = [];
