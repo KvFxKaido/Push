@@ -1560,7 +1560,10 @@ export interface WorkspaceScreenNavigationProps {
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onStartScratchWorkspace: () => void;
   onStartChat: () => void;
-  onStartLocalPc: () => void;
+  /** Optional so a build with `VITE_LOCAL_PC_MODE` disabled can omit
+   * the handler — undefined hides the Local PC tile on every surface
+   * that consumes it (onboarding, home, workspace launcher sheet). */
+  onStartLocalPc?: () => void;
   /** Phase 2.f Remote (relay) tile. Optional so a build without
    * VITE_RELAY_MODE doesn't need to plumb a no-op handler. */
   onStartRelay?: () => void;
