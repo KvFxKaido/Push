@@ -518,10 +518,10 @@ describe('createToolDispatcher — fenced array tool calls', () => {
     expect(result.malformed).toHaveLength(1);
     expect(result.malformed[0].reason).toBe('missing_args_object');
     expect(result.malformed[0].sample).toContain('[ARRAY_PARTIAL:');
-    expect(result.malformed[0].sample).toContain('1 sibling element(s) executed');
+    expect(result.malformed[0].sample).toContain('1 sibling element(s) parsed');
   });
 
-  it('omits the ARRAY_PARTIAL marker when no array elements executed', () => {
+  it('omits the ARRAY_PARTIAL marker when no array elements parsed', () => {
     // Regression guard: the marker is gated on `values.length > 0`,
     // so all-elements-fail arrays don't carry a misleading
     // "siblings executed" prefix.
@@ -547,10 +547,10 @@ describe('createToolDispatcher — fenced array tool calls', () => {
     const result = dispatcher.detectAllToolCalls(text);
     expect(result.calls).toHaveLength(1);
     expect(result.malformed.map((m) => m.reason)).toEqual(['invalid_shape', 'invalid_shape']);
-    // One element executed — the two non-object failures both carry
+    // One element parsed — the two non-object failures both carry
     // the partial-execution marker.
     for (const report of result.malformed) {
-      expect(report.sample).toContain('[ARRAY_PARTIAL: 1 sibling element(s) executed]');
+      expect(report.sample).toContain('[ARRAY_PARTIAL: 1 sibling element(s) parsed]');
     }
   });
 

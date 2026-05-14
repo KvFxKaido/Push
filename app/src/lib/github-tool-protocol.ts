@@ -345,8 +345,7 @@ const FIND_EXISTING_PR_TOOL = getToolPublicName('find_existing_pr');
 const DELEGATE_CODER_TOOL = getToolPublicName('delegate_coder');
 const DELEGATE_EXPLORER_TOOL = getToolPublicName('delegate_explorer');
 
-export const TOOL_PROTOCOL = `
-[Tool schema version: ${TOOL_REGISTRY_SCHEMA_VERSION}]
+export const TOOL_PROTOCOL = `[Tool schema version: ${TOOL_REGISTRY_SCHEMA_VERSION}]
 
 TOOLS — You can request GitHub data by outputting a fenced JSON block:
 

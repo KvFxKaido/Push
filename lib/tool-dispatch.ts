@@ -682,8 +682,15 @@ function parseToolArrayCandidate(candidate: string): ArrayParseResult {
   // (double-execute) or skip following up on a half-completed
   // transaction. Audit item #6 from the OpenCode silent-failure
   // inventory.
+  //
+  // Wording is `parsed` (not `executed`) because at this point the
+  // siblings have only passed shape validation — they still need to
+  // survive source-match dedup in the outer dispatcher loop. The
+  // exact "X executed vs Y parsed-but-unknown" split is less
+  // important than the signal "your array had partial success."
+  // Codex P2 + Copilot + GH Actions on PR #543.
   if (values.length > 0 && perElementMalformed.length > 0) {
-    const prefix = `[ARRAY_PARTIAL: ${values.length} sibling element(s) executed] `;
+    const prefix = `[ARRAY_PARTIAL: ${values.length} sibling element(s) parsed] `;
     for (const report of perElementMalformed) {
       report.sample = truncateSample(`${prefix}${report.sample}`);
     }

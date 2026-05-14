@@ -711,9 +711,22 @@ export { getToolCapabilities as getToolRequiredCapabilities } from './capabiliti
  * an 8-char zero-padded hex string for compact display.
  */
 function computeRegistrySchemaVersion(): string {
+  // Sort by canonicalName before stringifying so reordering specs in
+  // the source array (no semantic change) doesn't bump the version —
+  // otherwise version bumps include "we moved this tool up" noise that
+  // makes deployment correlation harder. Copilot on PR #543.
+  //
+  // publicName is included so renaming a tool (e.g. `repo_read` →
+  // `read_file`) bumps the version even when the canonical name stays
+  // the same. The publicName is the model-facing identifier so its
+  // change affects the prompt the model sees. GH Actions on PR #543.
+  const sorted = [...TOOL_SPECS].sort((a, b) =>
+    a.canonicalName < b.canonicalName ? -1 : a.canonicalName > b.canonicalName ? 1 : 0,
+  );
   const stable = JSON.stringify(
-    TOOL_SPECS.map((spec) => ({
+    sorted.map((spec) => ({
       n: spec.canonicalName,
+      p: spec.publicName,
       s: spec.source,
       sig: spec.protocolSignature,
       desc: spec.protocolDescription,
