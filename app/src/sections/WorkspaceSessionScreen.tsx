@@ -60,8 +60,15 @@ export function WorkspaceSessionScreen({
     installApp,
     setInstallationIdManually,
   } = auth;
-  const { onDisconnect, onSelectRepo, onStartScratchWorkspace, onStartChat, onEndWorkspace } =
-    navigation;
+  const {
+    onDisconnect,
+    onSelectRepo,
+    onStartScratchWorkspace,
+    onStartChat,
+    onStartLocalPc,
+    onStartRelay,
+    onEndWorkspace,
+  } = navigation;
   const { pendingResumeChatId, onConversationIndexChange } = homeBridge;
 
   const isScratch = workspaceSession.kind === 'scratch';
@@ -412,6 +419,8 @@ export function WorkspaceSessionScreen({
     sandbox,
     handleStartWorkspace: onStartScratchWorkspace,
     handleStartChat: onStartChat,
+    handleStartLocalPc: onStartLocalPc,
+    handleStartRelay: onStartRelay,
     handleExitWorkspace,
     handleDisconnect: handleDisconnectFromWorkspace,
     handleCreateNewChat,

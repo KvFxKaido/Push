@@ -476,6 +476,8 @@ export function buildRepoLauncherSheetProps(args: {
   sandboxCreatedAt: ChatRouteProps['sandbox']['createdAt'];
   handleStartWorkspace?: () => void;
   handleStartChat?: () => void;
+  handleStartLocalPc?: () => void;
+  handleStartRelay?: () => void;
   handleDisconnect: () => void;
   validatedUser: ChatRouteProps['validatedUser'];
   mode?: 'default' | 'chat';
@@ -498,6 +500,8 @@ export function buildRepoLauncherSheetProps(args: {
       : null,
     onStartWorkspace: args.handleStartWorkspace,
     onStartChat: args.handleStartChat,
+    onStartLocalPc: args.handleStartLocalPc,
+    onStartRelay: args.handleStartRelay,
     onDisconnect: args.handleDisconnect,
     user: args.validatedUser,
     mode: args.mode,
