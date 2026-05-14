@@ -1117,6 +1117,14 @@ export async function runAssistantLoop(
       // lives in `buildMalformedToolCallEvents`. Reuse it instead of
       // open-coding the same loop, so a new caller can't drift on
       // preview-slicing or forget to emit a report.
+      //
+      // Contract change vs. the pre-2026-05 inline loop: the in-process
+      // `dispatchEvent` now receives the same 500-char-truncated preview
+      // that gets persisted, where it previously received the full
+      // `malformed.sample`. Today's consumers (`cli/cli.ts`,
+      // `cli/tui.ts`) only display `reason`, so this is harmless. If a
+      // future consumer needs the full sample, plumb it through the
+      // helper rather than reintroducing a divergent dispatch payload.
       const malformedEvents = buildMalformedToolCallEvents(detected.malformed, turnIndex);
       for (const event of malformedEvents) {
         recordMalformedToolCall(event.reason, state.sessionId);

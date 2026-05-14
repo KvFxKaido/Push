@@ -12,7 +12,6 @@ export function trimRunEvents(events: RunEvent[]): RunEvent[] {
 export function shouldPersistRunEvent(event: RunEventInput): boolean {
   switch (event.type) {
     case 'assistant.turn_start':
-    case 'assistant.prompt_snapshot':
     case 'tool.execution_start':
     case 'subagent.started':
     case 'job.started':
@@ -21,6 +20,10 @@ export function shouldPersistRunEvent(event: RunEventInput): boolean {
     case 'user.follow_up_queued':
     case 'user.follow_up_steered':
       return false;
+    // `assistant.prompt_snapshot` persists. Hashes + sizes only (no
+    // section content), one event per turn — small enough to keep on
+    // the journal, and persistence is what makes the snapshot useful
+    // as an audit trail after the session reloads.
     default:
       return true;
   }
