@@ -498,6 +498,12 @@ describe('createToolDispatcher — fenced array tool calls', () => {
     // array shouldn't fail just because one element is malformed; the
     // valid calls go through and the invalid element shows up in the
     // malformed list so operators see the specific failure.
+    //
+    // Partial-execution marker: when sibling elements DID execute, the
+    // failure sample is prefixed with `[ARRAY_PARTIAL: N sibling…]` so
+    // the model doesn't read `[TOOL_CALL_PARSE_ERROR]` and assume the
+    // whole batch was rejected. Audit item #6 from the OpenCode
+    // silent-failure inventory.
     const text = [
       '```json',
       '[',
@@ -511,6 +517,28 @@ describe('createToolDispatcher — fenced array tool calls', () => {
     expect(result.calls[0]).toEqual({ tool: 'read_file', args: { path: 'foo.txt' } });
     expect(result.malformed).toHaveLength(1);
     expect(result.malformed[0].reason).toBe('missing_args_object');
+    expect(result.malformed[0].sample).toContain('[ARRAY_PARTIAL:');
+    expect(result.malformed[0].sample).toContain('1 sibling element(s) parsed');
+  });
+
+  it('omits the ARRAY_PARTIAL marker when no array elements parsed', () => {
+    // Regression guard: the marker is gated on `values.length > 0`,
+    // so all-elements-fail arrays don't carry a misleading
+    // "siblings executed" prefix.
+    const text = [
+      '```json',
+      '[',
+      '  {"tool":"missing_args_1"},',
+      '  {"tool":"missing_args_2"}',
+      ']',
+      '```',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(0);
+    expect(result.malformed).toHaveLength(2);
+    for (const report of result.malformed) {
+      expect(report.sample).not.toContain('[ARRAY_PARTIAL:');
+    }
   });
 
   it('reports invalid_shape when an array element is not an object', () => {
@@ -519,6 +547,11 @@ describe('createToolDispatcher — fenced array tool calls', () => {
     const result = dispatcher.detectAllToolCalls(text);
     expect(result.calls).toHaveLength(1);
     expect(result.malformed.map((m) => m.reason)).toEqual(['invalid_shape', 'invalid_shape']);
+    // One element parsed — the two non-object failures both carry
+    // the partial-execution marker.
+    for (const report of result.malformed) {
+      expect(report.sample).toContain('[ARRAY_PARTIAL: 1 sibling element(s) parsed]');
+    }
   });
 
   it('reports json_parse_error when the array body fails to parse', () => {
