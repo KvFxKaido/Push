@@ -691,3 +691,40 @@ export function escapeToolNameForRegex(name: string): string {
  * or public names — callers must pass the canonical tool name.
  */
 export { getToolCapabilities as getToolRequiredCapabilities } from './capabilities.js';
+
+/**
+ * Content-derived schema version for the tool registry. Computed once
+ * at module load from a canonical stringification of each tool's
+ * source, names, and protocol-facing fields (signature / description /
+ * example JSON). Any change to those fields bumps the hash, so a
+ * debug surface can correlate "the model was given schema version X"
+ * with deployment history without keeping a separate version field in
+ * sync. Stable across processes for the same code.
+ *
+ * Intended use: include in the tool-protocol prompt block so wire
+ * captures and prompt snapshots carry the version. Operators
+ * debugging "why did the agent emit the old `sandbox_exec` argument
+ * shape?" can grep their logs for the version and match it to a
+ * commit.
+ *
+ * djb2-style hash (same as `system-prompt-builder.ts`). Returned as
+ * an 8-char zero-padded hex string for compact display.
+ */
+function computeRegistrySchemaVersion(): string {
+  const stable = JSON.stringify(
+    TOOL_SPECS.map((spec) => ({
+      n: spec.canonicalName,
+      s: spec.source,
+      sig: spec.protocolSignature,
+      desc: spec.protocolDescription,
+      ex: spec.exampleJson,
+    })),
+  );
+  let hash = 5381;
+  for (let i = 0; i < stable.length; i++) {
+    hash = ((hash << 5) + hash + stable.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+export const TOOL_REGISTRY_SCHEMA_VERSION = computeRegistrySchemaVersion();

@@ -674,6 +674,21 @@ function parseToolArrayCandidate(candidate: string): ArrayParseResult {
     values.push(shaped.value);
   }
 
+  // Partial-execution annotation: when the array has BOTH successful
+  // elements AND per-element failures, prefix each failure's sample so
+  // the model sees that its sibling calls executed. Without this
+  // marker the model reads `[TOOL_CALL_PARSE_ERROR]` and may assume
+  // the whole batch was rejected, then re-emit calls that already ran
+  // (double-execute) or skip following up on a half-completed
+  // transaction. Audit item #6 from the OpenCode silent-failure
+  // inventory.
+  if (values.length > 0 && perElementMalformed.length > 0) {
+    const prefix = `[ARRAY_PARTIAL: ${values.length} sibling element(s) executed] `;
+    for (const report of perElementMalformed) {
+      report.sample = truncateSample(`${prefix}${report.sample}`);
+    }
+  }
+
   return { ok: true, values, perElementMalformed };
 }
 
