@@ -366,16 +366,37 @@ describe('createToolDispatcher — source registration', () => {
     expect(result.malformed[0].reason).toBe('unknown_tool');
   });
 
-  it('silently skips bare-object candidates that match no source', () => {
+  it('reports unknown_tool for eligible bare-object candidates that match no source', () => {
+    // A bare object outside any fence that passes `isBareBlockEligible`
+    // (whole-text-is-one-bare-call shape) AND parses as `{tool, args}`
+    // but no source claims it is the OpenCode silent-failure shape:
+    // the model emits a tool call with a name the harness doesn't
+    // recognize, and the harness silently drops it. Surface as
+    // malformed so the model sees the rejection on its next turn.
     const rejectAllSource: ToolSource<unknown> = {
       name: 'reject-all',
       detect: () => null,
     };
     const dispatcher = createToolDispatcher([rejectAllSource]);
-    // Bare object outside a fence — should not generate a malformed
-    // report even though no source claims it, to avoid noise from
-    // prose-embedded `{...}` objects.
     const text = '{"tool":"mystery_tool","args":{}}';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([]);
+    expect(result.malformed).toHaveLength(1);
+    expect(result.malformed[0].reason).toBe('unknown_tool');
+  });
+
+  it('keeps prose-embedded bare-object examples silent (eligibility gate intact)', () => {
+    // A bare object that fails `isBareBlockEligible` (prose around it)
+    // is still silent — documentation/examples must not trigger
+    // malformed reports. This is the regression-prevention for
+    // PR #542's bare-unknown fix.
+    const rejectAllSource: ToolSource<unknown> = {
+      name: 'reject-all',
+      detect: () => null,
+    };
+    const dispatcher = createToolDispatcher([rejectAllSource]);
+    const text =
+      'See the example: use {"tool":"mystery_tool","args":{}} when you want to test the parser.';
     const result = dispatcher.detectAllToolCalls(text);
     expect(result.calls).toEqual([]);
     expect(result.malformed).toEqual([]);
@@ -717,5 +738,45 @@ describe('createToolDispatcher — fenced array gate (Copilot review on PR #334)
     const text = "```json\n[{'tool': 'read_file', 'args': {'path': 'a.txt'}}]\n```";
     const result = dispatcher.detectAllToolCalls(text);
     expect(result.calls).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Namespaced-functions fallback diagnostics.
+// ---------------------------------------------------------------------------
+
+describe('createToolDispatcher — namespaced fallback diagnostics', () => {
+  const dispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE]);
+
+  it('promotes namespaced traces to candidates when phases 1+2 produced nothing', () => {
+    // Model emitted only in OpenAI-style namespaced shape — no fence,
+    // no bare object. The dispatcher should recover the call rather
+    // than dropping it silently.
+    const text = 'functions.read_file:1 {"path":"a.txt"}';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toEqual({ tool: 'read_file', args: { path: 'a.txt' } });
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('reports namespaced traces as malformed when fenced candidates also exist', () => {
+    // Mix-shape emission: the model produced a clean fenced call AND
+    // a namespaced trace. Before PR #542 the dispatcher silently
+    // dropped the namespaced one — the OpenCode shape where the
+    // harness executes one call and discards the other without
+    // telling the model. Surface the dropped trace as malformed so
+    // the model sees the divergence.
+    const text = [
+      '```json',
+      '{"tool":"read_file","args":{"path":"primary.txt"}}',
+      '```',
+      'functions.write_file:1 {"path":"dropped.txt","content":"x"}',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toEqual({ tool: 'read_file', args: { path: 'primary.txt' } });
+    expect(result.malformed).toHaveLength(1);
+    expect(result.malformed[0].reason).toBe('unknown_tool');
+    expect(result.malformed[0].sample).toContain('functions.write_file');
   });
 });
