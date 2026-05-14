@@ -281,7 +281,7 @@ describe('handleCloudflareSandbox happy paths', () => {
     );
     expect(sandbox.gitCheckout).toHaveBeenCalledWith(
       'https://x-access-token:ghs_token@github.com/owner/repo.git',
-      { branch: 'feature', targetDir: '/workspace' },
+      { branch: 'feature', targetDir: '/workspace', depth: 1 },
     );
     expect(sandbox.writeFile).toHaveBeenCalledWith('/workspace/README.md', 'hello');
     // Call 2 is the hardlink copy from the image-baked /opt/push-cache

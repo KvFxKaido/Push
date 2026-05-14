@@ -346,104 +346,159 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
   const sandboxId = crypto.randomUUID();
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
 
-  if (githubIdentity?.name && githubIdentity?.email) {
-    // Single-quote via shellSingleQuote, not JSON.stringify. Double quotes
-    // still evaluate $VAR, backticks, and $(...), so a crafted identity
-    // could trigger command substitution during `git config`. Same
-    // discipline as routeRead's path interpolation.
-    await withExecDeadline(
-      sandbox.exec(
-        `git config --global user.name ${shellSingleQuote(githubIdentity.name)} && ` +
-          `git config --global user.email ${shellSingleQuote(githubIdentity.email)}`,
-      ),
-    );
-  }
+  // Per-phase ready-state timing. Emitted once at the tail of routeCreate (or
+  // in the failure path) as `cf_sandbox_create_timing` so we can see whether
+  // clone or cache-populate dominates cold start before deciding what to
+  // optimize next. All values are millisecond wall clock from Date.now().
+  const createStart = Date.now();
+  const phases = {
+    git_identity: 0,
+    clone: 0,
+    cache_populate: 0,
+    seed_files: 0,
+    probe: 0,
+    token_issue: 0,
+  };
+  let failedPhase: keyof typeof phases | null = null;
+  const time = async <T>(phase: keyof typeof phases, fn: () => Promise<T>): Promise<T> => {
+    const start = Date.now();
+    try {
+      return await fn();
+    } catch (err) {
+      failedPhase = phase;
+      throw err;
+    } finally {
+      phases[phase] += Date.now() - start;
+    }
+  };
 
-  if (repo && repo.length > 0) {
-    const cloneUrl = githubToken
-      ? `https://x-access-token:${githubToken}@github.com/${repo}.git`
-      : `https://github.com/${repo}.git`;
-    await sandbox.gitCheckout(cloneUrl, { branch, targetDir: '/workspace' });
-
-    // Pre-populate /workspace/{,app/}node_modules from the image-baked
-    // cache via hardlink copy. Dockerfile.sandbox stages root and app
-    // deps at /opt/push-cache/{,app}/node_modules during build; `cp -al`
-    // creates new directory entries that share inodes with the cache,
-    // so a fresh sandbox gets instant access to deps without paying the
-    // ~100s cold `npm install` wall-clock — the heavy FS write that was
-    // the primary trigger for the stalls patched by #374/#375.
-    //
-    // Write-isolated by construction: a later `rm -rf node_modules` or
-    // `npm install <pkg>` in the sandbox writes to new inodes on the
-    // workspace side; the baked cache's inodes are untouched, so
-    // concurrent sandboxes never stomp each other.
-    //
-    // Gated on a byte-exact lockfile match (`cmp -s`) between the baked
-    // cache and the cloned repo. Any mismatch — different project, or
-    // Push itself on a branch whose deps have shifted from the image —
-    // falls through and lets downstream flows run `npm install` against
-    // the correct lockfile. Critical because `handleCheckTypes` in
-    // `sandbox-verification-handlers.ts` uses `node_modules` existence
-    // as its "install already ran" signal; populating with mismatched
-    // deps would silently regress typecheck results.
-    //
-    // Wrapped in `timeout 30` because wrangler's local container runtime
-    // has been observed to silently wedge `cp -al` across overlay layers
-    // (prod CF infra is unaffected). Without the bound, the copy would
-    // burn the full 150s/300s `withExecDeadline` budget and 504 the whole
-    // create. On timeout (shell exit 124), the `|| { ... }` branch cleans
-    // up any partial node_modules directory so the cold `npm install`
-    // that runs downstream (e.g. typecheck verification) sees a clean
-    // slate and not a half-populated tree. Final `true` keeps the overall
-    // exit status 0 — the cache is an optimization, never a correctness
-    // dependency.
-    await withExecDeadline(
-      sandbox.exec(
-        "timeout -k 5 30 bash -c '" +
-          'src=/opt/push-cache; ' +
-          'if [ -f "$src/package-lock.json" ] && ' +
-          'cmp -s "$src/package-lock.json" /workspace/package-lock.json 2>/dev/null && ' +
-          '[ -d "$src/node_modules" ] && [ ! -e /workspace/node_modules ]; then ' +
-          'cp -al "$src/node_modules" /workspace/node_modules; fi; ' +
-          'if [ -f "$src/app/package-lock.json" ] && [ -d /workspace/app ] && ' +
-          'cmp -s "$src/app/package-lock.json" /workspace/app/package-lock.json 2>/dev/null && ' +
-          '[ -d "$src/app/node_modules" ] && [ ! -e /workspace/app/node_modules ]; then ' +
-          'cp -al "$src/app/node_modules" /workspace/app/node_modules; fi' +
-          "' || { rm -rf /workspace/node_modules /workspace/app/node_modules 2>/dev/null; true; }",
-      ),
-    );
-  }
-
-  for (const seed of seedFiles) {
-    await sandbox.writeFile(seed.path, seed.content);
-  }
-
-  const environment = await probeEnvironment(sandbox);
-
-  // Mint the owner token AFTER all setup has succeeded. If provisioning
-  // fails before this point the sandbox dies without ever being reachable,
-  // so there's no partial-state to clean up. If token issuance ITSELF
-  // fails (transient KV failure), destroy the sandbox before returning
-  // an error — otherwise we'd orphan a live, un-verifiable, unreachable
-  // container that can't even be cleaned up via API (the cleanup route
-  // now requires a token we never stored).
-  let ownerToken: string;
   try {
-    ownerToken = await issueToken(env.SANDBOX_TOKENS, sandboxId, ownerHint);
-    await sandbox.writeFile(OWNER_TOKEN_PATH, ownerToken);
-  } catch (err) {
-    await sandbox.destroy?.().catch(() => {});
-    await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
-    throw err;
-  }
+    if (githubIdentity?.name && githubIdentity?.email) {
+      // Single-quote via shellSingleQuote, not JSON.stringify. Double quotes
+      // still evaluate $VAR, backticks, and $(...), so a crafted identity
+      // could trigger command substitution during `git config`. Same
+      // discipline as routeRead's path interpolation.
+      const idName = githubIdentity.name;
+      const idEmail = githubIdentity.email;
+      await time('git_identity', () =>
+        withExecDeadline(
+          sandbox.exec(
+            `git config --global user.name ${shellSingleQuote(idName)} && ` +
+              `git config --global user.email ${shellSingleQuote(idEmail)}`,
+          ),
+        ),
+      );
+    }
 
-  return Response.json({
-    sandbox_id: sandboxId,
-    owner_token: ownerToken,
-    status: 'ready',
-    workspace_revision: 0,
-    environment,
-  });
+    if (repo && repo.length > 0) {
+      const cloneUrl = githubToken
+        ? `https://x-access-token:${githubToken}@github.com/${repo}.git`
+        : `https://github.com/${repo}.git`;
+      // Shallow clone — Push sessions are scoped to a single branch tip and
+      // never inspect history beyond the current commit, so the full pack is
+      // pure cold-start tax. `depth: 1` is SDK-supported; deeper history can
+      // still be fetched on demand if a tool needs it.
+      await time('clone', () =>
+        sandbox.gitCheckout(cloneUrl, { branch, targetDir: '/workspace', depth: 1 }),
+      );
+
+      // Pre-populate /workspace/{,app/}node_modules from the image-baked
+      // cache via hardlink copy. Dockerfile.sandbox stages root and app
+      // deps at /opt/push-cache/{,app}/node_modules during build; `cp -al`
+      // creates new directory entries that share inodes with the cache,
+      // so a fresh sandbox gets instant access to deps without paying the
+      // ~100s cold `npm install` wall-clock — the heavy FS write that was
+      // the primary trigger for the stalls patched by #374/#375.
+      //
+      // Write-isolated by construction: a later `rm -rf node_modules` or
+      // `npm install <pkg>` in the sandbox writes to new inodes on the
+      // workspace side; the baked cache's inodes are untouched, so
+      // concurrent sandboxes never stomp each other.
+      //
+      // Gated on a byte-exact lockfile match (`cmp -s`) between the baked
+      // cache and the cloned repo. Any mismatch — different project, or
+      // Push itself on a branch whose deps have shifted from the image —
+      // falls through and lets downstream flows run `npm install` against
+      // the correct lockfile. Critical because `handleCheckTypes` in
+      // `sandbox-verification-handlers.ts` uses `node_modules` existence
+      // as its "install already ran" signal; populating with mismatched
+      // deps would silently regress typecheck results.
+      //
+      // Wrapped in `timeout 30` because wrangler's local container runtime
+      // has been observed to silently wedge `cp -al` across overlay layers
+      // (prod CF infra is unaffected). Without the bound, the copy would
+      // burn the full 150s/300s `withExecDeadline` budget and 504 the whole
+      // create. On timeout (shell exit 124), the `|| { ... }` branch cleans
+      // up any partial node_modules directory so the cold `npm install`
+      // that runs downstream (e.g. typecheck verification) sees a clean
+      // slate and not a half-populated tree. Final `true` keeps the overall
+      // exit status 0 — the cache is an optimization, never a correctness
+      // dependency.
+      await time('cache_populate', () =>
+        withExecDeadline(
+          sandbox.exec(
+            "timeout -k 5 30 bash -c '" +
+              'src=/opt/push-cache; ' +
+              'if [ -f "$src/package-lock.json" ] && ' +
+              'cmp -s "$src/package-lock.json" /workspace/package-lock.json 2>/dev/null && ' +
+              '[ -d "$src/node_modules" ] && [ ! -e /workspace/node_modules ]; then ' +
+              'cp -al "$src/node_modules" /workspace/node_modules; fi; ' +
+              'if [ -f "$src/app/package-lock.json" ] && [ -d /workspace/app ] && ' +
+              'cmp -s "$src/app/package-lock.json" /workspace/app/package-lock.json 2>/dev/null && ' +
+              '[ -d "$src/app/node_modules" ] && [ ! -e /workspace/app/node_modules ]; then ' +
+              'cp -al "$src/app/node_modules" /workspace/app/node_modules; fi' +
+              "' || { rm -rf /workspace/node_modules /workspace/app/node_modules 2>/dev/null; true; }",
+          ),
+        ),
+      );
+    }
+
+    await time('seed_files', async () => {
+      for (const seed of seedFiles) {
+        await sandbox.writeFile(seed.path, seed.content);
+      }
+    });
+
+    const environment = await time('probe', () => probeEnvironment(sandbox));
+
+    // Mint the owner token AFTER all setup has succeeded. If provisioning
+    // fails before this point the sandbox dies without ever being reachable,
+    // so there's no partial-state to clean up. If token issuance ITSELF
+    // fails (transient KV failure), destroy the sandbox before returning
+    // an error — otherwise we'd orphan a live, un-verifiable, unreachable
+    // container that can't even be cleaned up via API (the cleanup route
+    // now requires a token we never stored).
+    const tokenStore = env.SANDBOX_TOKENS;
+    const ownerToken = await time('token_issue', async () => {
+      try {
+        const t = await issueToken(tokenStore, sandboxId, ownerHint);
+        await sandbox.writeFile(OWNER_TOKEN_PATH, t);
+        return t;
+      } catch (err) {
+        await sandbox.destroy?.().catch(() => {});
+        await revokeToken(tokenStore, sandboxId).catch(() => {});
+        throw err;
+      }
+    });
+
+    return Response.json({
+      sandbox_id: sandboxId,
+      owner_token: ownerToken,
+      status: 'ready',
+      workspace_revision: 0,
+      environment,
+    });
+  } finally {
+    wlog('info', 'cf_sandbox_create_timing', {
+      sandbox_id: sandboxId,
+      repo,
+      branch,
+      has_repo: Boolean(repo && repo.length > 0),
+      phases_ms: phases,
+      total_ms: Date.now() - createStart,
+      ...(failedPhase ? { failed_phase: failedPhase } : {}),
+    });
+  }
 }
 
 async function routeConnect(env: Env, body: Json): Promise<Response> {
