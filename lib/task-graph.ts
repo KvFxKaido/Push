@@ -173,8 +173,14 @@ export function formatGoalRejection(
   lines.push('Current user goal:');
   lines.push(formatUserGoalBlock(anchor));
   lines.push('');
+  // Derive the valid-reference list from the actual anchor so v1
+  // (initialAsk only) anchors don't tell the model to reference fields
+  // that don't exist. Copilot + Gemini review on PR #550 — the previous
+  // hardcoded list was lying when the anchor was minimal.
   lines.push(
-    'Re-emit `plan_tasks` with `addresses` populated on every task — reference one of "Initial ask", "Current working goal", or a specific Constraint from the goal above.',
+    `Re-emit \`plan_tasks\` with \`addresses\` populated on every task — reference ${describeValidAddresses(
+      anchor,
+    )} from the goal above.`,
   );
   return lines.join('\n');
 }

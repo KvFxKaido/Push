@@ -139,4 +139,42 @@ describe('formatGoalRejection', () => {
     expect(body).toContain('Constraints: preserve typed-tool branch swaps; no UI rewrite');
     expect(body).toContain('Do not: bypass the desync guard');
   });
+
+  it('describes the valid-reference list dynamically from the anchor', () => {
+    // Copilot + Gemini review on PR #550: the trailing "Re-emit" line used
+    // to hardcode three sections, telling the model to reference fields
+    // (Current working goal, Constraints) that don't exist when the
+    // anchor is minimal. Verify the body adapts.
+    const minimalBody = formatGoalRejection(
+      [
+        {
+          type: 'missing_addresses' as const,
+          nodeId: 'a',
+          task: 'task',
+          message: 'x',
+        },
+      ],
+      anchorMinimal,
+    );
+    expect(minimalBody).toMatch(/reference\s+"Initial ask"\s+from the goal above/);
+    expect(minimalBody).not.toContain('Current working goal');
+    expect(minimalBody).not.toContain('a specific Constraint');
+
+    const fullBody = formatGoalRejection(
+      [
+        {
+          type: 'missing_addresses' as const,
+          nodeId: 'a',
+          task: 'task',
+          message: 'x',
+        },
+      ],
+      anchorFull,
+    );
+    // Full anchor → all three references in the trailing instruction.
+    const trailing = fullBody.slice(fullBody.lastIndexOf('Re-emit'));
+    expect(trailing).toContain('"Initial ask"');
+    expect(trailing).toContain('"Current working goal"');
+    expect(trailing).toContain('a specific Constraint');
+  });
 });

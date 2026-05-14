@@ -163,7 +163,7 @@ In this example: both Explorer tasks run in parallel, then "fix-auth" starts onc
 Rules for task graphs:
 - Each task needs a unique "id", an "agent" ("explorer" or "coder"), and a "task" description.
 - "dependsOn" lists task IDs that must complete first. Omit or use [] for root tasks.
-- "addresses" — required when a [USER_GOAL] block is present in your context. Short rationale naming which part of the goal this task advances; reference "Initial ask", "Current working goal", or a specific named Constraint. Emissions that omit this field on any task are rejected with a structured error and must be re-sent.
+- "addresses" — required on every task. Short rationale naming which part of the user goal this task advances; reference "Initial ask" (the user's first turn, always visible in your context), "Current working goal", or a specific named Constraint when those richer fields appear in the [USER_GOAL] block. The [USER_GOAL] block itself is only re-injected after compaction; before that, "Initial ask" still refers to the user's original message, which remains visible in your transcript. Emissions that omit this field on any task are rejected with a structured error and must be re-sent.
 - Explorer tasks are read-only and run in parallel (up to 3 concurrent).
 - Coder tasks run one at a time (sequential) to avoid sandbox conflicts.
 - Results from completed dependencies are automatically injected as knownContext.
