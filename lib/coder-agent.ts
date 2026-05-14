@@ -61,7 +61,11 @@ import {
   SHARED_OPERATIONAL_CONSTRAINTS,
   CODER_CODE_DISCIPLINE,
 } from './system-prompt-sections.js';
-import { getToolPublicName, TOOL_REGISTRY_SCHEMA_VERSION } from './tool-registry.js';
+import {
+  getToolPublicName,
+  TOOL_REGISTRY_SCHEMA_VERSION,
+  TOOL_SCHEMA_VERSION_PREFIX,
+} from './tool-registry.js';
 import type { DetectedToolCalls } from './deep-reviewer-agent.js';
 import { buildContextSummaryBlock, normalizeTrimmedRoleAlternation } from './coder-context-trim.js';
 import {
@@ -621,7 +625,13 @@ export async function runCoderAgent<TCall, TCard>(
     .append('guidelines', CODER_CODE_DISCIPLINE)
     .set(
       'tool_instructions',
-      `[Tool schema version: ${TOOL_REGISTRY_SCHEMA_VERSION}]\n\n${sandboxToolProtocol}`,
+      // Idempotent prepend: when the caller-supplied protocol already
+      // begins with a schema-version marker (the CLI daemon path feeds
+      // in `TOOL_PROTOCOL` from `cli/tools.ts`, which carries its own
+      // CLI-derived marker), don't double-stamp. GH Actions on PR #544.
+      sandboxToolProtocol.startsWith(TOOL_SCHEMA_VERSION_PREFIX)
+        ? sandboxToolProtocol
+        : `[Tool schema version: ${TOOL_REGISTRY_SCHEMA_VERSION}]\n\n${sandboxToolProtocol}`,
     );
 
   // User identity (name, bio)
