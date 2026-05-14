@@ -17,6 +17,16 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+function fetchAndCache(request) {
+  return fetch(request).then((response) => {
+    if (response.ok) {
+      const clone = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+    }
+    return response;
+  });
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
@@ -41,28 +51,16 @@ self.addEventListener('fetch', (event) => {
 
   if (isDocumentRequest) {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          }
-          return response;
-        })
-        .catch(() => caches.match(request).then((cached) => cached || caches.match('/index.html'))),
+      fetchAndCache(request).catch(() =>
+        caches.match(request).then((cached) => cached || caches.match('/index.html')),
+      ),
     );
     return;
   }
 
   event.respondWith(
-    fetch(request)
-      .then((response) => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-        }
-        return response;
-      })
-      .catch(() => caches.match(request)),
+    fetchAndCache(request).catch(() =>
+      caches.match(request).then((cached) => cached || Response.error()),
+    ),
   );
 });
