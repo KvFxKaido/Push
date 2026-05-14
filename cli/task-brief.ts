@@ -19,5 +19,6 @@ export function buildHeadlessTaskBrief(task: string, acceptanceChecks: string[] 
   return buildDelegationBrief({
     task,
     acceptanceCriteria: buildAcceptanceCriteria(acceptanceChecks),
+    targetRole: 'coder',
   });
 }

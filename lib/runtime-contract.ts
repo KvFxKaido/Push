@@ -263,6 +263,20 @@ export type RunEventInput =
       outcome: 'completed' | 'continued' | 'error' | 'aborted' | 'steered';
     }
   | {
+      // Per-turn system-prompt composition snapshot. Emitted once at the
+      // start of each LLM call so a debug surface can answer "what
+      // exactly went to the model on turn N?" without re-running. Carries
+      // section hashes and sizes — not the section content itself — so
+      // the event is cheap to persist and safe to log even when sections
+      // include sensitive context (project instructions, scratchpad).
+      // Producers: orchestrator + role agents that build a system prompt.
+      type: 'assistant.prompt_snapshot';
+      round: number;
+      role: AgentRole;
+      totalChars: number;
+      sections: Record<string, { hash: number; size: number; volatile: boolean }>;
+    }
+  | {
       type: 'tool.execution_start';
       round: number;
       executionId: string;

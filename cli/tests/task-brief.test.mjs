@@ -15,8 +15,22 @@ describe('buildHeadlessTaskBrief', () => {
     assert.ok(brief.includes('accept_2: Exit 0: npm run lint'));
   });
 
-  it('keeps simple tasks compact when there are no acceptance checks', () => {
+  it('lists the coder capability grant so the agent sees its scope', () => {
+    // Headless tasks always target the Coder role — the brief must
+    // surface that grant so the delegated agent knows what it can and
+    // cannot do, rather than learning by hitting ROLE_CAPABILITY_DENIED.
     const brief = buildHeadlessTaskBrief('Trace the auth flow');
-    assert.equal(brief, 'Task: Trace the auth flow');
+    assert.ok(
+      brief.startsWith('Task: Trace the auth flow'),
+      `brief should start with the task line, got: ${brief}`,
+    );
+    assert.ok(
+      brief.includes('Capabilities:'),
+      `brief should include a Capabilities line, got: ${brief}`,
+    );
+    assert.ok(
+      brief.includes('edit files'),
+      `brief should mention the coder write grant, got: ${brief}`,
+    );
   });
 });

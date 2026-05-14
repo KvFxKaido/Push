@@ -89,12 +89,18 @@ export {
 export const ORCHESTRATOR_SYSTEM_PROMPT = buildOrchestratorBasePrompt();
 
 /**
- * Dev-only: previous prompt snapshots for diffing between turns.
- * Keyed by a conversation-ish snapshot key so multi-chat sessions do not
- * compare unrelated prompts against each other in the console.
- * Only read/written inside `import.meta.env.DEV` guards.
+ * Last prompt snapshot per conversation-ish key. Two readers:
+ *
+ *   - The dev-only diff log inside `toLLMMessages` (previous-vs-current
+ *     section-level diff, console-printed).
+ *   - The `peekLastPromptSnapshot` accessor used by `chat-stream-round`
+ *     to emit an `assistant.prompt_snapshot` run event per turn so a
+ *     debug surface can answer "what exactly went to the model on turn
+ *     N?" without re-running the prompt build. The accessor is the
+ *     production wire — gating the populate behind `import.meta.env.DEV`
+ *     would silently leave production turns without an audit trail.
  */
-const _lastPromptSnapshots = new Map<string, PromptSnapshot>();
+const _lastPromptSnapshots = new Map<string, { snapshot: PromptSnapshot; totalChars: number }>();
 
 function getPromptSnapshotKey(
   messages: ChatMessage[],
@@ -110,6 +116,22 @@ function getPromptSnapshotKey(
     return `workspace:${workspaceContext.mode}:${workspaceContext.description}`;
   }
   return 'global';
+}
+
+/**
+ * Read back the most recent system-prompt snapshot for the conversation
+ * keyed by `(messages, workspaceContext)`. Used by `chat-stream-round`
+ * to emit `assistant.prompt_snapshot` events without re-running the
+ * prompt build. Returns null when no snapshot has been captured yet
+ * (e.g. the caller passed a `systemPromptOverride` so the orchestrator
+ * builder was skipped).
+ */
+export function peekLastPromptSnapshot(
+  messages: ChatMessage[],
+  workspaceContext?: WorkspaceContext,
+): { snapshot: PromptSnapshot; totalChars: number } | null {
+  const key = getPromptSnapshotKey(messages, workspaceContext);
+  return _lastPromptSnapshots.get(key) ?? null;
 }
 
 // Multimodal content types (OpenAI-compatible)
@@ -311,6 +333,16 @@ export function toLLMMessages(
 
     systemContent = builder.build();
 
+    // Always capture the snapshot (dev + prod). The accessor
+    // `peekLastPromptSnapshot` reads this entry to emit per-turn
+    // `assistant.prompt_snapshot` run events for debug surfaces.
+    const currentSnap = builder.snapshot();
+    const previousEntry = _lastPromptSnapshots.get(promptSnapshotKey);
+    _lastPromptSnapshots.set(promptSnapshotKey, {
+      snapshot: currentSnap,
+      totalChars: systemContent.length,
+    });
+
     // --- Log prompt-size breakdown and section diffs (dev only) ---
     if (import.meta.env.DEV) {
       const fmt = (n: number) => n.toLocaleString();
@@ -320,14 +352,11 @@ export function toLLMMessages(
         .join(' ');
       console.log(`[Context Budget] System prompt: ${fmt(systemContent.length)} chars (${parts})`);
 
-      const currentSnap = builder.snapshot();
-      const previousSnap = _lastPromptSnapshots.get(promptSnapshotKey);
-      if (previousSnap) {
-        const diff = diffSnapshots(previousSnap, currentSnap);
+      if (previousEntry) {
+        const diff = diffSnapshots(previousEntry.snapshot, currentSnap);
         const diffStr = formatSnapshotDiff(diff);
         if (diffStr) console.log(diffStr);
       }
-      _lastPromptSnapshots.set(promptSnapshotKey, currentSnap);
     }
   }
 
