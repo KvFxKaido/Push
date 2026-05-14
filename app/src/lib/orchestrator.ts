@@ -361,13 +361,18 @@ export function toLLMMessages(
     } else {
       const baseToolInstructions = builder.get('tool_instructions') ?? '';
       const toolProtocols: string[] = [];
-      // Local-pc sessions get a tailored tool protocol: no `/workspace`
-      // path prior, no remote-bound tools (commit/push/promote/draft),
-      // no Explorer/Coder delegation. The cloud SANDBOX_TOOL_PROTOCOL
-      // fights the workspace-context block otherwise — it mentions
-      // `/workspace` 9+ times and lists remote-bound tools that the
-      // daemon can't service. Smoke-tested 2026-05-13 in this PR.
-      if (workspaceContext?.mode === 'local-pc') {
+      // Local-daemon sessions (local-pc + relay) get a tailored tool
+      // protocol: no `/workspace` path prior, no remote-bound tools
+      // (commit/push/promote/draft), no Explorer/Coder delegation. The
+      // cloud SANDBOX_TOOL_PROTOCOL fights the workspace-context block
+      // otherwise — it mentions `/workspace` 9+ times and lists
+      // remote-bound tools that the daemon can't service. Both modes
+      // share the same daemon-backed transport (loopback vs Worker
+      // relay) so the protocol shape is the same. Smoke-tested
+      // 2026-05-13 for local-pc; relay extension addresses the Codex
+      // P2 from PR #554 where relay was falling through to the cloud
+      // protocol after the delegation strip widened.
+      if (isLocalDaemon) {
         toolProtocols.push(LOCAL_PC_TOOL_PROTOCOL);
       } else if (hasSandbox) {
         toolProtocols.push(getSandboxToolProtocol());
