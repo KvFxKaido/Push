@@ -232,6 +232,55 @@ export function isCapabilityMapped(canonicalName: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Execution mode — cloud sandbox vs paired local daemon
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the tool call is being executed.
+ *
+ *   - `cloud`        — cloud sandbox provider (Cloudflare Container, Modal,
+ *                      etc.). The orchestrator delegates writes/exec to the
+ *                      Coder via `delegate_coder`; direct file mutations
+ *                      and shell are NOT in the orchestrator's grant.
+ *   - `local-daemon` — a paired pushd daemon on the user's machine, reached
+ *                      over loopback (`kind: 'local-pc'`) or Worker relay
+ *                      (`kind: 'relay'`). There is no second hop, the
+ *                      local-pc tool protocol explicitly forbids
+ *                      delegation, and the user reviews diffs themselves.
+ *                      The orchestrator wields sandbox tools directly here.
+ *
+ * Passed as the third argument to `roleCanUseTool` / `enforceRoleCapability`.
+ * Defaults to `'cloud'` everywhere so existing callers stay correct without
+ * a churn pass.
+ *
+ * Surfaces derive the mode at the runtime edge — web via
+ * `getExecutionMode(context)` in `tool-execution-runtime.ts` (keying off
+ * `context.localDaemonBinding`); CLI via a local constant in
+ * `cli/tools.ts` since pushd is the daemon by definition today. That seam
+ * is where a future cloud-backed CLI path would change one value to opt
+ * into the cloud grant.
+ *
+ * Why named-mode and not raw binding-presence: the policy input must be a
+ * named contract, not "did something happen to set a binding." Future
+ * relay/binding shapes for non-local reasons must not silently widen the
+ * orchestrator's grant.
+ */
+export type ExecutionMode = 'cloud' | 'local-daemon';
+
+/**
+ * Capabilities orchestrator picks up in `local-daemon` mode. Mirrors the
+ * coder grant minus the remote-bound git ops (commit/push/branch/draft)
+ * and PR ops, which the local-pc tool protocol already declares
+ * unavailable (no remote wired up).
+ */
+const LOCAL_DAEMON_ORCHESTRATOR_EXTRA: ReadonlySet<Capability> = new Set<Capability>([
+  'sandbox:exec',
+  'repo:write',
+  'sandbox:test',
+  'sandbox:download',
+]);
+
+// ---------------------------------------------------------------------------
 // Role → Capability grants
 // ---------------------------------------------------------------------------
 
@@ -297,21 +346,53 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
 };
 
 /**
- * Check whether a role grants a specific capability.
+ * Resolve the effective capability set for a role in a given execution
+ * mode. `cloud` returns the static grant from ROLE_CAPABILITIES; in
+ * `local-daemon` mode the orchestrator picks up the daemon extras
+ * (exec, write, test, download).
+ *
+ * Other roles are unchanged across modes: coder already has those,
+ * explorer stays read-only by intent, reviewer/auditor are diff-only.
  */
-export function roleHasCapability(role: AgentRole, capability: Capability): boolean {
-  return ROLE_CAPABILITIES[role]?.has(capability) ?? false;
+export function getEffectiveCapabilities(
+  role: AgentRole,
+  mode: ExecutionMode = 'cloud',
+): ReadonlySet<Capability> {
+  const base = ROLE_CAPABILITIES[role];
+  if (!base) return new Set<Capability>();
+  if (role === 'orchestrator' && mode === 'local-daemon') {
+    return new Set<Capability>([...base, ...LOCAL_DAEMON_ORCHESTRATOR_EXTRA]);
+  }
+  return base;
+}
+
+/**
+ * Check whether a role grants a specific capability. Optional mode lets
+ * callers ask about the effective grant in a particular execution mode;
+ * defaults to `cloud` so existing call sites keep their current meaning.
+ */
+export function roleHasCapability(
+  role: AgentRole,
+  capability: Capability,
+  mode: ExecutionMode = 'cloud',
+): boolean {
+  return getEffectiveCapabilities(role, mode).has(capability);
 }
 
 /**
  * Check whether a role can use a specific tool (by canonical name).
- * Returns true only if the role grants ALL capabilities the tool requires.
+ * Returns true only if the role grants ALL capabilities the tool requires
+ * in the given execution mode.
  */
-export function roleCanUseTool(role: AgentRole, canonicalToolName: string): boolean {
+export function roleCanUseTool(
+  role: AgentRole,
+  canonicalToolName: string,
+  mode: ExecutionMode = 'cloud',
+): boolean {
   const required = getToolCapabilities(canonicalToolName);
   if (required.length === 0) return true; // Unknown tool — fail-open
-  const granted = ROLE_CAPABILITIES[role];
-  if (!granted) return false;
+  const granted = getEffectiveCapabilities(role, mode);
+  if (granted.size === 0) return false;
   return required.every((cap) => granted.has(cap));
 }
 
@@ -376,6 +457,7 @@ function isKnownAgentRole(value: unknown): value is AgentRole {
 export function enforceRoleCapability(
   role: unknown,
   canonicalToolName: string,
+  mode: ExecutionMode = 'cloud',
 ): RoleCapabilityCheck {
   if (role === undefined || role === null || role === '') {
     return {
@@ -395,14 +477,14 @@ export function enforceRoleCapability(
       detail: `Recognized roles: ${Array.from(KNOWN_AGENT_ROLES).join(', ')}. A typo or stale enum value in a JS caller usually causes this; TypeScript callers are protected by the AgentRole type.`,
     };
   }
-  if (!roleCanUseTool(role, canonicalToolName)) {
+  if (!roleCanUseTool(role, canonicalToolName, mode)) {
     const required = getToolCapabilities(canonicalToolName);
-    const granted = Array.from(ROLE_CAPABILITIES[role] ?? []);
+    const granted = Array.from(getEffectiveCapabilities(role, mode));
     return {
       ok: false,
       type: 'ROLE_CAPABILITY_DENIED',
       message: `Role "${role}" is not allowed to use tool "${canonicalToolName}".`,
-      detail: `Required: ${required.join(', ') || '(none)'} | Granted: ${granted.join(', ') || '(none)'}`,
+      detail: `Required: ${required.join(', ') || '(none)'} | Granted: ${granted.join(', ') || '(none)'} | Mode: ${mode}`,
     };
   }
   return { ok: true };

@@ -375,6 +375,129 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
     });
   });
 
+  describe('role=orchestrator capability widens when binding is a local daemon', () => {
+    // Mode-aware capability grant: cloud orchestrator does NOT have
+    // sandbox:exec or repo:write — the runtime denies direct calls.
+    // Local-daemon sessions widen the grant so the orchestrator can
+    // drive sandbox tools directly, matching the local-pc tool
+    // protocol's "no delegation" rule. The named mode is derived from
+    // `context.localDaemonBinding` at the runtime edge via
+    // `getExecutionMode` — binding-presence is a transport detail, the
+    // policy input is the named mode.
+
+    function execCall(): AnyToolCall {
+      return {
+        source: 'sandbox',
+        call: { tool: 'sandbox_exec', args: { command: 'git log -n 5' } },
+      };
+    }
+
+    it('cloud orchestrator: sandbox_exec is denied (no binding present)', async () => {
+      // Reproduces the screenshot bug for cloud sandbox sessions:
+      // orchestrator tries sandbox_exec, gets ROLE_CAPABILITY_DENIED
+      // because the cloud grant doesn't include sandbox:exec.
+      const result = await runtime.execute(execCall(), {
+        allowedRepo: 'owner/repo',
+        sandboxId: 'sb-1',
+        isMainProtected: false,
+        role: 'orchestrator',
+      });
+      expect(result.structuredError?.type).toBe('ROLE_CAPABILITY_DENIED');
+      expect(result.text).toContain('sandbox_exec');
+    });
+
+    it('cloud orchestrator: sandbox_write_file is denied', async () => {
+      const result = await runtime.execute(mutationCall(), {
+        allowedRepo: 'owner/repo',
+        sandboxId: 'sb-1',
+        isMainProtected: false,
+        role: 'orchestrator',
+      });
+      expect(result.structuredError?.type).toBe('ROLE_CAPABILITY_DENIED');
+    });
+
+    it('local-daemon orchestrator: sandbox_exec passes the gate', async () => {
+      // Same call shape, but a localDaemonBinding is wired —
+      // `getExecutionMode` derives `local-daemon`, the orchestrator
+      // grant widens, sandbox_exec is allowed. This is the unblocker
+      // for the "Remote" screenshot bug.
+      const result = await runtime.execute(execCall(), {
+        allowedRepo: 'owner/repo',
+        sandboxId: null,
+        isMainProtected: false,
+        role: 'orchestrator',
+        localDaemonBinding: {} as unknown,
+      });
+      expect(result.structuredError?.type).not.toBe('ROLE_CAPABILITY_DENIED');
+    });
+
+    it('local-daemon orchestrator: sandbox_write_file / edit / patch pass the gate', async () => {
+      const widenedCalls: AnyToolCall[] = [
+        {
+          source: 'sandbox',
+          call: {
+            tool: 'sandbox_write_file',
+            args: { path: '/home/u/app.ts', content: 'x' },
+          },
+        },
+        {
+          source: 'sandbox',
+          call: {
+            tool: 'sandbox_edit_range',
+            args: { path: '/home/u/app.ts', start_line: 1, end_line: 2, content: 'x' },
+          },
+        },
+        {
+          source: 'sandbox',
+          call: {
+            tool: 'sandbox_search_replace',
+            args: { path: '/home/u/app.ts', search: 'a', replace: 'b' },
+          },
+        },
+        {
+          source: 'sandbox',
+          call: { tool: 'sandbox_run_tests', args: {} },
+        },
+      ];
+      for (const call of widenedCalls) {
+        const result = await runtime.execute(call, {
+          allowedRepo: 'owner/repo',
+          sandboxId: null,
+          isMainProtected: false,
+          role: 'orchestrator',
+          localDaemonBinding: {} as unknown,
+        });
+        expect(result.structuredError?.type).not.toBe('ROLE_CAPABILITY_DENIED');
+      }
+    });
+
+    it('local-daemon orchestrator: remote-bound git ops are STILL denied (no remote wired)', async () => {
+      // The widening explicitly skips commit/push/branch/PR ops — the
+      // local-pc protocol declares those unavailable (no remote). The
+      // grant must match.
+      const stillDenied: AnyToolCall[] = [
+        {
+          source: 'sandbox',
+          call: { tool: 'sandbox_prepare_commit', args: { message: 'x' } },
+        },
+        {
+          source: 'sandbox',
+          call: { tool: 'sandbox_push', args: {} },
+        },
+      ];
+      for (const call of stillDenied) {
+        const result = await runtime.execute(call, {
+          allowedRepo: 'owner/repo',
+          sandboxId: null,
+          isMainProtected: false,
+          role: 'orchestrator',
+          localDaemonBinding: {} as unknown,
+        });
+        expect(result.structuredError?.type).toBe('ROLE_CAPABILITY_DENIED');
+      }
+    });
+  });
+
   describe('unknown tool names fail open', () => {
     it('allows a tool whose name is not in the capability map through the runtime invariant', async () => {
       // The capability map in `lib/capabilities.ts` explicitly documents

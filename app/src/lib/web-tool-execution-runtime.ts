@@ -13,6 +13,7 @@
 
 import type { ToolExecutionRuntime, ToolExecutionContext } from '@push/lib/tool-execution-runtime';
 import { enforceRoleCapability, formatRoleCapabilityDenial } from '@push/lib/capabilities';
+import { getExecutionMode } from '@push/lib/tool-execution-runtime';
 import { resolveToolName } from '@push/lib/tool-registry';
 
 import type { StructuredToolError, ToolHookContext, ToolExecutionResult } from '@/types';
@@ -186,7 +187,12 @@ export class WebToolExecutionRuntime
       // fail-closed.
       {
         const canonicalName = resolveToolName(toolName) ?? toolName;
-        const check = enforceRoleCapability(context.role, canonicalName);
+        // Derive the named execution mode at the runtime edge. Bindings
+        // are a transport detail; the mode is the policy input the
+        // capability gate consumes. See `getExecutionMode` for the
+        // single-seam-to-change rationale.
+        const executionMode = getExecutionMode(context);
+        const check = enforceRoleCapability(context.role, canonicalName, executionMode);
         if (!check.ok) {
           const err: StructuredToolError = {
             type: check.type,

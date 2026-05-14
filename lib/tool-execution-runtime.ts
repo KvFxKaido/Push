@@ -25,9 +25,31 @@
  * fallback; pushd will wire an RPC callback in Phase 6.
  */
 
-import type { CapabilityLedger } from './capabilities.js';
+import type { CapabilityLedger, ExecutionMode } from './capabilities.js';
 import type { AgentRole } from './runtime-contract.js';
 import type { ToolCallDiagnosis } from './tool-call-diagnosis.js';
+
+// ---------------------------------------------------------------------------
+// Execution mode helper — derives the named capability mode from context
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the `ExecutionMode` for a given tool-execution context.
+ *
+ * The named mode (`cloud` | `local-daemon`) is the policy input that
+ * capability checks consume. Today the web edge derives it from
+ * `context.localDaemonBinding` — if a local pushd binding is wired, the
+ * call is going to a paired daemon; otherwise it goes to a cloud
+ * sandbox. The derivation is intentionally one-line and centralized
+ * here so a future code path that sets `localDaemonBinding` for a
+ * non-local reason has one obvious seam to revisit. Bindings must not
+ * become the hidden policy input — the mode is.
+ */
+export function getExecutionMode(
+  context: Pick<ToolExecutionContext, 'localDaemonBinding'>,
+): ExecutionMode {
+  return context.localDaemonBinding ? 'local-daemon' : 'cloud';
+}
 
 // ---------------------------------------------------------------------------
 // Event payloads — narrow subset of the RunEvent vocabulary

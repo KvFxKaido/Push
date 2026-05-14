@@ -265,7 +265,17 @@ export function toLLMMessages(
   } else {
     // Build the full orchestrator prompt using the sectioned builder.
     // Start from the shared base and layer in runtime-dependent blocks.
-    const builder = buildOrchestratorBaseBuilder();
+    //
+    // `isLocalDaemon` switches the base tool-instructions + per-turn
+    // budget between two grant shapes: cloud orchestrator (no
+    // sandbox:exec, no repo:write → delegate everything) vs local-daemon
+    // orchestrator (wider grant, drives sandbox tools directly). Mode
+    // comes from the workspace session kind; capability enforcement in
+    // `web-tool-execution-runtime.ts` mirrors the same split via
+    // `getExecutionMode`.
+    const isLocalDaemon =
+      workspaceContext?.mode === 'local-pc' || workspaceContext?.mode === 'relay';
+    const builder = buildOrchestratorBaseBuilder({ isLocalDaemon });
 
     // Chat mode — strip orchestrator tool instructions and delegation (plain
     // conversation). Web search is layered back in below so chat can still

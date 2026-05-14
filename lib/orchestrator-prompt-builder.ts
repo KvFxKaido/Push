@@ -54,7 +54,66 @@ Use this operating loop unless the request clearly calls for something else:
 - If the ambiguity is minor or reversible, make the best reasonable assumption, state it briefly, and continue.`;
 }
 
-export function buildOrchestratorToolInstructions(): string {
+/**
+ * Options threaded into the orchestrator prompt builders.
+ *
+ * `isLocalDaemon` switches the tool-instructions block between two modes:
+ *   - cloud (default) — orchestrator delegates exec and writes to the
+ *     Coder; direct file mutations and shell are NOT in its grant.
+ *   - local-daemon — orchestrator wields sandbox tools directly (no
+ *     second hop, no delegation per local-pc tool protocol).
+ *
+ * Set by `app/src/lib/orchestrator.ts` from `workspaceContext.mode`.
+ * The CLI surface enters orchestrator-prompt territory rarely today; if
+ * it does, callers pass `isLocalDaemon: true` to match the runtime
+ * capability grant.
+ */
+export interface OrchestratorPromptOptions {
+  isLocalDaemon?: boolean;
+}
+
+export function buildOrchestratorToolInstructions(opts: OrchestratorPromptOptions = {}): string {
+  const { isLocalDaemon = false } = opts;
+
+  // Mutation surface differs by mode. In cloud mode, the orchestrator's
+  // trailing side-effects are delegation + GitHub mutations + ask_user —
+  // it does NOT have repo:write or sandbox:exec, so listing direct sandbox
+  // writes/exec as available would set the model up for a runtime denial
+  // (see `enforceRoleCapability` in `lib/capabilities.ts`). In local-daemon
+  // mode the grant widens to include sandbox:exec + repo:write, so the
+  // direct surface is real.
+  const mutatingShapesLine = isLocalDaemon
+    ? '- If you include a mutating call (edit, write, exec, commit, push, coder, explorer, ask, etc.), place it LAST — it runs after all reads complete.'
+    : `- If you include a mutating call (${getToolPublicName('delegate_coder')}, ${getToolPublicName('delegate_explorer')}, ${getToolPublicName('ask_user')}, ${getToolPublicName('create_pr')}, ${getToolPublicName('merge_pr')}, ${getToolPublicName('trigger_workflow')}, etc.), place it LAST — it runs after all reads complete.`;
+
+  // Tool routing in cloud mode must route exec/writes through delegation
+  // because orchestrator's grant doesn't include sandbox:exec or
+  // repo:write. In local-daemon mode the daemon is the user's machine
+  // and orchestrator drives sandbox tools directly.
+  const toolRoutingBlock = isLocalDaemon
+    ? `## Tool Routing
+
+- Use **sandbox tools** for local operations: reading/editing code, running commands, tests, type checks, diffs, commits.
+- Use **GitHub tools** for remote repo metadata: PRs, branches, CI checks, cross-repo search, workflow dispatch.
+- Prefer ${getToolPublicName('sandbox_search')} over ${getToolPublicName('search_files')} for code in the active repo — it's faster and reflects local edits.
+- Prefer ${getToolPublicName('sandbox_read_file')} over ${getToolPublicName('read_file')} when the sandbox is active — it reflects uncommitted changes.`
+    : `## Tool Routing
+
+- Use **sandbox tools** for local read operations: reading code, searching, listing directories, diffs, symbol lookups.
+- For running commands, tests, type checks, builds, or any file mutation, emit ${getToolPublicName('delegate_coder')} — exec and writes belong to the Coder's capability grant, not yours. The runtime denies direct ${getToolPublicName('sandbox_exec')} / write calls from your role with ROLE_CAPABILITY_DENIED.
+- Use **GitHub tools** for remote repo metadata: PRs, branches, CI checks, cross-repo search, workflow dispatch.
+- Prefer ${getToolPublicName('sandbox_search')} over ${getToolPublicName('search_files')} for code in the active repo — it's faster and reflects local edits.
+- Prefer ${getToolPublicName('sandbox_read_file')} over ${getToolPublicName('read_file')} when the sandbox is active — it reflects uncommitted changes.`;
+
+  // GIT_GUARD_BLOCKED only surfaces when something emitted sandbox_exec
+  // with a git command. In cloud mode the orchestrator never reaches
+  // that error directly (it'd be denied earlier), so the row is dead
+  // instruction — drop it. In local-daemon mode the orchestrator can
+  // emit sandbox_exec, so keep the row.
+  const gitGuardLine = isLocalDaemon
+    ? `\n- GIT_GUARD_BLOCKED → Direct git commit/push/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_prepare_commit')} + ${getToolPublicName('sandbox_push')}. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.`
+    : '';
+
   return `## Tool Execution Model
 
 You can emit multiple tool calls in one response. The runtime splits them into parallel reads and an optional trailing mutation:
@@ -64,19 +123,14 @@ You can emit multiple tool calls in one response. The runtime splits them into p
     getToolPublicName('web_search'),
     getToolPublicName('read_scratchpad'),
   ].join(', ')}) execute in parallel.
-- If you include a mutating call (edit, write, exec, commit, push, coder, explorer, ask, etc.), place it LAST — it runs after all reads complete.
+${mutatingShapesLine}
 - Maximum 6 parallel read-only calls per turn. If you need more, split across turns.
 
 ## Tool Call Placement
 
 Tool calls are dispatched from your assistant response content channel only — the content text, not the reasoning/thinking text. If you are a reasoning model that thinks before answering, do **not** place tool call JSON inside the thinking pass, not even in fenced \`\`\`json blocks. The runtime does not scan reasoning/thinking output for tool calls; a call emitted there never fires and the turn sits idle waiting on a tool result that will never arrive. Finish thinking, then emit the tool call in your response content.
 
-## Tool Routing
-
-- Use **sandbox tools** for local operations: reading/editing code, running commands, tests, type checks, diffs, commits.
-- Use **GitHub tools** for remote repo metadata: PRs, branches, CI checks, cross-repo search, workflow dispatch.
-- Prefer ${getToolPublicName('sandbox_search')} over ${getToolPublicName('search_files')} for code in the active repo — it's faster and reflects local edits.
-- Prefer ${getToolPublicName('sandbox_read_file')} over ${getToolPublicName('read_file')} when the sandbox is active — it reflects uncommitted changes.
+${toolRoutingBlock}
 
 ## Error Handling
 
@@ -91,8 +145,7 @@ Error types and how to respond:
 - STALE_FILE → Re-read the file to get the current version, then retry.
 - AUTH_FAILURE → Inform the user; don't retry.
 - RATE_LIMITED (retryable: true) → Wait briefly, then retry once.
-- SANDBOX_UNREACHABLE → Inform the user the sandbox may have expired.
-- GIT_GUARD_BLOCKED → Direct git commit/push/merge/rebase in ${getToolPublicName('sandbox_exec')} is blocked. Use ${getToolPublicName('sandbox_prepare_commit')} + ${getToolPublicName('sandbox_push')}. If the standard flow fails, use ${getToolPublicName('ask_user')} to explain and request permission. Only with explicit user approval, retry with "allowDirectGit": true.
+- SANDBOX_UNREACHABLE → Inform the user the sandbox may have expired.${gitGuardLine}
 
 General rules:
 - If retryable: false, pivot to a different approach — don't repeat the same call.
@@ -101,7 +154,39 @@ General rules:
 - If a sandbox command fails, check the error message and adjust (wrong path, missing dependency, etc.). Fix and retry instead of asking the user for help.`;
 }
 
-export function buildOrchestratorDelegation(): string {
+export function buildOrchestratorDelegation(opts: OrchestratorPromptOptions = {}): string {
+  const { isLocalDaemon = false } = opts;
+
+  // "Handle directly" third bullet — cloud orchestrator has no
+  // repo:write grant, so promising direct file writes/apply_patchset
+  // is misleading and will fail with ROLE_CAPABILITY_DENIED. In
+  // local-daemon mode the grant widens and the bullet stays
+  // accurate.
+  const handleDirectlyDirectWritesBullet = isLocalDaemon
+    ? `\n- The task can be completed in a single turn using a handful of file writes/edits or \`${getToolPublicName('sandbox_apply_patchset')}\`.`
+    : '';
+
+  // Per-turn tool budget. Cloud orchestrator's actual mutation
+  // surface is delegation + GitHub mutations + ask_user — NOT
+  // direct sandbox writes/exec. Re-shape the budget to describe
+  // what the model can actually emit.
+  const perTurnBudget = isLocalDaemon
+    ? `## Per-turn tool budget
+
+A single turn may emit:
+- Any number of read-only calls (they run in parallel).
+- Any number of pure file mutations (\`${getToolPublicName('sandbox_write_file')}\`, \`${getToolPublicName('sandbox_edit_file')}\`, \`${getToolPublicName('sandbox_edit_range')}\`, \`${getToolPublicName('sandbox_search_replace')}\`, \`${getToolPublicName('sandbox_apply_patchset')}\`) — the runtime executes them sequentially as one mutation batch.
+- At most one trailing side-effecting call (\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('sandbox_push')}\`, \`${getToolPublicName('delegate_coder')}\`, workflow dispatch, etc.). Any second side-effect is rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
+
+Order matters: put reads first, then writes/edits, then the single side-effect last. If you need to write files and then run tests, emit the writes and the \`${getToolPublicName('sandbox_exec')}\` in one turn; if you need to write files and then delegate to the Coder, do both in one turn.`
+    : `## Per-turn tool budget
+
+A single turn may emit:
+- Any number of read-only calls (they run in parallel, cap 6).
+- At most one trailing side-effecting call. Your side-effects are: \`${getToolPublicName('delegate_coder')}\`, \`${getToolPublicName('delegate_explorer')}\`, \`${getToolPublicName('plan_tasks')}\`, \`${getToolPublicName('ask_user')}\`, \`${getToolPublicName('create_pr')}\`, \`${getToolPublicName('merge_pr')}\`, \`${getToolPublicName('delete_branch')}\`, \`${getToolPublicName('trigger_workflow')}\`. Any second side-effect is rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
+
+For any code change, emit a single \`${getToolPublicName('delegate_coder')}\` (or \`${getToolPublicName('plan_tasks')}\`) as the trailing side-effect — do not attempt direct \`${getToolPublicName('sandbox_write_file')}\` / \`${getToolPublicName('sandbox_exec')}\`; those require capabilities the Coder has and you don't.`;
+
   return `## Efficient Delegation and Handoffs
 
 When delegating coding or exploration tasks via ${getToolPublicName('delegate_coder')} or ${getToolPublicName('delegate_explorer')}, significantly improve efficiency by passing the right brief, not just a bare task:
@@ -187,26 +272,26 @@ Delegate to the Explorer when the task requires:
 
 Handle directly (no delegation) when:
 - The request is read-only: explaining code, reviewing a PR diff, or answering structure questions.
-- The change is straightforward (e.g., adding to a list, updating config, localized refactor) even if it spans 2-3 files, provided you have the context and don't need to run complex commands.
-- The task can be completed in a single turn using a handful of file writes/edits or \`${getToolPublicName('sandbox_apply_patchset')}\`.
+- The change is straightforward (e.g., adding to a list, updating config, localized refactor) even if it spans 2-3 files, provided you have the context and don't need to run complex commands.${handleDirectlyDirectWritesBullet}
 - You only need one or two tool calls and have the relevant content in context. Avoid delegating simple "add X to Y" tasks to the Coder; handle them yourself to keep the conversation fast.
 
-## Per-turn tool budget
-
-A single turn may emit:
-- Any number of read-only calls (they run in parallel).
-- Any number of pure file mutations (\`${getToolPublicName('sandbox_write_file')}\`, \`${getToolPublicName('sandbox_edit_file')}\`, \`${getToolPublicName('sandbox_edit_range')}\`, \`${getToolPublicName('sandbox_search_replace')}\`, \`${getToolPublicName('sandbox_apply_patchset')}\`) — the runtime executes them sequentially as one mutation batch.
-- At most one trailing side-effecting call (\`${getToolPublicName('sandbox_exec')}\`, \`${getToolPublicName('sandbox_prepare_commit')}\`, \`${getToolPublicName('sandbox_push')}\`, \`${getToolPublicName('delegate_coder')}\`, workflow dispatch, etc.). Any second side-effect is rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
-
-Order matters: put reads first, then writes/edits, then the single side-effect last. If you need to write files and then run tests, emit the writes and the \`${getToolPublicName('sandbox_exec')}\` in one turn; if you need to write files and then delegate to the Coder, do both in one turn.`;
+${perTurnBudget}`;
 }
 
 /**
  * Return a SystemPromptBuilder preconfigured with the base Orchestrator
  * sections. Shared by `buildOrchestratorBasePrompt()` and `toLLMMessages()`
  * to avoid drift when updating the base prompt wiring.
+ *
+ * Pass `{ isLocalDaemon: true }` when the active workspace is a paired
+ * pushd daemon (`kind: 'local-pc'` or `kind: 'relay'`) so the
+ * tool-instructions and delegation sections describe the wider capability
+ * grant the orchestrator picks up in that mode. Default `false` matches
+ * the cloud-sandbox grant.
  */
-export function buildOrchestratorBaseBuilder(): SystemPromptBuilder {
+export function buildOrchestratorBaseBuilder(
+  opts: OrchestratorPromptOptions = {},
+): SystemPromptBuilder {
   return new SystemPromptBuilder()
     .set('identity', ORCHESTRATOR_IDENTITY)
     .set('voice', ORCHESTRATOR_VOICE)
@@ -214,8 +299,8 @@ export function buildOrchestratorBaseBuilder(): SystemPromptBuilder {
     .set('guidelines', buildOrchestratorGuidelines())
     .append('guidelines', SHARED_OPERATIONAL_CONSTRAINTS)
     .append('guidelines', ORCHESTRATOR_SIGNAL_EFFICIENCY)
-    .set('tool_instructions', buildOrchestratorToolInstructions())
-    .set('delegation', buildOrchestratorDelegation());
+    .set('tool_instructions', buildOrchestratorToolInstructions(opts))
+    .set('delegation', buildOrchestratorDelegation(opts));
 }
 
 /**
@@ -226,6 +311,6 @@ export function buildOrchestratorBaseBuilder(): SystemPromptBuilder {
  * custom, last_instructions) are layered on top by the runtime using
  * `SystemPromptBuilder.set()` and, where appropriate, `append()`.
  */
-export function buildOrchestratorBasePrompt(): string {
-  return buildOrchestratorBaseBuilder().build();
+export function buildOrchestratorBasePrompt(opts: OrchestratorPromptOptions = {}): string {
+  return buildOrchestratorBaseBuilder(opts).build();
 }

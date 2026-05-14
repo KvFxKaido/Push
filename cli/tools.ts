@@ -18,9 +18,20 @@ import {
   enforceRoleCapability,
   formatRoleCapabilityDenial,
   roleCanUseTool,
+  type ExecutionMode,
 } from '../lib/capabilities.ts';
 import type { AgentRole } from '../lib/runtime-contract.ts';
 import { deriveProtocolVersion } from '../lib/tool-registry.ts';
+
+/**
+ * CLI tool execution is the pushd daemon surface — the daemon IS the
+ * workspace. The current product treats Local PC / Remote sessions as
+ * daemon-backed, not cloud sandbox; hardcoding here matches that
+ * truth. A future cloud-backed CLI path would lift this to a per-call
+ * derivation at the runtime edge (mirroring the web seam in
+ * `getExecutionMode`).
+ */
+const CLI_EXECUTION_MODE: ExecutionMode = 'local-daemon';
 
 const KNOWN_AGENT_ROLES = new Set<AgentRole>([
   'orchestrator',
@@ -1509,7 +1520,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
   // invalid and surface the right diagnostic.
   {
     const canonicalForCheck = callCanonical || (typeof call?.tool === 'string' ? call.tool : '');
-    const check = enforceRoleCapability(options.role, canonicalForCheck);
+    const check = enforceRoleCapability(options.role, canonicalForCheck, CLI_EXECUTION_MODE);
     if (!check.ok) {
       return {
         ok: false,
@@ -2496,7 +2507,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           typeof options.role === 'string' && isAgentRole(options.role)
             ? options.role
             : 'orchestrator';
-        if (!roleCanUseTool(role, 'create_artifact')) {
+        if (!roleCanUseTool(role, 'create_artifact', CLI_EXECUTION_MODE)) {
           return {
             ok: false,
             text: `Role "${role}" cannot create artifacts. Required capability: artifacts:write.`,

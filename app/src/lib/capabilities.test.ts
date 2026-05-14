@@ -7,6 +7,7 @@ import {
   roleHasCapability,
   roleCanUseTool,
   getToolCapabilities,
+  getEffectiveCapabilities,
   isCapabilityMapped,
   formatCapabilities,
   CapabilityLedger,
@@ -229,6 +230,166 @@ describe('formatRoleCapabilityDenial', () => {
     expect(body).toContain('[Tool Blocked — sandbox_write_file]');
     expect(body).toContain('Required: repo:write');
     expect(body).toContain('Granted:');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Execution mode — cloud orchestrator vs local-daemon orchestrator
+// ---------------------------------------------------------------------------
+
+describe('ExecutionMode — orchestrator capability widening for local-daemon', () => {
+  // The named-mode contract is the policy input. We pin both halves:
+  // cloud (today's behavior) and local-daemon (orchestrator picks up the
+  // daemon extras). The runtime edge derives the mode from
+  // `localDaemonBinding` via `getExecutionMode`; the capability layer
+  // never sees the binding directly.
+
+  describe('cloud mode (default) keeps orchestrator narrow', () => {
+    it('orchestrator cannot exec or write files in cloud mode', () => {
+      expect(roleCanUseTool('orchestrator', 'sandbox_exec', 'cloud')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'sandbox_write_file', 'cloud')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'sandbox_edit_file', 'cloud')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'sandbox_edit_range', 'cloud')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'sandbox_search_replace', 'cloud')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'sandbox_apply_patchset', 'cloud')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'sandbox_run_tests', 'cloud')).toBe(false);
+    });
+
+    it('omitting the mode argument behaves like cloud (back-compat)', () => {
+      expect(roleCanUseTool('orchestrator', 'sandbox_exec')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'sandbox_write_file')).toBe(false);
+      expect(roleHasCapability('orchestrator', 'sandbox:exec')).toBe(false);
+      expect(roleHasCapability('orchestrator', 'repo:write')).toBe(false);
+    });
+
+    it('orchestrator keeps its base grant in cloud mode', () => {
+      expect(roleCanUseTool('orchestrator', 'sandbox_read_file', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'delegate_coder', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'delegate_explorer', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'web_search', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'ask_user', 'cloud')).toBe(true);
+    });
+  });
+
+  describe('local-daemon mode widens orchestrator to wield sandbox tools directly', () => {
+    it('orchestrator gains sandbox:exec, repo:write, sandbox:test, sandbox:download', () => {
+      expect(roleHasCapability('orchestrator', 'sandbox:exec', 'local-daemon')).toBe(true);
+      expect(roleHasCapability('orchestrator', 'repo:write', 'local-daemon')).toBe(true);
+      expect(roleHasCapability('orchestrator', 'sandbox:test', 'local-daemon')).toBe(true);
+      expect(roleHasCapability('orchestrator', 'sandbox:download', 'local-daemon')).toBe(true);
+    });
+
+    it('orchestrator can use sandbox_exec and write/edit/patch tools', () => {
+      expect(roleCanUseTool('orchestrator', 'sandbox_exec', 'local-daemon')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_write_file', 'local-daemon')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_edit_file', 'local-daemon')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_edit_range', 'local-daemon')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_search_replace', 'local-daemon')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_apply_patchset', 'local-daemon')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'sandbox_run_tests', 'local-daemon')).toBe(true);
+    });
+
+    it('orchestrator does NOT gain remote-bound git or PR capabilities', () => {
+      // Local-daemon sessions have no remote wired up; the prompt
+      // already advertises commit/push/pr as unavailable. Capability
+      // grant matches.
+      expect(roleHasCapability('orchestrator', 'git:commit', 'local-daemon')).toBe(false);
+      expect(roleHasCapability('orchestrator', 'git:push', 'local-daemon')).toBe(false);
+      expect(roleHasCapability('orchestrator', 'git:branch', 'local-daemon')).toBe(false);
+      expect(roleHasCapability('orchestrator', 'git:draft', 'local-daemon')).toBe(false);
+      expect(roleHasCapability('orchestrator', 'pr:write', 'local-daemon')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'sandbox_prepare_commit', 'local-daemon')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'sandbox_push', 'local-daemon')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'create_pr', 'local-daemon')).toBe(false);
+    });
+  });
+
+  describe('other roles are mode-independent', () => {
+    it('explorer stays read-only in both modes', () => {
+      for (const mode of ['cloud', 'local-daemon'] as const) {
+        expect(roleCanUseTool('explorer', 'sandbox_exec', mode)).toBe(false);
+        expect(roleCanUseTool('explorer', 'sandbox_write_file', mode)).toBe(false);
+        expect(roleCanUseTool('explorer', 'sandbox_read_file', mode)).toBe(true);
+      }
+    });
+
+    it('coder has the same capabilities in both modes (already wide)', () => {
+      for (const mode of ['cloud', 'local-daemon'] as const) {
+        expect(roleCanUseTool('coder', 'sandbox_exec', mode)).toBe(true);
+        expect(roleCanUseTool('coder', 'sandbox_write_file', mode)).toBe(true);
+        expect(roleCanUseTool('coder', 'sandbox_push', mode)).toBe(true);
+      }
+    });
+
+    it('auditor stays minimal in both modes', () => {
+      for (const mode of ['cloud', 'local-daemon'] as const) {
+        expect(roleCanUseTool('auditor', 'sandbox_read_file', mode)).toBe(true);
+        expect(roleCanUseTool('auditor', 'sandbox_exec', mode)).toBe(false);
+        expect(roleCanUseTool('auditor', 'sandbox_write_file', mode)).toBe(false);
+      }
+    });
+
+    it('reviewer stays read+web in both modes', () => {
+      for (const mode of ['cloud', 'local-daemon'] as const) {
+        expect(roleCanUseTool('reviewer', 'sandbox_read_file', mode)).toBe(true);
+        expect(roleCanUseTool('reviewer', 'web_search', mode)).toBe(true);
+        expect(roleCanUseTool('reviewer', 'sandbox_exec', mode)).toBe(false);
+        expect(roleCanUseTool('reviewer', 'sandbox_write_file', mode)).toBe(false);
+      }
+    });
+  });
+
+  describe('getEffectiveCapabilities — set-level invariants', () => {
+    it('cloud orchestrator matches the static ROLE_CAPABILITIES entry', () => {
+      const effective = getEffectiveCapabilities('orchestrator', 'cloud');
+      expect(effective).toEqual(ROLE_CAPABILITIES.orchestrator);
+    });
+
+    it('local-daemon orchestrator is a strict superset of the cloud grant', () => {
+      const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
+      const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
+      for (const cap of cloudCaps) {
+        expect(daemonCaps.has(cap)).toBe(true);
+      }
+      expect(daemonCaps.size).toBeGreaterThan(cloudCaps.size);
+    });
+
+    it('local-daemon orchestrator extras are exactly exec/write/test/download', () => {
+      const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
+      const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
+      const extras = new Set<Capability>();
+      for (const cap of daemonCaps) {
+        if (!cloudCaps.has(cap)) extras.add(cap);
+      }
+      expect(extras).toEqual(
+        new Set<Capability>(['sandbox:exec', 'repo:write', 'sandbox:test', 'sandbox:download']),
+      );
+    });
+  });
+
+  describe('enforceRoleCapability honors mode', () => {
+    it('cloud orchestrator hitting sandbox_exec gets ROLE_CAPABILITY_DENIED', () => {
+      const check = enforceRoleCapability('orchestrator', 'sandbox_exec', 'cloud');
+      expect(check.ok).toBe(false);
+      if (check.ok) return;
+      expect(check.type).toBe('ROLE_CAPABILITY_DENIED');
+      expect(check.detail).toContain('Mode: cloud');
+    });
+
+    it('local-daemon orchestrator can exec — same call passes the gate', () => {
+      const check = enforceRoleCapability('orchestrator', 'sandbox_exec', 'local-daemon');
+      expect(check.ok).toBe(true);
+    });
+
+    it('denial detail reports the effective grant for the mode (not the static one)', () => {
+      // Auditor doesn't change between modes — sanity check the
+      // detail still shows the role's effective grant.
+      const check = enforceRoleCapability('auditor', 'sandbox_write_file', 'local-daemon');
+      expect(check.ok).toBe(false);
+      if (check.ok) return;
+      expect(check.detail).toContain('Granted: repo:read');
+      expect(check.detail).toContain('Mode: local-daemon');
+    });
   });
 });
 
