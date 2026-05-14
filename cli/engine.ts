@@ -519,8 +519,16 @@ export async function buildSystemPrompt(workspaceRoot: string): Promise<string> 
  * `assistant.prompt_snapshot` run event), or null when no enrichment
  * ran. The promise itself is deduped per-state so concurrent callers
  * see the same outcome.
+ *
+ * Per-state consume-on-peek storage: the snapshot is also stashed in
+ * `_pendingEnrichmentSnapshots` so `consumeEnrichmentSnapshot` can
+ * hand it to a single emitter even when multiple `runAssistantLoop`
+ * calls concurrently await the same enrichment promise. Without this,
+ * each awaiter would receive the same `PromptSnapshot` from the shared
+ * promise and emit a duplicate `assistant.prompt_snapshot` event.
  */
 const _enrichmentMap: WeakMap<SessionState, Promise<PromptSnapshot | null>> = new WeakMap();
+const _pendingEnrichmentSnapshots: WeakMap<SessionState, PromptSnapshot> = new WeakMap();
 export function ensureSystemPromptReady(state: SessionState): Promise<PromptSnapshot | null> {
   const sysMsg = (state.messages as Message[])[0];
   if (
@@ -535,11 +543,27 @@ export function ensureSystemPromptReady(state: SessionState): Promise<PromptSnap
     ({ prompt, snapshot }: { prompt: string; snapshot: PromptSnapshot }): PromptSnapshot => {
       sysMsg.content = prompt;
       _enrichmentMap.delete(state);
+      _pendingEnrichmentSnapshots.set(state, snapshot);
       return snapshot;
     },
   );
   _enrichmentMap.set(state, promise);
   return promise;
+}
+
+/**
+ * Consume the most recent enrichment snapshot for this state, returning
+ * it exactly once. Subsequent calls (and calls for a state whose
+ * enrichment hasn't completed yet, or which was already resumed) return
+ * null. Used by `runAssistantLoop` to emit `assistant.prompt_snapshot`
+ * exactly once per session even when multiple loops concurrently await
+ * the same enrichment promise.
+ */
+export function consumeEnrichmentSnapshot(state: SessionState): PromptSnapshot | null {
+  const snap = _pendingEnrichmentSnapshots.get(state);
+  if (!snap) return null;
+  _pendingEnrichmentSnapshots.delete(state);
+  return snap;
 }
 
 // ─── Tool Result Messages ────────────────────────────────────────
@@ -680,7 +704,13 @@ export async function runAssistantLoop(
   // prompt is built once and reused across rounds, so the event is
   // tagged with `round: 0`; per-turn granularity belongs to the web
   // orchestrator where the prompt rebuilds on each round.
-  const enrichmentSnapshot = await ensureSystemPromptReady(state);
+  //
+  // `consumeEnrichmentSnapshot` returns the snapshot exactly once per
+  // state — protects against concurrent `runAssistantLoop` calls for
+  // the same state both receiving the same snapshot from the shared
+  // enrichment promise and emitting duplicate events.
+  await ensureSystemPromptReady(state);
+  const enrichmentSnapshot = consumeEnrichmentSnapshot(state);
   if (enrichmentSnapshot) {
     const sysMsg = (state.messages as Message[])[0];
     const totalChars = sysMsg && typeof sysMsg.content === 'string' ? sysMsg.content.length : 0;
