@@ -37,17 +37,18 @@ import type { ToolCallDiagnosis } from './tool-call-diagnosis.js';
  * Resolve the `ExecutionMode` for a given tool-execution context.
  *
  * The named mode (`cloud` | `local-daemon`) is the policy input that
- * capability checks consume. Today the web edge derives it from
- * `context.localDaemonBinding` — if a local pushd binding is wired, the
- * call is going to a paired daemon; otherwise it goes to a cloud
- * sandbox. The derivation is intentionally one-line and centralized
- * here so a future code path that sets `localDaemonBinding` for a
- * non-local reason has one obvious seam to revisit. Bindings must not
- * become the hidden policy input — the mode is.
+ * capability checks consume. The round loop sets `context.executionMode`
+ * once, derived from `workspaceContext.mode` via
+ * `workspaceModeToExecutionMode` — that's the single source of truth
+ * the prompt builder also reads. If a caller forgot to set the field
+ * (older bindings, tests pre-dating this seam), we fall back to
+ * `localDaemonBinding`-presence, which preserves the original Phase 1.d
+ * behavior. The fallback is a back-compat shim, not the policy input.
  */
 export function getExecutionMode(
-  context: Pick<ToolExecutionContext, 'localDaemonBinding'>,
+  context: Pick<ToolExecutionContext, 'executionMode' | 'localDaemonBinding'>,
 ): ExecutionMode {
+  if (context.executionMode) return context.executionMode;
   return context.localDaemonBinding ? 'local-daemon' : 'cloud';
 }
 
@@ -157,9 +158,27 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
    * promote this to a typed interface when it needs to read the fields.
    *
    * `sandboxId: null` is legal when this is set — the dispatcher decides
-   * which transport handles the call.
+   * which transport handles the call. NOTE: capability widening no
+   * longer keys off this field — set `executionMode` for that.
    */
   localDaemonBinding?: unknown;
+  /**
+   * Named execution mode resolved at the round-loop seam from
+   * `workspaceContext.mode` via `workspaceModeToExecutionMode`. The
+   * capability gate consumes this through `getExecutionMode(context)`.
+   *
+   * Threading the resolved mode explicitly (rather than re-deriving
+   * from `localDaemonBinding` inside the runtime) keeps the prompt
+   * builder and the capability gate reading from the same input —
+   * eliminates the drift class where `workspaceContext.mode` says
+   * `local-pc` but the binding ref hasn't propagated yet, leaving
+   * the prompt advertising direct sandbox tools while the runtime
+   * denies them with ROLE_CAPABILITY_DENIED.
+   *
+   * Optional: callers that haven't been updated fall back to the
+   * `localDaemonBinding`-based derivation in `getExecutionMode`.
+   */
+  executionMode?: ExecutionMode;
   /**
    * AbortSignal observed by daemon-routed tools that support mid-run
    * cancellation (today: `sandbox_exec`). When the signal fires while

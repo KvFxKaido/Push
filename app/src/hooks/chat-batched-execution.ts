@@ -33,6 +33,7 @@ import {
 } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { createId } from '@push/lib/id-utils';
+import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
 import type { DetectedToolCalls } from '@/lib/tool-dispatch';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage, ReasoningBlock } from '@/types';
@@ -66,6 +67,7 @@ export async function executeBatchedToolCalls(
     sandboxIdRef,
     ensureSandboxRef,
     localDaemonBindingRef,
+    workspaceContextRef,
     scratchpadRef,
     todoRef,
     repoRef,
@@ -81,6 +83,14 @@ export async function executeBatchedToolCalls(
     flushCheckpoint,
     executeDelegateCall,
   } = ctx;
+
+  // Resolve the named execution mode once at the round-loop seam from
+  // `workspaceContext.mode` — same input the prompt builder reads. The
+  // runtime forwards this onto `ToolExecutionContext.executionMode`
+  // where `enforceRoleCapability` consumes it, eliminating the
+  // prompt-vs-runtime drift class that fell out of binding-only
+  // derivation.
+  const executionMode = workspaceModeToExecutionMode(workspaceContextRef.current?.mode);
   const {
     applyPostToolPolicyEffects,
     recordToolFailure,
@@ -146,6 +156,7 @@ export async function executeBatchedToolCalls(
     sandboxId: sandboxIdRef.current,
     role: 'orchestrator',
     localDaemonBinding: localDaemonBindingRef.current ?? undefined,
+    executionMode,
     isMainProtected: isMainProtectedRef.current,
     defaultBranch: branchInfoRef.current?.defaultBranch,
     provider: lockedProvider,
@@ -277,6 +288,7 @@ export async function executeBatchedToolCalls(
       sandboxId: sandboxIdRef.current,
       role: 'orchestrator',
       localDaemonBinding: localDaemonBindingRef.current ?? undefined,
+      executionMode,
       isMainProtected: isMainProtectedRef.current,
       defaultBranch: branchInfoRef.current?.defaultBranch,
       provider: lockedProvider,
@@ -465,6 +477,7 @@ export async function executeBatchedToolCalls(
         sandboxId: sandboxIdRef.current,
         role: 'orchestrator',
         localDaemonBinding: localDaemonBindingRef.current ?? undefined,
+        executionMode,
         isMainProtected: isMainProtectedRef.current,
         defaultBranch: branchInfoRef.current?.defaultBranch,
         provider: lockedProvider,

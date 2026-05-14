@@ -13,8 +13,12 @@ import {
   CapabilityLedger,
   enforceRoleCapability,
   formatRoleCapabilityDenial,
+  workspaceModeToExecutionMode,
   type Capability,
+  type ExecutionMode,
 } from './capabilities';
+import { getExecutionMode } from '@push/lib/tool-execution-runtime';
+import type { WorkspaceMode } from '@/types';
 import { getAllToolSpecs } from './tool-registry';
 
 // ---------------------------------------------------------------------------
@@ -390,6 +394,105 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       expect(check.detail).toContain('Granted: repo:read');
       expect(check.detail).toContain('Mode: local-daemon');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Drift detector — workspaceModeToExecutionMode is the single source of truth
+// ---------------------------------------------------------------------------
+
+describe('workspaceModeToExecutionMode — canonical WorkspaceMode → ExecutionMode mapping', () => {
+  // This block is the "one source of truth per vocabulary" guard from
+  // CLAUDE.md. The prompt builder (`app/src/lib/orchestrator.ts`) and
+  // the runtime gate (`getExecutionMode` in
+  // `lib/tool-execution-runtime.ts`) both funnel through this helper.
+  // If a new WorkspaceMode lands or the daemon-bound set changes,
+  // these assertions break before production behavior does.
+
+  it('maps every WorkspaceMode value to a defined ExecutionMode (enum completeness)', () => {
+    // Compile-time exhaustiveness — `ReadonlyArray<WorkspaceMode>`
+    // alone would happily accept a strict subset (Copilot flagged
+    // this on PR #554). Two-sided check instead:
+    //   1. `satisfies readonly WorkspaceMode[]` rejects typos and
+    //      values that aren't a `WorkspaceMode`.
+    //   2. `Exclude<WorkspaceMode, (typeof allModes)[number]> extends
+    //      never` rejects new variants that aren't listed here — if a
+    //      future PR adds `'foo'` to `WorkspaceMode`, `_Exhaustive`
+    //      becomes `false` and this file fails to compile.
+    const allModes = [
+      'repo',
+      'scratch',
+      'chat',
+      'local-pc',
+      'relay',
+    ] as const satisfies readonly WorkspaceMode[];
+    type _Exhaustive = Exclude<WorkspaceMode, (typeof allModes)[number]> extends never
+      ? true
+      : false;
+    const _exhaustive: _Exhaustive = true;
+    void _exhaustive;
+    for (const mode of allModes) {
+      const resolved: ExecutionMode = workspaceModeToExecutionMode(mode);
+      expect(resolved === 'cloud' || resolved === 'local-daemon').toBe(true);
+    }
+  });
+
+  it('maps the daemon-bound modes to local-daemon', () => {
+    expect(workspaceModeToExecutionMode('local-pc')).toBe('local-daemon');
+    expect(workspaceModeToExecutionMode('relay')).toBe('local-daemon');
+  });
+
+  it('maps every other workspace mode to cloud', () => {
+    expect(workspaceModeToExecutionMode('repo')).toBe('cloud');
+    expect(workspaceModeToExecutionMode('scratch')).toBe('cloud');
+    expect(workspaceModeToExecutionMode('chat')).toBe('cloud');
+  });
+
+  it('defaults to cloud for null / undefined / unknown inputs', () => {
+    expect(workspaceModeToExecutionMode(null)).toBe('cloud');
+    expect(workspaceModeToExecutionMode(undefined)).toBe('cloud');
+    expect(workspaceModeToExecutionMode('made-up')).toBe('cloud');
+  });
+});
+
+describe('getExecutionMode honors context.executionMode as the single source of truth', () => {
+  it('prefers context.executionMode over binding-presence', () => {
+    // Both inputs set, disagreeing — the named mode wins. This is the
+    // drift class the seam eliminates: prompt and runtime see the
+    // same resolved mode even if the binding ref propagates late or
+    // a future code path sets a binding for a non-local reason.
+    expect(getExecutionMode({ executionMode: 'cloud', localDaemonBinding: {} })).toBe('cloud');
+    expect(getExecutionMode({ executionMode: 'local-daemon', localDaemonBinding: undefined })).toBe(
+      'local-daemon',
+    );
+  });
+
+  it('falls back to binding-presence when executionMode is unset (back-compat)', () => {
+    expect(getExecutionMode({ localDaemonBinding: {} })).toBe('local-daemon');
+    expect(getExecutionMode({ localDaemonBinding: undefined })).toBe('cloud');
+  });
+
+  it('agrees with workspaceModeToExecutionMode when both are derived from the same WorkspaceMode', () => {
+    // Round-loop seam invariant: the chat hooks compute executionMode
+    // from `workspaceContext.mode` via the helper and forward it onto
+    // the runtime context. Both reads must agree. Same two-sided
+    // compile-time exhaustiveness as the enum-completeness test
+    // above — keeps this loop pinned to the full WorkspaceMode union.
+    const modes = [
+      'repo',
+      'scratch',
+      'chat',
+      'local-pc',
+      'relay',
+    ] as const satisfies readonly WorkspaceMode[];
+    type _Exhaustive = Exclude<WorkspaceMode, (typeof modes)[number]> extends never ? true : false;
+    const _exhaustive: _Exhaustive = true;
+    void _exhaustive;
+    for (const mode of modes) {
+      const promptSide = workspaceModeToExecutionMode(mode);
+      const runtimeSide = getExecutionMode({ executionMode: promptSide });
+      expect(runtimeSide).toBe(promptSide);
+    }
   });
 });
 

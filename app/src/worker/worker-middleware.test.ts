@@ -299,7 +299,22 @@ describe('requireDeploymentTokenForApi', () => {
       method: 'GET',
       headers: {
         Upgrade: 'websocket',
+        Connection: 'Upgrade',
         'Sec-WebSocket-Protocol': 'push.relay.v1, bearer.pushd_da_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      },
+    });
+    expect(
+      requireDeploymentTokenForApi(request, makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' })),
+    ).toBe(null);
+  });
+
+  it('accepts a comma-separated Connection token list (e.g. "keep-alive, Upgrade")', () => {
+    const request = makeRequest('https://push.example.test/api/relay/v1/session/s1/connect', {
+      method: 'GET',
+      headers: {
+        Upgrade: 'websocket',
+        Connection: 'keep-alive, Upgrade',
+        'Sec-WebSocket-Protocol': 'push.relay.v1',
       },
     });
     expect(
@@ -326,7 +341,28 @@ describe('requireDeploymentTokenForApi', () => {
       method: 'GET',
       headers: {
         Upgrade: 'websocket',
+        Connection: 'Upgrade',
         'Sec-WebSocket-Protocol': 'bearer.pushd_da_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      },
+    });
+    const response = requireDeploymentTokenForApi(
+      request,
+      makeEnv({ PUSH_DEPLOYMENT_TOKEN: 'secret' }),
+    );
+    expect(response?.status).toBe(401);
+    const body = (await response!.json()) as { code?: string };
+    expect(body.code).toBe(DEPLOYMENT_AUTH_REQUIRED_CODE);
+  });
+
+  it('keeps Upgrade+subprotocol requests without `Connection: Upgrade` behind the gate', async () => {
+    // RFC 6455 requires both. A shaped-but-bogus request that copies
+    // the Upgrade and subprotocol headers but omits `Connection:
+    // Upgrade` must NOT bypass the deployment gate.
+    const request = makeRequest('https://push.example.test/api/relay/v1/session/s1/connect', {
+      method: 'GET',
+      headers: {
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Protocol': 'push.relay.v1',
       },
     });
     const response = requireDeploymentTokenForApi(

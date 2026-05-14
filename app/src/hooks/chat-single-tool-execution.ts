@@ -42,6 +42,7 @@ import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { isReadOnlyToolCall, type AnyToolCall } from '@/lib/tool-dispatch';
 import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verification-runtime';
 import { createId } from '@push/lib/id-utils';
+import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatCard, ChatMessage, ReasoningBlock, ToolExecutionResult } from '@/types';
 import {
@@ -74,6 +75,7 @@ export async function executeSingleToolCall(
     sandboxIdRef,
     ensureSandboxRef,
     localDaemonBindingRef,
+    workspaceContextRef,
     scratchpadRef,
     todoRef,
     repoRef,
@@ -90,6 +92,11 @@ export async function executeSingleToolCall(
     getVerificationState,
     executeDelegateCall,
   } = ctx;
+
+  // Resolve the named execution mode once at the round-loop seam from
+  // `workspaceContext.mode` — same input the prompt builder reads. See
+  // the matching comment in `chat-batched-execution.ts`.
+  const executionMode = workspaceModeToExecutionMode(workspaceContextRef.current?.mode);
   const {
     applyPostToolPolicyEffects,
     recordToolFailure,
@@ -195,6 +202,7 @@ export async function executeSingleToolCall(
       sandboxId: sandboxIdRef.current,
       role: 'orchestrator',
       localDaemonBinding: localDaemonBindingRef.current ?? undefined,
+      executionMode,
       isMainProtected: isMainProtectedRef.current,
       defaultBranch: branchInfoRef.current?.defaultBranch,
       provider: lockedProvider,

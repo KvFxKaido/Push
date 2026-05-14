@@ -12,6 +12,7 @@ import { buildUserIdentityBlock } from '@push/lib/user-identity';
 import { buildModelCapabilityAwarenessBlock } from './model-capabilities';
 import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
 import { buildSessionCapabilityBlock, buildSandboxEnvironmentBlock } from './workspace-context';
+import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
 import { diffSnapshots, formatSnapshotDiff, type PromptSnapshot } from './system-prompt-builder';
 import {
   buildOrchestratorBaseBuilder,
@@ -269,12 +270,12 @@ export function toLLMMessages(
     // `isLocalDaemon` switches the base tool-instructions + per-turn
     // budget between two grant shapes: cloud orchestrator (no
     // sandbox:exec, no repo:write → delegate everything) vs local-daemon
-    // orchestrator (wider grant, drives sandbox tools directly). Mode
-    // comes from the workspace session kind; capability enforcement in
-    // `web-tool-execution-runtime.ts` mirrors the same split via
-    // `getExecutionMode`.
-    const isLocalDaemon =
-      workspaceContext?.mode === 'local-pc' || workspaceContext?.mode === 'relay';
+    // orchestrator (wider grant, drives sandbox tools directly). The
+    // capability gate reads the same answer through
+    // `getExecutionMode(context)` — both ends funnel through
+    // `workspaceModeToExecutionMode` so the prompt cannot advertise a
+    // wider grant than the runtime allows.
+    const isLocalDaemon = workspaceModeToExecutionMode(workspaceContext?.mode) === 'local-daemon';
     const builder = buildOrchestratorBaseBuilder({ isLocalDaemon });
 
     // Chat mode — strip orchestrator tool instructions and delegation (plain
@@ -285,16 +286,18 @@ export function toLLMMessages(
       builder.set('delegation', null);
     }
 
-    // Local-PC mode — strip the cloud delegation block. The base
-    // `delegation` section advertises delegate_coder / delegate_explorer
-    // with the literal "Trace the auth flow / src/auth.ts" example that
-    // the model was parroting verbatim in pwd-only conversations. The
-    // local-pc tool protocol (injected below) tells the model NOT to
-    // delegate, but the contradictory base block reduces the signal —
-    // strip it cleanly for local-pc, the same way chat does. Copilot
-    // flagged this as a low-confidence concern on PR #527; verified
-    // load-bearing on inspection.
-    if (workspaceContext?.mode === 'local-pc') {
+    // Local-daemon modes (local-pc + relay) — strip the cloud
+    // delegation block. The base `delegation` section advertises
+    // delegate_coder / delegate_explorer with the literal "Trace the
+    // auth flow / src/auth.ts" example that the model was parroting
+    // verbatim in pwd-only conversations. The local-pc tool protocol
+    // (injected below) tells the model NOT to delegate, but the
+    // contradictory base block reduces the signal — strip it cleanly,
+    // the same way chat does. Relay shares the same protocol — the
+    // strip extends to it for the same reason. Copilot flagged this
+    // as a low-confidence concern on PR #527; verified load-bearing
+    // on inspection.
+    if (isLocalDaemon) {
       builder.set('delegation', null);
     }
 
@@ -358,13 +361,18 @@ export function toLLMMessages(
     } else {
       const baseToolInstructions = builder.get('tool_instructions') ?? '';
       const toolProtocols: string[] = [];
-      // Local-pc sessions get a tailored tool protocol: no `/workspace`
-      // path prior, no remote-bound tools (commit/push/promote/draft),
-      // no Explorer/Coder delegation. The cloud SANDBOX_TOOL_PROTOCOL
-      // fights the workspace-context block otherwise — it mentions
-      // `/workspace` 9+ times and lists remote-bound tools that the
-      // daemon can't service. Smoke-tested 2026-05-13 in this PR.
-      if (workspaceContext?.mode === 'local-pc') {
+      // Local-daemon sessions (local-pc + relay) get a tailored tool
+      // protocol: no `/workspace` path prior, no remote-bound tools
+      // (commit/push/promote/draft), no Explorer/Coder delegation. The
+      // cloud SANDBOX_TOOL_PROTOCOL fights the workspace-context block
+      // otherwise — it mentions `/workspace` 9+ times and lists
+      // remote-bound tools that the daemon can't service. Both modes
+      // share the same daemon-backed transport (loopback vs Worker
+      // relay) so the protocol shape is the same. Smoke-tested
+      // 2026-05-13 for local-pc; relay extension addresses the Codex
+      // P2 from PR #554 where relay was falling through to the cloud
+      // protocol after the delegation strip widened.
+      if (isLocalDaemon) {
         toolProtocols.push(LOCAL_PC_TOOL_PROTOCOL);
       } else if (hasSandbox) {
         toolProtocols.push(getSandboxToolProtocol());

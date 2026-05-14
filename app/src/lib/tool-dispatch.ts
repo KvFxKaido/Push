@@ -490,6 +490,7 @@ export async function executeAnyToolCall(
   chatId?: string,
   localDaemonBinding?: ToolDispatchBinding,
   abortSignal?: AbortSignal,
+  executionMode?: import('@push/lib/capabilities').ExecutionMode,
 ): Promise<ToolExecutionResult> {
   const runtime = new WebToolExecutionRuntime();
   return runtime.execute(toolCall, {
@@ -507,6 +508,7 @@ export async function executeAnyToolCall(
     chatId,
     localDaemonBinding,
     abortSignal,
+    executionMode,
   }) as Promise<ToolExecutionResult>;
 }
 
