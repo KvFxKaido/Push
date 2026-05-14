@@ -148,12 +148,18 @@ describe('runAssistantTurn — multi-feature delegation event sequence', needsLo
             id: 'inspect-cli-provider',
             description: 'Read cli/provider.ts and note provider URLs.',
             files: ['cli/provider.ts'],
+            // `addresses` is required when the planner sees a user goal
+            // (which it does here — the goal is derived from userText
+            // when no `goal.md` exists). Without it the goal-alignment
+            // gate rejects and the run falls back to single-agent.
+            addresses: 'Initial ask',
           },
           {
             id: 'inspect-worker-providers',
             description: 'Read app/src/worker/worker-providers.ts and note URLs.',
             files: ['app/src/worker/worker-providers.ts'],
             dependsOn: ['inspect-cli-provider'],
+            addresses: 'Initial ask',
           },
         ],
       });
@@ -330,3 +336,164 @@ describe(
     });
   },
 );
+
+describe(
+  'runAssistantTurn — anchor seed resolution across turns (PR #551 review)',
+  needsLoopback,
+  () => {
+    it('derives the goal anchor from the first user turn in state.messages, not the current turn', async () => {
+      // Multi-turn TUI / daemon sessions: the original goal sits in
+      // state.messages and the *current* userText is a follow-up.
+      // Before the Codex P2 + Copilot review on PR #551, the planner
+      // was anchored on the current turn, validating `addresses`
+      // against the wrong goal. This test pins the fix by inspecting
+      // the planner's request body to see which `[USER_GOAL]` it
+      // actually saw.
+      await withTempSessionDir(async (sessionDir) => {
+        const plannerPayload = JSON.stringify({
+          approach: 'Skip — return one feature so we fall back fast.',
+          features: [
+            {
+              id: 'lone',
+              description: 'single feature, falls back to single-agent',
+            },
+          ],
+        });
+
+        const server = await startSequencedProviderServer([
+          { tokens: [plannerPayload] },
+          { tokens: ['single-agent reply'] },
+        ]);
+
+        try {
+          const providerConfig = makeProviderConfig(server.url);
+          // Seed state with an original goal turn; the current turn
+          // arriving via runAssistantTurn is a follow-up.
+          const state = makeState(sessionDir, {
+            messages: [
+              { role: 'system', content: 'You are a helpful assistant.' },
+              {
+                role: 'user',
+                content: 'Fix the auth retry loop in src/auth/refresh.ts',
+              },
+              { role: 'assistant', content: "Sure, I'll start by reading the file." },
+            ],
+          });
+
+          await runAssistantTurn(
+            state,
+            providerConfig,
+            'mock-key',
+            'Now also document the change in the README',
+            5,
+            { emit: () => {} },
+          );
+
+          // First server request is the planner. Inspect the user
+          // message to confirm the [USER_GOAL] block was anchored on
+          // the original goal, not the current follow-up turn.
+          const plannerRequest = server.requests[0];
+          assert.ok(plannerRequest, 'expected at least one captured planner request');
+          const userMsg = plannerRequest.messages.find((m) => m.role === 'user');
+          assert.ok(userMsg, 'planner request must have a user message');
+          assert.ok(
+            userMsg.content.includes('[USER_GOAL]'),
+            'planner request should include a [USER_GOAL] block',
+          );
+          assert.ok(
+            userMsg.content.includes('Fix the auth retry loop in src/auth/refresh.ts'),
+            `planner [USER_GOAL] should carry the original goal, got: ${userMsg.content.slice(
+              0,
+              400,
+            )}`,
+          );
+          assert.ok(
+            !userMsg.content.includes('Initial ask: Now also document the change in the README'),
+            'planner [USER_GOAL] should NOT anchor on the current follow-up turn',
+          );
+        } finally {
+          await server.stop();
+        }
+      });
+    });
+  },
+);
+
+describe('runAssistantTurn — goal-alignment fallback (CLI parity)', needsLoopback, () => {
+  it('falls back to single-agent when planner emits multi-feature plan without addresses', async () => {
+    await withTempSessionDir(async (sessionDir) => {
+      // 2-feature plan with NO addresses on either feature. With a
+      // user goal derivable from userText, the goal-alignment gate
+      // (validateTaskGraphAgainstGoal in cli/delegation-entry.ts)
+      // flags this and CLI falls back gracefully.
+      const plannerPayload = JSON.stringify({
+        approach: 'Investigate both files',
+        features: [
+          {
+            id: 'feature-a',
+            description: 'Inspect file A.',
+            files: ['cli/provider.ts'],
+          },
+          {
+            id: 'feature-b',
+            description: 'Inspect file B.',
+            files: ['cli/cli.ts'],
+            dependsOn: ['feature-a'],
+          },
+        ],
+      });
+
+      const server = await startSequencedProviderServer([
+        { tokens: [plannerPayload] },
+        { tokens: ['Single-agent fallback reply.'] },
+      ]);
+
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(sessionDir);
+        const emitted = [];
+
+        const result = await runAssistantTurn(
+          state,
+          providerConfig,
+          'mock-key',
+          'Inspect both files and compare them',
+          5,
+          {
+            emit: (event) => emitted.push(event),
+          },
+        );
+
+        assert.equal(result.outcome, 'success');
+
+        const eventTypes = emitted.map((e) => e.type);
+
+        // Planner ran (subagent.* envelopes) but the gate triggered
+        // a fallback — no task_graph.* envelopes.
+        assert.ok(eventTypes.includes('subagent.started'));
+        assert.ok(eventTypes.includes('subagent.completed'));
+        assert.ok(
+          !eventTypes.some((t) => t.startsWith('task_graph.')),
+          `task_graph.* emitted despite missing addresses (got ${eventTypes.join(', ')})`,
+        );
+
+        // Warning envelope surfaces the misalignment to the TUI.
+        const warning = emitted.find(
+          (e) => e.type === 'warning' && e.payload?.code === 'PLAN_GOAL_INVALID',
+        );
+        assert.ok(
+          warning,
+          `missing PLAN_GOAL_INVALID warning (got types ${eventTypes.join(', ')})`,
+        );
+
+        // Persisted delegation.goal_invalid session event for
+        // post-hoc observability via aggregateStats / session log.
+        const persisted = await loadSessionEvents(state.sessionId);
+        const goalInvalid = persisted.find((e) => e.type === 'delegation.goal_invalid');
+        assert.ok(goalInvalid, 'missing delegation.goal_invalid session event');
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+});
