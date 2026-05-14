@@ -32,6 +32,8 @@ interface RepoLauncherSheetProps {
   onResumeSandbox?: () => void;
   onStartWorkspace?: () => void;
   onStartChat?: () => void;
+  onStartLocalPc?: () => void;
+  onStartRelay?: () => void;
   onDisconnect: () => void;
   user: GitHubUser | null;
   mode?: 'default' | 'chat';
@@ -55,6 +57,8 @@ export function RepoLauncherSheet({
   onResumeSandbox,
   onStartWorkspace,
   onStartChat,
+  onStartLocalPc,
+  onStartRelay,
   onDisconnect,
   user,
   mode = 'default',
@@ -116,6 +120,22 @@ export function RepoLauncherSheet({
                 onStartChat
                   ? () => {
                       onStartChat();
+                      onOpenChange(false);
+                    }
+                  : undefined
+              }
+              onStartLocalPc={
+                onStartLocalPc
+                  ? () => {
+                      onStartLocalPc();
+                      onOpenChange(false);
+                    }
+                  : undefined
+              }
+              onStartRelay={
+                onStartRelay
+                  ? () => {
+                      onStartRelay();
                       onOpenChange(false);
                     }
                   : undefined

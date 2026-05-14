@@ -58,6 +58,8 @@ export interface ChatRouteWorkspaceProps {
   };
   handleStartWorkspace: (() => void) | undefined;
   handleStartChat: (() => void) | undefined;
+  handleStartLocalPc: (() => void) | undefined;
+  handleStartRelay: (() => void) | undefined;
   handleExitWorkspace: () => void;
   handleDisconnect: () => void;
   handleCreateNewChat: () => void;
