@@ -1,18 +1,18 @@
 /**
  * tui-spinner.ts — frame-based Braille spinners for "busy" indicators.
  *
- * Unlike the color animator (time-varying hue/brightness on static text),
- * these are classic frame-cycling spinners: pick a Braille glyph based on
+ * Classic frame-cycling spinners: pick a Braille glyph based on
  * `tick % frames.length`. The caller decides when to show the spinner
  * (typically only while `runState === 'running'`); this module is pure.
  *
- * Scope for the first cut:
+ * Scope:
  *   - One-cell Braille frames only — legible at the header's status-dot
  *     position, no multi-cell animations.
  *   - Five variants plus 'off' (the static-dot fallback): braille, orbit,
  *     breathe, pulse, helix. Enough variety without becoming noise.
  *   - Reduced-motion (PUSH_REDUCED_MOTION / REDUCED_MOTION) forces 'off'
- *     via detectSpinnerName, mirroring the animator's guard.
+ *     via detectSpinnerName. `isReducedMotion()` lives here as the
+ *     canonical home now that the color-overlay animator is gone.
  *
  * Verbs (the label that sits next to the spinner glyph in the header)
  * also live in this module so the spinner remains the canonical home for
@@ -20,7 +20,22 @@
  * activity → verb, with no dependency on the renderer or the engine.
  */
 
-import { isReducedMotion } from './tui-animator.js';
+/**
+ * Returns true when the user has asked for reduced motion via env. Gates
+ * the spinner — when on, the spinner stays as a static dot regardless of
+ * configured Braille animation. Lives here because the spinner is the
+ * sole runtime consumer; the standalone `push spinner` CLI command and
+ * the TUI's `/spinner` handler both import this same helper so they
+ * share one source of truth.
+ */
+export function isReducedMotion(): boolean {
+  for (const key of ['PUSH_REDUCED_MOTION', 'REDUCED_MOTION'] as const) {
+    const value = (process.env[key] || '').toLowerCase().trim();
+    if (value === '' || value === '0' || value === 'false' || value === 'no') continue;
+    return true;
+  }
+  return false;
+}
 
 export type SpinnerName = 'off' | 'braille' | 'orbit' | 'breathe' | 'pulse' | 'helix';
 

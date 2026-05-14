@@ -151,18 +151,6 @@ describe('createTabCompleter', () => {
     assert.equal(result.text, '/theme set forest');
   });
 
-  it('completes /animate command name', () => {
-    const result = tc.tab('/ani', false);
-    assert.notEqual(result, null);
-    assert.equal(result.text, '/animate ');
-  });
-
-  it('completes animation name after /animate set ', () => {
-    const result = tc.tab('/animate set shi', false);
-    assert.notEqual(result, null);
-    assert.equal(result.text, '/animate set shimmer');
-  });
-
   it('completes /spinner command name', () => {
     const result = tc.tab('/spi', false);
     assert.notEqual(result, null);
