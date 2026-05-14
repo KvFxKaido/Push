@@ -1,8 +1,8 @@
 # Goal-Anchored Task Graph Layering
 
-**Status:** Current, added 2026-05-14
-**Scope:** Orchestrator plan_tasks emission + delegation brief
-**Related:** [`docs/architecture.md`](../architecture.md), PR #549 (user-goal anchor v1+v2)
+**Status:** Current, web shipped 2026-05-14 (PR #550), CLI parity shipped 2026-05-14 (this PR)
+**Scope:** Orchestrator plan_tasks emission + delegation brief + CLI planner output
+**Related:** [`docs/architecture.md`](../architecture.md), PR #549 (user-goal anchor v1+v2), PR #550 (web runtime gate)
 
 ## Problem
 
@@ -61,15 +61,30 @@ The web handler (`app/src/lib/task-graph-delegation-handler.ts`) returns this st
 
 `lib/orchestrator-prompt-builder.ts` documents the new field in the `plan_tasks` example and explicitly names the rejection path so cooperating models populate `addresses` without learning the validator the hard way.
 
-## Scope: web-only runtime enforcement for v1
+## Scope: web runtime gate (PR #550) + CLI parity (this PR)
 
-This decision applies to **web orchestrator-emitted task graphs**. CLI delegation uses a different shape — `runPlannerCore` produces a `PlannerFeatureList` that `planToTaskGraph` converts to nodes — and doesn't go through the same `plan_tasks` tool-call parsing path. Adding `addresses` extraction to the CLI planner is a separate piece of work that:
+Web's runtime gate (PR #550) lives at the `plan_tasks` tool-call parse path. The Orchestrator emits, the runtime rejects with a structured `[Goal Alignment Required]` body, the model re-emits with `addresses` populated on the next turn. In-band retry via the tool-result feedback loop, no extra LLM call from the runtime.
 
-1. Requires the planner prompt to teach `addresses`
-2. Requires `runPlannerCore` to surface goal-alignment failures back to the model
-3. Touches `PlannerFeatureList` schema
+CLI parity uses the same shared validator (`validateTaskGraphAgainstGoal`) and the same shared brief (`buildDelegationBrief` rendering `userGoal` + `addresses`), but the planner is structurally one-shot — there is no tool-result loop to bounce a rejection back through. So the CLI rejection path is **graceful degradation**, not retry:
 
-That's its own PR. CLI delegation continues to honour the goal via the v1 `[USER_GOAL]` anchor injected at engine entry, but won't reject emissions for missing `addresses` until the planner is updated.
+1. `runPlannerCore` learns `goal?: UserGoalAnchor`. When provided, the planner sees the formatted `[USER_GOAL]` block at the top of its user message and is asked (via the planner system prompt) to populate `addresses` on every feature.
+2. `PlannerFeature.addresses?` is propagated through `planToTaskGraph` onto `TaskGraphNode.addresses`.
+3. After `validateTaskGraph` (structural), `validateTaskGraphAgainstGoal` runs. On miss the CLI emits a `delegation.goal_invalid` session event + a `[delegation]` warning, then falls back to the existing non-delegated single-agent loop. Matches the existing `delegation.graph_invalid` pattern for structural validation failures (`cli/delegation-entry.ts:228`).
+4. Each per-node delegation brief carries `userGoal` + `node.addresses`, same as the web task-graph executor.
+
+### Why graceful degradation not retry on CLI
+
+CLI's planner is fail-open by contract (`runPlannerCore` returns `null` on parse/stream failure → caller falls back). Adding a retry loop would mean either:
+
+- **Re-running the planner with a feedback prompt.** Possible, but doubles the latency budget on every miss, and there's no evidence cooperating models that produced unaligned output once will produce aligned output the second time without architectural changes (e.g. fine-tuning, a stronger system prompt).
+- **Surfacing the failure back to a calling orchestrator.** CLI doesn't have one — the planner *is* the top of the stack for headless delegation runs.
+
+Graceful degradation preserves the user's task (they still get an answer from the single-agent loop) and surfaces the misalignment as a structured event observable in `aggregateStats` and the session log.
+
+### What this means for cooperating vs non-cooperating models on CLI
+
+- **Cooperating models** with goal context in the prompt populate `addresses` and the gate is silent — same outcome as web's cooperating path.
+- **Non-cooperating models** that omit the field on CLI trigger the warning + single-agent fallback. Web bounces; CLI degrades. Different surfaces, different idioms; same gate semantics.
 
 ## Scope: not building agent-write to `goal.md`
 
@@ -105,6 +120,6 @@ Both surfaces of the same rule, applied in the right register.
 
 ## Open questions / followups
 
-- **CLI parity** for the runtime check, gated on `runPlannerCore` learning `addresses`. Without this, CLI orchestrators that mis-plan have no rejection path.
 - **`addresses` content validation** — currently any non-empty string passes. A future tightening could require the string to reference one of the actual goal sections (literal string match against known headings). Held until we see whether free-form usage produces real misalignment cases.
 - **Web v2.5 of `goal.md`** — the sandbox-persistence story for the file itself (deferred from PR #549). Goal anchor injection on web today uses inline derivation from the first user turn, not a file. Once persistence lands, the same `addresses` runtime check carries over for free.
+- **CLI planner retry** — graceful degradation today; a one-time retry loop could land later if measurement shows cooperating models routinely producing unaligned output on first pass. Held until that evidence appears, because the simple/fail-open contract of `runPlannerCore` is itself load-bearing for CLI surface predictability.
