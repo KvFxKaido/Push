@@ -86,6 +86,7 @@ describe('artifact dispatch drift', () => {
       detected,
       'KvFxKaido/Push',
       'sb-123',
+      'orchestrator',
       false,
       undefined,
       undefined,
@@ -116,7 +117,7 @@ describe('artifact dispatch drift', () => {
     const detected = detectAnyToolCall(CALL_TEXT);
     if (!detected) throw new Error('Expected a detected tool call');
 
-    const result = await executeAnyToolCall(detected, '', null);
+    const result = await executeAnyToolCall(detected, '', null, 'orchestrator');
     expect(result.text).toContain('Artifact creation requires an active repo');
     expect(result.structuredError?.type).toBe('INVALID_ARG');
     expect(result.structuredError?.detail).toContain('NO_ACTIVE_REPO');
@@ -130,7 +131,7 @@ describe('artifact dispatch drift', () => {
     // Repo set, sandbox set, but chatId omitted — the runtime must fail
     // closed rather than silently file the artifact under repo+branch
     // and pollute the chat-scoped list.
-    const result = await executeAnyToolCall(detected, 'KvFxKaido/Push', 'sb-123');
+    const result = await executeAnyToolCall(detected, 'KvFxKaido/Push', 'sb-123', 'orchestrator');
     expect(result.structuredError?.type).toBe('INVALID_ARG');
     expect(result.structuredError?.detail).toContain('MISSING_CHAT_ID');
     expect(result.text).toContain('requires a chat id');

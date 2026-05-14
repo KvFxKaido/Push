@@ -7,13 +7,20 @@ import {
   detectToolCall,
   detectAllToolCalls,
   ensureInsideWorkspace,
-  executeToolCall,
+  executeToolCall as _rawExecuteToolCall,
   isHighRiskCommand,
   matchingRiskPatternIndex,
   isSafeCommand,
   suggestApprovalPrefix,
   truncateText,
 } from '../tools.ts';
+
+// The kernel role check in `executeToolCall` now fail-closes when
+// `options.role` is missing. These unit tests exercise tools directly
+// without caring which role is asking — default to `coder` since it has
+// the broadest grant. Tests that need a specific role override here.
+const executeToolCall = (call, root, opts = {}) =>
+  _rawExecuteToolCall(call, root, { role: 'coder', ...opts });
 
 async function rmWithRetry(target, attempts = process.platform === 'win32' ? 8 : 1) {
   for (let attempt = 0; attempt < attempts; attempt++) {

@@ -416,7 +416,17 @@ describe('chat-send', () => {
     expect(lastMsg?.content).toContain('npx tsc --noEmit');
   });
 
-  it('surfaces approval-gated tool calls through the main chat tool path', async () => {
+  it('refuses sandbox_exec from the orchestrator chat path at the role-capability kernel gate', async () => {
+    // Orchestrator's grant in `lib/capabilities.ts:ROLE_CAPABILITIES`
+    // intentionally omits `sandbox:exec` — destructive shell commands
+    // belong in a Coder delegation. Before the kernel role check was
+    // promoted into `WebToolExecutionRuntime.execute`, the chat path
+    // forgot to pass `role`, the check silently no-op'd, and the call
+    // landed on the approval gate. With kernel enforcement on, the call
+    // is denied with `ROLE_CAPABILITY_DENIED` *before* the approval
+    // gate runs — the architectural invariant ("orchestrator delegates
+    // mutation") is now load-bearing rather than convention. Closes
+    // audit item #3 from the OpenCode silent-failure inventory.
     const conversationsRef = {
       current: makeConversation([makeMessage({ content: 'streaming...' })]),
     };
@@ -444,11 +454,11 @@ describe('chat-send', () => {
 
     expect(result.loopAction).toBe('continue');
     expect(result.loopCompletedNormally).toBe(false);
-    expect(result.nextApiMessages.at(-1)?.content).toContain('Approval Required');
-    expect(result.nextApiMessages.at(-1)?.content).toContain('ask_user');
-    expect(conversationsRef.current['chat-1'].messages.at(-1)?.content).toContain(
-      'Approval Required',
-    );
+    const lastApiMsg = result.nextApiMessages.at(-1)?.content ?? '';
+    expect(lastApiMsg).toContain('Tool Blocked');
+    expect(lastApiMsg).toContain('sandbox_exec');
+    expect(lastApiMsg).toContain('orchestrator');
+    expect(conversationsRef.current['chat-1'].messages.at(-1)?.content).toContain('Tool Blocked');
   });
 
   it('appends post-tool inject messages to the conversation and next round context', async () => {

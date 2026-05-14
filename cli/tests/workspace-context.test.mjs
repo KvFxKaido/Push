@@ -8,7 +8,13 @@ import {
   loadProjectInstructions,
   loadMemory,
 } from '../workspace-context.ts';
-import { executeToolCall } from '../tools.ts';
+import { executeToolCall as _rawExecuteToolCall } from '../tools.ts';
+
+// Default `role: 'coder'` so the kernel role check admits these
+// direct-executor unit tests; overridden per call where a specific
+// role is under test.
+const executeToolCall = (call, root, opts = {}) =>
+  _rawExecuteToolCall(call, root, { role: 'coder', ...opts });
 
 const PUSH_ROOT = path.resolve(import.meta.dirname, '..', '..');
 

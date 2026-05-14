@@ -10,6 +10,7 @@
 import type { ChatMessage, ChatCard, ReasoningBlock, ToolExecutionResult } from '@/types';
 import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
 import type { ApprovalGateRegistry } from '@/lib/approval-gates';
+import type { AgentRole } from '@push/lib/runtime-contract';
 import { createDefaultApprovalGates } from '@/lib/approval-gates';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import { executeAnyToolCall } from '@/lib/tool-dispatch';
@@ -47,6 +48,15 @@ const DEFAULT_APPROVAL_GATES = createDefaultApprovalGates();
 /** Context that stays constant for the duration of a sendMessage call. */
 export interface ToolExecRunContext {
   repoFullName: string | null;
+  /**
+   * Agent role making the call. Required so the kernel role-capability
+   * check in `WebToolExecutionRuntime.execute` runs unconditionally —
+   * a binding that forgets to set it gets `ROLE_REQUIRED` rather than
+   * silently bypassing enforcement (closes audit item #3 from the
+   * OpenCode silent-failure inventory). The chat hooks pass
+   * `'orchestrator'` here; delegated paths supply their own role.
+   */
+  role: AgentRole;
   /**
    * Active chat id for this turn. Required because tools that scope
    * persistence by chat (notably `create_artifact`) need it
@@ -141,6 +151,7 @@ export async function executeTool(
           call,
           ctx.repoFullName || '',
           ctx.sandboxId,
+          ctx.role,
           ctx.isMainProtected,
           ctx.defaultBranch,
           ctx.provider,

@@ -37,30 +37,25 @@ type WebRuntime = ToolExecutionRuntime<
 const DEFAULT_APPROVAL_GATES = createDefaultApprovalGates();
 
 /**
- * Optional tail parameters for `executeReadOnlyTool`.
+ * Required parameters for `executeReadOnlyTool`'s options bag.
  *
- * Promoted to an options bag so new opt-in fields (like the step-6
- * runtime invariant `role`) can be added without making call sites
- * pass positional `undefined` placeholders. The required per-run
- * bindings (repo, sandbox, provider, model, hooks) stay positional
- * because every caller has to know them.
+ * `role` is required because `WebToolExecutionRuntime.execute` now
+ * unconditionally enforces the role capability check at the kernel
+ * level. The previous opt-in semantics (where callers could omit `role`
+ * and silently bypass enforcement) closed audit item #3 from the
+ * OpenCode silent-failure inventory.
  */
 export interface ExecuteReadOnlyToolOptions {
   capabilityLedger?: import('./capabilities').CapabilityLedger;
   runtime?: WebRuntime;
   /**
-   * Opt in to the runtime-level role capability check in
-   * `WebToolExecutionRuntime`. When set, the runtime refuses any tool
-   * the role cannot use — independent of whether the policy hook was
-   * registered and independent of whether the read-only tool registry
-   * was wired correctly for this call site.
-   *
-   * Explorer opts in. Deep Reviewer does not opt in yet because the
-   * `reviewer` role's capability grant does not currently include
-   * `web:search` but the deep-reviewer flow emits web-search tool
-   * calls — that mismatch needs its own audit first.
+   * Agent role making the call. Threaded into the runtime's
+   * `ToolExecutionContext` so the kernel-level capability check fires
+   * unconditionally. Explorer passes `'explorer'`; Deep Reviewer
+   * passes `'reviewer'` (with `web:search` now granted to reviewer —
+   * see `lib/capabilities.ts:ROLE_CAPABILITIES`).
    */
-  role?: AgentRole;
+  role: AgentRole;
   /**
    * Passive correlation tags to attach to the tool-execution span as
    * `push.*` attributes (see `lib/correlation-context.ts`). Never alters
@@ -80,7 +75,7 @@ export async function executeReadOnlyTool(
   activeProvider: ActiveProvider,
   activeModel: string | undefined,
   hooks: ToolHookRegistry,
-  options: ExecuteReadOnlyToolOptions = {},
+  options: ExecuteReadOnlyToolOptions,
 ): Promise<{ resultText: string; card?: ChatCard }> {
   const { capabilityLedger, runtime, role, correlation } = options;
   return withActiveSpan(
@@ -94,9 +89,7 @@ export async function executeReadOnlyTool(
         'push.tool.source': toolCall.source,
         'push.provider': activeProvider,
         'push.model': activeModel,
-        // Default 'explorer' preserves the pre-existing span label for
-        // callers that do not pass an explicit role (deep-reviewer today).
-        'push.agent.role': role ?? 'explorer',
+        'push.agent.role': role,
         'push.has_repo': Boolean(allowedRepo),
         'push.has_sandbox': Boolean(sandboxId),
       },

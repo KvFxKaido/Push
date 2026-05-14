@@ -14,7 +14,7 @@ import {
 import type { ArtifactAuthor, ArtifactScope } from '../lib/artifacts/types.ts';
 import { CliFlatJsonArtifactStore } from './artifacts-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
-import { roleCanUseTool } from '../lib/capabilities.ts';
+import { enforceRoleCapability, roleCanUseTool } from '../lib/capabilities.ts';
 import type { AgentRole } from '../lib/runtime-contract.ts';
 import { deriveProtocolVersion } from '../lib/tool-registry.ts';
 
@@ -1483,6 +1483,36 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         retryable: false,
       },
     };
+  }
+
+  // Kernel-level role capability check. Mirrors the web runtime's
+  // `WebToolExecutionRuntime.execute` gate so capability enforcement
+  // is binding-independent on both surfaces. The previous arrangement
+  // had the Explorer-side check in `cli/pushd.ts:makeDaemonExplorerToolExec`
+  // (binding-side); the engine's main loop had no kernel role check at
+  // all, which meant a future binding could silently skip enforcement.
+  // Closes audit item #3 from the OpenCode silent-failure inventory.
+  //
+  // Fail-closed when `options.role` is missing (`ROLE_REQUIRED`) so a
+  // forgetful caller is denied at the kernel rather than admitted by
+  // implicit orchestrator. Fail-open semantics for unmapped tool names
+  // are preserved by `enforceRoleCapability`. The Explorer-side
+  // `makeDaemonExplorerToolExec` 3-layer gate stays as defense-in-depth.
+  {
+    const role = isAgentRole(options.role) ? options.role : undefined;
+    const canonicalForCheck = callCanonical || (typeof call?.tool === 'string' ? call.tool : '');
+    const check = enforceRoleCapability(role, canonicalForCheck);
+    if (!check.ok) {
+      return {
+        ok: false,
+        text: `[Tool Blocked — ${call?.tool ?? '(unknown)'}] ${check.message}\n\n${check.detail}`,
+        structuredError: {
+          code: check.type,
+          message: check.message,
+          retryable: false,
+        },
+      };
+    }
   }
   // Forward a canonicalized `alwaysAllow` set into the per-case guard via
   // options so command guards see the same set without re-resolving env on

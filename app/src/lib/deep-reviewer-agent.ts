@@ -79,7 +79,9 @@ export async function runDeepReviewer(
     userProfile: getUserProfile(),
     resolveRuntimeContext: buildReviewerRuntimeContext,
     toolExec: (call) =>
-      executeReadOnlyTool(call, allowedRepo, sandboxId, activeProvider, modelId, hooks),
+      executeReadOnlyTool(call, allowedRepo, sandboxId, activeProvider, modelId, hooks, {
+        role: 'reviewer',
+      }),
     detectAllToolCalls,
     detectAnyToolCall,
     webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,

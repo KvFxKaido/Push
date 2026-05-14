@@ -169,20 +169,22 @@ export class WebToolExecutionRuntime
     try {
       // --- Runtime invariant: role capability check ---
       //
-      // When the caller has declared a role on the context, enforce the
-      // role's capability grant at the runtime layer — *before* hooks,
-      // approval gates, or Protect Main run. The point of this check is
-      // that it fires even when the policy-shaped hook was not registered
-      // and when the prompt-side tool registry is wrong: the runtime is
-      // the last line of defense.
+      // Enforces the role's capability grant at the runtime layer —
+      // *before* hooks, approval gates, or Protect Main run. The check
+      // is unconditional: a binding that fails to declare a role on the
+      // context gets denied with `ROLE_REQUIRED` rather than silently
+      // bypassing enforcement. This is the kernel invariant that closes
+      // audit item #3 from the OpenCode silent-failure inventory.
       //
-      // Today this is opt-in (callers that omit `context.role` skip the
-      // check). A follow-up commit makes `role` required so a forgetful
-      // binding can no longer silently bypass the gate — see the
-      // OpenCode silent-failure audit item #3. The enforcement primitive
-      // already returns a `ROLE_REQUIRED` branch in preparation; this
-      // call site simply doesn't reach it yet.
-      if (context.role) {
+      // The type system enforces this for TypeScript callers
+      // (`ToolExecutionContext.role` is required); the runtime check
+      // catches stragglers from JS callers (CLI) and provides a
+      // structured `ROLE_REQUIRED` error if anyone slips through.
+      //
+      // Fail-open for unmapped tools (forward-compat) is preserved by
+      // `enforceRoleCapability` — only the missing-role branch is
+      // fail-closed.
+      {
         const canonicalName = resolveToolName(toolName) ?? toolName;
         const check = enforceRoleCapability(context.role, canonicalName);
         if (!check.ok) {
@@ -419,7 +421,7 @@ export class WebToolExecutionRuntime
           };
           const author: ArtifactAuthor = {
             surface: 'web',
-            role: context.role ?? 'orchestrator',
+            role: context.role,
             createdAt: Date.now(),
           };
           result = await executeArtifactToolCall(toolCall.call.args, scope, author);

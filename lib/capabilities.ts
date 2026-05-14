@@ -284,7 +284,14 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'artifacts:write',
   ]),
 
-  reviewer: new Set<Capability>(['repo:read', 'pr:read']),
+  // Reviewer grants include `web:search` because the deep-reviewer
+  // protocol (`lib/deep-reviewer-agent.ts`) emits web-search tool calls
+  // when it needs current docs / advisories context. The mismatch was
+  // flagged in `app/src/lib/agent-loop-utils.ts:60-62` as the reason
+  // deep-reviewer didn't opt in to runtime role enforcement; closed
+  // here so the kernel-promoted role check below can be turned on for
+  // every read-only agent including deep-reviewer.
+  reviewer: new Set<Capability>(['repo:read', 'pr:read', 'web:search']),
 
   auditor: new Set<Capability>(['repo:read']),
 };
