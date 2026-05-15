@@ -36,7 +36,7 @@ import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
 import { DaemonModelPicker } from '@/components/daemon/DaemonModelPicker';
 import { ModelPicker } from '@/components/ui/model-picker';
 import { useChat } from '@/hooks/useChat';
-import { useModelCatalog, type ModelCatalog } from '@/hooks/useModelCatalog';
+import { useModelCatalog, buildModelControl } from '@/hooks/useModelCatalog';
 import type { ApprovalQueueHandle } from '@/hooks/useApprovalQueue';
 import type { ConnectionStatus, RequestOptions, SessionResponse } from '@/lib/local-daemon-binding';
 import type { LiveDaemonBinding, ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
@@ -46,7 +46,6 @@ import {
   type PreferredProvider,
 } from '@/lib/providers';
 import type { Conversation, WorkspaceContext, WorkspaceMode } from '@/types';
-import type { AIProviderType } from '@/types';
 
 /**
  * The reconnect surface the daemon hooks share. Both
@@ -211,7 +210,7 @@ export function DaemonChatBody({
 
   const displayedProvider =
     (lockedProvider as PreferredProvider | null) ?? catalog.activeProviderLabel;
-  const modelControl = getDaemonModelControl(catalog, displayedProvider, lockedModel);
+  const modelControl = buildModelControl(catalog, displayedProvider, lockedModel);
   const handleSelectModel = useCallback(
     (model: string) => {
       if (!modelControl || !model.trim()) return;
@@ -449,191 +448,6 @@ export function DaemonChatBody({
 
 function capitalize(s: string): string {
   return s.length > 0 ? s[0].toUpperCase() + s.slice(1) : s;
-}
-
-interface DaemonModelControl {
-  provider: PreferredProvider;
-  providerLabel: string;
-  value: string;
-  options: string[];
-  onChange: (model: string) => void;
-  loading?: boolean;
-  error?: string | null;
-  onRefresh?: () => Promise<void>;
-  allowCustom?: boolean;
-}
-
-function includeSelectedModel(
-  models: string[],
-  selectedModel: string | null | undefined,
-): string[] {
-  if (!selectedModel) return [...models];
-  return models.includes(selectedModel) ? [...models] : [selectedModel, ...models];
-}
-
-function providerLabel(
-  catalog: ModelCatalog,
-  provider: PreferredProvider,
-  fallback: string,
-): string {
-  return catalog.availableProviders.find(([id]) => id === provider)?.[1] ?? fallback;
-}
-
-function getDaemonModelControl(
-  catalog: ModelCatalog,
-  provider: AIProviderType | null | undefined,
-  lockedModel: string | null,
-): DaemonModelControl | null {
-  switch (provider) {
-    case 'ollama':
-      return {
-        provider,
-        providerLabel: providerLabel(catalog, provider, 'Ollama'),
-        value: lockedModel ?? catalog.ollama.model,
-        options: includeSelectedModel(
-          catalog.ollamaModelOptions,
-          lockedModel ?? catalog.ollama.model,
-        ),
-        onChange: catalog.ollama.setModel,
-        loading: catalog.ollamaModels.loading,
-        error: catalog.ollamaModels.error,
-        onRefresh: catalog.refreshOllamaModels,
-        allowCustom: true,
-      };
-    case 'openrouter':
-      return {
-        provider,
-        providerLabel: providerLabel(catalog, provider, 'OpenRouter'),
-        value: lockedModel ?? catalog.openRouter.model,
-        options: includeSelectedModel(
-          catalog.openRouterModelOptions,
-          lockedModel ?? catalog.openRouter.model,
-        ),
-        onChange: catalog.openRouter.setModel,
-        loading: catalog.openRouterModels.loading,
-        error: catalog.openRouterModels.error,
-        onRefresh: catalog.refreshOpenRouterModels,
-      };
-    case 'cloudflare':
-      return {
-        provider,
-        providerLabel: providerLabel(catalog, provider, 'Cloudflare Workers AI'),
-        value: lockedModel ?? catalog.cloudflare.model,
-        options: includeSelectedModel(
-          catalog.cloudflareModelOptions,
-          lockedModel ?? catalog.cloudflare.model,
-        ),
-        onChange: catalog.cloudflare.setModel,
-        loading: catalog.cloudflareModels.loading,
-        error: catalog.cloudflareModels.error,
-        onRefresh: catalog.refreshCloudflareModels,
-      };
-    case 'zen':
-      return {
-        provider,
-        providerLabel: providerLabel(catalog, provider, 'OpenCode Zen'),
-        value: lockedModel ?? catalog.zen.model,
-        options: includeSelectedModel(catalog.zenModelOptions, lockedModel ?? catalog.zen.model),
-        onChange: catalog.zen.setModel,
-        loading: catalog.zenModels.loading,
-        error: catalog.zenModels.error,
-        onRefresh: catalog.refreshZenModels,
-      };
-    case 'nvidia':
-      return {
-        provider,
-        providerLabel: providerLabel(catalog, provider, 'Nvidia NIM'),
-        value: lockedModel ?? catalog.nvidia.model,
-        options: includeSelectedModel(
-          catalog.nvidiaModelOptions,
-          lockedModel ?? catalog.nvidia.model,
-        ),
-        onChange: catalog.nvidia.setModel,
-        loading: catalog.nvidiaModels.loading,
-        error: catalog.nvidiaModels.error,
-        onRefresh: catalog.refreshNvidiaModels,
-      };
-    case 'blackbox':
-      return {
-        provider,
-        providerLabel: providerLabel(catalog, provider, 'Blackbox AI'),
-        value: lockedModel ?? catalog.blackbox.model,
-        options: includeSelectedModel(
-          catalog.blackboxModelOptions,
-          lockedModel ?? catalog.blackbox.model,
-        ),
-        onChange: catalog.blackbox.setModel,
-        loading: catalog.blackboxModels.loading,
-        error: catalog.blackboxModels.error,
-        onRefresh: catalog.refreshBlackboxModels,
-      };
-    case 'kilocode':
-      return {
-        provider,
-        providerLabel: providerLabel(catalog, provider, 'Kilo Code'),
-        value: lockedModel ?? catalog.kilocode.model,
-        options: includeSelectedModel(
-          catalog.kilocodeModelOptions,
-          lockedModel ?? catalog.kilocode.model,
-        ),
-        onChange: catalog.kilocode.setModel,
-        loading: catalog.kilocodeModels.loading,
-        error: catalog.kilocodeModels.error,
-        onRefresh: catalog.refreshKilocodeModels,
-      };
-    case 'openadapter':
-      return {
-        provider,
-        providerLabel: providerLabel(catalog, provider, 'OpenAdapter'),
-        value: lockedModel ?? catalog.openadapter.model,
-        options: includeSelectedModel(
-          catalog.openAdapterModelOptions,
-          lockedModel ?? catalog.openadapter.model,
-        ),
-        onChange: catalog.openadapter.setModel,
-        loading: catalog.openAdapterModels.loading,
-        error: catalog.openAdapterModels.error,
-        onRefresh: catalog.refreshOpenAdapterModels,
-      };
-    case 'azure': {
-      const value = lockedModel ?? catalog.azure.model;
-      const options = catalog.azure.deployments.map((deployment) => deployment.model);
-      return {
-        provider,
-        providerLabel: providerLabel(catalog, provider, 'Azure OpenAI'),
-        value,
-        options: includeSelectedModel(options, value),
-        onChange: catalog.azure.setModel,
-        allowCustom: true,
-      };
-    }
-    case 'bedrock': {
-      const value = lockedModel ?? catalog.bedrock.model;
-      const options = catalog.bedrock.deployments.map((deployment) => deployment.model);
-      return {
-        provider,
-        providerLabel: providerLabel(catalog, provider, 'AWS Bedrock'),
-        value,
-        options: includeSelectedModel(options, value),
-        onChange: catalog.bedrock.setModel,
-        allowCustom: true,
-      };
-    }
-    case 'vertex':
-      return {
-        provider,
-        providerLabel: providerLabel(catalog, provider, 'Google Vertex'),
-        value: lockedModel ?? catalog.vertex.model,
-        options: includeSelectedModel(
-          catalog.vertex.modelOptions,
-          lockedModel ?? catalog.vertex.model,
-        ),
-        onChange: catalog.vertex.setModel,
-        allowCustom: true,
-      };
-    default:
-      return null;
-  }
 }
 
 interface ReconnectBannerProps {
