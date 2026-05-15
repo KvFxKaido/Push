@@ -23,7 +23,7 @@ import { getSandboxOwnerToken } from '@/lib/sandbox-client';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UseBackgroundCoderJobResult } from '@/hooks/useBackgroundCoderJob';
 import { appendCardsToLatestToolCall } from '@/lib/chat-tool-messages';
-import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import { summarizeToolResultPreview, utf8ByteLength } from '@/lib/chat-run-events';
 import {
   buildDelegationResultCard,
   filterDelegationCardsForInlineDisplay,
@@ -631,7 +631,7 @@ export function useAgentDelegation({
             agent: 'coder',
             summary: summarizeToolResultPreview(toolExecResult.text),
             delegationOutcome: coderOutcome,
-            orchestratorBytes: toolExecResult.text.length,
+            orchestratorBytes: utf8ByteLength(toolExecResult.text),
           });
         }
       } else if (toolCall.call.tool === 'plan_tasks') {

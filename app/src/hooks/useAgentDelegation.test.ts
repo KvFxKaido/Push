@@ -57,6 +57,7 @@ const chatToolMessages = vi.hoisted(() => ({
 }));
 const chatRunEvents = vi.hoisted(() => ({
   summarizeToolResultPreview: vi.fn((s: string) => s),
+  utf8ByteLength: vi.fn((s: string) => s.length),
 }));
 const delegationResult = vi.hoisted(() => ({
   buildDelegationResultCard: vi.fn(() => ({ type: 'delegation-result' })),

@@ -98,7 +98,7 @@ import {
   recordVerificationCommandResult,
   recordVerificationMutation,
 } from '@/lib/verification-runtime';
-import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import { summarizeToolResultPreview, utf8ByteLength } from '@/lib/chat-run-events';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
 import {
   correlationToSpanAttributes,
@@ -678,7 +678,7 @@ export async function handleCoderDelegation(
         agent: 'coder',
         summary: 'Cancelled by user.',
         delegationOutcome: abortOutcome,
-        orchestratorBytes: abortText.length,
+        orchestratorBytes: utf8ByteLength(abortText),
       });
       return {
         status: 'aborted',

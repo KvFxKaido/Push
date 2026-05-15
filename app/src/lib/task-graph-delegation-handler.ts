@@ -82,7 +82,7 @@ import {
   type TaskExecutor,
 } from '@/lib/task-graph';
 import type { UserGoalAnchor } from '@push/lib/user-goal-anchor';
-import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import { summarizeToolResultPreview, utf8ByteLength } from '@/lib/chat-run-events';
 import {
   buildDelegationResultCard,
   formatCompactDelegationToolResult,
@@ -974,14 +974,22 @@ export async function handleTaskGraphDelegation(
       agent: 'task_graph',
       summary: summarizeToolResultPreview(toolExecResult.text),
       delegationOutcome: graphOutcome,
-      orchestratorBytes: toolExecResult.text.length,
+      orchestratorBytes: utf8ByteLength(toolExecResult.text),
     });
     return toolExecResult;
   } catch (err) {
     const isAbort = err instanceof DOMException && err.name === 'AbortError';
     if (isAbort || ctx.abortRef.current) {
+      const abortText = '[Tool Result — plan_tasks]\nTask graph execution cancelled by user.';
+      ctx.appendRunEvent(chatId, {
+        type: 'subagent.completed',
+        executionId,
+        agent: 'task_graph',
+        summary: 'Cancelled by user.',
+        orchestratorBytes: utf8ByteLength(abortText),
+      });
       return {
-        text: '[Tool Result — plan_tasks]\nTask graph execution cancelled by user.',
+        text: abortText,
         originBranch,
       };
     }

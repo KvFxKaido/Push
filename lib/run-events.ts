@@ -101,3 +101,14 @@ export function summarizeToolResultPreview(text: string, maxLength = 220): strin
   }
   return `${summary.slice(0, maxLength - 1).trimEnd()}...`;
 }
+
+const utf8Encoder = new TextEncoder();
+
+/**
+ * UTF-8 byte length of `text`. Use this whenever a metric is named
+ * `*Bytes` so the reported number matches what providers and transports
+ * actually count, not the JS engine's UTF-16 code-unit count.
+ */
+export function utf8ByteLength(text: string): number {
+  return utf8Encoder.encode(text).length;
+}
