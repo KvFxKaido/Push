@@ -307,13 +307,14 @@ export class TurnPolicyRegistry {
               hook: async (
                 toolName: string,
                 args: Record<string, unknown>,
-                result: ToolExecutionResult,
+                result: unknown,
               ): Promise<PostToolUseResult> => {
+                const typedResult = result as ToolExecutionResult;
                 const afterResult = await this.evaluateAfterTool(
                   toolName,
                   args,
-                  result.text,
-                  Boolean(result.structuredError),
+                  typedResult.text,
+                  Boolean(typedResult.structuredError),
                   ctx,
                 );
                 if (!afterResult) return {};
