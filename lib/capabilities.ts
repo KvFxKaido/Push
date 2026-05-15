@@ -299,18 +299,25 @@ const LOCAL_DAEMON_ORCHESTRATOR_EXTRA: ReadonlySet<Capability> = new Set<Capabil
 ]);
 
 /**
- * Capabilities the cloud orchestrator has that local-daemon orchestrator does
- * not. These are remote-bound GitHub mutations: in local-daemon mode the
- * paired session has no GitHub remote wired up, so `create_pr` / `merge_pr` /
- * `delete_branch` / `trigger_workflow` would fail at the transport layer even
- * if the model emitted them. Strip them from the local-daemon effective grant
- * so the runtime denial is on the capability check, not on a network error.
+ * Remote-bound capabilities that no role can use in `local-daemon` mode.
+ * The paired pushd session has no GitHub remote wired up, so
+ * `create_pr` / `merge_pr` / `delete_branch` / `trigger_workflow` would fail
+ * at the transport layer even if the model emitted them. Strip them from the
+ * local-daemon effective grant so the runtime denial is on the capability
+ * check, not on a network error.
  *
- * The static `ROLE_CAPABILITIES.orchestrator` entry encodes the cloud grant
- * (which is the dominant surface today); `getEffectiveCapabilities` subtracts
- * this set for `local-daemon`.
+ * Applied system-wide (every role) rather than only on `orchestrator` —
+ * "no remote" is a property of the execution mode, not a property of the
+ * role. Previously this only stripped `orchestrator` because that was the
+ * only mode-aware path; now `coder` is also stripped, which matters if a
+ * future cloud → local-daemon delegation ever lands. (Follow-up to PR #559
+ * review feedback.)
+ *
+ * The static `ROLE_CAPABILITIES` entries encode the cloud grants (the
+ * dominant surface today); `getEffectiveCapabilities` subtracts this set
+ * for `local-daemon`.
  */
-const LOCAL_DAEMON_ORCHESTRATOR_REMOVE: ReadonlySet<Capability> = new Set<Capability>([
+const LOCAL_DAEMON_REMOTE_ONLY_CAPS: ReadonlySet<Capability> = new Set<Capability>([
   'pr:write',
   'workflow:trigger',
 ]);
@@ -385,12 +392,21 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
 /**
  * Resolve the effective capability set for a role in a given execution
  * mode. `cloud` returns the static grant from ROLE_CAPABILITIES; in
- * `local-daemon` mode the orchestrator picks up the daemon extras
- * (exec, write, test, download) and drops the remote-only caps
- * (`pr:write`, `workflow:trigger`) that the paired session can't reach.
+ * `local-daemon` mode:
  *
- * Other roles are unchanged across modes: coder already has those,
- * explorer stays read-only by intent, reviewer/auditor are diff-only.
+ *   - Every role drops the remote-only caps (`pr:write`,
+ *     `workflow:trigger`) — the paired session has no GitHub remote, so
+ *     these would fail at the transport layer for any role. Enforced at
+ *     the capability boundary, not as a runtime network error.
+ *   - The orchestrator additionally picks up the daemon-orchestrator
+ *     extras (exec, write, test, download) so it can wield sandbox tools
+ *     directly (no Coder hop on the paired pushd path).
+ *
+ * Reviewer/auditor have no remote-only caps to drop, so their effective
+ * grant matches their static grant in both modes. Coder's grant changes
+ * in local-daemon: it loses pr:write + workflow:trigger but keeps
+ * everything else — relevant if a cloud → local-daemon Coder delegation
+ * ever lands. Explorer is similarly unaffected (no pr:write to drop).
  */
 export function getEffectiveCapabilities(
   role: AgentRole,
@@ -398,15 +414,15 @@ export function getEffectiveCapabilities(
 ): ReadonlySet<Capability> {
   const base = ROLE_CAPABILITIES[role];
   if (!base) return new Set<Capability>();
-  if (role === 'orchestrator' && mode === 'local-daemon') {
-    const result = new Set<Capability>();
-    for (const cap of base) {
-      if (!LOCAL_DAEMON_ORCHESTRATOR_REMOVE.has(cap)) result.add(cap);
-    }
-    for (const cap of LOCAL_DAEMON_ORCHESTRATOR_EXTRA) result.add(cap);
-    return result;
+  if (mode !== 'local-daemon') return base;
+  const result = new Set<Capability>();
+  for (const cap of base) {
+    if (!LOCAL_DAEMON_REMOTE_ONLY_CAPS.has(cap)) result.add(cap);
   }
-  return base;
+  if (role === 'orchestrator') {
+    for (const cap of LOCAL_DAEMON_ORCHESTRATOR_EXTRA) result.add(cap);
+  }
+  return result;
 }
 
 /**

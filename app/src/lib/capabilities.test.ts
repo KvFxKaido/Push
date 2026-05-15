@@ -339,12 +339,23 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       }
     });
 
-    it('coder has the same capabilities in both modes (already wide)', () => {
+    it('coder keeps sandbox/git caps in both modes but loses remote-only caps on local-daemon', () => {
+      // Sandbox + local-git caps are mode-independent for coder.
       for (const mode of ['cloud', 'local-daemon'] as const) {
         expect(roleCanUseTool('coder', 'sandbox_exec', mode)).toBe(true);
         expect(roleCanUseTool('coder', 'sandbox_write_file', mode)).toBe(true);
         expect(roleCanUseTool('coder', 'sandbox_push', mode)).toBe(true);
       }
+      // pr:write / workflow:trigger drop in local-daemon — no remote wired
+      // up in that mode, regardless of role. (Follow-up to PR #559.)
+      expect(roleHasCapability('coder', 'pr:write', 'cloud')).toBe(true);
+      expect(roleHasCapability('coder', 'workflow:trigger', 'cloud')).toBe(true);
+      expect(roleHasCapability('coder', 'pr:write', 'local-daemon')).toBe(false);
+      expect(roleHasCapability('coder', 'workflow:trigger', 'local-daemon')).toBe(false);
+      expect(roleCanUseTool('coder', 'create_pr', 'local-daemon')).toBe(false);
+      expect(roleCanUseTool('coder', 'merge_pr', 'local-daemon')).toBe(false);
+      expect(roleCanUseTool('coder', 'delete_branch', 'local-daemon')).toBe(false);
+      expect(roleCanUseTool('coder', 'trigger_workflow', 'local-daemon')).toBe(false);
     });
 
     it('auditor stays minimal in both modes', () => {
