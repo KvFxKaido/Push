@@ -108,7 +108,7 @@ export function RelayModeChip({ deploymentUrl, status, replayUnavailableAt }: Re
       <div
         key={flashKey}
         aria-label={`Remote relay mode at ${host}, ${statusLabel(status.state)}${isReplayEvent ? ' (replay unavailable signal active)' : ''}`}
-        className="inline-flex items-center gap-2 rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1 text-xs font-medium text-sky-200"
+        className="inline-flex min-w-0 items-center gap-2 rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1 text-xs font-medium text-sky-200"
         style={
           isReplayEvent
             ? {

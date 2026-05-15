@@ -9,7 +9,8 @@
 
 import process from 'node:process';
 import path from 'node:path';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, promises as fs } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 
 import {
@@ -125,6 +126,7 @@ import { shouldFullRedraw } from './tui-render-frame.js';
 
 const MAX_TRANSCRIPT = 2000; // max lines in transcript buffer
 const MAX_TOOL_FEED = 200; // max items in tool feed
+const TUI_DAEMON_CAPABILITIES = Object.freeze(['event_v2']);
 
 // OSC 52 payload cap. Widely-supported terminals (Windows Terminal, iTerm2,
 // kitty, alacritty) accept at least ~100 KB; tmux historically capped lower
@@ -152,6 +154,42 @@ function normalizeProviderInput(value) {
   const normalized = value.trim().toLowerCase();
   if (!normalized || normalized === 'undefined' || normalized === 'null') return '';
   return normalized;
+}
+
+function normalizeBooleanSetting(value, fallback = false) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value !== 'string') return Boolean(value);
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (['1', 'true', 'yes', 'on', 'auto'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off', 'manual'].includes(normalized)) return false;
+  return fallback;
+}
+
+function isTuiDaemonAutoStartEnabled(config) {
+  return normalizeBooleanSetting(
+    process.env.PUSH_TUI_DAEMON_AUTOSTART ?? config.tuiDaemonAutoStart,
+    true,
+  );
+}
+
+function isProcessRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // `kill(pid, 0)` only checks whether the process exists. POSIX
+    // distinguishes two failure modes: ESRCH (no such process) and
+    // EPERM (process exists, but the caller cannot signal it). EPERM
+    // means the daemon is running under another uid or has changed
+    // credentials — it is NOT "not running." Treating it as such
+    // would cause `startDaemonForTui` to delete the pidfile and spawn
+    // a duplicate. Any other code (EINVAL, etc.) is treated as the
+    // safe "not running" fallback.
+    return err?.code === 'EPERM';
+  }
 }
 
 function findContainingPushRepoRoot(startDir) {
@@ -1016,9 +1054,10 @@ function maskInput(str) {
 
 /**
  * Build the ordered list of config items.
- * Provider rows followed by: tavily, sandbox, execMode, explain.
+ * Provider rows followed by: tavily, sandbox, execMode, explain,
+ * daemon, remote.
  */
-function getConfigItems(providerList, config) {
+function getConfigItems(providerList, config, modalState = null) {
   const items = [];
   for (const p of providerList) {
     const providerConf = config[p.id] || {};
@@ -1052,13 +1091,27 @@ function getConfigItems(providerList, config) {
   // ExplainMode
   const explainOn = process.env.PUSH_EXPLAIN_MODE === 'true' || config.explainMode === true;
   items.push({ type: 'explain', id: 'explain', explainOn });
+  // TUI daemon autostart
+  items.push({
+    type: 'daemon',
+    id: 'daemon',
+    daemonAutoStart: isTuiDaemonAutoStartEnabled(config),
+  });
+  // Remote relay config is stored separately from ~/.push/config.json;
+  // modalState carries a best-effort async snapshot loaded when the
+  // modal opens.
+  items.push({
+    type: 'remote',
+    id: 'remote',
+    remoteStatus: modalState?.remoteStatusLabel || 'status...',
+  });
   return items;
 }
 
 function renderConfigModal(buf, theme, rows, cols, modalState, config) {
   const { glyphs } = theme;
   const providers = getProviderList();
-  const items = getConfigItems(providers, config);
+  const items = getConfigItems(providers, config, modalState);
   const modalWidth = Math.min(50, cols - 8);
 
   if (modalState.mode === 'list') {
@@ -1109,6 +1162,17 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
           : theme.style('fg.dim', 'off');
         const name = cursorStyle(theme, isCursor, 'explain');
         lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${status}`);
+      } else if (item.type === 'daemon') {
+        const status = item.daemonAutoStart
+          ? theme.style('state.success', 'auto')
+          : theme.style('fg.dim', 'manual');
+        const name = cursorStyle(theme, isCursor, 'daemon');
+        lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${status}`);
+      } else if (item.type === 'remote') {
+        const name = cursorStyle(theme, isCursor, 'remote');
+        lines.push(
+          `  ${marker} ${num} ${padTo(name, 14)} ${theme.style('fg.dim', item.remoteStatus)}`,
+        );
       }
 
       // Visual gap between providers and extras
@@ -1116,7 +1180,7 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
     }
 
     lines.push('');
-    lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter edit  Esc close')}`);
+    lines.push(`  ${theme.style('fg.dim', '\u2191\u2193 navigate  Enter edit/toggle  Esc close')}`);
 
     renderCenteredModalBox(buf, theme, rows, cols, modalWidth, lines);
   } else if (modalState.mode === 'edit') {
@@ -1386,6 +1450,91 @@ export async function runTUI(options = {}) {
   let daemonClient = null;
   let daemonSessionId = null;
   let daemonAttachToken = null;
+  let daemonAutoStartAttempted = false;
+
+  async function readDaemonPidFile(pidPath) {
+    try {
+      const raw = await fs.readFile(pidPath, 'utf8');
+      const parsed = Number.parseInt(raw.trim(), 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function startDaemonForTui() {
+    const { getPidPath, getSocketPath, getLogPath } = await import('./pushd.js');
+    const pidPath = getPidPath();
+    const existingPid = await readDaemonPidFile(pidPath);
+    const socketPath = getSocketPath();
+    const logPath = getLogPath();
+
+    if (existingPid && isProcessRunning(existingPid)) {
+      const { waitForReady } = await import('./daemon-client.js');
+      const ready = await waitForReady(socketPath, { maxWaitMs: 3000, intervalMs: 200 });
+      if (ready) {
+        return { status: 'already-running', ready, pid: existingPid, socketPath, logPath };
+      }
+      // The pid is alive but the socket never responded. Two
+      // explanations: (1) the pid file is stale and the pid was reused
+      // by an unrelated process (e.g. crash without pidfile cleanup);
+      // (2) pushd is wedged. Returning `ready: false` here would
+      // strand the session in inline-fallback mode for the rest of
+      // the TUI run — `daemonAutoStartAttempted` flips and the
+      // autostart never retries. Fall through to the spawn path
+      // instead: if the live pid is actually pushd, the duplicate
+      // spawn will hit EADDRINUSE on the unix socket and exit
+      // (leaving the original in place), so the cost of being wrong
+      // is one noisy log line. The cost of being right is a working
+      // session. Codex P2 on PR #566.
+    }
+
+    if (existingPid) {
+      try {
+        await fs.unlink(pidPath);
+      } catch {
+        /* stale pid cleanup is best-effort */
+      }
+    }
+
+    const { spawn } = await import('node:child_process');
+    const currentExt = import.meta.url.match(/\.(m?[jt]s)$/)?.[1] ?? 'mjs';
+    const pushdPath = fileURLToPath(new URL(`./pushd.${currentExt}`, import.meta.url));
+    // Both .ts and .mts need the tsx loader; Node won't strip TS
+    // syntax on its own. `.js` / `.mjs` are runnable directly.
+    const needsTsxLoader = currentExt === 'ts' || currentExt === 'mts';
+    const nodeArgs = needsTsxLoader ? ['--import', 'tsx', pushdPath] : [pushdPath];
+
+    const logDir = path.dirname(logPath);
+    await fs.mkdir(logDir, { recursive: true, mode: 0o700 });
+    try {
+      await fs.chmod(logDir, 0o700);
+    } catch {
+      /* non-POSIX */
+    }
+    const logHandle = await fs.open(logPath, 'a', 0o600);
+    try {
+      await logHandle.chmod(0o600);
+    } catch {
+      /* non-POSIX */
+    }
+
+    let child;
+    try {
+      child = spawn(process.execPath, nodeArgs, {
+        detached: true,
+        stdio: ['ignore', logHandle.fd, logHandle.fd],
+        env: { ...process.env },
+      });
+      child.unref();
+    } finally {
+      await logHandle.close();
+    }
+
+    const { waitForReady } = await import('./daemon-client.js');
+    const ready = await waitForReady(socketPath, { maxWaitMs: 3000, intervalMs: 200 });
+    return { status: 'started', ready, pid: child.pid, socketPath, logPath };
+  }
 
   async function tryDaemonConnect() {
     try {
@@ -1396,7 +1545,12 @@ export async function runTUI(options = {}) {
       if (!client) return false;
 
       // Verify protocol with hello
-      const hello = await client.request('hello', {}, null, 500);
+      const hello = await client.request(
+        'hello',
+        { capabilities: [...TUI_DAEMON_CAPABILITIES] },
+        null,
+        500,
+      );
       if (!hello.ok) {
         client.close();
         return false;
@@ -1430,14 +1584,40 @@ export async function runTUI(options = {}) {
     }
   }
 
+  async function attachExistingDaemonSession() {
+    if (!daemonClient || daemonSessionId || !sessionPersisted || !state?.sessionId) {
+      return false;
+    }
+    try {
+      await daemonClient.request(
+        'attach_session',
+        {
+          sessionId: state.sessionId,
+          lastSeenSeq: state.eventSeq || 0,
+          attachToken: state.attachToken || undefined,
+          capabilities: [...TUI_DAEMON_CAPABILITIES],
+        },
+        null,
+        1500,
+      );
+      daemonSessionId = state.sessionId;
+      daemonAttachToken = state.attachToken || null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function ensureDaemonSession() {
     if (!daemonClient || daemonSessionId) return;
+    if (await attachExistingDaemonSession()) return;
     try {
       const res = await daemonClient.request('start_session', {
         provider: state.provider,
         model: state.model,
         repo: { rootPath: state.cwd },
         mode: 'tui',
+        capabilities: [...TUI_DAEMON_CAPABILITIES],
       });
       daemonSessionId = res.payload.sessionId;
       daemonAttachToken = res.payload.attachToken;
@@ -1452,15 +1632,58 @@ export async function runTUI(options = {}) {
     }
   }
 
-  // Try daemon on startup (fast probe — 500ms connect + 500ms hello max)
-  const daemonConnected = await tryDaemonConnect();
-  if (daemonConnected) {
-    addTranscriptEntry(
-      tuiState,
-      'status',
-      'Connected to pushd daemon. Sessions persist in background.',
-    );
+  async function ensureDaemonConnected({ announce = true } = {}) {
+    if (daemonClient?.connected) return true;
+
+    // Fast probe first — if pushd is already running this stays below
+    // a second and avoids an unnecessary spawn path.
+    if (await tryDaemonConnect()) {
+      if (announce) {
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          'Connected to pushd daemon. Sessions persist in background.',
+        );
+      }
+      return true;
+    }
+
+    if (!isTuiDaemonAutoStartEnabled(config) || daemonAutoStartAttempted) {
+      return false;
+    }
+    daemonAutoStartAttempted = true;
+
+    try {
+      const started = await startDaemonForTui();
+      if (started.ready && (await tryDaemonConnect())) {
+        if (announce) {
+          const verb = started.status === 'already-running' ? 'Connected to' : 'Started';
+          addTranscriptEntry(
+            tuiState,
+            'status',
+            `${verb} pushd daemon. Sessions persist in background.`,
+          );
+        }
+        return true;
+      }
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `pushd ${started.status === 'started' ? 'spawned' : 'is running'} but is not responsive yet. Falling back to inline mode. Log: ${started.logPath}`,
+      );
+      return false;
+    } catch (err) {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        `Could not start pushd (${err.message}). Falling back to inline mode.`,
+      );
+      return false;
+    }
   }
+
+  // Try daemon on startup; start it if TUI daemon autostart is enabled.
+  await ensureDaemonConnected({ announce: true });
 
   const runtimeOriginWarning = getRuntimeOriginWarning(state.cwd);
   if (runtimeOriginWarning) {
@@ -2331,6 +2554,7 @@ export async function runTUI(options = {}) {
               sessionId: daemonSessionId,
               text,
               attachToken: daemonAttachToken,
+              capabilities: [...TUI_DAEMON_CAPABILITIES],
             },
             daemonSessionId,
           );
@@ -3152,10 +3376,240 @@ export async function runTUI(options = {}) {
     await switchProvider(providers.indexOf(target));
   }
 
+  async function requestDaemonAdmin(
+    type,
+    payload = {},
+    { timeoutMs = 2000, startDaemon = false } = {},
+  ) {
+    if (!daemonClient?.connected && startDaemon) {
+      await ensureDaemonConnected({ announce: false });
+    }
+
+    if (daemonClient?.connected) {
+      try {
+        const response = await daemonClient.request(type, payload, null, timeoutMs);
+        return {
+          ok: Boolean(response.ok),
+          payload: response.payload || {},
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          code: err.code || 'UNKNOWN',
+          error: err.message || String(err),
+        };
+      }
+    }
+
+    const { tryConnect } = await import('./daemon-client.js');
+    const { getSocketPath } = await import('./pushd.js');
+    const client = await tryConnect(getSocketPath(), 500);
+    if (!client) return { ok: false, code: 'DAEMON_OFFLINE', error: 'daemon not running' };
+    try {
+      const response = await client.request(type, payload, null, timeoutMs);
+      return {
+        ok: Boolean(response.ok),
+        payload: response.payload || {},
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        code: err.code || 'UNKNOWN',
+        error: err.message || String(err),
+      };
+    } finally {
+      client.close();
+    }
+  }
+
+  function formatRelayStatusLines(payload, { offline = false } = {}) {
+    const persisted = payload?.persisted || null;
+    const live = payload?.live || null;
+    if (!persisted) {
+      return [`Remote relay: disabled${offline ? ' (daemon offline)' : ''}`];
+    }
+
+    const lines = [
+      `Remote relay: enabled${offline ? ' (daemon offline)' : ''}`,
+      `  deployment: ${persisted.deploymentUrl}`,
+    ];
+    if (persisted.enabledAt) {
+      lines.push(`  enabled at: ${new Date(persisted.enabledAt).toISOString()}`);
+    }
+    if (live?.running) {
+      lines.push(`  client: running`);
+      lines.push(`  state: ${live.state || 'unknown'}`);
+      if (typeof live.attempt === 'number' && live.attempt > 0) {
+        lines.push(`  attempt: ${live.attempt}`);
+      }
+      if (live.exhausted) lines.push(`  exhausted: true`);
+      if (live.closeCode !== null && live.closeCode !== undefined) {
+        lines.push(`  last close: ${live.closeCode} ${live.closeReason || ''}`.trimEnd());
+      }
+      if (typeof live.allowlistSize === 'number') {
+        lines.push(`  allowlist: ${live.allowlistSize} attach token(s)`);
+      }
+    } else if (!offline) {
+      lines.push(`  client: not running`);
+    }
+    return lines;
+  }
+
+  async function getRemoteStatusLabel() {
+    const response = await requestDaemonAdmin('relay_status', {}, { timeoutMs: 1000 });
+    if (response.ok) {
+      const persisted = response.payload?.persisted || null;
+      const live = response.payload?.live || null;
+      if (!persisted) return 'off';
+      if (live?.running) return live.state ? String(live.state) : 'running';
+      return 'enabled';
+    }
+
+    const { readRelayConfig } = await import('./pushd-relay-config.js');
+    const cfg = await readRelayConfig();
+    return cfg ? 'config only' : 'off';
+  }
+
+  async function handleRemoteCommand(arg) {
+    const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
+    const sub = (parts[0] || 'status').toLowerCase();
+
+    if (sub === 'status' || sub === 'show') {
+      const response = await requestDaemonAdmin('relay_status', {}, { timeoutMs: 1500 });
+      if (response.ok) {
+        addTranscriptEntry(tuiState, 'status', formatRelayStatusLines(response.payload).join('\n'));
+        scheduler.flush();
+        return;
+      }
+      if (response.code === 'DAEMON_OFFLINE') {
+        const { readRelayConfig } = await import('./pushd-relay-config.js');
+        const cfg = await readRelayConfig();
+        const payload = cfg
+          ? { persisted: { deploymentUrl: cfg.deploymentUrl, enabledAt: cfg.enabledAt } }
+          : { persisted: null };
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          formatRelayStatusLines(payload, { offline: true }).join('\n'),
+        );
+        scheduler.flush();
+        return;
+      }
+      addTranscriptEntry(
+        tuiState,
+        'error',
+        `Remote relay status failed: ${response.error || response.code || 'unknown'}`,
+      );
+      scheduler.flush();
+      return;
+    }
+
+    if (sub === 'enable') {
+      const deploymentUrl = parts[1];
+      const token = parts[2];
+      if (!deploymentUrl || !token) {
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          'Usage: /remote enable <deployment-url> <pushd_relay_...>',
+        );
+        scheduler.flush();
+        return;
+      }
+      if (!token.startsWith('pushd_relay_')) {
+        addTranscriptEntry(tuiState, 'warning', 'Remote relay token must start with pushd_relay_');
+        scheduler.flush();
+        return;
+      }
+
+      const response = await requestDaemonAdmin(
+        'relay_enable',
+        { deploymentUrl, token },
+        { timeoutMs: 5000, startDaemon: true },
+      );
+      if (response.ok) {
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          `Remote relay enabled: ${deploymentUrl} (${maskSecret(token)})`,
+        );
+        scheduler.flush();
+        return;
+      }
+      if (response.code === 'DAEMON_OFFLINE') {
+        const { writeRelayConfig } = await import('./pushd-relay-config.js');
+        try {
+          await writeRelayConfig({ deploymentUrl, token });
+          addTranscriptEntry(
+            tuiState,
+            'status',
+            `Remote relay config saved: ${deploymentUrl}. pushd will dial it on start.`,
+          );
+        } catch (err) {
+          addTranscriptEntry(
+            tuiState,
+            'error',
+            `Remote relay enable failed: ${err.message || String(err)}`,
+          );
+        }
+        scheduler.flush();
+        return;
+      }
+
+      addTranscriptEntry(
+        tuiState,
+        'error',
+        `Remote relay enable failed: ${response.error || response.code || 'unknown'}`,
+      );
+      scheduler.flush();
+      return;
+    }
+
+    if (sub === 'disable') {
+      const response = await requestDaemonAdmin('relay_disable', {}, { timeoutMs: 3000 });
+      if (response.ok) {
+        const removed = Boolean(response.payload?.configRemoved);
+        const stopped = Boolean(response.payload?.clientStopped);
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          `Remote relay disabled${removed ? '' : ' (no config was present)'}${stopped ? ' (closed live connection)' : ''}`,
+        );
+        scheduler.flush();
+        return;
+      }
+      if (response.code === 'DAEMON_OFFLINE') {
+        const { deleteRelayConfig } = await import('./pushd-relay-config.js');
+        const removed = await deleteRelayConfig();
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          `Remote relay config ${removed ? 'removed' : 'was not set'} (daemon offline)`,
+        );
+        scheduler.flush();
+        return;
+      }
+      addTranscriptEntry(
+        tuiState,
+        'error',
+        `Remote relay disable failed: ${response.error || response.code || 'unknown'}`,
+      );
+      scheduler.flush();
+      return;
+    }
+
+    addTranscriptEntry(
+      tuiState,
+      'warning',
+      'Usage: /remote status | /remote enable <deployment-url> <pushd_relay_...> | /remote disable',
+    );
+    scheduler.flush();
+  }
+
   /** Handle /config [subcommand] [args]. */
   async function handleConfigCommand(arg) {
     if (!arg) {
-      openConfigModal();
+      await openConfigModal();
       return;
     }
 
@@ -3287,10 +3741,35 @@ export async function runTUI(options = {}) {
       return;
     }
 
+    if (sub === 'daemon') {
+      const value = parts[1]?.toLowerCase();
+      if (value !== 'auto' && value !== 'off') {
+        addTranscriptEntry(tuiState, 'warning', 'Usage: /config daemon auto|off');
+        scheduler.flush();
+        return;
+      }
+      const enabled = value === 'auto';
+      config.tuiDaemonAutoStart = enabled;
+      process.env.PUSH_TUI_DAEMON_AUTOSTART = String(enabled);
+      await saveConfig(config);
+      if (enabled) {
+        daemonAutoStartAttempted = false;
+        await ensureDaemonConnected({ announce: true });
+      }
+      addTranscriptEntry(tuiState, 'status', `TUI daemon autostart: ${enabled ? 'auto' : 'off'}`);
+      scheduler.flush();
+      return;
+    }
+
+    if (sub === 'remote') {
+      await handleRemoteCommand(parts.slice(1).join(' '));
+      return;
+    }
+
     addTranscriptEntry(
       tuiState,
       'warning',
-      `Unknown config subcommand: ${sub}. Try: key, url, tavily, sandbox, explain`,
+      `Unknown config subcommand: ${sub}. Try: key, url, tavily, sandbox, explain, daemon, remote`,
     );
     scheduler.flush();
   }
@@ -3503,6 +3982,10 @@ export async function runTUI(options = {}) {
         await handleConfigCommand(arg || null);
         return true;
 
+      case 'remote':
+        await handleRemoteCommand(arg || null);
+        return true;
+
       case 'theme':
         await handleThemeCommand(arg || null);
         return true;
@@ -3532,6 +4015,8 @@ export async function runTUI(options = {}) {
             '  /config tavily <key> Set Tavily web search API key',
             '  /config sandbox on|off  Toggle local Docker sandbox',
             '  /config explain on|off  Toggle pattern explanations',
+            '  /config daemon auto|off  Toggle TUI pushd autostart',
+            '  /remote status|enable|disable  Manage Remote relay',
             '  /theme               Show current theme',
             '  /theme list          List available themes',
             '  /theme preview [<name>]  Preview theme swatches (all themes if omitted)',
@@ -4191,7 +4676,7 @@ export async function runTUI(options = {}) {
 
   // ── Config modal lifecycle ────────────────────────────────────────
 
-  function openConfigModal() {
+  async function openConfigModal() {
     setActiveOverlayModal('config');
     tuiState.configModalState = {
       mode: 'list',
@@ -4200,6 +4685,7 @@ export async function runTUI(options = {}) {
       editBuf: '',
       editCursor: 0,
       pickCursor: 0,
+      remoteStatusLabel: await getRemoteStatusLabel(),
     };
     tuiState.dirty.add('all');
     scheduler.flush();
@@ -4213,7 +4699,7 @@ export async function runTUI(options = {}) {
   }
 
   function getConfigItemCount() {
-    return getProviderList().length + 4;
+    return getProviderList().length + 6;
   }
 
   async function handleConfigModalInput(key) {
@@ -4348,6 +4834,20 @@ export async function runTUI(options = {}) {
       await saveConfig(config);
       process.env.PUSH_EXPLAIN_MODE = String(!isOn);
       await refreshSystemPromptForConfigChange();
+    } else if (index === providers.length + 4) {
+      // TUI daemon autostart → toggle directly
+      const isOn = isTuiDaemonAutoStartEnabled(config);
+      config.tuiDaemonAutoStart = !isOn;
+      process.env.PUSH_TUI_DAEMON_AUTOSTART = String(!isOn);
+      await saveConfig(config);
+      if (!isOn) {
+        daemonAutoStartAttempted = false;
+        await ensureDaemonConnected({ announce: true });
+      }
+    } else if (index === providers.length + 5) {
+      // Remote relay → show status + command hints in the transcript.
+      await handleRemoteCommand('status');
+      ms.remoteStatusLabel = await getRemoteStatusLabel();
     }
     tuiState.dirty.add('all');
     scheduler.flush();

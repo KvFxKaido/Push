@@ -36,6 +36,7 @@ vi.mock('@/hooks/useChat', () => ({
     handleCardAction: vi.fn(),
     setLocalDaemonBinding: vi.fn(),
     setWorkspaceMode: vi.fn(),
+    createNewChat: vi.fn(),
   }),
 }));
 
@@ -73,8 +74,8 @@ vi.mock('@/lib/local-pc-storage', () => ({
 // useModelCatalog touches storage + provider configs that aren't
 // available in the SSR test env. Return just the subset the local-pc
 // chat reads — `availableProviders`, `activeProviderLabel`, and
-// `setActiveBackend` — so the picker chip renders without booting
-// the full catalog.
+// model-control fields — so the picker renders without booting the
+// full catalog.
 vi.mock('@/hooks/useModelCatalog', () => ({
   useModelCatalog: () => ({
     availableProviders: [
@@ -83,6 +84,16 @@ vi.mock('@/hooks/useModelCatalog', () => ({
     ] as const,
     activeProviderLabel: 'cloudflare',
     setActiveBackend: vi.fn(),
+    cloudflare: {
+      model: '@cf/meta/llama-3-8b',
+      setModel: vi.fn(),
+    },
+    cloudflareModelOptions: ['@cf/meta/llama-3-8b', '@cf/qwen/qwen3-30b-a3b-fp8'],
+    cloudflareModels: {
+      loading: false,
+      error: null,
+    },
+    refreshCloudflareModels: vi.fn(),
   }),
 }));
 
@@ -91,7 +102,6 @@ vi.mock('@/lib/providers', async (importOriginal) => {
   return {
     ...actual,
     setPreferredProvider: vi.fn(),
-    getModelForRole: vi.fn(() => ({ id: '@cf/meta/llama-3-8b' })),
   };
 });
 
@@ -119,7 +129,9 @@ describe('LocalPcChatScreen', () => {
   });
 
   it('renders the mode chip with the binding port', () => {
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
     // LocalPcModeChip renders the port — verify it's wired in.
     expect(html).toContain(':49152');
     // "Local PC" label is the chip's prefix.
@@ -127,13 +139,18 @@ describe('LocalPcChatScreen', () => {
   });
 
   it('renders an Unpair button with an accessible label', () => {
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
+    expect(html).toContain('aria-label="Leave local daemon"');
     expect(html).toContain('aria-label="Unpair"');
     expect(html).toContain('Unpair');
   });
 
   it('renders the compose textarea and send button', () => {
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
     expect(html).toContain('<textarea');
     expect(html).toContain('aria-label="Message"');
     expect(html).toContain('aria-label="Send"');
@@ -142,12 +159,16 @@ describe('LocalPcChatScreen', () => {
   it('does NOT render a Stop button when not streaming (default mock state)', () => {
     // The Stop button is conditional on isStreaming. Default mock returns
     // false, so it should be absent — Unpair is the only header button.
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
     expect(html).not.toContain('aria-label="Stop"');
   });
 
   it('shows an "Ask the local daemon" placeholder when the WS is open', () => {
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
     expect(html).toContain('Ask the local daemon');
   });
 
@@ -155,7 +176,9 @@ describe('LocalPcChatScreen', () => {
     // Regression guard: the new screen should not pull in cloud-specific
     // chrome. If a future refactor accidentally routes a sandbox-aware
     // component through here, the mention of these terms surfaces it.
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
     expect(html).not.toContain('FileBrowser');
     expect(html).not.toContain('Snapshot');
   });
@@ -173,7 +196,9 @@ describe('LocalPcChatScreen', () => {
       exhausted: false,
       maxAttempts: 6,
     };
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
     expect(html).toMatch(/Reconnecting to local daemon in \ds/);
     expect(html).toContain('attempt 1 of 6');
   });
@@ -191,7 +216,9 @@ describe('LocalPcChatScreen', () => {
       exhausted: false,
       maxAttempts: 6,
     };
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
     expect(html).toContain('Reconnecting to local daemon');
     expect(html).toContain('attempt 2 of 6');
   });
@@ -208,7 +235,9 @@ describe('LocalPcChatScreen', () => {
       exhausted: true,
       maxAttempts: 6,
     };
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
     expect(html).toContain('aria-label="Retry connection"');
     expect(html).toContain('after 6 attempts');
   });
@@ -216,19 +245,22 @@ describe('LocalPcChatScreen', () => {
   it('omits the reconnect banner while the WS is open', () => {
     // Default `status: open` — no banner, no extra chrome. The header
     // is the only thing above the chat container.
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
     expect(html).not.toContain('Reconnecting to local daemon');
     expect(html).not.toContain('aria-label="Retry connection"');
   });
 
   it('renders the model picker chip in the input area with the active provider', () => {
-    // The chip is the surface that finally tells the user which
-    // provider + model they're talking to on local-pc — before this,
-    // the local-pc chat silently inherited the cloud orchestrator's
-    // last selection. The catalog mock pins `cloudflare` + the
-    // `@cf/meta/llama-3-8b` model.
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
-    expect(html).toContain('aria-label="Daemon model and provider"');
+    // The daemon input now has a provider chip plus a real model
+    // combobox. The catalog mock pins `cloudflare` +
+    // `@cf/meta/llama-3-8b`.
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
+    expect(html).toContain('aria-label="Daemon provider"');
+    expect(html).toContain('aria-label="Select daemon model"');
     expect(html).toContain('Cloudflare Workers AI');
     expect(html).toContain('llama-3-8b');
   });
@@ -240,7 +272,9 @@ describe('LocalPcChatScreen', () => {
     // null. A future test harness that drives a real onEvent
     // callback would assert the populated path; SSR can't drive
     // useState updates from outside the component tree.
-    const html = renderToStaticMarkup(<LocalPcChatScreen binding={binding} onUnpair={() => {}} />);
+    const html = renderToStaticMarkup(
+      <LocalPcChatScreen binding={binding} onLeave={() => {}} onUnpair={() => {}} />,
+    );
     expect(html).not.toContain('role="dialog"');
     expect(html).not.toContain('aria-label="Approve"');
     expect(html).not.toContain('aria-label="Deny"');

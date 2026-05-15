@@ -47,7 +47,7 @@ export function LocalPcModeChip({ port, status }: LocalPcModeChipProps) {
   return (
     <div
       aria-label={`Local PC mode on port ${port}, ${statusLabel(status.state)}`}
-      className="inline-flex items-center gap-2 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200"
+      className="inline-flex min-w-0 items-center gap-2 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200"
     >
       <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
       <span>Local PC</span>

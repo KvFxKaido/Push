@@ -1,5 +1,5 @@
 /**
- * DaemonModelPicker — provider/model status chip for the daemon-backed
+ * DaemonModelPicker — provider status chip for the daemon-backed
  * chat input area. Phase 1.f deferred-polish item from the
  * Remote Sessions decision doc; renamed from `LocalPcModelPicker` in
  * Phase 2.i once the relay surface started using the same chip
@@ -7,12 +7,10 @@
  * via `DaemonChatBody`.
  *
  * Scope: a popover chip that
- *   - shows the current orchestrator provider + model,
+ *   - shows the current orchestrator provider,
  *   - lets the user switch providers in-place via
  *     `setPreferredProvider`, and
- *   - hands off model-id editing to Settings (per-provider model
- *     wiring is a sizable surface and lives there already; the chip
- *     is for "which backend am I using right now").
+ *   - leaves model-id selection to the adjacent daemon `ModelPicker`.
  *
  * Why "orchestrator" specifically: the daemon-backed chat doesn't
  * expose per-role model selection (no Reviewer / Auditor / Coder UI
@@ -22,12 +20,7 @@
  */
 import { ChevronDown, Cpu, ExternalLink } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import {
-  formatModelDisplayName,
-  getModelDisplayLeafName,
-  getModelForRole,
-  type PreferredProvider,
-} from '@/lib/providers';
+import { type PreferredProvider } from '@/lib/providers';
 import { cn } from '@/lib/utils';
 import type { AIProviderType } from '@/types';
 
@@ -46,14 +39,10 @@ export interface DaemonModelPickerProps {
    * When the current chat has already sent a message, `useChat`
    * locks the conversation to its original provider (see
    * `lockedProvider` / `prepareSendContext`). The chip surfaces the
-   * locked provider AND disables the provider switch — without this
-   * the user would see the global preference change in the chip but
-   * the next `sendMessage` would still route through the
-   * conversation's lock, deceiving them about what the model is.
-   * Codex P2 on #522.
+   * locked provider so it reports what the current transcript uses.
    */
   lockedProvider?: AIProviderType | null;
-  /** When true, switching providers from this chip is disabled. */
+  /** When true, provider switching starts a fresh daemon chat upstream. */
   isProviderLocked?: boolean;
   /**
    * Navigate to the Settings surface so the user can edit per-provider
@@ -78,35 +67,23 @@ export function DaemonModelPicker({
 }: DaemonModelPickerProps) {
   // When the chat has been locked to a specific provider (e.g. after
   // the first sendMessage), DISPLAY the locked one regardless of
-  // the catalog's current preference — that's what the next turn
-  // will actually use. Switching is also disabled below so the user
-  // doesn't get a chip that lies about provider routing.
+  // the catalog's current preference — that's what the current
+  // transcript uses.
   const displayedProvider = (lockedProvider as AIProviderType | undefined) ?? activeProvider;
-  // Orchestrator model id — `getModelForRole` resolves the user-
-  // configured model name via MODEL_NAME_GETTERS, so the chip's
-  // display follows the same source of truth Settings writes to.
-  // A missing model (e.g. provider configured but no model picked
-  // yet) falls back to the bare provider label.
-  const modelEntry = getModelForRole(displayedProvider, 'orchestrator');
-  const modelId = modelEntry?.id ?? '';
   // Slice 1.d: docstring promised "only ready providers shown"; the
   // ready filter lives here so callers can safely pass the raw
   // catalog tuple list. Github-actions + Copilot review on #522.
   const readyProviders = availableProviders.filter(([, , isReady]) => isReady);
   const providerLabel =
     readyProviders.find(([id]) => id === displayedProvider)?.[1] ?? displayedProvider;
-  const modelLeaf = modelId ? getModelDisplayLeafName(displayedProvider, modelId) : null;
-  const titleHint = modelId
-    ? `${providerLabel} · ${formatModelDisplayName(displayedProvider, modelId)}`
-    : providerLabel;
-  const switchDisabled = disabled || isProviderLocked;
+  const titleHint = providerLabel;
 
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label="Daemon model and provider"
+          aria-label="Daemon provider"
           title={titleHint}
           disabled={disabled}
           className={cn(
@@ -117,12 +94,6 @@ export function DaemonModelPicker({
           <Cpu className="h-3 w-3 shrink-0 text-push-fg-secondary" aria-hidden="true" />
           <span className="truncate">
             <span className="text-push-fg-secondary/80">{providerLabel}</span>
-            {modelLeaf ? (
-              <>
-                <span className="mx-1 text-push-fg-secondary/40">·</span>
-                <span className="text-push-fg">{modelLeaf}</span>
-              </>
-            ) : null}
           </span>
           <ChevronDown className="h-3 w-3 shrink-0 opacity-60" aria-hidden="true" />
         </button>
@@ -153,7 +124,7 @@ export function DaemonModelPicker({
                 type="button"
                 aria-pressed={active}
                 onClick={() => onSelectProvider(id)}
-                disabled={switchDisabled}
+                disabled={disabled}
                 className={cn(
                   'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition disabled:cursor-not-allowed disabled:opacity-50',
                   active
@@ -174,7 +145,7 @@ export function DaemonModelPicker({
         </div>
         {isProviderLocked && readyProviders.length > 1 ? (
           <p className="px-2 py-1.5 text-[10px] text-push-fg-secondary/60">
-            Locked to this conversation's original provider — start a new chat to switch.
+            Current chat is locked. Switching providers starts a new daemon chat.
           </p>
         ) : null}
         {onOpenSettings ? (

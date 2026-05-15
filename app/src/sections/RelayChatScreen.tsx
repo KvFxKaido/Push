@@ -25,11 +25,13 @@ import type { RelayBinding } from '@/types';
 
 interface RelayChatScreenProps {
   binding: RelayBinding;
+  /** Non-destructive exit back to the app shell. Pairing remains stored. */
+  onLeave: () => void;
   /** Called after the user unpairs — caller ends the workspace session. */
   onUnpair: () => void;
 }
 
-export function RelayChatScreen({ binding, onUnpair }: RelayChatScreenProps) {
+export function RelayChatScreen({ binding, onLeave, onUnpair }: RelayChatScreenProps) {
   const approvals = useApprovalQueue();
   const { status, reconnect, reconnectInfo, request, liveBinding, replayUnavailableAt } =
     useRelayDaemon(binding, {
@@ -63,6 +65,7 @@ export function RelayChatScreen({ binding, onUnpair }: RelayChatScreenProps) {
         />
       }
       unpairIcon={Globe}
+      onLeave={onLeave}
       onUnpair={handleUnpair}
       status={status}
       reconnect={reconnect}
