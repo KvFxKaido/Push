@@ -1,6 +1,6 @@
 /**
- * Semantic context-summary primitive shared by web and CLI orchestrators
- * and by the Coder agent's mid-loop trim.
+ * Semantic context-summary primitive shared by the web orchestrator
+ * and the Coder agent's mid-loop trim.
  *
  * `extractSemanticSummaryLines` picks out the load-bearing lines from a
  * tool result or assistant turn — headers, important-prefix lines,
@@ -12,7 +12,10 @@
  * the tool returned".
  *
  * Generic over a minimal message shape so both surfaces' richer
- * `ChatMessage` / `LlmMessage` types are structurally assignable.
+ * `ChatMessage` / `LlmMessage` types are structurally assignable. The
+ * CLI orchestrator (`cli/context-manager.ts`) keeps its own simpler
+ * summarizers today; this module is the available primitive if/when
+ * the CLI surface adopts it.
  */
 
 const TOOL_RESULT_HEADER_RE = /^\[Tool Result\b/i;
@@ -264,7 +267,11 @@ export function extractSemanticSummaryLines(
     const visibleItemCount = listMeta ? countVisibleListItems(summary, listMeta.itemNoun) : 0;
     const marker = buildOmissionMarker(hasDiffContent, hasCodeBlock, listMeta, visibleItemCount);
     if (summary.length >= maxLines) {
-      summary[maxLines - 1] = marker;
+      // `Math.max(0, …)` guards against `maxLines: 0` configs that
+      // would otherwise write to `summary[-1]` (Gemini P3 from PR
+      // #565). No production caller passes 0 today, but the bound
+      // is cheap and prevents a silent property write.
+      summary[Math.max(0, maxLines - 1)] = marker;
     } else {
       summary.push(marker);
     }

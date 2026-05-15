@@ -4,8 +4,9 @@
  * The semantic-summary logic (header detection, list-meta tracking,
  * omission markers, file-path collection) lives in
  * `lib/context-summary.ts` and is generic over a minimal message
- * shape. Web call sites keep using these named helpers; CLI imports
- * the generic primitive directly.
+ * shape. Web call sites keep using these named helpers via this
+ * shim; the CLI orchestrator keeps its own simpler summarizers today
+ * and would import the generic primitive directly if it migrates.
  */
 
 import type { ChatMessage } from '@/types';

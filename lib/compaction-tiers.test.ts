@@ -83,8 +83,9 @@ describe('createDropToolOutputsTier', () => {
       toolResult('newest result'),
     ];
     // preserveHead=1 → sys protected; preserveTail=2 → last two tool
-    // results protected. Only the middle one is in the touchable
-    // window and gets dropped.
+    // results protected ('mid result' and 'newest result'). Only
+    // index 1 ('old result') is in the touchable window and gets
+    // dropped.
     const result = tier.apply(messages, ctx(50, 2, 1));
     const contents = result.messages.map((m) => m.content);
     expect(contents).toContain('SYSTEM');
@@ -145,6 +146,48 @@ describe('createDropOldestPairsTier', () => {
     expect(contents).not.toContain('call-A');
     expect(contents).not.toContain('result-A');
     expect(result.applied).toBe(true);
+  });
+});
+
+describe('createDropOldestPairsTier — preserveHead caveat', () => {
+  // Documents the gotcha called out in PR #565 review: with the
+  // default `preserveHead: 1`, a transcript shaped
+  // `[system, user_root_task, ...]` lets drop-pairs eat the user's
+  // root request under sufficient budget pressure. Callers should
+  // bump `preserveHead` to 2 for that conversation shape.
+
+  it('with default preserveHead, the user root task is dropped (gotcha)', () => {
+    const tier = createDropOldestPairsTier<TestMessage>();
+    const messages = [
+      sys('SYSTEM'),
+      usr('original ask: implement the feature please'),
+      toolCall('call-A'),
+      toolResult('result-A '.repeat(50)),
+      ast('latest assistant'),
+      usr('latest user'),
+    ];
+    // preserveHead=1 (default-ish), preserveTail=2. The user's root
+    // task at index 1 is inside the touchable window.
+    const result = tier.apply(messages, ctx(60, 2, 1));
+    const contents = result.messages.map((m) => m.content);
+    expect(contents).not.toContain('original ask: implement the feature please');
+  });
+
+  it('with preserveHead=2, the user root task is preserved', () => {
+    const tier = createDropOldestPairsTier<TestMessage>();
+    const messages = [
+      sys('SYSTEM'),
+      usr('original ask: implement the feature please'),
+      toolCall('call-A'),
+      toolResult('result-A '.repeat(50)),
+      ast('latest assistant'),
+      usr('latest user'),
+    ];
+    // Caller bumps preserveHead to 2 — user root task is now in the
+    // protected head window and survives drop-pairs.
+    const result = tier.apply(messages, ctx(60, 2, 2));
+    const contents = result.messages.map((m) => m.content);
+    expect(contents).toContain('original ask: implement the feature please');
   });
 });
 

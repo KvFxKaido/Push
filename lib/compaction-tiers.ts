@@ -47,6 +47,16 @@ export interface CompactionContext {
    * Index of the first message that may be touched by tiers. Anything
    * at `[0, preserveHead)` is considered system context and stays
    * verbatim. Default 1 — preserves the system prompt only.
+   *
+   * **Caller responsibility:** when the conversation starts with
+   * `[system, user_root_task, ...]`, the default `preserveHead: 1`
+   * leaves the user's root request inside the touchable window. The
+   * hard-fallback `createDropOldestPairsTier` will drop it under
+   * sufficient budget pressure. Callers with that conversation shape
+   * should bump `preserveHead` to 2 (or use a tier list that excludes
+   * the pair-drop fallback). See the
+   * `createDropOldestPairsTier — preserveHead caveat` test in
+   * `lib/compaction-tiers.test.ts` for the exact behavior.
    */
   preserveHead?: number;
 }
@@ -56,7 +66,12 @@ export interface CompactionTierResult<M extends CompactionTierMessage> {
   messages: M[];
   /** True when this tier shaved enough that we're now under budget. */
   fits: boolean;
-  /** Bytes of `content` removed by this tier — for telemetry. */
+  /**
+   * Characters (JS string length, NOT UTF-8 bytes) of `content`
+   * removed by this tier — for telemetry. Consumers that need actual
+   * byte counts should reuse `utf8ByteLength` from `lib/run-events.ts`
+   * on the input/output diff.
+   */
   savedChars: number;
   /** Whether this tier actually modified anything. */
   applied: boolean;
