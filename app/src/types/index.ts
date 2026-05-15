@@ -1184,111 +1184,28 @@ export interface AskUserCardData {
 // Tool hooks — pre/post execution interception
 // ---------------------------------------------------------------------------
 
-/** Context passed to tool hooks for decision-making. */
-export interface ToolHookContext {
-  sandboxId: string | null;
-  allowedRepo: string;
-  activeProvider?: string;
-  activeModel?: string;
-  /** When present, the capability ledger for the current run. */
-  capabilityLedger?: import('../lib/capabilities').CapabilityLedger;
-}
-
-/** Result from a PreToolUse hook. */
-export interface PreToolUseResult {
-  /** 'deny' blocks execution, 'allow' permits (and may carry modifiedArgs), 'passthrough' defers to next hook. */
-  decision: 'allow' | 'deny' | 'passthrough';
-  reason?: string;
-  /** Replacement args — applied when decision is 'allow'. */
-  modifiedArgs?: Record<string, unknown>;
-  /** Appended to the tool result text after execution. */
-  systemMessage?: string;
-}
-
-/** Result from a PostToolUse hook. */
-export interface PostToolUseResult {
-  /** Appended to the tool result text after execution. */
-  systemMessage?: string;
-  /** When set, replaces the tool result text sent to the model. */
-  resultOverride?: string;
-  /**
-   * Runtime action requested by a post-tool policy.
-   * - 'inject':  append an advisory message after the tool result
-   * - 'halt':    stop the agent loop (e.g., repeated mutation failures)
-   * When absent, the hook only modifies the result text (legacy behavior).
-   */
-  action?: 'inject' | 'halt';
-  /**
-   * Message to inject into the conversation (when action === 'inject').
-   * Structured as a ChatMessage so it appears in the conversation history.
-   */
-  injectMessage?: ChatMessage;
-  /**
-   * Summary reason for halting (when action === 'halt').
-   * Used for status display and journal recording.
-   */
-  haltSummary?: string;
-}
+/**
+ * Tool-hook types now live in `lib/tool-hooks.ts` so both web and CLI
+ * surfaces evaluate the same hooks. Re-exported here for back-compat
+ * with existing `@/types` import sites.
+ */
+export type {
+  ToolHookContext,
+  PreToolUseResult,
+  PostToolUseResult,
+} from '@push/lib/tool-hooks';
 
 // ---------------------------------------------------------------------------
-// Approval gates — runtime gate checks for approval-sensitive actions
+// Approval gates — runtime gate checks for approval-sensitive actions.
+// Types live in `lib/approval-gates.ts`; re-exported here for back-compat.
 // ---------------------------------------------------------------------------
 
-/** Categories of actions that require explicit approval or a safe audited path. */
-export type ApprovalGateCategory =
-  | 'destructive_sandbox'
-  | 'git_override'
-  | 'remote_side_effect'
-  | 'capability_violation';
-
-/**
- * Result of an approval gate check.
- * - 'allowed':  action may proceed
- * - 'blocked':  action is blocked; model gets structured explanation + recovery path
- * - 'ask_user': action requires explicit user approval via ask_user tool
- */
-export type ApprovalGateDecision = 'allowed' | 'blocked' | 'ask_user';
-
-/**
- * A registered approval gate rule. Evaluated before tool execution for
- * actions that should not rely solely on prompt guidance.
- */
-export interface ApprovalGateRule {
-  /** Unique rule identifier for telemetry and debugging. */
-  id: string;
-  /** Human-readable description of what this gate protects. */
-  label: string;
-  /** Category for grouping and override logic. */
-  category: ApprovalGateCategory;
-  /** Tool name matcher — regex or pipe-delimited string. */
-  matcher: RegExp | string;
-  /**
-   * Evaluate whether the action is allowed.
-   * Receives tool name, args, and current context.
-   */
-  evaluate: (
-    toolName: string,
-    args: Record<string, unknown>,
-    context: ToolHookContext,
-  ) => ApprovalGateDecision | Promise<ApprovalGateDecision>;
-  /** Structured reason shown to the model when blocked. */
-  blockedReason: string;
-  /** Recovery guidance — the safest next action the model should take. */
-  recoveryPath: string;
-}
-
-/**
- * Result returned when an approval gate blocks an action.
- * Provides the model with structured information about why the action
- * was blocked and what to do instead.
- */
-export interface ApprovalGateBlockedResult {
-  gateId: string;
-  category: ApprovalGateCategory;
-  decision: 'blocked' | 'ask_user';
-  reason: string;
-  recoveryPath: string;
-}
+export type {
+  ApprovalGateCategory,
+  ApprovalGateDecision,
+  ApprovalGateRule,
+  ApprovalGateBlockedResult,
+} from '@push/lib/approval-gates';
 
 // ---------------------------------------------------------------------------
 // PreCompact event — fired before context window compaction

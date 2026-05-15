@@ -2,7 +2,7 @@
 
 Date: 2026-05-15
 Author: Claude (via Claude Code)
-Status: Draft, lifted from a public-docs scan of Anthropic's Claude Code
+Status: Partly shipped — #1 (PR #561, 2026-05-15) and #2 (this PR, 2026-05-15) landed; remaining patterns Draft.
 
 ---
 
@@ -51,17 +51,24 @@ Lifecycle events (`SessionStart`, `PreToolUse`, `PostToolUse`, `PermissionReques
 
 ### Push today
 
-No equivalent. Safety behavior — Protect Main, the SAFE/UNSAFE Auditor gate, the `git checkout`/`git switch` block in `sandbox_exec` — lives inside runtime code or prompts. The Auditor is a dedicated role with its own loop, which is the most hook-like piece Push has but it isn't a generic harness primitive.
+**Shipped 2026-05-15** (this PR). Push had a partial `ToolHookRegistry` + `ApprovalGateRegistry` in `app/src/lib/`, plus two inline checks (git guard in `sandbox-tools.ts`, Protect Main in `web-tool-execution-runtime.ts`) that bypassed the registry. This PR lifted the registry types and factories to `lib/`, ported both inline checks to `PreToolUse` hooks (`lib/default-pre-hooks.ts`), and wired CLI's `executeToolCall` to evaluate the same registry — so web and CLI now share one rule set.
 
-### Load-bearing next step
+Concrete inventory:
+- `lib/tool-hooks.ts` — `PreToolUseHook`, `PostToolUseHook`, `ToolHookRegistry`, `evaluatePreHooks`, `evaluatePostHooks`. `PreToolUseResult` gained an optional `errorType` so hooks emit structured-error codes (`GIT_GUARD_BLOCKED`, `PROTECT_MAIN_BLOCKED`) the runtime promotes to a `StructuredToolError`.
+- `lib/approval-gates.ts` — `ApprovalGateRegistry` with injected `modeProvider`. Web wires `getApprovalMode()` (safeStorage); CLI wires its own provider when it adopts modes.
+- `lib/git-mutation-detection.ts` — `detectBlockedGitCommand` lifted from `app/src/lib/sandbox-tool-utils.ts` (pure heuristic, no app deps).
+- `lib/default-pre-hooks.ts` — `createGitGuardPreHook({ modeProvider })`, `createProtectMainPreHook()`. The Protect Main matcher covers both web (`sandbox_prepare_commit` / `sandbox_push`) and CLI (`git_commit`) vocabularies.
+- `app/src/lib/web-default-hooks.ts` — `getDefaultWebHookRegistry()` lazily registers both factories with web's approval-mode provider. `WebToolExecutionRuntime.execute()` evaluates default + caller-supplied registries in series.
+- `cli/tool-hooks-default.ts` — `getDefaultCliHookRegistry()` registers Protect Main only (the git guard's *why* — keeping Push's tracked branch in sync with sandbox HEAD — doesn't apply to CLI, which operates on a real working tree). `readCliCurrentBranch(workspaceRoot)` uses `git branch --show-current` for the branch reader.
+- `cli/tools.ts:executeToolCall` — new `hooks` / `getCurrentBranch` / `isMainProtected` / `defaultBranch` options, evaluated after the role-capability check.
 
-This one is the highest-leverage borrow IMO. The CLAUDE.md guardrail "behavior lives in code, not prompts" already points the same direction, but the *primitive* — a `PreToolUse`/`PostToolUse` extension point that's surface-agnostic — would let:
+Drift-detector coverage: `lib/default-pre-hooks.test.ts` pins the rule semantics across both surfaces (git guard branches: branch-create/branch-switch/commit-push, approval-mode handling, `allowDirectGit` consent gate; Protect Main: default-branch match, fail-safe behavior, CLI matcher coverage).
 
-- The git-branch guard in `sandbox-tools.ts` (currently "best-effort detection" per CLAUDE.md) become a deterministic `PreToolUse` rejection.
-- The Auditor SAFE/UNSAFE check become a `PreToolUse` on commit instead of a separate delegation hop.
-- The protocol-violation handling in tool dispatch (parallel-cap, single-trailing-mutation) collapse into a small ruleset.
+### What's not in scope here
 
-Order of operations: define the hook shape (input JSON, return codes, deny/allow/modify semantics) in `lib/`, port one existing check (recommend the git guard since it's already conceptually a `PreToolUse`), then move others incrementally. The drift-detector test pattern (`cli/tests/protocol-drift.test.mjs`) applies — hook contract gets a schema pin.
+- The Auditor SAFE/UNSAFE gate stays a delegation hop. The hook surface could host it, but Auditor outputs a verdict + summary, not a binary allow/deny — different return shape, different next move.
+- Protocol-violation handling in `tool-dispatch.ts` (parallel-cap, single-trailing-mutation) stays in the dispatcher. Those are parse-time grouping rules, not pre-execution gates.
+- `coder-job-executor-adapter.ts` (worker-side coder job) still has its own duplicated git-guard logic — Cloudflare Worker context can't read `safeStorage`. Separate consolidation step.
 
 ---
 
@@ -175,7 +182,7 @@ Nothing new — keep doing it. The note here exists so the pattern stays visible
 | Pattern | Push state | Next step |
 |---|---|---|
 | 1. Subagent context isolation | At/ahead of parity (compact 260-char summaries) | Instrument leak, formalize return envelope, or evidence pointers — pick one |
-| 2. Hooks as policy-as-code | None — closest cousin is Auditor role | Define `PreToolUse`/`PostToolUse` extension shape in `lib/`, port git guard first |
+| 2. Hooks as policy-as-code | **Shipped 2026-05-15** — `lib/tool-hooks.ts` + `lib/default-pre-hooks.ts` with git guard + Protect Main as `PreToolUse` hooks across web and CLI | Auditor gate / protocol-violation handling deliberately out of scope |
 | 3. Deny-first permissions | Implicit via role capabilities | Defer until (2) lands |
 | 4. Skills lazy-loaded | CLI does skill discovery; project instructions still eager | Measure per-turn cost of project-instructions; move stable reference behind on-demand fetches |
 | 5. MCP tool deferral | Full schemas always inject | Names-only manifest + on-hit schema fetch — biggest context payoff |

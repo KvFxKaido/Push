@@ -46,6 +46,7 @@ import { loadUserGoalFile, seedUserGoalFile, extractDigestBody } from './user-go
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
 import { TurnPolicyRegistry, createCoderPolicy } from './turn-policy.js';
 import { buildMalformedToolCallEvents, summarizeToolResultPreview } from '../lib/run-events.ts';
+import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
 import { assertReadyForAssistantTurn } from '../lib/llm-message-invariants.ts';
 import {
   SystemPromptBuilder,
@@ -666,6 +667,11 @@ export async function runAssistantLoop(
   } = options;
   const runId: string = providedRunId || makeRunId();
 
+  // Built once per run — hook callbacks read live state via injected
+  // providers (e.g. `getCurrentBranch` is per-call), so the registry
+  // doesn't need to be rebuilt as state changes.
+  const defaultCliHookRegistry = getDefaultCliHookRegistry();
+
   async function appendSessionEvent(
     stateArg: SessionState,
     type: string,
@@ -853,6 +859,13 @@ export async function runAssistantLoop(
           providerId: providerConfig?.id,
           providerApiKey: apiKey,
           runId,
+          // Shared PreToolUse hooks (see `lib/default-pre-hooks.ts`).
+          // The default CLI registry registers Protect Main; the hook
+          // is a no-op until the CLI surfaces an isMainProtected
+          // toggle (not exposed today), but the seam is wired so the
+          // rule lands by default the moment it does.
+          hooks: defaultCliHookRegistry,
+          getCurrentBranch: () => readCliCurrentBranch(state.cwd),
         });
     const result: ToolResult = rawResult ?? { ok: false, text: 'Tool returned no result' };
     recordAwarenessFromCall(call, result, awarenessLedger, state.cwd);

@@ -16,9 +16,15 @@ import { enforceRoleCapability, formatRoleCapabilityDenial } from '@push/lib/cap
 import { getExecutionMode } from '@push/lib/tool-execution-runtime';
 import { resolveToolName } from '@push/lib/tool-registry';
 
-import type { StructuredToolError, ToolHookContext, ToolExecutionResult } from '@/types';
+import type {
+  ChatMessage,
+  StructuredToolError,
+  ToolHookContext,
+  ToolExecutionResult,
+} from '@/types';
 import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
 import { evaluatePreHooks, evaluatePostHooks, type ToolHookRegistry } from './tool-hooks';
+import { getDefaultWebHookRegistry } from './web-default-hooks';
 import type { ApprovalGateRegistry } from './approval-gates';
 import { executeToolCall } from './github-tools';
 import { executeSandboxToolCall } from './sandbox-tools';
@@ -87,12 +93,6 @@ export function applyHookToolArgs(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Protect Main
-// ---------------------------------------------------------------------------
-
-const PROTECTED_MAIN_TOOLS = new Set(['sandbox_prepare_commit', 'sandbox_push']);
-
 /**
  * Sandbox tools that have a `pushd` daemon implementation today.
  *
@@ -152,12 +152,20 @@ export class WebToolExecutionRuntime
     const toolName = getHookToolName(toolCall);
     const toolArgs = getHookToolArgs(toolCall);
     const activeProvider = context.activeProvider as ActiveProvider | undefined;
+    const sandboxIdForBranch = context.sandboxId;
     const hookContext: ToolHookContext = {
       sandboxId: context.sandboxId,
       allowedRepo: context.allowedRepo,
       activeProvider,
       activeModel: context.activeModel,
       capabilityLedger: context.capabilityLedger,
+      defaultBranch: context.defaultBranch,
+      isMainProtected: context.isMainProtected,
+      // Branch reader is lazy — hooks that don't need it never pay the
+      // sandbox round-trip. Only Protect Main currently calls it.
+      getCurrentBranch: sandboxIdForBranch
+        ? () => this.getSandboxBranch(sandboxIdForBranch)
+        : undefined,
     };
 
     context.emit?.toolExecutionStart({
@@ -220,11 +228,30 @@ export class WebToolExecutionRuntime
       }
 
       // --- Pre-hooks ---
+      // Default web hooks (git guard, …) apply to every call; caller-
+      // supplied hooks (e.g. Explorer's read-only allowlist) layer on
+      // top. First deny across either set short-circuits.
+      const preRegistries: ToolHookRegistry[] = [getDefaultWebHookRegistry()];
       if (context.hooks && context.hooks.pre.length > 0) {
-        const preResult = await evaluatePreHooks(context.hooks, toolName, toolArgs, hookContext);
+        preRegistries.push(context.hooks);
+      }
+      for (const registry of preRegistries) {
+        const preResult = await evaluatePreHooks(registry, toolName, toolArgs, hookContext);
         if (preResult?.decision === 'deny') {
+          const reason = preResult.reason || 'Blocked by pre-execution hook.';
+          // Promote a hook-supplied `errorType` into a real
+          // `StructuredToolError` for telemetry + downstream
+          // classification. Falls back to a generic code when the hook
+          // didn't supply one — the model still sees the same human-
+          // readable block, just without the specific taxonomy entry.
+          const err: StructuredToolError = {
+            type: preResult.errorType ?? 'PRE_HOOK_BLOCKED',
+            retryable: false,
+            message: reason,
+          };
           return {
-            text: `[Tool Blocked] ${preResult.reason || 'Blocked by pre-execution hook.'}`,
+            text: `[Tool Blocked] ${reason}`,
+            structuredError: err,
           };
         }
         if (preResult?.modifiedArgs) {
@@ -277,22 +304,11 @@ export class WebToolExecutionRuntime
         }
       }
 
-      // --- Protect Main: block commit/push tools when on the default branch ---
-      if (
-        context.isMainProtected &&
-        toolCall.source === 'sandbox' &&
-        PROTECTED_MAIN_TOOLS.has(toolCall.call.tool) &&
-        context.sandboxId
-      ) {
-        const currentBranch = await this.getSandboxBranch(context.sandboxId);
-        const mainBranches = new Set(['main', 'master']);
-        if (context.defaultBranch) mainBranches.add(context.defaultBranch);
-        if (!currentBranch || mainBranches.has(currentBranch)) {
-          return {
-            text: `[Tool Error] Protect Main is enabled. Commits and pushes to the main/default branch are blocked. Create a new branch first (e.g. sandbox_exec with "git checkout -b feature/my-change"), then retry.`,
-          };
-        }
-      }
+      // Protect Main ran as a `PreToolUse` hook (see
+      // `lib/default-pre-hooks.ts:createProtectMainPreHook`). The
+      // `hookContext.getCurrentBranch` callback above lets the hook read
+      // the sandbox branch lazily — only paid when a commit/push tool
+      // actually dispatches.
 
       // --- Execute through the appropriate handler ---
       let result: ToolExecutionResult;
@@ -459,7 +475,11 @@ export class WebToolExecutionRuntime
           result = { ...result, text: `${result.text}\n\n[Hook] ${postResult.systemMessage}` };
         }
         if (postResult?.action === 'inject' && postResult.injectMessage) {
-          result = { ...result, postHookInject: postResult.injectMessage };
+          // injectMessage is typed `unknown` in lib so hooks aren't forced
+          // to import the rich ChatMessage type. Web hooks construct
+          // ChatMessage values; cast at the boundary where we know that's
+          // what they passed.
+          result = { ...result, postHookInject: postResult.injectMessage as ChatMessage };
         }
         if (postResult?.action === 'halt' && postResult.haltSummary) {
           result = { ...result, postHookHalt: postResult.haltSummary };

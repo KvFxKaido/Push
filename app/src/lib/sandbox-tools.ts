@@ -41,7 +41,6 @@ import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
 import { fileLedger } from './file-awareness-ledger';
 import { symbolLedger } from './symbol-persistence-ledger';
 import { getActiveGitHubToken } from './github-auth';
-import { getApprovalMode } from './approval-mode';
 import {
   getByKey as versionCacheGet,
   getWorkspaceRevisionByKey,
@@ -64,8 +63,6 @@ import {
   createGitHubRepo,
   shellEscape,
 } from './sandbox-tool-utils';
-import { SANDBOX_EXEC_POLICY } from './sandbox-git-policy';
-import { evaluateProcess } from '@push/lib/sandbox-policy';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 
@@ -309,67 +306,11 @@ export async function executeSandboxToolCall(
   try {
     switch (call.tool) {
       case 'sandbox_exec': {
-        // Git guard: block direct git mutations unless user explicitly approved
-        // In full-auto mode, allow direct git — the system has granted blanket permission
-        const gitGuardDecision = evaluateProcess(SANDBOX_EXEC_POLICY, {
-          command: 'sh',
-          argv: [],
-          raw: call.args.command,
-        });
-        const blockedGitOp: string | null =
-          gitGuardDecision.action === 'deny' ? (gitGuardDecision.reason ?? null) : null;
-        const currentApprovalMode = getApprovalMode();
-        const isBranchCreate =
-          blockedGitOp === 'git checkout -b' || blockedGitOp === 'git switch -c';
-        const isBranchSwitch =
-          blockedGitOp === 'git checkout <branch>' || blockedGitOp === 'git switch <branch>';
-        // Full-auto skips the consent-style block (commit/push/merge/rebase)
-        // because the model has blanket permission. Branch-create / -switch
-        // variants are different: the issue is state synchronization, not
-        // consent — raw `git checkout` leaves Push's currentBranch out of
-        // sync with sandbox HEAD regardless of approval mode. Always route
-        // those through sandbox_create_branch / sandbox_switch_branch.
-        const isBranchOp = isBranchCreate || isBranchSwitch;
-        const shouldBlock = isBranchOp || currentApprovalMode !== 'full-auto';
-        // `allowDirectGit` is the consent escape hatch for commit/push/
-        // merge/rebase. It does NOT apply to branch create/switch — those
-        // would still desync Push's tracked branch from sandbox HEAD even
-        // with explicit user approval, so the only safe path is the typed
-        // tool. Honoring `allowDirectGit` here would re-open the bypass
-        // the slice 2.5 guard exists to close.
-        const allowDirectGitApplies = !isBranchOp && call.args.allowDirectGit;
-        if (blockedGitOp && !allowDirectGitApplies && shouldBlock) {
-          const guardDetail = isBranchCreate
-            ? 'Use sandbox_create_branch to create a branch — it keeps Push and the sandbox in sync.'
-            : isBranchSwitch
-              ? 'Use sandbox_switch_branch to switch branches — it keeps Push and the sandbox in sync, and routes the conversation to the matching chat.'
-              : currentApprovalMode === 'autonomous'
-                ? 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or retry with allowDirectGit: true.'
-                : 'Use sandbox_prepare_commit + sandbox_push for the audited flow, or get explicit user approval before retrying with allowDirectGit.';
-          const guardErr: StructuredToolError = {
-            type: 'GIT_GUARD_BLOCKED',
-            retryable: false,
-            message: `Direct "${blockedGitOp}" is blocked`,
-            detail: guardDetail,
-          };
-          const guidance = isBranchCreate
-            ? `Direct "${blockedGitOp}" is blocked. Use sandbox_create_branch({"name": "<branch-name>"}) — it creates the branch in the sandbox and keeps Push's branch state in sync. Pass "from": "<base>" to branch from a specific ref instead of HEAD.`
-            : isBranchSwitch
-              ? `Direct "${blockedGitOp}" is blocked. Use sandbox_switch_branch({"branch": "<branch-name>"}) — it switches the sandbox and routes the conversation to the existing chat for that branch (or auto-creates one). For branch-restore-as-file flows, pass an explicit flag (e.g. "git checkout -- <path>").`
-              : currentApprovalMode === 'autonomous'
-                ? `Direct "${blockedGitOp}" is blocked. Use sandbox_prepare_commit + sandbox_push for the audited flow. If the standard flow fails, retry with "allowDirectGit": true — you have autonomous permission.`
-                : [
-                    `Direct "${blockedGitOp}" is blocked. Commits must go through sandbox_prepare_commit (Auditor review) and pushes through sandbox_push.`,
-                    ``,
-                    `If the standard flow is failing, use ask_user to explain the problem and request explicit permission from the user.`,
-                    `If the user approves, retry with "allowDirectGit": true in your sandbox_exec args.`,
-                  ].join('\n');
-          return {
-            text: formatStructuredError(guardErr, `[Tool Blocked — sandbox_exec]\n${guidance}`),
-            structuredError: guardErr,
-          };
-        }
-
+        // Git guard ran as a `PreToolUse` hook before this executor was
+        // called — see `lib/default-pre-hooks.ts:createGitGuardPreHook`.
+        // The runtime registers it on the shared registry and short-
+        // circuits with a structured `GIT_GUARD_BLOCKED` deny before we
+        // get here. No inline check needed.
         const start = Date.now();
         const markWorkspaceMutated = isLikelyMutatingSandboxExec(call.args.command);
         const normalizedWorkdir = normalizeSandboxWorkdir(call.args.workdir);

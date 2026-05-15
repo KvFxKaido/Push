@@ -22,6 +22,7 @@ import {
 } from '../lib/capabilities.ts';
 import type { AgentRole } from '../lib/runtime-contract.ts';
 import { deriveProtocolVersion } from '../lib/tool-registry.ts';
+import { evaluatePreHooks } from '../lib/tool-hooks.ts';
 
 /**
  * CLI tool execution is the pushd daemon surface — the daemon IS the
@@ -1533,6 +1534,47 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       };
     }
   }
+  // --- Pre-hooks (shared with web via lib/tool-hooks) ---
+  //
+  // When the caller supplies a `ToolHookRegistry`, evaluate it now —
+  // after the role-capability check, before the per-tool switch. The
+  // CLI's default registry (see `cli/tool-hooks-default.ts`) includes
+  // Protect Main; callers can layer more rules on top. First deny wins.
+  if (options.hooks && options.hooks.pre && options.hooks.pre.length > 0) {
+    const toolNameForHooks = callCanonical || (typeof call?.tool === 'string' ? call.tool : '');
+    const hookContext = {
+      sandboxId: null,
+      allowedRepo: options.allowedRepo ?? '',
+      activeProvider: options.providerId,
+      activeModel: options.modelId,
+      capabilityLedger: options.capabilityLedger,
+      defaultBranch: options.defaultBranch,
+      isMainProtected: options.isMainProtected,
+      getCurrentBranch: options.getCurrentBranch,
+    };
+    const preResult = await evaluatePreHooks(
+      options.hooks,
+      toolNameForHooks,
+      call?.args ?? {},
+      hookContext,
+    );
+    if (preResult?.decision === 'deny') {
+      const reason = preResult.reason || 'Blocked by pre-execution hook.';
+      return {
+        ok: false,
+        text: `[Tool Blocked — ${toolNameForHooks}]\n${reason}`,
+        structuredError: {
+          code: preResult.errorType ?? 'PRE_HOOK_BLOCKED',
+          message: reason,
+          retryable: false,
+        },
+      };
+    }
+    if (preResult?.modifiedArgs && call && typeof call === 'object') {
+      call.args = { ...call.args, ...preResult.modifiedArgs };
+    }
+  }
+
   // Forward a canonicalized `alwaysAllow` set into the per-case guard via
   // options so command guards see the same set without re-resolving env on
   // every call. We always normalize (even when an explicit array was
