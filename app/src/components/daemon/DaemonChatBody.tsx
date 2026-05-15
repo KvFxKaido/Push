@@ -26,17 +26,21 @@
  * conversation init, workspace context, picker placement, layout)
  * lives here so the screens don't drift.
  */
-import { ArrowLeft, RefreshCw, Send, Square } from 'lucide-react';
+import { ArrowLeft, Notebook, RefreshCw, Send, Square } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
 
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
+import { DaemonHubSheet } from '@/components/daemon/DaemonHubSheet';
 import { DaemonModelPicker } from '@/components/daemon/DaemonModelPicker';
 import { ModelPicker } from '@/components/ui/model-picker';
 import { useChat } from '@/hooks/useChat';
 import { useModelCatalog, buildModelControl } from '@/hooks/useModelCatalog';
+import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
+import { useScratchpad } from '@/hooks/useScratchpad';
+import { useTodo } from '@/hooks/useTodo';
 import type { ApprovalQueueHandle } from '@/hooks/useApprovalQueue';
 import type { ConnectionStatus, RequestOptions, SessionResponse } from '@/lib/local-daemon-binding';
 import type { LiveDaemonBinding, ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
@@ -132,6 +136,16 @@ export function DaemonChatBody({
   // preference (via providers.ts) AND the catalog's reactive state
   // so `getActiveProvider()` returns the new value on the next read.
   const catalog = useModelCatalog();
+
+  // Hub sheet open state + data feeds for its Notes tab. All three
+  // hooks accept `repoFullName: string | null`; daemon sessions have
+  // no repo binding, so we pass `null` to get the "global / non-repo
+  // scoped" storage key. The hub stays unmounted when closed (state
+  // lives here so toggling doesn't reset between renders).
+  const [hubOpen, setHubOpen] = useState(false);
+  const scratchpad = useScratchpad(null);
+  const todo = useTodo(null);
+  const pinnedArtifacts = usePinnedArtifacts(null);
   const decideApproval = useCallback(
     (decision: 'approve' | 'deny') => {
       // Read the head from the ref (a synchronous mirror of the
@@ -336,6 +350,15 @@ export function DaemonChatBody({
           ) : null}
           <button
             type="button"
+            onClick={() => setHubOpen(true)}
+            aria-label="Open hub"
+            title="Notes + pinned artifacts"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-push-edge/60 text-push-fg-secondary transition hover:border-push-fg/60 hover:text-push-fg"
+          >
+            <Notebook className="h-4 w-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
             onClick={handleUnpair}
             aria-label="Unpair"
             className="inline-flex items-center gap-1.5 rounded-full border border-push-edge/60 px-3 py-1.5 text-xs text-push-fg-secondary transition hover:border-rose-400/40 hover:text-rose-200"
@@ -442,6 +465,25 @@ export function DaemonChatBody({
           </button>
         </div>
       </div>
+
+      <DaemonHubSheet
+        open={hubOpen}
+        onOpenChange={setHubOpen}
+        daemonLabel={daemonLabel}
+        scratchpadContent={scratchpad.content}
+        scratchpadMemories={scratchpad.memories}
+        activeMemoryId={scratchpad.activeMemoryId}
+        onScratchpadContentChange={scratchpad.setContent}
+        onScratchpadClear={scratchpad.clear}
+        onScratchpadSaveMemory={scratchpad.saveMemory}
+        onScratchpadLoadMemory={scratchpad.loadMemory}
+        onScratchpadDeleteMemory={scratchpad.deleteMemory}
+        pinnedArtifacts={pinnedArtifacts.artifacts}
+        onUnpinArtifact={pinnedArtifacts.unpin}
+        onUpdateArtifactLabel={pinnedArtifacts.updateLabel}
+        todos={todo.todos}
+        onTodoClear={todo.clear}
+      />
     </div>
   );
 }
