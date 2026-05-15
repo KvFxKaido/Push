@@ -1,6 +1,6 @@
 # Docs Index
 
-Status reviewed: 2026-05-14
+Status reviewed: 2026-05-15
 
 Use this file to navigate active design/planning docs versus historical references.
 `docs/` is the canonical documentation home for this repo.
@@ -41,9 +41,9 @@ Detailed per-doc status lives in [`decisions/README.md`](decisions/README.md). S
 
 Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Summary by role:
 
-- **Current** — `Chat Surface Evolution Plan.md` (Track C remaining), `Private Cloudflare Deployment.md`, `Provider Stats Endpoint.md`, `Test Coverage Plan.md` (Phases 1–5 shipped, Phase 6 outlined), `Workspace Publish to GitHub Plan.md` (follow-through), `Workspace Route Follow-up Plan.md` (measurement only), `Web-CLI Parity Plan.md` (foundation shipped).
+- **Current** — `Chat Surface Evolution Plan.md` (Track C remaining), `Private Cloudflare Deployment.md`, `Provider Stats Endpoint.md`, `Test Coverage Plan.md` (Phases 1–5 shipped, Phase 6 outlined), `Workspace Publish to GitHub Plan.md` (follow-through).
 - **Draft spikes** — `Tiered Orchestrator Routing Spike.md`, `Canonical SOP Playbooks Spike.md`, `Hashline Effectiveness Metric.md`.
-- **Deferred reference** — `Background Coder Tasks Plan.md`, `UX Nice-to-Haves Plan.md`.
+- **Deferred reference** — `Background Coder Tasks Plan.md`.
 
 ## Research
 
@@ -69,8 +69,6 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
 
 ## CLI Docs
 
-- `cli/runbooks/Push CLI Plan.md`
-  - Status: Superseded baseline; core phases shipped. ROADMAP now drives CLI priorities directly.
 - `cli/design/Push Runtime Protocol.md`
   - Status: Implemented baseline; protocol version/envelopes and the `lib/protocol-schema.ts` runtime validator are in code.
 - `cli/design/Push CLI TUI Visual Language Spec.md`
@@ -105,10 +103,14 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
   - Status: Older duplication analysis snapshot.
 - `archive/Google Native Search Decision.md`
   - Status: Historical decision reference.
+- `archive/branch-context-preservation-slice-2-draft.md`
+  - Status: Archived 2026-05-15; branch context preservation shipped via PRs #412–#415.
 - `archive/runbooks/Agent Context Sprint Plan.md`
   - Status: Shipped sprint plan retained as implementation history.
 - `archive/runbooks/Architecture Follow-up Plan.md`
   - Status: Completed architecture cleanup plan retained as reference.
+- `archive/runbooks/Background Coder Tasks Phase 1.md`
+  - Status: Archived 2026-05-15; Phase 1 shipped and was superseded operationally by `AgentJob Foundation.md`.
 - `archive/runbooks/Efficiency Plan.md`
   - Status: Archived 2026-04-16; partially shipped rationale kept for provenance.
 - `archive/runbooks/Harness Ergonomics Plan.md`
@@ -127,12 +129,20 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
   - Status: Implemented track-specific rollout history retained as reference.
 - `archive/runbooks/Unified Workspace Plan.md`
   - Status: Shipped multi-sprint workspace consolidation plan retained as reference.
+- `archive/runbooks/UX Nice-to-Haves Plan.md`
+  - Status: Archived 2026-05-15; old wishlist/reference, not current roadmap.
+- `archive/runbooks/Web-CLI Parity Plan.md`
+  - Status: Archived 2026-05-15; Tracks 1–4 shipped and remaining work is tracked by ROADMAP.
+- `archive/runbooks/Workspace Route Follow-up Plan.md`
+  - Status: Archived 2026-05-15; route-boundary cleanup shipped and remaining work is optional/product-scoped elsewhere.
 - `archive/runbooks/WorkspaceScreen Extraction Plan.md`
   - Status: Shipped workspace-route extraction plan retained as reference.
 - `archive/runbooks/useChat Refactor Plan.md`
   - Status: Completed refactor execution record retained as reference.
 - `archive/cli/runbooks/LSP Diagnostics Plan.md`
   - Status: Shipped CLI diagnostics plan retained as reference.
+- `archive/cli/runbooks/Push CLI Plan.md`
+  - Status: Archived 2026-05-15; superseded baseline, with live CLI priorities in ROADMAP.
 - `archive/cli/runbooks/Push CLI Bootstrap Execution Plan.md`
   - Status: Completed CLI bootstrap plan retained as reference.
 - `archive/cli/runbooks/Push CLI TUI Phase 1 Plan.md`

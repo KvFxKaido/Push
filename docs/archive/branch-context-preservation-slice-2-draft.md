@@ -1,6 +1,6 @@
 # Slice 2 — Conversation-Preserving Fork Flow (Draft v3)
 
-Status: revised after TWO /council passes; ready for implementation
+Status: Archived 2026-05-15; shipped via PRs #412–#415
 Author: Claude (working with Shawn)
 Date: 2026-04-26
 Roadmap item: "UX: Preserving Context on Branch Creation" (planned)

@@ -1,12 +1,12 @@
 # Background Coder Tasks Plan
 
 Date: 2026-02-13 (Updated: 2026-04-21)
-Status: **Phase 1 scoped — see [`Background Coder Tasks Phase 1.md`](Background%20Coder%20Tasks%20Phase%201.md). Phases 2–4 remain deferred.**
+Status: **Phase 1 scoped — see archived [`Background Coder Tasks Phase 1.md`](../archive/runbooks/Background%20Coder%20Tasks%20Phase%201.md). Phases 2–4 remain deferred.**
 Owner: Push
 
 ## Status Update (2026-04-21)
 
-Phase 1 was re-scoped and pulled out into `Background Coder Tasks Phase 1.md` as a concrete implementation sketch grounded in current code: a `CoderJob` Durable Object running the already-shared `lib/coder-agent.ts` kernel, SSE event replay by `Last-Event-ID`, and a new `useBackgroundCoderJob` hook on the client. The Phase 1 doc supersedes the status-level "deferred" stance on Phase 1 only; Phases 2–4 (retry/backoff, push notifications, job history, multi-role background jobs) remain out of scope.
+Phase 1 was re-scoped and pulled out into archived `Background Coder Tasks Phase 1.md` as a concrete implementation sketch grounded in current code: a `CoderJob` Durable Object running the already-shared `lib/coder-agent.ts` kernel, SSE event replay by `Last-Event-ID`, and a new `useBackgroundCoderJob` hook on the client. The Phase 1 doc supersedes the status-level "deferred" stance on Phase 1 only; Phases 2–4 (retry/backoff, push notifications, job history, multi-role background jobs) remain out of scope.
 
 The original deferral rationale below still applies to those later phases and to the "full PWA background parity" ambition.
 

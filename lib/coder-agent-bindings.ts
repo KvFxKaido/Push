@@ -7,7 +7,7 @@
  * composition, and the after-model policy bridge — each deeply coupled
  * to the 10 `CoderAgentOptions` DI slots of `lib/coder-agent.ts`. The
  * background-jobs Phase 1 plan (see
- * `docs/runbooks/Background Coder Tasks Phase 1.md`) needs the same
+ * `docs/archive/runbooks/Background Coder Tasks Phase 1.md`) needs the same
  * closures available in a Durable Object context, with Web-only
  * dependencies (localStorage approval mode, browser tracing, client
  * HTTP helpers) replaced by server equivalents.

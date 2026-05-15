@@ -18,7 +18,7 @@
  *      a `ChatMessage` with `branch: originBranch`, locking the result to
  *      the launch branch at write time.
  *
- * See `docs/branch-context-preservation-slice-2-draft.md` (R11).
+ * See `docs/archive/branch-context-preservation-slice-2-draft.md` (R11).
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';

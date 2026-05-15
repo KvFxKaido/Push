@@ -17,7 +17,7 @@ This protocol is interactive-first and supports:
 
 ## Product Alignment
 
-This protocol follows the current CLI direction in `docs/cli/runbooks/Push CLI Plan.md`:
+This protocol follows the archived CLI baseline in `docs/archive/cli/runbooks/Push CLI Plan.md`:
 - interactive UX is default
 - headless is optional mode
 - modal is optional via sandbox provider abstraction

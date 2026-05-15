@@ -1,7 +1,7 @@
 # Context Memory and Retrieval Architecture
 
 Status: Current, added 2026-04-05
-Origin: [Multi-Agent Orchestration Research](Multi-Agent%20Orchestration%20Research%20%E2%80%94%20open-multi-agent.md), [Task Graph Orchestration Plan](../runbooks/Task%20Graph%20Orchestration%20Plan.md)
+Origin: [Multi-Agent Orchestration Research](Multi-Agent%20Orchestration%20Research%20%E2%80%94%20open-multi-agent.md), [Task Graph Orchestration Plan](../archive/runbooks/Task%20Graph%20Orchestration%20Plan.md)
 
 ## Implementation Status
 

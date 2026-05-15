@@ -22,7 +22,7 @@
  * runs inside `executeCoderJob()` with DO-side services assembled by
  * `coder-job-services.ts`. Production detectors wrap the Web-side
  * implementations behind `coder-job-detector-adapter.ts`. See
- * `docs/runbooks/Background Coder Tasks Phase 1.md`.
+ * `docs/archive/runbooks/Background Coder Tasks Phase 1.md`.
  */
 
 import type { DurableObjectState } from '@cloudflare/workers-types';
@@ -50,7 +50,7 @@ import type { ChatCard, ChatMessage, DelegationEnvelope } from '@/types';
 import { buildApprovalModeBlock } from '@/lib/approval-mode';
 // Web-side imports held behind the adapter pattern — see
 // `coder-job-detector-adapter.ts` module docstring and the PR #4 plan in
-// `docs/runbooks/Background Coder Tasks Phase 1.md`.
+// `docs/archive/runbooks/Background Coder Tasks Phase 1.md`.
 import { buildCoderDelegationBrief } from '@/lib/role-context';
 import { getSandboxToolProtocol } from '@/lib/sandbox-tool-detection';
 import { WEB_SEARCH_TOOL_PROTOCOL } from '@/lib/web-search-tools';

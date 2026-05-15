@@ -572,7 +572,7 @@ export function useChat(
     lastCoderStateRef,
     backgroundCoderJob,
     // Phase 1: single global toggle. Per-chat override is a later
-    // layer — see docs/runbooks/Background Coder Tasks Phase 1.md §4.
+    // layer — see docs/archive/runbooks/Background Coder Tasks Phase 1.md §4.
     isBackgroundModeEnabledForChat: () => isBackgroundModeEnabled(),
   });
 

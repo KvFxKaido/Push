@@ -1,7 +1,7 @@
 /**
  * HTTP route handlers for `/api/jobs/*`. Forwards to the `CoderJob`
  * Durable Object bound as `env.CoderJob`. Phase 1 PR #2 — see
- * `docs/runbooks/Background Coder Tasks Phase 1.md`.
+ * `docs/archive/runbooks/Background Coder Tasks Phase 1.md`.
  *
  * Routes:
  *   POST /api/jobs/start         — body carries the job envelope;

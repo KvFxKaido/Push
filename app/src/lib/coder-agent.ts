@@ -5,7 +5,7 @@
  * Three of the 10 DI slots — the `toolExec` closure, the Coder-filtered
  * detectors, and the `evaluateAfterModel` bridge — are also shared, now
  * living in `lib/coder-agent-bindings.ts` so the Durable-Object Phase 1
- * background-jobs runtime (`docs/runbooks/Background Coder Tasks Phase 1.md`)
+ * background-jobs runtime (`docs/archive/runbooks/Background Coder Tasks Phase 1.md`)
  * can call the same closure builders with server-side substitutes for
  * policy/tracing/HTTP execution.
  *

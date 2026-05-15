@@ -4,7 +4,7 @@ Date: 2026-04-27
 Status: **shipped** (PRs #433, #434, #435)
 Owner: Push
 
-This is the next chapter after `Background Coder Tasks Phase 1.md`. Phase 1 moved
+This is the next chapter after archived `Background Coder Tasks Phase 1.md`. Phase 1 moved
 the `delegate_coder` sub-loop server-side into the `CoderJob` Durable Object.
 This arc moves **main-chat user turns** server-side through the same DO, behind
 the existing global `push:background-mode-preference` flag.
@@ -192,7 +192,7 @@ shape) — verified pre-existing on main throughout this arc. Independent.
 - PR #433 — role-aware AgentJob contract + `job.*` SSE events
 - PR #434 — main-chat bg-mode branch through CoderJob
 - PR #435 — chatRef context-loader for multi-turn continuity
-- `docs/runbooks/Background Coder Tasks Phase 1.md` — original CoderJob DO
+- `docs/archive/runbooks/Background Coder Tasks Phase 1.md` — original CoderJob DO
   scoping, predates this arc
 - `docs/decisions/Resumable Sessions Design.md` §"Relationship to Background
   Coder Tasks" — the design hook this arc fulfills

@@ -1,7 +1,7 @@
 # Canonical SOP Playbooks Spike
 
 Status: Draft spike, added 2026-04-14
-Origin: [Task Graph Orchestration Plan](Task%20Graph%20Orchestration%20Plan.md), [Harness Reliability Plan](Harness%20Reliability%20Plan.md), r/ollama CPU SLM agent post (2026-04)
+Origin: [Task Graph Orchestration Plan](../archive/runbooks/Task%20Graph%20Orchestration%20Plan.md), [Harness Reliability Plan](../archive/runbooks/Harness%20Reliability%20Plan.md), r/ollama CPU SLM agent post (2026-04)
 
 ## Why This Exists
 

@@ -15,7 +15,7 @@
  *   `@/lib/web-search-tools` imports anywhere else in the DO code.
  *   Go through `CoderJobDetectorAdapter`.
  *
- * Tracked in `docs/runbooks/Background Coder Tasks Phase 1.md` PR #4.
+ * Tracked in `docs/archive/runbooks/Background Coder Tasks Phase 1.md` PR #4.
  */
 
 import type { DetectedToolCalls } from '@push/lib/coder-agent';
