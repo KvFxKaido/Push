@@ -461,6 +461,29 @@ export const MessageBubble = memo(function MessageBubble({
     );
   }
 
+  // Post-merge migration: same transcript-divider treatment as branch_forked,
+  // but labels the transition as "Merged" and surfaces the PR number when
+  // known. The chat migrated to the default branch instead of being filtered
+  // out by the auto-switch effect, so this event marks the seam in history.
+  if (message.kind === 'branch_merged' && message.branchMergedMeta) {
+    const { from, to, prNumber } = message.branchMergedMeta;
+    return (
+      <div className="my-3 flex items-center justify-center px-4">
+        <div className="flex items-center gap-2 rounded-full border border-push-border bg-push-surface px-3 py-1 text-push-2xs text-push-fg-dim">
+          <BranchWaveIcon className="h-3 w-3" />
+          <span>
+            Merged <span className="font-mono text-push-fg-secondary">{from}</span>
+            <span className="mx-1">→</span>
+            <span className="font-mono text-push-fg-secondary">{to}</span>
+            {prNumber !== undefined ? (
+              <span className="ml-1 text-push-fg-dim">(#{prNumber})</span>
+            ) : null}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   // Hide tool call / malformed messages only when they have no cards.
   // If the model included user-facing text before the JSON call, keep it visible.
   if ((message.isToolCall || message.isMalformed) && !hasContent && visibleCards.length === 0) {

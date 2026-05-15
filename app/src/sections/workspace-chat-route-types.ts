@@ -75,6 +75,14 @@ export interface ChatRouteWorkspaceProps {
     name: string,
     from?: string,
   ) => Promise<import('@/lib/fork-branch-in-workspace').ForkBranchInWorkspaceResult>;
+  /** UI-initiated post-merge migration. Dispatches a `kind: 'merged'`
+   *  BranchSwitchPayload through `applyBranchSwitchPayload`, so the active
+   *  chat migrates to the default branch instead of being filtered out by
+   *  the auto-switch effect. Called by `MergeFlowSheet` after a successful
+   *  PR merge — the chat follows on branch switches but explicitly
+   *  follows on merge too, just without auto-bumping the user to a fresh
+   *  conversation. */
+  mergeBranchInUI: (toBranch: string, opts?: { from?: string; prNumber?: number }) => void;
   sandboxState: SandboxStateCardData | null;
   sandboxStateLoading: boolean;
   fetchSandboxState: (id: string) => void;

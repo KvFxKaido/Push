@@ -72,6 +72,12 @@ export interface MergeFlowSheetProps {
   sandboxId: string | null;
   projectInstructions?: string | null;
   setCurrentBranch: (branch: string) => void;
+  /** Post-merge: migrate the active chat to the default branch so the user
+   *  stays in the conversation they just shipped from, instead of being
+   *  filtered out by the auto-switch effect. Drives `setCurrentBranch`
+   *  internally via the shared `applyBranchSwitchPayload` path — callers
+   *  that pass this should NOT also call `setCurrentBranch`. */
+  mergeBranchInUI?: (toBranch: string, opts?: { from?: string; prNumber?: number }) => void;
   lockedProvider?: AIProviderType | null;
   lockedModel?: string | null;
 }
@@ -171,6 +177,7 @@ function MergeFlowSheet({
   sandboxId,
   projectInstructions,
   setCurrentBranch,
+  mergeBranchInUI,
   lockedProvider,
   lockedModel,
 }: MergeFlowSheetProps) {
@@ -637,11 +644,25 @@ function MergeFlowSheet({
   }, []);
 
   // ── Post-merge: switch to main ─────────────────────────────────────
+  //
+  // Prefer `mergeBranchInUI` when present: it migrates the active chat to
+  // the default branch (mirrors the fork-migration path) so the user stays
+  // in the conversation they just shipped from. It calls `setCurrentBranch`
+  // internally via the runtime handler, so the direct call here only fires
+  // in the (legacy) no-callback case to preserve back-compat for any
+  // embedder that hasn't wired the new callback yet.
 
   const handleSwitchToMain = useCallback(() => {
-    setCurrentBranch(defaultBranch);
+    if (mergeBranchInUI) {
+      mergeBranchInUI(defaultBranch, {
+        from: currentBranch,
+        prNumber: prInfo?.number,
+      });
+    } else {
+      setCurrentBranch(defaultBranch);
+    }
     close();
-  }, [setCurrentBranch, defaultBranch, close]);
+  }, [mergeBranchInUI, setCurrentBranch, defaultBranch, currentBranch, prInfo, close]);
 
   // ── Post-merge: switch to main + delete branch ─────────────────────
 
@@ -658,10 +679,26 @@ function MergeFlowSheet({
       console.warn('Branch delete failed (may already be deleted):', err);
     }
 
-    setCurrentBranch(defaultBranch);
+    if (mergeBranchInUI) {
+      mergeBranchInUI(defaultBranch, {
+        from: currentBranch,
+        prNumber: prInfo?.number,
+      });
+    } else {
+      setCurrentBranch(defaultBranch);
+    }
     setDeletingBranch(false);
     close();
-  }, [deletingBranch, repo, currentBranch, defaultBranch, setCurrentBranch, close]);
+  }, [
+    deletingBranch,
+    repo,
+    currentBranch,
+    defaultBranch,
+    mergeBranchInUI,
+    setCurrentBranch,
+    prInfo,
+    close,
+  ]);
 
   // ── Render ─────────────────────────────────────────────────────────
 

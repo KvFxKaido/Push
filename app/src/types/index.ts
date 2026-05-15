@@ -348,10 +348,13 @@ export interface ChatMessage {
   branch?: string;
   /** Discriminator for synthetic message kinds. Plain user/assistant messages
    *  leave this undefined. */
-  kind?: 'branch_forked';
+  kind?: 'branch_forked' | 'branch_merged';
   /** Payload for `kind: 'branch_forked'` events. Records the branch
    *  transition that happened at this point in the conversation. */
   branchForkedMeta?: BranchForkedMeta;
+  /** Payload for `kind: 'branch_merged'` events. Records the merge that
+   *  caused the conversation to migrate to the default branch. */
+  branchMergedMeta?: BranchMergedMeta;
   /** When explicitly `false`, this message is transcript metadata only —
    *  filtered out of every prompt-pack path. Default behavior (undefined)
    *  is model-visible. Used for system events like `branch_forked` that
@@ -366,17 +369,22 @@ export type BranchSwitchSource =
   | 'sandbox_switch_branch'
   | 'github_create_branch'
   | 'release_draft'
-  | 'ui';
+  | 'ui'
+  | 'ui-merge';
 
 /** Normalized payload for a branch transition reported by a tool result.
  *  `kind: 'forked'` means the tool just created a new branch and the active
  *  conversation should follow it (slice 2). `kind: 'switched'` means the
  *  branch changed but the conversation should NOT migrate — existing
  *  pre-slice-2 behavior (auto-select existing chat for the target branch
- *  via `useChat`'s filter, or auto-create one). */
+ *  via `useChat`'s filter, or auto-create one). `kind: 'merged'` means a PR
+ *  was just merged and the workspace is switching back to the default
+ *  branch: the active conversation migrates to the default branch (mirrors
+ *  forked) so the user stays in the chat where the work shipped, instead of
+ *  being bumped to a different chat or a fresh auto-created one. */
 export interface BranchSwitchPayload {
   name: string;
-  kind: 'forked' | 'switched';
+  kind: 'forked' | 'switched' | 'merged';
   /** Source branch (for forked: the base; for switched: optional context). */
   from?: string;
   /** Branch the sandbox was on immediately before this switch. Captured by
@@ -387,6 +395,11 @@ export interface BranchSwitchPayload {
   previous?: string;
   /** Commit SHA of the new branch's HEAD, when known. */
   sha?: string;
+  /** PR number whose merge triggered this transition. Only meaningful when
+   *  `kind === 'merged'`; forked/switched producers leave it unset. Threaded
+   *  through to the `branch_merged` event so the chat divider can reference
+   *  the PR that shipped. */
+  prNumber?: number;
   /** Producer that emitted this payload. */
   source?: BranchSwitchSource;
 }
@@ -398,6 +411,16 @@ export interface BranchForkedMeta {
   from: string;
   to: string;
   sha?: string;
+  source?: BranchSwitchSource;
+}
+
+/** Payload for a `kind: 'branch_merged'` system event. Records that the
+ *  conversation migrated because the source branch was merged via a PR.
+ *  Optional `prNumber` lets the renderer surface the PR that triggered it. */
+export interface BranchMergedMeta {
+  from: string;
+  to: string;
+  prNumber?: number;
   source?: BranchSwitchSource;
 }
 

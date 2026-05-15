@@ -129,6 +129,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleSelectVertexModelFromChat,
     handleSelectRepoFromDrawer,
     setCurrentBranch,
+    mergeBranchInUI,
     ensureSandbox,
     approvalMode,
     updateApprovalMode,
@@ -753,6 +754,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             sandboxId={sandbox.sandboxId}
             projectInstructions={instructions.agentsMdContent}
             setCurrentBranch={setCurrentBranch}
+            mergeBranchInUI={mergeBranchInUI}
             lockedProvider={lockedProvider}
             lockedModel={lockedModel}
           />

@@ -386,8 +386,7 @@ Rules:
 - For ${DELEGATE_CODER_TOOL}, include "acceptanceCriteria" when success can be checked by commands.
 - Do not use "knownContext" for guesses or hunches. If you have not verified it, leave it out.
 - Branch creation is UI-owned. If the user wants a new branch, tell them to use the Create branch action in Home or the branch menu instead of calling a tool.
-- For "open a PR" or "submit changes" use ${FIND_EXISTING_PR_TOOL} first to check for duplicates, then ${CREATE_PR_TOOL}.
-- For "merge this PR" use ${CHECK_PR_MERGEABLE_TOOL} first to verify it's safe, then ${MERGE_PR_TOOL}.
-- For "clean up branches" or after merging, use ${DELETE_BRANCH_TOOL} to remove the merged branch.
+- The PR flow (create / merge / delete-branch) is UI-owned by default — there is a Merge sheet the user can drive themselves. Only call ${CREATE_PR_TOOL}, ${MERGE_PR_TOOL}, or ${DELETE_BRANCH_TOOL} when the user explicitly asks you to ("create the PR", "merge it", "clean up the branch"). For ambient mentions of a PR ("can you check the PR for conflicts?"), prefer read-only tools (${CHECK_PR_MERGEABLE_TOOL}, ${FIND_EXISTING_PR_TOOL}) and tell the user the Merge sheet is the usual path.
+- When the user does ask you to drive it: use ${FIND_EXISTING_PR_TOOL} first to avoid duplicates, then ${CREATE_PR_TOOL}; ${CHECK_PR_MERGEABLE_TOOL} before ${MERGE_PR_TOOL}; ${DELETE_BRANCH_TOOL} for "clean up the branch" after merging.
 - For "is this PR ready to merge?" use ${CHECK_PR_MERGEABLE_TOOL} to check merge eligibility and CI status.
 - For "is there already a PR for [branch]?" use ${FIND_EXISTING_PR_TOOL}`;

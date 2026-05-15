@@ -298,6 +298,23 @@ const LOCAL_DAEMON_ORCHESTRATOR_EXTRA: ReadonlySet<Capability> = new Set<Capabil
   'sandbox:download',
 ]);
 
+/**
+ * Capabilities the cloud orchestrator has that local-daemon orchestrator does
+ * not. These are remote-bound GitHub mutations: in local-daemon mode the
+ * paired session has no GitHub remote wired up, so `create_pr` / `merge_pr` /
+ * `delete_branch` / `trigger_workflow` would fail at the transport layer even
+ * if the model emitted them. Strip them from the local-daemon effective grant
+ * so the runtime denial is on the capability check, not on a network error.
+ *
+ * The static `ROLE_CAPABILITIES.orchestrator` entry encodes the cloud grant
+ * (which is the dominant surface today); `getEffectiveCapabilities` subtracts
+ * this set for `local-daemon`.
+ */
+const LOCAL_DAEMON_ORCHESTRATOR_REMOVE: ReadonlySet<Capability> = new Set<Capability>([
+  'pr:write',
+  'workflow:trigger',
+]);
+
 // ---------------------------------------------------------------------------
 // Role → Capability grants
 // ---------------------------------------------------------------------------
@@ -307,7 +324,9 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
   orchestrator: new Set<Capability>([
     'repo:read',
     'pr:read',
+    'pr:write',
     'workflow:read',
+    'workflow:trigger',
     'delegate:coder',
     'delegate:explorer',
     'scratchpad',
@@ -367,7 +386,8 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
  * Resolve the effective capability set for a role in a given execution
  * mode. `cloud` returns the static grant from ROLE_CAPABILITIES; in
  * `local-daemon` mode the orchestrator picks up the daemon extras
- * (exec, write, test, download).
+ * (exec, write, test, download) and drops the remote-only caps
+ * (`pr:write`, `workflow:trigger`) that the paired session can't reach.
  *
  * Other roles are unchanged across modes: coder already has those,
  * explorer stays read-only by intent, reviewer/auditor are diff-only.
@@ -379,7 +399,12 @@ export function getEffectiveCapabilities(
   const base = ROLE_CAPABILITIES[role];
   if (!base) return new Set<Capability>();
   if (role === 'orchestrator' && mode === 'local-daemon') {
-    return new Set<Capability>([...base, ...LOCAL_DAEMON_ORCHESTRATOR_EXTRA]);
+    const result = new Set<Capability>();
+    for (const cap of base) {
+      if (!LOCAL_DAEMON_ORCHESTRATOR_REMOVE.has(cap)) result.add(cap);
+    }
+    for (const cap of LOCAL_DAEMON_ORCHESTRATOR_EXTRA) result.add(cap);
+    return result;
   }
   return base;
 }
