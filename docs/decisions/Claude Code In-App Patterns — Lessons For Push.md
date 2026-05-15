@@ -2,7 +2,7 @@
 
 Date: 2026-05-15
 Author: Claude (via Claude Code)
-Status: Partly shipped — #1 (PR #561, 2026-05-15) and #2 (this PR, 2026-05-15) landed; remaining patterns Draft.
+Status: Partly shipped — #1 (PR #561), #2 (PRs #562 + #563), and #7 (this PR, 2026-05-15) landed; remaining patterns Draft.
 
 ---
 
@@ -150,14 +150,19 @@ Auto-compaction clears older tool outputs first, then summarizes if needed. Defe
 
 ### Push today
 
-`coder-context-trim.ts` does targeted Coder context trimming (drop intermediate tool results, preserve recent + first message, inject a `[CONTEXT_SUMMARY]` block). Conditional working-memory reinjection (see #1) plays a similar role. There's no Orchestrator-level compaction primitive — long Orchestrator threads rely on whatever the provider does.
+**Shipped 2026-05-15** (this PR). Earlier drafts of this doc claimed "no Orchestrator-level compaction primitive" — that read was wrong. Both surfaces already have one: web uses `createContextManager` from `lib/message-context-manager.ts` with `compactChatMessage` + digest insertion; CLI's `cli/context-manager.ts` has its own three-phase trim (summarize → drop pairs → hard fallback). The real gap was three near-duplicate `extractSemanticSummaryLines` / `buildContextSummaryBlock` implementations and no shared tier interface.
 
-### Load-bearing next step
+This round closed two pieces:
 
-Two pieces:
+- **Shared semantic-summary primitive.** `lib/context-summary.ts` is now the canonical home for `extractSemanticSummaryLines`, `buildContextSummaryBlock`, `compactMessage`, and `extractToolName`. The richer list-meta detection (with omission markers like `[N more commits omitted from original X-item list; visible items are a sample]`) that previously only lived in `app/src/lib/context-compaction.ts` is now available to all callers. `lib/coder-context-trim.ts` is a back-compat shim; `app/src/lib/context-compaction.ts` re-exports the lib primitive and keeps the typed `compactChatMessage` wrapper. The CLI's own simpler summarizers stay as-is — they're tuned for the CLI's predictability requirements and migrating them was real behavioral churn for limited gain.
+- **Compaction tiers primitive.** `lib/compaction-tiers.ts` defines the typed tier interface (`CompactionTier`, `applyTiers`, `CompactionContext`) plus three default tier factories: `createDropToolOutputsTier` (cheap — drops old `isToolResult` messages outside the keep-latest window), `createSemanticCompactTier` (medium — runs `compactMessage` on each touchable message), `createDropOldestPairsTier` (hard fallback — drops oldest assistant+tool-result pairs). `applyTiers` runs them in order with a "do the least amount of compaction necessary" semantics and returns a trace (which tiers attempted, which applied, total chars saved, whether the final result fits).
 
-1. **Promote `coder-context-trim` from Coder-only to a generic policy.** The Orchestrator can suffer the same bloat on long sessions with many delegations. Refactor the trim primitive to accept a "what to preserve" predicate and apply it at the Orchestrator boundary too.
-2. **Compaction tiers.** Distinguish "drop tool outputs older than N rounds" from "summarize and replace". Cheap tier first, expensive tier when the cheap one isn't enough. Claude Code's docs hint at this layering without spelling it out.
+Test coverage: 13 cases in `lib/compaction-tiers.test.ts` pin cheap-first ordering, fall-through behavior, system-prompt / tail preservation, and trace shape. 22 cases total across context-summary + compaction-tiers.
+
+### What's not in scope here
+
+- The existing concrete managers (`createContextManager`, `cli/context-manager.ts`) keep their current implementations. The tier primitive is offered as the canonical shape for new compaction sites and as a migration target if/when the concrete managers grow more divergent — forcing the existing surfaces through the new tier interface would be a non-trivial behavior change with test churn that didn't pay for itself in this round.
+- Deferred tool schemas (the "only names cost tokens until used" half of the Claude Code pattern) is pattern #5 in this doc, not #7.
 
 ---
 
@@ -187,7 +192,7 @@ Nothing new — keep doing it. The note here exists so the pattern stays visible
 | 4. Skills lazy-loaded | CLI does skill discovery; project instructions still eager | Measure per-turn cost of project-instructions; move stable reference behind on-demand fetches |
 | 5. MCP tool deferral | Full schemas always inject | Names-only manifest + on-hit schema fetch — biggest context payoff |
 | 6. Agent View | Branch-scoped chats, no cross-chat in-flight view | Workspace-screen listing of background jobs grouped by state |
-| 7. Auto-compaction | Coder-specific trim only | Promote `coder-context-trim` to a generic policy with Orchestrator-level application |
+| 7. Auto-compaction | **Shipped 2026-05-15** — `lib/context-summary.ts` (canonical summary primitive) + `lib/compaction-tiers.ts` (typed tier interface + 3 default tiers). Existing managers kept; CLI summarizers kept. | Concrete-manager migration to tier primitive (if needed) |
 | 8. Drift-detector tests | Already practiced | Keep doing it; surface the pattern when adding new cross-surface types |
 
 ## Ordering recommendation
