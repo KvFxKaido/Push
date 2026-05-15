@@ -135,6 +135,50 @@ describe('recoverXmlToolCalls — multiple calls, ordering, prose tolerance', ()
     expect(recoverXmlToolCalls(text)).toEqual([]);
   });
 
+  it('rejects a single `<tool_call>` block surrounded by prose (Codex P1)', () => {
+    // The exact false-positive Codex flagged: a closed `<tool_call>`
+    // sitting inside prose explaining what NOT to do. Without the
+    // whole-message gap gate the dispatcher would promote this to a
+    // real exec.
+    const text =
+      'Do not run <tool_call>exec<arg_key>command</arg_key><arg_value>rm -rf /</arg_value></tool_call> on production.';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
+  it('rejects an XML block preceded by prose', () => {
+    const text =
+      'Earlier I called <tool_call>read_file<arg_key>path</arg_key><arg_value>x</arg_value></tool_call>';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
+  it('rejects an XML block followed by trailing prose', () => {
+    const text =
+      '<tool_call>read_file<arg_key>path</arg_key><arg_value>x</arg_value></tool_call> — but actually skip this.';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
+  it('rejects two XML blocks separated by prose', () => {
+    const text = [
+      '<tool_call>read_file<arg_key>path</arg_key><arg_value>a</arg_value></tool_call>',
+      'and then maybe',
+      '<tool_call>read_file<arg_key>path</arg_key><arg_value>b</arg_value></tool_call>',
+    ].join(' ');
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
+  it('accepts an XML-only message with a stray `json`/`tool` language marker', () => {
+    // Mirrors the bare-object eligibility gate's tolerance for a
+    // language marker on its own line — some models prefix tool blocks
+    // with the language hint even when the wrapper is XML.
+    const text = [
+      'tool',
+      '<tool_call>read_file<arg_key>path</arg_key><arg_value>x</arg_value></tool_call>',
+    ].join('\n');
+    expect(recoverXmlToolCalls(text)).toEqual([
+      { tool: 'read_file', args: { path: 'x' }, offset: 5 },
+    ]);
+  });
+
   it('emits zero recoveries on text with no `<tool_call>` tags at all', () => {
     expect(recoverXmlToolCalls('Plain prose. No tags.')).toEqual([]);
   });

@@ -244,83 +244,52 @@ export function createToolDispatcher<TCall>(
         }
       }
 
-      // Phase 3: namespaced-functions recovery (`functions.<name>:<id>
-      // <args>`). Two paths:
+      // Phase 3: non-canonical recovery — namespaced `functions.<name>:<id>
+      // <args>` traces (Kimi/Blackbox) and XML-wrapped `<tool_call>…
+      // </tool_call>` blocks (Hermes/Qwen/Nous finetunes). Merged into
+      // one promotion path so a model that emits BOTH non-canonical
+      // shapes runs all of them rather than executing namespaced and
+      // dropping XML as malformed. Codex/Copilot review on PR #558.
+      // Two paths:
       //
-      //   (a) Phases 1+2 produced zero candidates — promote any
-      //       namespaced traces to candidates. This is the model-quirk
-      //       fallback for outputs like Kimi-via-Blackbox that emit
-      //       OpenAI-style function-call traces instead of fenced JSON.
-      //   (b) Phases 1+2 produced candidates AND namespaced traces also
-      //       exist — surface NON-DUPLICATE traces as `unknown_tool`
-      //       malformed reports. Before this branch they were silently
-      //       dropped, which fit the OpenCode silent-failure shape:
-      //       the model emitted two callable things, the harness
-      //       executed one and discarded the other without telling
-      //       the model. Duplicate-suppression is critical: if the
-      //       same `(tool, args)` is emitted as both a fenced call
-      //       and a namespaced trace, the fenced version executes
-      //       and reporting the namespaced copy as malformed would
-      //       trigger a spurious `[TOOL_CALL_PARSE_ERROR]` correction
-      //       round for a call that wasn't actually dropped. Codex P2
-      //       + Copilot on PR #542.
-      const namespacedRecoveries = recoverNamespacedToolCalls(text);
-      if (candidates.length === 0) {
-        for (const recovered of namespacedRecoveries) {
-          candidates.push({
-            kind: 'namespaced',
-            offset: recovered.offset,
-            parsed: {
-              tool: recovered.tool,
-              args: recovered.args,
-              raw: { tool: recovered.tool, args: recovered.args },
-            },
-            sample: `functions.${recovered.tool}:* ${JSON.stringify(recovered.args)}`,
-          });
-        }
-      } else {
-        const existingKeys = new Set<string>();
-        for (const c of candidates) {
-          existingKeys.add(canonicalKey(c.parsed));
-        }
-        for (const recovered of namespacedRecoveries) {
-          const parsed: ParsedToolObject = {
-            tool: recovered.tool,
-            args: recovered.args,
-            raw: { tool: recovered.tool, args: recovered.args },
-          };
-          if (existingKeys.has(canonicalKey(parsed))) continue;
-          malformed.push({
-            reason: 'unknown_tool',
-            sample: truncateSample(
-              `functions.${recovered.tool}:* ${JSON.stringify(recovered.args)}`,
-            ),
-          });
-        }
-      }
+      //   (a) Phases 1+2 produced zero candidates — promote ALL
+      //       recoveries (both shapes) to candidates, in textual order.
+      //   (b) Phases 1+2 produced candidates AND recoveries also exist —
+      //       surface NON-DUPLICATE recoveries as `unknown_tool` so the
+      //       model sees the divergence (OpenCode silent-failure
+      //       shape). Duplicate-suppression is critical: a tool+args
+      //       emitted as both a fenced call AND a recovery shape
+      //       executes once via the fence; reporting the recovery
+      //       copy as malformed would trigger a spurious
+      //       `[TOOL_CALL_PARSE_ERROR]` correction round.
+      const recoveries: RecoveredCandidate[] = [
+        ...recoverNamespacedToolCalls(text).map((r) => ({
+          kind: 'namespaced' as const,
+          tool: r.tool,
+          args: r.args,
+          offset: r.offset,
+          sample: `functions.${r.tool}:* ${JSON.stringify(r.args)}`,
+        })),
+        ...recoverXmlToolCalls(text).map((r) => ({
+          kind: 'xml' as const,
+          tool: r.tool,
+          args: r.args,
+          offset: r.offset,
+          sample: formatXmlRecoverySample(r.tool, r.args),
+        })),
+      ].sort((a, b) => a.offset - b.offset);
 
-      // Phase 4: XML-wrapped recovery (`<tool_call>...</tool_call>`).
-      // Same two-path shape as phase 3 — Hermes/Qwen/Nous finetunes and
-      // related open-weight models emit tool calls in XML tags instead
-      // of fenced JSON, which the canonical phases ignore. Without this
-      // pass the call appears as raw `<tool_call>...` text in the
-      // assistant transcript and the harness silently runs zero tools.
-      // Promotion when nothing else parsed; otherwise non-duplicate
-      // traces surface as `unknown_tool` so the model sees the
-      // divergence rather than discovering it via missing follow-up
-      // tool results.
-      const xmlRecoveries = recoverXmlToolCalls(text);
       if (candidates.length === 0) {
-        for (const recovered of xmlRecoveries) {
+        for (const recovered of recoveries) {
           candidates.push({
-            kind: 'xml',
+            kind: recovered.kind,
             offset: recovered.offset,
             parsed: {
               tool: recovered.tool,
               args: recovered.args,
               raw: { tool: recovered.tool, args: recovered.args },
             },
-            sample: formatXmlRecoverySample(recovered.tool, recovered.args),
+            sample: recovered.sample,
           });
         }
       } else {
@@ -328,7 +297,7 @@ export function createToolDispatcher<TCall>(
         for (const c of candidates) {
           existingKeys.add(canonicalKey(c.parsed));
         }
-        for (const recovered of xmlRecoveries) {
+        for (const recovered of recoveries) {
           const parsed: ParsedToolObject = {
             tool: recovered.tool,
             args: recovered.args,
@@ -337,7 +306,7 @@ export function createToolDispatcher<TCall>(
           if (existingKeys.has(canonicalKey(parsed))) continue;
           malformed.push({
             reason: 'unknown_tool',
-            sample: truncateSample(formatXmlRecoverySample(recovered.tool, recovered.args)),
+            sample: truncateSample(recovered.sample),
           });
         }
       }
@@ -622,6 +591,19 @@ interface DetectedCandidate {
   offset: number;
   parsed: ParsedToolObject;
   /** Truncatable sample for malformed reports. */
+  sample: string;
+}
+
+/**
+ * Normalized shape for the merged phase-3 recovery list (namespaced
+ * + XML traces). Lets the dispatcher walk both shapes through one
+ * promotion/dedup loop instead of duplicating the logic per source.
+ */
+interface RecoveredCandidate {
+  kind: 'namespaced' | 'xml';
+  tool: string;
+  args: Record<string, unknown>;
+  offset: number;
   sample: string;
 }
 

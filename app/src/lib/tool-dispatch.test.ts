@@ -1076,3 +1076,90 @@ describe('detectAllToolCalls — namespaced-functions recovery', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// detectAllToolCalls / detectAnyToolCall — XML-wrapper recovery on the
+// web/mobile dispatcher. Mirrors the namespaced suite above so the
+// mobile-app `<tool_call>` failure mode that motivated PR #558 is
+// pinned end-to-end through the web routing layer (which differs from
+// the shared CLI dispatcher kernel — it groups calls by execution
+// phase and resolves tool names through `inferToolFromArgs`).
+// ---------------------------------------------------------------------------
+
+describe('detectAllToolCalls — XML-wrapper recovery', () => {
+  const SHAPE_B_CAPTURE = [
+    '<tool_call>read_file',
+    '<arg_key>path</arg_key>',
+    '<arg_value>TODO.md</arg_value>',
+    '</tool_call>',
+  ].join('\n');
+
+  const SHAPE_A_CAPTURE =
+    '<tool_call>{"name": "read_file", "arguments": {"path": "ROADMAP.md"}}</tool_call>';
+
+  it('recovers a Shape B `<tool_call>` block via detectAllToolCalls', () => {
+    const result = detectAllToolCalls(SHAPE_B_CAPTURE);
+    const allCalls = [...result.readOnly, ...result.fileMutations];
+    if (result.mutating) allCalls.push(result.mutating);
+    expect(allCalls).toHaveLength(1);
+    // The web runtime resolves the bare `read_file` + `{path}` shape to
+    // the sandbox variant via inferToolFromArgs.
+    expect(allCalls[0].call.tool).toBe('sandbox_read_file');
+  });
+
+  it('recovers a Shape A `<tool_call>` block via detectAllToolCalls', () => {
+    const result = detectAllToolCalls(SHAPE_A_CAPTURE);
+    const allCalls = [...result.readOnly, ...result.fileMutations];
+    if (result.mutating) allCalls.push(result.mutating);
+    expect(allCalls).toHaveLength(1);
+    expect(allCalls[0].call.tool).toBe('sandbox_read_file');
+  });
+
+  it('detectAnyToolCall returns the XML-recovered call when no canonical wrapper exists', () => {
+    const recovered = detectAnyToolCall(SHAPE_B_CAPTURE);
+    expect(recovered).not.toBeNull();
+    expect(recovered!.call.tool).toBe('sandbox_read_file');
+  });
+
+  it('detectAllToolCalls merges + sorts namespaced and XML recoveries by textual offset', () => {
+    // XML appears before the namespaced prefix in the text. Before
+    // the merge-and-sort fix, namespaced recoveries always ran first
+    // regardless of textual order, so the namespaced call landed at
+    // result.readOnly[0] and the XML one at [1] — the opposite of
+    // what the model intended. Pinning the corrected order here.
+    // Codex/Copilot review on PR #558.
+    const text = [
+      '<tool_call>read_file',
+      '<arg_key>path</arg_key>',
+      '<arg_value>FIRST.md</arg_value>',
+      '</tool_call>',
+      'functions.read_file:1 {"path": "SECOND.md"}',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    expect(result.readOnly).toHaveLength(2);
+    const paths = result.readOnly.map((c) =>
+      c.source === 'sandbox' && c.call.tool === 'sandbox_read_file'
+        ? (c.call.args as Record<string, unknown>).path
+        : null,
+    );
+    expect(paths).toEqual(['/workspace/FIRST.md', '/workspace/SECOND.md']);
+  });
+
+  it('does not let XML recovery override canonical tool calls in the same message', () => {
+    // Canonical fenced block + an XML wrapper in the surrounding text.
+    // The XML recovery branch is gated on having NO explicit wrappers
+    // (same gate as the namespaced branch), so only the canonical call
+    // executes and the XML one is ignored — preventing the prose-shape
+    // `<tool_call>exec ...</tool_call>` false-positive from hijacking a
+    // run that already has a real fenced call.
+    const text = [
+      '```json',
+      '{"tool": "sandbox_read_file", "args": {"path": "REAL.md"}}',
+      '```',
+      '<tool_call>exec<arg_key>command</arg_key><arg_value>rm -rf /</arg_value></tool_call>',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    expect(result.readOnly).toHaveLength(1);
+    expect(result.readOnly[0].call.tool).toBe('sandbox_read_file');
+  });
+});

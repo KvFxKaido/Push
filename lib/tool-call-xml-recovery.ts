@@ -65,6 +65,33 @@ const ARG_PAIR_REGEX =
 const TOOL_NAME_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const ARG_KEY_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
+// Eligibility gate for the whole-message context — mirrors
+// `isBareBlockEligible` in the dispatcher. The prefix before the first
+// `<tool_call>`, every gap between consecutive blocks, and the suffix
+// after the last block must each consist only of whitespace and
+// optional fence/language markers (after stripping well-formed fenced
+// blocks, which are legitimate sibling tool-call output). Without
+// this gate, a prose mention like `Do not run <tool_call>exec ...
+// </tool_call>` would be promoted to a real exec call by the
+// dispatcher's phase-4 fallback. Codex review on PR #558.
+const XML_GAP_REGEX =
+  /^\s*(?:`{3,}|~{3,})?\s*(?:json[c5]?|tool|xml|javascript)?\s*(?:`{3,}|~{3,})?\s*$/i;
+
+// Strip well-formed fenced regions (` ``` … ``` ` / `~~~ … ~~~`) and
+// namespaced `functions.<name>:<id> {…}` traces so legitimate sibling
+// tool-call output doesn't trip the prose gate. Without this, mixed
+// emissions (canonical-fenced + XML, or namespaced + XML) would
+// reject the XML recovery as prose-bounded. The namespaced strip is
+// approximate (a JSON string value containing `}` could close the
+// match early) but only matters for the gap check — actual recovery
+// is unaffected, and the false-negative side rejects rather than
+// over-accepts.
+const FENCED_BLOCK_REGEX = /(?:`{3,}|~{3,})[\s\S]*?(?:`{3,}|~{3,})/g;
+const NAMESPACED_TRACE_REGEX = /functions\.[a-zA-Z_]\w*\s*:\s*\w+(?:\s*(?:\{[\s\S]*?\}|null))?/g;
+function stripSiblingToolCallShapes(text: string): string {
+  return text.replace(FENCED_BLOCK_REGEX, '').replace(NAMESPACED_TRACE_REGEX, '');
+}
+
 /**
  * Scan `text` for `<tool_call>...</tool_call>` blocks and assemble a
  * `{tool, args}` shape for each. Order-preserving, no dedup — the
@@ -77,16 +104,40 @@ const ARG_KEY_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
  * `git_status` that take no arguments.
  */
 export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
-  const out: RecoveredXmlCall[] = [];
+  const matches: Array<{ blockStart: number; blockEnd: number; inner: string }> = [];
   const regex = new RegExp(TOOL_CALL_TAG_REGEX.source, TOOL_CALL_TAG_REGEX.flags);
   let match: RegExpExecArray | null;
-
   while ((match = regex.exec(text)) !== null) {
-    const inner = match[1];
-    const offset = match.index;
-    const parsed = parseToolCallInner(inner);
+    matches.push({
+      blockStart: match.index,
+      blockEnd: match.index + match[0].length,
+      inner: match[1],
+    });
+  }
+  if (matches.length === 0) return [];
+
+  // Whole-message eligibility gate — see `XML_GAP_REGEX`. Reject the
+  // entire recovery batch if any non-block region contains prose
+  // (after stripping well-formed fenced regions, which are legitimate
+  // sibling tool-call output). The false-negative trade (a model that
+  // legitimately mixes a tool call with continuing prose afterwards
+  // is skipped) matches the same trade `hasRecoverableTrailingContext`
+  // makes in the namespaced recovery: a missed call resolves on the
+  // next turn, a false-positive `<tool_call>exec ...</tool_call>`
+  // that executes does not.
+  const isAllowedGap = (slice: string): boolean =>
+    XML_GAP_REGEX.test(stripSiblingToolCallShapes(slice));
+  if (!isAllowedGap(text.slice(0, matches[0].blockStart))) return [];
+  for (let i = 1; i < matches.length; i++) {
+    if (!isAllowedGap(text.slice(matches[i - 1].blockEnd, matches[i].blockStart))) return [];
+  }
+  if (!isAllowedGap(text.slice(matches[matches.length - 1].blockEnd))) return [];
+
+  const out: RecoveredXmlCall[] = [];
+  for (const m of matches) {
+    const parsed = parseToolCallInner(m.inner);
     if (!parsed) continue;
-    out.push({ ...parsed, offset });
+    out.push({ ...parsed, offset: m.blockStart });
   }
   return out;
 }

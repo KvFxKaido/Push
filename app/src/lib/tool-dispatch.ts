@@ -435,19 +435,17 @@ export function detectAnyToolCall(text: string): AnyToolCall | null {
   const recovered = tryRecoverBareToolArgs(text);
   if (recovered) return recovered;
 
-  // Fallback for OpenAI-style namespaced output (`functions.<name>:<id>
-  // <args>`) — see `recoverNamespacedToolCalls` for the model behavior
-  // this addresses.
-  for (const namespaced of recoverNamespacedToolCalls(text)) {
-    const call = wrapRecoveredCallToAny(namespaced.tool, namespaced.args);
-    if (call) return call;
-  }
-
-  // Fallback for XML-wrapped output (`<tool_call>...</tool_call>`) —
-  // Hermes / Qwen / Nous finetunes and similar open-weight models emit
-  // this instead of fenced JSON. See `recoverXmlToolCalls`.
-  for (const xml of recoverXmlToolCalls(text)) {
-    const call = wrapRecoveredCallToAny(xml.tool, xml.args);
+  // Fallback for non-canonical wrappers — namespaced (`functions.<name>:<id>
+  // <args>`, Kimi/Blackbox) and XML (`<tool_call>...</tool_call>`,
+  // Hermes/Qwen/Nous finetunes). Merge + sort by offset so the
+  // textually-first call wins regardless of which shape it's in —
+  // matches the "returns the first match" docstring.
+  const fallbackRecoveries = [
+    ...recoverNamespacedToolCalls(text),
+    ...recoverXmlToolCalls(text),
+  ].sort((a, b) => a.offset - b.offset);
+  for (const recovered of fallbackRecoveries) {
+    const call = wrapRecoveredCallToAny(recovered.tool, recovered.args);
     if (call) return call;
   }
 
