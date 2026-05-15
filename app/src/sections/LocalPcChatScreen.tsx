@@ -25,11 +25,13 @@ import type { LocalPcBinding } from '@/types';
 
 interface LocalPcChatScreenProps {
   binding: LocalPcBinding;
+  /** Non-destructive exit back to the app shell. Pairing remains stored. */
+  onLeave: () => void;
   /** Called after the user unpairs — caller ends the workspace session. */
   onUnpair: () => void;
 }
 
-export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps) {
+export function LocalPcChatScreen({ binding, onLeave, onUnpair }: LocalPcChatScreenProps) {
   // Approval queue is owned at the screen so we can wire its
   // `handleDaemonEvent` into the daemon hook's `onEvent` callback
   // below. Rules-of-Hooks: we have to call the daemon hook at the
@@ -61,6 +63,7 @@ export function LocalPcChatScreen({ binding, onUnpair }: LocalPcChatScreenProps)
       workspaceContext={workspaceContext}
       modeChip={<LocalPcModeChip port={binding.port} status={status} />}
       unpairIcon={MonitorOff}
+      onLeave={onLeave}
       onUnpair={handleUnpair}
       status={status}
       reconnect={reconnect}

@@ -26,6 +26,7 @@ export function WorkspaceScreen(props: WorkspaceScreenProps) {
       <Suspense fallback={workspaceFallback}>
         <LocalPcChatScreen
           binding={workspaceSession.binding}
+          onLeave={props.navigation.onEndWorkspace}
           onUnpair={props.navigation.onEndWorkspace}
         />
       </Suspense>
@@ -41,6 +42,7 @@ export function WorkspaceScreen(props: WorkspaceScreenProps) {
       <Suspense fallback={workspaceFallback}>
         <RelayChatScreen
           binding={workspaceSession.binding}
+          onLeave={props.navigation.onEndWorkspace}
           onUnpair={props.navigation.onEndWorkspace}
         />
       </Suspense>

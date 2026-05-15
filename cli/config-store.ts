@@ -18,6 +18,12 @@ export interface PushConfig {
   execMode?: string;
   theme?: string;
   spinner?: string;
+  /**
+   * TUI daemon integration. Defaults to true: the TUI starts pushd
+   * when it is not already reachable, then sends turns through it so
+   * sessions can persist in the background.
+   */
+  tuiDaemonAutoStart?: boolean | string;
   // Tool name allow/deny lists (CLI tool names from `cli/tools.ts` — e.g.
   // `exec`, `exec_start`, `write_file`). `disabledTools` blocks at dispatch;
   // `alwaysAllow` waives approval for the listed tools (today only `exec`

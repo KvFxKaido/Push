@@ -26,7 +26,7 @@
  * conversation init, workspace context, picker placement, layout)
  * lives here so the screens don't drift.
  */
-import { RefreshCw, Send, Square } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Send, Square } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
@@ -34,13 +34,19 @@ import type React from 'react';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
 import { DaemonModelPicker } from '@/components/daemon/DaemonModelPicker';
+import { ModelPicker } from '@/components/ui/model-picker';
 import { useChat } from '@/hooks/useChat';
-import { useModelCatalog } from '@/hooks/useModelCatalog';
+import { useModelCatalog, type ModelCatalog } from '@/hooks/useModelCatalog';
 import type { ApprovalQueueHandle } from '@/hooks/useApprovalQueue';
 import type { ConnectionStatus, RequestOptions, SessionResponse } from '@/lib/local-daemon-binding';
 import type { LiveDaemonBinding, ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
-import { setPreferredProvider, type PreferredProvider } from '@/lib/providers';
+import {
+  getModelDisplayLeafName,
+  setPreferredProvider,
+  type PreferredProvider,
+} from '@/lib/providers';
 import type { Conversation, WorkspaceContext, WorkspaceMode } from '@/types';
+import type { AIProviderType } from '@/types';
 
 /**
  * The reconnect surface the daemon hooks share. Both
@@ -72,6 +78,8 @@ export interface DaemonChatBodyProps {
    * `clearPaired*` doesn't leave the workspace session dangling.
    */
   onUnpair: () => Promise<void> | void;
+  /** Non-destructive exit back to the app shell. Pairing remains stored. */
+  onLeave: () => void;
 
   /** Live connection status from the daemon hook. */
   status: ConnectionStatus;
@@ -110,6 +118,7 @@ export function DaemonChatBody({
   modeChip,
   unpairIcon: UnpairIcon,
   onUnpair,
+  onLeave,
   status,
   reconnect,
   reconnectInfo,
@@ -124,18 +133,6 @@ export function DaemonChatBody({
   // preference (via providers.ts) AND the catalog's reactive state
   // so `getActiveProvider()` returns the new value on the next read.
   const catalog = useModelCatalog();
-  const handleSelectProvider = useCallback(
-    (provider: PreferredProvider) => {
-      // Order matters: persist FIRST so a re-render mid-switch sees
-      // the same value the catalog is about to report. The catalog's
-      // setActiveBackend is what actually triggers the re-render —
-      // setPreferredProvider alone wouldn't.
-      setPreferredProvider(provider);
-      catalog.setActiveBackend(provider);
-    },
-    [catalog],
-  );
-
   const decideApproval = useCallback(
     (decision: 'approve' | 'deny') => {
       // Read the head from the ref (a synchronous mirror of the
@@ -184,14 +181,50 @@ export function DaemonChatBody({
     // Slice 1.d polish: once the active chat has sent its first
     // message, useChat locks the conversation to its original
     // provider. The picker reads these to render the locked
-    // provider and disable in-place switching, so the chip doesn't
-    // lie about what the next turn uses. Codex P2 on #522.
+    // provider/model. The daemon pickers surface the locked values;
+    // switching starts a fresh daemon chat so the existing transcript
+    // does not lie about what routed its earlier turns.
     lockedProvider,
     isProviderLocked,
+    lockedModel,
+    isModelLocked,
   } = useChat(
     // No GitHub repo — daemon-backed sessions are bound to the
     // daemon cwd, not a remote repo.
     null,
+  );
+
+  const handleSelectProvider = useCallback(
+    (provider: PreferredProvider) => {
+      // Order matters: persist FIRST so a re-render mid-switch sees
+      // the same value the catalog is about to report. The catalog's
+      // setActiveBackend is what actually triggers the re-render —
+      // setPreferredProvider alone wouldn't.
+      setPreferredProvider(provider);
+      catalog.setActiveBackend(provider);
+      if (isProviderLocked && provider !== lockedProvider) {
+        createNewChat();
+      }
+    },
+    [catalog, createNewChat, isProviderLocked, lockedProvider],
+  );
+
+  const displayedProvider =
+    (lockedProvider as PreferredProvider | null) ?? catalog.activeProviderLabel;
+  const modelControl = getDaemonModelControl(catalog, displayedProvider, lockedModel);
+  const handleSelectModel = useCallback(
+    (model: string) => {
+      if (!modelControl || !model.trim()) return;
+      if (catalog.activeProviderLabel !== modelControl.provider) {
+        setPreferredProvider(modelControl.provider);
+        catalog.setActiveBackend(modelControl.provider);
+      }
+      modelControl.onChange(model);
+      if (isModelLocked && model !== lockedModel) {
+        createNewChat();
+      }
+    },
+    [catalog, createNewChat, isModelLocked, lockedModel, modelControl],
   );
 
   // Wire the binding into the chat's tool-dispatch context. Prefer
@@ -276,9 +309,20 @@ export function DaemonChatBody({
 
   return (
     <div className="flex h-dvh flex-col bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] safe-area-top safe-area-bottom">
-      <header className="flex items-center justify-between gap-3 border-b border-push-edge/40 px-4 py-3">
-        {modeChip}
-        <div className="flex items-center gap-2">
+      <header className="flex items-center justify-between gap-2 border-b border-push-edge/40 px-3 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onLeave}
+            aria-label={`Leave ${daemonLabel}`}
+            title={`Leave ${daemonLabel}`}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-push-edge/60 text-push-fg-secondary transition hover:border-push-fg/60 hover:text-push-fg"
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          </button>
+          <div className="min-w-0 [&>*]:max-w-full">{modeChip}</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
           {isStreaming ? (
             <button
               type="button"
@@ -288,7 +332,7 @@ export function DaemonChatBody({
               className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/40 px-3 py-1.5 text-xs text-rose-200 transition hover:border-rose-400/60 hover:bg-rose-400/10"
             >
               <Square className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Stop</span>
+              <span className="hidden sm:inline">Stop</span>
             </button>
           ) : null}
           <button
@@ -298,7 +342,7 @@ export function DaemonChatBody({
             className="inline-flex items-center gap-1.5 rounded-full border border-push-edge/60 px-3 py-1.5 text-xs text-push-fg-secondary transition hover:border-rose-400/40 hover:text-rose-200"
           >
             <UnpairIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>Unpair</span>
+            <span className="hidden sm:inline">Unpair</span>
           </button>
         </div>
       </header>
@@ -335,14 +379,41 @@ export function DaemonChatBody({
       />
 
       <div className="border-t border-push-edge/40 bg-[#000]/80 px-3 py-2 backdrop-blur safe-area-bottom">
-        <div className="mb-2 flex items-center">
+        <div className="mb-2 grid grid-cols-[auto,minmax(0,1fr)] items-center gap-2">
           <DaemonModelPicker
             activeProvider={catalog.activeProviderLabel}
             availableProviders={catalog.availableProviders}
             onSelectProvider={handleSelectProvider}
             lockedProvider={lockedProvider}
             isProviderLocked={isProviderLocked}
+            className="max-w-[46vw]"
           />
+          {modelControl ? (
+            <ModelPicker
+              provider={modelControl.provider}
+              value={modelControl.value}
+              options={modelControl.options}
+              onChange={handleSelectModel}
+              allowCustom={modelControl.allowCustom}
+              disabled={modelControl.loading}
+              onRefresh={modelControl.onRefresh}
+              isRefreshing={modelControl.loading}
+              refreshAriaLabel={`Refresh ${modelControl.providerLabel} models`}
+              ariaLabel="Select daemon model"
+              searchPlaceholder={`Search ${modelControl.providerLabel} models...`}
+              emptyLabel={modelControl.error ?? 'No models found.'}
+              triggerLabel={
+                <span className="truncate">
+                  {modelControl.value
+                    ? getModelDisplayLeafName(modelControl.provider, modelControl.value)
+                    : 'Select model'}
+                </span>
+              }
+              className="min-w-0"
+              triggerClassName="h-7 rounded-full border-push-edge/60 bg-[#070a10] px-2.5 text-xs"
+              popoverClassName="w-[min(20rem,calc(100vw-2rem))]"
+            />
+          ) : null}
         </div>
         <div className="flex items-end gap-2">
           <textarea
@@ -378,6 +449,191 @@ export function DaemonChatBody({
 
 function capitalize(s: string): string {
   return s.length > 0 ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+interface DaemonModelControl {
+  provider: PreferredProvider;
+  providerLabel: string;
+  value: string;
+  options: string[];
+  onChange: (model: string) => void;
+  loading?: boolean;
+  error?: string | null;
+  onRefresh?: () => Promise<void>;
+  allowCustom?: boolean;
+}
+
+function includeSelectedModel(
+  models: string[],
+  selectedModel: string | null | undefined,
+): string[] {
+  if (!selectedModel) return [...models];
+  return models.includes(selectedModel) ? [...models] : [selectedModel, ...models];
+}
+
+function providerLabel(
+  catalog: ModelCatalog,
+  provider: PreferredProvider,
+  fallback: string,
+): string {
+  return catalog.availableProviders.find(([id]) => id === provider)?.[1] ?? fallback;
+}
+
+function getDaemonModelControl(
+  catalog: ModelCatalog,
+  provider: AIProviderType | null | undefined,
+  lockedModel: string | null,
+): DaemonModelControl | null {
+  switch (provider) {
+    case 'ollama':
+      return {
+        provider,
+        providerLabel: providerLabel(catalog, provider, 'Ollama'),
+        value: lockedModel ?? catalog.ollama.model,
+        options: includeSelectedModel(
+          catalog.ollamaModelOptions,
+          lockedModel ?? catalog.ollama.model,
+        ),
+        onChange: catalog.ollama.setModel,
+        loading: catalog.ollamaModels.loading,
+        error: catalog.ollamaModels.error,
+        onRefresh: catalog.refreshOllamaModels,
+        allowCustom: true,
+      };
+    case 'openrouter':
+      return {
+        provider,
+        providerLabel: providerLabel(catalog, provider, 'OpenRouter'),
+        value: lockedModel ?? catalog.openRouter.model,
+        options: includeSelectedModel(
+          catalog.openRouterModelOptions,
+          lockedModel ?? catalog.openRouter.model,
+        ),
+        onChange: catalog.openRouter.setModel,
+        loading: catalog.openRouterModels.loading,
+        error: catalog.openRouterModels.error,
+        onRefresh: catalog.refreshOpenRouterModels,
+      };
+    case 'cloudflare':
+      return {
+        provider,
+        providerLabel: providerLabel(catalog, provider, 'Cloudflare Workers AI'),
+        value: lockedModel ?? catalog.cloudflare.model,
+        options: includeSelectedModel(
+          catalog.cloudflareModelOptions,
+          lockedModel ?? catalog.cloudflare.model,
+        ),
+        onChange: catalog.cloudflare.setModel,
+        loading: catalog.cloudflareModels.loading,
+        error: catalog.cloudflareModels.error,
+        onRefresh: catalog.refreshCloudflareModels,
+      };
+    case 'zen':
+      return {
+        provider,
+        providerLabel: providerLabel(catalog, provider, 'OpenCode Zen'),
+        value: lockedModel ?? catalog.zen.model,
+        options: includeSelectedModel(catalog.zenModelOptions, lockedModel ?? catalog.zen.model),
+        onChange: catalog.zen.setModel,
+        loading: catalog.zenModels.loading,
+        error: catalog.zenModels.error,
+        onRefresh: catalog.refreshZenModels,
+      };
+    case 'nvidia':
+      return {
+        provider,
+        providerLabel: providerLabel(catalog, provider, 'Nvidia NIM'),
+        value: lockedModel ?? catalog.nvidia.model,
+        options: includeSelectedModel(
+          catalog.nvidiaModelOptions,
+          lockedModel ?? catalog.nvidia.model,
+        ),
+        onChange: catalog.nvidia.setModel,
+        loading: catalog.nvidiaModels.loading,
+        error: catalog.nvidiaModels.error,
+        onRefresh: catalog.refreshNvidiaModels,
+      };
+    case 'blackbox':
+      return {
+        provider,
+        providerLabel: providerLabel(catalog, provider, 'Blackbox AI'),
+        value: lockedModel ?? catalog.blackbox.model,
+        options: includeSelectedModel(
+          catalog.blackboxModelOptions,
+          lockedModel ?? catalog.blackbox.model,
+        ),
+        onChange: catalog.blackbox.setModel,
+        loading: catalog.blackboxModels.loading,
+        error: catalog.blackboxModels.error,
+        onRefresh: catalog.refreshBlackboxModels,
+      };
+    case 'kilocode':
+      return {
+        provider,
+        providerLabel: providerLabel(catalog, provider, 'Kilo Code'),
+        value: lockedModel ?? catalog.kilocode.model,
+        options: includeSelectedModel(
+          catalog.kilocodeModelOptions,
+          lockedModel ?? catalog.kilocode.model,
+        ),
+        onChange: catalog.kilocode.setModel,
+        loading: catalog.kilocodeModels.loading,
+        error: catalog.kilocodeModels.error,
+        onRefresh: catalog.refreshKilocodeModels,
+      };
+    case 'openadapter':
+      return {
+        provider,
+        providerLabel: providerLabel(catalog, provider, 'OpenAdapter'),
+        value: lockedModel ?? catalog.openadapter.model,
+        options: includeSelectedModel(
+          catalog.openAdapterModelOptions,
+          lockedModel ?? catalog.openadapter.model,
+        ),
+        onChange: catalog.openadapter.setModel,
+        loading: catalog.openAdapterModels.loading,
+        error: catalog.openAdapterModels.error,
+        onRefresh: catalog.refreshOpenAdapterModels,
+      };
+    case 'azure': {
+      const value = lockedModel ?? catalog.azure.model;
+      const options = catalog.azure.deployments.map((deployment) => deployment.model);
+      return {
+        provider,
+        providerLabel: providerLabel(catalog, provider, 'Azure OpenAI'),
+        value,
+        options: includeSelectedModel(options, value),
+        onChange: catalog.azure.setModel,
+        allowCustom: true,
+      };
+    }
+    case 'bedrock': {
+      const value = lockedModel ?? catalog.bedrock.model;
+      const options = catalog.bedrock.deployments.map((deployment) => deployment.model);
+      return {
+        provider,
+        providerLabel: providerLabel(catalog, provider, 'AWS Bedrock'),
+        value,
+        options: includeSelectedModel(options, value),
+        onChange: catalog.bedrock.setModel,
+        allowCustom: true,
+      };
+    }
+    case 'vertex':
+      return {
+        provider,
+        providerLabel: providerLabel(catalog, provider, 'Google Vertex'),
+        value: lockedModel ?? catalog.vertex.model,
+        options: includeSelectedModel(
+          catalog.vertex.modelOptions,
+          lockedModel ?? catalog.vertex.model,
+        ),
+        onChange: catalog.vertex.setModel,
+        allowCustom: true,
+      };
+    default:
+      return null;
+  }
 }
 
 interface ReconnectBannerProps {
