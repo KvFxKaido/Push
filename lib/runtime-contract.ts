@@ -346,6 +346,24 @@ export type RunEventInput =
       delegationOutcome?: DelegationOutcome;
       /** Advisory review payload — present for reviewer delegations. */
       reviewResult?: ReviewResult;
+      /**
+       * UTF-8 byte length of the compact tool-result payload that lands in
+       * the Orchestrator's message list (`toolExecResult.text`). Computed
+       * via `utf8ByteLength` so the number matches what providers and
+       * transports actually count, not JS string length. Set only by
+       * foreground delegation emitters that produce orchestrator-visible
+       * payloads (coder / explorer / task_graph terminal events); omitted
+       * for nested subagents whose output stays inside the parent loop
+       * (planner inside coder, auditor inside coder/graph) and for daemon
+       * emitters that route through a different transport.
+       *
+       * This is the inner payload size — `buildToolResultMessage` later
+       * wraps the text in a `[Tool Result — <tool>] / [/Tool Result]`
+       * envelope (and possibly a `[meta]` line), adding a small fixed
+       * overhead that consumers should account for if they need final
+       * message-list bytes.
+       */
+      orchestratorBytes?: number;
     }
   | {
       type: 'subagent.failed';

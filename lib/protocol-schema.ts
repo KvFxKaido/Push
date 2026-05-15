@@ -276,6 +276,28 @@ function expectOptionalFiniteNumber(
   return null;
 }
 
+function expectOptionalNonNegativeInteger(
+  obj: Record<string, unknown>,
+  field: string,
+  basePath: string,
+): ValidationIssue | null {
+  if (field in obj && obj[field] !== undefined) {
+    const value = obj[field];
+    if (
+      typeof value !== 'number' ||
+      !Number.isFinite(value) ||
+      !Number.isInteger(value) ||
+      value < 0
+    ) {
+      return {
+        path: `${basePath}.${field}`,
+        message: `expected non-negative integer or omitted, got ${JSON.stringify(value)}`,
+      };
+    }
+  }
+  return null;
+}
+
 function expectAgentValue(
   obj: Record<string, unknown>,
   field: string,
@@ -343,6 +365,8 @@ function validateSubagentCompleted(payload: unknown, basePath: string): Validati
   if (a) issues.push(a);
   const s = expectNonEmptyString(payload, 'summary', basePath);
   if (s) issues.push(s);
+  const ob = expectOptionalNonNegativeInteger(payload, 'orchestratorBytes', basePath);
+  if (ob) issues.push(ob);
   return issues;
 }
 

@@ -258,6 +258,56 @@ describe('validateRunEventPayload — subagent events', () => {
     assert.ok(issues.some((i) => i.path === 'payload.summary'));
   });
 
+  it('accepts subagent.completed with orchestratorBytes', () => {
+    const issues = validateRunEventPayload('subagent.completed', {
+      executionId: 'sub_1',
+      agent: 'coder',
+      summary: 'done',
+      orchestratorBytes: 280,
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects subagent.completed with non-numeric orchestratorBytes', () => {
+    const issues = validateRunEventPayload('subagent.completed', {
+      executionId: 'sub_1',
+      agent: 'coder',
+      summary: 'done',
+      orchestratorBytes: '280',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.orchestratorBytes'));
+  });
+
+  it('rejects subagent.completed with negative orchestratorBytes', () => {
+    const issues = validateRunEventPayload('subagent.completed', {
+      executionId: 'sub_1',
+      agent: 'coder',
+      summary: 'done',
+      orchestratorBytes: -1,
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.orchestratorBytes'));
+  });
+
+  it('rejects subagent.completed with non-integer orchestratorBytes', () => {
+    const issues = validateRunEventPayload('subagent.completed', {
+      executionId: 'sub_1',
+      agent: 'coder',
+      summary: 'done',
+      orchestratorBytes: 1.5,
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.orchestratorBytes'));
+  });
+
+  it('accepts subagent.completed with zero orchestratorBytes', () => {
+    const issues = validateRunEventPayload('subagent.completed', {
+      executionId: 'sub_1',
+      agent: 'coder',
+      summary: 'done',
+      orchestratorBytes: 0,
+    });
+    assert.deepEqual(issues, []);
+  });
+
   it('accepts a valid subagent.failed payload', () => {
     const issues = validateRunEventPayload('subagent.failed', {
       executionId: 'sub_1',

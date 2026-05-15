@@ -36,7 +36,7 @@ import {
   formatCompactDelegationToolResult,
 } from '@/lib/delegation-result';
 import { recordVerificationArtifact } from '@/lib/verification-runtime';
-import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import { summarizeToolResultPreview, utf8ByteLength } from '@/lib/chat-run-events';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
 import {
   correlationToSpanAttributes,
@@ -266,6 +266,7 @@ export async function handleExplorerDelegation(
       agent: 'explorer',
       summary: summarizeToolResultPreview(explorerResult.summary),
       delegationOutcome: explorerOutcome,
+      orchestratorBytes: utf8ByteLength(toolExecResult.text),
     });
     return toolExecResult;
   } catch (err) {
@@ -284,18 +285,20 @@ export async function handleExplorerDelegation(
         checkpoints: 0,
         elapsedMs: Date.now() - explorerStartMs,
       };
+      const abortText = formatCompactDelegationToolResult({
+        agent: 'explorer',
+        outcome: abortOutcome,
+      });
       ctx.appendRunEvent(chatId, {
         type: 'subagent.completed',
         executionId,
         agent: 'explorer',
         summary: 'Cancelled by user.',
         delegationOutcome: abortOutcome,
+        orchestratorBytes: utf8ByteLength(abortText),
       });
       return {
-        text: formatCompactDelegationToolResult({
-          agent: 'explorer',
-          outcome: abortOutcome,
-        }),
+        text: abortText,
         card: buildDelegationResultCard({
           agent: 'explorer',
           outcome: abortOutcome,
