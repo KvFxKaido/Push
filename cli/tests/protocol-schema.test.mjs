@@ -258,6 +258,26 @@ describe('validateRunEventPayload — subagent events', () => {
     assert.ok(issues.some((i) => i.path === 'payload.summary'));
   });
 
+  it('accepts subagent.completed with orchestratorBytes', () => {
+    const issues = validateRunEventPayload('subagent.completed', {
+      executionId: 'sub_1',
+      agent: 'coder',
+      summary: 'done',
+      orchestratorBytes: 280,
+    });
+    assert.deepEqual(issues, []);
+  });
+
+  it('rejects subagent.completed with non-numeric orchestratorBytes', () => {
+    const issues = validateRunEventPayload('subagent.completed', {
+      executionId: 'sub_1',
+      agent: 'coder',
+      summary: 'done',
+      orchestratorBytes: '280',
+    });
+    assert.ok(issues.some((i) => i.path === 'payload.orchestratorBytes'));
+  });
+
   it('accepts a valid subagent.failed payload', () => {
     const issues = validateRunEventPayload('subagent.failed', {
       executionId: 'sub_1',

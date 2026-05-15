@@ -974,6 +974,7 @@ export async function handleTaskGraphDelegation(
       agent: 'task_graph',
       summary: summarizeToolResultPreview(toolExecResult.text),
       delegationOutcome: graphOutcome,
+      orchestratorBytes: toolExecResult.text.length,
     });
     return toolExecResult;
   } catch (err) {

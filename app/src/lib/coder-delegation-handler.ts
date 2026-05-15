@@ -668,21 +668,23 @@ export async function handleCoderDelegation(
         checkpoints: 0,
         elapsedMs: Date.now() - coderStartMs,
       };
+      const abortText = formatCompactDelegationToolResult({
+        agent: 'coder',
+        outcome: abortOutcome,
+      });
       ctx.appendRunEvent(chatId, {
         type: 'subagent.completed',
         executionId,
         agent: 'coder',
         summary: 'Cancelled by user.',
         delegationOutcome: abortOutcome,
+        orchestratorBytes: abortText.length,
       });
       return {
         status: 'aborted',
         executionId,
         toolExecResult: {
-          text: formatCompactDelegationToolResult({
-            agent: 'coder',
-            outcome: abortOutcome,
-          }),
+          text: abortText,
           card: buildDelegationResultCard({
             agent: 'coder',
             outcome: abortOutcome,

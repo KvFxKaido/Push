@@ -346,6 +346,17 @@ export type RunEventInput =
       delegationOutcome?: DelegationOutcome;
       /** Advisory review payload — present for reviewer delegations. */
       reviewResult?: ReviewResult;
+      /**
+       * Character length of the compact tool-result payload that lands in
+       * the Orchestrator's message list (`toolExecResult.text`). Set only
+       * by foreground delegation emitters that produce orchestrator-visible
+       * payloads (coder / explorer / task_graph terminal events); omitted
+       * for nested subagents whose output stays inside the parent loop
+       * (planner inside coder, auditor inside coder/graph) and for daemon
+       * emitters that route through a different transport. Lets us measure
+       * actual context leakage per delegation without re-deriving the text.
+       */
+      orchestratorBytes?: number;
     }
   | {
       type: 'subagent.failed';

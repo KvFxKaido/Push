@@ -266,6 +266,7 @@ export async function handleExplorerDelegation(
       agent: 'explorer',
       summary: summarizeToolResultPreview(explorerResult.summary),
       delegationOutcome: explorerOutcome,
+      orchestratorBytes: toolExecResult.text.length,
     });
     return toolExecResult;
   } catch (err) {
@@ -284,18 +285,20 @@ export async function handleExplorerDelegation(
         checkpoints: 0,
         elapsedMs: Date.now() - explorerStartMs,
       };
+      const abortText = formatCompactDelegationToolResult({
+        agent: 'explorer',
+        outcome: abortOutcome,
+      });
       ctx.appendRunEvent(chatId, {
         type: 'subagent.completed',
         executionId,
         agent: 'explorer',
         summary: 'Cancelled by user.',
         delegationOutcome: abortOutcome,
+        orchestratorBytes: abortText.length,
       });
       return {
-        text: formatCompactDelegationToolResult({
-          agent: 'explorer',
-          outcome: abortOutcome,
-        }),
+        text: abortText,
         card: buildDelegationResultCard({
           agent: 'explorer',
           outcome: abortOutcome,

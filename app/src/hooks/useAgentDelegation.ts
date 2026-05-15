@@ -631,6 +631,7 @@ export function useAgentDelegation({
             agent: 'coder',
             summary: summarizeToolResultPreview(toolExecResult.text),
             delegationOutcome: coderOutcome,
+            orchestratorBytes: toolExecResult.text.length,
           });
         }
       } else if (toolCall.call.tool === 'plan_tasks') {

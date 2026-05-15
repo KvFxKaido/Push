@@ -343,6 +343,8 @@ function validateSubagentCompleted(payload: unknown, basePath: string): Validati
   if (a) issues.push(a);
   const s = expectNonEmptyString(payload, 'summary', basePath);
   if (s) issues.push(s);
+  const ob = expectOptionalFiniteNumber(payload, 'orchestratorBytes', basePath);
+  if (ob) issues.push(ob);
   return issues;
 }
 
