@@ -120,17 +120,19 @@ export function HubNotesTab({
                   <HubControlGlow />
                   <Trash2 className="relative z-10 h-3.5 w-3.5" />
                 </button>
-                <button
-                  type="button"
-                  onClick={onExportToRepo}
-                  disabled={!scratchpadContent.trim() || !sandboxId}
-                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
-                  aria-label="Save notes to repo"
-                >
-                  <HubControlGlow />
-                  <Download className="relative z-10 h-3.5 w-3.5" />
-                  <span className="relative z-10">Save to repo</span>
-                </button>
+                {onExportToRepo ? (
+                  <button
+                    type="button"
+                    onClick={onExportToRepo}
+                    disabled={!scratchpadContent.trim() || !sandboxId}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
+                    aria-label="Save notes to repo"
+                  >
+                    <HubControlGlow />
+                    <Download className="relative z-10 h-3.5 w-3.5" />
+                    <span className="relative z-10">Save to repo</span>
+                  </button>
+                ) : null}
               </div>
 
               <div className="mt-2 flex flex-wrap items-center gap-2">
