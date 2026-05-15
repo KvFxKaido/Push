@@ -3470,6 +3470,90 @@ export async function runTUI(options = {}) {
     return cfg ? 'config only' : 'off';
   }
 
+  async function handleDaemonCommand(arg) {
+    const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
+    const sub = (parts[0] || 'status').toLowerCase();
+
+    if (sub === 'status' || sub === 'show') {
+      const lines = [];
+
+      // Effective autostart setting. Don't attribute a "from env" vs
+      // "from config" source — the TUI itself writes
+      // PUSH_TUI_DAEMON_AUTOSTART into process.env when /config daemon
+      // toggles, so any source attribution after a config change would
+      // lie ("from env" when the value actually came from config).
+      const autostart = isTuiDaemonAutoStartEnabled(config);
+      lines.push(`Autostart: ${autostart ? 'auto' : 'off'}`);
+
+      // Connection state from the TUI's POV. Order matters: check
+      // !autostart BEFORE daemonAutoStartAttempted. `ensureDaemonConnected`
+      // returns early without setting `daemonAutoStartAttempted = true`
+      // when autostart is off (cli/tui.ts:1651), so the
+      // `attempted && !autostart` combination is unreachable.
+      if (daemonClient?.connected) {
+        lines.push('Connected: yes');
+        if (daemonSessionId) lines.push(`Session: ${daemonSessionId}`);
+      } else if (!autostart) {
+        lines.push('Connected: no (autostart off, running inline)');
+      } else if (daemonAutoStartAttempted) {
+        lines.push('Connected: no (autostart attempted, fell back to inline)');
+      } else {
+        lines.push('Connected: no (inline mode, autostart pending)');
+      }
+
+      // Process state from the pid file. isProcessRunning's EPERM
+      // handling means "running under another uid" reads as running,
+      // which is what we want here.
+      const { getPidPath, getSocketPath, getLogPath } = await import('./pushd.js');
+      const pidPath = getPidPath();
+      try {
+        const pidRaw = await fs.readFile(pidPath, 'utf8');
+        const pid = Number.parseInt(pidRaw.trim(), 10);
+        if (Number.isFinite(pid) && isProcessRunning(pid)) {
+          lines.push(`Process: pid ${pid} (running)`);
+        } else if (Number.isFinite(pid)) {
+          lines.push(`Process: pid ${pid} in pidfile but not running (stale)`);
+        } else {
+          lines.push('Process: pid file unreadable');
+        }
+      } catch {
+        lines.push('Process: not running (no pid file)');
+      }
+
+      lines.push('');
+      lines.push('Paths:');
+      lines.push(`  socket: ${getSocketPath()}`);
+      lines.push(`  log:    ${getLogPath()}`);
+      const { getAuditLogPath, getAuditMaxBytes } = await import('./pushd-audit-log.js');
+      const auditPath = getAuditLogPath();
+      lines.push(`  audit:  ${auditPath}`);
+
+      // Audit log size + rotation threshold so the user can tell how
+      // close they are to a rotation event. Reuse the audit module's
+      // own env parser + default so this row can't drift from the
+      // value the rotator actually consults.
+      try {
+        const stat = await fs.stat(auditPath);
+        const sizeMb = (stat.size / 1024 / 1024).toFixed(2);
+        const maxMb = (getAuditMaxBytes() / 1024 / 1024).toFixed(0);
+        lines.push(`  audit size: ${sizeMb} MB (rotates at ${maxMb} MB)`);
+      } catch {
+        // No audit log on disk yet — fine, just skip the size row.
+      }
+
+      addTranscriptEntry(tuiState, 'status', lines.join('\n'));
+      scheduler.flush();
+      return;
+    }
+
+    addTranscriptEntry(
+      tuiState,
+      'warning',
+      `Unknown daemon subcommand: ${sub}. Try: /daemon status`,
+    );
+    scheduler.flush();
+  }
+
   async function handleRemoteCommand(arg) {
     const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
     const sub = (parts[0] || 'status').toLowerCase();
@@ -3986,6 +4070,10 @@ export async function runTUI(options = {}) {
         await handleRemoteCommand(arg || null);
         return true;
 
+      case 'daemon':
+        await handleDaemonCommand(arg || null);
+        return true;
+
       case 'theme':
         await handleThemeCommand(arg || null);
         return true;
@@ -4017,6 +4105,7 @@ export async function runTUI(options = {}) {
             '  /config explain on|off  Toggle pattern explanations',
             '  /config daemon auto|off  Toggle TUI pushd autostart',
             '  /remote status|enable|disable  Manage Remote relay',
+            '  /daemon status       Show pushd connection, process, and log paths',
             '  /theme               Show current theme',
             '  /theme list          List available themes',
             '  /theme preview [<name>]  Preview theme swatches (all themes if omitted)',
