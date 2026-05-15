@@ -26,7 +26,8 @@
  * conversation init, workspace context, picker placement, layout)
  * lives here so the screens don't drift.
  */
-import { ArrowLeft, Notebook, RefreshCw, Send, Square } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Send, Square } from 'lucide-react';
+import { NotebookPadIcon } from '@/components/icons/push-custom-icons';
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
@@ -205,6 +206,26 @@ export function DaemonChatBody({
     // No GitHub repo — daemon-backed sessions are bound to the
     // daemon cwd, not a remote repo.
     null,
+    // Scratchpad handlers — wire so model `set_scratchpad` /
+    // `append_scratchpad` tool calls hit the daemon hub's notes
+    // surface instead of the chat-hook's "not available" path.
+    {
+      content: scratchpad.content,
+      replace: scratchpad.replace,
+      append: scratchpad.append,
+    },
+    // usageHandler / runtimeHandlers / branchInfo are cloud-sandbox
+    // concerns; daemon sessions don't drive them.
+    undefined,
+    undefined,
+    undefined,
+    // Todo handlers — wire so model `todo_write` / `todo_clear` calls
+    // update the Plan section in the hub.
+    {
+      todos: todo.todos,
+      replace: todo.replace,
+      clear: todo.clear,
+    },
   );
 
   const handleSelectProvider = useCallback(
@@ -355,7 +376,7 @@ export function DaemonChatBody({
             title="Notes + pinned artifacts"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-push-edge/60 text-push-fg-secondary transition hover:border-push-fg/60 hover:text-push-fg"
           >
-            <Notebook className="h-4 w-4" aria-hidden="true" />
+            <NotebookPadIcon className="h-4 w-4" aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -398,6 +419,9 @@ export function DaemonChatBody({
         interruptedCheckpoint={interruptedCheckpoint}
         onResumeRun={resumeInterruptedRun}
         onDismissResume={dismissResume}
+        // Wire pin so chat messages get the pin action and the
+        // result lands in the hub's Kept section.
+        onPin={pinnedArtifacts.pin}
       />
 
       <div className="border-t border-push-edge/40 bg-[#000]/80 px-3 py-2 backdrop-blur safe-area-bottom">
