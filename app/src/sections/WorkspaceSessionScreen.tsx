@@ -152,6 +152,7 @@ export function WorkspaceSessionScreen({
     ciStatus,
     diagnoseCIFailure,
     forkBranchFromUI,
+    mergeBranchInUI,
   } = useChat(
     workspaceRepo?.full_name ?? null,
     {
@@ -468,6 +469,7 @@ export function WorkspaceSessionScreen({
     ciStatus,
     diagnoseCIFailure,
     forkBranchFromUI,
+    mergeBranchInUI,
   };
 
   const repositoryDomain = {

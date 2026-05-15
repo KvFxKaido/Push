@@ -834,6 +834,46 @@ export function useChat(
     [updateConversations, skipAutoCreateRef, dirtyConversationIdsRef],
   );
 
+  // ---------------------------------------------------------------------------
+  // UI-initiated post-merge migration
+  // ---------------------------------------------------------------------------
+
+  // Called by the merge flow (`MergeFlowSheet`) after a successful PR merge,
+  // to swap the workspace to the default branch AND migrate the active chat
+  // along with it. Without this, the chat would be filtered out (its branch
+  // is now defunct) and `useChatAutoSwitch` would either select an unrelated
+  // chat or auto-create a fresh one — bumping the user out of the
+  // conversation they just shipped from.
+  //
+  // Mirrors `forkBranchFromUI` but emits a `kind: 'merged'` payload so the
+  // shared `applyBranchSwitchPayload` migration helper labels the transcript
+  // divider correctly (`branch_merged` vs `branch_forked`). The migration
+  // helper itself drives the same R10/R12 mitigations as the fork path:
+  // cross-tab marker, in-tab guard, atomic backfill, runtime branch update.
+  const mergeBranchInUI = useCallback(
+    (toBranch: string, opts?: { from?: string; prNumber?: number }): void => {
+      applyBranchSwitchPayload(
+        {
+          name: toBranch,
+          kind: 'merged',
+          from: opts?.from,
+          prNumber: opts?.prNumber,
+          source: 'ui-merge',
+        },
+        {
+          activeChatIdRef,
+          conversationsRef,
+          branchInfoRef,
+          skipAutoCreateRef,
+          setConversations: updateConversations,
+          dirtyConversationIdsRef,
+          runtimeHandlersRef,
+        },
+      );
+    },
+    [updateConversations, skipAutoCreateRef, dirtyConversationIdsRef],
+  );
+
   return {
     // Active chat
     messages,
@@ -899,5 +939,9 @@ export function useChat(
 
     // Slice 2.1 UI-initiated fork
     forkBranchFromUI,
+    // UI-initiated post-merge chat migration — keeps the active chat
+    // anchored to the default branch after a PR merge, instead of being
+    // bumped to a different chat by the auto-switch effect.
+    mergeBranchInUI,
   };
 }

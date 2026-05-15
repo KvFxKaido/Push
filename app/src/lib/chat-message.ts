@@ -15,7 +15,7 @@
  * design doc for the invariant.
  */
 
-import type { BranchForkedMeta, BranchSwitchSource, ChatMessage } from '@/types';
+import type { BranchForkedMeta, BranchMergedMeta, BranchSwitchSource, ChatMessage } from '@/types';
 
 /** Generate a stable conversation-relative message id. Mirrors the existing
  *  inline `crypto.randomUUID()` calls scattered across message-creation
@@ -96,6 +96,46 @@ export function createBranchForkedMessage(input: CreateBranchForkedMessageInput)
     branch: input.to,
     kind: 'branch_forked',
     branchForkedMeta: meta,
+    visibleToModel: false,
+  };
+}
+
+interface CreateBranchMergedMessageInput {
+  /** Source branch the PR merged from (now defunct in the workspace). */
+  from: string;
+  /** Target branch the workspace switched to (typically the default branch). */
+  to: string;
+  /** PR number that triggered this migration, when known. */
+  prNumber?: number;
+  /** Producer that triggered the merge transition. Currently always
+   *  `'ui-merge'` (MergeFlowSheet); future model-driven merge paths will
+   *  reuse this factory. */
+  source?: BranchSwitchSource;
+  id?: string;
+  timestamp?: number;
+}
+
+/** Create a typed `branch_merged` system event for insertion into a
+ *  conversation after a successful PR merge migrates the chat to the
+ *  default branch. Mirrors `createBranchForkedMessage` — same transcript-
+ *  metadata shape (`visibleToModel: false`, empty content, stamped with the
+ *  NEW branch). Renderer in `MessageBubble.tsx` draws a centered "Merged
+ *  X → Y" divider, parallel to the forked divider. */
+export function createBranchMergedMessage(input: CreateBranchMergedMessageInput): ChatMessage {
+  const meta: BranchMergedMeta = {
+    from: input.from,
+    to: input.to,
+    ...(input.prNumber !== undefined ? { prNumber: input.prNumber } : {}),
+    ...(input.source ? { source: input.source } : {}),
+  };
+  return {
+    id: input.id ?? createMessageId(),
+    role: 'assistant',
+    content: '',
+    timestamp: input.timestamp ?? Date.now(),
+    branch: input.to,
+    kind: 'branch_merged',
+    branchMergedMeta: meta,
     visibleToModel: false,
   };
 }

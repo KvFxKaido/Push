@@ -348,6 +348,72 @@ describe('applyBranchSwitchPayload — forked, with active chat', () => {
     expect(ctx.conversations['chat-1'].messages).toHaveLength(0);
   });
 
+  it('merged: migrates the active chat like forked but emits a branch_merged event', () => {
+    // The chat-on-merge contract: when a PR merges and the workspace swaps
+    // to the default branch, the chat the user was just in should migrate
+    // with the branch — same R10/R12 mitigations as the fork path — instead
+    // of being filtered out and replaced by an auto-created chat.
+    const oldMessages = [
+      makeMessage({ id: 'm1', content: 'shipped this' }),
+      makeMessage({ id: 'm2', content: 'looks good' }),
+    ];
+    const conv = makeConversation({ branch: 'feature/foo', messages: oldMessages });
+    const ctx = makeContext(conv);
+    ctx.branchInfoRef.current = { currentBranch: 'feature/foo', defaultBranch: 'main' };
+
+    applyBranchSwitchPayload(
+      {
+        name: 'main',
+        kind: 'merged',
+        from: 'feature/foo',
+        prNumber: 42,
+        source: 'ui-merge',
+      },
+      ctx,
+    );
+
+    const updated = ctx.conversations['chat-1'];
+    expect(updated.branch).toBe('main');
+    expect(updated.messages).toHaveLength(3);
+    expect(updated.messages[0].branch).toBe('feature/foo');
+    expect(updated.messages[1].branch).toBe('feature/foo');
+    const event = updated.messages[2];
+    expect(event.kind).toBe('branch_merged');
+    expect(event.branch).toBe('main');
+    expect(event.visibleToModel).toBe(false);
+    expect(event.branchMergedMeta).toEqual({
+      from: 'feature/foo',
+      to: 'main',
+      prNumber: 42,
+      source: 'ui-merge',
+    });
+    // Same guard mechanism as forked — auto-switch is suppressed until the
+    // migration is observable.
+    expect(ctx.skipAutoCreateRef.current).toEqual({ chatId: 'chat-1', toBranch: 'main' });
+    expect(getMigrationMarker()).toMatchObject({
+      chatId: 'chat-1',
+      fromBranch: 'feature/foo',
+      toBranch: 'main',
+    });
+    expect(ctx.onBranchSwitchSpy).toHaveBeenCalledWith('main');
+    expect(ctx.dirtyConversationIdsRef.current.has('chat-1')).toBe(true);
+  });
+
+  it('merged with no active chat: syncs branch silently without setting guards', () => {
+    const ctx = makeContext();
+    ctx.activeChatIdRef.current = null;
+
+    applyBranchSwitchPayload(
+      { name: 'main', kind: 'merged', from: 'feature/foo', source: 'ui-merge' },
+      ctx,
+    );
+
+    expect(ctx.onBranchSwitchSpy).toHaveBeenCalledWith('main');
+    expect(ctx.setConversations).not.toHaveBeenCalled();
+    expect(ctx.skipAutoCreateRef.current).toBeNull();
+    expect(getMigrationMarker()).toBeNull();
+  });
+
   it('R12 backfill: legacy conv with undefined branch falls back to fromBranch', () => {
     // PR #412 review (Codex P2): Conversation.branch is optional; legacy
     // chats from before per-conversation branches landed have it undefined.

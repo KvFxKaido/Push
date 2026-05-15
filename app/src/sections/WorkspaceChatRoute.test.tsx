@@ -144,6 +144,7 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
     ciStatus: null,
     diagnoseCIFailure: vi.fn(),
     forkBranchFromUI: vi.fn(async () => ({ ok: true as const })),
+    mergeBranchInUI: vi.fn(),
     repos: [],
     reposLoading: false,
     reposError: null,

@@ -90,6 +90,17 @@ describe('Role capability grants', () => {
     expect(roleHasCapability('orchestrator', 'sandbox:exec')).toBe(false);
   });
 
+  it('Orchestrator (cloud) can drive PRs and workflow dispatch when the user asks', () => {
+    // The UI owns the PR flow by default, but the model has the grant to take
+    // over when explicitly asked. Approval gates handle per-call consent.
+    expect(roleHasCapability('orchestrator', 'pr:write')).toBe(true);
+    expect(roleHasCapability('orchestrator', 'workflow:trigger')).toBe(true);
+    expect(roleCanUseTool('orchestrator', 'create_pr')).toBe(true);
+    expect(roleCanUseTool('orchestrator', 'merge_pr')).toBe(true);
+    expect(roleCanUseTool('orchestrator', 'delete_branch')).toBe(true);
+    expect(roleCanUseTool('orchestrator', 'trigger_workflow')).toBe(true);
+  });
+
   it('Auditor has minimal capabilities', () => {
     const auditorCaps = ROLE_CAPABILITIES.auditor;
     expect(auditorCaps.size).toBe(1);
@@ -273,6 +284,13 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       expect(roleCanUseTool('orchestrator', 'web_search', 'cloud')).toBe(true);
       expect(roleCanUseTool('orchestrator', 'ask_user', 'cloud')).toBe(true);
     });
+
+    it('orchestrator can drive PR mutations and workflow dispatch in cloud mode', () => {
+      expect(roleCanUseTool('orchestrator', 'create_pr', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'merge_pr', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'delete_branch', 'cloud')).toBe(true);
+      expect(roleCanUseTool('orchestrator', 'trigger_workflow', 'cloud')).toBe(true);
+    });
   });
 
   describe('local-daemon mode widens orchestrator to wield sandbox tools directly', () => {
@@ -302,9 +320,13 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       expect(roleHasCapability('orchestrator', 'git:branch', 'local-daemon')).toBe(false);
       expect(roleHasCapability('orchestrator', 'git:draft', 'local-daemon')).toBe(false);
       expect(roleHasCapability('orchestrator', 'pr:write', 'local-daemon')).toBe(false);
+      expect(roleHasCapability('orchestrator', 'workflow:trigger', 'local-daemon')).toBe(false);
       expect(roleCanUseTool('orchestrator', 'sandbox_prepare_commit', 'local-daemon')).toBe(false);
       expect(roleCanUseTool('orchestrator', 'sandbox_push', 'local-daemon')).toBe(false);
       expect(roleCanUseTool('orchestrator', 'create_pr', 'local-daemon')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'merge_pr', 'local-daemon')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'delete_branch', 'local-daemon')).toBe(false);
+      expect(roleCanUseTool('orchestrator', 'trigger_workflow', 'local-daemon')).toBe(false);
     });
   });
 
@@ -349,13 +371,24 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       expect(effective).toEqual(ROLE_CAPABILITIES.orchestrator);
     });
 
-    it('local-daemon orchestrator is a strict superset of the cloud grant', () => {
+    it('local-daemon orchestrator adds sandbox extras and removes remote-only caps', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
-      for (const cap of cloudCaps) {
+      // Sandbox extras present only in daemon mode.
+      for (const cap of [
+        'sandbox:exec',
+        'repo:write',
+        'sandbox:test',
+        'sandbox:download',
+      ] as const) {
         expect(daemonCaps.has(cap)).toBe(true);
+        expect(cloudCaps.has(cap)).toBe(false);
       }
-      expect(daemonCaps.size).toBeGreaterThan(cloudCaps.size);
+      // Remote-only caps present only in cloud mode (no remote in daemon).
+      for (const cap of ['pr:write', 'workflow:trigger'] as const) {
+        expect(cloudCaps.has(cap)).toBe(true);
+        expect(daemonCaps.has(cap)).toBe(false);
+      }
     });
 
     it('local-daemon orchestrator extras are exactly exec/write/test/download', () => {
@@ -368,6 +401,16 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       expect(extras).toEqual(
         new Set<Capability>(['sandbox:exec', 'repo:write', 'sandbox:test', 'sandbox:download']),
       );
+    });
+
+    it('cloud-only orchestrator caps are exactly pr:write/workflow:trigger', () => {
+      const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
+      const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
+      const cloudOnly = new Set<Capability>();
+      for (const cap of cloudCaps) {
+        if (!daemonCaps.has(cap)) cloudOnly.add(cap);
+      }
+      expect(cloudOnly).toEqual(new Set<Capability>(['pr:write', 'workflow:trigger']));
     });
   });
 

@@ -25,9 +25,13 @@
  */
 
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import type { BranchSwitchPayload, Conversation } from '@/types';
+import type { BranchSwitchPayload, ChatMessage, Conversation } from '@/types';
 import type { ChatRuntimeHandlers } from '@/hooks/chat-send';
-import { createBranchForkedMessage, type MigrationGuard } from './chat-message';
+import {
+  createBranchForkedMessage,
+  createBranchMergedMessage,
+  type MigrationGuard,
+} from './chat-message';
 import { setMigrationMarker } from './branch-migration-marker';
 
 export interface BranchForkMigrationContext {
@@ -62,17 +66,20 @@ export interface BranchForkMigrationContext {
 /**
  * Apply a branch-switch tool-result payload to the active conversation.
  *
- * For `kind: 'forked'`: migrates the active conversation (or syncs branch
- * silently if no active chat exists). For `kind: 'switched'` or undefined:
- * just triggers the existing `onBranchSwitch` handler — useChat's auto-
- * switch effect handles the rest via its filter + auto-select / auto-create
- * path (existing pre-slice-2 behavior).
+ * For `kind: 'forked'` or `kind: 'merged'`: migrates the active conversation
+ * (or syncs branch silently if no active chat exists). The two kinds share
+ * the same R10/R12 mitigation mechanism; only the transcript event differs
+ * (`branch_forked` vs `branch_merged`) so the renderer can label the
+ * divider correctly. For `kind: 'switched'`: just triggers the existing
+ * `onBranchSwitch` handler — useChat's auto-switch effect handles the rest
+ * via its filter + auto-select / auto-create path (existing pre-slice-2
+ * behavior).
  */
 export function applyBranchSwitchPayload(
   payload: BranchSwitchPayload,
   ctx: BranchForkMigrationContext,
 ): void {
-  if (payload.kind !== 'forked') {
+  if (payload.kind !== 'forked' && payload.kind !== 'merged') {
     // Existing behavior for 'switched' (or any future kind): just sync the
     // workspace branch. useChat's auto-switch effect picks it up.
     ctx.runtimeHandlersRef.current?.onBranchSwitch?.(payload.name);
@@ -114,8 +121,9 @@ export function applyBranchSwitchPayload(
 
   // R12: atomic backfill + branch update + event insertion in one
   // setConversations. Existing un-stamped messages get the OLD branch
-  // (preserving provenance); new conv.branch becomes the target;
-  // branch_forked event is appended to demarcate the transition.
+  // (preserving provenance); new conv.branch becomes the target; a typed
+  // event (branch_forked or branch_merged) is appended to demarcate the
+  // transition for the renderer.
   ctx.setConversations((prev) => {
     const conv = prev[targetChatId];
     if (!conv) return prev;
@@ -129,19 +137,27 @@ export function applyBranchSwitchPayload(
     const backfilledMessages = conv.messages.map((m) =>
       m.branch === undefined ? { ...m, branch: oldBranch } : m,
     );
-    const branchForkedEvent = createBranchForkedMessage({
-      from: fromBranch,
-      to: payload.name,
-      sha: payload.sha,
-      source: payload.source,
-    });
+    const transitionEvent: ChatMessage =
+      payload.kind === 'merged'
+        ? createBranchMergedMessage({
+            from: fromBranch,
+            to: payload.name,
+            prNumber: payload.prNumber,
+            source: payload.source,
+          })
+        : createBranchForkedMessage({
+            from: fromBranch,
+            to: payload.name,
+            sha: payload.sha,
+            source: payload.source,
+          });
     return {
       ...prev,
       [targetChatId]: {
         ...conv,
         branch: payload.name,
-        messages: [...backfilledMessages, branchForkedEvent],
-        lastMessageAt: branchForkedEvent.timestamp,
+        messages: [...backfilledMessages, transitionEvent],
+        lastMessageAt: transitionEvent.timestamp,
       },
     };
   });
