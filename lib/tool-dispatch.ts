@@ -34,6 +34,7 @@ import {
   repairToolJson,
 } from './tool-call-parsing.js';
 import { recoverNamespacedToolCalls } from './tool-call-namespaced-recovery.js';
+import { recoverXmlToolCalls } from './tool-call-xml-recovery.js';
 
 /**
  * Result of scanning assistant text for tool calls.
@@ -298,6 +299,49 @@ export function createToolDispatcher<TCall>(
         }
       }
 
+      // Phase 4: XML-wrapped recovery (`<tool_call>...</tool_call>`).
+      // Same two-path shape as phase 3 — Hermes/Qwen/Nous finetunes and
+      // related open-weight models emit tool calls in XML tags instead
+      // of fenced JSON, which the canonical phases ignore. Without this
+      // pass the call appears as raw `<tool_call>...` text in the
+      // assistant transcript and the harness silently runs zero tools.
+      // Promotion when nothing else parsed; otherwise non-duplicate
+      // traces surface as `unknown_tool` so the model sees the
+      // divergence rather than discovering it via missing follow-up
+      // tool results.
+      const xmlRecoveries = recoverXmlToolCalls(text);
+      if (candidates.length === 0) {
+        for (const recovered of xmlRecoveries) {
+          candidates.push({
+            kind: 'xml',
+            offset: recovered.offset,
+            parsed: {
+              tool: recovered.tool,
+              args: recovered.args,
+              raw: { tool: recovered.tool, args: recovered.args },
+            },
+            sample: formatXmlRecoverySample(recovered.tool, recovered.args),
+          });
+        }
+      } else {
+        const existingKeys = new Set<string>();
+        for (const c of candidates) {
+          existingKeys.add(canonicalKey(c.parsed));
+        }
+        for (const recovered of xmlRecoveries) {
+          const parsed: ParsedToolObject = {
+            tool: recovered.tool,
+            args: recovered.args,
+            raw: { tool: recovered.tool, args: recovered.args },
+          };
+          if (existingKeys.has(canonicalKey(parsed))) continue;
+          malformed.push({
+            reason: 'unknown_tool',
+            sample: truncateSample(formatXmlRecoverySample(recovered.tool, recovered.args)),
+          });
+        }
+      }
+
       // Sort by textual offset so the final call order matches the
       // order the model intended. Dedup + source-match after sorting.
       candidates.sort((a, b) => a.offset - b.offset);
@@ -324,7 +368,8 @@ export function createToolDispatcher<TCall>(
         if (
           candidate.kind === 'fenced' ||
           candidate.kind === 'bare' ||
-          candidate.kind === 'namespaced'
+          candidate.kind === 'namespaced' ||
+          candidate.kind === 'xml'
         ) {
           malformed.push({ reason: 'unknown_tool', sample: truncateSample(candidate.sample) });
         }
@@ -573,11 +618,22 @@ function isBareBlockEligible(
 }
 
 interface DetectedCandidate {
-  kind: 'fenced' | 'bare' | 'namespaced';
+  kind: 'fenced' | 'bare' | 'namespaced' | 'xml';
   offset: number;
   parsed: ParsedToolObject;
   /** Truncatable sample for malformed reports. */
   sample: string;
+}
+
+/**
+ * Render an XML-recovered call as a short string sample for malformed
+ * reports. Mirrors the namespaced phase's `functions.NAME:* ARGS`
+ * shape so the model sees a compact reminder of what it emitted
+ * without us echoing the full original XML body (which could be
+ * arbitrarily large).
+ */
+function formatXmlRecoverySample(tool: string, args: Record<string, unknown>): string {
+  return `<tool_call> ${tool} ${JSON.stringify(args)}`;
 }
 
 type ParseOutcome =
