@@ -1557,6 +1557,8 @@ export async function runTUI(options = {}) {
       }
 
       daemonClient = client;
+      tuiState.dirty.add('footer');
+      scheduler?.schedule();
 
       // Register event handler — bridge daemon events to TUI
       client.onEvent((event) => {
@@ -1629,6 +1631,8 @@ export async function runTUI(options = {}) {
       );
       daemonClient.close();
       daemonClient = null;
+      tuiState.dirty.add('footer');
+      scheduler?.schedule();
     }
   }
 
@@ -1923,6 +1927,9 @@ export async function runTUI(options = {}) {
         messageCount: state.messages?.length || 0,
         contextBudget: budget,
         fileAwareness: tuiState.fileAwareness,
+        // Persistent chip — read live so a reconnect/disconnect that
+        // already marked the footer dirty renders the new state.
+        daemonStatus: { connected: Boolean(daemonClient?.connected) },
       });
       tuiState.session = state.sessionId;
       renderKeybindHints(screenBuf, layout, theme, tuiState);

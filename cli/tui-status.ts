@@ -193,6 +193,16 @@ interface FileAwareness {
   files: FileEntry[];
 }
 
+/**
+ * Persistent indicator for whether the TUI is dispatching turns through
+ * a paired `pushd` daemon or running them inline. Updated whenever the
+ * TUI's daemon connection state changes; sits next to git/cwd/context
+ * so a glance at the footer answers "where are my turns going."
+ */
+export interface DaemonStatusIndicator {
+  connected: boolean;
+}
+
 interface StatusBarOptions {
   gitStatus?: CompactGitStatus | null;
   cwd?: string;
@@ -201,6 +211,7 @@ interface StatusBarOptions {
   messageCount?: number;
   contextBudget?: ContextBudget | null;
   fileAwareness?: FileAwareness | null;
+  daemonStatus?: DaemonStatusIndicator | null;
 }
 
 /**
@@ -219,6 +230,7 @@ export function renderStatusBar(
     messageCount = 0,
     contextBudget = null,
     fileAwareness = null,
+    daemonStatus = null,
   }: StatusBarOptions,
 ): void {
   const { top, left, width } = layout.footer;
@@ -247,6 +259,24 @@ export function renderStatusBar(
     color: 'fg.secondary',
     width: visibleWidth(pathStr),
   });
+
+  // Daemon connection chip. Always shown when the indicator is
+  // supplied so the user can tell at a glance whether the next turn
+  // goes through pushd (sessions persist) or runs inline (vanishes
+  // when the TUI exits). `connected` → green chip; otherwise dim. The
+  // chip is dropped entirely when the caller passes null so callers
+  // that don't track daemon state (e.g. a one-shot smoke test) don't
+  // see a misleading "inline" label.
+  if (daemonStatus) {
+    const text = daemonStatus.connected ? 'daemon' : 'inline';
+    const color: TokenName = daemonStatus.connected ? 'state.success' : 'fg.dim';
+    parts.push({
+      icon: '',
+      text,
+      color,
+      width: visibleWidth(text),
+    });
+  }
 
   // Context meter (visual bar + tokens/budget)
   if (contextBudget) {
