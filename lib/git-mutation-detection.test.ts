@@ -130,6 +130,71 @@ describe('detectBlockedGitCommand — list separators and pipelines', () => {
   });
 });
 
+describe('detectBlockedGitCommand — bypasses caught in PR #563 review', () => {
+  it('blocks `/usr/bin/git commit` (path-prefixed binary)', () => {
+    expect(detectBlockedGitCommand('/usr/bin/git commit -m fix')).toBe('git commit');
+  });
+
+  it('blocks `./bin/git push` (relative path to git)', () => {
+    expect(detectBlockedGitCommand('./bin/git push')).toBe('git push');
+  });
+
+  it('blocks `git switch -- main` (no path-restore mode in switch)', () => {
+    // `git switch` is branch-only. `git switch -- main` is parsed by
+    // git as still switching to branch `main`, so the `--` escape
+    // hatch must not bypass the guard here.
+    expect(detectBlockedGitCommand('git switch -- main')).toBe('git switch <branch>');
+  });
+
+  it('blocks `git switch -- feat/foo`', () => {
+    expect(detectBlockedGitCommand('git switch -- feat/foo')).toBe('git switch <branch>');
+  });
+
+  it('blocks `git 2>&1 push` (fd duplicate must not skip subcommand)', () => {
+    expect(detectBlockedGitCommand('git 2>&1 push')).toBe('git push');
+  });
+
+  it('blocks `git push 2>&1` (fd duplicate after subcommand)', () => {
+    expect(detectBlockedGitCommand('git push 2>&1')).toBe('git push');
+  });
+
+  it('blocks `git push >&-` (close-stdout fd dup)', () => {
+    expect(detectBlockedGitCommand('git push >&-')).toBe('git push');
+  });
+
+  it('blocks `git checkout -q -b feature/foo` (branch-create flag not first)', () => {
+    expect(detectBlockedGitCommand('git checkout -q -b feature/foo')).toBe('git checkout -b');
+  });
+
+  it('blocks `git checkout -B feature` (force branch-create variant)', () => {
+    expect(detectBlockedGitCommand('git checkout -B feature/foo')).toBe('git checkout -b');
+  });
+
+  it('blocks `git checkout -b new base` (two flagless args after -b)', () => {
+    expect(detectBlockedGitCommand('git checkout -b new base')).toBe('git checkout -b');
+  });
+
+  it('blocks `git switch --quiet -c feature` (branch-create flag not first)', () => {
+    expect(detectBlockedGitCommand('git switch --quiet -c feature/foo')).toBe('git switch -c');
+  });
+
+  it('blocks `git switch --create feature` (long-form branch create)', () => {
+    expect(detectBlockedGitCommand('git switch --create feature/foo')).toBe('git switch -c');
+  });
+
+  it('blocks `git switch -C feature` (force branch-create variant)', () => {
+    expect(detectBlockedGitCommand('git switch -C feature/foo')).toBe('git switch -c');
+  });
+
+  it('blocks `git revert HEAD` (added to subcommand block list)', () => {
+    expect(detectBlockedGitCommand('git revert HEAD')).toBe('git revert');
+  });
+
+  it('blocks `git -C path revert abc123`', () => {
+    expect(detectBlockedGitCommand('git -C path revert abc123')).toBe('git revert');
+  });
+});
+
 describe('detectBlockedGitCommand — false-positive prevention', () => {
   // Note: the detection doesn't parse shell quoting, so commands like
   // `echo "use git push later"` would still match. The previous regex

@@ -24,13 +24,21 @@
  */
 
 // Standalone shell operator: redirect introducer (`>`, `2>`, `>>`,
-// `2>&1`, `<<`, `<<<`) that consumes the NEXT token as its target.
-const REDIRECT_INTRODUCER = /^(?:[0-9]*[<>]+&?[-0-9]*|<<-?|<<<)$/;
-// Redirect fused to its target with no whitespace, e.g. `>/dev/null`.
-const FUSED_REDIRECT = /^[0-9]*[<>]/;
-// Pipe / list separators (defense-in-depth — the outer segment split
-// already terminates on these).
-const LIST_SEPARATOR_TOKEN = /^(?:&&|\|\|?|;|&)$/;
+// `2>&1` is NOT one — that's a self-contained fd duplicate, handled
+// by `FUSED_REDIRECT`). Patterns matching `<` and `<<` follow the
+// same rule. The hard constraint is: this token must consume the
+// NEXT token as its target, so we must not match self-contained
+// forms here or we'd skip a real argument.
+const REDIRECT_INTRODUCER = /^(?:[0-9]*>{1,2}|<{1,3}-?)$/;
+// Redirect fused to its target (or self-contained fd dup): `>/dev/null`,
+// `2>/tmp/log`, `<input.txt`, `2>&1`. Self-contained — no trailing
+// target token to skip.
+const FUSED_REDIRECT = /^(?:[0-9]*[<>]|[0-9]*>{1,2}&[0-9-]*)/;
+// Pipe / list separators. `&` is intentionally NOT a top-level
+// separator here because it appears inside fd duplicates like
+// `2>&1`; the `tokenizeSegment` pass strips those redirects so by
+// the time we'd otherwise split on `&`, the segment is clean.
+const LIST_SEPARATOR_TOKEN = /^(?:&&|\|\|?|;)$/;
 
 // Git global options that consume a separate argument token (e.g.
 // `-C <path>`, `--git-dir <path>`). When parsing past these to find
@@ -71,7 +79,21 @@ const BLOCKED_GIT_SUBCOMMANDS = new Map<string, string>([
   ['merge', 'git merge'],
   ['rebase', 'git rebase'],
   ['cherry-pick', 'git cherry-pick'],
+  ['revert', 'git revert'],
 ]);
+
+/**
+ * Recognize a token as a `git` invocation. Catches both the bare
+ * `git` form and absolute/relative path forms like `/usr/bin/git` or
+ * `./bin/git` — without those, a model could bypass the guard by
+ * spelling out git's executable path.
+ */
+function isGitToken(token: string): boolean {
+  const lower = token.toLowerCase();
+  if (lower === 'git') return true;
+  if (lower.endsWith('/git')) return true;
+  return false;
+}
 
 /**
  * Split a shell command on top-level list separators (`;`, `|`, `||`,
@@ -80,8 +102,12 @@ const BLOCKED_GIT_SUBCOMMANDS = new Map<string, string>([
  * toward over-detection (safer for a guard).
  */
 function splitOnListSeparators(command: string): string[] {
+  // Single `&` is intentionally NOT a separator here — it appears
+  // inside fd duplicates (`2>&1`, `>&-`) and splitting on it would
+  // shred the segment so detection misses the subcommand. Background
+  // jobs in tool calls are rare; we accept the false-negative trade.
   return command
-    .split(/(?:&&|\|\|?|;|&)/)
+    .split(/(?:&&|\|\|?|;)/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -131,7 +157,7 @@ interface ParsedGitInvocation {
  *     dynamic and force the caller to fail safe.
  */
 function parseGitInvocation(tokens: string[]): ParsedGitInvocation | null {
-  const gitIdx = tokens.findIndex((t) => t.toLowerCase() === 'git');
+  const gitIdx = tokens.findIndex(isGitToken);
   if (gitIdx === -1) return null;
 
   let i = gitIdx + 1;
@@ -182,13 +208,30 @@ function parseGitInvocation(tokens: string[]): ParsedGitInvocation | null {
  *
  * Users wanting a branch switch should use `sandbox_switch_branch`.
  */
+/**
+ * Return the flag tokens (those starting with `-`) that appear before
+ * any `--` separator. Used to scan for branch-create flags
+ * (`-b`/`-B`/`-c`/`-C`/`--create`) regardless of position relative to
+ * other flags like `-q`/`--quiet`.
+ */
+function takeFlagsBeforeDoubleDash(rest: string[]): string[] {
+  const flags: string[] = [];
+  for (const t of rest) {
+    if (t === '--') break;
+    if (t.startsWith('-')) flags.push(t);
+  }
+  return flags;
+}
+
 function detectBlockedBranchCheckout(invocation: ParsedGitInvocation): string | null {
   const { subcommand, rest } = invocation;
   if (subcommand !== 'checkout' && subcommand !== 'switch') return null;
 
-  // `--` is the explicit "what follows is a path" separator. Anything
-  // after it is a file restore, never a branch. Let it pass.
-  if (rest.includes('--')) return null;
+  // `--` is the explicit path separator only for `checkout` (which
+  // has a file-restore mode). `git switch` is branch-only — `git
+  // switch -- main` is still a branch switch (the `--` is a no-op
+  // there per git's parser), so we must not let it bypass.
+  if (subcommand === 'checkout' && rest.includes('--')) return null;
 
   // Command substitution / backticks make the operand dynamic — block.
   if (rest.some((t) => t.includes('$(') || t.includes('`'))) {
@@ -222,11 +265,23 @@ export function detectBlockedGitCommand(command: string): string | null {
     const tier1Label = BLOCKED_GIT_SUBCOMMANDS.get(invocation.subcommand);
     if (tier1Label) return tier1Label;
 
-    // Branch-create variants: `checkout -b` / `switch -c`.
-    if (invocation.subcommand === 'checkout' && invocation.rest[0] === '-b') {
+    // Branch-create variants: `checkout -b/-B` / `switch -c/-C/--create`.
+    // Scan all flags before any `--` separator — flags can appear in
+    // any order (`git checkout -q -b feature` is a common form), and
+    // checking only `rest[0]` would let the model bypass the dedicated
+    // branch-create label and fall through to Tier 2's branch-switch
+    // label instead, surfacing the wrong recovery guidance.
+    const flagsBeforeDoubleDash = takeFlagsBeforeDoubleDash(invocation.rest);
+    if (
+      invocation.subcommand === 'checkout' &&
+      flagsBeforeDoubleDash.some((f) => f === '-b' || f === '-B')
+    ) {
       return 'git checkout -b';
     }
-    if (invocation.subcommand === 'switch' && invocation.rest[0] === '-c') {
+    if (
+      invocation.subcommand === 'switch' &&
+      flagsBeforeDoubleDash.some((f) => f === '-c' || f === '-C' || f === '--create')
+    ) {
       return 'git switch -c';
     }
 
