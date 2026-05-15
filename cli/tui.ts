@@ -179,8 +179,16 @@ function isProcessRunning(pid) {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // `kill(pid, 0)` only checks whether the process exists. POSIX
+    // distinguishes two failure modes: ESRCH (no such process) and
+    // EPERM (process exists, but the caller cannot signal it). EPERM
+    // means the daemon is running under another uid or has changed
+    // credentials — it is NOT "not running." Treating it as such
+    // would cause `startDaemonForTui` to delete the pidfile and spawn
+    // a duplicate. Any other code (EINVAL, etc.) is treated as the
+    // safe "not running" fallback.
+    return err?.code === 'EPERM';
   }
 }
 
@@ -1464,7 +1472,21 @@ export async function runTUI(options = {}) {
     if (existingPid && isProcessRunning(existingPid)) {
       const { waitForReady } = await import('./daemon-client.js');
       const ready = await waitForReady(socketPath, { maxWaitMs: 3000, intervalMs: 200 });
-      return { status: 'already-running', ready, pid: existingPid, socketPath, logPath };
+      if (ready) {
+        return { status: 'already-running', ready, pid: existingPid, socketPath, logPath };
+      }
+      // The pid is alive but the socket never responded. Two
+      // explanations: (1) the pid file is stale and the pid was reused
+      // by an unrelated process (e.g. crash without pidfile cleanup);
+      // (2) pushd is wedged. Returning `ready: false` here would
+      // strand the session in inline-fallback mode for the rest of
+      // the TUI run — `daemonAutoStartAttempted` flips and the
+      // autostart never retries. Fall through to the spawn path
+      // instead: if the live pid is actually pushd, the duplicate
+      // spawn will hit EADDRINUSE on the unix socket and exit
+      // (leaving the original in place), so the cost of being wrong
+      // is one noisy log line. The cost of being right is a working
+      // session. Codex P2 on PR #566.
     }
 
     if (existingPid) {
@@ -1478,7 +1500,10 @@ export async function runTUI(options = {}) {
     const { spawn } = await import('node:child_process');
     const currentExt = import.meta.url.match(/\.(m?[jt]s)$/)?.[1] ?? 'mjs';
     const pushdPath = fileURLToPath(new URL(`./pushd.${currentExt}`, import.meta.url));
-    const nodeArgs = currentExt === 'ts' ? ['--import', 'tsx', pushdPath] : [pushdPath];
+    // Both .ts and .mts need the tsx loader; Node won't strip TS
+    // syntax on its own. `.js` / `.mjs` are runnable directly.
+    const needsTsxLoader = currentExt === 'ts' || currentExt === 'mts';
+    const nodeArgs = needsTsxLoader ? ['--import', 'tsx', pushdPath] : [pushdPath];
 
     const logDir = path.dirname(logPath);
     await fs.mkdir(logDir, { recursive: true, mode: 0o700 });
@@ -3718,12 +3743,12 @@ export async function runTUI(options = {}) {
 
     if (sub === 'daemon') {
       const value = parts[1]?.toLowerCase();
-      if (value !== 'auto' && value !== 'on' && value !== 'off' && value !== 'manual') {
+      if (value !== 'auto' && value !== 'off') {
         addTranscriptEntry(tuiState, 'warning', 'Usage: /config daemon auto|off');
         scheduler.flush();
         return;
       }
-      const enabled = value === 'auto' || value === 'on';
+      const enabled = value === 'auto';
       config.tuiDaemonAutoStart = enabled;
       process.env.PUSH_TUI_DAEMON_AUTOSTART = String(enabled);
       await saveConfig(config);
