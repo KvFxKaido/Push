@@ -42,6 +42,7 @@ import {
   inferToolFromArgs,
 } from '@push/lib/tool-call-diagnosis';
 import { recoverNamespacedToolCalls } from '@push/lib/tool-call-namespaced-recovery';
+import { recoverXmlToolCalls } from '@push/lib/tool-call-xml-recovery';
 
 // ---------------------------------------------------------------------------
 // Re-exports — the tool-call diagnosis kernel now lives in
@@ -171,14 +172,19 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
   const allCalls: AnyToolCall[] = [];
   const seen = new Set<string>();
 
-  // OpenAI-style namespaced fallback (`functions.<name>:<id>  <args>`).
-  // Models like Kimi-via-Blackbox emit this format with no canonical
-  // wrapper, so the existing precondition below would have dropped them
-  // silently. Only fires when there are zero explicit wrappers — once a
-  // real tool block exists, trust the model's primary intent and let
-  // the standard scan handle it.
+  // OpenAI-style namespaced fallback (`functions.<name>:<id>  <args>`)
+  // and XML-wrapped fallback (`<tool_call>...</tool_call>`). Models
+  // like Kimi-via-Blackbox emit the namespaced shape; Hermes / Qwen /
+  // Nous finetunes emit the XML shape. Neither carries the canonical
+  // `{tool, args}` wrapper, so the existing precondition below would
+  // have dropped them silently. Only fires when there are zero
+  // explicit wrappers — once a real tool block exists, trust the
+  // model's primary intent and let the standard scan handle it.
   if (explicitToolObjects.length === 0) {
-    for (const recovered of recoverNamespacedToolCalls(text)) {
+    const recoveries = [...recoverNamespacedToolCalls(text), ...recoverXmlToolCalls(text)].sort(
+      (a, b) => a.offset - b.offset,
+    );
+    for (const recovered of recoveries) {
       const call = wrapRecoveredCallToAny(recovered.tool, recovered.args);
       if (!call) continue;
       const key = getCanonicalInvocationKey(call);
@@ -429,11 +435,17 @@ export function detectAnyToolCall(text: string): AnyToolCall | null {
   const recovered = tryRecoverBareToolArgs(text);
   if (recovered) return recovered;
 
-  // Fallback for OpenAI-style namespaced output (`functions.<name>:<id>
-  // <args>`) — see `recoverNamespacedToolCalls` for the model behavior
-  // this addresses.
-  for (const namespaced of recoverNamespacedToolCalls(text)) {
-    const call = wrapRecoveredCallToAny(namespaced.tool, namespaced.args);
+  // Fallback for non-canonical wrappers — namespaced (`functions.<name>:<id>
+  // <args>`, Kimi/Blackbox) and XML (`<tool_call>...</tool_call>`,
+  // Hermes/Qwen/Nous finetunes). Merge + sort by offset so the
+  // textually-first call wins regardless of which shape it's in —
+  // matches the "returns the first match" docstring.
+  const fallbackRecoveries = [
+    ...recoverNamespacedToolCalls(text),
+    ...recoverXmlToolCalls(text),
+  ].sort((a, b) => a.offset - b.offset);
+  for (const recovered of fallbackRecoveries) {
+    const call = wrapRecoveredCallToAny(recovered.tool, recovered.args);
     if (call) return call;
   }
 

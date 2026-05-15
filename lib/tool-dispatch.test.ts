@@ -851,3 +851,97 @@ describe('createToolDispatcher — namespaced fallback diagnostics', () => {
     expect(result.malformed[0].sample).toContain('functions.mystery_tool');
   });
 });
+
+// ---------------------------------------------------------------------------
+// XML-wrapper recovery — `<tool_call>…</tool_call>` shape emitted by
+// Hermes / Qwen / Nous-style finetunes. The mobile-app screenshot bug
+// that motivated phase 4: the model emitted the Shape B variant and the
+// dispatcher silently produced zero calls.
+// ---------------------------------------------------------------------------
+
+describe('createToolDispatcher — XML-wrapper fallback', () => {
+  const dispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE]);
+
+  it('recovers the Hermes-style JSON-inside-tag shape when no other candidates exist', () => {
+    const text = '<tool_call>{"name": "read_file", "arguments": {"path": "a.txt"}}</tool_call>';
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([{ tool: 'read_file', args: { path: 'a.txt' } }]);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('recovers the mobile-app param-pair shape (the bug-report capture)', () => {
+    // The exact shape rendered as raw text in the mobile-app
+    // screenshot: tool name as text head, alternating
+    // `<arg_key>`/`<arg_value>` children, no canonical wrapper.
+    const text = [
+      '<tool_call>commits',
+      '<arg_key>count</arg_key>',
+      '<arg_value>10</arg_value>',
+      '<arg_key>repo</arg_key>',
+      '<arg_value>KvFxKaido/Push</arg_value>',
+      '</tool_call>',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([
+      { tool: 'commits', args: { count: 10, repo: 'KvFxKaido/Push' } },
+    ]);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('reports XML traces as malformed when canonical fenced candidates also exist', () => {
+    // Mixed-shape emission: model produced a clean fenced call AND a
+    // `<tool_call>` XML trace with a different canonical key. The
+    // canonical one executes; the XML divergence is surfaced as
+    // malformed so the model sees that one of its calls was dropped.
+    const text = [
+      '```json',
+      '{"tool":"read_file","args":{"path":"primary.txt"}}',
+      '```',
+      '<tool_call>write_file',
+      '<arg_key>path</arg_key>',
+      '<arg_value>dropped.txt</arg_value>',
+      '<arg_key>content</arg_key>',
+      '<arg_value>"x"</arg_value>',
+      '</tool_call>',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([{ tool: 'read_file', args: { path: 'primary.txt' } }]);
+    expect(result.malformed).toHaveLength(1);
+    expect(result.malformed[0].reason).toBe('unknown_tool');
+    expect(result.malformed[0].sample).toContain('<tool_call>');
+    expect(result.malformed[0].sample).toContain('write_file');
+  });
+
+  it('suppresses duplicate XML traces when the canonical call has the same args', () => {
+    // Mixed-shape duplicate: same tool + args emitted as both fenced
+    // and `<tool_call>`. Without dedup the dispatcher would report
+    // the XML copy as malformed and trigger a spurious correction
+    // round for a call that actually ran.
+    const text = [
+      '```json',
+      '{"tool":"read_file","args":{"path":"a.txt"}}',
+      '```',
+      '<tool_call>read_file',
+      '<arg_key>path</arg_key>',
+      '<arg_value>a.txt</arg_value>',
+      '</tool_call>',
+    ].join('\n');
+    const result = dispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([{ tool: 'read_file', args: { path: 'a.txt' } }]);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('reports XML unknown-tool traces in the XML-only fallback path', () => {
+    const rejectAllSource: ToolSource<unknown> = {
+      name: 'reject-all',
+      detect: () => null,
+    };
+    const strictDispatcher = createToolDispatcher([rejectAllSource]);
+    const text = '<tool_call>mystery_tool<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>';
+    const result = strictDispatcher.detectAllToolCalls(text);
+    expect(result.calls).toEqual([]);
+    expect(result.malformed).toHaveLength(1);
+    expect(result.malformed[0].reason).toBe('unknown_tool');
+    expect(result.malformed[0].sample).toContain('mystery_tool');
+  });
+});
