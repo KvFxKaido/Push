@@ -281,7 +281,7 @@ describe('handleCloudflareSandbox happy paths', () => {
     );
     expect(sandbox.gitCheckout).toHaveBeenCalledWith(
       'https://x-access-token:ghs_token@github.com/owner/repo.git',
-      { branch: 'feature', targetDir: '/workspace' },
+      { branch: 'feature', targetDir: '/workspace', depth: 1 },
     );
     expect(sandbox.writeFile).toHaveBeenCalledWith('/workspace/README.md', 'hello');
     // Call 2 is the hardlink copy from the image-baked /opt/push-cache
@@ -292,6 +292,105 @@ describe('handleCloudflareSandbox happy paths', () => {
       expect.stringContaining('cp -al "$src/node_modules"'),
     );
     expect(sandbox.exec).toHaveBeenCalledTimes(3);
+  });
+
+  it('emits cf_sandbox_create_timing on the success path with hashed repo and no raw identifiers', async () => {
+    const sandbox = mockSandbox();
+    const sandboxId = mockUuid();
+    sandbox.exec.mockResolvedValue({ stdout: probeStdout(), stderr: '', exitCode: 0 });
+    const consoleLog = vi.mocked(console.log);
+    consoleLog.mockClear();
+
+    const response = await callRoute('create', {
+      repo: 'owner/secret-repo',
+      branch: 'feat/private-codename',
+      github_token: 'ghs_token',
+    });
+
+    expect(response.status).toBe(200);
+    const timingEntries = consoleLog.mock.calls
+      .map((args) => {
+        try {
+          return JSON.parse(args[0] as string) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      })
+      .filter(
+        (entry): entry is Record<string, unknown> => entry?.event === 'cf_sandbox_create_timing',
+      );
+    expect(timingEntries).toHaveLength(1);
+    const timing = timingEntries[0];
+
+    expect(timing.sandbox_id).toBe(sandboxId);
+    expect(timing.has_repo).toBe(true);
+    // Privacy: raw repo / branch strings must never appear anywhere in the
+    // log entry. The hash is the only identifier carried; this guards
+    // against a future field reintroducing the leak that prompted the
+    // hashing in the first place.
+    const serialized = JSON.stringify(timing);
+    expect(serialized).not.toContain('owner/secret-repo');
+    expect(serialized).not.toContain('feat/private-codename');
+    expect(timing.repo_hash).toMatch(/^[0-9a-f]{12}$/);
+    expect(timing.failed_phase).toBeUndefined();
+
+    const phases = timing.phases_ms as Record<string, number>;
+    expect(Object.keys(phases).sort()).toEqual([
+      'cache_populate',
+      'clone',
+      'git_identity',
+      'probe',
+      'seed_files',
+      'token_issue',
+    ]);
+    for (const ms of Object.values(phases)) {
+      expect(typeof ms).toBe('number');
+      expect(ms).toBeGreaterThanOrEqual(0);
+    }
+    expect(typeof timing.total_ms).toBe('number');
+  });
+
+  it('records failed_phase=clone and still emits timing when gitCheckout throws', async () => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockResolvedValue({ stdout: probeStdout(), stderr: '', exitCode: 0 });
+    sandbox.gitCheckout.mockRejectedValueOnce(new Error('clone exploded'));
+    const consoleLog = vi.mocked(console.log);
+    consoleLog.mockClear();
+
+    const response = await callRoute('create', {
+      repo: 'owner/repo',
+      branch: 'main',
+      github_token: 'ghs_token',
+    });
+
+    // The route surfaces the upstream failure as a 5xx; the exact code is
+    // not the subject of this test — what matters is that the finally
+    // block fires and tags the failed phase.
+    expect(response.status).toBeGreaterThanOrEqual(500);
+    const timingEntries = consoleLog.mock.calls
+      .map((args) => {
+        try {
+          return JSON.parse(args[0] as string) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      })
+      .filter(
+        (entry): entry is Record<string, unknown> => entry?.event === 'cf_sandbox_create_timing',
+      );
+    expect(timingEntries).toHaveLength(1);
+    const timing = timingEntries[0];
+
+    expect(timing.failed_phase).toBe('clone');
+    const phases = timing.phases_ms as Record<string, number>;
+    // Phases that ran before the throw should have non-undefined timings;
+    // phases that never started stay at 0. Clone itself has a recorded
+    // duration even though it threw — that's the whole point of the
+    // try/finally inside the `time` helper.
+    expect(typeof phases.clone).toBe('number');
+    expect(phases.token_issue).toBe(0);
+    expect(phases.probe).toBe(0);
   });
 
   it('connects to a reachable sandbox', async () => {

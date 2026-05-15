@@ -843,7 +843,25 @@ export async function executeSandboxToolCall(
         // collision (e.g. `docs/` directory and no `docs` branch) fails fast
         // with non-zero exit instead of silently doing a path-mode checkout
         // that leaves HEAD where it was while we'd still emit `branchSwitch`.
-        const cmd = `cd /workspace && git switch ${shellEscape(branch)}`;
+        //
+        // Fall back to a depth-1 fetch when the bare switch fails. The cf
+        // sandbox provider clones with `--depth=1 --branch <create-branch>`,
+        // which implies `--single-branch` and leaves only the create-time
+        // branch's remote ref locally — switching to any other remote branch
+        // in the same sandbox would otherwise fail with `invalid reference`.
+        // The explicit `<branch>:refs/remotes/origin/<branch>` refspec works
+        // even when remote.origin.fetch was set to single-branch by the
+        // shallow clone. The first switch's stderr is suppressed because the
+        // miss is an expected branch in the control flow, not a real error;
+        // a real failure (e.g. branch missing on origin too) surfaces from
+        // the second switch's stderr.
+        const escapedBranch = shellEscape(branch);
+        const cmd =
+          `cd /workspace && (` +
+          `git switch ${escapedBranch} 2>/dev/null || ` +
+          `(git fetch --depth=1 origin ${escapedBranch}:refs/remotes/origin/${escapedBranch} && ` +
+          `git switch ${escapedBranch})` +
+          `)`;
         const result = await execInSandbox(sandboxId, cmd, undefined, {
           markWorkspaceMutated: true,
         });
