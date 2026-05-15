@@ -3477,26 +3477,28 @@ export async function runTUI(options = {}) {
     if (sub === 'status' || sub === 'show') {
       const lines = [];
 
-      // Effective autostart setting. Env wins over config inside
-      // isTuiDaemonAutoStartEnabled — show the source so a surprise
-      // value is easy to trace.
-      const envOverride = process.env.PUSH_TUI_DAEMON_AUTOSTART;
+      // Effective autostart setting. Don't attribute a "from env" vs
+      // "from config" source — the TUI itself writes
+      // PUSH_TUI_DAEMON_AUTOSTART into process.env when /config daemon
+      // toggles, so any source attribution after a config change would
+      // lie ("from env" when the value actually came from config).
       const autostart = isTuiDaemonAutoStartEnabled(config);
-      const source = envOverride !== undefined ? 'env' : 'config';
-      lines.push(`Autostart: ${autostart ? 'auto' : 'off'} (from ${source})`);
+      lines.push(`Autostart: ${autostart ? 'auto' : 'off'}`);
 
-      // Connection state from the TUI's POV. `daemonAutoStartAttempted`
-      // distinguishes "we tried and fell back" from "autostart is off,
-      // running inline by choice."
+      // Connection state from the TUI's POV. Order matters: check
+      // !autostart BEFORE daemonAutoStartAttempted. `ensureDaemonConnected`
+      // returns early without setting `daemonAutoStartAttempted = true`
+      // when autostart is off (cli/tui.ts:1651), so the
+      // `attempted && !autostart` combination is unreachable.
       if (daemonClient?.connected) {
         lines.push('Connected: yes');
         if (daemonSessionId) lines.push(`Session: ${daemonSessionId}`);
-      } else if (daemonAutoStartAttempted && !autostart) {
+      } else if (!autostart) {
         lines.push('Connected: no (autostart off, running inline)');
       } else if (daemonAutoStartAttempted) {
         lines.push('Connected: no (autostart attempted, fell back to inline)');
       } else {
-        lines.push('Connected: no (inline mode)');
+        lines.push('Connected: no (inline mode, autostart pending)');
       }
 
       // Process state from the pid file. isProcessRunning's EPERM
@@ -3522,20 +3524,18 @@ export async function runTUI(options = {}) {
       lines.push('Paths:');
       lines.push(`  socket: ${getSocketPath()}`);
       lines.push(`  log:    ${getLogPath()}`);
-      const { getAuditLogPath } = await import('./pushd-audit-log.js');
+      const { getAuditLogPath, getAuditMaxBytes } = await import('./pushd-audit-log.js');
       const auditPath = getAuditLogPath();
       lines.push(`  audit:  ${auditPath}`);
 
       // Audit log size + rotation threshold so the user can tell how
-      // close they are to a rotation event. PUSHD_AUDIT_MAX_BYTES
-      // overrides the 10 MB default; we show whichever is effective.
+      // close they are to a rotation event. Reuse the audit module's
+      // own env parser + default so this row can't drift from the
+      // value the rotator actually consults.
       try {
         const stat = await fs.stat(auditPath);
         const sizeMb = (stat.size / 1024 / 1024).toFixed(2);
-        const maxBytesEnv = process.env.PUSHD_AUDIT_MAX_BYTES;
-        const maxBytes = maxBytesEnv ? Number.parseInt(maxBytesEnv, 10) : 10 * 1024 * 1024;
-        const maxMb =
-          Number.isFinite(maxBytes) && maxBytes > 0 ? (maxBytes / 1024 / 1024).toFixed(0) : '10';
+        const maxMb = (getAuditMaxBytes() / 1024 / 1024).toFixed(0);
         lines.push(`  audit size: ${sizeMb} MB (rotates at ${maxMb} MB)`);
       } catch {
         // No audit log on disk yet — fine, just skip the size row.
