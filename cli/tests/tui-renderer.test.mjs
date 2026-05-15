@@ -245,6 +245,33 @@ describe('computeLayout', () => {
     assert.ok(layout.innerLeft >= 3); // 2 col margin + 1 for 1-indexing
     assert.ok(layout.innerWidth <= 76); // 80 - 4
   });
+
+  it('honors a headerHeight override', () => {
+    // tui.ts hardcodes headerHeight=1 today, but computeLayout exposes
+    // the option. If a future surface (or a multi-line header) sets this
+    // higher, the cache key in tui.ts will need to include it — these
+    // tests make sure the helper itself behaves correctly so the gap is
+    // localized to the cache key.
+    const single = computeLayout(40, 120, { headerHeight: 1 });
+    const triple = computeLayout(40, 120, { headerHeight: 3 });
+    assert.equal(single.header.height, 1);
+    assert.equal(triple.header.height, 3);
+    // A taller header eats from the transcript region, not the footer
+    // or composer (those are bottom-anchored fixed sizes).
+    assert.equal(single.transcript.height - triple.transcript.height, 2);
+    assert.equal(single.footer.top, triple.footer.top);
+    assert.equal(single.composer.top, triple.composer.top);
+  });
+
+  it('clamps a non-positive headerHeight up to 1', () => {
+    // Math.max(1, headerHeightOverride ?? 1) — guards against a 0 or
+    // negative override blowing up the layout. Without the clamp, a
+    // header of height 0 would leave the first content row dangling.
+    const zero = computeLayout(40, 120, { headerHeight: 0 });
+    const negative = computeLayout(40, 120, { headerHeight: -5 });
+    assert.equal(zero.header.height, 1);
+    assert.equal(negative.header.height, 1);
+  });
 });
 
 // ─── solveFlex ──────────────────────────────────────────────────

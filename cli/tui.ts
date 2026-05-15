@@ -119,6 +119,7 @@ import {
   findFirstBlockStartingAtOrAfter,
   findFirstIntersectingBlock,
 } from './tui-transcript-window.js';
+import { shouldFullRedraw } from './tui-render-frame.js';
 
 // ── TUI state ───────────────────────────────────────────────────────
 
@@ -1654,15 +1655,14 @@ export async function runTUI(options = {}) {
       : null;
 
     const overlayKind = getVisibleOverlayKind();
-    const mustFullRedraw =
-      tuiState.dirty.has('all') ||
-      !renderFrameMeta.initialized ||
-      renderFrameMeta.tooSmall ||
-      renderFrameMeta.rows !== rows ||
-      renderFrameMeta.cols !== cols ||
-      renderFrameMeta.layoutKey !== layoutKey ||
-      renderFrameMeta.hadOverlay ||
-      Boolean(overlayKind);
+    const mustFullRedraw = shouldFullRedraw({
+      prev: renderFrameMeta,
+      rows,
+      cols,
+      layoutKey,
+      dirtyAll: tuiState.dirty.has('all'),
+      overlayActive: Boolean(overlayKind),
+    });
 
     const renderHeaderRegion = () => {
       renderHeader(screenBuf, layout, theme, {
