@@ -19,6 +19,7 @@ import { resolveToolName } from '@push/lib/tool-registry';
 import type {
   ChatMessage,
   StructuredToolError,
+  ToolErrorType,
   ToolHookContext,
   ToolExecutionResult,
 } from '@/types';
@@ -244,8 +245,12 @@ export class WebToolExecutionRuntime
           // classification. Falls back to a generic code when the hook
           // didn't supply one — the model still sees the same human-
           // readable block, just without the specific taxonomy entry.
+          // `errorType` is typed `string` in lib (hooks aren't forced
+          // to import the rich `ToolErrorType` union); the registered
+          // hooks emit codes that are members of the union — cast
+          // here at the boundary where the relationship holds.
           const err: StructuredToolError = {
-            type: preResult.errorType ?? 'PRE_HOOK_BLOCKED',
+            type: (preResult.errorType as ToolErrorType | undefined) ?? 'PRE_HOOK_BLOCKED',
             retryable: false,
             message: reason,
           };
