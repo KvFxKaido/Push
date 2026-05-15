@@ -84,7 +84,9 @@ export function createProtectMainPreHook(): PreToolHookEntry {
       context: ToolHookContext,
     ): Promise<PreToolUseResult> => {
       if (!context.isMainProtected) return { decision: 'passthrough' };
-      if (!context.sandboxId) return { decision: 'passthrough' };
+      // No `sandboxId` short-circuit: CLI sets `sandboxId: null` because
+      // its workspace IS the local working tree. The hook only needs a
+      // branch reader to make a decision.
       if (!context.getCurrentBranch) return { decision: 'passthrough' };
 
       const currentBranch = await context.getCurrentBranch();
@@ -100,8 +102,11 @@ export function createProtectMainPreHook(): PreToolHookEntry {
       return {
         decision: 'deny',
         errorType: 'PROTECT_MAIN_BLOCKED',
+        // Generic guidance — the rule applies to both web and CLI, so
+        // don't name a surface-specific tool here. Web's per-tool block
+        // text can layer extra hints in its system prompt.
         reason:
-          'Protect Main is enabled. Commits and pushes to the main/default branch are blocked. Create a new branch first (e.g. sandbox_create_branch({"name": "feature/my-change"})), then retry.',
+          'Protect Main is enabled. Commits and pushes to the main/default branch are blocked. Create a new branch first, then retry.',
       };
     },
   };

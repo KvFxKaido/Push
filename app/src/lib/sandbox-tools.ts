@@ -65,6 +65,8 @@ import {
 } from './sandbox-tool-utils';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
+import { createGitGuardPreHook } from '@push/lib/default-pre-hooks';
+import { getApprovalMode } from './approval-mode';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
 
@@ -284,6 +286,36 @@ async function runLocalDaemonTool(
   }
 }
 
+/**
+ * Defense-in-depth git-guard for `sandbox_exec`. Runs the same lib hook
+ * factory the runtime registers so the rule has a single source of
+ * truth, but evaluates it inline so the web Coder bypass path (which
+ * skips `WebToolExecutionRuntime` per the Coder Bypass decision doc)
+ * stays covered. Returns a structured deny when the hook would block,
+ * or null when the call should proceed.
+ */
+const inlineGitGuardEntry = createGitGuardPreHook({ modeProvider: getApprovalMode });
+
+async function evaluateGitGuardForSandboxExec(
+  args: Record<string, unknown>,
+): Promise<ToolExecutionResult | null> {
+  const result = await inlineGitGuardEntry.hook('sandbox_exec', args, {
+    sandboxId: null,
+    allowedRepo: '',
+  });
+  if (result.decision !== 'deny') return null;
+  const reason = result.reason ?? 'Direct git mutation is blocked.';
+  const err: StructuredToolError = {
+    type: 'GIT_GUARD_BLOCKED',
+    retryable: false,
+    message: reason,
+  };
+  return {
+    text: `[Tool Blocked] ${reason}`,
+    structuredError: err,
+  };
+}
+
 export async function executeSandboxToolCall(
   call: SandboxToolCall,
   sandboxId: string,
@@ -306,11 +338,20 @@ export async function executeSandboxToolCall(
   try {
     switch (call.tool) {
       case 'sandbox_exec': {
-        // Git guard ran as a `PreToolUse` hook before this executor was
-        // called — see `lib/default-pre-hooks.ts:createGitGuardPreHook`.
-        // The runtime registers it on the shared registry and short-
-        // circuits with a structured `GIT_GUARD_BLOCKED` deny before we
-        // get here. No inline check needed.
+        // Git guard — defense-in-depth. The chat path runs this hook
+        // via `WebToolExecutionRuntime` before reaching here, so the
+        // call is a no-op (denials short-circuit upstream). The web
+        // Coder path bypasses the runtime by design (see
+        // `docs/decisions/Coder Bypass of WebToolExecutionRuntime.md`)
+        // and dispatches straight into `executeSandboxToolCall` from
+        // `lib/coder-agent-bindings.ts`; without an inline check here,
+        // Coder-issued git mutations would slip through. Evaluating
+        // the same lib hook factory keeps the rule source-of-truth
+        // single while covering both call paths.
+        const gitGuardDeny = await evaluateGitGuardForSandboxExec(call.args);
+        if (gitGuardDeny) {
+          return gitGuardDeny;
+        }
         const start = Date.now();
         const markWorkspaceMutated = isLikelyMutatingSandboxExec(call.args.command);
         const normalizedWorkdir = normalizeSandboxWorkdir(call.args.workdir);

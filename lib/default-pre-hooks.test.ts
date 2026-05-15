@@ -97,12 +97,16 @@ describe('createProtectMainPreHook', () => {
     expect(result.errorType).toBe('PROTECT_MAIN_BLOCKED');
   });
 
-  it('denies CLI git_commit on default branch (shared matcher)', async () => {
+  it('denies CLI git_commit on default branch with sandboxId: null (CLI context)', async () => {
+    // Regression pin: CLI's `executeToolCall` builds the hook context with
+    // `sandboxId: null` because the daemon's workspace is the local
+    // working tree. The hook must still fire when only `isMainProtected`
+    // and `getCurrentBranch` are present.
     const entry = createProtectMainPreHook();
     const result = await entry.hook(
       'git_commit',
       { message: 'fix' },
-      { ...baseContext, defaultBranch: 'main' },
+      { ...baseContext, sandboxId: null },
     );
     expect(result.decision).toBe('deny');
     expect(result.errorType).toBe('PROTECT_MAIN_BLOCKED');
