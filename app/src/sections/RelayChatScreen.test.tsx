@@ -48,26 +48,30 @@ vi.mock('@/lib/relay-storage', () => ({
   clearPairedRemote: vi.fn(),
 }));
 
-vi.mock('@/hooks/useModelCatalog', () => ({
-  useModelCatalog: () => ({
-    availableProviders: [
-      ['cloudflare', 'Cloudflare Workers AI', true],
-      ['openrouter', 'OpenRouter', true],
-    ] as const,
-    activeProviderLabel: 'cloudflare',
-    setActiveBackend: vi.fn(),
-    cloudflare: {
-      model: '@cf/qwen/qwen3-30b-a3b-fp8',
-      setModel: vi.fn(),
-    },
-    cloudflareModelOptions: ['@cf/qwen/qwen3-30b-a3b-fp8', '@cf/meta/llama-3-8b'],
-    cloudflareModels: {
-      loading: false,
-      error: null,
-    },
-    refreshCloudflareModels: vi.fn(),
-  }),
-}));
+vi.mock('@/hooks/useModelCatalog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/useModelCatalog')>();
+  return {
+    ...actual,
+    useModelCatalog: () => ({
+      availableProviders: [
+        ['cloudflare', 'Cloudflare Workers AI', true],
+        ['openrouter', 'OpenRouter', true],
+      ] as const,
+      activeProviderLabel: 'cloudflare',
+      setActiveBackend: vi.fn(),
+      cloudflare: {
+        model: '@cf/qwen/qwen3-30b-a3b-fp8',
+        setModel: vi.fn(),
+      },
+      cloudflareModelOptions: ['@cf/qwen/qwen3-30b-a3b-fp8', '@cf/meta/llama-3-8b'],
+      cloudflareModels: {
+        loading: false,
+        error: null,
+      },
+      refreshCloudflareModels: vi.fn(),
+    }),
+  };
+});
 
 vi.mock('@/lib/providers', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/providers')>();

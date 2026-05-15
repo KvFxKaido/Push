@@ -43,6 +43,7 @@ import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 import { useVertexConfig, type VertexConfiguredMode } from '@/hooks/useVertexConfig';
 import { shouldAutoFetchProviderModels, scheduleAutoFetch } from './model-catalog-utils';
+import type { AIProviderType } from '@/types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -204,6 +205,206 @@ function includeSelectedModel(
   const available = new Set(models);
   if (available.has(selectedModel)) return [...models];
   return [selectedModel, ...models];
+}
+
+// ---------------------------------------------------------------------------
+// ModelControl — picker-shaped view over the catalog for a single provider
+// ---------------------------------------------------------------------------
+
+/**
+ * Picker-ready view of one provider's slice of the catalog. The shape
+ * matches what `ModelPicker` consumes — value, options, onChange, plus
+ * loading/error/refresh affordances when the provider supports them.
+ *
+ * Built via `buildModelControl(catalog, provider, lockedModel?)`. Lives
+ * next to `useModelCatalog` so the per-provider field names stay in one
+ * file: any new provider added to `ModelCatalog` forces an obvious update
+ * to the switch below, instead of drift between this helper and the
+ * catalog hook.
+ */
+export interface ModelControl {
+  provider: PreferredProvider;
+  providerLabel: string;
+  value: string;
+  options: string[];
+  onChange: (model: string) => void;
+  loading?: boolean;
+  error?: string | null;
+  onRefresh?: () => Promise<void>;
+  allowCustom?: boolean;
+}
+
+function resolveProviderLabel(
+  catalog: ModelCatalog,
+  provider: PreferredProvider,
+  fallback: string,
+): string {
+  return catalog.availableProviders.find(([id]) => id === provider)?.[1] ?? fallback;
+}
+
+/**
+ * Build a `ModelControl` for `provider` from `catalog`. When the active
+ * chat has locked a specific model (`lockedModel`), surface that value
+ * so the picker reflects what the next turn will actually route through.
+ *
+ * Returns `null` for providers the daemon/picker surfaces don't drive
+ * directly (e.g. `demo`) so callers can fall back to a static label.
+ */
+export function buildModelControl(
+  catalog: ModelCatalog,
+  provider: AIProviderType | null | undefined,
+  lockedModel: string | null = null,
+): ModelControl | null {
+  switch (provider) {
+    case 'ollama':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Ollama'),
+        value: lockedModel ?? catalog.ollama.model,
+        options: includeSelectedModel(
+          catalog.ollamaModelOptions,
+          lockedModel ?? catalog.ollama.model,
+        ),
+        onChange: catalog.ollama.setModel,
+        loading: catalog.ollamaModels.loading,
+        error: catalog.ollamaModels.error,
+        onRefresh: catalog.refreshOllamaModels,
+        allowCustom: true,
+      };
+    case 'openrouter':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'OpenRouter'),
+        value: lockedModel ?? catalog.openRouter.model,
+        options: includeSelectedModel(
+          catalog.openRouterModelOptions,
+          lockedModel ?? catalog.openRouter.model,
+        ),
+        onChange: catalog.openRouter.setModel,
+        loading: catalog.openRouterModels.loading,
+        error: catalog.openRouterModels.error,
+        onRefresh: catalog.refreshOpenRouterModels,
+      };
+    case 'cloudflare':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Cloudflare Workers AI'),
+        value: lockedModel ?? catalog.cloudflare.model,
+        options: includeSelectedModel(
+          catalog.cloudflareModelOptions,
+          lockedModel ?? catalog.cloudflare.model,
+        ),
+        onChange: catalog.cloudflare.setModel,
+        loading: catalog.cloudflareModels.loading,
+        error: catalog.cloudflareModels.error,
+        onRefresh: catalog.refreshCloudflareModels,
+      };
+    case 'zen':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'OpenCode Zen'),
+        value: lockedModel ?? catalog.zen.model,
+        options: includeSelectedModel(catalog.zenModelOptions, lockedModel ?? catalog.zen.model),
+        onChange: catalog.zen.setModel,
+        loading: catalog.zenModels.loading,
+        error: catalog.zenModels.error,
+        onRefresh: catalog.refreshZenModels,
+      };
+    case 'nvidia':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Nvidia NIM'),
+        value: lockedModel ?? catalog.nvidia.model,
+        options: includeSelectedModel(
+          catalog.nvidiaModelOptions,
+          lockedModel ?? catalog.nvidia.model,
+        ),
+        onChange: catalog.nvidia.setModel,
+        loading: catalog.nvidiaModels.loading,
+        error: catalog.nvidiaModels.error,
+        onRefresh: catalog.refreshNvidiaModels,
+      };
+    case 'blackbox':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Blackbox AI'),
+        value: lockedModel ?? catalog.blackbox.model,
+        options: includeSelectedModel(
+          catalog.blackboxModelOptions,
+          lockedModel ?? catalog.blackbox.model,
+        ),
+        onChange: catalog.blackbox.setModel,
+        loading: catalog.blackboxModels.loading,
+        error: catalog.blackboxModels.error,
+        onRefresh: catalog.refreshBlackboxModels,
+      };
+    case 'kilocode':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Kilo Code'),
+        value: lockedModel ?? catalog.kilocode.model,
+        options: includeSelectedModel(
+          catalog.kilocodeModelOptions,
+          lockedModel ?? catalog.kilocode.model,
+        ),
+        onChange: catalog.kilocode.setModel,
+        loading: catalog.kilocodeModels.loading,
+        error: catalog.kilocodeModels.error,
+        onRefresh: catalog.refreshKilocodeModels,
+      };
+    case 'openadapter':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'OpenAdapter'),
+        value: lockedModel ?? catalog.openadapter.model,
+        options: includeSelectedModel(
+          catalog.openAdapterModelOptions,
+          lockedModel ?? catalog.openadapter.model,
+        ),
+        onChange: catalog.openadapter.setModel,
+        loading: catalog.openAdapterModels.loading,
+        error: catalog.openAdapterModels.error,
+        onRefresh: catalog.refreshOpenAdapterModels,
+      };
+    case 'azure': {
+      const value = lockedModel ?? catalog.azure.model;
+      const options = catalog.azure.deployments.map((deployment) => deployment.model);
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Azure OpenAI'),
+        value,
+        options: includeSelectedModel(options, value),
+        onChange: catalog.azure.setModel,
+        allowCustom: true,
+      };
+    }
+    case 'bedrock': {
+      const value = lockedModel ?? catalog.bedrock.model;
+      const options = catalog.bedrock.deployments.map((deployment) => deployment.model);
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'AWS Bedrock'),
+        value,
+        options: includeSelectedModel(options, value),
+        onChange: catalog.bedrock.setModel,
+        allowCustom: true,
+      };
+    }
+    case 'vertex':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Google Vertex'),
+        value: lockedModel ?? catalog.vertex.model,
+        options: includeSelectedModel(
+          catalog.vertex.modelOptions,
+          lockedModel ?? catalog.vertex.model,
+        ),
+        onChange: catalog.vertex.setModel,
+        allowCustom: true,
+      };
+    default:
+      return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
