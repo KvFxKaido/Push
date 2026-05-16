@@ -29,6 +29,7 @@ import type {
 } from '../lib/provider-contract.ts';
 import { openAISSEPump } from '../lib/openai-sse-pump.ts';
 import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
+import { MAX_ROLLING_CACHE_BREAKPOINTS } from '../lib/context-transformer.ts';
 import type { ProviderConfig } from './provider.ts';
 
 export class CliProviderError extends Error {
@@ -105,18 +106,23 @@ async function* cliProviderStream(
     messages.push({ role: m.role, content: m.content });
   }
 
-  // Prompt caching: tag the system message at index 0 (if present) and the
-  // last user message (`cacheBreakpointIndex`) with Anthropic-style
-  // `cache_control: ephemeral`. Mirrors `app/src/lib/orchestrator.ts:285-298`
-  // and 367-387. OpenRouter forwards this to Claude models; non-Anthropic
-  // routes harmlessly ignore the marker. We gate on `config.id === 'openrouter'`
-  // because that's the only CLI provider known to route to Anthropic. Other
-  // gateway-style providers (zen / kilocode / openadapter) are conservative
-  // pass-throughs until parity is verified.
+  // Prompt caching: Hermes `system_and_3` strategy. Tag the system message
+  // plus up to 3 rolling-tail messages (`cacheBreakpointIndices`) with
+  // Anthropic-style `cache_control: ephemeral`. Anthropic caps a request at
+  // 4 cache breakpoints; the transformer caps its tail emission at 3, so
+  // `system + indices` stays within the limit. The slice below enforces that
+  // cap at the wire layer too — defense in depth against a caller that
+  // bypasses the transformer and passes a longer indices array directly.
+  //
+  // OpenRouter forwards the marker to Claude models; non-Anthropic routes
+  // ignore it harmlessly. We gate on `config.id === 'openrouter'` because
+  // that's the only CLI provider known to route to Anthropic — other gateway
+  // providers (zen / kilocode / openadapter) are conservative pass-throughs
+  // until parity is verified. Mirrors `app/src/lib/orchestrator.ts` (wire-side
+  // rolling-tail loop near the end of `buildLLMMessages`).
+  const rawBreakpoints = req.cacheBreakpointIndices;
   const cacheable =
-    config.id === 'openrouter' &&
-    typeof req.cacheBreakpointIndex === 'number' &&
-    req.cacheBreakpointIndex >= 0;
+    config.id === 'openrouter' && Array.isArray(rawBreakpoints) && rawBreakpoints.length > 0;
   if (cacheable) {
     if (messages[0]?.role === 'system' && typeof messages[0].content === 'string') {
       messages[0] = {
@@ -126,13 +132,36 @@ async function* cliProviderStream(
         ],
       };
     }
-    const wireBreakpoint = (req.cacheBreakpointIndex as number) + systemPrependOffset;
-    const target = messages[wireBreakpoint];
-    if (target && target.role === 'user' && typeof target.content === 'string') {
-      messages[wireBreakpoint] = {
-        role: 'user',
-        content: [{ type: 'text', text: target.content, cache_control: { type: 'ephemeral' } }],
-      };
+    // Hard cap at MAX_ROLLING_CACHE_BREAKPOINTS — slice the most recent N if
+    // the caller provided more. The contract says ≤3; this enforces the
+    // invariant at the wire boundary so we cannot exceed Anthropic's
+    // per-request limit of 4 cache markers even when the contract is violated.
+    const breakpoints = rawBreakpoints!.slice(-MAX_ROLLING_CACHE_BREAKPOINTS);
+    for (const reqIndex of breakpoints) {
+      const wireIndex = reqIndex + systemPrependOffset;
+      const target = messages[wireIndex];
+      if (!target) continue;
+      // The system at wire index 0 already got its own marker above; skip
+      // duplicate tagging if a transformer ever emits 0 in the rolling tail.
+      // The role check matters when there's NO system at wire index 0 (e.g.
+      // a user-first transcript): in that case the rolling tail legitimately
+      // includes index 0 and must be tagged.
+      if (wireIndex === 0 && messages[0]?.role === 'system') continue;
+      if (typeof target.content === 'string') {
+        messages[wireIndex] = {
+          role: target.role,
+          content: [{ type: 'text', text: target.content, cache_control: { type: 'ephemeral' } }],
+        };
+      } else if (Array.isArray(target.content)) {
+        // Already an array (e.g. multimodal or attachment-bearing message
+        // forwarded by a future CLI surface). Tag the last text part — mirrors
+        // the web orchestrator's behavior so multi-part messages don't lose
+        // their cache slot.
+        const lastPart = target.content[target.content.length - 1];
+        if (lastPart && lastPart.type === 'text') {
+          lastPart.cache_control = { type: 'ephemeral' };
+        }
+      }
     }
   }
 

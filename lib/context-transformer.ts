@@ -89,9 +89,18 @@ export interface TransformContextOptions<M extends TransformableMessage> {
 
 export interface TransformedContext<M extends TransformableMessage> {
   messages: M[];
-  /** Index of the last `role: 'user'` message in `messages`, or -1 if none.
-   *  Provider format adapters apply `cache_control` here. */
-  cacheBreakpointIndex: number;
+  /** Indices in `messages` to tag with `cache_control: ephemeral`, ordered
+   *  oldest-first. Computed as the most-recent up to {@link MAX_ROLLING_CACHE_BREAKPOINTS}
+   *  non-system messages — the "rolling tail" of the conversation. Combined
+   *  with the system-message marker that wire adapters apply separately, this
+   *  yields the Hermes-documented `system_and_3` shape: at most one cached
+   *  prefix per breakpoint, with the system prompt as the longest-lived one
+   *  and the rolling tail catching intermediate states (assistant + tool result
+   *  pairs from prior rounds).
+   *
+   *  Empty array when the transcript has no non-system messages. -1 is no
+   *  longer used — consumers should `if (indices.length > 0)`. */
+  cacheBreakpointIndices: number[];
   /** True if any rewrite stage (currently distillation or compaction)
    *  rewrote, inserted, dropped, or replaced messages. When this fires
    *  the cache breakpoint may move backward — invariants that assume
@@ -258,15 +267,37 @@ export function transformContextBeforeLLM<M extends TransformableMessage>(
 
   return {
     messages: working,
-    cacheBreakpointIndex: findLastUserIndex(working),
+    cacheBreakpointIndices: findRollingCacheBreakpoints(working, MAX_ROLLING_CACHE_BREAKPOINTS),
     rewriteApplied,
     metrics: { inputCount, outputCount: working.length },
   };
 }
 
-function findLastUserIndex<M extends TransformableMessage>(messages: ReadonlyArray<M>): number {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') return i;
+/** Anthropic supports up to 4 `cache_control` markers per request. Wire adapters
+ *  reserve one for the system prompt, leaving 3 for the rolling tail. Hermes
+ *  Agent documents this as the `system_and_3` strategy; see
+ *  `docs/decisions/Hermes Agent — Lessons For Push.md` item 1. */
+export const MAX_ROLLING_CACHE_BREAKPOINTS = 3;
+
+/**
+ * Return up to `count` indices in `messages` for the most-recent non-system
+ * messages, ordered oldest-first.
+ *
+ * The cache value of a tail breakpoint comes from its content being byte-stable
+ * across turns when only new messages are appended. A breakpoint at the
+ * last assistant message stays valid for the *next* turn (the assistant text
+ * doesn't change once emitted). With multiple breakpoints, each older one
+ * keeps catching cache hits even after newer turns push it further from the tail.
+ */
+export function findRollingCacheBreakpoints<M extends TransformableMessage>(
+  messages: ReadonlyArray<M>,
+  count: number,
+): number[] {
+  if (count <= 0) return [];
+  const picked: number[] = [];
+  for (let i = messages.length - 1; i >= 0 && picked.length < count; i--) {
+    if (messages[i].role !== 'system') picked.push(i);
   }
-  return -1;
+  // Ordered oldest-first so wire layers can iterate naturally without re-sorting.
+  return picked.reverse();
 }

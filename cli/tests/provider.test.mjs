@@ -821,9 +821,9 @@ describe('streamCompletion', () => {
       assert.ok(capturedBody.session_id.length <= 256);
     });
 
-    // ─── Prompt caching (cacheBreakpointIndex) ───────────────────
+    // ─── Prompt caching (cacheBreakpointIndices: Hermes system_and_3) ─
 
-    it('tags system + breakpoint with cache_control when cacheBreakpointIndex is set', async () => {
+    it('tags system + up to 3 rolling-tail messages with cache_control', async () => {
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -844,22 +844,67 @@ describe('streamCompletion', () => {
         { role: 'user', content: 'last' },
       ];
       await streamCompletion(orConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
-        cacheBreakpointIndex: 3,
+        cacheBreakpointIndices: [1, 2, 3],
+      });
+
+      // 4 markers total: system + 3 tail entries. Anthropic's per-request cap.
+      assert.deepEqual(capturedBody.messages[0], {
+        role: 'system',
+        content: [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }],
+      });
+      assert.deepEqual(capturedBody.messages[1], {
+        role: 'user',
+        content: [{ type: 'text', text: 'first', cache_control: { type: 'ephemeral' } }],
+      });
+      assert.deepEqual(capturedBody.messages[2], {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'reply', cache_control: { type: 'ephemeral' } }],
+      });
+      assert.deepEqual(capturedBody.messages[3], {
+        role: 'user',
+        content: [{ type: 'text', text: 'last', cache_control: { type: 'ephemeral' } }],
+      });
+
+      // Drift-detector: no more than 4 markers total across the wire body.
+      const markerCount = capturedBody.messages.filter(
+        (m) => Array.isArray(m.content) && m.content.some((p) => p.cache_control),
+      ).length;
+      assert.ok(markerCount <= 4, `expected ≤ 4 cache markers, got ${markerCount}`);
+    });
+
+    it('tags only the indices passed when fewer than 3 are provided', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const messages = [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'only-user' },
+      ];
+      await streamCompletion(orConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
+        cacheBreakpointIndices: [1],
       });
 
       assert.deepEqual(capturedBody.messages[0], {
         role: 'system',
         content: [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }],
       });
-      assert.deepEqual(capturedBody.messages[1], { role: 'user', content: 'first' });
-      assert.deepEqual(capturedBody.messages[2], { role: 'assistant', content: 'reply' });
-      assert.deepEqual(capturedBody.messages[3], {
+      assert.deepEqual(capturedBody.messages[1], {
         role: 'user',
-        content: [{ type: 'text', text: 'last', cache_control: { type: 'ephemeral' } }],
+        content: [{ type: 'text', text: 'only-user', cache_control: { type: 'ephemeral' } }],
       });
     });
 
-    it('does not tag when cacheBreakpointIndex is omitted', async () => {
+    it('does not tag when cacheBreakpointIndices is omitted', async () => {
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -883,7 +928,7 @@ describe('streamCompletion', () => {
       assert.equal(typeof capturedBody.messages[1].content, 'string');
     });
 
-    it('does not tag when cacheBreakpointIndex is -1 (no user message)', async () => {
+    it('does not tag when cacheBreakpointIndices is empty (system-only transcript)', async () => {
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -905,17 +950,99 @@ describe('streamCompletion', () => {
         null,
         DEFAULT_TIMEOUT_MS,
         null,
-        { cacheBreakpointIndex: -1 },
+        { cacheBreakpointIndices: [] },
       );
 
       assert.equal(typeof capturedBody.messages[0].content, 'string');
     });
 
     // Exercises the lib-side agent-role path that calls createCliProviderStream
-    // directly with a `systemPromptOverride`. The `cacheBreakpointIndex` is
-    // into `req.messages` (which excludes the synthesized system), so the
-    // wire-side adapter must add `systemPrependOffset = 1` before tagging.
-    it('applies systemPrependOffset when systemPromptOverride is set', async () => {
+    // directly with a `systemPromptOverride`. The indices in `cacheBreakpointIndices`
+    // are into `req.messages` (which excludes the synthesized system), so the
+    // wire-side adapter must add `systemPrependOffset = 1` before tagging each.
+    it('clamps to the last 3 indices when more than 3 are provided (defense in depth)', async () => {
+      // The transformer caps emission at 3, but the provider contract is
+      // exported and `createCliProviderStream` can be called directly by
+      // future consumers. The wire layer must enforce the cap independently
+      // so Anthropic's per-request limit of 4 markers (system + 3 tail) is
+      // never exceeded even when the contract is violated upstream.
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const messages = [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'u1' },
+        { role: 'assistant', content: 'a1' },
+        { role: 'user', content: 'u2' },
+        { role: 'assistant', content: 'a2' },
+        { role: 'user', content: 'u3' },
+      ];
+      await streamCompletion(orConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
+        // Caller passes 5 indices — the slice should keep only the last 3.
+        cacheBreakpointIndices: [1, 2, 3, 4, 5],
+      });
+
+      const markerCount = capturedBody.messages.filter(
+        (m) => Array.isArray(m.content) && m.content.some((p) => p.cache_control),
+      ).length;
+      assert.equal(
+        markerCount,
+        4,
+        `expected 4 cache markers (system + 3 tail), got ${markerCount}`,
+      );
+      // The earlier indices (1, 2) must NOT be tagged — confirming the slice
+      // kept the last 3, not the first 3.
+      assert.equal(typeof capturedBody.messages[1].content, 'string');
+      assert.equal(typeof capturedBody.messages[2].content, 'string');
+      assert.ok(Array.isArray(capturedBody.messages[3].content));
+      assert.ok(Array.isArray(capturedBody.messages[4].content));
+      assert.ok(Array.isArray(capturedBody.messages[5].content));
+    });
+
+    it('tags wire-index 0 when no system message is present (user-first transcript)', async () => {
+      // The defensive `wireIndex === 0` skip must only fire when index 0 is
+      // actually a system message. A user-first transcript legitimately
+      // includes index 0 in the rolling tail and would otherwise lose its
+      // cache slot.
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const messages = [
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'reply' },
+      ];
+      await streamCompletion(orConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
+        cacheBreakpointIndices: [0, 1],
+      });
+
+      // Both indices tagged — no system at index 0 to skip.
+      assert.ok(Array.isArray(capturedBody.messages[0].content));
+      assert.deepEqual(capturedBody.messages[0].content[0].cache_control, { type: 'ephemeral' });
+      assert.ok(Array.isArray(capturedBody.messages[1].content));
+      assert.deepEqual(capturedBody.messages[1].content[0].cache_control, { type: 'ephemeral' });
+    });
+
+    it('applies systemPrependOffset to every breakpoint when systemPromptOverride is set', async () => {
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -930,7 +1057,6 @@ describe('streamCompletion', () => {
       };
 
       const stream = createCliProviderStream(orConfig, 'key');
-      // Drain the stream so the request body is captured.
       const events = stream({
         provider: 'openrouter',
         model: 'model',
@@ -940,10 +1066,9 @@ describe('streamCompletion', () => {
           { id: 'm2', role: 'user', content: 'last', timestamp: 0 },
         ],
         systemPromptOverride: 'sys-from-override',
-        // Index 2 is into req.messages (the user 'last'). With the
-        // synthesized system at wire index 0, the tagged wire index
-        // should be 2 + 1 = 3.
-        cacheBreakpointIndex: 2,
+        // Indices 0..2 are into req.messages. With the synthesized system at
+        // wire index 0, the tagged wire indices become 1..3.
+        cacheBreakpointIndices: [0, 1, 2],
       });
       for await (const _ of events) {
         // drain
@@ -957,8 +1082,14 @@ describe('streamCompletion', () => {
           { type: 'text', text: 'sys-from-override', cache_control: { type: 'ephemeral' } },
         ],
       });
-      assert.deepEqual(capturedBody.messages[1], { role: 'user', content: 'first' });
-      assert.deepEqual(capturedBody.messages[2], { role: 'assistant', content: 'reply' });
+      assert.deepEqual(capturedBody.messages[1], {
+        role: 'user',
+        content: [{ type: 'text', text: 'first', cache_control: { type: 'ephemeral' } }],
+      });
+      assert.deepEqual(capturedBody.messages[2], {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'reply', cache_control: { type: 'ephemeral' } }],
+      });
       assert.deepEqual(capturedBody.messages[3], {
         role: 'user',
         content: [{ type: 'text', text: 'last', cache_control: { type: 'ephemeral' } }],
@@ -967,7 +1098,7 @@ describe('streamCompletion', () => {
   });
 
   describe('prompt caching gate (non-openrouter)', () => {
-    it('does not tag cache_control for non-openrouter providers even when cacheBreakpointIndex is set', async () => {
+    it('does not tag cache_control for non-openrouter providers even when cacheBreakpointIndices is set', async () => {
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -986,7 +1117,7 @@ describe('streamCompletion', () => {
         { role: 'user', content: 'last' },
       ];
       await streamCompletion(testConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
-        cacheBreakpointIndex: 1,
+        cacheBreakpointIndices: [1],
       });
 
       assert.equal(typeof capturedBody.messages[0].content, 'string');

@@ -742,7 +742,7 @@ export async function runAssistantLoop(
   // mutated at session entry — distillation is a per-hop transformation,
   // leaving the canonical transcript append-only so resume-from-disk
   // sees the full history. The append-only invariant is also what makes
-  // provider-prefix caching effective: `transformed.cacheBreakpointIndex`
+  // provider-prefix caching effective: `transformed.cacheBreakpointIndices`
   // is threaded into `streamCompletion` and tagged at the wire boundary
   // in `cli/openai-stream.ts` (OpenRouter only today). Persistence is
   // O(diff): saveSessionState appends new messages to messages.jsonl
@@ -1131,7 +1131,7 @@ export async function runAssistantLoop(
           }
         : undefined,
       sessionId: state.sessionId,
-      cacheBreakpointIndex: transformed.cacheBreakpointIndex,
+      cacheBreakpointIndices: transformed.cacheBreakpointIndices,
     };
 
     let assistantText: string;
@@ -1421,7 +1421,7 @@ export async function runAssistantLoop(
                 }
               : undefined,
             sessionId: state.sessionId,
-            cacheBreakpointIndex: finalTransformed.cacheBreakpointIndex,
+            cacheBreakpointIndices: finalTransformed.cacheBreakpointIndices,
           };
           const finalizationText = await streamCompletion(
             providerConfig,
@@ -1865,7 +1865,7 @@ export async function runAssistantLoop(
           }
         : undefined,
       sessionId: state.sessionId,
-      cacheBreakpointIndex: finalTransformed.cacheBreakpointIndex,
+      cacheBreakpointIndices: finalTransformed.cacheBreakpointIndices,
     };
     const assistantText = await streamCompletion(
       providerConfig,

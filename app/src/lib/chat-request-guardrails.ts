@@ -43,8 +43,25 @@ function normalizeReasoningBlocks(raw: unknown): OpenAIReasoningBlock[] | undefi
 }
 
 export type OpenAIContentPart =
-  | { type: 'text'; text?: string }
-  | { type: 'image_url'; image_url?: { url?: string } };
+  | { type: 'text'; text?: string; cache_control?: { type: 'ephemeral' } }
+  | { type: 'image_url'; image_url?: { url?: string }; cache_control?: { type: 'ephemeral' } };
+
+/** Extract a `cache_control` field from a raw content part and return the
+ *  normalized shape Push emits today, or `undefined` if the field is absent
+ *  or malformed. Fail-closed by design: an unrecognized cache_control shape
+ *  is dropped silently rather than passed through unchecked, so the request
+ *  still succeeds upstream (just without that breakpoint contributing to
+ *  the cached prefix).
+ *
+ *  Push currently only emits `{ type: 'ephemeral' }`. Future variants
+ *  (`ttl`, `{ type: 'persistent' }`) can extend this without changing the
+ *  upstream contract; just add the new keys here. */
+function pickCacheControl(rawPart: Record<string, unknown>): { type: 'ephemeral' } | undefined {
+  const cc = asRecord(rawPart.cache_control);
+  if (!cc) return undefined;
+  if (cc.type === 'ephemeral') return { type: 'ephemeral' };
+  return undefined;
+}
 
 /** Structured reasoning blocks attached to a prior assistant message.
  *  Push-private extension — not part of OpenAI's public schema. The
@@ -198,7 +215,12 @@ export function validateAndNormalizeChatRequest(
             `${policy.routeLabel} request message ${index + 1} has a text part without "text".`,
           );
         }
-        normalizedParts.push({ type: 'text', text: rawPart.text });
+        const cacheControl = pickCacheControl(rawPart);
+        normalizedParts.push({
+          type: 'text',
+          text: rawPart.text,
+          ...(cacheControl ? { cache_control: cacheControl } : {}),
+        });
         continue;
       }
 
@@ -209,7 +231,12 @@ export function validateAndNormalizeChatRequest(
             `${policy.routeLabel} request message ${index + 1} has an image part without a URL.`,
           );
         }
-        normalizedParts.push({ type: 'image_url', image_url: { url: imageUrl.url } });
+        const cacheControl = pickCacheControl(rawPart);
+        normalizedParts.push({
+          type: 'image_url',
+          image_url: { url: imageUrl.url },
+          ...(cacheControl ? { cache_control: cacheControl } : {}),
+        });
         continue;
       }
 

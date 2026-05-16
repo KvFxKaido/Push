@@ -69,7 +69,7 @@ describe('transformContextBeforeLLM — append-stability', () => {
     expect(extOut.messages.slice(0, baseOut.messages.length)).toEqual(baseOut.messages);
   });
 
-  it('shifts cacheBreakpointIndex forward (or holds) when only appending and no trim', () => {
+  it('shifts cacheBreakpointIndices forward (or holds) when only appending and no trim', () => {
     const base: FakeMsg[] = [
       sample({ role: 'user', content: 'first' }),
       sample({ role: 'assistant', content: 'reply' }),
@@ -80,7 +80,9 @@ describe('transformContextBeforeLLM — append-stability', () => {
     const extOut = transformContextBeforeLLM(extended, baseOptions);
 
     if (!baseOut.rewriteApplied && !extOut.rewriteApplied) {
-      expect(extOut.cacheBreakpointIndex).toBeGreaterThanOrEqual(baseOut.cacheBreakpointIndex);
+      const baseMaxIdx = Math.max(...baseOut.cacheBreakpointIndices, -1);
+      const extMaxIdx = Math.max(...extOut.cacheBreakpointIndices, -1);
+      expect(extMaxIdx).toBeGreaterThanOrEqual(baseMaxIdx);
     }
   });
 
@@ -324,11 +326,11 @@ describe('transformContextBeforeLLM — distill stage', () => {
 });
 
 // ---------------------------------------------------------------------------
-// cacheBreakpointIndex
+// cacheBreakpointIndices — Hermes `system_and_3` rolling tail
 // ---------------------------------------------------------------------------
 
-describe('transformContextBeforeLLM — cacheBreakpointIndex', () => {
-  it('points at the last user message', () => {
+describe('transformContextBeforeLLM — cacheBreakpointIndices', () => {
+  it('returns the last 3 non-system indices ordered oldest-first', () => {
     const messages: FakeMsg[] = [
       sample({ role: 'system', content: 's' }),
       sample({ role: 'user', content: 'u1' }),
@@ -337,19 +339,42 @@ describe('transformContextBeforeLLM — cacheBreakpointIndex', () => {
       sample({ role: 'assistant', content: 'a2' }),
     ];
     const out = transformContextBeforeLLM(messages, baseOptions);
-    expect(out.cacheBreakpointIndex).toBe(3);
+    expect(out.cacheBreakpointIndices).toEqual([2, 3, 4]);
   });
 
-  it('returns -1 when no user message is present', () => {
+  it('returns fewer indices when the transcript has fewer than 3 non-system messages', () => {
     const messages: FakeMsg[] = [
       sample({ role: 'system', content: 's' }),
-      sample({ role: 'assistant', content: 'a' }),
+      sample({ role: 'user', content: 'u1' }),
+      sample({ role: 'assistant', content: 'a1' }),
     ];
     const out = transformContextBeforeLLM(messages, baseOptions);
-    expect(out.cacheBreakpointIndex).toBe(-1);
+    expect(out.cacheBreakpointIndices).toEqual([1, 2]);
   });
 
-  it('reflects post-filter index (not pre-filter)', () => {
+  it('returns an empty array when the transcript is system-only', () => {
+    const messages: FakeMsg[] = [sample({ role: 'system', content: 's' })];
+    const out = transformContextBeforeLLM(messages, baseOptions);
+    expect(out.cacheBreakpointIndices).toEqual([]);
+  });
+
+  it('includes assistant messages — not just user', () => {
+    // The rolling tail is role-agnostic (non-system); it must include the
+    // last assistant so its bytes stay cached across the next tool-result
+    // round-trip. This is the substantive shift from the prior `last user
+    // only` strategy.
+    const messages: FakeMsg[] = [
+      sample({ role: 'system', content: 's' }),
+      sample({ role: 'user', content: 'u1' }),
+      sample({ role: 'assistant', content: 'a1' }),
+      sample({ role: 'user', content: 'u2' }),
+    ];
+    const out = transformContextBeforeLLM(messages, baseOptions);
+    expect(out.cacheBreakpointIndices).toEqual([1, 2, 3]);
+    expect(out.messages[2].role).toBe('assistant');
+  });
+
+  it('reflects post-filter indices (not pre-filter)', () => {
     const messages: FakeMsg[] = [
       sample({ role: 'user', content: 'first' }),
       sample({ role: 'user', content: 'hidden', visibleToModel: false }),
@@ -357,8 +382,56 @@ describe('transformContextBeforeLLM — cacheBreakpointIndex', () => {
       sample({ role: 'user', content: 'second' }),
     ];
     const out = transformContextBeforeLLM(messages, baseOptions);
-    // After filter: ['first', 'reply', 'second'] — 'second' is at index 2
-    expect(out.cacheBreakpointIndex).toBe(2);
+    // After filter: ['first', 'reply', 'second'] — three non-system messages
+    // at indices 0, 1, 2.
+    expect(out.cacheBreakpointIndices).toEqual([0, 1, 2]);
+  });
+
+  it('never emits more than MAX_ROLLING_CACHE_BREAKPOINTS indices', () => {
+    // Anthropic caps a request at 4 markers (system + 3 tail). The transformer
+    // emits the tail; the wire adapter adds the system marker. Together they
+    // must never exceed 4 — this drift-detector pins the tail half of that
+    // budget.
+    const messages: FakeMsg[] = [
+      sample({ role: 'system', content: 's' }),
+      ...Array.from({ length: 10 }, (_, i) =>
+        sample({ role: i % 2 === 0 ? 'user' : 'assistant', content: `m${i}` }),
+      ),
+    ];
+    const out = transformContextBeforeLLM(messages, baseOptions);
+    expect(out.cacheBreakpointIndices.length).toBeLessThanOrEqual(3);
+  });
+
+  it('drift-detector: append-only turn keeps the prefix bytes stable', () => {
+    // The whole point of cache breakpoints is that the bytes hashed up to
+    // each marker don't change between turns when only new messages were
+    // appended. Indices shift forward, but the *content* at the prior
+    // breakpoint positions is unchanged — that's what makes the cached
+    // prefix from the previous turn hit on the next call.
+    const turn1: FakeMsg[] = [
+      sample({ role: 'system', content: 'sys' }),
+      sample({ role: 'user', content: 'q1' }),
+      sample({ role: 'assistant', content: 'a1' }),
+      sample({ role: 'user', content: 'q2' }),
+    ];
+    const turn2: FakeMsg[] = [
+      ...turn1,
+      sample({ role: 'assistant', content: 'a2' }),
+      sample({ role: 'user', content: 'q3' }),
+    ];
+
+    const out1 = transformContextBeforeLLM(turn1, baseOptions);
+    const out2 = transformContextBeforeLLM(turn2, baseOptions);
+
+    // Turn 2's messages must include turn 1's messages byte-for-byte at the
+    // same positions — that's the append-only invariant the cache relies on.
+    expect(out2.messages.slice(0, out1.messages.length)).toEqual(out1.messages);
+
+    // The breakpoints from turn 1 still point at content that exists,
+    // unchanged, in turn 2's transcript. That's the cache-hit condition.
+    for (const idx of out1.cacheBreakpointIndices) {
+      expect(out2.messages[idx]).toEqual(out1.messages[idx]);
+    }
   });
 });
 
@@ -383,12 +456,16 @@ describe('transformContextBeforeLLM — snapshots', () => {
     const out = transformContextBeforeLLM(messages, baseOptions);
     expect({
       messages: out.messages,
-      cacheBreakpointIndex: out.cacheBreakpointIndex,
+      cacheBreakpointIndices: out.cacheBreakpointIndices,
       rewriteApplied: out.rewriteApplied,
       metrics: out.metrics,
     }).toMatchInlineSnapshot(`
       {
-        "cacheBreakpointIndex": 4,
+        "cacheBreakpointIndices": [
+          2,
+          3,
+          4,
+        ],
         "messages": [
           {
             "content": "You are a helpful assistant.",
@@ -432,9 +509,12 @@ describe('transformContextBeforeLLM — snapshots', () => {
     ];
     const out = transformContextBeforeLLM(messages, baseOptions);
     const wire = out.messages.map((m) => ({ role: m.role, content: m.content }));
+    const tagged = new Set(out.cacheBreakpointIndices);
     const withCache = wire.map((m, i) =>
-      i === out.cacheBreakpointIndex ? { ...m, cache_control: { type: 'ephemeral' } } : m,
+      tagged.has(i) ? { ...m, cache_control: { type: 'ephemeral' } } : m,
     );
+    // Three non-system messages → all three rolling-tail markers populated.
+    // System still gets its own marker at the wire layer (not modeled here).
     expect(withCache).toMatchInlineSnapshot(`
       [
         {
@@ -442,10 +522,16 @@ describe('transformContextBeforeLLM — snapshots', () => {
           "role": "system",
         },
         {
+          "cache_control": {
+            "type": "ephemeral",
+          },
           "content": "hi",
           "role": "user",
         },
         {
+          "cache_control": {
+            "type": "ephemeral",
+          },
           "content": "hello",
           "role": "assistant",
         },
@@ -561,7 +647,7 @@ describe('transformContextBeforeLLM — injectUserGoal stage', () => {
     expect(anchorCount).toBe(1);
   });
 
-  it('shifts cacheBreakpointIndex forward by one when injecting before the last user turn', () => {
+  it('shifts cacheBreakpointIndices forward by one when injecting before the last user turn', () => {
     const messages: FakeMsg[] = [
       sample({ role: 'user', content: 'first' }),
       sample({ role: 'user', content: '[CONTEXT DIGEST] prior compaction' }),
@@ -573,10 +659,13 @@ describe('transformContextBeforeLLM — injectUserGoal stage', () => {
       userGoalAnchor: anchor,
       createGoalMessage,
     });
-    // Last user message ("now") was at index 3 pre-injection; anchor lands at 3
-    // pushing "now" to 4.
-    expect(out.cacheBreakpointIndex).toBe(4);
-    expect(out.messages[out.cacheBreakpointIndex].content).toBe('now');
+    // Pre-injection the last 3 non-system messages were at [1, 2, 3]. The
+    // goal anchor inserts at position 3 (before "now"), pushing the tail
+    // forward by one: rolling breakpoints become [2, 3, 4] and "now" sits at
+    // the last of them.
+    expect(out.cacheBreakpointIndices).toEqual([2, 3, 4]);
+    const lastIdx = out.cacheBreakpointIndices[out.cacheBreakpointIndices.length - 1];
+    expect(out.messages[lastIdx].content).toBe('now');
   });
 
   it('determinism: identical input + options produces identical output', () => {

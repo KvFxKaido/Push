@@ -137,22 +137,21 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
   /** Forwarded through the adapter so gateways can signal context compaction. */
   onPreCompact?: (event: PreCompactEvent) => void;
   /**
-   * Index into `messages` of the last user-role message, as computed by
-   * `transformContextBeforeLLM`. When set to a non-negative integer,
-   * gateways MAY use it to attach Anthropic-style
-   * `cache_control: { type: 'ephemeral' }` markers at the prompt prefix
-   * boundary so the cached prefix stays byte-stable across turns when
-   * only new messages were appended.
+   * Indices into `messages` to tag with Anthropic-style
+   * `cache_control: { type: 'ephemeral' }`, as computed by
+   * `transformContextBeforeLLM`'s `cacheBreakpointIndices`. The wire adapter
+   * pairs these with a separate marker on the system message for the Hermes
+   * `system_and_3` shape — at most 4 cached prefixes per request.
    *
-   * Disabled states (gateway must NOT tag):
+   * Ordered oldest-first. Disabled states (gateway must NOT tag):
    * - `undefined` — caller did not opt in
-   * - `-1` — sentinel returned by `transformContextBeforeLLM` when the
-   *   transformed messages contain no user role
+   * - `[]` — sentinel when the transformed messages contain no non-system
+   *   role (e.g. system-only transcript on the very first turn before the
+   *   user sends anything)
    *
-   * Gateways that don't support prefix caching ignore this field
-   * entirely.
+   * Gateways that don't support prefix caching ignore this field entirely.
    */
-  cacheBreakpointIndex?: number;
+  cacheBreakpointIndices?: number[];
 }
 
 export type PushStream<M extends LlmMessage = LlmMessage> = (
