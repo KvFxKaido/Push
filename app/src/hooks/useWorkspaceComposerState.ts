@@ -428,6 +428,24 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
+  const handleSelectAnthropicModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('anthropic', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { anthropic: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
+  const handleSelectOpenAIModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('openai', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { openai: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
   return {
     selectedChatProvider: activeChatDraft.provider,
     selectedChatModels: activeChatDraft.models,
@@ -445,5 +463,7 @@ export function useWorkspaceComposerState({
     handleSelectAzureModelFromChat,
     handleSelectBedrockModelFromChat,
     handleSelectVertexModelFromChat,
+    handleSelectAnthropicModelFromChat,
+    handleSelectOpenAIModelFromChat,
   };
 }

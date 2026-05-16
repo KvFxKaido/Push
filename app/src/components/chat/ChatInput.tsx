@@ -128,6 +128,14 @@ interface ChatInputProps {
     vertexModelOptions: string[];
     isVertexModelLocked: boolean;
     onSelectVertexModel: (model: string) => void;
+    anthropicModel: string;
+    anthropicModelOptions: string[];
+    isAnthropicModelLocked: boolean;
+    onSelectAnthropicModel: (model: string) => void;
+    openaiModel: string;
+    openaiModelOptions: string[];
+    isOpenAIModelLocked: boolean;
+    onSelectOpenAIModel: (model: string) => void;
   };
 }
 
@@ -401,6 +409,8 @@ export function ChatInput({
     if (selectedProvider === 'azure') return providerControls.azureModel;
     if (selectedProvider === 'bedrock') return providerControls.bedrockModel;
     if (selectedProvider === 'vertex') return providerControls.vertexModel;
+    if (selectedProvider === 'anthropic') return providerControls.anthropicModel;
+    if (selectedProvider === 'openai') return providerControls.openaiModel;
     return 'demo';
   })();
 
@@ -1185,6 +1195,58 @@ export function ChatInput({
                             ))}
                           </select>
                           {providerControls.isVertexModelLocked && (
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'anthropic' && (
+                        <>
+                          <select
+                            value={providerControls.anthropicModel}
+                            disabled={!canChangeModel}
+                            onChange={(e) =>
+                              providerControls.onSelectAnthropicModel(e.target.value)
+                            }
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {(providerControls.anthropicModelOptions.length > 0
+                              ? providerControls.anthropicModelOptions
+                              : [providerControls.anthropicModel]
+                            ).map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
+                          </select>
+                          {providerControls.isAnthropicModelLocked && (
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'openai' && (
+                        <>
+                          <select
+                            value={providerControls.openaiModel}
+                            disabled={!canChangeModel}
+                            onChange={(e) => providerControls.onSelectOpenAIModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {(providerControls.openaiModelOptions.length > 0
+                              ? providerControls.openaiModelOptions
+                              : [providerControls.openaiModel]
+                            ).map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
+                          </select>
+                          {providerControls.isOpenAIModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">
                               Current chat locked; choosing a model starts a new chat.
                             </p>
