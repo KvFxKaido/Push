@@ -10,6 +10,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  handleAnthropicChat,
+  handleAnthropicModels,
   handleCloudflareChat,
   handleCloudflareModels,
   handleOllamaChat,
@@ -579,5 +581,140 @@ describe('handleOllamaModels', () => {
     expect(captured?.url).toBe('https://ollama.com/v1/models');
     const headers = captured?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer sk-ol');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Anthropic direct — bridge body translation + x-api-key auth
+// ---------------------------------------------------------------------------
+
+describe('handleAnthropicChat', () => {
+  it('posts to api.anthropic.com/v1/messages with x-api-key + anthropic-version', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    await handleAnthropicChat(makeChatRequest(), makeEnv({ ANTHROPIC_API_KEY: 'sk-ant-test' }));
+    expect(captured?.url).toBe('https://api.anthropic.com/v1/messages');
+    const headers = captured?.init.headers as Record<string, string>;
+    // Direct Anthropic uses x-api-key, NOT Authorization: Bearer.
+    expect(headers['x-api-key']).toBe('sk-ant-test');
+    expect(headers['anthropic-version']).toBe('2023-06-01');
+    expect(headers.Authorization).toBeUndefined();
+  });
+
+  it('strips a client-side Bearer prefix when ANTHROPIC_API_KEY is not set on the Worker', async () => {
+    let captured: Record<string, string> = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        captured = init.headers as Record<string, string>;
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    const req = new Request('https://push.example.test/api/anthropic/chat', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://push.example.test',
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer sk-ant-client',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    });
+    await handleAnthropicChat(req, makeEnv());
+    expect(captured['x-api-key']).toBe('sk-ant-client');
+  });
+
+  it('includes the model field in the upstream JSON body', async () => {
+    // buildAnthropicMessagesRequest omits `model` (Vertex carries it in the
+    // URL), so handleAnthropicChat must re-attach it. This test pins that
+    // contract so a future refactor of the bridge can't silently regress it.
+    let captured: { init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        captured = { init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    await handleAnthropicChat(makeChatRequest(), makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }));
+    const body = JSON.parse(captured!.init.body as string);
+    expect(body.model).toBe('test-model');
+    expect(Array.isArray(body.messages)).toBe(true);
+  });
+
+  it('returns 401 when no Anthropic key is available from any source', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleAnthropicChat(makeChatRequest(), makeEnv());
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toMatch(/Anthropic API key not configured/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when the request body has no model id', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const req = new Request('https://push.example.test/api/anthropic/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: '',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+    const response = await handleAnthropicChat(req, makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }));
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('formats upstream errors with an Anthropic ${status} prefix', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'invalid x-api-key' } }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+    const response = await handleAnthropicChat(
+      makeChatRequest(),
+      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
+    );
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toMatch(/^Anthropic 401:/);
+  });
+});
+
+describe('handleAnthropicModels', () => {
+  it('returns the curated ANTHROPIC_MODELS list (no upstream fetch)', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleAnthropicModels(makeModelsRequest(), makeEnv());
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data.length).toBeGreaterThan(0);
+    expect(body.data.every((m) => typeof m.id === 'string')).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

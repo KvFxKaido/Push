@@ -33,6 +33,8 @@ import {
 } from '@/lib/model-catalog';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
+import { useAnthropicConfig } from '@/hooks/useAnthropicConfig';
+import { ANTHROPIC_MODELS } from '@push/lib/provider-models';
 import { useZenConfig } from '@/hooks/useZenConfig';
 import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
 import { useBlackboxConfig } from '@/hooks/useBlackboxConfig';
@@ -148,6 +150,7 @@ export interface ModelCatalog {
   azure: ExperimentalProviderConfig;
   bedrock: ExperimentalProviderConfig;
   vertex: VertexProviderConfig;
+  anthropic: ProviderKeyConfig;
   tavily: TavilyKeyConfig;
 
   // Active backend
@@ -177,6 +180,7 @@ export interface ModelCatalog {
   blackboxModelOptions: string[];
   kilocodeModelOptions: string[];
   openAdapterModelOptions: string[];
+  anthropicModelOptions: string[];
 
   // Zen Go tier
   zenGoMode: boolean;
@@ -420,6 +424,7 @@ export function useModelCatalog(): ModelCatalog {
   const blackboxCfg = useBlackboxConfig();
   const kilocodeCfg = useKilocodeConfig();
   const openAdapterCfg = useOpenAdapterConfig();
+  const anthropicCfg = useAnthropicConfig();
   const azureCfg = useAzureConfig();
   const bedrockCfg = useBedrockConfig();
   const vertexCfg = useVertexConfig();
@@ -433,6 +438,7 @@ export function useModelCatalog(): ModelCatalog {
   const [blackboxKeyInput, setBlackboxKeyInput] = useState('');
   const [kilocodeKeyInput, setKilocodeKeyInput] = useState('');
   const [openAdapterKeyInput, setOpenAdapterKeyInput] = useState('');
+  const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
   const [azureKeyInput, setAzureKeyInput] = useState('');
   const [azureBaseUrlInput, setAzureBaseUrlInput] = useState('');
   const [azureModelInput, setAzureModelInput] = useState('');
@@ -516,6 +522,7 @@ export function useModelCatalog(): ModelCatalog {
       ['azure', 'Azure OpenAI', azureCfg.isConfigured],
       ['bedrock', 'AWS Bedrock', bedrockCfg.isConfigured],
       ['vertex', 'Google Vertex', vertexCfg.isConfigured],
+      ['anthropic', 'Anthropic', anthropicCfg.hasKey],
     ] as const
   ).filter(([, , has]) => has);
 
@@ -1071,6 +1078,13 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [openAdapterModelList, openAdapterCfg.model],
   );
+  // Anthropic uses the curated list directly — no live `/v1/models` proxy yet
+  // (curated covers MVP; live fetching can land in a follow-up with a Worker
+  // /api/anthropic/models proxy that does more than echo the curated list).
+  const anthropicModelOptions = useMemo(
+    () => includeSelectedModel(ANTHROPIC_MODELS, anthropicCfg.model),
+    [anthropicCfg.model],
+  );
   const vertexModelOptions = useMemo(
     () => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model),
     [vertexCfg.modelOptions, vertexCfg.model],
@@ -1199,6 +1213,15 @@ export function useModelCatalog(): ModelCatalog {
       deploymentLimitReached: bedrockCfg.deploymentLimitReached,
       isConfigured: bedrockCfg.isConfigured,
     },
+    anthropic: {
+      setKey: anthropicCfg.setKey,
+      clearKey: anthropicCfg.clearKey,
+      hasKey: anthropicCfg.hasKey,
+      model: anthropicCfg.model,
+      setModel: anthropicCfg.setModel,
+      keyInput: anthropicKeyInput,
+      setKeyInput: setAnthropicKeyInput,
+    },
     vertex: {
       keyInput: vertexKeyInput,
       setKeyInput: setVertexKeyInput,
@@ -1296,6 +1319,7 @@ export function useModelCatalog(): ModelCatalog {
     blackboxModelOptions,
     kilocodeModelOptions,
     openAdapterModelOptions,
+    anthropicModelOptions,
 
     zenGoMode: zenCfg.goMode,
     setZenGoMode: zenCfg.setGoMode,

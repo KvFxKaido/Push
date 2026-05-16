@@ -152,6 +152,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   kilocode: 'Kilo Code',
   openadapter: 'OpenAdapter',
   vertex: 'Google Vertex',
+  anthropic: 'Anthropic',
   demo: 'Demo',
 };
 

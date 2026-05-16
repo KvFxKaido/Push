@@ -16,6 +16,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   azure: '',
   bedrock: '',
   vertex: '',
+  anthropic: '',
   kilocode: '',
   openadapter: '',
 };
@@ -36,6 +37,7 @@ function readStoredChatModelMemory(): Record<PreferredProvider, string> {
       azure: typeof parsed.azure === 'string' ? parsed.azure.trim() : '',
       bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
       vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
+      anthropic: typeof parsed.anthropic === 'string' ? parsed.anthropic.trim() : '',
       kilocode:
         typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
       openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
@@ -96,8 +98,10 @@ export function useWorkspaceComposerState({
       azure: catalog.azure.model,
       bedrock: catalog.bedrock.model,
       vertex: catalog.vertex.model,
+      anthropic: catalog.anthropic.model,
     }),
     [
+      catalog.anthropic.model,
       catalog.azure.model,
       catalog.bedrock.model,
       catalog.blackbox.model,
@@ -187,6 +191,10 @@ export function useWorkspaceComposerState({
           defaultChatModels.bedrock,
         vertex:
           draft?.models?.vertex?.trim() || rememberedChatModels.vertex || defaultChatModels.vertex,
+        anthropic:
+          draft?.models?.anthropic?.trim() ||
+          rememberedChatModels.anthropic ||
+          defaultChatModels.anthropic,
         kilocode: normalizeKilocodeModelName(
           draft?.models?.kilocode?.trim() ||
             rememberedChatModels.kilocode ||

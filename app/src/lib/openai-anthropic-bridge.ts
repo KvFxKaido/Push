@@ -50,12 +50,21 @@ function convertOpenAIContentToAnthropic(
   for (const part of content) {
     if (!part || typeof part !== 'object') continue;
     if (part.type === 'text' && typeof part.text === 'string') {
-      parts.push({ type: 'text', text: part.text });
+      const textPart: Record<string, unknown> = { type: 'text', text: part.text };
+      // Anthropic accepts the same `cache_control: { type: 'ephemeral' }` shape
+      // OpenAI uses for prompt caching. Pass it through verbatim — dropping it
+      // here would silently disable caching on every direct-Anthropic /
+      // Vertex-Anthropic turn even when the caller set breakpoints upstream.
+      if (part.cache_control) textPart.cache_control = part.cache_control;
+      parts.push(textPart);
       continue;
     }
     if (part.type === 'image_url' && typeof part.image_url?.url === 'string') {
       const imagePart = dataUrlToAnthropicImagePart(part.image_url.url);
-      if (imagePart) parts.push(imagePart);
+      if (imagePart) {
+        if (part.cache_control) imagePart.cache_control = part.cache_control;
+        parts.push(imagePart);
+      }
     }
   }
 
@@ -121,17 +130,24 @@ export function buildAnthropicMessagesRequest(
 ): Record<string, unknown> {
   const messages = Array.isArray(request.messages) ? request.messages : [];
 
-  const systemSegments: string[] = [];
+  // Anthropic accepts `system` as a plain string OR as an array of content
+  // blocks. We use the array form whenever the upstream system message carries
+  // a `cache_control` marker so the Hermes `system_and_3` strategy's longest-
+  // lived breakpoint survives translation. Otherwise we flatten to a string
+  // (cheaper to wire, and consistent with the historical Vertex behaviour).
+  const systemBlocks: Array<Record<string, unknown>> = [];
+  let systemHasCacheControl = false;
   const anthropicMessages: Array<Record<string, unknown>> = [];
 
   for (const message of messages) {
     const role = typeof message.role === 'string' ? message.role : 'user';
     if (role === 'system' || role === 'developer') {
-      const systemParts = convertOpenAIContentToAnthropic(message.content)
-        .map((part) => (typeof part.text === 'string' ? part.text : ''))
-        .filter(Boolean);
-      if (systemParts.length > 0) {
-        systemSegments.push(systemParts.join('\n\n'));
+      const parts = convertOpenAIContentToAnthropic(message.content);
+      for (const part of parts) {
+        if (part.type === 'text' && typeof part.text === 'string' && part.text.length > 0) {
+          if (part.cache_control) systemHasCacheControl = true;
+          systemBlocks.push(part);
+        }
       }
       continue;
     }
@@ -165,8 +181,10 @@ export function buildAnthropicMessagesRequest(
   if (options?.anthropicVersion) {
     body.anthropic_version = options.anthropicVersion;
   }
-  if (systemSegments.length > 0) {
-    body.system = systemSegments.join('\n\n');
+  if (systemBlocks.length > 0) {
+    body.system = systemHasCacheControl
+      ? systemBlocks
+      : systemBlocks.map((p) => p.text).join('\n\n');
   }
   if (typeof request.temperature === 'number') {
     body.temperature = request.temperature;

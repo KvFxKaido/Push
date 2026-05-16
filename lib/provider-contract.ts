@@ -36,6 +36,7 @@ export type AIProviderType =
   | 'openadapter'
   | 'bedrock'
   | 'vertex'
+  | 'anthropic'
   | 'demo';
 
 // ---------------------------------------------------------------------------

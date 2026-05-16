@@ -52,6 +52,7 @@
     "import.meta.env.MODE": "\"production\"",
     "import.meta.env.BASE_URL": "\"/\"",
     "import.meta.env.SSR": "true",
+    "import.meta.env.VITE_ANTHROPIC_API_KEY": "\"\"",
     "import.meta.env.VITE_API_BASE_URL": "\"\"",
     "import.meta.env.VITE_AZURE_OPENAI_API_KEY": "\"\"",
     "import.meta.env.VITE_AZURE_OPENAI_BASE_URL": "\"\"",

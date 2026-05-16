@@ -39,6 +39,7 @@ function routesThroughAnthropicBridge(
   model: string | undefined,
 ): boolean {
   if (!provider || !model) return false;
+  if (provider === 'anthropic') return true;
   if (provider === 'zen') return getZenGoTransport(model) === 'anthropic';
   if (provider === 'vertex') return getVertexModelTransport(model) === 'anthropic';
   return false;
@@ -454,9 +455,10 @@ export function toLLMMessages(
   }
 
   // Prompt caching: wrap the system message as a content-array with cache_control
-  // for providers that support it (currently OpenRouter/Anthropic). Other
-  // providers harmlessly ignore the extra field.
-  const cacheable = providerType === 'openrouter';
+  // for providers that support it. OpenRouter passes the field through to its
+  // upstream Anthropic models verbatim; direct Anthropic consumes it natively
+  // via the openai-anthropic-bridge. Other providers harmlessly ignore it.
+  const cacheable = providerType === 'openrouter' || providerType === 'anthropic';
   const llmMessages: LLMMessage[] = [
     cacheable
       ? {

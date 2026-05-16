@@ -67,8 +67,11 @@ function extractWebProviderEnvKey(source, providerId) {
 describe('provider config parity', () => {
   const allWebProviderIds = extractUnionMembers(webProviderSource, 'PreferredProvider');
   // CLI only implements the four built-in providers; azure/bedrock/vertex are
-  // advanced connectors deferred per the Web-CLI Parity Plan.
-  const CLI_DEFERRED_PROVIDERS = new Set(['azure', 'bedrock', 'vertex', 'cloudflare']);
+  // advanced connectors deferred per the Web-CLI Parity Plan. `anthropic` is
+  // deferred until the openai-anthropic-bridge promotes from `app/src/lib/` to
+  // shared `lib/` and the CLI gains a non-OpenAI-compat stream adapter — both
+  // belong in the CLI Anthropic follow-up PR, not this Worker-side wiring.
+  const CLI_DEFERRED_PROVIDERS = new Set(['azure', 'bedrock', 'vertex', 'cloudflare', 'anthropic']);
   const providerIds = allWebProviderIds.filter((id) => !CLI_DEFERRED_PROVIDERS.has(id));
   const defaultConstByProvider = {
     ollama: 'OLLAMA_DEFAULT_MODEL',

@@ -190,6 +190,24 @@ export function buildSettingsAI(props: ChatRouteProps): SettingsAIProps {
         setKey: catalog.openadapter.setKey,
         clearKey: catalog.openadapter.clearKey,
       },
+      anthropic: {
+        hasKey: catalog.anthropic.hasKey,
+        model: catalog.anthropic.model,
+        setModel: catalog.anthropic.setModel,
+        modelOptions: catalog.anthropicModelOptions,
+        // Curated-list-only for now (no live /v1/models proxy). Loading/error
+        // signals stay false/null so the Settings UI doesn't render a spinner
+        // or stale-fetch warning that has nothing to fetch.
+        modelsLoading: false,
+        modelsError: null,
+        modelsUpdatedAt: null,
+        isModelLocked: isProviderLocked && lockedProvider === 'anthropic',
+        refreshModels: () => {},
+        keyInput: catalog.anthropic.keyInput,
+        setKeyInput: catalog.anthropic.setKeyInput,
+        setKey: catalog.anthropic.setKey,
+        clearKey: catalog.anthropic.clearKey,
+      },
     },
     cloudflareProvider: {
       configured: catalog.cloudflare.configured,

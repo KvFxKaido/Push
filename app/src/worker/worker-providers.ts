@@ -20,6 +20,7 @@ import {
   createAnthropicTranslatedStream,
 } from '../lib/openai-anthropic-bridge';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
+import { ANTHROPIC_MODELS } from '@push/lib/provider-models';
 import {
   buildVertexAnthropicEndpoint,
   buildVertexOpenApiBaseUrl,
@@ -1006,6 +1007,160 @@ export async function handleVertexModels(request: Request, env: Env): Promise<Re
       transport: model.transport,
       family: model.family,
     })),
+  });
+}
+
+// --- Anthropic Claude (direct /v1/messages) ---
+//
+// Models: serve the curated `ANTHROPIC_MODELS` list. Anthropic does have a
+// live `/v1/models` endpoint, but proxying it would add another auth path +
+// rate-limit class without changing the dropdown content materially; the
+// curated list is the source of truth until the live proxy lands later.
+//
+// Modeled on handleVertexChat's native-Anthropic transport path. Difference:
+// auth is a flat `x-api-key` header instead of OAuth, no project/region path
+// segments, and no `anthropic_version` in the body — the version goes in the
+// header. Reuses `buildAnthropicMessagesRequest` and `createAnthropicTranslatedStream`
+// from the bridge so the response surfaces to the client as OpenAI-shaped SSE.
+
+const ANTHROPIC_API_VERSION = '2023-06-01';
+const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
+
+function buildAnthropicAuth(env: Env, request: Request): string | null {
+  const serverKey = env.ANTHROPIC_API_KEY;
+  if (serverKey) return serverKey;
+  // Accept a client-side `Authorization: Bearer <key>` for dev / unconfigured
+  // Worker paths, matching the standardAuth fallback shape used by the
+  // OpenAI-compat providers.
+  const clientAuth = request.headers.get('Authorization');
+  if (clientAuth?.startsWith('Bearer ')) return clientAuth.slice(7);
+  return clientAuth;
+}
+
+export async function handleAnthropicChat(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: buildAnthropicAuth,
+    keyMissingError:
+      'Anthropic API key not configured. Add it in Settings or set ANTHROPIC_API_KEY on the Worker.',
+    needsBody: true,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { authHeader: apiKey, bodyText, requestId } = preamble;
+
+  const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
+    routeLabel: 'Anthropic',
+    maxOutputTokens: 12_288,
+  });
+  if (!normalizedRequest.ok) {
+    return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
+  }
+  if (normalizedRequest.value.adjustments.length > 0) {
+    wlog('warn', 'chat_request_adjusted', {
+      requestId,
+      route: 'api/anthropic/chat',
+      adjustments: normalizedRequest.value.adjustments,
+    });
+  }
+  const parsedRequest = normalizedRequest.value.parsed;
+  const model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
+  if (!model) {
+    return Response.json({ error: 'Anthropic request is missing a model id' }, { status: 400 });
+  }
+
+  // Anthropic API requires the version header. We deliberately do NOT pass
+  // `anthropicVersion` into the body — that field is for Vertex's
+  // `vertex-2023-10-16` shape; the direct Anthropic API ignores any
+  // `anthropic_version` field and reads it from the header instead.
+  //
+  // `buildAnthropicMessagesRequest` does not include `model` in the body
+  // because Vertex carries the model in the URL path. Direct `/v1/messages`
+  // requires `model` in the JSON, so re-attach it here.
+  const upstreamBody = JSON.stringify({
+    ...buildAnthropicMessagesRequest(parsedRequest),
+    model,
+  });
+
+  wlog('info', 'request', {
+    requestId,
+    route: 'api/anthropic/chat',
+    model,
+  });
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180_000);
+    let upstream: Response;
+
+    try {
+      upstream = await fetch(ANTHROPIC_MESSAGES_URL, {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': ANTHROPIC_API_VERSION,
+          'Content-Type': 'application/json',
+          [REQUEST_ID_HEADER]: requestId,
+        },
+        body: upstreamBody,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      wlog('error', 'upstream_error', {
+        requestId,
+        route: 'api/anthropic/chat',
+        status: upstream.status,
+        body: errBody.slice(0, 500),
+      });
+      return Response.json(
+        {
+          error: `Anthropic ${upstream.status}: ${extractProviderHttpErrorDetail(upstream.status, errBody)}`,
+          code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+        },
+        { status: upstream.status },
+      );
+    }
+
+    return new Response(createAnthropicTranslatedStream(upstream, model), {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        [REQUEST_ID_HEADER]: requestId,
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    wlog('error', 'unhandled', {
+      requestId,
+      route: 'api/anthropic/chat',
+      message,
+      timeout: isTimeout,
+    });
+    return Response.json(
+      { error: isTimeout ? 'Anthropic request timed out after 180 seconds' : message },
+      { status: isTimeout ? 504 : 502 },
+    );
+  }
+}
+
+export async function handleAnthropicModels(request: Request, env: Env): Promise<Response> {
+  // Run preamble for origin check + rate limit even though we serve a static
+  // curated list — keeps the route shape consistent with the other /models
+  // proxies and pins the call within the same rate-limit bucket.
+  const preamble = await runPreamble(request, env, {
+    buildAuth: () => 'AnthropicCuratedList',
+    needsBody: false,
+  });
+  if (preamble instanceof Response) return preamble;
+  return Response.json({
+    object: 'list',
+    data: ANTHROPIC_MODELS.map((id) => ({ id, name: id })),
   });
 }
 

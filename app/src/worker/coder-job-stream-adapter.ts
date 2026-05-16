@@ -27,6 +27,7 @@ import type { AIProviderType, PushStream, PushStreamEvent } from '@push/lib/prov
 import type { ChatMessage } from '@/types';
 import type { Env } from './worker-middleware';
 import {
+  handleAnthropicChat,
   handleBlackboxChat,
   handleCloudflareChat,
   handleKiloCodeChat,
@@ -69,6 +70,8 @@ function resolveProviderHandler(provider: AIProviderType): ProviderHandler | nul
       return handleKiloCodeChat as unknown as ProviderHandler;
     case 'openadapter':
       return handleOpenAdapterChat as unknown as ProviderHandler;
+    case 'anthropic':
+      return handleAnthropicChat as unknown as ProviderHandler;
     case 'demo':
       return null;
     // The remaining providers (azure, bedrock, vertex) exist on the
@@ -94,7 +97,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       if (!handler) {
         throw new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
-            `Supported in Phase 1 PR #3a: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, openadapter.`,
+            `Supported: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, openadapter, anthropic.`,
         );
       }
 
