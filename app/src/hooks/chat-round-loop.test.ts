@@ -332,92 +332,35 @@ describe('runRoundLoop', () => {
     // No tool-call-malformed event either — that path runs inside
     // processAssistantTurn for the multiple-mutations case, and the
     // invariant is "no tool side-effects of any shape after abort."
+    // The canonical execution-start event is `tool.execution_start`
+    // (per `RunEventInput` in `lib/runtime-contract.ts`); use the
+    // exact name so a regression that adds a real tool-start after
+    // abort breaks the test.
     const toolEvents = h.appendRunEvent.mock.calls
       .map(([, event]) => event as { type: string })
-      .filter((e) => e.type === 'tool.call_malformed' || e.type === 'tool.call_started');
+      .filter((e) => e.type === 'tool.call_malformed' || e.type === 'tool.execution_start');
     expect(toolEvents).toEqual([]);
   });
 
-  it('does not carry partial accumulator across an abort/resend boundary', async () => {
-    // Cancellation invariant continuation: after an aborted turn, a
-    // subsequent runRoundLoop call must start from a clean accumulator
-    // and not inherit the partial content from the prior turn. The
-    // accumulator lives inside streamAssistantRound (not on the loop
-    // context), so the risk here is shared state on the loop context —
-    // primarily `processedContentRef` and `checkpointRefs.apiMessages`.
-    //
-    // We invoke runRoundLoop twice on the same harness: first call
-    // aborts mid-stream with partial tool-call content; second call
-    // completes normally with a different content. The second turn's
-    // processAssistantTurn must see ONLY the new round's accumulator —
-    // not the abandoned partial from turn 1.
-    const h = makeHarness();
-    const partial = '```json\n{"tool": "sandbox_exec", "args": {';
-    const cleanContent = 'Done — no tool needed.';
-
-    mockStreamAssistantRound
-      .mockImplementationOnce(async () => {
-        h.loopCtx.abortRef.current = true;
-        return {
-          accumulated: partial,
-          thinkingAccumulated: '',
-          reasoningBlocks: [],
-          error: null,
-        };
-      })
-      .mockImplementationOnce(async () => ({
-        accumulated: cleanContent,
-        thinkingAccumulated: '',
-        reasoningBlocks: [],
-        error: null,
-      }));
-    mockProcessAssistantTurn.mockImplementationOnce(async (_round, accumulated) => ({
-      nextApiMessages: [],
-      nextRecoveryState: emptyRecovery,
-      loopAction: 'break',
-      loopCompletedNormally: true,
-      // Echo so the assertion can see exactly what processAssistantTurn
-      // received from the loop on the resend.
-      _receivedAccumulated: accumulated,
-    }));
-
-    await runRoundLoop(
-      h.loopCtx,
-      { apiMessages: [], recoveryState: emptyRecovery },
-      {
-        runJournalEntryRef: h.runJournalEntryRef,
-        persistRunJournal: h.persistRunJournal,
-        dequeuePendingSteer: h.dequeuePendingSteer,
-        pendingSteersByChatRef: h.pendingSteersByChatRef,
-      },
-    );
-    // The user "resends" — reset the abort flag the way the next
-    // outer-loop iteration would and re-enter.
-    h.loopCtx.abortRef.current = false;
-    await runRoundLoop(
-      h.loopCtx,
-      { apiMessages: [], recoveryState: emptyRecovery },
-      {
-        runJournalEntryRef: h.runJournalEntryRef,
-        persistRunJournal: h.persistRunJournal,
-        dequeuePendingSteer: h.dequeuePendingSteer,
-        pendingSteersByChatRef: h.pendingSteersByChatRef,
-      },
-    );
-
-    expect(mockProcessAssistantTurn).toHaveBeenCalledTimes(1);
-    const [, accumulatedArg] = mockProcessAssistantTurn.mock.calls[0];
-    expect(accumulatedArg).toBe(cleanContent);
-    expect(accumulatedArg).not.toContain(partial);
-    // Two turn_end events should appear: the first aborted, the second
-    // completed. Pin both so a regression that drops the second turn
-    // (or surfaces a phantom continuation) breaks the test.
-    const turnEnds = h.appendRunEvent.mock.calls
-      .map(([, event]) => event as { type: string; outcome?: string })
-      .filter((e) => e.type === 'assistant.turn_end')
-      .map((e) => e.outcome);
-    expect(turnEnds).toEqual(['aborted', 'completed']);
-  });
+  // The originally-scoped "abort + resend" test was dropped before
+  // merge: it asserted that the second runRoundLoop's
+  // processAssistantTurn received only the new accumulator, but
+  // `mockStreamAssistantRound` controls what the second call returns,
+  // so the assertion was tautological — it tested the mock chain, not
+  // the leak path the Hermes #6 brief actually cared about.
+  //
+  // The real leak path lives upstream: when streaming aborts, the
+  // partial content is already in `conversationsRef.current[chatId].messages`
+  // (with `status: 'streaming'`); on the next send,
+  // `toLLMMessages` (`app/src/lib/orchestrator.ts:269`) rebuilds the
+  // wire history from `conversation.messages` and does NOT filter on
+  // status, so the partial tool-call shape could ride forward as
+  // assistant history. Whether this matters depends on what providers
+  // do with malformed/partial assistant turns in history.
+  //
+  // That's a higher-level integration test (or possibly a fix, not a
+  // test) than runRoundLoop can host. Tracked in the cancellation
+  // follow-up scope; not pinned here.
 
   it('drains a pending steer that arrives during streaming and continues', async () => {
     const h = makeHarness();
