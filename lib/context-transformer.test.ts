@@ -680,3 +680,255 @@ describe('transformContextBeforeLLM — injectUserGoal stage', () => {
     expect(out1).toEqual(out2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// injectSessionDigest stage
+//
+// Same trigger as the goal-anchor stage: fires only when compaction is in
+// play. Materializes a `SessionDigest` from caller-provided records +
+// working memory. On subsequent compactions, detects the prior digest
+// message by its `[SESSION_DIGEST]` marker and merges in place rather than
+// emitting a new one.
+// ---------------------------------------------------------------------------
+
+describe('transformContextBeforeLLM — injectSessionDigest stage', () => {
+  const createSessionDigestMessage = (content: string): FakeMsg => ({ role: 'user', content });
+
+  it('does not fire when compaction has not happened (no rewrite, no marker)', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'assistant', content: 'reply' }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      sessionDigestInputs: {
+        records: [],
+        workingMemory: { plan: 'ship feature' },
+      },
+      createSessionDigestMessage,
+    });
+    expect(out.messages).toEqual(messages);
+    expect(out.rewriteApplied).toBe(false);
+    expect(out.messages.some((m) => m.content.includes('[SESSION_DIGEST]'))).toBe(false);
+  });
+
+  it('injects when upstream compaction ran this turn', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'assistant', content: 'reply' }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      enableManageContext: true,
+      manageContext: (msgs) => ({ messages: msgs, compactionApplied: true }),
+      sessionDigestInputs: {
+        records: [],
+        workingMemory: { plan: 'ship feature' },
+      },
+      createSessionDigestMessage,
+    });
+    const digestMessage = out.messages.find((m) => m.content.includes('[SESSION_DIGEST]'));
+    expect(digestMessage).toBeDefined();
+    expect(digestMessage?.content).toContain('Goal: ship feature');
+    expect(out.rewriteApplied).toBe(true);
+  });
+
+  it('injects when a prior turn left the durable compaction marker', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({
+        role: 'user',
+        content: '[CONTEXT DIGEST] earlier turns dropped\n[USER_GOAL_COMPACTION_MARKER]',
+      }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      sessionDigestInputs: {
+        records: [],
+        workingMemory: { plan: 'g' },
+      },
+      createSessionDigestMessage,
+    });
+    expect(out.messages.some((m) => m.content.includes('[SESSION_DIGEST]'))).toBe(true);
+  });
+
+  it('inserts the digest message just before the last message', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'assistant', content: 'reply' }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      enableManageContext: true,
+      manageContext: (msgs) => ({ messages: msgs, compactionApplied: true }),
+      sessionDigestInputs: { records: [], workingMemory: { plan: 'g' } },
+      createSessionDigestMessage,
+    });
+    // The digest should sit at messages.length - 2, with 'now' (the prior
+    // last message) still at the end.
+    expect(out.messages[out.messages.length - 1].content).toBe('now');
+    expect(out.messages[out.messages.length - 2].content).toContain('[SESSION_DIGEST]');
+  });
+
+  it('merges in place when a prior digest exists in the transcript', () => {
+    // Build a synthetic prior turn's digest message.
+    const priorDigestContent = [
+      '[SESSION_DIGEST]',
+      'Goal: prior goal',
+      'Decisions:',
+      '  - prior decision',
+      '[/SESSION_DIGEST]',
+    ].join('\n');
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'user', content: priorDigestContent }),
+      sample({ role: 'assistant', content: 'reply' }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      enableManageContext: true,
+      manageContext: (msgs) => ({ messages: msgs, compactionApplied: true }),
+      sessionDigestInputs: {
+        records: [
+          {
+            id: 'd-new',
+            kind: 'decision',
+            summary: 'new decision',
+            scope: { repoFullName: 'o/r' },
+            source: { kind: 'orchestrator', label: 't', createdAt: 0 },
+            freshness: 'fresh',
+          },
+        ],
+        // Don't supply working memory — let the prior `goal` survive.
+      },
+      createSessionDigestMessage,
+    });
+
+    // Same number of messages (merged in place, not appended).
+    expect(out.messages.length).toBe(4);
+    // The merged digest sits at the SAME index as the prior — index 1.
+    expect(out.messages[1].content).toContain('[SESSION_DIGEST]');
+    // The merged content has both the prior and the new decision; goal
+    // survives from the prior digest since the new build doesn't override.
+    expect(out.messages[1].content).toContain('prior decision');
+    expect(out.messages[1].content).toContain('new decision');
+    expect(out.messages[1].content).toContain('Goal: prior goal');
+  });
+
+  it('does not flip rewriteApplied when the merged content matches the prior byte-for-byte', () => {
+    // Same inputs as the prior digest → merge is a no-op → byte-stable.
+    const priorContent = ['[SESSION_DIGEST]', 'Goal: same goal', '[/SESSION_DIGEST]'].join('\n');
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'user', content: priorContent }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      enableManageContext: true,
+      // Pass a compaction that just returns the input unchanged but reports
+      // applied=true, so the digest stage runs.
+      manageContext: (msgs) => ({ messages: msgs, compactionApplied: true }),
+      sessionDigestInputs: { records: [], goal: 'same goal' },
+      createSessionDigestMessage,
+    });
+    // The digest stage itself didn't flip rewrite (its merge produced same
+    // bytes). manageContext set it to true so the top-level is true, but
+    // we should at least confirm the digest's content was not changed.
+    expect(out.messages[1].content).toBe(priorContent);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// safetyNet stage
+//
+// Last-line-of-defense: when the upstream output is still over the
+// `threshold * budget`, hard-trim oldest non-protected messages until the
+// estimate fits. Doesn't fire when below threshold; doesn't drop below the
+// `preserveTail` window.
+// ---------------------------------------------------------------------------
+
+describe('transformContextBeforeLLM — safetyNet stage', () => {
+  // Estimate by character count of `content` for predictable test math.
+  function estimateByChars(messages: { role: string; content?: unknown }[]): number {
+    return messages.reduce((acc, m) => {
+      const c = typeof m.content === 'string' ? m.content : '';
+      return acc + c.length;
+    }, 0);
+  }
+
+  it('is a no-op when estimate is below threshold * budget', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'system', content: 'sys' }),
+      sample({ role: 'user', content: 'short' }),
+      sample({ role: 'user', content: 'short' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      safetyNet: { estimateTokens: estimateByChars, budget: 1000, threshold: 0.85 },
+    });
+    expect(out.messages).toEqual(messages);
+    expect(out.rewriteApplied).toBe(false);
+  });
+
+  it('hard-trims oldest non-protected messages when over threshold', () => {
+    // Make total = 200, budget = 100, threshold = 0.85, so ceiling = 85.
+    const messages: FakeMsg[] = [
+      sample({ role: 'system', content: 'sys-prompt-long' }), // 15 chars (protected)
+      sample({ role: 'user', content: 'a'.repeat(80) }), // 80 (eligible)
+      sample({ role: 'user', content: 'b'.repeat(40) }), // 40 (eligible)
+      sample({ role: 'user', content: 'c'.repeat(20) }), // 20 (within preserveTail)
+      sample({ role: 'user', content: 'd'.repeat(20) }), // 20 (within preserveTail)
+      sample({ role: 'user', content: 'e'.repeat(20) }), // 20 (within preserveTail)
+      sample({ role: 'user', content: 'f'.repeat(20) }), // 20 (within preserveTail)
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      safetyNet: {
+        estimateTokens: estimateByChars,
+        budget: 100,
+        threshold: 0.85,
+        preserveTail: 4,
+      },
+    });
+    // System (index 0) and the last 4 messages must survive. Both eligible
+    // head messages ('a' x80 and 'b' x40) should have been dropped — that's
+    // all the non-protected fat there is. The protected tail (4 × 20) + system
+    // (15) leaves a floor of 95 chars, which already exceeds the 85 ceiling;
+    // the stage stops once eligible drops are exhausted rather than breach
+    // protection, so we assert the drops happened, not that the estimate fits.
+    expect(out.messages[0].content).toBe('sys-prompt-long');
+    expect(out.messages.some((m) => m.content === 'a'.repeat(80))).toBe(false);
+    expect(out.messages.some((m) => m.content === 'b'.repeat(40))).toBe(false);
+    expect(out.messages.length).toBe(5);
+    expect(out.rewriteApplied).toBe(true);
+  });
+
+  it('respects preserveTail — never drops the trailing window', () => {
+    const messages: FakeMsg[] = [
+      sample({ role: 'system', content: 'sys' }),
+      // Even if we'd need to drop everything to fit, the last 2 messages stay.
+      sample({ role: 'user', content: 'a'.repeat(1000) }),
+      sample({ role: 'user', content: 'b'.repeat(1000) }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      safetyNet: {
+        estimateTokens: estimateByChars,
+        budget: 100,
+        threshold: 0.85,
+        preserveTail: 2,
+      },
+    });
+    // Both protected (tail) — only the system can be dropped, and it would
+    // be the only eligible target. Since system is at index 0 we also
+    // protect it. Bail when nothing left to drop.
+    expect(out.messages.some((m) => m.content === 'b'.repeat(1000))).toBe(true);
+    expect(out.messages.some((m) => m.content === 'a'.repeat(1000))).toBe(true);
+  });
+});

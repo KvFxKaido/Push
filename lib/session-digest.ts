@@ -1,0 +1,496 @@
+/**
+ * Session digest — Hermes-shaped structured summary materialized at compaction.
+ *
+ * When the per-agent compactor fires (currently in `lib/message-context-manager.ts`
+ * on the web side and `cli/context-manager.ts` on the CLI side), the rolling
+ * tail is the cheapest place to anchor a single high-signal summary of the
+ * session so far. Free-text summaries drift between turns and break prompt
+ * caching; a typed digest with a fixed schema is byte-stable when its inputs
+ * don't change, so the cached prefix from the prior turn keeps hitting.
+ *
+ * The schema is borrowed verbatim from Hermes Agent's compaction layer
+ * (see `docs/decisions/Hermes Agent — Lessons For Push.md` item 2): goal /
+ * constraints / progress {done, inProgress, blocked} / decisions / relevant
+ * files / next steps / critical context. Each field is optional at the type
+ * level so a thin digest (e.g. only a goal + open tasks) renders without
+ * cluttering the block with `(none)` lines.
+ *
+ * Idempotency: subsequent compactions on the same conversation should
+ * **merge** into the prior digest rather than emit a new one. The
+ * `[SESSION_DIGEST]` / `[/SESSION_DIGEST]` markers in the rendered block let
+ * `parseSessionDigest` recover the prior structured value from a message's
+ * content; `mergeSessionDigests` then deduplicates against the new inputs.
+ */
+
+import type { CoderWorkingMemory } from './working-memory.ts';
+import type { MemoryRecord } from './runtime-contract.ts';
+
+// ---------------------------------------------------------------------------
+// Type
+// ---------------------------------------------------------------------------
+
+export interface SessionDigest {
+  /** Top-level goal — typically the user's current ask (after redirects).
+   *  Sourced from the `UserGoalAnchor` when available; falls back to working
+   *  memory's `plan` field. */
+  goal?: string;
+  /** Hard constraints from the user or prior decisions that must be honored
+   *  for the duration of the session (e.g. "don't touch the auth module").
+   *  Sourced from working memory `assumptions`. */
+  constraints: string[];
+  /** Progress tracking. Empty inner arrays render as nothing (not "(none)")
+   *  so a digest with only a goal stays small. */
+  progress: {
+    done: string[];
+    inProgress: string[];
+    blocked: string[];
+  };
+  /** Important decisions made — typically reasoning the model committed to
+   *  that future turns should respect (e.g. "chose Modal over Cloudflare for
+   *  the GPU path"). Sourced from `MemoryRecord` rows with `kind: 'decision'`. */
+  decisions: string[];
+  /** Files materially touched or under active investigation. Union of
+   *  `MemoryRecord.relatedFiles[]` across all input records plus working
+   *  memory `filesTouched`, deduplicated, capped. */
+  relevantFiles: string[];
+  /** Immediate next actions. Sourced from working memory `openTasks`. */
+  nextSteps: string[];
+  /** Catch-all for anything else load-bearing that doesn't fit a bucket.
+   *  Kept short — one paragraph at most. */
+  criticalContext?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Markers + caps
+// ---------------------------------------------------------------------------
+
+export const SESSION_DIGEST_HEADER = '[SESSION_DIGEST]';
+export const SESSION_DIGEST_FOOTER = '[/SESSION_DIGEST]';
+
+/** Per-field item caps. Bounds the rendered block size for predictable
+ *  token consumption and keeps the rolling-tail message under the breakpoint
+ *  byte budget. */
+const DEFAULT_MAX_ITEMS_PER_LIST = 12;
+const DEFAULT_MAX_ITEM_CHARS = 240;
+const DEFAULT_MAX_FILES = 20;
+const DEFAULT_MAX_CRITICAL_CONTEXT_CHARS = 600;
+
+// ---------------------------------------------------------------------------
+// Materialization from records + working memory
+// ---------------------------------------------------------------------------
+
+export interface BuildSessionDigestInputs {
+  /** Memory records scoped to the current chat / repo / branch. Caller is
+   *  responsible for the scope query — the digest builder is pure. */
+  records: ReadonlyArray<MemoryRecord>;
+  /** Optional Coder working memory snapshot. When present, fills `goal`
+   *  (from `plan`), `constraints` (from `assumptions`), `progress.done`
+   *  (from `completedPhases`), `progress.inProgress` (from `currentPhase`),
+   *  `progress.blocked` (from `errorsEncountered`), `nextSteps` (from
+   *  `openTasks`), and contributes to `relevantFiles` (from `filesTouched`). */
+  workingMemory?: CoderWorkingMemory;
+  /** Optional goal override — wins over `workingMemory.plan` when both
+   *  are present. Typically populated from `UserGoalAnchor` so the anchor
+   *  and digest agree on the current ask. */
+  goal?: string;
+  /** Optional caps. Defaults are conservative — the digest stays readable
+   *  and stays under the token budget for the rolling-tail breakpoint. */
+  maxItemsPerList?: number;
+  maxItemChars?: number;
+  maxFiles?: number;
+}
+
+export function buildSessionDigest(inputs: BuildSessionDigestInputs): SessionDigest {
+  const maxItems = inputs.maxItemsPerList ?? DEFAULT_MAX_ITEMS_PER_LIST;
+  const maxChars = inputs.maxItemChars ?? DEFAULT_MAX_ITEM_CHARS;
+  const maxFiles = inputs.maxFiles ?? DEFAULT_MAX_FILES;
+
+  const wm = inputs.workingMemory;
+
+  const decisions: string[] = [];
+  const recordFiles: string[] = [];
+  const recordOutcomesDone: string[] = [];
+  const recordOutcomesBlocked: string[] = [];
+
+  for (const record of inputs.records) {
+    if (record.freshness === 'expired') continue;
+    if (record.kind === 'decision') {
+      decisions.push(record.summary);
+    } else if (record.kind === 'task_outcome') {
+      // Heuristic: `task_outcome` records' summary text tends to lead with
+      // an outcome verb. Anything explicitly flagged as failed/blocked goes
+      // to blocked; everything else counts as done. This is a heuristic, not
+      // a contract — future MemoryRecord shapes may expose an explicit
+      // `outcome: 'pass' | 'fail' | 'blocked'` we can switch on.
+      const lower = record.summary.toLowerCase();
+      if (lower.includes('blocked') || lower.includes('failed') || lower.includes('error')) {
+        recordOutcomesBlocked.push(record.summary);
+      } else {
+        recordOutcomesDone.push(record.summary);
+      }
+    } else if (record.kind === 'verification_result') {
+      const lower = record.summary.toLowerCase();
+      if (lower.includes('fail') || lower.includes('error') || lower.includes('blocked')) {
+        recordOutcomesBlocked.push(record.summary);
+      } else {
+        recordOutcomesDone.push(record.summary);
+      }
+    }
+    if (record.relatedFiles && record.relatedFiles.length > 0) {
+      recordFiles.push(...record.relatedFiles);
+    }
+  }
+
+  const goalCandidate = inputs.goal ?? wm?.plan;
+  const goal = goalCandidate && goalCandidate.trim() ? goalCandidate.trim() : undefined;
+
+  const constraints = capList(wm?.assumptions, maxItems, maxChars);
+
+  const done = capList([...(wm?.completedPhases ?? []), ...recordOutcomesDone], maxItems, maxChars);
+  const inProgress = wm?.currentPhase ? capList([wm.currentPhase], maxItems, maxChars) : [];
+  const blocked = capList(
+    [...(wm?.errorsEncountered ?? []), ...recordOutcomesBlocked],
+    maxItems,
+    maxChars,
+  );
+
+  const decisionsCapped = capList(decisions, maxItems, maxChars);
+
+  const filesCombined = [...(wm?.filesTouched ?? []), ...recordFiles];
+  const relevantFiles = capList(filesCombined, maxFiles, maxChars);
+
+  const nextSteps = capList(wm?.openTasks, maxItems, maxChars);
+
+  return {
+    ...(goal ? { goal } : {}),
+    constraints,
+    progress: { done, inProgress, blocked },
+    decisions: decisionsCapped,
+    relevantFiles,
+    nextSteps,
+  };
+}
+
+/** Deduplicate (preserve first occurrence), trim each entry to `maxChars`,
+ *  cap the list at `maxItems`. Empty / whitespace-only entries dropped. */
+function capList(
+  values: ReadonlyArray<string> | undefined,
+  maxItems: number,
+  maxChars: number,
+): string[] {
+  if (!values) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of values) {
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const clamped = trimmed.length > maxChars ? `${trimmed.slice(0, maxChars - 1)}…` : trimmed;
+    if (seen.has(clamped)) continue;
+    seen.add(clamped);
+    out.push(clamped);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
+
+/** Render a digest to its canonical block form. Empty fields are omitted so
+ *  thin digests stay readable; the block is byte-stable for the same inputs
+ *  (deterministic field order + deduplication) so prompt caching can hit. */
+export function renderSessionDigest(digest: SessionDigest): string {
+  const lines: string[] = [SESSION_DIGEST_HEADER];
+
+  if (digest.goal) lines.push(`Goal: ${digest.goal}`);
+
+  if (digest.constraints.length > 0) {
+    lines.push('Constraints:');
+    for (const c of digest.constraints) lines.push(`  - ${c}`);
+  }
+
+  const { done, inProgress, blocked } = digest.progress;
+  if (done.length > 0 || inProgress.length > 0 || blocked.length > 0) {
+    lines.push('Progress:');
+    if (done.length > 0) {
+      lines.push('  Done:');
+      for (const d of done) lines.push(`    - ${d}`);
+    }
+    if (inProgress.length > 0) {
+      lines.push('  In progress:');
+      for (const i of inProgress) lines.push(`    - ${i}`);
+    }
+    if (blocked.length > 0) {
+      lines.push('  Blocked:');
+      for (const b of blocked) lines.push(`    - ${b}`);
+    }
+  }
+
+  if (digest.decisions.length > 0) {
+    lines.push('Decisions:');
+    for (const d of digest.decisions) lines.push(`  - ${d}`);
+  }
+
+  if (digest.relevantFiles.length > 0) {
+    lines.push('Relevant files:');
+    for (const f of digest.relevantFiles) lines.push(`  - ${f}`);
+  }
+
+  if (digest.nextSteps.length > 0) {
+    lines.push('Next steps:');
+    for (const n of digest.nextSteps) lines.push(`  - ${n}`);
+  }
+
+  if (digest.criticalContext) {
+    lines.push('Critical context:');
+    lines.push(`  ${digest.criticalContext}`);
+  }
+
+  lines.push(SESSION_DIGEST_FOOTER);
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Parse
+// ---------------------------------------------------------------------------
+
+/** Find and parse a `[SESSION_DIGEST]…[/SESSION_DIGEST]` block out of a
+ *  message's content. Returns `null` if no block is present or the block
+ *  is malformed. Tolerates extra whitespace; ignores unknown field labels
+ *  (forward compat). */
+export function parseSessionDigest(content: string): SessionDigest | null {
+  const start = content.indexOf(SESSION_DIGEST_HEADER);
+  if (start === -1) return null;
+  const end = content.indexOf(SESSION_DIGEST_FOOTER, start + SESSION_DIGEST_HEADER.length);
+  if (end === -1) return null;
+
+  const body = content.slice(start + SESSION_DIGEST_HEADER.length, end);
+  const lines = body.split('\n').map((l) => l.replace(/\s+$/, ''));
+
+  const digest: SessionDigest = {
+    constraints: [],
+    progress: { done: [], inProgress: [], blocked: [] },
+    decisions: [],
+    relevantFiles: [],
+    nextSteps: [],
+  };
+
+  type ListTarget =
+    | 'constraints'
+    | 'decisions'
+    | 'relevantFiles'
+    | 'nextSteps'
+    | 'progress.done'
+    | 'progress.inProgress'
+    | 'progress.blocked';
+  let listTarget: ListTarget | null = null;
+  let inProgressBlock = false;
+  let inCriticalContext = false;
+  const criticalContextLines: string[] = [];
+
+  for (const raw of lines) {
+    const line = raw;
+    if (!line.trim()) {
+      // Blank inside the block ends a critical-context capture but not a list.
+      if (inCriticalContext) inCriticalContext = false;
+      continue;
+    }
+
+    // Top-level field labels — case-sensitive to keep the parser narrow.
+    const goalMatch = line.match(/^Goal:\s*(.+)$/);
+    if (goalMatch) {
+      digest.goal = goalMatch[1].trim();
+      listTarget = null;
+      inProgressBlock = false;
+      inCriticalContext = false;
+      continue;
+    }
+    if (line === 'Constraints:') {
+      listTarget = 'constraints';
+      inProgressBlock = false;
+      inCriticalContext = false;
+      continue;
+    }
+    if (line === 'Progress:') {
+      inProgressBlock = true;
+      listTarget = null;
+      inCriticalContext = false;
+      continue;
+    }
+    if (inProgressBlock) {
+      if (line === '  Done:') {
+        listTarget = 'progress.done';
+        continue;
+      }
+      if (line === '  In progress:') {
+        listTarget = 'progress.inProgress';
+        continue;
+      }
+      if (line === '  Blocked:') {
+        listTarget = 'progress.blocked';
+        continue;
+      }
+      // Falling out of Progress when a new top-level label is seen below.
+    }
+    if (line === 'Decisions:') {
+      listTarget = 'decisions';
+      inProgressBlock = false;
+      inCriticalContext = false;
+      continue;
+    }
+    if (line === 'Relevant files:') {
+      listTarget = 'relevantFiles';
+      inProgressBlock = false;
+      inCriticalContext = false;
+      continue;
+    }
+    if (line === 'Next steps:') {
+      listTarget = 'nextSteps';
+      inProgressBlock = false;
+      inCriticalContext = false;
+      continue;
+    }
+    if (line === 'Critical context:') {
+      inCriticalContext = true;
+      listTarget = null;
+      inProgressBlock = false;
+      continue;
+    }
+
+    // List entries: nested progress is `    - x`; top-level lists are `  - x`.
+    const topMatch = line.match(/^  - (.+)$/);
+    const nestedMatch = line.match(/^    - (.+)$/);
+    if (nestedMatch && listTarget?.startsWith('progress.')) {
+      appendToTarget(digest, listTarget, nestedMatch[1]);
+      continue;
+    }
+    if (topMatch && listTarget && !listTarget.startsWith('progress.')) {
+      appendToTarget(digest, listTarget, topMatch[1]);
+      continue;
+    }
+
+    if (inCriticalContext) {
+      const trimmed = line.startsWith('  ') ? line.slice(2) : line;
+      criticalContextLines.push(trimmed);
+      continue;
+    }
+
+    // Unknown line — ignore for forward compat.
+  }
+
+  if (criticalContextLines.length > 0) {
+    digest.criticalContext = criticalContextLines.join('\n').trim();
+  }
+
+  return digest;
+}
+
+function appendToTarget(digest: SessionDigest, target: string, value: string): void {
+  switch (target) {
+    case 'constraints':
+      digest.constraints.push(value);
+      break;
+    case 'decisions':
+      digest.decisions.push(value);
+      break;
+    case 'relevantFiles':
+      digest.relevantFiles.push(value);
+      break;
+    case 'nextSteps':
+      digest.nextSteps.push(value);
+      break;
+    case 'progress.done':
+      digest.progress.done.push(value);
+      break;
+    case 'progress.inProgress':
+      digest.progress.inProgress.push(value);
+      break;
+    case 'progress.blocked':
+      digest.progress.blocked.push(value);
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Merge
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge a newly-materialized digest into a prior one. The result preserves
+ * all prior entries, appends new ones not seen before (string equality after
+ * trim), and lets the newer scalar fields (`goal`, `criticalContext`) win
+ * when set — they represent the most current view.
+ *
+ * This is what makes multi-compaction sessions cumulative: the digest grows
+ * with the conversation rather than churning. Per-list caps from
+ * `BuildSessionDigestInputs` are reapplied after the union so a long session
+ * doesn't unbound the rendered block.
+ */
+export interface MergeSessionDigestOptions {
+  maxItemsPerList?: number;
+  maxFiles?: number;
+}
+
+export function mergeSessionDigests(
+  prior: SessionDigest,
+  next: SessionDigest,
+  options: MergeSessionDigestOptions = {},
+): SessionDigest {
+  const maxItems = options.maxItemsPerList ?? DEFAULT_MAX_ITEMS_PER_LIST;
+  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
+  return {
+    ...(next.goal || prior.goal ? { goal: next.goal ?? prior.goal } : {}),
+    constraints: mergeList(prior.constraints, next.constraints, maxItems),
+    progress: {
+      done: mergeList(prior.progress.done, next.progress.done, maxItems),
+      inProgress: mergeList(prior.progress.inProgress, next.progress.inProgress, maxItems),
+      blocked: mergeList(prior.progress.blocked, next.progress.blocked, maxItems),
+    },
+    decisions: mergeList(prior.decisions, next.decisions, maxItems),
+    relevantFiles: mergeList(prior.relevantFiles, next.relevantFiles, maxFiles),
+    nextSteps: mergeList(prior.nextSteps, next.nextSteps, maxItems),
+    ...(next.criticalContext || prior.criticalContext
+      ? {
+          criticalContext: clampCriticalContext(next.criticalContext ?? prior.criticalContext),
+        }
+      : {}),
+  };
+}
+
+function mergeList(prior: string[], next: string[], cap: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of [...prior, ...next]) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+function clampCriticalContext(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (value.length <= DEFAULT_MAX_CRITICAL_CONTEXT_CHARS) return value;
+  return `${value.slice(0, DEFAULT_MAX_CRITICAL_CONTEXT_CHARS - 1)}…`;
+}
+
+// ---------------------------------------------------------------------------
+// Detection helper
+// ---------------------------------------------------------------------------
+
+/** Does any message in the array carry a `[SESSION_DIGEST]` block in its
+ *  content? Mirrors `hasCompactionMarker` in `context-transformer.ts` — used
+ *  by the transformer stage to detect prior digests and trigger merge-in-place
+ *  rather than emit a new synthetic message. */
+export function hasSessionDigest<M extends { content?: unknown }>(
+  messages: ReadonlyArray<M>,
+): boolean {
+  return messages.some((m) => {
+    const c = (m as { content?: unknown }).content;
+    return typeof c === 'string' && c.includes(SESSION_DIGEST_HEADER);
+  });
+}

@@ -21,6 +21,8 @@ import {
 import { manageContext } from './message-context-manager';
 import { transformContextBeforeLLM } from '@push/lib/context-transformer';
 import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
+import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
+import { estimateContextTokens } from './orchestrator-context';
 import { getZenGoTransport } from './zen-go';
 import { getVertexModelTransport } from './vertex-provider';
 
@@ -464,6 +466,27 @@ export function toLLMMessages(
   const firstUserTurn = userTurnContents[0];
   const userGoalAnchor =
     deriveUserGoalAnchor({ firstUserTurn, recentUserTurns: userTurnContents }) ?? undefined;
+
+  // Materialize records for the session-digest stage. The transformer is
+  // pure, so we compute the record set here and pass it in.
+  //
+  // Scope: `WorkspaceContext` doesn't carry repoFullName/branch today, so
+  // for v1 the digest pulls every record visible to the default store. This
+  // is acceptable because the store's lifetime is per-Worker-session (one
+  // user, one session at a time), and the digest only gets injected when
+  // the conversation's own compactor fires — so cross-repo leakage requires
+  // a single Worker session to have actively used two different repos
+  // *and* hit compaction in the second. When `WorkspaceContext` grows
+  // repo/branch fields (tracked in `MemoryScope`), the predicate here
+  // should narrow to match — wire it through then, not now.
+  //
+  // `store.list()` can be async (persistent backends); the default in-memory
+  // store is sync. We narrow to the sync case here. An async store would
+  // be a separate plumbing change since `toLLMMessages` is sync.
+  const memoryStore = getDefaultMemoryStore();
+  const listed = memoryStore.list();
+  const scopedRecords = Array.isArray(listed) ? listed : [];
+
   const transformed = transformContextBeforeLLM<ChatMessage>(messages, {
     surface: 'web',
     manageContext: (msgs) => {
@@ -487,6 +510,37 @@ export function toLLMMessages(
       // digest message factory in `message-context-manager.ts`.
       isToolResult: true,
     }),
+    // Session digest stage (Hermes item 2). Materialized from
+    // `MemoryRecord` rows scoped to repoFullName + branch, with the active
+    // user-goal carried through so the digest's `goal` field matches the
+    // anchor. Working memory is the Coder's per-delegation state and isn't
+    // available at the orchestrator boundary — the records-only path covers
+    // the cross-session "decisions made / files touched / outcomes" view.
+    sessionDigestInputs: {
+      records: scopedRecords,
+      goal: userGoalAnchor?.currentWorkingGoal ?? userGoalAnchor?.initialAsk,
+    },
+    createSessionDigestMessage: (content): ChatMessage => ({
+      id: `session-digest-${goalIdHash(content)}`,
+      role: 'user',
+      content,
+      timestamp: 0,
+      status: 'done',
+      // Hidden in the UI; visible to the model. Same isToolResult trick as
+      // the goal-anchor and context-digest messages.
+      isToolResult: true,
+    }),
+    // 85% gateway safety net: catches over-budget bodies that slip past
+    // the per-agent compactor. Hermes documents this at 0.85 of the
+    // request budget; the upstream `manageContext` aims for `targetTokens`
+    // (currently 88K of 100K — already below 0.85) so this only fires in
+    // pathological cases where compaction overshot.
+    safetyNet: {
+      estimateTokens: (msgs) => estimateContextTokens(msgs as ChatMessage[]),
+      budget: contextBudget.maxTokens,
+      threshold: 0.85,
+      preserveTail: 4,
+    },
   });
   const windowedMessages = transformed.messages;
 

@@ -41,6 +41,7 @@ import {
   isParseErrorMessage,
 } from './context-manager.js';
 import { transformContextBeforeLLM, type DistillResult } from '../lib/context-transformer.ts';
+import { getDefaultMemoryStore } from '../lib/context-memory-store.ts';
 import { deriveUserGoalAnchor } from '../lib/user-goal-anchor.ts';
 import { loadUserGoalFile, seedUserGoalFile, extractDigestBody } from './user-goal-file.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
@@ -1041,6 +1042,17 @@ export async function runAssistantLoop(
         recentUserTurns: userTurnContents,
       }) ??
       undefined;
+    // Session-digest record materialization: scope-filter via `store.list()`
+    // narrowed to the sync case. Mirrors `app/src/lib/orchestrator.ts` —
+    // the CLI's default memory store is per-process and the digest is only
+    // injected when this conversation's compactor fires, so cross-session
+    // leakage requires reusing a single CLI process across repos *and*
+    // hitting compaction in the second. When `MemoryScope` gets plumbed
+    // through CLI session context, narrow the predicate here.
+    const cliMemoryStore = getDefaultMemoryStore();
+    const cliMemoryListed = cliMemoryStore.list();
+    const cliScopedRecords = Array.isArray(cliMemoryListed) ? cliMemoryListed : [];
+    const cliContextBudget = getContextBudget(providerConfig.id, state.model);
     const transformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
       surface: 'cli',
       enableFilterVisible: false,
@@ -1057,6 +1069,26 @@ export async function runAssistantLoop(
       },
       userGoalAnchor,
       createGoalMessage: (content): Message => ({ role: 'user', content }),
+      // Session digest (Hermes item 2). CLI carries `state.workingMemory`
+      // (Coder's per-delegation state) which feeds `plan` / `openTasks` /
+      // etc into the digest's structured fields. The goal flows from the
+      // active user-goal anchor so the digest and anchor agree.
+      sessionDigestInputs: {
+        records: cliScopedRecords,
+        workingMemory: state.workingMemory as WorkingMemory | undefined,
+        goal: userGoalAnchor?.currentWorkingGoal ?? userGoalAnchor?.initialAsk,
+      },
+      createSessionDigestMessage: (content): Message => ({ role: 'user', content }),
+      // 85% gateway safety net — last-line-of-defense if `trimContext`
+      // overshot. CLI's hard fallback in `applyHardFallback` already fires
+      // at 100% (maxTokens); this earlier net catches the case before the
+      // provider truncates.
+      safetyNet: {
+        estimateTokens: (msgs) => estimateContextTokens(msgs as Message[]),
+        budget: cliContextBudget.maxTokens,
+        threshold: 0.85,
+        preserveTail: 4,
+      },
     });
     // Cast through the closure-mutable ref. TS narrows `capturedDistill`
     // to its declared null because it doesn't track the synchronous
