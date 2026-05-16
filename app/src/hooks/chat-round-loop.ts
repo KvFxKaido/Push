@@ -228,7 +228,7 @@ function applyStreamErrorToConversation(loopCtx: SendLoopContext, errorMessage: 
  * Finalize a partial assistant message after abort.
  *
  * `chat-stream-round.ts` writes accumulator tokens into the last
- * assistant message as they arrive. When abort fires mid-stream the
+ * assistant message as they arrive. When abort fires mid-stream, the
  * function just returns — the message stays with whatever partial
  * content + `status: 'streaming'` it had at the cancel point. Without
  * finalization, two things go wrong:
