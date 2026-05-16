@@ -342,6 +342,63 @@ describe('runRoundLoop', () => {
     expect(toolEvents).toEqual([]);
   });
 
+  it('marks the partial assistant message visibleToModel:false on abort', () => {
+    // Producer side of the cancellation invariant the
+    // orchestrator.test.ts "aborted assistant message leakage" describe
+    // pins on the consumer side. After abort, the partial assistant
+    // message in the conversation must be finalized so the next
+    // toLLMMessages call drops it via `filterVisibleStage` in
+    // `lib/context-transformer.ts`. Specifically:
+    //
+    //   - status flips from 'streaming' to 'done' (UI stops spinning)
+    //   - visibleToModel flips to false (LLM history filter drops it)
+    //
+    // Without this finalization, the conversation retains a streaming-
+    // status assistant message containing the partial accumulator;
+    // the next send rebuilds wire history from conversation.messages
+    // and the partial rides forward.
+    const partialAssistant = makeMessage({
+      id: 'a1',
+      role: 'assistant',
+      content: '```json\n{"tool": "sandbox_exec", "args":',
+      status: 'streaming',
+    });
+    const h = makeHarness([
+      makeMessage({ id: 'u1', role: 'user', content: 'Run a command' }),
+      partialAssistant,
+    ]);
+
+    mockStreamAssistantRound.mockImplementationOnce(async () => {
+      h.loopCtx.abortRef.current = true;
+      return {
+        accumulated: '```json\n{"tool": "sandbox_exec", "args":',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      };
+    });
+
+    return runRoundLoop(
+      h.loopCtx,
+      { apiMessages: [], recoveryState: emptyRecovery },
+      {
+        runJournalEntryRef: h.runJournalEntryRef,
+        persistRunJournal: h.persistRunJournal,
+        dequeuePendingSteer: h.dequeuePendingSteer,
+        pendingSteersByChatRef: h.pendingSteersByChatRef,
+      },
+    ).then(() => {
+      const finalAssistant = h.conversationsRef.current['chat-1'].messages.at(-1);
+      expect(finalAssistant?.role).toBe('assistant');
+      expect(finalAssistant?.status).toBe('done');
+      expect(finalAssistant?.visibleToModel).toBe(false);
+      // Content is preserved — the user still sees what the model
+      // started saying before they hit Stop; only the wire-history
+      // visibility flips.
+      expect(finalAssistant?.content).toContain('sandbox_exec');
+    });
+  });
+
   // The originally-scoped "abort + resend" test was dropped before
   // merge: it asserted that the second runRoundLoop's
   // processAssistantTurn received only the new accumulator, but
