@@ -1054,8 +1054,20 @@ const OPENAI_NON_CHAT_ID_PATTERNS: RegExp[] = [
   /^text-curie-/,
   /^text-babbage-/,
   /^text-ada-/,
+  // Legacy embedding-search families: text-search-ada-doc-001,
+  // text-search-curie-query-001, etc. Anchored to ^text-search- so it
+  // does NOT match chat-capable search-preview models like
+  // gpt-4o-search-preview / gpt-4o-mini-search-preview, which route
+  // through /v1/chat/completions just like any other chat model.
+  /^text-search-/,
   /^code-/,
-  /-search-/,
+  // Legacy completions-only "-instruct" models (gpt-3.5-turbo-instruct,
+  // gpt-3.5-turbo-instruct-0914). These do NOT accept /v1/chat/completions
+  // requests, so letting them through the dropdown would surface a
+  // selection that fails at chat time. Anchored to a hyphen boundary so a
+  // hypothetical chat model with "instruct" as a substring (e.g.
+  // gpt-N-instructive) wouldn't be caught.
+  /(?:^|-)instruct(?:-|$)/,
 ];
 
 function isOpenAIChatModel(id: unknown): id is string {

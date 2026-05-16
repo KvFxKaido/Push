@@ -815,6 +815,12 @@ describe('handleOpenAIModels', () => {
               { id: 'gpt-4o' },
               { id: 'o3-mini' },
               { id: 'chatgpt-4o-latest' },
+              // Chat-capable search-preview variants. Regression coverage
+              // for a false positive Copilot caught: an unanchored
+              // /-search-/ pattern would drop these even though they route
+              // through /v1/chat/completions like every other chat model.
+              { id: 'gpt-4o-search-preview' },
+              { id: 'gpt-4o-mini-search-preview' },
               { id: 'text-embedding-3-large' },
               { id: 'text-embedding-ada-002' },
               { id: 'tts-1' },
@@ -827,6 +833,16 @@ describe('handleOpenAIModels', () => {
               { id: 'davinci-002' },
               { id: 'babbage-002' },
               { id: 'text-davinci-003' },
+              // Legacy text-search embeddings family — still excluded, but
+              // via the new anchored ^text-search- pattern.
+              { id: 'text-search-ada-doc-001' },
+              { id: 'text-search-curie-query-001' },
+              // Legacy completions-only instruct models. Regression
+              // coverage for a Codex finding: these would otherwise reach
+              // the dropdown, be selected by a user, and then 4xx at chat
+              // time because they don't accept /v1/chat/completions.
+              { id: 'gpt-3.5-turbo-instruct' },
+              { id: 'gpt-3.5-turbo-instruct-0914' },
             ],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -848,7 +864,13 @@ describe('handleOpenAIModels', () => {
       data: Array<{ id: string; name: string }>;
     };
     expect(body.object).toBe('list');
-    expect(body.data.map((m) => m.id)).toEqual(['gpt-4o', 'o3-mini', 'chatgpt-4o-latest']);
+    expect(body.data.map((m) => m.id)).toEqual([
+      'gpt-4o',
+      'o3-mini',
+      'chatgpt-4o-latest',
+      'gpt-4o-search-preview',
+      'gpt-4o-mini-search-preview',
+    ]);
     // Each surviving entry duplicates `id` into `name` — matches the curated
     // handler shape that the dropdown already consumes.
     expect(body.data.every((m) => m.name === m.id)).toBe(true);
