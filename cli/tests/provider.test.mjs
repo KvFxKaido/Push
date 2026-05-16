@@ -1246,3 +1246,189 @@ describe('streamCompletion', () => {
     });
   });
 });
+
+// ─── reasoning-block round-trip through the legacy engine path ──────────
+//
+// The bridge consumes `reasoning_blocks` on the OpenAI-shaped message and
+// re-emits them as the FIRST entries of the upstream assistant content[].
+// The forwarding chain through streamCompletion is what makes that work
+// for the legacy `cli/engine.ts` → streamCompletion path. Without these
+// tests, the field could silently get dropped at the ChatMessage → LlmMessage
+// → wire boundary again and the daemon-path tests wouldn't catch it.
+
+describe('streamCompletion reasoning-block forwarding (direct Anthropic)', () => {
+  const ANTHROPIC_CONFIG = {
+    id: 'anthropic',
+    url: 'http://test.invalid/v1/messages',
+    defaultModel: 'claude-sonnet-4-6',
+    apiKeyEnv: ['TEST_STREAM_KEY'],
+    requiresKey: false,
+    streamShape: 'anthropic',
+  };
+
+  function stringToStream(s) {
+    const encoder = new TextEncoder();
+    return new ReadableStream({
+      start(c) {
+        c.enqueue(encoder.encode(s));
+        c.close();
+      },
+    });
+  }
+
+  let originalFetch;
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('forwards ChatMessage.reasoningBlocks through the LlmMessage mapping into the Anthropic body', async () => {
+    let capturedBody;
+    globalThis.fetch = async (_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      // Yield a single content_block_delta + message_stop so the
+      // translator emits one text_delta + done. Keeps the adapter from
+      // hanging on this request.
+      const sse = [
+        `data: ${JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } })}\n\n`,
+        `data: ${JSON.stringify({ type: 'message_stop' })}\n\n`,
+      ].join('');
+      return {
+        ok: true,
+        status: 200,
+        body: stringToStream(sse),
+        headers: new Headers({ 'content-type': 'text/event-stream' }),
+        text: async () => sse,
+      };
+    };
+
+    const messages = [
+      { role: 'user', content: 'Why is the sky blue?' },
+      {
+        role: 'assistant',
+        content: 'Rayleigh scattering.',
+        reasoningBlocks: [{ type: 'thinking', text: 'Recall optics.', signature: 'sig-abc' }],
+      },
+      { role: 'user', content: 'More' },
+    ];
+
+    await streamCompletion(ANTHROPIC_CONFIG, 'sk', 'claude-opus-4-7', messages, null);
+
+    // The bridge translates the OpenAI-shaped reasoning_blocks into the
+    // Anthropic content[] prefix. Without the streamCompletion mapping
+    // forwarding the field, this assertion would fire on a plain-text
+    // content array — the regression that triggered this test.
+    const assistantTurn = capturedBody.messages[1];
+    assert.equal(assistantTurn.role, 'assistant');
+    assert.ok(Array.isArray(assistantTurn.content));
+    assert.deepEqual(assistantTurn.content[0], {
+      type: 'thinking',
+      thinking: 'Recall optics.',
+      signature: 'sig-abc',
+    });
+  });
+
+  it('fires onReasoningBlock for each reasoning_block event the adapter emits', async () => {
+    // Build an Anthropic SSE stream that opens a `thinking` block, streams
+    // text + signature deltas, then closes — the bridge translates this
+    // into a single reasoning_block PushStreamEvent which the
+    // streamCompletion loop must forward to onReasoningBlock.
+    const frames = [
+      // message_start
+      `data: ${JSON.stringify({ type: 'message_start', message: { id: 'm1' } })}\n\n`,
+      // content_block_start: open a thinking block at index 0
+      `data: ${JSON.stringify({
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'thinking', thinking: '', signature: '' },
+      })}\n\n`,
+      // thinking_delta
+      `data: ${JSON.stringify({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'Need to think...' },
+      })}\n\n`,
+      // signature_delta
+      `data: ${JSON.stringify({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'signature_delta', signature: 'sig-xyz' },
+      })}\n\n`,
+      // content_block_stop: closes the thinking block → emits reasoning_block
+      `data: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`,
+      // message_stop
+      `data: ${JSON.stringify({ type: 'message_stop' })}\n\n`,
+    ].join('');
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      body: stringToStream(frames),
+      headers: new Headers({ 'content-type': 'text/event-stream' }),
+      text: async () => frames,
+    });
+
+    const capturedBlocks = [];
+    await streamCompletion(
+      ANTHROPIC_CONFIG,
+      'sk',
+      'claude-opus-4-7',
+      [{ role: 'user', content: 'hi' }],
+      null,
+      undefined,
+      null,
+      {
+        onReasoningBlock: (block) => capturedBlocks.push(block),
+      },
+    );
+
+    assert.equal(capturedBlocks.length, 1, 'one reasoning_block event expected');
+    assert.deepEqual(capturedBlocks[0], {
+      type: 'thinking',
+      text: 'Need to think...',
+      signature: 'sig-xyz',
+    });
+  });
+
+  it('does not fire onReasoningBlock when the adapter never emits reasoning_block (OpenAI-compat path)', async () => {
+    // Non-Anthropic adapters never emit reasoning_block PushStreamEvents,
+    // so the callback should stay silent — pins the contract that
+    // callers can always wire the callback without worrying about
+    // spurious fires on plain-text providers.
+    const openaiCompatConfig = {
+      id: 'openrouter',
+      url: 'http://test.invalid/v1/chat/completions',
+      defaultModel: 'test-model',
+      apiKeyEnv: ['TEST_STREAM_KEY'],
+      requiresKey: false,
+    };
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      body: stringToStream(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })}\n\ndata: [DONE]\n\n`,
+      ),
+      headers: new Headers({ 'content-type': 'text/event-stream' }),
+      text: async () => '',
+    });
+
+    const capturedBlocks = [];
+    await streamCompletion(
+      openaiCompatConfig,
+      'sk',
+      'model',
+      [{ role: 'user', content: 'hi' }],
+      null,
+      undefined,
+      null,
+      {
+        onReasoningBlock: (block) => capturedBlocks.push(block),
+      },
+    );
+
+    assert.equal(capturedBlocks.length, 0);
+  });
+});
