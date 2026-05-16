@@ -20,7 +20,7 @@ import {
   createAnthropicTranslatedStream,
 } from '@push/lib/openai-anthropic-bridge';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
-import { ANTHROPIC_MODELS, GOOGLE_MODELS } from '@push/lib/provider-models';
+import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import {
   buildGeminiGenerateContentRequest,
   createGeminiTranslatedStream,
@@ -1036,24 +1036,148 @@ export const handleOpenAIChat = createStreamProxyHandler({
   }),
 });
 
-export const handleOpenAIModels = createJsonProxyHandler({
-  name: 'OpenAI',
-  logTag: 'api/openai/models',
-  upstreamUrl: 'https://api.openai.com/v1/models',
-  method: 'GET',
-  timeoutMs: 30_000,
-  buildAuth: standardAuth('OPENAI_API_KEY'),
-  keyMissingError:
-    'OpenAI API key not configured. Add it in Settings or set OPENAI_API_KEY on the Worker.',
-  timeoutError: 'OpenAI model list timed out after 30 seconds',
-});
+// OpenAI's /v1/models returns embeddings, TTS, Whisper, image, moderation, and
+// legacy text-completion models alongside chat models — none of which the chat
+// dropdown should surface. There's no public capability flag in the response,
+// so we deny-list by id prefix. New chat families (gpt-N, oN, chatgpt-*) flow
+// through automatically; new non-chat categories would need a list update.
+const OPENAI_NON_CHAT_ID_PATTERNS: RegExp[] = [
+  /^text-embedding-/,
+  /^tts-/,
+  /^whisper-/,
+  /^dall-e-/,
+  /^gpt-image-/,
+  /-moderation-/,
+  /^babbage-/,
+  /^davinci-/,
+  /^text-davinci-/,
+  /^text-curie-/,
+  /^text-babbage-/,
+  /^text-ada-/,
+  /^code-/,
+  /-search-/,
+];
+
+function isOpenAIChatModel(id: unknown): id is string {
+  if (typeof id !== 'string' || id.length === 0) return false;
+  return !OPENAI_NON_CHAT_ID_PATTERNS.some((re) => re.test(id));
+}
+
+const OPENAI_MODELS_URL = 'https://api.openai.com/v1/models';
+const OPENAI_MODELS_TIMEOUT_MS = 30_000;
+
+export async function handleOpenAIModels(request: Request, env: Env): Promise<Response> {
+  // Preamble runs origin check + rate-limit even when we end up serving the
+  // curated fallback — keeps this route in the same bucket as the chat route
+  // and the other /models proxies. `buildAuth` returns a placeholder so the
+  // preamble doesn't 401 when the key is missing; the real key check happens
+  // below so a missing key falls back to the curated list instead.
+  const preamble = await runPreamble(request, env, {
+    buildAuth: () => 'OpenAIChatModelsList',
+    needsBody: false,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { requestId } = preamble;
+
+  const apiKey = resolveDirectProviderKey(env.OPENAI_API_KEY, request);
+  if (!apiKey) {
+    return curatedOpenAIModelsResponse(requestId);
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), OPENAI_MODELS_TIMEOUT_MS);
+    let upstream: Response;
+    try {
+      upstream = await fetch(OPENAI_MODELS_URL, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          [REQUEST_ID_HEADER]: requestId,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const body = await upstream.text().catch(() => '');
+      wlog('warn', 'upstream_error_fallback', {
+        requestId,
+        route: 'api/openai/models',
+        status: upstream.status,
+        body: body.slice(0, 300),
+      });
+      return curatedOpenAIModelsResponse(requestId);
+    }
+
+    const json = (await upstream.json().catch(() => null)) as {
+      data?: Array<{ id?: unknown }>;
+    } | null;
+    const upstreamData = Array.isArray(json?.data) ? json!.data : [];
+    const filtered = upstreamData
+      .map((entry) => (entry && typeof entry === 'object' ? entry.id : null))
+      .filter(isOpenAIChatModel)
+      .map((id) => ({ id, name: id }));
+
+    // Empty result after filtering is suspicious (upstream shape drift, or
+    // the deny-list matched every id) — prefer the curated list over an
+    // empty dropdown.
+    if (filtered.length === 0) {
+      wlog('warn', 'empty_after_filter_fallback', {
+        requestId,
+        route: 'api/openai/models',
+        upstreamCount: upstreamData.length,
+      });
+      return curatedOpenAIModelsResponse(requestId);
+    }
+
+    return Response.json(
+      { object: 'list', data: filtered },
+      { headers: { [REQUEST_ID_HEADER]: requestId } },
+    );
+  } catch (err) {
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    wlog('warn', isTimeout ? 'upstream_timeout_fallback' : 'unhandled_fallback', {
+      requestId,
+      route: 'api/openai/models',
+      message: err instanceof Error ? err.message : String(err),
+      timeout: isTimeout,
+    });
+    return curatedOpenAIModelsResponse(requestId);
+  }
+}
+
+function curatedOpenAIModelsResponse(requestId: string): Response {
+  return Response.json(
+    { object: 'list', data: OPENAI_MODELS.map((id) => ({ id, name: id })) },
+    { headers: { [REQUEST_ID_HEADER]: requestId } },
+  );
+}
+
+/** Resolve a direct-provider API key from the server env first, else the
+ *  client's Authorization: Bearer header. Mirrors `standardAuth` in
+ *  worker-middleware.ts but used inline here so the handler can decide to
+ *  fall back to curated instead of 401-ing when no key resolves. */
+function resolveDirectProviderKey(serverKey: string | undefined, request: Request): string | null {
+  if (serverKey && serverKey.trim()) return serverKey.trim();
+  const auth = request.headers.get('Authorization');
+  if (!auth) return null;
+  return auth.startsWith('Bearer ') ? auth.slice(7).trim() || null : auth.trim() || null;
+}
 
 // --- Anthropic Claude (direct /v1/messages) ---
 //
 // Models: serve the curated `ANTHROPIC_MODELS` list. Anthropic does have a
-// live `/v1/models` endpoint, but proxying it would add another auth path +
-// rate-limit class without changing the dropdown content materially; the
-// curated list is the source of truth until the live proxy lands later.
+// live `/v1/models` endpoint, but its full list closely matches what's
+// curated anyway and proxying it adds another auth path + rate-limit class
+// without changing the dropdown content materially. Unlike OpenAI/Gemini
+// (which return embeddings/TTS/etc the chat dropdown has to filter out),
+// the Anthropic catalog is small enough that the curated list stays in sync
+// without continuous upstream polling. Leave curated until / unless the
+// dropdown needs surface parity with new Claude releases the moment they
+// ship — at which point mirror handleOpenAIModels.
 //
 // Modeled on handleVertexChat's native-Anthropic transport path. Difference:
 // auth is a flat `x-api-key` header instead of OAuth, no project/region path
@@ -1214,11 +1338,11 @@ export async function handleAnthropicModels(request: Request, env: Env): Promise
 // public `generativelanguage.googleapis.com` host that takes a plain API key
 // (no service-account OAuth, no project/region path segments).
 //
-// Models: serve the curated `GOOGLE_MODELS` list. Gemini does have a live
-// `/v1beta/models` endpoint, but proxying it would also require filtering for
-// chat-capable models (the upstream list includes embeddings and image-only
-// models); the curated list is the source of truth until the live proxy lands
-// later.
+// Models: live proxy against `/v1beta/models`, filtered to chat-capable
+// entries via the upstream's `supportedGenerationMethods` array (the
+// canonical capability flag). Falls back to the curated `GOOGLE_MODELS`
+// list when the key is missing or upstream is unhealthy so the dropdown
+// stays populated for offline / unconfigured dev paths.
 
 const GOOGLE_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -1341,16 +1465,108 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
   }
 }
 
+const GOOGLE_MODELS_TIMEOUT_MS = 30_000;
+
 export async function handleGoogleModels(request: Request, env: Env): Promise<Response> {
+  // Same preamble trick as handleOpenAIModels: placeholder auth so the
+  // preamble doesn't 401 on missing key — we check the real key below and
+  // fall back to the curated list instead of returning an error.
   const preamble = await runPreamble(request, env, {
-    buildAuth: () => 'GoogleCuratedList',
+    buildAuth: () => 'GoogleChatModelsList',
     needsBody: false,
   });
   if (preamble instanceof Response) return preamble;
-  return Response.json({
-    object: 'list',
-    data: GOOGLE_MODELS.map((id) => ({ id, name: id })),
-  });
+  const { requestId } = preamble;
+
+  const apiKey = resolveDirectProviderKey(env.GOOGLE_API_KEY, request);
+  if (!apiKey) {
+    return curatedGoogleModelsResponse(requestId);
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), GOOGLE_MODELS_TIMEOUT_MS);
+    let upstream: Response;
+    try {
+      upstream = await fetch(`${GOOGLE_API_BASE}/models?pageSize=200`, {
+        method: 'GET',
+        headers: {
+          'x-goog-api-key': apiKey,
+          [REQUEST_ID_HEADER]: requestId,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const body = await upstream.text().catch(() => '');
+      wlog('warn', 'upstream_error_fallback', {
+        requestId,
+        route: 'api/google/models',
+        status: upstream.status,
+        body: body.slice(0, 300),
+      });
+      return curatedGoogleModelsResponse(requestId);
+    }
+
+    // Gemini's models endpoint returns objects of shape:
+    //   { name: "models/gemini-2.5-flash", supportedGenerationMethods: [...] }
+    // The `name` carries a `models/` prefix that the chat URL builder doesn't
+    // expect, and `supportedGenerationMethods` is the canonical capability
+    // flag — `generateContent` (and its streaming sibling) marks chat-capable
+    // entries. Embeddings models advertise `embedContent` instead and are
+    // filtered out here.
+    const json = (await upstream.json().catch(() => null)) as {
+      models?: Array<{ name?: unknown; supportedGenerationMethods?: unknown }>;
+    } | null;
+    const upstreamModels = Array.isArray(json?.models) ? json!.models : [];
+    const filtered = upstreamModels
+      .filter((entry): entry is { name: string; supportedGenerationMethods: string[] } => {
+        if (!entry || typeof entry !== 'object') return false;
+        if (typeof entry.name !== 'string' || entry.name.length === 0) return false;
+        const methods = entry.supportedGenerationMethods;
+        if (!Array.isArray(methods)) return false;
+        return methods.includes('generateContent');
+      })
+      .map((entry) => {
+        const id = entry.name.startsWith('models/')
+          ? entry.name.slice('models/'.length)
+          : entry.name;
+        return { id, name: id };
+      });
+
+    if (filtered.length === 0) {
+      wlog('warn', 'empty_after_filter_fallback', {
+        requestId,
+        route: 'api/google/models',
+        upstreamCount: upstreamModels.length,
+      });
+      return curatedGoogleModelsResponse(requestId);
+    }
+
+    return Response.json(
+      { object: 'list', data: filtered },
+      { headers: { [REQUEST_ID_HEADER]: requestId } },
+    );
+  } catch (err) {
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    wlog('warn', isTimeout ? 'upstream_timeout_fallback' : 'unhandled_fallback', {
+      requestId,
+      route: 'api/google/models',
+      message: err instanceof Error ? err.message : String(err),
+      timeout: isTimeout,
+    });
+    return curatedGoogleModelsResponse(requestId);
+  }
+}
+
+function curatedGoogleModelsResponse(requestId: string): Response {
+  return Response.json(
+    { object: 'list', data: GOOGLE_MODELS.map((id) => ({ id, name: id })) },
+    { headers: { [REQUEST_ID_HEADER]: requestId } },
+  );
 }
 
 // --- Ollama Web Search proxy ---

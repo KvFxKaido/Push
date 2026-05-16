@@ -798,22 +798,135 @@ describe('handleOpenAIChat', () => {
 });
 
 describe('handleOpenAIModels', () => {
-  it('proxies GET https://api.openai.com/v1/models with the server key', async () => {
+  it('GETs https://api.openai.com/v1/models with the server key and filters to chat-capable ids', async () => {
     let captured: { url: string; init: RequestInit } | undefined;
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string, init: RequestInit) => {
         captured = { url, init };
-        return new Response(JSON.stringify({ object: 'list', data: [] }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
+        // A sampling of the categories OpenAI's /v1/models actually returns:
+        // chat models (gpt-4o, o3-mini), embeddings, TTS, Whisper, image,
+        // moderation, and the legacy davinci-002 completion model. The chat
+        // dropdown only wants the first two.
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            data: [
+              { id: 'gpt-4o' },
+              { id: 'o3-mini' },
+              { id: 'chatgpt-4o-latest' },
+              { id: 'text-embedding-3-large' },
+              { id: 'text-embedding-ada-002' },
+              { id: 'tts-1' },
+              { id: 'tts-1-hd' },
+              { id: 'whisper-1' },
+              { id: 'dall-e-3' },
+              { id: 'gpt-image-1' },
+              { id: 'omni-moderation-latest' },
+              { id: 'text-moderation-stable' },
+              { id: 'davinci-002' },
+              { id: 'babbage-002' },
+              { id: 'text-davinci-003' },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
       }),
     );
-    await handleOpenAIModels(makeModelsRequest(), makeEnv({ OPENAI_API_KEY: 'sk-server' }));
+
+    const response = await handleOpenAIModels(
+      makeModelsRequest(),
+      makeEnv({ OPENAI_API_KEY: 'sk-server' }),
+    );
     expect(captured?.url).toBe('https://api.openai.com/v1/models');
     const headers = captured?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer sk-server');
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      object: string;
+      data: Array<{ id: string; name: string }>;
+    };
+    expect(body.object).toBe('list');
+    expect(body.data.map((m) => m.id)).toEqual(['gpt-4o', 'o3-mini', 'chatgpt-4o-latest']);
+    // Each surviving entry duplicates `id` into `name` — matches the curated
+    // handler shape that the dropdown already consumes.
+    expect(body.data.every((m) => m.name === m.id)).toBe(true);
+  });
+
+  it('falls back to the curated OPENAI_MODELS list when no key is configured (no upstream fetch)', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleOpenAIModels(makeModelsRequest(), makeEnv());
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data.length).toBeGreaterThan(0);
+    expect(body.data.every((m) => typeof m.id === 'string' && m.id.length > 0)).toBe(true);
+  });
+
+  it('falls back to the curated list on upstream 401 (bad key) instead of bubbling the error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'Invalid API key' } }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+    const response = await handleOpenAIModels(
+      makeModelsRequest(),
+      makeEnv({ OPENAI_API_KEY: 'sk-bad' }),
+    );
+    // Curated fallback is a 200 — pins the contract that the dropdown stays
+    // populated when the user's saved key has been rotated/revoked.
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data.length).toBeGreaterThan(0);
+  });
+
+  it('falls back to the curated list when filtering empties the upstream result (shape drift defense)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            // Only non-chat entries — would otherwise yield an empty dropdown.
+            JSON.stringify({
+              object: 'list',
+              data: [{ id: 'text-embedding-3-small' }, { id: 'tts-1' }, { id: 'whisper-1' }],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    );
+    const response = await handleOpenAIModels(
+      makeModelsRequest(),
+      makeEnv({ OPENAI_API_KEY: 'sk-good' }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data.length).toBeGreaterThan(0);
+    // Confirm this IS the curated list, not the filtered (empty) upstream.
+    expect(body.data.some((m) => /^gpt-/.test(m.id))).toBe(true);
+  });
+
+  it('falls back to the curated list when upstream fetch throws a network error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('connect ECONNREFUSED');
+      }),
+    );
+    const response = await handleOpenAIModels(
+      makeModelsRequest(),
+      makeEnv({ OPENAI_API_KEY: 'sk-good' }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data.length).toBeGreaterThan(0);
   });
 });
 
@@ -910,14 +1023,142 @@ describe('handleGoogleChat', () => {
 });
 
 describe('handleGoogleModels', () => {
-  it('returns the curated GOOGLE_MODELS list (no upstream fetch)', async () => {
+  it('GETs generativelanguage.googleapis.com/v1beta/models with x-goog-api-key, filters by supportedGenerationMethods, strips `models/` prefix', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        // Sample of what /v1beta/models actually returns: chat-capable
+        // (generateContent), embeddings (embedContent), and streaming-only
+        // entries (streamGenerateContent without generateContent — rare,
+        // generally excluded). Each carries a `models/` prefix.
+        return new Response(
+          JSON.stringify({
+            models: [
+              {
+                name: 'models/gemini-2.5-flash',
+                supportedGenerationMethods: ['generateContent', 'streamGenerateContent'],
+              },
+              {
+                name: 'models/gemini-3-flash-preview',
+                supportedGenerationMethods: ['generateContent', 'streamGenerateContent'],
+              },
+              {
+                name: 'models/text-embedding-004',
+                supportedGenerationMethods: ['embedContent'],
+              },
+              {
+                name: 'models/aqa',
+                supportedGenerationMethods: ['generateAnswer'],
+              },
+              // Missing capability array — drop it as malformed.
+              { name: 'models/gemini-malformed' },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }),
+    );
+
+    const response = await handleGoogleModels(
+      makeModelsRequest(),
+      makeEnv({ GOOGLE_API_KEY: 'AIza-server' }),
+    );
+    expect(captured?.url).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',
+    );
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers['x-goog-api-key']).toBe('AIza-server');
+    // No Authorization header — Gemini uses x-goog-api-key exclusively, and
+    // smuggling a Bearer through would confuse the upstream auth path.
+    expect(headers.Authorization).toBeUndefined();
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      object: string;
+      data: Array<{ id: string; name: string }>;
+    };
+    expect(body.object).toBe('list');
+    // Only the two generateContent-capable entries survive, and the
+    // `models/` prefix is stripped from each id.
+    expect(body.data.map((m) => m.id)).toEqual(['gemini-2.5-flash', 'gemini-3-flash-preview']);
+    expect(body.data.every((m) => m.name === m.id)).toBe(true);
+    expect(body.data.every((m) => !m.id.startsWith('models/'))).toBe(true);
+  });
+
+  it('falls back to the curated GOOGLE_MODELS list when no key is configured (no upstream fetch)', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     const response = await handleGoogleModels(makeModelsRequest(), makeEnv());
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(response.status).toBe(200);
     const body = (await response.json()) as { data: Array<{ id: string }> };
     expect(body.data.length).toBeGreaterThan(0);
-    expect(body.data.every((m) => typeof m.id === 'string')).toBe(true);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(body.data.every((m) => typeof m.id === 'string' && m.id.length > 0)).toBe(true);
+  });
+
+  it('falls back to the curated list on upstream 400 (bad key) instead of bubbling the error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'API key not valid' } }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+    const response = await handleGoogleModels(
+      makeModelsRequest(),
+      makeEnv({ GOOGLE_API_KEY: 'AIza-bad' }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data.length).toBeGreaterThan(0);
+  });
+
+  it('falls back to the curated list when no upstream entry advertises generateContent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              models: [
+                {
+                  name: 'models/text-embedding-004',
+                  supportedGenerationMethods: ['embedContent'],
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    );
+    const response = await handleGoogleModels(
+      makeModelsRequest(),
+      makeEnv({ GOOGLE_API_KEY: 'AIza-good' }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data.length).toBeGreaterThan(0);
+    expect(body.data.some((m) => /^gemini-/.test(m.id))).toBe(true);
+  });
+
+  it('falls back to the curated list when upstream fetch throws a network error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('connect ECONNREFUSED');
+      }),
+    );
+    const response = await handleGoogleModels(
+      makeModelsRequest(),
+      makeEnv({ GOOGLE_API_KEY: 'AIza-good' }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data.length).toBeGreaterThan(0);
   });
 });
