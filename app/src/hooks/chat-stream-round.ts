@@ -17,8 +17,42 @@ import { drainRecentContextMetrics } from '@/lib/context-metrics';
 import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
 import { buildTodoContext } from '@/lib/todo-tools';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
+import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
+import { type SessionDigest, SESSION_DIGEST_HEADER } from '@push/lib/session-digest';
+
+/** Threshold above which we eagerly pre-fetch memory records each round
+ *  even without a compaction marker. Chosen well below the typical
+ *  manageContext trigger so we don't ever miss a first-compaction turn,
+ *  but high enough to skip the cost on warm-up turns. The actual
+ *  compaction decision still happens in `manageContext`. */
+const MIN_MESSAGES_BEFORE_PREFETCH = 20;
 import type { ChatMessage, ReasoningBlock } from '@/types';
 import type { SendLoopContext, StreamRoundResult } from './chat-send-types';
+
+/**
+ * Cross-turn cache for the last `SessionDigest` emitted per chat. The
+ * synthetic digest message lives only in the transformer's output and is
+ * not written back into the canonical conversation transcript, so without
+ * this cache the digest stage would re-emit a fresh digest every
+ * compaction (Copilot review on PR #574). Caller persistence here is what
+ * makes the cumulative-merge behavior reach production.
+ *
+ * Module-scoped, keyed by `chatId`. Page reload clears it — that's
+ * acceptable for v1 since the digest is a compaction-time anchor, not
+ * durable session state. Capped to bound memory.
+ */
+const MAX_CACHED_DIGESTS = 64;
+const _lastSessionDigests = new Map<string, SessionDigest>();
+
+function recordSessionDigest(chatId: string, digest: SessionDigest): void {
+  if (_lastSessionDigests.has(chatId)) {
+    _lastSessionDigests.delete(chatId);
+  } else if (_lastSessionDigests.size >= MAX_CACHED_DIGESTS) {
+    const oldest = _lastSessionDigests.keys().next().value;
+    if (oldest !== undefined) _lastSessionDigests.delete(oldest);
+  }
+  _lastSessionDigests.set(chatId, digest);
+}
 
 export async function streamAssistantRound(
   round: number,
@@ -71,6 +105,42 @@ export async function streamAssistantRound(
   }
   if (invariantError) {
     return { accumulated, thinkingAccumulated, reasoningBlocks, error: invariantError };
+  }
+
+  // Pre-fetch the scope-filtered MemoryRecord rows for the session-digest
+  // stage — but only when the stage might actually fire. The IndexedDB
+  // `list(predicate)` loads every record before filtering; on a hot path
+  // that runs every round even though the digest no-ops until compaction,
+  // the full read is wasted work (PR #574 review). Two cheap signals
+  // indicate compaction is in play:
+  //   (a) a durable compaction marker already in the transcript (a prior
+  //       turn compacted; this turn likely will too and future-merge into
+  //       that lineage)
+  //   (b) message count is high enough that compaction is plausible this
+  //       turn (rough threshold — the actual decision happens in
+  //       `manageContext`; we just need a not-too-tight gate)
+  // When neither holds, skip the prefetch and let the digest stage emit
+  // an empty-records digest (or no digest at all if compaction doesn't
+  // trigger). Persisted records get picked up on the first compacted turn.
+  const compactionLikely =
+    apiMessages.some(
+      (m) =>
+        typeof m.content === 'string' &&
+        (m.content.includes('[CONTEXT DIGEST]') ||
+          m.content.includes(SESSION_DIGEST_HEADER) ||
+          m.content.includes('[USER_GOAL]')),
+    ) || apiMessages.length > MIN_MESSAGES_BEFORE_PREFETCH;
+  const memoryStore = getDefaultMemoryStore();
+  let sessionDigestRecords: Awaited<ReturnType<typeof memoryStore.list>> = [];
+  if (compactionLikely) {
+    try {
+      const listed = memoryStore.list((record) => record.scope.chatId === chatId);
+      sessionDigestRecords = await Promise.resolve(listed);
+    } catch {
+      // Memory store is best-effort. A read failure shouldn't block the turn —
+      // the digest just falls back to working-memory + goal only.
+      sessionDigestRecords = [];
+    }
   }
 
   const error = await new Promise<Error | null>((resolve) => {
@@ -167,6 +237,17 @@ export async function streamAssistantRound(
           }
           return { ...prev, [chatId]: { ...conv, messages: msgs } };
         });
+      },
+      {
+        records: sessionDigestRecords,
+        prior: _lastSessionDigests.get(chatId),
+        onEmit: (digest) => {
+          // Persist the digest the model actually saw so next turn's
+          // `priorSessionDigest` is non-empty — what makes the merge
+          // accumulate across turns. `null` means no digest this turn
+          // (no compaction), so don't overwrite an existing entry.
+          if (digest) recordSessionDigest(chatId, digest);
+        },
       },
     );
   });

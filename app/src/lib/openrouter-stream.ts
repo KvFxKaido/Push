@@ -41,6 +41,11 @@ export async function* openrouterStream(
     req.onPreCompact,
     undefined,
     req.todoContent,
+    {
+      records: req.sessionDigestRecords,
+      prior: req.priorSessionDigest,
+      onEmit: req.onSessionDigestEmitted,
+    },
   );
 
   // 2. Layer in OpenRouter-specific body extensions (reasoning effort,

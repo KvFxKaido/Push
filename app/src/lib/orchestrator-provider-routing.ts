@@ -373,6 +373,19 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
   }
 }
 
+export interface SessionDigestPlumbing {
+  /** Pre-fetched, scope-filtered `MemoryRecord` rows for the digest stage.
+   *  Awaited by the caller (`store.list(predicate)` returns a Promise in
+   *  the production IndexedDB-backed store). */
+  records?: ReadonlyArray<import('@push/lib/runtime-contract').MemoryRecord>;
+  /** Most-recent digest from the previous turn, persisted by the caller
+   *  between turns. */
+  prior?: import('@push/lib/session-digest').SessionDigest;
+  /** Persistence sink for the digest emitted this turn. Caller stores it
+   *  and passes it as `prior` on the next turn. */
+  onEmit?: (digest: import('@push/lib/session-digest').SessionDigest | null) => void;
+}
+
 export async function streamChat(
   messages: ChatMessage[],
   onToken: (token: string, meta?: ChunkMetadata) => void,
@@ -388,6 +401,7 @@ export async function streamChat(
   onPreCompact?: (event: PreCompactEvent) => void,
   todoContent?: string,
   onReasoningBlock?: (block: ReasoningBlock) => void,
+  sessionDigest?: SessionDigestPlumbing,
 ): Promise<void> {
   const provider = providerOverride || getActiveProvider();
 
@@ -448,6 +462,9 @@ export async function streamChat(
       hasSandbox,
       onPreCompact,
       signal,
+      sessionDigestRecords: sessionDigest?.records,
+      priorSessionDigest: sessionDigest?.prior,
+      onSessionDigestEmitted: sessionDigest?.onEmit,
     },
     {
       onToken: wrappedOnToken,

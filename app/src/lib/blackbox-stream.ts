@@ -43,6 +43,11 @@ export async function* blackboxStream(
     req.onPreCompact,
     undefined,
     req.todoContent,
+    {
+      records: req.sessionDigestRecords,
+      prior: req.priorSessionDigest,
+      onEmit: req.onSessionDigestEmitted,
+    },
   );
 
   const body: Record<string, unknown> = {

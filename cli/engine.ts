@@ -41,6 +41,9 @@ import {
   isParseErrorMessage,
 } from './context-manager.js';
 import { transformContextBeforeLLM, type DistillResult } from '../lib/context-transformer.ts';
+import { getDefaultMemoryStore } from '../lib/context-memory-store.ts';
+import { isSyntheticDigestMessage, parseSessionDigest } from '../lib/session-digest.ts';
+import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { deriveUserGoalAnchor } from '../lib/user-goal-anchor.ts';
 import { loadUserGoalFile, seedUserGoalFile, extractDigestBody } from './user-goal-file.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
@@ -146,6 +149,11 @@ interface MetaEnvelope {
   estimatedTokens: number;
   ledger: unknown;
   workingMemory?: unknown;
+  /** Most-recent SessionDigest emitted by the per-agent context transformer.
+   *  Persisted across rounds so the digest accumulates rather than churning
+   *  fresh on every compaction. Set by the `onSessionDigestEmitted` hook on
+   *  the digest stage; consumed as `priorSessionDigest` on the next round. */
+  lastSessionDigest?: unknown;
 }
 
 interface ProjectInstructions {
@@ -162,6 +170,13 @@ export const DEFAULT_MAX_ROUNDS: number = 30;
 // Sentinel appended to the base prompt — signals that workspace context
 // (git status, project instructions, memory) still needs to be loaded.
 const NEEDS_ENRICHMENT: string = '[WORKSPACE_PENDING]';
+
+/** Threshold above which we eagerly pre-fetch memory records each round
+ *  even without a compaction marker. Mirrors the web-side constant in
+ *  `app/src/hooks/chat-stream-round.ts`. Well below typical compaction
+ *  triggers so we don't ever miss a first-compaction turn; high enough to
+ *  skip the cost on warm-up turns. */
+const MIN_MESSAGES_BEFORE_CLI_PREFETCH = 20;
 
 const DEBUG_PROMPTS: boolean = process.env.PUSH_DEBUG === '1' || process.env.PUSH_DEBUG === 'true';
 
@@ -1041,6 +1056,59 @@ export async function runAssistantLoop(
         recentUserTurns: userTurnContents,
       }) ??
       undefined;
+    // Session-digest record materialization — but only when compaction is
+    // plausible this round. The file-backed store's `list(predicate)` scans
+    // every repo/branch JSONL file before filtering, so eagerly prefetching
+    // on every round is wasted work for non-compacted turns. Match the
+    // web-side heuristic: prefetch when a durable compaction marker is
+    // already in the transcript OR the message count is past a low
+    // threshold. The digest stage no-ops without prefetched records.
+    //
+    // Scope filter: `createFileMemoryStore().list()` scans every JSONL
+    // file under `~/.push/memory` (one per repo+branch), so without a
+    // predicate the digest pulls decisions/files/outcomes from unrelated
+    // repos into this session's prompt. `resolveWorkspaceIdentity(cwd)`
+    // gives us the repoFullName + branch the writers (task-graph-memory,
+    // coder/explorer outcomes) used; matching on those keeps the
+    // cross-repo records out of the digest.
+    const compactionLikelyCli =
+      (state.messages as Message[]).some((m) => {
+        const c = (m as { content?: unknown }).content;
+        return (
+          typeof c === 'string' &&
+          (c.includes('[CONTEXT DIGEST]') ||
+            c.includes('[SESSION_DIGEST]') ||
+            c.includes('[USER_GOAL]'))
+        );
+      }) || (state.messages as Message[]).length > MIN_MESSAGES_BEFORE_CLI_PREFETCH;
+    const cliMemoryStore = getDefaultMemoryStore();
+    let cliScopedRecords: Awaited<ReturnType<typeof cliMemoryStore.list>> = [];
+    if (compactionLikelyCli) {
+      const cliWorkspaceIdentity = await resolveWorkspaceIdentity(state.cwd);
+      try {
+        cliScopedRecords = await Promise.resolve(
+          cliMemoryStore.list((record) => {
+            // No identity (non-git workspace, transient session) → fall back
+            // to the conservative "include everything" path. This matches the
+            // current behavior for ad-hoc CLI runs without a git remote.
+            if (!cliWorkspaceIdentity.repoFullName) return true;
+            if (record.scope.repoFullName !== cliWorkspaceIdentity.repoFullName) return false;
+            // Branch is optional on both sides; only filter when both are set.
+            if (
+              cliWorkspaceIdentity.branch &&
+              record.scope.branch &&
+              record.scope.branch !== cliWorkspaceIdentity.branch
+            ) {
+              return false;
+            }
+            return true;
+          }),
+        );
+      } catch {
+        cliScopedRecords = [];
+      }
+    }
+    const cliContextBudget = getContextBudget(providerConfig.id, state.model);
     const transformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
       surface: 'cli',
       enableFilterVisible: false,
@@ -1057,7 +1125,51 @@ export async function runAssistantLoop(
       },
       userGoalAnchor,
       createGoalMessage: (content): Message => ({ role: 'user', content }),
+      // Session digest (Hermes item 2). CLI carries `state.workingMemory`
+      // (Coder's per-delegation state) which feeds `plan` / `openTasks` /
+      // etc into the digest's structured fields. The goal flows from the
+      // active user-goal anchor so the digest and anchor agree.
+      sessionDigestInputs: {
+        records: cliScopedRecords,
+        workingMemory: state.workingMemory as WorkingMemory | undefined,
+        goal: userGoalAnchor?.currentWorkingGoal ?? userGoalAnchor?.initialAsk,
+      },
+      // Cross-turn merge anchor: last round's emitted digest, persisted on
+      // `state.lastSessionDigest` by the post-transform hook below. Without
+      // this the transformer would emit a fresh digest every compaction
+      // since the synthetic digest message isn't written back to
+      // `state.messages` (it lives only in the transient request body).
+      priorSessionDigest: state.lastSessionDigest as
+        | import('../lib/session-digest.ts').SessionDigest
+        | undefined,
+      createSessionDigestMessage: (content): Message => ({ role: 'user', content }),
+      // 85% gateway safety net — last-line-of-defense if `trimContext`
+      // overshot. CLI's hard fallback in `applyHardFallback` already fires
+      // at 100% (maxTokens); this earlier net catches the case before the
+      // provider truncates.
+      //
+      // No `fixedOverheadTokens`: the CLI's system message is at index 0
+      // of `state.messages` (see `lib/system-prompt-builder.ts` and the
+      // enrichment path above), so `estimateContextTokens` already counts
+      // it. The web side differs because the system prompt is composed
+      // downstream of the transformer in `toLLMMessages`.
+      safetyNet: {
+        estimateTokens: (msgs) => estimateContextTokens(msgs as Message[]),
+        budget: cliContextBudget.maxTokens,
+        threshold: 0.85,
+        preserveTail: 4,
+      },
     });
+    // Persist the digest the model is about to see so the next round's
+    // `priorSessionDigest` is set. Narrow on `isSyntheticDigestMessage`
+    // (exact-block shape) so a real user/tool message that quotes a digest
+    // block can't spoof the persistence sink. Leave prior entry alone
+    // when no digest was emitted this round.
+    const emittedDigestMsg = transformed.messages.find((m) => isSyntheticDigestMessage(m));
+    if (emittedDigestMsg) {
+      const parsedEmitted = parseSessionDigest((emittedDigestMsg as { content: string }).content);
+      if (parsedEmitted) state.lastSessionDigest = parsedEmitted;
+    }
     // Cast through the closure-mutable ref. TS narrows `capturedDistill`
     // to its declared null because it doesn't track the synchronous
     // callback assignment; the explicit type assertion restores the
