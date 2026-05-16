@@ -11,15 +11,19 @@
  * The schema is borrowed verbatim from Hermes Agent's compaction layer
  * (see `docs/decisions/Hermes Agent — Lessons For Push.md` item 2): goal /
  * constraints / progress {done, inProgress, blocked} / decisions / relevant
- * files / next steps / critical context. Each field is optional at the type
- * level so a thin digest (e.g. only a goal + open tasks) renders without
- * cluttering the block with `(none)` lines.
+ * files / next steps / critical context. Only `goal` and `criticalContext`
+ * are optional at the type level; the list fields are always present (empty
+ * arrays when nothing applies). The render path then omits empty sections so
+ * thin digests don't clutter the block with `(none)` lines.
  *
  * Idempotency: subsequent compactions on the same conversation should
  * **merge** into the prior digest rather than emit a new one. The
  * `[SESSION_DIGEST]` / `[/SESSION_DIGEST]` markers in the rendered block let
  * `parseSessionDigest` recover the prior structured value from a message's
  * content; `mergeSessionDigests` then deduplicates against the new inputs.
+ * Two of the buckets behave as "current state" rather than "history" and
+ * **replace** on merge: `progress.inProgress` (single active phase) and
+ * `nextSteps` (open task list). The remaining list buckets accumulate.
  */
 
 import type { CoderWorkingMemory } from './working-memory.ts';
@@ -117,18 +121,20 @@ export function buildSessionDigest(inputs: BuildSessionDigestInputs): SessionDig
     if (record.kind === 'decision') {
       decisions.push(record.summary);
     } else if (record.kind === 'task_outcome') {
-      // Heuristic: `task_outcome` records' summary text tends to lead with
-      // an outcome verb. Anything explicitly flagged as failed/blocked goes
-      // to blocked; everything else counts as done. This is a heuristic, not
-      // a contract — future MemoryRecord shapes may expose an explicit
-      // `outcome: 'pass' | 'fail' | 'blocked'` we can switch on.
-      const lower = record.summary.toLowerCase();
-      if (lower.includes('blocked') || lower.includes('failed') || lower.includes('error')) {
-        recordOutcomesBlocked.push(record.summary);
-      } else {
+      // `task_outcome` records are written by the delegation layer in
+      // `lib/context-memory.ts:recordTaskOutcome` with `tags: [outcome.status]`
+      // where status is the `DelegationStatus` enum (`complete` | `incomplete`
+      // | `inconclusive`). Use the structured tag as the source of truth;
+      // fall back to summary substring only when tags are absent (legacy
+      // records or non-delegation outcomes).
+      if (isCompleteOutcome(record)) {
         recordOutcomesDone.push(record.summary);
+      } else {
+        recordOutcomesBlocked.push(record.summary);
       }
     } else if (record.kind === 'verification_result') {
+      // Verification results don't carry a structured status enum in `tags`
+      // today; the summary text is the source. Substring fallback stays.
       const lower = record.summary.toLowerCase();
       if (lower.includes('fail') || lower.includes('error') || lower.includes('blocked')) {
         recordOutcomesBlocked.push(record.summary);
@@ -171,8 +177,42 @@ export function buildSessionDigest(inputs: BuildSessionDigestInputs): SessionDig
   };
 }
 
+/** True iff the record's structured status indicates the task actually
+ *  completed. Reads `record.tags` against the `DelegationStatus` enum
+ *  (`complete` | `incomplete` | `inconclusive`) — only `complete` counts as
+ *  done. When tags are absent (legacy records, non-delegation sources), falls
+ *  back to the original substring heuristic so we don't regress that path. */
+function isCompleteOutcome(record: MemoryRecord): boolean {
+  if (record.tags && record.tags.length > 0) {
+    return record.tags.includes('complete');
+  }
+  const lower = record.summary.toLowerCase();
+  return !(lower.includes('blocked') || lower.includes('failed') || lower.includes('error'));
+}
+
+/** Collapse a rendered field value to a single line so the line-oriented
+ *  `[SESSION_DIGEST]` block parses back round-trip. MemoryRecord summaries
+ *  and working-memory fields can contain embedded newlines — left raw they'd
+ *  parse as fresh list items, labels, or footers in `parseSessionDigest`,
+ *  breaking merge-in-place. Replace any line break with a single space, then
+ *  collapse runs of whitespace. Also strip stray digest markers so a value
+ *  containing `[SESSION_DIGEST]` can't terminate the surrounding block. */
+function sanitizeFieldValue(value: string): string {
+  return value
+    .replace(new RegExp(escapeRegExp(SESSION_DIGEST_FOOTER), 'g'), '')
+    .replace(new RegExp(escapeRegExp(SESSION_DIGEST_HEADER), 'g'), '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** Deduplicate (preserve first occurrence), trim each entry to `maxChars`,
- *  cap the list at `maxItems`. Empty / whitespace-only entries dropped. */
+ *  cap the list at `maxItems`. Empty / whitespace-only entries dropped.
+ *  Each value is sanitized for the single-line render format before dedupe. */
 function capList(
   values: ReadonlyArray<string> | undefined,
   maxItems: number,
@@ -183,9 +223,10 @@ function capList(
   const out: string[] = [];
   for (const raw of values) {
     if (typeof raw !== 'string') continue;
-    const trimmed = raw.trim();
-    if (!trimmed) continue;
-    const clamped = trimmed.length > maxChars ? `${trimmed.slice(0, maxChars - 1)}…` : trimmed;
+    const sanitized = sanitizeFieldValue(raw);
+    if (!sanitized) continue;
+    const clamped =
+      sanitized.length > maxChars ? `${sanitized.slice(0, maxChars - 1)}…` : sanitized;
     if (seen.has(clamped)) continue;
     seen.add(clamped);
     out.push(clamped);
@@ -418,15 +459,24 @@ function appendToTarget(digest: SessionDigest, target: string, value: string): v
 // ---------------------------------------------------------------------------
 
 /**
- * Merge a newly-materialized digest into a prior one. The result preserves
- * all prior entries, appends new ones not seen before (string equality after
- * trim), and lets the newer scalar fields (`goal`, `criticalContext`) win
- * when set — they represent the most current view.
+ * Merge a newly-materialized digest into a prior one. Two merge semantics
+ * by field role:
  *
- * This is what makes multi-compaction sessions cumulative: the digest grows
- * with the conversation rather than churning. Per-list caps from
- * `BuildSessionDigestInputs` are reapplied after the union so a long session
- * doesn't unbound the rendered block.
+ *   **Accumulating** (history of what happened):
+ *   `constraints`, `progress.done`, `progress.blocked`, `decisions`,
+ *   `relevantFiles` — preserve prior entries, append new ones not seen
+ *   before (string equality after sanitize+trim).
+ *
+ *   **Current-state** (snapshot, not history):
+ *   `progress.inProgress`, `nextSteps` — replace from `next` when defined,
+ *   else keep prior. A task that moved from in-progress to done should not
+ *   appear in both buckets; an open task that's been completed should drop
+ *   out of `nextSteps`.
+ *
+ * Scalars (`goal`, `criticalContext`) — newer wins when set, else prior.
+ *
+ * Per-list caps from `BuildSessionDigestInputs` are reapplied after the
+ * union so a long session doesn't unbound the rendered block.
  */
 export interface MergeSessionDigestOptions {
   maxItemsPerList?: number;
@@ -445,18 +495,41 @@ export function mergeSessionDigests(
     constraints: mergeList(prior.constraints, next.constraints, maxItems),
     progress: {
       done: mergeList(prior.progress.done, next.progress.done, maxItems),
-      inProgress: mergeList(prior.progress.inProgress, next.progress.inProgress, maxItems),
+      // Current-state buckets: replace from `next` (the freshly-materialized
+      // snapshot of what's open right now). Prior entries survive only when
+      // the new digest doesn't define this bucket at all (e.g. a build call
+      // that didn't touch working memory). See header comment.
+      inProgress: replaceList(prior.progress.inProgress, next.progress.inProgress, maxItems),
       blocked: mergeList(prior.progress.blocked, next.progress.blocked, maxItems),
     },
     decisions: mergeList(prior.decisions, next.decisions, maxItems),
     relevantFiles: mergeList(prior.relevantFiles, next.relevantFiles, maxFiles),
-    nextSteps: mergeList(prior.nextSteps, next.nextSteps, maxItems),
+    nextSteps: replaceList(prior.nextSteps, next.nextSteps, maxItems),
     ...(next.criticalContext || prior.criticalContext
       ? {
           criticalContext: clampCriticalContext(next.criticalContext ?? prior.criticalContext),
         }
       : {}),
   };
+}
+
+/** Current-state merge: prefer `next` when non-empty, else keep `prior`.
+ *  Sanitizes + dedupes + caps the chosen side. Empty arrays from `next`
+ *  intentionally fall through to `prior` so that a build call that didn't
+ *  surface working memory doesn't accidentally wipe an existing open-task
+ *  list — only an *explicit* next snapshot replaces. */
+function replaceList(prior: string[], next: string[], cap: number): string[] {
+  const source = next.length > 0 ? next : prior;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of source) {
+    const sanitized = sanitizeFieldValue(value);
+    if (!sanitized || seen.has(sanitized)) continue;
+    seen.add(sanitized);
+    out.push(sanitized);
+    if (out.length >= cap) break;
+  }
+  return out;
 }
 
 function mergeList(prior: string[], next: string[], cap: number): string[] {

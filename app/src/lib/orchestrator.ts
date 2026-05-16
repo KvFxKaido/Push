@@ -21,8 +21,8 @@ import {
 import { manageContext } from './message-context-manager';
 import { transformContextBeforeLLM } from '@push/lib/context-transformer';
 import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
-import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
 import { estimateContextTokens } from './orchestrator-context';
+import { parseSessionDigest, SESSION_DIGEST_HEADER } from '@push/lib/session-digest';
 import { getZenGoTransport } from './zen-go';
 import { getVertexModelTransport } from './vertex-provider';
 
@@ -245,6 +245,26 @@ export { buildUserIdentityBlock };
  * `cloudflare-stream.ts`, etc.) can compose messages client-side via the
  * same prompt-assembly path. Not part of the public runtime API.
  */
+/** Optional inputs for the session-digest transformer stage. Each piece is
+ *  pre-resolved by the caller because the production memory stores return
+ *  Promises from `list()` and `toLLMMessages` is synchronous. See
+ *  `lib/session-digest.ts` for the digest contract and
+ *  `lib/context-transformer.ts` for the stage's resolution order. */
+export interface SessionDigestOptions {
+  /** Scope-filtered `MemoryRecord` rows for the current chat/repo/branch.
+   *  Caller awaits `store.list(predicate)` and passes the result. */
+  records?: ReadonlyArray<import('@push/lib/runtime-contract').MemoryRecord>;
+  /** Most-recent digest from the previous turn — caller-persisted, since
+   *  the synthetic digest message in `transformed.messages` is not written
+   *  back into the canonical transcript. */
+  prior?: import('@push/lib/session-digest').SessionDigest;
+  /** Invoked after the transform with the digest the model actually sees
+   *  (post-merge with prior, if any), or null when no digest was emitted
+   *  this turn. Caller persists this as the next turn's `prior` to make
+   *  cross-turn accumulation reach production. */
+  onEmit?: (digest: import('@push/lib/session-digest').SessionDigest | null) => void;
+}
+
 export function toLLMMessages(
   messages: ChatMessage[],
   workspaceContext?: WorkspaceContext,
@@ -256,6 +276,7 @@ export function toLLMMessages(
   onPreCompact?: (event: import('@/types').PreCompactEvent) => void,
   intentHint?: string | null,
   todoContent?: string,
+  sessionDigestOptions?: SessionDigestOptions,
 ): LLMMessage[] {
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
   // composed a complete system prompt — don't append Orchestrator-specific protocols.
@@ -467,25 +488,15 @@ export function toLLMMessages(
   const userGoalAnchor =
     deriveUserGoalAnchor({ firstUserTurn, recentUserTurns: userTurnContents }) ?? undefined;
 
-  // Materialize records for the session-digest stage. The transformer is
-  // pure, so we compute the record set here and pass it in.
-  //
-  // Scope: `WorkspaceContext` doesn't carry repoFullName/branch today, so
-  // for v1 the digest pulls every record visible to the default store. This
-  // is acceptable because the store's lifetime is per-Worker-session (one
-  // user, one session at a time), and the digest only gets injected when
-  // the conversation's own compactor fires — so cross-repo leakage requires
-  // a single Worker session to have actively used two different repos
-  // *and* hit compaction in the second. When `WorkspaceContext` grows
-  // repo/branch fields (tracked in `MemoryScope`), the predicate here
-  // should narrow to match — wire it through then, not now.
-  //
-  // `store.list()` can be async (persistent backends); the default in-memory
-  // store is sync. We narrow to the sync case here. An async store would
-  // be a separate plumbing change since `toLLMMessages` is sync.
-  const memoryStore = getDefaultMemoryStore();
-  const listed = memoryStore.list();
-  const scopedRecords = Array.isArray(listed) ? listed : [];
+  // Records for the session-digest stage come from the caller, pre-fetched
+  // and scope-filtered. The earlier sync `getDefaultMemoryStore().list()`
+  // call here was a no-op in production: the policy-enforced IndexedDB
+  // store returns a Promise, so `Array.isArray()` was always false and
+  // the digest never saw any persisted MemoryRecord rows. Callers (the
+  // stream wrappers under `app/src/lib/*-stream.ts`) now hydrate records
+  // out-of-band — typically the chat round loop awaiting `store.list(scope)`
+  // — and pass them on `PushStreamRequest.sessionDigestRecords`.
+  const scopedRecords = sessionDigestOptions?.records ?? [];
 
   const transformed = transformContextBeforeLLM<ChatMessage>(messages, {
     surface: 'web',
@@ -510,16 +521,21 @@ export function toLLMMessages(
       // digest message factory in `message-context-manager.ts`.
       isToolResult: true,
     }),
-    // Session digest stage (Hermes item 2). Materialized from
-    // `MemoryRecord` rows scoped to repoFullName + branch, with the active
-    // user-goal carried through so the digest's `goal` field matches the
-    // anchor. Working memory is the Coder's per-delegation state and isn't
-    // available at the orchestrator boundary — the records-only path covers
-    // the cross-session "decisions made / files touched / outcomes" view.
+    // Session digest stage (Hermes item 2). Materialized from caller-
+    // provided `MemoryRecord` rows, with the active user-goal carried
+    // through so the digest's `goal` field matches the anchor. Working
+    // memory is the Coder's per-delegation state and isn't available at
+    // the orchestrator boundary — the records path covers the cross-
+    // session "decisions / files touched / outcomes" view.
     sessionDigestInputs: {
       records: scopedRecords,
       goal: userGoalAnchor?.currentWorkingGoal ?? userGoalAnchor?.initialAsk,
     },
+    // Cross-turn merge anchor — see the option's JSDoc on
+    // `TransformContextOptions`. When the caller persists the last emitted
+    // digest, this is what makes the digest accumulate across turns
+    // instead of churning per compaction.
+    priorSessionDigest: sessionDigestOptions?.prior,
     createSessionDigestMessage: (content): ChatMessage => ({
       id: `session-digest-${goalIdHash(content)}`,
       role: 'user',
@@ -532,9 +548,13 @@ export function toLLMMessages(
     }),
     // 85% gateway safety net: catches over-budget bodies that slip past
     // the per-agent compactor. Hermes documents this at 0.85 of the
-    // request budget; the upstream `manageContext` aims for `targetTokens`
-    // (currently 88K of 100K — already below 0.85) so this only fires in
-    // pathological cases where compaction overshot.
+    // request budget. Note the ceiling here is `0.85 * contextBudget.maxTokens`
+    // — `maxTokens` is already ~92% of the model window, so the effective
+    // ceiling is ~78% of the real window. Target sizes from `manageContext`
+    // (88K of 100K maxTokens for the typical 100K budget = 88%) are above
+    // this ceiling, so the net is reachable in normal operation, not just
+    // pathological overshoots. The protected pins (system, first user task,
+    // anchor/digest markers, tail window) keep load-bearing messages safe.
     safetyNet: {
       estimateTokens: (msgs) => estimateContextTokens(msgs as ChatMessage[]),
       budget: contextBudget.maxTokens,
@@ -543,6 +563,20 @@ export function toLLMMessages(
     },
   });
   const windowedMessages = transformed.messages;
+
+  // Surface the emitted digest to the caller so they can persist it for
+  // the next turn's `priorSessionDigest`. The transformer doesn't return
+  // the structured digest separately — it embeds it in the message stream
+  // — so we recover it by scanning for the marker and parsing. `null` when
+  // no digest was emitted this turn (no compaction in play).
+  if (sessionDigestOptions?.onEmit) {
+    const digestMsg = windowedMessages.find(
+      (m) => typeof m.content === 'string' && m.content.includes(SESSION_DIGEST_HEADER),
+    );
+    const digestContent = typeof digestMsg?.content === 'string' ? digestMsg.content : null;
+    const parsed = digestContent ? parseSessionDigest(digestContent) : null;
+    sessionDigestOptions.onEmit(parsed);
+  }
 
   // Only emit `reasoning_blocks` on the wire when the route lands on the
   // Anthropic bridge. Other backends would forward the sidecar verbatim

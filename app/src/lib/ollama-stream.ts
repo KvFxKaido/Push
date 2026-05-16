@@ -38,6 +38,11 @@ export async function* ollamaStream(
     req.onPreCompact,
     undefined,
     req.todoContent,
+    {
+      records: req.sessionDigestRecords,
+      prior: req.priorSessionDigest,
+      onEmit: req.onSessionDigestEmitted,
+    },
   );
 
   // 2. Plain OpenAI-compatible request body — Ollama Cloud has no

@@ -49,6 +49,11 @@ export async function* azureStream(
     req.onPreCompact,
     undefined,
     req.todoContent,
+    {
+      records: req.sessionDigestRecords,
+      prior: req.priorSessionDigest,
+      onEmit: req.onSessionDigestEmitted,
+    },
   );
 
   // 2. Plain OpenAI-compatible request body. The Worker forwards verbatim.

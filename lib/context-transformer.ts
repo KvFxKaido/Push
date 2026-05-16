@@ -35,7 +35,9 @@ import {
   mergeSessionDigests,
   parseSessionDigest,
   renderSessionDigest,
+  SESSION_DIGEST_FOOTER,
   SESSION_DIGEST_HEADER,
+  type SessionDigest,
 } from './session-digest.ts';
 
 // ---------------------------------------------------------------------------
@@ -97,14 +99,26 @@ export interface TransformContextOptions<M extends TransformableMessage> {
    *  When provided alongside `createSessionDigestMessage`, the digest stage
    *  fires whenever compaction is in play (same trigger as `userGoalAnchor`),
    *  injecting a typed structured-summary message near the head of the
-   *  rolling tail. On subsequent compactions, the prior digest message is
-   *  detected via its `[SESSION_DIGEST]` marker and **merged in place** so
-   *  the summary grows cumulatively rather than churning.
+   *  rolling tail.
    *
    *  Callers supply the scope-filtered records and working-memory snapshot;
    *  the transformer is pure and doesn't read from any store. See
    *  `lib/session-digest.ts` for the builder contract. */
   sessionDigestInputs?: BuildSessionDigestInputs;
+  /** Prior session digest from a previous turn, supplied by the caller out
+   *  of band of the transcript. The digest stage merges into this when set,
+   *  even if no `[SESSION_DIGEST]` message survives in the rewritten message
+   *  array — necessary because callers (web `toLLMMessages`, CLI
+   *  `runAssistantLoop`) compose `transformed.messages` for the wire but
+   *  don't write the synthetic digest message back into the canonical
+   *  transcript. Without this option, every compaction would emit a fresh
+   *  digest rather than accumulating.
+   *
+   *  Resolution order: (1) prior digest parsed from a `[SESSION_DIGEST]`
+   *  message still present in `messages`, (2) this option, (3) fresh
+   *  digest. (1) wins because it represents the most recent merged state
+   *  the model actually saw. */
+  priorSessionDigest?: SessionDigest;
   /** Factory for the synthetic message that carries the digest block.
    *  Mirrors `createGoalMessage` — typically a hidden user message
    *  (`isToolResult: true`) so it informs the model without surfacing in
@@ -307,31 +321,36 @@ function injectSessionDigestStage<M extends TransformableMessage>(): Stage<M> {
 
       const nextDigest = buildSessionDigest(options.sessionDigestInputs!);
 
-      // Locate a prior digest message by its marker. If found, parse it,
-      // merge with `nextDigest`, and rewrite that message's content in place
-      // — the rolling tail keeps the same position so the cache breakpoint
-      // doesn't shift.
+      // Resolve a prior digest: (1) parsed from a surviving `[SESSION_DIGEST]`
+      // message in `messages`, (2) the explicit `priorSessionDigest` option
+      // when callers persist it across turns. The transcript path wins
+      // because it's exactly what the model saw last turn — the option path
+      // is the back-channel for callers (web `toLLMMessages`, CLI loop) that
+      // don't write the synthetic digest message back into `state.messages`.
       const priorIdx = findSessionDigestIndex(messages);
-      if (priorIdx !== -1) {
+      const priorFromTranscript =
+        priorIdx !== -1 ? parseSessionDigest(readContent(messages[priorIdx])) : null;
+      const prior = priorFromTranscript ?? options.priorSessionDigest ?? null;
+
+      if (priorIdx !== -1 && priorFromTranscript) {
+        // Merge in place against the transcript-resident digest. Same index
+        // → same cache breakpoint position; byte-equal output → no rewrite
+        // flag flipped → prior cached prefix still hits.
+        const merged = mergeSessionDigests(priorFromTranscript, nextDigest);
+        const newContent = renderSessionDigest(merged);
         const priorContent = readContent(messages[priorIdx]);
-        const prior = parseSessionDigest(priorContent);
-        if (prior) {
-          const merged = mergeSessionDigests(prior, nextDigest);
-          const newContent = renderSessionDigest(merged);
-          if (newContent === priorContent) {
-            // No new information — leave the prefix bytes alone so the cached
-            // prefix from the prior turn still hits.
-            return { messages, rewriteApplied: false };
-          }
-          const updated = [...messages];
-          updated[priorIdx] = options.createSessionDigestMessage!(newContent);
-          return { messages: updated, rewriteApplied: true };
+        if (newContent === priorContent) {
+          return { messages, rewriteApplied: false };
         }
-        // Marker was present but content unparseable (extremely unlikely —
-        // we wrote it). Fall through to emit a fresh digest at the tail.
+        const updated = [...messages];
+        updated[priorIdx] = options.createSessionDigestMessage!(newContent);
+        return { messages: updated, rewriteApplied: true };
       }
 
-      const blockContent = renderSessionDigest(nextDigest);
+      // No transcript-resident digest. If the caller passed `priorSessionDigest`,
+      // merge against it; otherwise this is the first digest for the session.
+      const effectiveDigest = prior ? mergeSessionDigests(prior, nextDigest) : nextDigest;
+      const blockContent = renderSessionDigest(effectiveDigest);
       const digestMessage = options.createSessionDigestMessage!(blockContent);
       if (messages.length === 0) {
         return { messages: [digestMessage], rewriteApplied: true };
@@ -362,24 +381,71 @@ function safetyNetStage<M extends TransformableMessage>(): Stage<M> {
       const estimate = cfg.estimateTokens(messages);
       if (estimate <= ceiling) return { messages, rewriteApplied: false };
 
-      // Walk forward dropping non-protected messages from the head onward.
-      // We preserve a system message at index 0 if present (otherwise that
-      // index is just another non-protected message) and the trailing
-      // `preserveTail` messages. The session-digest message at the head of
-      // the rolling tail is also preserved if it falls within the tail
-      // window — its position is what keeps the cache breakpoint stable.
+      // Drop oldest non-protected messages until we fit or eligible drops
+      // are exhausted. Protected:
+      //   - the first message when it's role: 'system'
+      //   - the first non-tool-result user message (the original user task)
+      //   - any message whose content carries a recognized anchor/digest
+      //     marker — `[USER_GOAL]`, `[CONTEXT DIGEST]`, `[SESSION_DIGEST]`
+      //   - the trailing `preserveTail` window
+      // This mirrors the load-bearing pins that `message-context-manager`
+      // already respects in its 100% hard fallback so the safety net can't
+      // delete the user's actual request or the synthetic anchors that
+      // hold the cache breakpoint position.
       const working = [...messages];
-      const head = working[0]?.role === 'system' ? 1 : 0;
       let rewriteApplied = false;
       while (cfg.estimateTokens(working) > ceiling) {
-        const tailStart = Math.max(head, working.length - preserveTail);
-        if (tailStart <= head) break; // nothing left to drop without breaching protection
-        working.splice(head, 1);
+        const dropIdx = findFirstDroppableIndex(working, preserveTail);
+        if (dropIdx === -1) break; // no eligible target left without breaching protection
+        working.splice(dropIdx, 1);
         rewriteApplied = true;
       }
       return { messages: working, rewriteApplied };
     },
   };
+}
+
+function findFirstDroppableIndex<M extends TransformableMessage>(
+  messages: M[],
+  preserveTail: number,
+): number {
+  const tailStart = Math.max(0, messages.length - preserveTail);
+  const firstUserTaskIdx = findFirstNonToolResultUserIndex(messages);
+  for (let i = 0; i < tailStart; i++) {
+    if (i === 0 && messages[0]?.role === 'system') continue;
+    if (i === firstUserTaskIdx) continue;
+    if (hasProtectedMarker(messages[i])) continue;
+    return i;
+  }
+  return -1;
+}
+
+function findFirstNonToolResultUserIndex<M extends TransformableMessage>(messages: M[]): number {
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role !== 'user') continue;
+    // CLI `Message` and web `ChatMessage` both surface tool results as
+    // user-role messages with an `isToolResult: true` flag (web) or a
+    // detectable pattern (CLI). We treat any user message without the flag
+    // as a real user turn — false positives only protect *more* messages,
+    // which is the conservative direction.
+    const isToolResult = (m as { isToolResult?: boolean }).isToolResult === true;
+    if (!isToolResult) return i;
+  }
+  return -1;
+}
+
+const PROTECTED_MARKERS = [
+  '[USER_GOAL]',
+  '[CONTEXT DIGEST]',
+  SESSION_DIGEST_HEADER,
+  SESSION_DIGEST_FOOTER,
+];
+
+function hasProtectedMarker<M extends TransformableMessage>(msg: M): boolean {
+  const content = readContent(msg);
+  if (!content) return false;
+  return PROTECTED_MARKERS.some((marker) => content.includes(marker));
 }
 
 // Order is fixed: filter (drop hidden) → distill (preserve essentials) →

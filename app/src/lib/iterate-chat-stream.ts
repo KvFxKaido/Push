@@ -80,6 +80,15 @@ export interface IterateChatStreamRequest<M extends LlmMessage> {
   onPreCompact?: (event: PreCompactEvent) => void;
   /** External cancellation signal (e.g. user hit cancel). Composed with internal timer aborts. */
   signal?: AbortSignal;
+  /** Pre-fetched memory records for the session-digest stage. Forwarded
+   *  verbatim to `PushStreamRequest.sessionDigestRecords`. */
+  sessionDigestRecords?: ReadonlyArray<import('@push/lib/runtime-contract').MemoryRecord>;
+  /** Last-turn digest, persisted by the caller. Forwarded verbatim. */
+  priorSessionDigest?: import('@push/lib/session-digest').SessionDigest;
+  /** Persistence sink for the digest emitted this turn. Forwarded verbatim. */
+  onSessionDigestEmitted?: (
+    digest: import('@push/lib/session-digest').SessionDigest | null,
+  ) => void;
 }
 
 export interface IterateChatStreamCallbacks {
@@ -212,6 +221,9 @@ export async function iterateChatStream<M extends LlmMessage>(
         workspaceContext: request.workspaceContext,
         hasSandbox: request.hasSandbox,
         onPreCompact: request.onPreCompact,
+        sessionDigestRecords: request.sessionDigestRecords,
+        priorSessionDigest: request.priorSessionDigest,
+        onSessionDigestEmitted: request.onSessionDigestEmitted,
       });
 
       // Arm both windows before iteration. `resetEventTimer` catches

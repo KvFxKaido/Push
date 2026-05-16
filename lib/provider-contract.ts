@@ -152,6 +152,28 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
    * Gateways that don't support prefix caching ignore this field entirely.
    */
   cacheBreakpointIndices?: number[];
+  /** Scope-filtered `MemoryRecord` rows pre-fetched by the caller for the
+   *  session-digest transformer stage. Pre-fetched (not resolved inside the
+   *  sync wire path) because the production memory stores
+   *  (`createIndexedDbStore`, `createFileMemoryStore`) return Promises from
+   *  `list()`. Gateways forward this verbatim to `toLLMMessages` /
+   *  equivalent; consumers without session-digest wiring ignore. */
+  sessionDigestRecords?: ReadonlyArray<import('./runtime-contract.js').MemoryRecord>;
+  /** Most-recent `SessionDigest` emitted by the previous turn, persisted by
+   *  the caller out of band of the transcript. The transformer's digest
+   *  stage merges into this when a transcript-resident `[SESSION_DIGEST]`
+   *  message isn't available — what makes cross-turn cumulative behavior
+   *  reach production. See `lib/session-digest.ts` and the digest stage in
+   *  `lib/context-transformer.ts`. */
+  priorSessionDigest?: import('./session-digest.js').SessionDigest;
+  /** Invoked synchronously by the gateway after `toLLMMessages` materializes
+   *  the digest for this turn, so the caller can persist it as the next
+   *  turn's `priorSessionDigest`. Receives the merged digest the model is
+   *  actually about to see; `null` when no digest was emitted (no compaction
+   *  this turn). The whole cross-turn merge chain depends on the caller
+   *  wiring this callback — without it the session digest cannot accumulate
+   *  across turns. */
+  onSessionDigestEmitted?: (digest: import('./session-digest.js').SessionDigest | null) => void;
 }
 
 export type PushStream<M extends LlmMessage = LlmMessage> = (

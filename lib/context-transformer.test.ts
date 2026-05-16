@@ -820,6 +820,80 @@ describe('transformContextBeforeLLM — injectSessionDigest stage', () => {
     expect(out.messages[1].content).toContain('Goal: prior goal');
   });
 
+  it('merges against priorSessionDigest option when no transcript digest is present', () => {
+    // The wire callers (web `toLLMMessages`, CLI loop) build the transformed
+    // messages for the request but don't write the synthetic digest message
+    // back into `state.messages`. Cross-turn cumulative behavior depends on
+    // the caller persisting the last emitted digest and passing it via the
+    // `priorSessionDigest` option on the next turn. This test pins that
+    // resolution path.
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      enableManageContext: true,
+      manageContext: (msgs) => ({ messages: msgs, compactionApplied: true }),
+      sessionDigestInputs: {
+        records: [
+          {
+            id: 'd-new',
+            kind: 'decision',
+            summary: 'new decision',
+            scope: { repoFullName: 'o/r' },
+            source: { kind: 'orchestrator', label: 't', createdAt: 0 },
+            freshness: 'fresh',
+          },
+        ],
+      },
+      priorSessionDigest: {
+        goal: 'persisted prior goal',
+        constraints: [],
+        progress: { done: [], inProgress: [], blocked: [] },
+        decisions: ['prior decision'],
+        relevantFiles: [],
+        nextSteps: [],
+      },
+      createSessionDigestMessage,
+    });
+    const digestMsg = out.messages.find((m) => m.content.includes('[SESSION_DIGEST]'));
+    expect(digestMsg?.content).toContain('Goal: persisted prior goal');
+    expect(digestMsg?.content).toContain('prior decision');
+    expect(digestMsg?.content).toContain('new decision');
+  });
+
+  it('transcript-resident digest wins over priorSessionDigest option', () => {
+    // When both signals exist, the transcript path wins because it's exactly
+    // what the model saw last turn.
+    const priorContent = ['[SESSION_DIGEST]', 'Goal: transcript goal', '[/SESSION_DIGEST]'].join(
+      '\n',
+    );
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'first' }),
+      sample({ role: 'user', content: priorContent }),
+      sample({ role: 'user', content: 'now' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      enableManageContext: true,
+      manageContext: (msgs) => ({ messages: msgs, compactionApplied: true }),
+      sessionDigestInputs: { records: [] },
+      priorSessionDigest: {
+        goal: 'option goal (should lose)',
+        constraints: [],
+        progress: { done: [], inProgress: [], blocked: [] },
+        decisions: [],
+        relevantFiles: [],
+        nextSteps: [],
+      },
+      createSessionDigestMessage,
+    });
+    const digestMsg = out.messages.find((m) => m.content.includes('[SESSION_DIGEST]'));
+    expect(digestMsg?.content).toContain('Goal: transcript goal');
+    expect(digestMsg?.content).not.toContain('option goal');
+  });
+
   it('does not flip rewriteApplied when the merged content matches the prior byte-for-byte', () => {
     // Same inputs as the prior digest → merge is a no-op → byte-stable.
     const priorContent = ['[SESSION_DIGEST]', 'Goal: same goal', '[/SESSION_DIGEST]'].join('\n');
@@ -877,15 +951,20 @@ describe('transformContextBeforeLLM — safetyNet stage', () => {
   });
 
   it('hard-trims oldest non-protected messages when over threshold', () => {
-    // Make total = 200, budget = 100, threshold = 0.85, so ceiling = 85.
+    // Total = 15 + 80 + 40 + 4*20 = 215. budget=100, threshold=0.85 ⇒
+    // ceiling = 85. Index 0 (system) protected; indices 3..6 protected by
+    // the 4-message tail window. So only indices 1 (80 chars) and 2 (40
+    // chars) are eligible to drop. Note: the first non-tool-result user
+    // message is *also* protected by the new safety net, but it falls
+    // inside the tail window here so the rule doesn't compound.
     const messages: FakeMsg[] = [
-      sample({ role: 'system', content: 'sys-prompt-long' }), // 15 chars (protected)
-      sample({ role: 'user', content: 'a'.repeat(80) }), // 80 (eligible)
-      sample({ role: 'user', content: 'b'.repeat(40) }), // 40 (eligible)
-      sample({ role: 'user', content: 'c'.repeat(20) }), // 20 (within preserveTail)
-      sample({ role: 'user', content: 'd'.repeat(20) }), // 20 (within preserveTail)
-      sample({ role: 'user', content: 'e'.repeat(20) }), // 20 (within preserveTail)
-      sample({ role: 'user', content: 'f'.repeat(20) }), // 20 (within preserveTail)
+      sample({ role: 'system', content: 'sys-prompt-long' }), // 15 (protected: system)
+      sample({ role: 'assistant', content: 'a'.repeat(80) }), // 80 (eligible)
+      sample({ role: 'assistant', content: 'b'.repeat(40) }), // 40 (eligible)
+      sample({ role: 'user', content: 'c'.repeat(20) }), // 20 (tail; also first-user)
+      sample({ role: 'user', content: 'd'.repeat(20) }), // 20 (tail)
+      sample({ role: 'user', content: 'e'.repeat(20) }), // 20 (tail)
+      sample({ role: 'user', content: 'f'.repeat(20) }), // 20 (tail)
     ];
     const out = transformContextBeforeLLM(messages, {
       ...baseOptions,
@@ -907,6 +986,72 @@ describe('transformContextBeforeLLM — safetyNet stage', () => {
     expect(out.messages.some((m) => m.content === 'b'.repeat(40))).toBe(false);
     expect(out.messages.length).toBe(5);
     expect(out.rewriteApplied).toBe(true);
+  });
+
+  it('protects the first non-tool-result user message even when system is absent', () => {
+    // No system message → the original ask sits at index 0. Without
+    // protection the safety net would delete it before anything else
+    // (Copilot's review pointed out this is the actual production shape on
+    // the web: the system prompt is added later in the wire path, not in
+    // the array reaching the transformer). The first non-tool-result user
+    // message must survive.
+    const messages: FakeMsg[] = [
+      sample({ role: 'user', content: 'the original task'.padEnd(60, ' ') }),
+      sample({ role: 'assistant', content: 'a'.repeat(80) }), // eligible
+      sample({ role: 'assistant', content: 'b'.repeat(40) }), // eligible
+      sample({ role: 'user', content: 'c'.repeat(10) }), // tail
+      sample({ role: 'user', content: 'd'.repeat(10) }), // tail
+      sample({ role: 'user', content: 'e'.repeat(10) }), // tail
+      sample({ role: 'user', content: 'f'.repeat(10) }), // tail
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      safetyNet: {
+        estimateTokens: estimateByChars,
+        budget: 100,
+        threshold: 0.85,
+        preserveTail: 4,
+      },
+    });
+    expect(out.messages[0].content.startsWith('the original task')).toBe(true);
+    expect(out.rewriteApplied).toBe(true);
+  });
+
+  it('protects messages carrying recognized anchor/digest markers', () => {
+    // The synthetic anchor + digest messages hold the cache breakpoint
+    // position and contain load-bearing structured state. They must not
+    // be dropped by the safety net.
+    const messages: FakeMsg[] = [
+      sample({ role: 'system', content: 'sys' }),
+      sample({ role: 'user', content: 'the original task' }),
+      sample({ role: 'assistant', content: 'a'.repeat(120) }), // eligible
+      sample({
+        role: 'user',
+        content: '[USER_GOAL]\nInitial ask: the goal\n[/USER_GOAL]',
+      }),
+      sample({
+        role: 'user',
+        content: '[SESSION_DIGEST]\nGoal: g\n[/SESSION_DIGEST]',
+      }),
+      sample({ role: 'user', content: 'tail-1' }),
+      sample({ role: 'user', content: 'tail-2' }),
+      sample({ role: 'user', content: 'tail-3' }),
+      sample({ role: 'user', content: 'tail-4' }),
+    ];
+    const out = transformContextBeforeLLM(messages, {
+      ...baseOptions,
+      safetyNet: {
+        estimateTokens: estimateByChars,
+        budget: 100,
+        threshold: 0.85,
+        preserveTail: 4,
+      },
+    });
+    expect(out.messages.some((m) => m.content.includes('[USER_GOAL]'))).toBe(true);
+    expect(out.messages.some((m) => m.content.includes('[SESSION_DIGEST]'))).toBe(true);
+    expect(out.messages.some((m) => m.content === 'the original task')).toBe(true);
+    // The 120-char eligible message is the only thing that could go.
+    expect(out.messages.some((m) => m.content === 'a'.repeat(120))).toBe(false);
   });
 
   it('respects preserveTail — never drops the trailing window', () => {

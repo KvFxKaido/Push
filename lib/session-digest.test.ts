@@ -35,8 +35,9 @@ function decision(summary: string, files?: string[]): MemoryRecord {
 function outcome(
   summary: string,
   kind: 'task_outcome' | 'verification_result' = 'task_outcome',
+  tags?: string[],
 ): MemoryRecord {
-  return fact({ id: `out-${summary}`, kind, summary });
+  return fact({ id: `out-${summary}`, kind, summary, tags });
 }
 
 const sampleWorkingMemory: CoderWorkingMemory = {
@@ -81,19 +82,38 @@ describe('buildSessionDigest', () => {
     expect(digest.relevantFiles).toEqual(['lib/c.ts', 'lib/d.ts', 'lib/a.ts', 'lib/b.ts']);
   });
 
-  it('classifies task_outcome records by tone — failed/blocked/error → blocked, else → done', () => {
+  it('classifies task_outcome records by tags — only `complete` → done, others → blocked', () => {
+    // Tags carry the structured `DelegationStatus` enum from
+    // `lib/context-memory.ts:recordTaskOutcome`. Substring tone is irrelevant
+    // when tags are present.
     const digest = buildSessionDigest({
       records: [
-        outcome('Test suite passed'),
+        outcome('Coder finished cleanly', 'task_outcome', ['complete']),
+        outcome('Could not finish before timeout', 'task_outcome', ['incomplete']),
+        outcome('Result ambiguous', 'task_outcome', ['inconclusive']),
+        // Pre-tag legacy record: falls back to substring heuristic.
         outcome('Failed to compile typescript'),
-        outcome('Blocked on missing API key'),
         outcome('Built artifact in 3.2s'),
       ],
     });
-    expect(digest.progress.done).toContain('Test suite passed');
+    expect(digest.progress.done).toContain('Coder finished cleanly');
     expect(digest.progress.done).toContain('Built artifact in 3.2s');
+    expect(digest.progress.blocked).toContain('Could not finish before timeout');
+    expect(digest.progress.blocked).toContain('Result ambiguous');
     expect(digest.progress.blocked).toContain('Failed to compile typescript');
-    expect(digest.progress.blocked).toContain('Blocked on missing API key');
+  });
+
+  it('tag classification is authoritative over summary substring', () => {
+    // Summary contains "failed" but tag says complete → done. This is the
+    // case Copilot's review flagged: substring "Could not finish" would mark
+    // incomplete work as done; with tags the structured truth wins.
+    const digest = buildSessionDigest({
+      records: [
+        outcome('Job failed to spawn but completed via fallback', 'task_outcome', ['complete']),
+      ],
+    });
+    expect(digest.progress.done).toEqual(['Job failed to spawn but completed via fallback']);
+    expect(digest.progress.blocked).toEqual([]);
   });
 
   it('classifies verification_result records the same way', () => {
@@ -158,6 +178,20 @@ describe('buildSessionDigest', () => {
       maxItemChars: 30, // truncates both to 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxx…'
     });
     expect(digest.decisions.length).toBe(1);
+  });
+
+  it('sanitizes embedded newlines so the rendered block round-trips', () => {
+    // Summaries with embedded newlines would parse as fresh list items or
+    // even a footer when rendered raw. Newlines should collapse to spaces;
+    // stray digest markers should be stripped.
+    const dirty = `Line one\nLine two\rmore\n[/SESSION_DIGEST]injected`;
+    const digest = buildSessionDigest({ records: [decision(dirty)] });
+    const rendered = renderSessionDigest(digest);
+    const parsed = parseSessionDigest(rendered);
+    expect(parsed).toEqual(digest);
+    // The decision survived as a single sanitized line — no embedded
+    // newlines, no marker substring that could terminate the block early.
+    expect(digest.decisions[0]).toBe('Line one Line two more injected');
   });
 });
 
@@ -294,15 +328,41 @@ describe('mergeSessionDigests', () => {
     expect(merged.goal).toBe('old goal');
   });
 
-  it('progress sub-arrays merge independently', () => {
+  it('progress.done and progress.blocked accumulate; inProgress replaces from next', () => {
+    // inProgress is a current-state bucket — when next defines a new value
+    // the prior one drops out. Avoids the "task shown as both done and in
+    // progress" bug Copilot flagged.
     const prior = digest({ progress: { done: ['a'], inProgress: ['b'], blocked: ['c'] } });
     const next = digest({ progress: { done: ['d'], inProgress: ['e'], blocked: ['f'] } });
     const merged = mergeSessionDigests(prior, next);
     expect(merged.progress).toEqual({
       done: ['a', 'd'],
-      inProgress: ['b', 'e'],
+      inProgress: ['e'],
       blocked: ['c', 'f'],
     });
+  });
+
+  it('inProgress and nextSteps keep prior when next is empty (not an explicit replacement)', () => {
+    // A digest build that didn't surface working memory should not wipe an
+    // existing open-task list. Empty `next` ⇒ keep prior; non-empty next ⇒
+    // replace.
+    const prior = digest({
+      progress: { done: [], inProgress: ['phase A'], blocked: [] },
+      nextSteps: ['step 1', 'step 2'],
+    });
+    const next = digest({});
+    const merged = mergeSessionDigests(prior, next);
+    expect(merged.progress.inProgress).toEqual(['phase A']);
+    expect(merged.nextSteps).toEqual(['step 1', 'step 2']);
+  });
+
+  it('nextSteps replaces from next when next defines new entries', () => {
+    // The open-task list represents what's outstanding right now. Once a
+    // task is done it should drop out, not linger forever.
+    const prior = digest({ nextSteps: ['old-task-1', 'old-task-2'] });
+    const next = digest({ nextSteps: ['new-task'] });
+    const merged = mergeSessionDigests(prior, next);
+    expect(merged.nextSteps).toEqual(['new-task']);
   });
 
   it('respects maxItemsPerList cap after union', () => {

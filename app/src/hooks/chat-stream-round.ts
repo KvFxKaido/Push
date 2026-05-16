@@ -17,8 +17,35 @@ import { drainRecentContextMetrics } from '@/lib/context-metrics';
 import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
 import { buildTodoContext } from '@/lib/todo-tools';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
+import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
+import type { SessionDigest } from '@push/lib/session-digest';
 import type { ChatMessage, ReasoningBlock } from '@/types';
 import type { SendLoopContext, StreamRoundResult } from './chat-send-types';
+
+/**
+ * Cross-turn cache for the last `SessionDigest` emitted per chat. The
+ * synthetic digest message lives only in the transformer's output and is
+ * not written back into the canonical conversation transcript, so without
+ * this cache the digest stage would re-emit a fresh digest every
+ * compaction (Copilot review on PR #574). Caller persistence here is what
+ * makes the cumulative-merge behavior reach production.
+ *
+ * Module-scoped, keyed by `chatId`. Page reload clears it — that's
+ * acceptable for v1 since the digest is a compaction-time anchor, not
+ * durable session state. Capped to bound memory.
+ */
+const MAX_CACHED_DIGESTS = 64;
+const _lastSessionDigests = new Map<string, SessionDigest>();
+
+function recordSessionDigest(chatId: string, digest: SessionDigest): void {
+  if (_lastSessionDigests.has(chatId)) {
+    _lastSessionDigests.delete(chatId);
+  } else if (_lastSessionDigests.size >= MAX_CACHED_DIGESTS) {
+    const oldest = _lastSessionDigests.keys().next().value;
+    if (oldest !== undefined) _lastSessionDigests.delete(oldest);
+  }
+  _lastSessionDigests.set(chatId, digest);
+}
 
 export async function streamAssistantRound(
   round: number,
@@ -71,6 +98,28 @@ export async function streamAssistantRound(
   }
   if (invariantError) {
     return { accumulated, thinkingAccumulated, reasoningBlocks, error: invariantError };
+  }
+
+  // Pre-fetch the scope-filtered MemoryRecord rows for the session-digest
+  // stage. The production memory store (`createPolicyEnforcedStore(
+  // createIndexedDbStore())`) returns a Promise from `list()`, so this MUST
+  // be awaited up here rather than narrowed sync inside the synchronous
+  // `toLLMMessages` (which is what the pre-#574 code did, and Copilot
+  // flagged as always falling through to `[]`).
+  //
+  // Scope filter: by chatId only. `WorkspaceContext` doesn't carry
+  // repoFullName/branch today; chatId alone is durable and scopes the
+  // digest to this conversation's history. When workspace context grows
+  // repo/branch fields, narrow the predicate further here.
+  const memoryStore = getDefaultMemoryStore();
+  let sessionDigestRecords: Awaited<ReturnType<typeof memoryStore.list>> = [];
+  try {
+    const listed = memoryStore.list((record) => record.scope.chatId === chatId);
+    sessionDigestRecords = await Promise.resolve(listed);
+  } catch {
+    // Memory store is best-effort. A read failure shouldn't block the turn —
+    // the digest just falls back to working-memory + goal only.
+    sessionDigestRecords = [];
   }
 
   const error = await new Promise<Error | null>((resolve) => {
@@ -167,6 +216,17 @@ export async function streamAssistantRound(
           }
           return { ...prev, [chatId]: { ...conv, messages: msgs } };
         });
+      },
+      {
+        records: sessionDigestRecords,
+        prior: _lastSessionDigests.get(chatId),
+        onEmit: (digest) => {
+          // Persist the digest the model actually saw so next turn's
+          // `priorSessionDigest` is non-empty — what makes the merge
+          // accumulate across turns. `null` means no digest this turn
+          // (no compaction), so don't overwrite an existing entry.
+          if (digest) recordSessionDigest(chatId, digest);
+        },
       },
     );
   });

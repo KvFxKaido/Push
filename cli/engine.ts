@@ -42,6 +42,7 @@ import {
 } from './context-manager.js';
 import { transformContextBeforeLLM, type DistillResult } from '../lib/context-transformer.ts';
 import { getDefaultMemoryStore } from '../lib/context-memory-store.ts';
+import { parseSessionDigest } from '../lib/session-digest.ts';
 import { deriveUserGoalAnchor } from '../lib/user-goal-anchor.ts';
 import { loadUserGoalFile, seedUserGoalFile, extractDigestBody } from './user-goal-file.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
@@ -147,6 +148,11 @@ interface MetaEnvelope {
   estimatedTokens: number;
   ledger: unknown;
   workingMemory?: unknown;
+  /** Most-recent SessionDigest emitted by the per-agent context transformer.
+   *  Persisted across rounds so the digest accumulates rather than churning
+   *  fresh on every compaction. Set by the `onSessionDigestEmitted` hook on
+   *  the digest stage; consumed as `priorSessionDigest` on the next round. */
+  lastSessionDigest?: unknown;
 }
 
 interface ProjectInstructions {
@@ -1042,16 +1048,24 @@ export async function runAssistantLoop(
         recentUserTurns: userTurnContents,
       }) ??
       undefined;
-    // Session-digest record materialization: scope-filter via `store.list()`
-    // narrowed to the sync case. Mirrors `app/src/lib/orchestrator.ts` —
-    // the CLI's default memory store is per-process and the digest is only
-    // injected when this conversation's compactor fires, so cross-session
-    // leakage requires reusing a single CLI process across repos *and*
-    // hitting compaction in the second. When `MemoryScope` gets plumbed
-    // through CLI session context, narrow the predicate here.
+    // Session-digest record materialization. The default CLI store is
+    // file-backed in headless/daemon execution (`createFileMemoryStore`),
+    // whose `list()` returns a Promise — the pre-#574 sync `Array.isArray`
+    // narrow dropped every persisted record. Await up here, scoped to the
+    // current session.
+    //
+    // Scope filter: we don't have repoFullName/branch in `state` yet, so
+    // narrow by `chatId` if the workspace context surfaces one. Without a
+    // chatId predicate, fall back to all records — acceptable for the
+    // primary CLI process since memory persistence is per-cwd, but a TODO
+    // to tighten when `state` carries explicit scope identifiers.
     const cliMemoryStore = getDefaultMemoryStore();
-    const cliMemoryListed = cliMemoryStore.list();
-    const cliScopedRecords = Array.isArray(cliMemoryListed) ? cliMemoryListed : [];
+    let cliScopedRecords: Awaited<ReturnType<typeof cliMemoryStore.list>> = [];
+    try {
+      cliScopedRecords = await Promise.resolve(cliMemoryStore.list());
+    } catch {
+      cliScopedRecords = [];
+    }
     const cliContextBudget = getContextBudget(providerConfig.id, state.model);
     const transformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
       surface: 'cli',
@@ -1078,6 +1092,14 @@ export async function runAssistantLoop(
         workingMemory: state.workingMemory as WorkingMemory | undefined,
         goal: userGoalAnchor?.currentWorkingGoal ?? userGoalAnchor?.initialAsk,
       },
+      // Cross-turn merge anchor: last round's emitted digest, persisted on
+      // `state.lastSessionDigest` by the post-transform hook below. Without
+      // this the transformer would emit a fresh digest every compaction
+      // since the synthetic digest message isn't written back to
+      // `state.messages` (it lives only in the transient request body).
+      priorSessionDigest: state.lastSessionDigest as
+        | import('../lib/session-digest.ts').SessionDigest
+        | undefined,
       createSessionDigestMessage: (content): Message => ({ role: 'user', content }),
       // 85% gateway safety net — last-line-of-defense if `trimContext`
       // overshot. CLI's hard fallback in `applyHardFallback` already fires
@@ -1090,6 +1112,20 @@ export async function runAssistantLoop(
         preserveTail: 4,
       },
     });
+    // Persist the digest the model is about to see so the next round's
+    // `priorSessionDigest` is set. Recover it from the transformed message
+    // stream — the transformer doesn't return the structured digest
+    // separately. `null` means no digest this round (no compaction in
+    // play), so leave the prior entry alone.
+    const emittedDigestMsg = transformed.messages.find(
+      (m) =>
+        typeof (m as { content?: unknown }).content === 'string' &&
+        ((m as { content: string }).content as string).includes('[SESSION_DIGEST]'),
+    );
+    if (emittedDigestMsg) {
+      const parsedEmitted = parseSessionDigest((emittedDigestMsg as { content: string }).content);
+      if (parsedEmitted) state.lastSessionDigest = parsedEmitted;
+    }
     // Cast through the closure-mutable ref. TS narrows `capturedDistill`
     // to its declared null because it doesn't track the synchronous
     // callback assignment; the explicit type assertion restores the
