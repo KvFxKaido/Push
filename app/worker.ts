@@ -45,6 +45,7 @@ import {
   handleBedrockModels,
   handleVertexChat,
   handleVertexModels,
+  handleAnthropicChat,
   handleTavilySearch,
   handleFreeSearch,
 } from './src/worker/worker-providers';
@@ -384,6 +385,7 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/bedrock/models', method: 'GET', handler: handleBedrockModels },
   { path: '/api/vertex/chat', method: 'POST', handler: handleVertexChat },
   { path: '/api/vertex/models', method: 'GET', handler: handleVertexModels },
+  { path: '/api/anthropic/chat', method: 'POST', handler: handleAnthropicChat },
   { path: '/api/ollama/search', method: 'POST', handler: handleOllamaSearch },
   { path: '/api/search/tavily', method: 'POST', handler: handleTavilySearch },
   { path: '/api/search', method: 'POST', handler: handleFreeSearch },

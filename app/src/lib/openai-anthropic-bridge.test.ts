@@ -113,6 +113,50 @@ describe('buildAnthropicMessagesRequest', () => {
     expect(body.messages[0].content[0]).toMatchObject({ type: 'thinking' });
     expect(body.messages[0].content[1]).toMatchObject({ type: 'text', text: 'Here.' });
   });
+
+  it('preserves cache_control on text and image content parts', () => {
+    // Prompt caching is the LEDE for going direct-Anthropic vs OpenRouter,
+    // so a regression here would silently kill cache hit rate on every turn.
+    // The bridge previously stripped the field — that's now fixed and pinned.
+    const request = {
+      model: 'claude-sonnet-4-6',
+      messages: [
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: 'system prefix',
+              cache_control: { type: 'ephemeral' as const },
+            },
+            { type: 'text' as const, text: 'unsafe to cache' },
+            {
+              type: 'image_url' as const,
+              image_url: { url: 'data:image/png;base64,AAAA' },
+              cache_control: { type: 'ephemeral' as const },
+            },
+          ],
+        },
+      ],
+      stream: true,
+    };
+
+    const body = buildAnthropicMessagesRequest(request) as {
+      messages: Array<{ content: Array<Record<string, unknown>> }>;
+    };
+    const parts = body.messages[0].content;
+    expect(parts[0]).toMatchObject({
+      type: 'text',
+      text: 'system prefix',
+      cache_control: { type: 'ephemeral' },
+    });
+    expect(parts[1]).toMatchObject({ type: 'text', text: 'unsafe to cache' });
+    expect(parts[1]).not.toHaveProperty('cache_control');
+    expect(parts[2]).toMatchObject({
+      type: 'image',
+      cache_control: { type: 'ephemeral' },
+    });
+  });
 });
 
 describe('createAnthropicTranslatedStream', () => {

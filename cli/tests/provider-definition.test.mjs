@@ -99,6 +99,46 @@ describe('ProviderDefinition', () => {
   }
 });
 
+// Cross-registry drift: as each direct provider is wired end-to-end, its
+// ProviderDefinition entry must align with the surrounding registries. The
+// assertions land per-provider so a provider that hasn't shipped yet (e.g.
+// the OpenAI / Google PRs in this track) doesn't fail the suite prematurely.
+describe('anthropic cross-registry wiring', () => {
+  it('appears in AIProviderType', async () => {
+    // The union is types-only at runtime, but provider-contract.ts is the
+    // single declaration site — a regex match catches accidental removals.
+    const fs = await import('node:fs');
+    const url = new URL('../../lib/provider-contract.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /\|\s*'anthropic'/);
+  });
+
+  it('has a worker proxy route declared in app/worker.ts', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/worker.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /handler:\s*handleAnthropicChat/);
+    assert.match(source, /'\/api\/anthropic\/chat'/);
+  });
+
+  it('has a stream-adapter dispatch case in orchestrator-provider-routing.ts', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/src/lib/orchestrator-provider-routing.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(
+      source,
+      /case 'anthropic':\s*\n\s*stream = \(req\) => normalizeReasoning\(anthropicStream/,
+    );
+  });
+
+  it('has a coder-job dispatch case for background runs', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/src/worker/coder-job-stream-adapter.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /case 'anthropic':\s*\n\s*return handleAnthropicChat/);
+  });
+});
+
 describe('ProviderDefinition lookup helpers', () => {
   it('getProviderDefinition returns each registered entry', () => {
     for (const def of PROVIDER_DEFINITIONS) {

@@ -7,6 +7,8 @@ import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storag
 import { VERTEX_DEFAULT_MODEL as SHARED_VERTEX_DEFAULT_MODEL } from './vertex-provider';
 import { ZEN_GO_DEFAULT_MODEL, ZEN_GO_MODELS as SHARED_ZEN_GO_MODELS } from './zen-go';
 export {
+  ANTHROPIC_DEFAULT_MODEL,
+  ANTHROPIC_MODELS,
   BLACKBOX_DEFAULT_MODEL,
   BLACKBOX_MODELS,
   CLOUDFLARE_DEFAULT_MODEL,
@@ -24,6 +26,7 @@ export {
   ZEN_MODELS,
 } from '@push/lib/provider-models';
 import {
+  ANTHROPIC_DEFAULT_MODEL,
   BLACKBOX_DEFAULT_MODEL,
   CLOUDFLARE_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
@@ -90,6 +93,13 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   openadapter: {
     chat: providerUrl('/api/openadapter/chat', '/api/openadapter/chat'),
     models: providerUrl('/api/openadapter/models', '/api/openadapter/models'),
+  },
+  anthropic: {
+    chat: providerUrl('/api/anthropic/chat', '/api/anthropic/chat'),
+    // Anthropic's /v1/models exists, but for MVP the curated ANTHROPIC_MODELS
+    // list seeds the dropdown; a Worker `/api/anthropic/models` proxy can land
+    // alongside live fetching in a follow-up.
+    models: providerUrl('/api/anthropic/models', '/api/anthropic/models'),
   },
 };
 
@@ -333,6 +343,15 @@ export const PROVIDERS: AIProviderConfig[] = [
     envUrl: 'global',
     models: makeRoleModels(VERTEX_DEFAULT_MODEL, 'Google Vertex', 'vertex', 1_000_000),
   },
+  {
+    type: 'anthropic',
+    name: 'Anthropic',
+    description:
+      'Anthropic Claude direct — native /v1/messages API with prompt caching and extended thinking',
+    envKey: 'VITE_ANTHROPIC_API_KEY',
+    envUrl: 'https://api.anthropic.com',
+    models: makeRoleModels(ANTHROPIC_DEFAULT_MODEL, 'Anthropic', 'anthropic', 200_000),
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
@@ -441,6 +460,10 @@ const kiloCodeModel = createModelNameStorage(
 export const getKiloCodeModelName = kiloCodeModel.get;
 export const setKiloCodeModelName = kiloCodeModel.set;
 
+const anthropicModel = createModelNameStorage('anthropic_model', ANTHROPIC_DEFAULT_MODEL);
+export const getAnthropicModelName = anthropicModel.get;
+export const setAnthropicModelName = anthropicModel.set;
+
 /** Runtime model-name getters for providers where the user can override the default. */
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
@@ -454,6 +477,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   vertex: getVertexModelName,
   kilocode: getKiloCodeModelName,
   openadapter: getOpenAdapterModelName,
+  anthropic: getAnthropicModelName,
 };
 
 /** Return the current runtime model name for a provider, or undefined if unknown. */
@@ -494,7 +518,8 @@ export type PreferredProvider =
   | 'bedrock'
   | 'vertex'
   | 'kilocode'
-  | 'openadapter';
+  | 'openadapter'
+  | 'anthropic';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
@@ -509,7 +534,8 @@ export function getPreferredProvider(): PreferredProvider | null {
     stored === 'bedrock' ||
     stored === 'vertex' ||
     stored === 'kilocode' ||
-    stored === 'openadapter'
+    stored === 'openadapter' ||
+    stored === 'anthropic'
   )
     return stored;
   return null;
@@ -543,7 +569,8 @@ export function getLastUsedProvider(): PreferredProvider | null {
     stored === 'bedrock' ||
     stored === 'vertex' ||
     stored === 'kilocode' ||
-    stored === 'openadapter'
+    stored === 'openadapter' ||
+    stored === 'anthropic'
   )
     return stored;
   return null;

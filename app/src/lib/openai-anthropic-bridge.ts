@@ -50,12 +50,21 @@ function convertOpenAIContentToAnthropic(
   for (const part of content) {
     if (!part || typeof part !== 'object') continue;
     if (part.type === 'text' && typeof part.text === 'string') {
-      parts.push({ type: 'text', text: part.text });
+      const textPart: Record<string, unknown> = { type: 'text', text: part.text };
+      // Anthropic accepts the same `cache_control: { type: 'ephemeral' }` shape
+      // OpenAI uses for prompt caching. Pass it through verbatim — dropping it
+      // here would silently disable caching on every direct-Anthropic /
+      // Vertex-Anthropic turn even when the caller set breakpoints upstream.
+      if (part.cache_control) textPart.cache_control = part.cache_control;
+      parts.push(textPart);
       continue;
     }
     if (part.type === 'image_url' && typeof part.image_url?.url === 'string') {
       const imagePart = dataUrlToAnthropicImagePart(part.image_url.url);
-      if (imagePart) parts.push(imagePart);
+      if (imagePart) {
+        if (part.cache_control) imagePart.cache_control = part.cache_control;
+        parts.push(imagePart);
+      }
     }
   }
 
