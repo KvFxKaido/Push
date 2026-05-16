@@ -172,7 +172,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 | Variable | Purpose |
 |---|---|
-| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `blackbox`, `openadapter`) |
+| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `blackbox`, `openadapter`, `openai`, `anthropic`, `google`) |
 | `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
@@ -194,6 +194,15 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_OPENADAPTER_URL` | OpenAdapter endpoint (default: `https://api.openadapter.in/v1/chat/completions`) |
 | `PUSH_OPENADAPTER_API_KEY` | OpenAdapter API key |
 | `PUSH_OPENADAPTER_MODEL` | OpenAdapter model (default: `deepseek/deepseek-v3`) |
+| `PUSH_OPENAI_URL` | OpenAI endpoint (default: `https://api.openai.com/v1/chat/completions`) |
+| `PUSH_OPENAI_API_KEY` | OpenAI API key |
+| `PUSH_OPENAI_MODEL` | OpenAI model (default: `gpt-5.4`) |
+| `PUSH_ANTHROPIC_URL` | Anthropic Messages endpoint (default: `https://api.anthropic.com/v1/messages`) |
+| `PUSH_ANTHROPIC_API_KEY` | Anthropic API key |
+| `PUSH_ANTHROPIC_MODEL` | Anthropic model (default: `claude-sonnet-4-6`) |
+| `PUSH_GOOGLE_URL` | Google Gemini base URL (default: `https://generativelanguage.googleapis.com/v1beta`) |
+| `PUSH_GOOGLE_API_KEY` | Google Gemini API key (also accepted as `GEMINI_API_KEY`) |
+| `PUSH_GOOGLE_MODEL` | Google Gemini model (default: `gemini-3.1-pro-preview`) |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
@@ -205,7 +214,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-All seven providers use OpenAI-compatible SSE streaming. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+The CLI ships ten providers. Seven (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `blackbox`, `openadapter`) plus `openai` speak OpenAI Chat Completions natively. `anthropic` and `google` carry the upstream's native wire shape — the CLI translates OpenAI-shaped messages via the shared bridges in `lib/openai-anthropic-bridge.ts` and `lib/openai-gemini-bridge.ts`, then pipes the response back through the same OpenAI SSE pump so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
@@ -216,8 +225,11 @@ All seven providers use OpenAI-compatible SSE streaming. The CLI retries on 429/
 | `kilocode` | `google/gemini-3-flash-preview` | Yes |
 | `blackbox` | `blackbox-ai` | Yes |
 | `openadapter` | `deepseek/deepseek-v3` | Yes |
+| `openai` | `gpt-5.4` | Yes |
+| `anthropic` | `claude-sonnet-4-6` | Yes |
+| `google` | `gemini-3.1-pro-preview` | Yes |
 
-Removed providers (`mistral`, `zai`, `google`, `minimax`) are gracefully redirected to `openrouter` with a warning.
+Removed providers (`mistral`, `zai`, `minimax`) are gracefully redirected to `openrouter` with a warning.
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
 
@@ -383,7 +395,7 @@ push config init                    Interactive setup wizard
 push config set ...                 Save provider config
 
 Options:
-  --provider <name>       ollama | openrouter | zen | nvidia | kilocode | blackbox | openadapter (default: ollama)
+  --provider <name>       ollama | openrouter | zen | nvidia | kilocode | blackbox | openadapter | openai | anthropic | google (default: ollama)
   --model <name>          Override model
   --url <endpoint>        Override provider endpoint URL
   --api-key <secret>      Set provider API key

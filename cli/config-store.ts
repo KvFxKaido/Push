@@ -39,6 +39,9 @@ export interface PushConfig {
   kilocode?: ProviderConfig;
   blackbox?: ProviderConfig;
   openadapter?: ProviderConfig;
+  openai?: ProviderConfig;
+  anthropic?: ProviderConfig;
+  google?: ProviderConfig;
   [key: string]: unknown;
 }
 
@@ -150,6 +153,21 @@ export function applyConfigToEnv(config: PushConfig): void {
   setEnvIfMissing('PUSH_OPENADAPTER_URL', openadapter.url);
   setEnvIfMissing('PUSH_OPENADAPTER_API_KEY', openadapter.apiKey);
   setEnvIfMissing('PUSH_OPENADAPTER_MODEL', openadapter.model);
+
+  const openai = ensureObject(config.openai) as ProviderConfig;
+  setEnvIfMissing('PUSH_OPENAI_URL', openai.url);
+  setEnvIfMissing('PUSH_OPENAI_API_KEY', openai.apiKey);
+  setEnvIfMissing('PUSH_OPENAI_MODEL', openai.model);
+
+  const anthropic = ensureObject(config.anthropic) as ProviderConfig;
+  setEnvIfMissing('PUSH_ANTHROPIC_URL', anthropic.url);
+  setEnvIfMissing('PUSH_ANTHROPIC_API_KEY', anthropic.apiKey);
+  setEnvIfMissing('PUSH_ANTHROPIC_MODEL', anthropic.model);
+
+  const google = ensureObject(config.google) as ProviderConfig;
+  setEnvIfMissing('PUSH_GOOGLE_URL', google.url);
+  setEnvIfMissing('PUSH_GOOGLE_API_KEY', google.apiKey);
+  setEnvIfMissing('PUSH_GOOGLE_MODEL', google.model);
 }
 
 export function maskSecret(value: unknown): string {

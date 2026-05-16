@@ -66,26 +66,11 @@ function extractWebProviderEnvKey(source, providerId) {
 
 describe('provider config parity', () => {
   const allWebProviderIds = extractUnionMembers(webProviderSource, 'PreferredProvider');
-  // CLI only implements the four built-in providers; azure/bedrock/vertex are
-  // advanced connectors deferred per the Web-CLI Parity Plan. `anthropic` is
-  // deferred until the openai-anthropic-bridge promotes from `app/src/lib/` to
-  // shared `lib/` and the CLI gains a non-OpenAI-compat stream adapter — both
-  // belong in the CLI Anthropic follow-up PR, not this Worker-side wiring.
-  // `openai` is deferred to a sibling CLI follow-up — the CLI's OpenAI-compatible
-  // path already covers the wire shape; the deferral is about a curated default
-  // model + env-key plumbing landing alongside the CLI Anthropic adapter.
-  // `google` is deferred for the same reason as `anthropic`: the
-  // openai-gemini-bridge lives in `app/src/lib/` for the web PR and the CLI
-  // would need its own non-OpenAI-compat adapter to consume it.
-  const CLI_DEFERRED_PROVIDERS = new Set([
-    'azure',
-    'bedrock',
-    'vertex',
-    'cloudflare',
-    'anthropic',
-    'openai',
-    'google',
-  ]);
+  // CLI only implements built-in providers that ship with the binary.
+  // `azure` / `bedrock` / `vertex` are advanced connectors deferred per the
+  // Web-CLI Parity Plan; `cloudflare` is bound to the Worker's `env.AI`
+  // runtime and has no usable CLI shape.
+  const CLI_DEFERRED_PROVIDERS = new Set(['azure', 'bedrock', 'vertex', 'cloudflare']);
   const providerIds = allWebProviderIds.filter((id) => !CLI_DEFERRED_PROVIDERS.has(id));
   const defaultConstByProvider = {
     ollama: 'OLLAMA_DEFAULT_MODEL',
@@ -95,6 +80,9 @@ describe('provider config parity', () => {
     kilocode: 'KILOCODE_DEFAULT_MODEL',
     blackbox: 'BLACKBOX_DEFAULT_MODEL',
     openadapter: 'OPENADAPTER_DEFAULT_MODEL',
+    openai: 'OPENAI_DEFAULT_MODEL',
+    anthropic: 'ANTHROPIC_DEFAULT_MODEL',
+    google: 'GOOGLE_DEFAULT_MODEL',
   };
 
   it('keeps the CLI provider roster in sync with the web provider set', () => {

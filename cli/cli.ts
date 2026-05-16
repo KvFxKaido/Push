@@ -222,7 +222,7 @@ Usage:
   push spinner unpin            Unpin: revert to static status dot
 
 Options:
-  --provider <name>             ollama | openrouter | zen | nvidia (default: ollama)
+  --provider <name>             ollama | openrouter | zen | nvidia | kilocode | blackbox | openadapter | openai | anthropic | google (default: ollama)
   --model <name>                Override model
   --url <endpoint>              Override provider endpoint URL
   --api-key <secret>            Set provider API key (for push config set/init)
@@ -1311,10 +1311,13 @@ async function initSession(sessionId, provider, model, cwd) {
   return state;
 }
 
+// `google` was previously a deprecated alias for `openrouter` (when the
+// only Gemini access was via OpenRouter's google/* model family). The
+// direct Google provider now exists in `PROVIDER_CONFIGS`, so `google`
+// resolves natively — it's no longer in this redirect table.
 const DEPRECATED_PROVIDERS = {
   mistral: 'openrouter',
   zai: 'openrouter',
-  google: 'openrouter',
   minimax: 'openrouter',
 };
 

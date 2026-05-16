@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type { OpenAIChatRequest } from './chat-request-guardrails';
+import type { OpenAIChatRequest } from './openai-chat-types.ts';
 import {
   buildGeminiGenerateContentRequest,
   createGeminiTranslatedStream,
-} from './openai-gemini-bridge';
+} from './openai-gemini-bridge.ts';
 
 function createEventStreamResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();

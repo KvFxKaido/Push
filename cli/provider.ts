@@ -1,20 +1,44 @@
 import process from 'node:process';
 import {
+  ANTHROPIC_DEFAULT_MODEL,
   BLACKBOX_DEFAULT_MODEL,
+  GOOGLE_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
   NVIDIA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_MODEL,
   OPENADAPTER_DEFAULT_MODEL,
+  OPENAI_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
 } from '../lib/provider-models.ts';
-import type { AIProviderType, LlmMessage, PushStreamEvent } from '../lib/provider-contract.ts';
+import type {
+  AIProviderType,
+  LlmMessage,
+  PushStream,
+  PushStreamEvent,
+} from '../lib/provider-contract.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
+import { createCliAnthropicStream } from './anthropic-stream.ts';
+import { createCliGeminiStream } from './gemini-stream.ts';
 
 export const DEFAULT_TIMEOUT_MS: number = 120_000;
 export const MAX_RETRIES: number = 3;
 const RETRY_BASE_DELAY_MS: number = 1_000;
+
+/** Wire shape for streaming + request bodies. Mirrors
+ *  `ProviderStreamShape` in `lib/provider-definition.ts` so the CLI's
+ *  per-provider dispatch stays aligned with the canonical scaffold.
+ *
+ *  - `openai-compat`: OpenAI Chat Completions schema; consume via
+ *    `cli/openai-stream.ts`. Default — every provider before the direct
+ *    track used this shape.
+ *  - `anthropic`: Anthropic Messages API; consume via
+ *    `cli/anthropic-stream.ts` (translates via `lib/openai-anthropic-bridge`).
+ *  - `gemini`: Google Generative Language API; consume via
+ *    `cli/gemini-stream.ts` (translates via `lib/openai-gemini-bridge`).
+ */
+export type CliProviderStreamShape = 'openai-compat' | 'anthropic' | 'gemini';
 
 export interface ProviderConfig {
   id: string;
@@ -22,6 +46,9 @@ export interface ProviderConfig {
   defaultModel: string;
   apiKeyEnv: string[];
   requiresKey: boolean;
+  /** Optional. Omitting it defaults to `openai-compat` for backwards
+   *  compatibility with every pre-existing entry. */
+  streamShape?: CliProviderStreamShape;
 }
 
 export interface ProviderListEntry {
@@ -128,7 +155,61 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
     apiKeyEnv: ['PUSH_OPENADAPTER_API_KEY', 'OPENADAPTER_API_KEY', 'VITE_OPENADAPTER_API_KEY'],
     requiresKey: true,
   },
+  openai: {
+    id: 'openai',
+    // OpenAI is OpenAI-compatible by definition — the existing
+    // `createCliProviderStream` handles the wire shape unchanged.
+    url: process.env.PUSH_OPENAI_URL || 'https://api.openai.com/v1/chat/completions',
+    defaultModel: process.env.PUSH_OPENAI_MODEL || OPENAI_DEFAULT_MODEL,
+    apiKeyEnv: ['PUSH_OPENAI_API_KEY', 'OPENAI_API_KEY', 'VITE_OPENAI_API_KEY'],
+    requiresKey: true,
+    streamShape: 'openai-compat',
+  },
+  anthropic: {
+    id: 'anthropic',
+    // Direct Anthropic Messages API. The CLI adapter translates the
+    // OpenAI-shaped body via `lib/openai-anthropic-bridge` and pipes the
+    // response back through the same OpenAI SSE pump every other CLI
+    // provider uses, so consumers see one event surface.
+    url: process.env.PUSH_ANTHROPIC_URL || 'https://api.anthropic.com/v1/messages',
+    defaultModel: process.env.PUSH_ANTHROPIC_MODEL || ANTHROPIC_DEFAULT_MODEL,
+    apiKeyEnv: ['PUSH_ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY', 'VITE_ANTHROPIC_API_KEY'],
+    requiresKey: true,
+    streamShape: 'anthropic',
+  },
+  google: {
+    id: 'google',
+    // Direct Google Generative Language API. The CLI adapter appends
+    // `/models/{model}:streamGenerateContent?alt=sse` onto this base URL
+    // (the model name varies per request, so it can't be baked in here).
+    // If a caller pre-bakes a full URL with `:streamGenerateContent`, the
+    // adapter uses it verbatim — supports regional mirrors and proxies.
+    url: process.env.PUSH_GOOGLE_URL || 'https://generativelanguage.googleapis.com/v1beta',
+    defaultModel: process.env.PUSH_GOOGLE_MODEL || GOOGLE_DEFAULT_MODEL,
+    apiKeyEnv: ['PUSH_GOOGLE_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'VITE_GOOGLE_API_KEY'],
+    requiresKey: true,
+    streamShape: 'gemini',
+  },
 };
+
+/** Build the right `PushStream` for a provider based on its wire shape.
+ *  Centralized so callers (legacy `streamCompletion` here, plus the
+ *  daemon provider stream) don't each branch on `streamShape` themselves. */
+export function createProviderStream(
+  config: ProviderConfig,
+  apiKey: string,
+  options: { sessionId?: string } = {},
+): PushStream<LlmMessage> {
+  switch (config.streamShape) {
+    case 'anthropic':
+      return createCliAnthropicStream(config, apiKey);
+    case 'gemini':
+      return createCliGeminiStream(config, apiKey);
+    case 'openai-compat':
+    case undefined:
+      return createCliProviderStream(config, apiKey, { sessionId: options.sessionId });
+  }
+}
 
 export function resolveApiKey(config: ProviderConfig): string {
   for (const key of config.apiKeyEnv) {
@@ -203,7 +284,7 @@ export async function streamCompletion(
     if (externalSignal) signals.push(externalSignal);
     const compositeSignal: AbortSignal = AbortSignal.any(signals);
 
-    const stream = createCliProviderStream(config, apiKey, {
+    const stream = createProviderStream(config, apiKey, {
       sessionId: options?.sessionId,
     });
 

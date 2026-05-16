@@ -18,13 +18,13 @@ import { validateAndNormalizeChatRequest } from '../lib/chat-request-guardrails'
 import {
   buildAnthropicMessagesRequest,
   createAnthropicTranslatedStream,
-} from '../lib/openai-anthropic-bridge';
+} from '@push/lib/openai-anthropic-bridge';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import { ANTHROPIC_MODELS, GOOGLE_MODELS } from '@push/lib/provider-models';
 import {
   buildGeminiGenerateContentRequest,
   createGeminiTranslatedStream,
-} from '../lib/openai-gemini-bridge';
+} from '@push/lib/openai-gemini-bridge';
 import {
   buildVertexAnthropicEndpoint,
   buildVertexOpenApiBaseUrl,

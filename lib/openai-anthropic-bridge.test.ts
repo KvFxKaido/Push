@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type { OpenAIChatRequest } from './chat-request-guardrails';
+import type { OpenAIChatRequest } from './openai-chat-types.ts';
 import {
   buildAnthropicMessagesRequest,
   createAnthropicTranslatedStream,
-} from './openai-anthropic-bridge';
+} from './openai-anthropic-bridge.ts';
 
 function createEventStreamResponse(lines: string[]): Response {
   const encoder = new TextEncoder();

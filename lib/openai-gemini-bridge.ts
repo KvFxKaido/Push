@@ -1,4 +1,4 @@
-import type { OpenAIChatRequest, OpenAIContentPart } from './chat-request-guardrails';
+import type { OpenAIChatRequest, OpenAIContentPart } from './openai-chat-types.ts';
 
 /**
  * OpenAI ↔ Gemini bridge.

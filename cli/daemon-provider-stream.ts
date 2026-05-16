@@ -23,8 +23,7 @@
 
 import type { LlmMessage, PushStream } from '../lib/provider-contract.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
-import { createCliProviderStream } from './openai-stream.ts';
-import { PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
+import { createProviderStream, PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
 
 export function createDaemonProviderStream(
   provider: string,
@@ -41,6 +40,10 @@ export function createDaemonProviderStream(
       // observed. The throw lands on the consumer's first `.next()` and is
       // caught by the agent role's try/catch around iteratePushStreamText.
       const apiKey = resolveApiKey(config);
-      yield* normalizeReasoning(createCliProviderStream(config, apiKey, { sessionId })(req));
+      // Route through the shape-aware factory so direct Anthropic / Google
+      // delegations use their native adapters instead of the OpenAI-compat
+      // path. The factory short-circuits to `createCliProviderStream` for
+      // every legacy provider, so this is a no-op for them.
+      yield* normalizeReasoning(createProviderStream(config, apiKey, { sessionId })(req));
     })();
 }

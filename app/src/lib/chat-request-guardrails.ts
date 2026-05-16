@@ -1,4 +1,16 @@
 import { asRecord } from './utils';
+import type {
+  OpenAIChatRequest,
+  OpenAIContentPart,
+  OpenAIMessage,
+  OpenAIReasoningBlock,
+} from '@push/lib/openai-chat-types';
+export type {
+  OpenAIChatRequest,
+  OpenAIContentPart,
+  OpenAIMessage,
+  OpenAIReasoningBlock,
+} from '@push/lib/openai-chat-types';
 
 const MAX_REASONING_BLOCKS_PER_MESSAGE = 64;
 const MAX_REASONING_BLOCK_SIGNATURE_LENGTH = 16_384;
@@ -42,10 +54,6 @@ function normalizeReasoningBlocks(raw: unknown): OpenAIReasoningBlock[] | undefi
   return out.length > 0 ? out : undefined;
 }
 
-export type OpenAIContentPart =
-  | { type: 'text'; text?: string; cache_control?: { type: 'ephemeral' } }
-  | { type: 'image_url'; image_url?: { url?: string }; cache_control?: { type: 'ephemeral' } };
-
 /** Extract a `cache_control` field from a raw content part and return the
  *  normalized shape Push emits today, or `undefined` if the field is absent
  *  or malformed. Fail-closed by design: an unrecognized cache_control shape
@@ -61,34 +69,6 @@ function pickCacheControl(rawPart: Record<string, unknown>): { type: 'ephemeral'
   if (!cc) return undefined;
   if (cc.type === 'ephemeral') return { type: 'ephemeral' };
   return undefined;
-}
-
-/** Structured reasoning blocks attached to a prior assistant message.
- *  Push-private extension — not part of OpenAI's public schema. The
- *  Anthropic bridge consumes these and re-emits them as the first entries
- *  of the upstream Anthropic `content[]` so signed thinking round-trips
- *  correctly across chained turns. Other backends (OpenAI Chat, Vertex
- *  non-Anthropic) ignore the field entirely. See
- *  `lib/provider-contract.ts` `ReasoningBlock` for the canonical shape. */
-export type OpenAIReasoningBlock =
-  | { type: 'thinking'; text: string; signature: string }
-  | { type: 'redacted_thinking'; data: string };
-
-export type OpenAIMessage = {
-  role?: string;
-  content?: string | OpenAIContentPart[] | null;
-  reasoning_blocks?: OpenAIReasoningBlock[];
-};
-
-export interface OpenAIChatRequest {
-  model?: string;
-  messages?: OpenAIMessage[];
-  temperature?: number;
-  top_p?: number;
-  max_tokens?: number;
-  max_completion_tokens?: number;
-  stream?: boolean;
-  n?: number;
 }
 
 export interface ChatRequestPolicy {
