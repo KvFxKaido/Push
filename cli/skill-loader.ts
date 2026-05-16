@@ -21,7 +21,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Capability } from '../lib/capabilities.js';
+import { ALL_CAPABILITIES, type Capability } from '../lib/capabilities.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -136,7 +136,15 @@ function parseFrontmatter(raw: string): {
       fm.description = unquote(value);
     } else if (key === 'requires_capabilities' || key === 'requires-capabilities') {
       const arr = parseInlineArray(value);
-      if (arr) fm.requiresCapabilities = arr as Capability[];
+      if (arr) {
+        // Validate against the known capability set; unknown entries are dropped so
+        // a typo (`git:pus`) doesn't become an unmeetable constraint that silently hides
+        // the skill. Mirrors how `platforms` filters to known values — fail-open by design.
+        const valid = arr.filter((v): v is Capability =>
+          (ALL_CAPABILITIES as readonly string[]).includes(v),
+        );
+        if (valid.length > 0) fm.requiresCapabilities = valid;
+      }
     } else if (key === 'platforms') {
       const arr = parseInlineArray(value);
       if (arr) {
@@ -168,10 +176,30 @@ function parseInlineArray(value: string): string[] | null {
   if (!value.startsWith('[') || !value.endsWith(']')) return null;
   const inner = value.slice(1, -1).trim();
   if (!inner) return [];
-  return inner
-    .split(',')
-    .map((s) => unquote(s.trim()))
-    .filter((s) => s.length > 0);
+  // Split on commas at depth 0 only — commas inside "…" or '…' stay attached to their entry.
+  const parts: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+  for (const ch of inner) {
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === ',') {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current);
+  return parts.map((s) => unquote(s.trim())).filter((s) => s.length > 0);
 }
 
 /**

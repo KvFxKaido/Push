@@ -42,6 +42,7 @@ import {
   filterSkillsForEnvironment,
   getCurrentSkillPlatform,
 } from './skill-loader.js';
+import { ALL_CAPABILITIES, type Capability } from '../lib/capabilities.js';
 import { createCompleter } from './completer.js';
 import { fmt, formatRelativeTime, Spinner } from './format.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
@@ -840,6 +841,21 @@ async function runInteractive(
     await saveSessionState(state);
   }
   const skills = await loadSkills(state.cwd);
+  // `visibleSkills` mirrors `skills` filtered by current platform + capabilities.
+  // The completer iterates the visible view so hidden skills don't tab-complete;
+  // dispatch uses the full `skills` so explicit `/<name>` invocation still runs.
+  const skillFilterEnv = {
+    platform: getCurrentSkillPlatform(),
+    availableCapabilities: new Set<Capability>(ALL_CAPABILITIES),
+  };
+  const visibleSkills = filterSkillsForEnvironment(skills, skillFilterEnv);
+  function rebuildVisibleSkills() {
+    const fresh = filterSkillsForEnvironment(skills, skillFilterEnv);
+    visibleSkills.clear();
+    for (const [name, skill] of fresh) {
+      visibleSkills.set(name, skill);
+    }
+  }
 
   async function reloadSkillsMap() {
     const fresh = await loadSkills(state.cwd);
@@ -847,6 +863,7 @@ async function runInteractive(
     for (const [name, skill] of fresh) {
       skills.set(name, skill);
     }
+    rebuildVisibleSkills();
     return skills.size;
   }
 
@@ -920,7 +937,7 @@ async function runInteractive(
   const execMode = process.env.PUSH_EXEC_MODE || 'auto';
   const completer = createCompleter({
     ctx,
-    skills,
+    skills: visibleSkills,
     getCuratedModels,
     getProviderList,
     workspaceRoot: state.cwd,
@@ -1054,17 +1071,18 @@ async function runInteractive(
         continue;
       }
 
-      // /skills — list loaded skills (filtered to skills valid for the current platform)
+      // /skills — list loaded skills (filtered for the current environment)
       if (line === '/skills' || line.startsWith('/skills ')) {
         const arg = line.slice('/skills'.length).trim();
         if (!arg) {
-          const visible = filterSkillsForEnvironment(skills, {
-            platform: getCurrentSkillPlatform(),
-          });
-          if (visible.size === 0) {
+          if (skills.size === 0) {
             process.stdout.write('No skills loaded.\n');
+          } else if (visibleSkills.size === 0) {
+            process.stdout.write(
+              `All ${skills.size} skills hidden by platform or capability constraints.\n`,
+            );
           } else {
-            for (const [name, skill] of visible) {
+            for (const [name, skill] of visibleSkills) {
               const tag =
                 skill.source === 'workspace'
                   ? fmt.dim(' (workspace)')
@@ -1073,7 +1091,7 @@ async function runInteractive(
                     : '';
               process.stdout.write(`  ${fmt.bold('/' + name)}  ${skill.description}${tag}\n`);
             }
-            const hidden = skills.size - visible.size;
+            const hidden = skills.size - visibleSkills.size;
             if (hidden > 0) {
               process.stdout.write(
                 fmt.dim(`  (${hidden} hidden — platform or capability constraints unmet)\n`),
@@ -3220,9 +3238,16 @@ export async function main() {
     }
     const visible = filterSkillsForEnvironment(skills, {
       platform: getCurrentSkillPlatform(),
+      availableCapabilities: new Set<Capability>(ALL_CAPABILITIES),
     });
-    if (visible.size === 0) {
+    if (skills.size === 0) {
       process.stdout.write('No skills found.\n');
+      return 0;
+    }
+    if (visible.size === 0) {
+      process.stdout.write(
+        `All ${skills.size} skills hidden by platform or capability constraints.\n`,
+      );
       return 0;
     }
     for (const [name, skill] of visible) {
