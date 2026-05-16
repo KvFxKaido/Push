@@ -22,7 +22,8 @@ import { manageContext } from './message-context-manager';
 import { transformContextBeforeLLM } from '@push/lib/context-transformer';
 import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
 import { estimateContextTokens } from './orchestrator-context';
-import { parseSessionDigest, SESSION_DIGEST_HEADER } from '@push/lib/session-digest';
+import { estimateTokens as estimateRawTokens } from '@push/lib/context-budget';
+import { isSyntheticDigestMessage, parseSessionDigest } from '@push/lib/session-digest';
 import { getZenGoTransport } from './zen-go';
 import { getVertexModelTransport } from './vertex-provider';
 
@@ -555,11 +556,19 @@ export function toLLMMessages(
     // this ceiling, so the net is reachable in normal operation, not just
     // pathological overshoots. The protected pins (system, first user task,
     // anchor/digest markers, tail window) keep load-bearing messages safe.
+    //
+    // `fixedOverheadTokens` accounts for the system prompt: the transformer
+    // sees only the message array, but the wire request also carries
+    // `systemContent` (project instructions + tool protocols + workspace
+    // context — often 5K-15K tokens). Without subtracting that overhead the
+    // 85% ceiling undercounts and large system prompts can push the real
+    // request past the gateway budget even when the message body alone fits.
     safetyNet: {
       estimateTokens: (msgs) => estimateContextTokens(msgs as ChatMessage[]),
       budget: contextBudget.maxTokens,
       threshold: 0.85,
       preserveTail: 4,
+      fixedOverheadTokens: estimateRawTokens(systemContent),
     },
   });
   const windowedMessages = transformed.messages;
@@ -567,12 +576,12 @@ export function toLLMMessages(
   // Surface the emitted digest to the caller so they can persist it for
   // the next turn's `priorSessionDigest`. The transformer doesn't return
   // the structured digest separately — it embeds it in the message stream
-  // — so we recover it by scanning for the marker and parsing. `null` when
+  // — so we recover it. Narrow on `isSyntheticDigestMessage` (exact-block
+  // shape, not just substring includes) so a real user/tool message that
+  // quotes a digest block can't spoof the persistence sink. `null` when
   // no digest was emitted this turn (no compaction in play).
   if (sessionDigestOptions?.onEmit) {
-    const digestMsg = windowedMessages.find(
-      (m) => typeof m.content === 'string' && m.content.includes(SESSION_DIGEST_HEADER),
-    );
+    const digestMsg = windowedMessages.find((m) => isSyntheticDigestMessage(m));
     const digestContent = typeof digestMsg?.content === 'string' ? digestMsg.content : null;
     const parsed = digestContent ? parseSessionDigest(digestContent) : null;
     sessionDigestOptions.onEmit(parsed);

@@ -133,13 +133,15 @@ export function buildSessionDigest(inputs: BuildSessionDigestInputs): SessionDig
         recordOutcomesBlocked.push(record.summary);
       }
     } else if (record.kind === 'verification_result') {
-      // Verification results don't carry a structured status enum in `tags`
-      // today; the summary text is the source. Substring fallback stays.
-      const lower = record.summary.toLowerCase();
-      if (lower.includes('fail') || lower.includes('error') || lower.includes('blocked')) {
-        recordOutcomesBlocked.push(record.summary);
-      } else {
+      // Verification results carry structured `pass`/`fail` tags from
+      // `writeCoderMemory` in `lib/context-memory.ts`. Read tags first
+      // for the same reason as `task_outcome`: substring tone can lie
+      // (a check id like `error-handling` or `failover` is a `pass`).
+      // Substring fallback only when tags are absent.
+      if (isPassedVerification(record)) {
         recordOutcomesDone.push(record.summary);
+      } else {
+        recordOutcomesBlocked.push(record.summary);
       }
     }
     if (record.relatedFiles && record.relatedFiles.length > 0) {
@@ -188,6 +190,18 @@ function isCompleteOutcome(record: MemoryRecord): boolean {
   }
   const lower = record.summary.toLowerCase();
   return !(lower.includes('blocked') || lower.includes('failed') || lower.includes('error'));
+}
+
+/** True iff the verification record passed. Reads `record.tags` for the
+ *  `pass`/`fail` markers written by `writeCoderMemory`. Falls back to
+ *  substring tone only when tags are absent — and even then we lean
+ *  conservative: ambiguous summaries route to blocked. */
+function isPassedVerification(record: MemoryRecord): boolean {
+  if (record.tags && record.tags.length > 0) {
+    return record.tags.includes('pass');
+  }
+  const lower = record.summary.toLowerCase();
+  return !(lower.includes('fail') || lower.includes('error') || lower.includes('blocked'));
 }
 
 /** Collapse a rendered field value to a single line so the line-oriented
@@ -245,7 +259,14 @@ function capList(
 export function renderSessionDigest(digest: SessionDigest): string {
   const lines: string[] = [SESSION_DIGEST_HEADER];
 
-  if (digest.goal) lines.push(`Goal: ${digest.goal}`);
+  // Sanitize the scalar value the same way list entries are sanitized —
+  // the goal comes from working memory or the user-goal anchor, both of
+  // which can carry embedded newlines or stray marker substrings. Left raw,
+  // those would corrupt the line-oriented block and break later parse+merge.
+  if (digest.goal) {
+    const sanitizedGoal = sanitizeFieldValue(digest.goal);
+    if (sanitizedGoal) lines.push(`Goal: ${sanitizedGoal}`);
+  }
 
   if (digest.constraints.length > 0) {
     lines.push('Constraints:');
@@ -418,7 +439,20 @@ export function parseSessionDigest(content: string): SessionDigest | null {
       continue;
     }
 
-    // Unknown line — ignore for forward compat.
+    // Unknown top-level label (forward compat). Detected by the heuristic
+    // "non-indented line that ends with a colon and isn't a recognized
+    // label above." Clear the active list target so any `  - x` entries
+    // that follow don't bleed into the previous section — that bleed is
+    // what would corrupt parse+merge when a future digest version adds a
+    // new section between two known ones.
+    if (/^[A-Za-z][^\n]*:\s*$/.test(line)) {
+      listTarget = null;
+      inProgressBlock = false;
+      inCriticalContext = false;
+      continue;
+    }
+
+    // Unrecognized line shape — ignore.
   }
 
   if (criticalContextLines.length > 0) {
@@ -513,16 +547,20 @@ export function mergeSessionDigests(
   };
 }
 
-/** Current-state merge: prefer `next` when non-empty, else keep `prior`.
- *  Sanitizes + dedupes + caps the chosen side. Empty arrays from `next`
- *  intentionally fall through to `prior` so that a build call that didn't
- *  surface working memory doesn't accidentally wipe an existing open-task
- *  list — only an *explicit* next snapshot replaces. */
-function replaceList(prior: string[], next: string[], cap: number): string[] {
-  const source = next.length > 0 ? next : prior;
+/** Current-state merge: always use `next` (which IS the current snapshot
+ *  per the build contract — `buildSessionDigest` populates each current-
+ *  state bucket from working memory or empty). Sanitizes + dedupes + caps.
+ *  Explicit empties from the build (user cleared `openTasks`, no
+ *  `currentPhase`) intentionally wipe prior values; otherwise stale state
+ *  lingers forever. The "keep prior when next is empty" fallback was
+ *  appealing but wrong: it loses the explicit-clear case (Copilot review
+ *  on PR #574). The "fresh build with no working memory" worry is moot —
+ *  that build would emit `next.X === []`, which IS the current snapshot
+ *  for that turn. */
+function replaceList(_prior: string[], next: string[], cap: number): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const value of source) {
+  for (const value of next) {
     const sanitized = sanitizeFieldValue(value);
     if (!sanitized || seen.has(sanitized)) continue;
     seen.add(sanitized);
@@ -566,4 +604,23 @@ export function hasSessionDigest<M extends { content?: unknown }>(
     const c = (m as { content?: unknown }).content;
     return typeof c === 'string' && c.includes(SESSION_DIGEST_HEADER);
   });
+}
+
+/**
+ * True iff the message content is *exactly* a `[SESSION_DIGEST]…[/SESSION_DIGEST]`
+ * block — i.e. the synthetic shape the digest stage emits. Real user/tool
+ * messages that merely quote a digest block (think a debugging paste, a
+ * tool-output dump, or a chat memo) carry surrounding prose and fail this
+ * check. Using `includes`-based detection elsewhere (merge-in-place,
+ * persistence) lets such messages spoof the prior synthetic digest;
+ * `isSyntheticDigestMessage` is the narrower guard that closes that gap.
+ *
+ * Permits leading / trailing whitespace so accidental formatter passes
+ * (Biome / Prettier) over the synthetic content don't break the check.
+ */
+export function isSyntheticDigestMessage<M extends { content?: unknown }>(msg: M): boolean {
+  const c = (msg as { content?: unknown }).content;
+  if (typeof c !== 'string') return false;
+  const trimmed = c.trim();
+  return trimmed.startsWith(SESSION_DIGEST_HEADER) && trimmed.endsWith(SESSION_DIGEST_FOOTER);
 }

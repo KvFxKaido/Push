@@ -32,6 +32,7 @@ import {
 import {
   type BuildSessionDigestInputs,
   buildSessionDigest,
+  isSyntheticDigestMessage,
   mergeSessionDigests,
   parseSessionDigest,
   renderSessionDigest,
@@ -150,6 +151,14 @@ export interface SafetyNetOptions {
    *  from removal — the most recent turns the model is about to read.
    *  Defaults to 4. */
   preserveTail?: number;
+  /** Pre-counted token overhead the gateway will add to the request outside
+   *  of `messages` — typically the system prompt (built downstream in the
+   *  wire path, not seen by the transformer's message array) plus any
+   *  per-message wire framing. The safety net subtracts this from
+   *  `threshold * budget` when deciding whether to trim, so a large system
+   *  prompt can no longer push the wire-side request past the 85% ceiling
+   *  even when the message body alone fits. Defaults to 0. */
+  fixedOverheadTokens?: number;
 }
 
 export interface TransformedContext<M extends TransformableMessage> {
@@ -300,8 +309,13 @@ function injectUserGoalStage<M extends TransformableMessage>(): Stage<M> {
 }
 
 function findSessionDigestIndex<M extends TransformableMessage>(messages: M[]): number {
+  // Narrow on `isSyntheticDigestMessage` rather than substring includes: a
+  // user/tool message that quotes a digest block must not be mistaken for
+  // the transformer's own synthetic message during merge-in-place — the
+  // merge path rewrites that index's content, which would drop the quoting
+  // prose from the prompt. See `lib/session-digest.ts:isSyntheticDigestMessage`.
   for (let i = 0; i < messages.length; i++) {
-    if (readContent(messages[i]).includes(SESSION_DIGEST_HEADER)) return i;
+    if (isSyntheticDigestMessage(messages[i] as { content?: unknown })) return i;
   }
   return -1;
 }
@@ -376,7 +390,14 @@ function safetyNetStage<M extends TransformableMessage>(): Stage<M> {
       const cfg = options.safetyNet!;
       const threshold = cfg.threshold ?? 0.85;
       const preserveTail = cfg.preserveTail ?? 4;
-      const ceiling = cfg.budget * threshold;
+      const overhead = cfg.fixedOverheadTokens ?? 0;
+      // The effective ceiling for the message-array estimate is the
+      // configured fraction of the budget, minus whatever the gateway
+      // will add outside the array (system prompt, tool protocols, etc).
+      // Without subtracting the overhead, a large system prompt can push
+      // the actual provider request past the 85% gateway ceiling even
+      // when the message body alone fits.
+      const ceiling = Math.max(0, cfg.budget * threshold - overhead);
 
       const estimate = cfg.estimateTokens(messages);
       if (estimate <= ceiling) return { messages, rewriteApplied: false };
@@ -395,6 +416,8 @@ function safetyNetStage<M extends TransformableMessage>(): Stage<M> {
       const working = [...messages];
       let rewriteApplied = false;
       while (cfg.estimateTokens(working) > ceiling) {
+        // Loop uses the same ceiling (post-overhead subtraction).
+        // Re-resolve protection on every iteration since drops shift indices.
         const dropIdx = findFirstDroppableIndex(working, preserveTail);
         if (dropIdx === -1) break; // no eligible target left without breaching protection
         working.splice(dropIdx, 1);

@@ -42,7 +42,8 @@ import {
 } from './context-manager.js';
 import { transformContextBeforeLLM, type DistillResult } from '../lib/context-transformer.ts';
 import { getDefaultMemoryStore } from '../lib/context-memory-store.ts';
-import { parseSessionDigest } from '../lib/session-digest.ts';
+import { isSyntheticDigestMessage, parseSessionDigest } from '../lib/session-digest.ts';
+import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { deriveUserGoalAnchor } from '../lib/user-goal-anchor.ts';
 import { loadUserGoalFile, seedUserGoalFile, extractDigestBody } from './user-goal-file.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
@@ -1051,18 +1052,38 @@ export async function runAssistantLoop(
     // Session-digest record materialization. The default CLI store is
     // file-backed in headless/daemon execution (`createFileMemoryStore`),
     // whose `list()` returns a Promise — the pre-#574 sync `Array.isArray`
-    // narrow dropped every persisted record. Await up here, scoped to the
-    // current session.
+    // narrow dropped every persisted record. Await up here, scoped to
+    // the current repo+branch.
     //
-    // Scope filter: we don't have repoFullName/branch in `state` yet, so
-    // narrow by `chatId` if the workspace context surfaces one. Without a
-    // chatId predicate, fall back to all records — acceptable for the
-    // primary CLI process since memory persistence is per-cwd, but a TODO
-    // to tighten when `state` carries explicit scope identifiers.
+    // Scope filter: `createFileMemoryStore().list()` scans every JSONL
+    // file under `~/.push/memory` (one per repo+branch), so without a
+    // predicate the digest pulls decisions/files/outcomes from unrelated
+    // repos into this session's prompt. `resolveWorkspaceIdentity(cwd)`
+    // gives us the repoFullName + branch the writers (task-graph-memory,
+    // coder/explorer outcomes) used; matching on those keeps the
+    // cross-repo records out of the digest.
+    const cliWorkspaceIdentity = await resolveWorkspaceIdentity(state.cwd);
     const cliMemoryStore = getDefaultMemoryStore();
     let cliScopedRecords: Awaited<ReturnType<typeof cliMemoryStore.list>> = [];
     try {
-      cliScopedRecords = await Promise.resolve(cliMemoryStore.list());
+      cliScopedRecords = await Promise.resolve(
+        cliMemoryStore.list((record) => {
+          // No identity (non-git workspace, transient session) → fall back
+          // to the conservative "include everything" path. This matches the
+          // current behavior for ad-hoc CLI runs without a git remote.
+          if (!cliWorkspaceIdentity.repoFullName) return true;
+          if (record.scope.repoFullName !== cliWorkspaceIdentity.repoFullName) return false;
+          // Branch is optional on both sides; only filter when both are set.
+          if (
+            cliWorkspaceIdentity.branch &&
+            record.scope.branch &&
+            record.scope.branch !== cliWorkspaceIdentity.branch
+          ) {
+            return false;
+          }
+          return true;
+        }),
+      );
     } catch {
       cliScopedRecords = [];
     }
@@ -1105,6 +1126,12 @@ export async function runAssistantLoop(
       // overshot. CLI's hard fallback in `applyHardFallback` already fires
       // at 100% (maxTokens); this earlier net catches the case before the
       // provider truncates.
+      //
+      // No `fixedOverheadTokens`: the CLI's system message is at index 0
+      // of `state.messages` (see `lib/system-prompt-builder.ts` and the
+      // enrichment path above), so `estimateContextTokens` already counts
+      // it. The web side differs because the system prompt is composed
+      // downstream of the transformer in `toLLMMessages`.
       safetyNet: {
         estimateTokens: (msgs) => estimateContextTokens(msgs as Message[]),
         budget: cliContextBudget.maxTokens,
@@ -1113,15 +1140,11 @@ export async function runAssistantLoop(
       },
     });
     // Persist the digest the model is about to see so the next round's
-    // `priorSessionDigest` is set. Recover it from the transformed message
-    // stream — the transformer doesn't return the structured digest
-    // separately. `null` means no digest this round (no compaction in
-    // play), so leave the prior entry alone.
-    const emittedDigestMsg = transformed.messages.find(
-      (m) =>
-        typeof (m as { content?: unknown }).content === 'string' &&
-        ((m as { content: string }).content as string).includes('[SESSION_DIGEST]'),
-    );
+    // `priorSessionDigest` is set. Narrow on `isSyntheticDigestMessage`
+    // (exact-block shape) so a real user/tool message that quotes a digest
+    // block can't spoof the persistence sink. Leave prior entry alone
+    // when no digest was emitted this round.
+    const emittedDigestMsg = transformed.messages.find((m) => isSyntheticDigestMessage(m));
     if (emittedDigestMsg) {
       const parsedEmitted = parseSessionDigest((emittedDigestMsg as { content: string }).content);
       if (parsedEmitted) state.lastSessionDigest = parsedEmitted;
