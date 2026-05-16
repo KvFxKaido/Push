@@ -2,10 +2,10 @@
 
 Date: 2026-05-16
 Author: Claude (via Claude Code)
-Status: Shipped — all three borrow items landed.
-  - **Item 1** (cache breakpoint audit — `system + rolling 3`): shipped via PR #573 (2026-05-16). Includes `cache_control` preservation through `chat-request-guardrails` so the web side actually benefits in production.
-  - **Item 2** (typed `SessionDigest` for compaction output + 85% gateway safety net): shipping in this PR. New `lib/session-digest.ts` primitive (type + render/parse round-trip + merge), two new transformer stages (`injectSessionDigestStage` + `safetyNetStage`) in `lib/context-transformer.ts`, wired into both web (`app/src/lib/orchestrator.ts`) and CLI (`cli/engine.ts`) main loops.
-  - **Item 3** (skill frontmatter + auto-hide): shipped via PR #572 (2026-05-16).
+Status: Historical, shipped 2026-05-16 in PRs #572 / #573 / #574.
+  - **Item 1** (cache breakpoint audit — `system + rolling 3`): shipped via PR #573. Includes `cache_control` preservation through `chat-request-guardrails` so the web side actually benefits in production.
+  - **Item 2** (typed `SessionDigest` for compaction output + 85% gateway safety net): shipped via PR #574. New `lib/session-digest.ts` primitive (type + render/parse round-trip + merge), two new transformer stages (`injectSessionDigestStage` + `safetyNetStage`) in `lib/context-transformer.ts`, wired into both web (`app/src/lib/orchestrator.ts`) and CLI (`cli/engine.ts`) main loops.
+  - **Item 3** (skill frontmatter + auto-hide): shipped via PR #572.
 
 ---
 
