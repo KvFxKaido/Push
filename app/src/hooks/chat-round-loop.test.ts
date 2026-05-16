@@ -278,6 +278,147 @@ describe('runRoundLoop', () => {
     expect(turnEnd?.outcome).toBe('aborted');
   });
 
+  it('does not dispatch a partial tool call when abort fires mid-emission', async () => {
+    // Cancellation invariant: "nothing partial reaches history."
+    // Specifically: when streamAssistantRound returns with `accumulated`
+    // containing a half-emitted fenced JSON tool-call block (no closing
+    // braces, no fence terminator) AND abortRef is set, the loop must
+    // NOT proceed to processAssistantTurn. The existing
+    // "breaks early when abort is set" test pinned the empty-accumulator
+    // case; this pins the more realistic shape where the model started
+    // emitting a tool call and the user hit Stop before it finished.
+    //
+    // Without this pin, a future change that gates dispatch on
+    // "accumulator has tool-shaped content" rather than "abort is false"
+    // could regress the invariant silently — detectAllToolCalls would
+    // happily return zero matches on the malformed JSON, but any
+    // downstream code that tried to parse fenced blocks loosely could
+    // still trigger a tool execution.
+    const h = makeHarness();
+    const partialToolCall =
+      'Looking up the file.\n\n```json\n{"tool": "sandbox_write_file", "args": {';
+
+    mockStreamAssistantRound.mockImplementationOnce(async () => {
+      h.loopCtx.abortRef.current = true;
+      return {
+        accumulated: partialToolCall,
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      };
+    });
+
+    const result = await runRoundLoop(
+      h.loopCtx,
+      { apiMessages: [], recoveryState: emptyRecovery },
+      {
+        runJournalEntryRef: h.runJournalEntryRef,
+        persistRunJournal: h.persistRunJournal,
+        dequeuePendingSteer: h.dequeuePendingSteer,
+        pendingSteersByChatRef: h.pendingSteersByChatRef,
+      },
+    );
+
+    expect(result.loopCompletedNormally).toBe(false);
+    // The load-bearing assertion: even with tool-shaped content in the
+    // accumulator, no dispatch path was reached.
+    expect(mockProcessAssistantTurn).not.toHaveBeenCalled();
+    // Turn finalizes as aborted, not completed or errored — the
+    // run-engine state machine consumes this outcome.
+    const turnEnd = h.appendRunEvent.mock.calls
+      .map(([, event]) => event as { type: string; outcome?: string })
+      .find((e) => e.type === 'assistant.turn_end');
+    expect(turnEnd?.outcome).toBe('aborted');
+    // No tool-call-malformed event either — that path runs inside
+    // processAssistantTurn for the multiple-mutations case, and the
+    // invariant is "no tool side-effects of any shape after abort."
+    const toolEvents = h.appendRunEvent.mock.calls
+      .map(([, event]) => event as { type: string })
+      .filter((e) => e.type === 'tool.call_malformed' || e.type === 'tool.call_started');
+    expect(toolEvents).toEqual([]);
+  });
+
+  it('does not carry partial accumulator across an abort/resend boundary', async () => {
+    // Cancellation invariant continuation: after an aborted turn, a
+    // subsequent runRoundLoop call must start from a clean accumulator
+    // and not inherit the partial content from the prior turn. The
+    // accumulator lives inside streamAssistantRound (not on the loop
+    // context), so the risk here is shared state on the loop context —
+    // primarily `processedContentRef` and `checkpointRefs.apiMessages`.
+    //
+    // We invoke runRoundLoop twice on the same harness: first call
+    // aborts mid-stream with partial tool-call content; second call
+    // completes normally with a different content. The second turn's
+    // processAssistantTurn must see ONLY the new round's accumulator —
+    // not the abandoned partial from turn 1.
+    const h = makeHarness();
+    const partial = '```json\n{"tool": "sandbox_exec", "args": {';
+    const cleanContent = 'Done — no tool needed.';
+
+    mockStreamAssistantRound
+      .mockImplementationOnce(async () => {
+        h.loopCtx.abortRef.current = true;
+        return {
+          accumulated: partial,
+          thinkingAccumulated: '',
+          reasoningBlocks: [],
+          error: null,
+        };
+      })
+      .mockImplementationOnce(async () => ({
+        accumulated: cleanContent,
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      }));
+    mockProcessAssistantTurn.mockImplementationOnce(async (_round, accumulated) => ({
+      nextApiMessages: [],
+      nextRecoveryState: emptyRecovery,
+      loopAction: 'break',
+      loopCompletedNormally: true,
+      // Echo so the assertion can see exactly what processAssistantTurn
+      // received from the loop on the resend.
+      _receivedAccumulated: accumulated,
+    }));
+
+    await runRoundLoop(
+      h.loopCtx,
+      { apiMessages: [], recoveryState: emptyRecovery },
+      {
+        runJournalEntryRef: h.runJournalEntryRef,
+        persistRunJournal: h.persistRunJournal,
+        dequeuePendingSteer: h.dequeuePendingSteer,
+        pendingSteersByChatRef: h.pendingSteersByChatRef,
+      },
+    );
+    // The user "resends" — reset the abort flag the way the next
+    // outer-loop iteration would and re-enter.
+    h.loopCtx.abortRef.current = false;
+    await runRoundLoop(
+      h.loopCtx,
+      { apiMessages: [], recoveryState: emptyRecovery },
+      {
+        runJournalEntryRef: h.runJournalEntryRef,
+        persistRunJournal: h.persistRunJournal,
+        dequeuePendingSteer: h.dequeuePendingSteer,
+        pendingSteersByChatRef: h.pendingSteersByChatRef,
+      },
+    );
+
+    expect(mockProcessAssistantTurn).toHaveBeenCalledTimes(1);
+    const [, accumulatedArg] = mockProcessAssistantTurn.mock.calls[0];
+    expect(accumulatedArg).toBe(cleanContent);
+    expect(accumulatedArg).not.toContain(partial);
+    // Two turn_end events should appear: the first aborted, the second
+    // completed. Pin both so a regression that drops the second turn
+    // (or surfaces a phantom continuation) breaks the test.
+    const turnEnds = h.appendRunEvent.mock.calls
+      .map(([, event]) => event as { type: string; outcome?: string })
+      .filter((e) => e.type === 'assistant.turn_end')
+      .map((e) => e.outcome);
+    expect(turnEnds).toEqual(['aborted', 'completed']);
+  });
+
   it('drains a pending steer that arrives during streaming and continues', async () => {
     const h = makeHarness();
     const steer: PendingSteerRequest = {
