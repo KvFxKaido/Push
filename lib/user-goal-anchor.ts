@@ -51,6 +51,12 @@ export interface UserGoalAnchorInputs {
    *  their own helpers to identify this; we accept the raw string so this
    *  module stays message-shape-agnostic. */
   firstUserTurn?: string | null;
+  /** All non-tool-result user turns in transcript order (oldest → newest),
+   *  including the first. When provided, the most recent turn matching a
+   *  redirect pattern populates `currentWorkingGoal` so the anchor tracks
+   *  where the conversation actually is rather than only where it started.
+   *  Omit to disable redirect detection (legacy v1 behaviour). */
+  recentUserTurns?: ReadonlyArray<string>;
   /** Active repo + branch context, when known. Web has this on the
    *  Conversation; CLI has it on the workspace snapshot. Both fields are
    *  individually optional. */
@@ -83,6 +89,11 @@ export interface UserGoalAnchor {
  * Build a UserGoalAnchor from seed inputs. Returns null when there is no
  * usable seed — callers should treat null as "no anchor for this turn"
  * and skip injection rather than emit an empty block.
+ *
+ * When `recentUserTurns` is provided, scans the tail for an explicit
+ * redirect statement and populates `currentWorkingGoal` from it. This
+ * keeps the anchor from over-pinning the original ask once the user has
+ * clearly steered the conversation elsewhere.
  */
 export function deriveUserGoalAnchor(inputs: UserGoalAnchorInputs): UserGoalAnchor | null {
   const seed = (inputs.firstUserTurn ?? '').trim();
@@ -90,8 +101,86 @@ export function deriveUserGoalAnchor(inputs: UserGoalAnchorInputs): UserGoalAnch
 
   const initialAsk = truncateInitialAsk(seed);
   const branchLabel = formatBranchLabel(inputs.branch);
+  const currentWorkingGoal = inputs.recentUserTurns
+    ? (deriveCurrentWorkingGoal(inputs.recentUserTurns, seed) ?? undefined)
+    : undefined;
 
-  return branchLabel ? { initialAsk, branchLabel } : { initialAsk };
+  const anchor: UserGoalAnchor = { initialAsk };
+  if (branchLabel) anchor.branchLabel = branchLabel;
+  if (currentWorkingGoal) anchor.currentWorkingGoal = currentWorkingGoal;
+  return anchor;
+}
+
+/**
+ * Pattern set for detecting an explicit redirect/refocus statement in a
+ * user turn. Each entry matches a phrase that conventionally signals "the
+ * goal has shifted" rather than a casual continuation. Conservative on
+ * purpose — false positives shift the working goal away from the initial
+ * ask, false negatives leave it stale; we'd rather under-detect.
+ */
+const REDIRECT_PATTERNS: ReadonlyArray<RegExp> = [
+  /\bactually,/i,
+  /\bactually (let|we|i (think|do|wanna|want))/i,
+  // "instead" not in the prepositional "instead of …" — "let's do Y
+  // instead" still matches, "what about Y instead of X?" does not.
+  /\binstead\b(?!\s+of\b)/i,
+  /\bwait,/i,
+  /\bwait\s*[—-]/i,
+  /\b(let'?s|let me) reset\b/i,
+  /\b(forget|scrap) (that|what|all|it)\b/i,
+  /\bnevermind\b/i,
+  /\bhold (on|up)\b/i,
+  /\bhang on\b/i,
+  /\bchange of plans?\b/i,
+  /\bswitch (focus|to)\b/i,
+  /\bpivot\b/i,
+  /\bon second thought\b/i,
+  /\b(were|are|we'?re) supposed to be\b/i,
+  /\bsupposed to be (doing|working|focusing)\b/i,
+  /\bwe should be (doing|working|focusing)\b/i,
+  /\boff[- ]track\b/i,
+  /\b(got|getting) pulled off\b/i,
+  /\buh ?oh\b/i,
+  /\bcontext problem\b/i,
+  /\blet'?s (pivot|switch|focus on|tackle)\b/i,
+];
+
+function isRedirectStatement(text: string): boolean {
+  return REDIRECT_PATTERNS.some((pat) => pat.test(text));
+}
+
+/**
+ * How far back from the tail to scan for a redirect. Bounded so a stale
+ * redirect from earlier in a long conversation doesn't keep populating
+ * `currentWorkingGoal` after the conversation has moved on past it again.
+ * 6 covers ~3 user-assistant exchanges, enough to catch a recent reset
+ * without dragging in distant history.
+ */
+const REDIRECT_SCAN_WINDOW = 6;
+
+/**
+ * Scan recent user turns (newest → oldest, bounded by `REDIRECT_SCAN_WINDOW`)
+ * for an explicit redirect statement and return the matching turn as the
+ * working goal. Skips the seed turn itself — that already lives in
+ * `initialAsk`. Returns null when no recent redirect is found.
+ *
+ * Exported for unit testing; callers should normally go through
+ * `deriveUserGoalAnchor`.
+ */
+export function deriveCurrentWorkingGoal(
+  userTurns: ReadonlyArray<string>,
+  seed: string,
+): string | null {
+  const seedTrimmed = seed.trim();
+  const start = Math.max(0, userTurns.length - REDIRECT_SCAN_WINDOW);
+  for (let i = userTurns.length - 1; i >= start; i--) {
+    const turn = (userTurns[i] ?? '').trim();
+    if (!turn || turn === seedTrimmed) continue;
+    if (isRedirectStatement(turn)) {
+      return truncateInitialAsk(turn);
+    }
+  }
+  return null;
 }
 
 /**
