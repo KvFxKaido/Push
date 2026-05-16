@@ -16,6 +16,7 @@ import {
   makeRunId,
 } from './session-store.js';
 import { streamCompletion, type StreamCompletionOptions } from './provider.js';
+import type { ReasoningBlock } from '../lib/provider-contract.ts';
 import {
   createFileLedger,
   getLedgerSummary,
@@ -1232,6 +1233,15 @@ export async function runAssistantLoop(
     state.lastPromptTokens = trimResult.afterTokens || estimateContextTokens(transformed.messages);
     state.lastPromptChars = transformedChars;
 
+    // Per-turn buffer for signed-reasoning blocks Anthropic emits as
+    // content_block_stop events. Attached to the assistant Message at
+    // the persistence site below so the next turn's bridge call can
+    // round-trip them through `reasoningBlocksToAnthropic` and avoid
+    // the `invalid_request_error` Anthropic raises when extended
+    // thinking + tool use are combined and the signed prefix is
+    // missing. Non-Anthropic providers never call this callback.
+    const turnReasoningBlocks: ReasoningBlock[] = [];
+
     const streamOptions: StreamCompletionOptions = {
       onThinkingToken: emit
         ? (token: string | null): void => {
@@ -1242,6 +1252,9 @@ export async function runAssistantLoop(
             dispatchEvent('assistant_thinking_token', { text: token });
           }
         : undefined,
+      onReasoningBlock: (block: ReasoningBlock): void => {
+        turnReasoningBlocks.push(block);
+      },
       sessionId: state.sessionId,
       cacheBreakpointIndices: transformed.cacheBreakpointIndices,
     };
@@ -1308,7 +1321,11 @@ export async function runAssistantLoop(
     }
 
     finalAssistantText = assistantText.trim();
-    (state.messages as Message[]).push({ role: 'assistant', content: assistantText });
+    const assistantMessage: Message = { role: 'assistant', content: assistantText };
+    if (turnReasoningBlocks.length > 0) {
+      assistantMessage.reasoningBlocks = turnReasoningBlocks;
+    }
+    (state.messages as Message[]).push(assistantMessage);
     state.rounds += 1;
     turnCtx.round = round;
 
@@ -1522,6 +1539,7 @@ export async function runAssistantLoop(
               return { messages: result.messages, compactionApplied: result.trimmed };
             },
           });
+          const finalTurnReasoningBlocks: ReasoningBlock[] = [];
           const finalStreamOptions: StreamCompletionOptions = {
             onThinkingToken: emit
               ? (token: string | null): void => {
@@ -1532,6 +1550,9 @@ export async function runAssistantLoop(
                   dispatchEvent('assistant_thinking_token', { text: token });
                 }
               : undefined,
+            onReasoningBlock: (block: ReasoningBlock): void => {
+              finalTurnReasoningBlocks.push(block);
+            },
             sessionId: state.sessionId,
             cacheBreakpointIndices: finalTransformed.cacheBreakpointIndices,
           };
@@ -1550,7 +1571,14 @@ export async function runAssistantLoop(
           const trimmed = finalizationText.trim();
           if (trimmed) {
             finalAssistantText = trimmed;
-            (state.messages as Message[]).push({ role: 'assistant', content: finalizationText });
+            const finalizationMessage: Message = {
+              role: 'assistant',
+              content: finalizationText,
+            };
+            if (finalTurnReasoningBlocks.length > 0) {
+              finalizationMessage.reasoningBlocks = finalTurnReasoningBlocks;
+            }
+            (state.messages as Message[]).push(finalizationMessage);
             assistantPushed = true;
             const finalizationMessageId: string = `asst_${Date.now().toString(36)}`;
             await appendSessionEvent(
@@ -1966,6 +1994,7 @@ export async function runAssistantLoop(
         detail: `${finalTrimResult.beforeTokens} → ${finalTrimResult.afterTokens} tokens (${finalTrimResult.removedCount} msgs removed)`,
       });
     }
+    const maxRoundsReasoningBlocks: ReasoningBlock[] = [];
     const finalStreamOptions: StreamCompletionOptions = {
       onThinkingToken: emit
         ? (token: string | null): void => {
@@ -1976,6 +2005,9 @@ export async function runAssistantLoop(
             dispatchEvent('assistant_thinking_token', { text: token });
           }
         : undefined,
+      onReasoningBlock: (block: ReasoningBlock): void => {
+        maxRoundsReasoningBlocks.push(block);
+      },
       sessionId: state.sessionId,
       cacheBreakpointIndices: finalTransformed.cacheBreakpointIndices,
     };
@@ -1992,7 +2024,11 @@ export async function runAssistantLoop(
       finalStreamOptions,
     );
     finalSummaryText = assistantText.trim() || warning;
-    (state.messages as Message[]).push({ role: 'assistant', content: assistantText });
+    const summaryMessage: Message = { role: 'assistant', content: assistantText };
+    if (maxRoundsReasoningBlocks.length > 0) {
+      summaryMessage.reasoningBlocks = maxRoundsReasoningBlocks;
+    }
+    (state.messages as Message[]).push(summaryMessage);
     const messageId: string = `asst_${Date.now().toString(36)}`;
     await appendSessionEvent(state, 'assistant_done', { messageId }, runId);
     dispatchEvent('assistant_done', { messageId });

@@ -16,6 +16,7 @@ import type {
   LlmMessage,
   PushStream,
   PushStreamEvent,
+  ReasoningBlock,
 } from '../lib/provider-contract.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
@@ -62,10 +63,24 @@ export interface ProviderListEntry {
 interface ChatMessage {
   role: string;
   content: string;
+  /** Optional signed-reasoning sidecar carried on prior assistant turns.
+   *  Forwarded through to `LlmMessage.reasoningBlocks` and onward into the
+   *  Anthropic bridge. The OpenAI-compat adapter ignores the field on the
+   *  wire — see `cli/openai-stream.ts` for the rationale. */
+  reasoningBlocks?: ReasoningBlock[];
 }
 
 export interface StreamCompletionOptions {
   onThinkingToken?: ((token: string | null) => void) | null;
+  /** Per-block callback for signed-reasoning. Fires once per
+   *  `reasoning_block` event the provider emits (Anthropic emits one at
+   *  every `content_block_stop` for `thinking` / `redacted_thinking`).
+   *  Callers persist these onto the assistant `Message` so the next turn
+   *  can round-trip them through the Anthropic bridge — without that
+   *  capture, extended-thinking + tool-use chains 400 on the second turn
+   *  with `invalid_request_error`. Adapters that don't surface signed
+   *  reasoning (every OpenAI-compat path today) never call this. */
+  onReasoningBlock?: ((block: ReasoningBlock) => void) | null;
   /** OpenRouter session_id for grouping related requests. */
   sessionId?: string;
   /**
@@ -266,6 +281,7 @@ export async function streamCompletion(
   options: StreamCompletionOptions | undefined = undefined,
 ): Promise<string> {
   const onThinkingToken = options?.onThinkingToken ?? null;
+  const onReasoningBlock = options?.onReasoningBlock ?? null;
   let lastError: Error | undefined;
 
   for (let attempt: number = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -304,12 +320,19 @@ export async function streamCompletion(
       const llmMessages: LlmMessage[] = messages.map((m, idx) => {
         const role: LlmMessage['role'] =
           m.role === 'user' || m.role === 'assistant' || m.role === 'system' ? m.role : 'user';
-        return {
+        const out: LlmMessage = {
           id: `cli-${idx}`,
           role,
           content: m.content,
           timestamp: 0,
         };
+        // Forward signed-reasoning blocks when the caller's message carries
+        // them. The Anthropic CLI adapter consumes these via the bridge;
+        // OpenAI-compat adapters drop the field at their wire boundary.
+        if (m.reasoningBlocks && m.reasoningBlocks.length > 0) {
+          out.reasoningBlocks = m.reasoningBlocks;
+        }
+        return out;
       });
 
       const events: AsyncIterable<PushStreamEvent> = normalizeReasoning(
@@ -334,6 +357,15 @@ export async function streamCompletion(
             break;
           case 'reasoning_end':
             onThinkingToken?.(null);
+            break;
+          case 'reasoning_block':
+            // Anthropic emits one of these at every content_block_stop for
+            // thinking / redacted_thinking. The caller is responsible for
+            // persisting them onto the assistant Message so the next turn
+            // round-trips signed thinking through the bridge. Without this
+            // capture, extended-thinking + tool-use chains 400 on the
+            // second turn.
+            onReasoningBlock?.(event.block);
             break;
           case 'tool_call_delta':
             // Structural progress signal — not surfaced through the legacy
