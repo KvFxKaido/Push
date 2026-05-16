@@ -50,7 +50,9 @@ const PROVIDER_FALLBACK_TEXT: Record<AIProviderType, string> = {
   bedrock: 'B',
   vertex: 'V',
   anthropic: 'A',
-  openai: 'OA',
+  // OpenAdapter already owns 'OA'; use 'GPT' for OpenAI to keep the no-logo
+  // fallback unambiguous.
+  openai: 'GPT',
   kilocode: 'K',
   openadapter: 'OA',
   demo: 'P',

@@ -409,6 +409,30 @@ export function buildModelControl(
         onChange: catalog.vertex.setModel,
         allowCustom: true,
       };
+    case 'anthropic':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Anthropic'),
+        value: lockedModel ?? catalog.anthropic.model,
+        options: includeSelectedModel(
+          catalog.anthropicModelOptions,
+          lockedModel ?? catalog.anthropic.model,
+        ),
+        onChange: catalog.anthropic.setModel,
+        allowCustom: true,
+      };
+    case 'openai':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'OpenAI'),
+        value: lockedModel ?? catalog.openai.model,
+        options: includeSelectedModel(
+          catalog.openaiModelOptions,
+          lockedModel ?? catalog.openai.model,
+        ),
+        onChange: catalog.openai.setModel,
+        allowCustom: true,
+      };
     default:
       return null;
   }
