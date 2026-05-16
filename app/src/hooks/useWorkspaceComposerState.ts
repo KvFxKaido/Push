@@ -17,6 +17,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   bedrock: '',
   vertex: '',
   anthropic: '',
+  openai: '',
   kilocode: '',
   openadapter: '',
 };
@@ -38,6 +39,7 @@ function readStoredChatModelMemory(): Record<PreferredProvider, string> {
       bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
       vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
       anthropic: typeof parsed.anthropic === 'string' ? parsed.anthropic.trim() : '',
+      openai: typeof parsed.openai === 'string' ? parsed.openai.trim() : '',
       kilocode:
         typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
       openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
@@ -99,9 +101,11 @@ export function useWorkspaceComposerState({
       bedrock: catalog.bedrock.model,
       vertex: catalog.vertex.model,
       anthropic: catalog.anthropic.model,
+      openai: catalog.openai.model,
     }),
     [
       catalog.anthropic.model,
+      catalog.openai.model,
       catalog.azure.model,
       catalog.bedrock.model,
       catalog.blackbox.model,
@@ -195,6 +199,8 @@ export function useWorkspaceComposerState({
           draft?.models?.anthropic?.trim() ||
           rememberedChatModels.anthropic ||
           defaultChatModels.anthropic,
+        openai:
+          draft?.models?.openai?.trim() || rememberedChatModels.openai || defaultChatModels.openai,
         kilocode: normalizeKilocodeModelName(
           draft?.models?.kilocode?.trim() ||
             rememberedChatModels.kilocode ||
@@ -422,6 +428,24 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
+  const handleSelectAnthropicModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('anthropic', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { anthropic: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
+  const handleSelectOpenAIModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('openai', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { openai: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
   return {
     selectedChatProvider: activeChatDraft.provider,
     selectedChatModels: activeChatDraft.models,
@@ -439,5 +463,7 @@ export function useWorkspaceComposerState({
     handleSelectAzureModelFromChat,
     handleSelectBedrockModelFromChat,
     handleSelectVertexModelFromChat,
+    handleSelectAnthropicModelFromChat,
+    handleSelectOpenAIModelFromChat,
   };
 }

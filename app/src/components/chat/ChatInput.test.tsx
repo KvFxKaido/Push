@@ -89,6 +89,14 @@ function buildProps(
     vertexModelOptions: ['gemini-2.5-pro'],
     isVertexModelLocked: false,
     onSelectVertexModel: vi.fn(),
+    anthropicModel: 'claude-sonnet-4-6',
+    anthropicModelOptions: ['claude-sonnet-4-6'],
+    isAnthropicModelLocked: false,
+    onSelectAnthropicModel: vi.fn(),
+    openaiModel: 'gpt-5.4',
+    openaiModelOptions: ['gpt-5.4'],
+    isOpenAIModelLocked: false,
+    onSelectOpenAIModel: vi.fn(),
   };
 
   return {

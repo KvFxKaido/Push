@@ -208,6 +208,24 @@ export function buildSettingsAI(props: ChatRouteProps): SettingsAIProps {
         setKey: catalog.anthropic.setKey,
         clearKey: catalog.anthropic.clearKey,
       },
+      openai: {
+        hasKey: catalog.openai.hasKey,
+        model: catalog.openai.model,
+        setModel: catalog.openai.setModel,
+        modelOptions: catalog.openaiModelOptions,
+        // Curated-list-only — OpenAI's /v1/models includes a lot of
+        // non-chat endpoints (embeddings, audio, etc.) so a live proxy
+        // would need filtering; not worth it for MVP.
+        modelsLoading: false,
+        modelsError: null,
+        modelsUpdatedAt: null,
+        isModelLocked: isProviderLocked && lockedProvider === 'openai',
+        refreshModels: () => {},
+        keyInput: catalog.openai.keyInput,
+        setKeyInput: catalog.openai.setKeyInput,
+        setKey: catalog.openai.setKey,
+        clearKey: catalog.openai.clearKey,
+      },
     },
     cloudflareProvider: {
       configured: catalog.cloudflare.configured,

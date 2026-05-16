@@ -24,6 +24,7 @@ const CHAT_PROVIDER_LABELS: Record<AIProviderType, string> = {
   openadapter: 'OpenAdapter',
   vertex: 'Google Vertex',
   anthropic: 'Anthropic',
+  openai: 'OpenAI',
   demo: 'Demo',
 };
 
@@ -49,6 +50,8 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectAzureModelFromChat'
   | 'handleSelectBedrockModelFromChat'
   | 'handleSelectVertexModelFromChat'
+  | 'handleSelectAnthropicModelFromChat'
+  | 'handleSelectOpenAIModelFromChat'
   | 'isProviderLocked'
   | 'lockedProvider'
   | 'lockedModel'
@@ -78,6 +81,8 @@ export function useWorkspaceChatComposerController({
   handleSelectAzureModelFromChat,
   handleSelectBedrockModelFromChat,
   handleSelectVertexModelFromChat,
+  handleSelectAnthropicModelFromChat,
+  handleSelectOpenAIModelFromChat,
   isProviderLocked,
   lockedProvider,
   lockedModel,
@@ -114,6 +119,8 @@ export function useWorkspaceChatComposerController({
     if (selectedComposerProvider === 'azure') return selectedChatModels.azure;
     if (selectedComposerProvider === 'bedrock') return selectedChatModels.bedrock;
     if (selectedComposerProvider === 'vertex') return selectedChatModels.vertex;
+    if (selectedComposerProvider === 'anthropic') return selectedChatModels.anthropic;
+    if (selectedComposerProvider === 'openai') return selectedChatModels.openai;
     return 'demo';
   })();
 
@@ -241,6 +248,8 @@ export function useWorkspaceChatComposerController({
   const isAzureModelLocked = isModelLocked && lockedProvider === 'azure';
   const isBedrockModelLocked = isModelLocked && lockedProvider === 'bedrock';
   const isVertexModelLocked = isModelLocked && lockedProvider === 'vertex';
+  const isAnthropicModelLocked = isModelLocked && lockedProvider === 'anthropic';
+  const isOpenAIModelLocked = isModelLocked && lockedProvider === 'openai';
 
   return {
     composerPrefillRequest,
@@ -338,6 +347,14 @@ export function useWorkspaceChatComposerController({
       vertexModelOptions: catalog.vertex.modelOptions,
       isVertexModelLocked,
       onSelectVertexModel: handleSelectVertexModelFromChat,
+      anthropicModel: selectedChatModels.anthropic,
+      anthropicModelOptions: catalog.anthropicModelOptions,
+      isAnthropicModelLocked,
+      onSelectAnthropicModel: handleSelectAnthropicModelFromChat,
+      openaiModel: selectedChatModels.openai,
+      openaiModelOptions: catalog.openaiModelOptions,
+      isOpenAIModelLocked,
+      onSelectOpenAIModel: handleSelectOpenAIModelFromChat,
     },
   };
 }

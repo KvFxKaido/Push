@@ -1010,6 +1010,40 @@ export async function handleVertexModels(request: Request, env: Env): Promise<Re
   });
 }
 
+// --- OpenAI (direct /v1/chat/completions) ---
+//
+// OpenAI is OpenAI-compatible (obviously), so the standard
+// createStreamProxyHandler factory handles everything — no bridge, no body
+// translation, no response rewriting. Bearer auth, vanilla shape.
+
+export const handleOpenAIChat = createStreamProxyHandler({
+  name: 'OpenAI',
+  logTag: 'api/openai/chat',
+  upstreamUrl: 'https://api.openai.com/v1/chat/completions',
+  timeoutMs: 120_000,
+  maxOutputTokens: 12_288,
+  buildAuth: standardAuth('OPENAI_API_KEY'),
+  keyMissingError:
+    'OpenAI API key not configured. Add it in Settings or set OPENAI_API_KEY on the Worker.',
+  timeoutError: 'OpenAI request timed out after 120 seconds',
+  formatUpstreamError: (status, bodyText) => ({
+    error: `OpenAI ${status}: ${extractProviderHttpErrorDetail(status, bodyText)}`,
+    code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+  }),
+});
+
+export const handleOpenAIModels = createJsonProxyHandler({
+  name: 'OpenAI',
+  logTag: 'api/openai/models',
+  upstreamUrl: 'https://api.openai.com/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('OPENAI_API_KEY'),
+  keyMissingError:
+    'OpenAI API key not configured. Add it in Settings or set OPENAI_API_KEY on the Worker.',
+  timeoutError: 'OpenAI model list timed out after 30 seconds',
+});
+
 // --- Anthropic Claude (direct /v1/messages) ---
 //
 // Models: serve the curated `ANTHROPIC_MODELS` list. Anthropic does have a

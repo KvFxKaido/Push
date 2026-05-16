@@ -71,7 +71,17 @@ describe('provider config parity', () => {
   // deferred until the openai-anthropic-bridge promotes from `app/src/lib/` to
   // shared `lib/` and the CLI gains a non-OpenAI-compat stream adapter — both
   // belong in the CLI Anthropic follow-up PR, not this Worker-side wiring.
-  const CLI_DEFERRED_PROVIDERS = new Set(['azure', 'bedrock', 'vertex', 'cloudflare', 'anthropic']);
+  // `openai` is deferred to a sibling CLI follow-up — the CLI's OpenAI-compatible
+  // path already covers the wire shape; the deferral is about a curated default
+  // model + env-key plumbing landing alongside the CLI Anthropic adapter.
+  const CLI_DEFERRED_PROVIDERS = new Set([
+    'azure',
+    'bedrock',
+    'vertex',
+    'cloudflare',
+    'anthropic',
+    'openai',
+  ]);
   const providerIds = allWebProviderIds.filter((id) => !CLI_DEFERRED_PROVIDERS.has(id));
   const defaultConstByProvider = {
     ollama: 'OLLAMA_DEFAULT_MODEL',
