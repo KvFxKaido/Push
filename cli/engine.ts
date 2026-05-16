@@ -171,6 +171,13 @@ export const DEFAULT_MAX_ROUNDS: number = 30;
 // (git status, project instructions, memory) still needs to be loaded.
 const NEEDS_ENRICHMENT: string = '[WORKSPACE_PENDING]';
 
+/** Threshold above which we eagerly pre-fetch memory records each round
+ *  even without a compaction marker. Mirrors the web-side constant in
+ *  `app/src/hooks/chat-stream-round.ts`. Well below typical compaction
+ *  triggers so we don't ever miss a first-compaction turn; high enough to
+ *  skip the cost on warm-up turns. */
+const MIN_MESSAGES_BEFORE_CLI_PREFETCH = 20;
+
 const DEBUG_PROMPTS: boolean = process.env.PUSH_DEBUG === '1' || process.env.PUSH_DEBUG === 'true';
 
 // ─── Context Distillation ─────────────────────────────────────────
@@ -1049,11 +1056,13 @@ export async function runAssistantLoop(
         recentUserTurns: userTurnContents,
       }) ??
       undefined;
-    // Session-digest record materialization. The default CLI store is
-    // file-backed in headless/daemon execution (`createFileMemoryStore`),
-    // whose `list()` returns a Promise — the pre-#574 sync `Array.isArray`
-    // narrow dropped every persisted record. Await up here, scoped to
-    // the current repo+branch.
+    // Session-digest record materialization — but only when compaction is
+    // plausible this round. The file-backed store's `list(predicate)` scans
+    // every repo/branch JSONL file before filtering, so eagerly prefetching
+    // on every round is wasted work for non-compacted turns. Match the
+    // web-side heuristic: prefetch when a durable compaction marker is
+    // already in the transcript OR the message count is past a low
+    // threshold. The digest stage no-ops without prefetched records.
     //
     // Scope filter: `createFileMemoryStore().list()` scans every JSONL
     // file under `~/.push/memory` (one per repo+branch), so without a
@@ -1062,30 +1071,42 @@ export async function runAssistantLoop(
     // gives us the repoFullName + branch the writers (task-graph-memory,
     // coder/explorer outcomes) used; matching on those keeps the
     // cross-repo records out of the digest.
-    const cliWorkspaceIdentity = await resolveWorkspaceIdentity(state.cwd);
+    const compactionLikelyCli =
+      (state.messages as Message[]).some((m) => {
+        const c = (m as { content?: unknown }).content;
+        return (
+          typeof c === 'string' &&
+          (c.includes('[CONTEXT DIGEST]') ||
+            c.includes('[SESSION_DIGEST]') ||
+            c.includes('[USER_GOAL]'))
+        );
+      }) || (state.messages as Message[]).length > MIN_MESSAGES_BEFORE_CLI_PREFETCH;
     const cliMemoryStore = getDefaultMemoryStore();
     let cliScopedRecords: Awaited<ReturnType<typeof cliMemoryStore.list>> = [];
-    try {
-      cliScopedRecords = await Promise.resolve(
-        cliMemoryStore.list((record) => {
-          // No identity (non-git workspace, transient session) → fall back
-          // to the conservative "include everything" path. This matches the
-          // current behavior for ad-hoc CLI runs without a git remote.
-          if (!cliWorkspaceIdentity.repoFullName) return true;
-          if (record.scope.repoFullName !== cliWorkspaceIdentity.repoFullName) return false;
-          // Branch is optional on both sides; only filter when both are set.
-          if (
-            cliWorkspaceIdentity.branch &&
-            record.scope.branch &&
-            record.scope.branch !== cliWorkspaceIdentity.branch
-          ) {
-            return false;
-          }
-          return true;
-        }),
-      );
-    } catch {
-      cliScopedRecords = [];
+    if (compactionLikelyCli) {
+      const cliWorkspaceIdentity = await resolveWorkspaceIdentity(state.cwd);
+      try {
+        cliScopedRecords = await Promise.resolve(
+          cliMemoryStore.list((record) => {
+            // No identity (non-git workspace, transient session) → fall back
+            // to the conservative "include everything" path. This matches the
+            // current behavior for ad-hoc CLI runs without a git remote.
+            if (!cliWorkspaceIdentity.repoFullName) return true;
+            if (record.scope.repoFullName !== cliWorkspaceIdentity.repoFullName) return false;
+            // Branch is optional on both sides; only filter when both are set.
+            if (
+              cliWorkspaceIdentity.branch &&
+              record.scope.branch &&
+              record.scope.branch !== cliWorkspaceIdentity.branch
+            ) {
+              return false;
+            }
+            return true;
+          }),
+        );
+      } catch {
+        cliScopedRecords = [];
+      }
     }
     const cliContextBudget = getContextBudget(providerConfig.id, state.model);
     const transformed = transformContextBeforeLLM<Message>(state.messages as Message[], {

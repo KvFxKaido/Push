@@ -18,7 +18,14 @@ import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
 import { buildTodoContext } from '@/lib/todo-tools';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
-import type { SessionDigest } from '@push/lib/session-digest';
+import { type SessionDigest, SESSION_DIGEST_HEADER } from '@push/lib/session-digest';
+
+/** Threshold above which we eagerly pre-fetch memory records each round
+ *  even without a compaction marker. Chosen well below the typical
+ *  manageContext trigger so we don't ever miss a first-compaction turn,
+ *  but high enough to skip the cost on warm-up turns. The actual
+ *  compaction decision still happens in `manageContext`. */
+const MIN_MESSAGES_BEFORE_PREFETCH = 20;
 import type { ChatMessage, ReasoningBlock } from '@/types';
 import type { SendLoopContext, StreamRoundResult } from './chat-send-types';
 
@@ -101,25 +108,39 @@ export async function streamAssistantRound(
   }
 
   // Pre-fetch the scope-filtered MemoryRecord rows for the session-digest
-  // stage. The production memory store (`createPolicyEnforcedStore(
-  // createIndexedDbStore())`) returns a Promise from `list()`, so this MUST
-  // be awaited up here rather than narrowed sync inside the synchronous
-  // `toLLMMessages` (which is what the pre-#574 code did, and Copilot
-  // flagged as always falling through to `[]`).
-  //
-  // Scope filter: by chatId only. `WorkspaceContext` doesn't carry
-  // repoFullName/branch today; chatId alone is durable and scopes the
-  // digest to this conversation's history. When workspace context grows
-  // repo/branch fields, narrow the predicate further here.
+  // stage — but only when the stage might actually fire. The IndexedDB
+  // `list(predicate)` loads every record before filtering; on a hot path
+  // that runs every round even though the digest no-ops until compaction,
+  // the full read is wasted work (PR #574 review). Two cheap signals
+  // indicate compaction is in play:
+  //   (a) a durable compaction marker already in the transcript (a prior
+  //       turn compacted; this turn likely will too and future-merge into
+  //       that lineage)
+  //   (b) message count is high enough that compaction is plausible this
+  //       turn (rough threshold — the actual decision happens in
+  //       `manageContext`; we just need a not-too-tight gate)
+  // When neither holds, skip the prefetch and let the digest stage emit
+  // an empty-records digest (or no digest at all if compaction doesn't
+  // trigger). Persisted records get picked up on the first compacted turn.
+  const compactionLikely =
+    apiMessages.some(
+      (m) =>
+        typeof m.content === 'string' &&
+        (m.content.includes('[CONTEXT DIGEST]') ||
+          m.content.includes(SESSION_DIGEST_HEADER) ||
+          m.content.includes('[USER_GOAL]')),
+    ) || apiMessages.length > MIN_MESSAGES_BEFORE_PREFETCH;
   const memoryStore = getDefaultMemoryStore();
   let sessionDigestRecords: Awaited<ReturnType<typeof memoryStore.list>> = [];
-  try {
-    const listed = memoryStore.list((record) => record.scope.chatId === chatId);
-    sessionDigestRecords = await Promise.resolve(listed);
-  } catch {
-    // Memory store is best-effort. A read failure shouldn't block the turn —
-    // the digest just falls back to working-memory + goal only.
-    sessionDigestRecords = [];
+  if (compactionLikely) {
+    try {
+      const listed = memoryStore.list((record) => record.scope.chatId === chatId);
+      sessionDigestRecords = await Promise.resolve(listed);
+    } catch {
+      // Memory store is best-effort. A read failure shouldn't block the turn —
+      // the digest just falls back to working-memory + goal only.
+      sessionDigestRecords = [];
+    }
   }
 
   const error = await new Promise<Error | null>((resolve) => {
