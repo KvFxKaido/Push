@@ -19,7 +19,10 @@ export type SharedProviderModelId =
   | 'nvidia'
   | 'kilocode'
   | 'blackbox'
-  | 'openadapter';
+  | 'openadapter'
+  | 'openai'
+  | 'anthropic'
+  | 'google';
 
 export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
@@ -31,6 +34,13 @@ export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
 export const KILOCODE_DEFAULT_MODEL = 'google/gemini-3-flash-preview';
 export const BLACKBOX_DEFAULT_MODEL = 'blackbox-ai';
 export const OPENADAPTER_DEFAULT_MODEL = 'deepseek/deepseek-v3';
+
+// Direct-provider defaults — populated by the scaffolding PR; the streaming /
+// auth / system-prompt wiring lands per-provider in follow-up PRs that consume
+// the matching entry in `lib/provider-definition.ts`.
+export const OPENAI_DEFAULT_MODEL = 'gpt-5.4';
+export const ANTHROPIC_DEFAULT_MODEL = 'claude-sonnet-4-6';
+export const GOOGLE_DEFAULT_MODEL = 'gemini-3.1-pro-preview';
 
 export const OLLAMA_MODELS: string[] = [
   // Cloud-first curated fallback. Live `/models` fetch and free-text entry
@@ -144,6 +154,33 @@ export const OPENADAPTER_MODELS: string[] = [
   'z-ai/glm-5',
 ];
 
+// Curated direct-provider model lists. Free-text entry is still permitted at
+// the UI layer; the curated list seeds dropdowns. Refresh against each
+// provider's `/v1/models` endpoint once the per-provider PRs land.
+export const OPENAI_MODELS: string[] = [
+  OPENAI_DEFAULT_MODEL,
+  'gpt-5.4-mini',
+  'gpt-5.4-nano',
+  'gpt-5.4-pro',
+  'gpt-5.3-codex',
+  'gpt-5.2-codex',
+  'gpt-5-mini',
+];
+
+export const ANTHROPIC_MODELS: string[] = [
+  'claude-opus-4-7',
+  ANTHROPIC_DEFAULT_MODEL,
+  'claude-haiku-4-5-20251001',
+];
+
+export const GOOGLE_MODELS: string[] = [
+  GOOGLE_DEFAULT_MODEL,
+  'gemini-3.1-flash-lite-preview',
+  'gemini-3-flash-preview',
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+];
+
 export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string[]> = {
   ollama: OLLAMA_MODELS,
   openrouter: OPENROUTER_MODELS,
@@ -152,6 +189,9 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
   kilocode: KILOCODE_MODELS,
   blackbox: BLACKBOX_MODELS,
   openadapter: OPENADAPTER_MODELS,
+  openai: OPENAI_MODELS,
+  anthropic: ANTHROPIC_MODELS,
+  google: GOOGLE_MODELS,
 };
 
 export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, string> = {
@@ -162,6 +202,9 @@ export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, strin
   kilocode: KILOCODE_DEFAULT_MODEL,
   blackbox: BLACKBOX_DEFAULT_MODEL,
   openadapter: OPENADAPTER_DEFAULT_MODEL,
+  openai: OPENAI_DEFAULT_MODEL,
+  anthropic: ANTHROPIC_DEFAULT_MODEL,
+  google: GOOGLE_DEFAULT_MODEL,
 };
 
 export function getSharedCuratedModels(providerId: string): readonly string[] {
