@@ -83,6 +83,30 @@ describe('buildGeminiGenerateContentRequest', () => {
     });
   });
 
+  it('unshifts an empty user turn when the first non-system message is an assistant', () => {
+    // After context compaction the user prefix can get lopped off and the
+    // first non-system message is an assistant turn. Gemini 400s on
+    // `contents must not start with a model turn`, so we pad with an empty
+    // user turn to satisfy the upstream invariant.
+    expect(
+      buildGeminiGenerateContentRequest({
+        model: 'gemini-3.1-pro-preview',
+        messages: [
+          { role: 'system', content: 'be terse' },
+          { role: 'assistant', content: 'Earlier answer.' },
+          { role: 'user', content: 'follow-up' },
+        ],
+      } as OpenAIChatRequest),
+    ).toEqual({
+      contents: [
+        { role: 'user', parts: [{ text: '' }] },
+        { role: 'model', parts: [{ text: 'Earlier answer.' }] },
+        { role: 'user', parts: [{ text: 'follow-up' }] },
+      ],
+      systemInstruction: { parts: [{ text: 'be terse' }] },
+    });
+  });
+
   it('translates inline image_url data URLs into Gemini inline_data parts', () => {
     const body = buildGeminiGenerateContentRequest({
       model: 'gemini-2.5-pro',
@@ -182,6 +206,28 @@ describe('createGeminiTranslatedStream', () => {
   it('closes cleanly when upstream has no body', async () => {
     const empty = new Response(null);
     const out = await collectChunks(createGeminiTranslatedStream(empty, 'gemini-2.5-flash'));
+    expect(out).toContain('"finish_reason":"stop"');
+    expect(out.endsWith('data: [DONE]\n\n')).toBe(true);
+  });
+
+  it('parses CRLF-framed SSE upstreams without buffering', async () => {
+    // SSE permits `\r\n\r\n` event boundaries. Google's edge or an
+    // intermediary can emit that form; without CRLF normalization the
+    // boundary scan never matches, the whole stream buffers, and only the
+    // synthesized terminal frame is emitted.
+    const frames = [
+      `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'crlf' }] } }] })}\r\n\r\n`,
+      `data: ${JSON.stringify({
+        candidates: [{ content: { parts: [{ text: ' frames' }] }, finishReason: 'STOP' }],
+      })}\r\n\r\n`,
+    ];
+
+    const out = await collectChunks(
+      createGeminiTranslatedStream(createEventStreamResponse(frames), 'gemini-3.1-pro-preview'),
+    );
+
+    expect(out).toContain('"content":"crlf"');
+    expect(out).toContain('"content":" frames"');
     expect(out).toContain('"finish_reason":"stop"');
     expect(out.endsWith('data: [DONE]\n\n')).toBe(true);
   });

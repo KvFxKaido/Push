@@ -96,11 +96,16 @@ export function buildGeminiGenerateContentRequest(
     });
   }
 
-  // Gemini requires `contents` to be non-empty and to start with a `user` turn.
-  // Pad with an empty user message when the only messages were system-role so
-  // the upstream doesn't 400 on `contents must not be empty`.
+  // Gemini requires `contents` to be non-empty AND to start with a `user`
+  // turn — `[{ role: 'model', ... }]` 400s with "contents must not start
+  // with a model turn". Pad with an empty user turn in two cases:
+  //   - no non-system messages at all (e.g. system-only opening turn);
+  //   - first non-system message is an assistant, which happens after
+  //     context compaction lops off the user prefix.
   if (contents.length === 0) {
     contents.push({ role: 'user', parts: [{ text: '' }] });
+  } else if (contents[0].role === 'model') {
+    contents.unshift({ role: 'user', parts: [{ text: '' }] });
   }
 
   const generationConfig: Record<string, unknown> = {};
@@ -296,7 +301,12 @@ export function createGeminiTranslatedStream(
           const { done, value } = await reader.read();
           if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
+          // Normalize CRLF → LF before scanning. SSE permits `\r\n\r\n`
+          // framing and Google's edge can emit it; without the rewrite the
+          // single-form `\n\n` boundary scan would never match, buffer the
+          // entire response, and fail JSON.parse on the multi-frame blob at
+          // EOF — same defense `coder-job-stream-adapter.ts` already applies.
+          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
 
           // SSE event boundary is a blank line (\n\n). Process every complete
           // event in the buffer and keep the trailing partial for the next
