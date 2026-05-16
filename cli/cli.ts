@@ -35,7 +35,13 @@ import {
 import { aggregateStats, formatStats } from './stats.js';
 import { getToolCallMetrics } from './tool-call-metrics.js';
 import { getSocketPath, getPidPath, getLogPath } from './pushd.js';
-import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.js';
+import {
+  loadSkills,
+  interpolateSkill,
+  getSkillPromptTemplate,
+  filterSkillsForEnvironment,
+  getCurrentSkillPlatform,
+} from './skill-loader.js';
 import { createCompleter } from './completer.js';
 import { fmt, formatRelativeTime, Spinner } from './format.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
@@ -1048,14 +1054,17 @@ async function runInteractive(
         continue;
       }
 
-      // /skills — list loaded skills
+      // /skills — list loaded skills (filtered to skills valid for the current platform)
       if (line === '/skills' || line.startsWith('/skills ')) {
         const arg = line.slice('/skills'.length).trim();
         if (!arg) {
-          if (skills.size === 0) {
+          const visible = filterSkillsForEnvironment(skills, {
+            platform: getCurrentSkillPlatform(),
+          });
+          if (visible.size === 0) {
             process.stdout.write('No skills loaded.\n');
           } else {
-            for (const [name, skill] of skills) {
+            for (const [name, skill] of visible) {
               const tag =
                 skill.source === 'workspace'
                   ? fmt.dim(' (workspace)')
@@ -1063,6 +1072,12 @@ async function runInteractive(
                     ? fmt.dim(' (claude)')
                     : '';
               process.stdout.write(`  ${fmt.bold('/' + name)}  ${skill.description}${tag}\n`);
+            }
+            const hidden = skills.size - visible.size;
+            if (hidden > 0) {
+              process.stdout.write(
+                fmt.dim(`  (${hidden} hidden — platform or capability constraints unmet)\n`),
+              );
             }
           }
           continue;
@@ -3188,20 +3203,29 @@ export async function main() {
     const cwd = path.resolve(values.cwd || process.cwd());
     const skills = await loadSkills(cwd);
     if (values.json) {
-      const arr = [...skills.values()].map(({ name, description, source, filePath }) => ({
-        name,
-        description,
-        source,
-        filePath,
-      }));
+      // JSON includes every skill plus its constraint fields so tooling can introspect
+      // (filtering is a display concern; consumers may have a different runtime profile).
+      const arr = [...skills.values()].map(
+        ({ name, description, source, filePath, requiresCapabilities, platforms }) => ({
+          name,
+          description,
+          source,
+          filePath,
+          ...(requiresCapabilities ? { requiresCapabilities } : {}),
+          ...(platforms ? { platforms } : {}),
+        }),
+      );
       process.stdout.write(`${JSON.stringify(arr, null, 2)}\n`);
       return 0;
     }
-    if (skills.size === 0) {
+    const visible = filterSkillsForEnvironment(skills, {
+      platform: getCurrentSkillPlatform(),
+    });
+    if (visible.size === 0) {
       process.stdout.write('No skills found.\n');
       return 0;
     }
-    for (const [name, skill] of skills) {
+    for (const [name, skill] of visible) {
       const tag =
         skill.source === 'workspace'
           ? fmt.dim(' (workspace)')
@@ -3209,6 +3233,12 @@ export async function main() {
             ? fmt.dim(' (claude)')
             : '';
       process.stdout.write(`  ${fmt.bold('/' + name)}  ${skill.description}${tag}\n`);
+    }
+    const hidden = skills.size - visible.size;
+    if (hidden > 0) {
+      process.stdout.write(
+        fmt.dim(`  (${hidden} hidden — platform or capability constraints unmet)\n`),
+      );
     }
     return 0;
   }

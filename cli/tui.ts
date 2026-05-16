@@ -108,7 +108,13 @@ import {
   DEFAULT_MAX_ROUNDS,
 } from './engine.js';
 import { loadConfig, applyConfigToEnv, saveConfig, maskSecret } from './config-store.js';
-import { loadSkills, interpolateSkill, getSkillPromptTemplate } from './skill-loader.js';
+import {
+  loadSkills,
+  interpolateSkill,
+  getSkillPromptTemplate,
+  filterSkillsForEnvironment,
+  getCurrentSkillPlatform,
+} from './skill-loader.js';
 import { matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
 import { ensureRepoCommandsSeeded } from './repo-commands.js';
 import { createTabCompleter } from './tui-completer.js';
@@ -4222,20 +4228,29 @@ export async function runTUI(options = {}) {
           scheduler.flush();
           return true;
         }
-        if (skills.size === 0) {
-          addTranscriptEntry(tuiState, 'status', 'No skills loaded.');
-        } else {
-          const lines = [];
-          for (const [name, skill] of skills) {
-            const tag =
-              skill.source === 'workspace'
-                ? ' (workspace)'
-                : skill.source === 'claude'
-                  ? ' (claude)'
-                  : '';
-            lines.push(`  /${name}  ${skill.description}${tag}`);
+        {
+          const visible = filterSkillsForEnvironment(skills, {
+            platform: getCurrentSkillPlatform(),
+          });
+          if (visible.size === 0) {
+            addTranscriptEntry(tuiState, 'status', 'No skills loaded.');
+          } else {
+            const lines = [];
+            for (const [name, skill] of visible) {
+              const tag =
+                skill.source === 'workspace'
+                  ? ' (workspace)'
+                  : skill.source === 'claude'
+                    ? ' (claude)'
+                    : '';
+              lines.push(`  /${name}  ${skill.description}${tag}`);
+            }
+            const hidden = skills.size - visible.size;
+            if (hidden > 0) {
+              lines.push(`  (${hidden} hidden — platform or capability constraints unmet)`);
+            }
+            addTranscriptEntry(tuiState, 'status', lines.join('\n'));
           }
-          addTranscriptEntry(tuiState, 'status', lines.join('\n'));
         }
         scheduler.flush();
         return true;
