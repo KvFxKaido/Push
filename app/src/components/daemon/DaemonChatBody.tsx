@@ -356,7 +356,7 @@ export function DaemonChatBody({
   // can't statically analyze the `approvals.headRef.current` access.
   // Stop is a low-frequency click; a per-render closure is fine.
   const handleAbort = () => {
-    cancelPendingApprovals(approvals.headRef.current, request);
+    cancelPendingApprovals(approvals.headRef.current, request, approvals.popMatching);
     abortStream();
   };
 

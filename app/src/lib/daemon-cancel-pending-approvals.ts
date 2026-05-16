@@ -1,38 +1,52 @@
 /**
- * daemon-cancel-pending-approvals.ts — Fire `cancel_run` to the daemon
- * for every pending approval prompt, so a parent-round abort doesn't
- * leave the daemon's Coder agent paused waiting on a prompt the user
- * has already cancelled.
+ * daemon-cancel-pending-approvals.ts — Two-sided cleanup for pending
+ * daemon approvals when the user aborts the parent round.
  *
- * Why this exists: in a paired-daemon session (local-pc / relay), the
+ * Why this exists: in a paired-daemon session (local-pc / relay), a
  * delegated Coder agent runs on the daemon side. When it hits a tool
  * needing approval, the daemon emits `approval_required` which
  * `useApprovalQueue` enqueues; the ApprovalPrompt renders in the
  * paired client. If the user hits Stop on the parent round at that
  * moment, the web round loop sets `abortRef.current = true` and
  * breaks — but nothing on the abort path tells the daemon to stop
- * waiting on the approval. The Coder agent stays paused, the local
- * prompt persists, and a confused click would actually execute the
- * tool the user tried to cancel.
+ * waiting, and nothing clears the local queue. The Coder agent stays
+ * paused, the local prompt persists, and a confused click would
+ * actually execute the tool the user tried to cancel.
  *
- * The daemon's `cancel_run` handler (`cli/pushd.ts:1634-1638`)
- * already resolves a session's pending approval as `deny` and aborts
- * the active run, then emits `approval_received` which the
- * `useApprovalQueue` `approval_received` branch consumes to drop the
- * entry from the local queue. So firing `cancel_run` is the single
- * load-bearing call — local cleanup follows the daemon's
- * acknowledgement.
+ * The cleanup needs BOTH sides addressed and neither side knows about
+ * the other:
  *
- * Behavior is fire-and-forget per approval:
+ *   - **Daemon side:** fire `cancel_run` with `sessionId` only (no
+ *     `runId`). The daemon's `handleCancelRun` at `cli/pushd.ts:1619-
+ *     1638` rejects with `NO_ACTIVE_RUN` when a provided `runId`
+ *     doesn't match `entry.activeRunId`, and for delegations
+ *     `entry.activeRunId` is the parent run while
+ *     `approval.runId` is the child run emitted by `buildApprovalFn`.
+ *     Omitting `runId` makes the cancel session-scoped: the daemon
+ *     aborts the active run AND resolves the pending approval as
+ *     denied (line 1633-1638). Codex P1 + Copilot review caught the
+ *     runId mismatch on the initial #579 attempt.
+ *
+ *   - **Local side:** `cancel_run` does NOT emit `approval_received`
+ *     — that broadcast only fires from `submit_approval`
+ *     (`cli/pushd.ts:1536`). So the local `useApprovalQueue` won't
+ *     auto-drop the entry the way the original design assumed. The
+ *     caller must pop the matched approval from the local queue
+ *     itself. Codex P2 + Copilot review caught this on #579.
+ *
+ * Behavior is fire-and-forget for the daemon request and synchronous
+ * for the local pop:
  *
  *   - The daemon dispatcher tolerates `cancel_run` for a session
  *     that no longer has an active run (`NO_ACTIVE_RUN` ack) — that
- *     race is benign for our purposes.
+ *     race is benign.
  *   - A transport failure (binding torn down, WS closed) is
  *     swallowed via `.catch(() => {})`. The daemon's WS-close
  *     cleanup also resolves pending approvals as denied at session
- *     teardown, so a failed dispatch at worst delays cleanup until
- *     the daemon's own path fires.
+ *     teardown, so a failed dispatch at worst delays the daemon-side
+ *     cleanup until that path fires.
+ *   - The local pop happens regardless of the daemon's response —
+ *     the user's intent is the source of truth for the UI.
  */
 
 import type { PendingApproval } from '@/components/daemon/ApprovalPrompt';
@@ -46,22 +60,38 @@ import type { RequestOptions, SessionResponse } from '@/lib/local-daemon-binding
 export type DaemonRequestFn = <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>;
 
 /**
- * Fire `cancel_run` for each pending approval. Returns immediately —
- * the requests fire-and-forget. Errors are swallowed; see file-level
- * doc for the rationale.
+ * Local-queue pop callback. Matches `useApprovalQueue`'s
+ * `popMatching` signature — drops the entry with the given
+ * approvalId from the FIFO if present, no-ops otherwise.
+ */
+export type PopMatchingFn = (approvalId: string) => void;
+
+/**
+ * For each pending approval: fire session-scoped `cancel_run` to the
+ * daemon and pop the entry from the local queue. Returns immediately
+ * — daemon requests are fire-and-forget; local pops are synchronous
+ * and unconditional on the daemon's response.
  */
 export function cancelPendingApprovals(
   pending: readonly PendingApproval[],
   request: DaemonRequestFn,
+  popMatching: PopMatchingFn,
 ): void {
   for (const approval of pending) {
+    // Session-scoped — omit `runId` because the daemon rejects
+    // child-run ids against `entry.activeRunId` (parent for
+    // delegations). See file-level doc.
     void request({
       type: 'cancel_run',
       sessionId: approval.sessionId,
-      payload: { sessionId: approval.sessionId, runId: approval.runId },
+      payload: { sessionId: approval.sessionId },
       timeoutMs: 5_000,
     }).catch(() => {
       // Intentional swallow — see file-level doc.
     });
+    // Local pop is unconditional. `cancel_run` does NOT emit
+    // `approval_received`, so without this the ApprovalPrompt
+    // would keep rendering even after a successful daemon cancel.
+    popMatching(approval.approvalId);
   }
 }
