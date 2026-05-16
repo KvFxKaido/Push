@@ -38,6 +38,7 @@ export type AIProviderType =
   | 'vertex'
   | 'anthropic'
   | 'openai'
+  | 'google'
   | 'demo';
 
 // ---------------------------------------------------------------------------

@@ -25,6 +25,7 @@ const CHAT_PROVIDER_LABELS: Record<AIProviderType, string> = {
   vertex: 'Google Vertex',
   anthropic: 'Anthropic',
   openai: 'OpenAI',
+  google: 'Google Gemini',
   demo: 'Demo',
 };
 
@@ -52,6 +53,7 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectVertexModelFromChat'
   | 'handleSelectAnthropicModelFromChat'
   | 'handleSelectOpenAIModelFromChat'
+  | 'handleSelectGoogleModelFromChat'
   | 'isProviderLocked'
   | 'lockedProvider'
   | 'lockedModel'
@@ -83,6 +85,7 @@ export function useWorkspaceChatComposerController({
   handleSelectVertexModelFromChat,
   handleSelectAnthropicModelFromChat,
   handleSelectOpenAIModelFromChat,
+  handleSelectGoogleModelFromChat,
   isProviderLocked,
   lockedProvider,
   lockedModel,
@@ -121,6 +124,7 @@ export function useWorkspaceChatComposerController({
     if (selectedComposerProvider === 'vertex') return selectedChatModels.vertex;
     if (selectedComposerProvider === 'anthropic') return selectedChatModels.anthropic;
     if (selectedComposerProvider === 'openai') return selectedChatModels.openai;
+    if (selectedComposerProvider === 'google') return selectedChatModels.google;
     return 'demo';
   })();
 
@@ -250,6 +254,7 @@ export function useWorkspaceChatComposerController({
   const isVertexModelLocked = isModelLocked && lockedProvider === 'vertex';
   const isAnthropicModelLocked = isModelLocked && lockedProvider === 'anthropic';
   const isOpenAIModelLocked = isModelLocked && lockedProvider === 'openai';
+  const isGoogleModelLocked = isModelLocked && lockedProvider === 'google';
 
   return {
     composerPrefillRequest,
@@ -355,6 +360,10 @@ export function useWorkspaceChatComposerController({
       openaiModelOptions: catalog.openaiModelOptions,
       isOpenAIModelLocked,
       onSelectOpenAIModel: handleSelectOpenAIModelFromChat,
+      googleModel: selectedChatModels.google,
+      googleModelOptions: catalog.googleModelOptions,
+      isGoogleModelLocked,
+      onSelectGoogleModel: handleSelectGoogleModelFromChat,
     },
   };
 }

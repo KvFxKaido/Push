@@ -30,6 +30,7 @@ import {
   handleAnthropicChat,
   handleBlackboxChat,
   handleCloudflareChat,
+  handleGoogleChat,
   handleKiloCodeChat,
   handleNvidiaChat,
   handleOllamaChat,
@@ -75,6 +76,8 @@ function resolveProviderHandler(provider: AIProviderType): ProviderHandler | nul
       return handleAnthropicChat as unknown as ProviderHandler;
     case 'openai':
       return handleOpenAIChat as unknown as ProviderHandler;
+    case 'google':
+      return handleGoogleChat as unknown as ProviderHandler;
     case 'demo':
       return null;
     // The remaining providers (azure, bedrock, vertex) exist on the
@@ -100,7 +103,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       if (!handler) {
         throw new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
-            `Supported: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, openadapter, anthropic, openai.`,
+            `Supported: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, openadapter, anthropic, openai, google.`,
         );
       }
 

@@ -136,6 +136,10 @@ interface ChatInputProps {
     openaiModelOptions: string[];
     isOpenAIModelLocked: boolean;
     onSelectOpenAIModel: (model: string) => void;
+    googleModel: string;
+    googleModelOptions: string[];
+    isGoogleModelLocked: boolean;
+    onSelectGoogleModel: (model: string) => void;
   };
 }
 
@@ -162,6 +166,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   vertex: 'Google Vertex',
   anthropic: 'Anthropic',
   openai: 'OpenAI',
+  google: 'Google Gemini',
   demo: 'Demo',
 };
 
@@ -411,6 +416,7 @@ export function ChatInput({
     if (selectedProvider === 'vertex') return providerControls.vertexModel;
     if (selectedProvider === 'anthropic') return providerControls.anthropicModel;
     if (selectedProvider === 'openai') return providerControls.openaiModel;
+    if (selectedProvider === 'google') return providerControls.googleModel;
     return 'demo';
   })();
 
@@ -1247,6 +1253,31 @@ export function ChatInput({
                             ))}
                           </select>
                           {providerControls.isOpenAIModelLocked && (
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'google' && (
+                        <>
+                          <select
+                            value={providerControls.googleModel}
+                            disabled={!canChangeModel}
+                            onChange={(e) => providerControls.onSelectGoogleModel(e.target.value)}
+                            className="h-8 w-full rounded-lg border border-[#2a3447] bg-[#070a10] px-2.5 text-xs text-[#d7deeb] outline-none focus:border-[#3d5579] disabled:opacity-60"
+                          >
+                            {(providerControls.googleModelOptions.length > 0
+                              ? providerControls.googleModelOptions
+                              : [providerControls.googleModel]
+                            ).map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
+                          </select>
+                          {providerControls.isGoogleModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">
                               Current chat locked; choosing a model starts a new chat.
                             </p>

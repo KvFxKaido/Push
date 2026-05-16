@@ -35,7 +35,8 @@ import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
 import { useAnthropicConfig } from '@/hooks/useAnthropicConfig';
 import { useOpenAIConfig } from '@/hooks/useOpenAIConfig';
-import { ANTHROPIC_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
+import { useGoogleConfig } from '@/hooks/useGoogleConfig';
+import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import { useZenConfig } from '@/hooks/useZenConfig';
 import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
 import { useBlackboxConfig } from '@/hooks/useBlackboxConfig';
@@ -153,6 +154,7 @@ export interface ModelCatalog {
   vertex: VertexProviderConfig;
   anthropic: ProviderKeyConfig;
   openai: ProviderKeyConfig;
+  google: ProviderKeyConfig;
   tavily: TavilyKeyConfig;
 
   // Active backend
@@ -184,6 +186,7 @@ export interface ModelCatalog {
   openAdapterModelOptions: string[];
   anthropicModelOptions: string[];
   openaiModelOptions: string[];
+  googleModelOptions: string[];
 
   // Zen Go tier
   zenGoMode: boolean;
@@ -433,6 +436,18 @@ export function buildModelControl(
         onChange: catalog.openai.setModel,
         allowCustom: true,
       };
+    case 'google':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Google Gemini'),
+        value: lockedModel ?? catalog.google.model,
+        options: includeSelectedModel(
+          catalog.googleModelOptions,
+          lockedModel ?? catalog.google.model,
+        ),
+        onChange: catalog.google.setModel,
+        allowCustom: true,
+      };
     default:
       return null;
   }
@@ -453,6 +468,7 @@ export function useModelCatalog(): ModelCatalog {
   const openAdapterCfg = useOpenAdapterConfig();
   const anthropicCfg = useAnthropicConfig();
   const openaiCfg = useOpenAIConfig();
+  const googleCfg = useGoogleConfig();
   const azureCfg = useAzureConfig();
   const bedrockCfg = useBedrockConfig();
   const vertexCfg = useVertexConfig();
@@ -468,6 +484,7 @@ export function useModelCatalog(): ModelCatalog {
   const [openAdapterKeyInput, setOpenAdapterKeyInput] = useState('');
   const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
   const [openaiKeyInput, setOpenaiKeyInput] = useState('');
+  const [googleKeyInput, setGoogleKeyInput] = useState('');
   const [azureKeyInput, setAzureKeyInput] = useState('');
   const [azureBaseUrlInput, setAzureBaseUrlInput] = useState('');
   const [azureModelInput, setAzureModelInput] = useState('');
@@ -553,6 +570,7 @@ export function useModelCatalog(): ModelCatalog {
       ['vertex', 'Google Vertex', vertexCfg.isConfigured],
       ['anthropic', 'Anthropic', anthropicCfg.hasKey],
       ['openai', 'OpenAI', openaiCfg.hasKey],
+      ['google', 'Google Gemini', googleCfg.hasKey],
     ] as const
   ).filter(([, , has]) => has);
 
@@ -1122,6 +1140,13 @@ export function useModelCatalog(): ModelCatalog {
     () => includeSelectedModel(OPENAI_MODELS, openaiCfg.model),
     [openaiCfg.model],
   );
+  // Google: curated list for MVP. A live /v1beta/models proxy could land
+  // later — it ships chat-capable models alongside embedding/image-only
+  // entries, so the live path needs a filter before it's useful here.
+  const googleModelOptions = useMemo(
+    () => includeSelectedModel(GOOGLE_MODELS, googleCfg.model),
+    [googleCfg.model],
+  );
   const vertexModelOptions = useMemo(
     () => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model),
     [vertexCfg.modelOptions, vertexCfg.model],
@@ -1268,6 +1293,15 @@ export function useModelCatalog(): ModelCatalog {
       keyInput: openaiKeyInput,
       setKeyInput: setOpenaiKeyInput,
     },
+    google: {
+      setKey: googleCfg.setKey,
+      clearKey: googleCfg.clearKey,
+      hasKey: googleCfg.hasKey,
+      model: googleCfg.model,
+      setModel: googleCfg.setModel,
+      keyInput: googleKeyInput,
+      setKeyInput: setGoogleKeyInput,
+    },
     vertex: {
       keyInput: vertexKeyInput,
       setKeyInput: setVertexKeyInput,
@@ -1367,6 +1401,7 @@ export function useModelCatalog(): ModelCatalog {
     openAdapterModelOptions,
     anthropicModelOptions,
     openaiModelOptions,
+    googleModelOptions,
 
     zenGoMode: zenCfg.goMode,
     setZenGoMode: zenCfg.setGoMode,

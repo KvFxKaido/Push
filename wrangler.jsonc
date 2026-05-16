@@ -67,6 +67,7 @@
     "import.meta.env.VITE_GITHUB_REDIRECT_URI": "\"\"",
     "import.meta.env.VITE_GITHUB_TOKEN": "\"\"",
     "import.meta.env.VITE_GITHUB_TOOL_BACKEND": "\"\"",
+    "import.meta.env.VITE_GOOGLE_API_KEY": "\"\"",
     "import.meta.env.VITE_KILOCODE_API_KEY": "\"\"",
     "import.meta.env.VITE_LOCAL_PC_MODE": "\"\"",
     "import.meta.env.VITE_NVIDIA_API_KEY": "\"\"",

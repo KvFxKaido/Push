@@ -226,6 +226,24 @@ export function buildSettingsAI(props: ChatRouteProps): SettingsAIProps {
         setKey: catalog.openai.setKey,
         clearKey: catalog.openai.clearKey,
       },
+      google: {
+        hasKey: catalog.google.hasKey,
+        model: catalog.google.model,
+        setModel: catalog.google.setModel,
+        modelOptions: catalog.googleModelOptions,
+        // Curated-list-only — Gemini's /v1beta/models mixes chat-capable
+        // models with embedding/image-only entries; a live proxy needs a
+        // filter before it's useful here.
+        modelsLoading: false,
+        modelsError: null,
+        modelsUpdatedAt: null,
+        isModelLocked: isProviderLocked && lockedProvider === 'google',
+        refreshModels: () => {},
+        keyInput: catalog.google.keyInput,
+        setKeyInput: catalog.google.setKeyInput,
+        setKey: catalog.google.setKey,
+        clearKey: catalog.google.clearKey,
+      },
     },
     cloudflareProvider: {
       configured: catalog.cloudflare.configured,
@@ -404,6 +422,7 @@ export function buildWorkspaceHubReviewModelOptions(
     kilocode: catalog.kilocodeModelOptions,
     openadapter: catalog.openAdapterModelOptions,
     vertex: catalog.vertex.modelOptions,
+    google: catalog.googleModelOptions,
   };
 }
 

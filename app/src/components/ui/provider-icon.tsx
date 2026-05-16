@@ -17,6 +17,7 @@ const MODELS_DEV_LOGOS: Record<AIProviderType, string> = {
   vertex: 'https://models.dev/logos/google.svg',
   anthropic: 'https://models.dev/logos/anthropic.svg',
   openai: 'https://models.dev/logos/openai.svg',
+  google: 'https://models.dev/logos/google.svg',
   kilocode: 'https://kilo.ai/favicon.ico',
   openadapter: 'https://openadapter.dev/favicon.ico',
   demo: demoIcon,
@@ -34,6 +35,7 @@ const PROVIDER_ALT: Record<AIProviderType, string> = {
   vertex: 'Google Vertex logo',
   anthropic: 'Anthropic logo',
   openai: 'OpenAI logo',
+  google: 'Google Gemini logo',
   kilocode: 'Kilo Code logo',
   openadapter: 'OpenAdapter logo',
   demo: 'Push logo',
@@ -53,6 +55,9 @@ const PROVIDER_FALLBACK_TEXT: Record<AIProviderType, string> = {
   // OpenAdapter already owns 'OA'; use 'GPT' for OpenAI to keep the no-logo
   // fallback unambiguous.
   openai: 'GPT',
+  // 'G' would collide with a future Gemini-via-Vertex fallback if we ever
+  // gave Vertex a single-letter; 'Gm' is unambiguous and reads as "Gemini".
+  google: 'Gm',
   kilocode: 'K',
   openadapter: 'OA',
   demo: 'P',

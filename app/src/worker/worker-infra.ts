@@ -329,6 +329,7 @@ interface HealthStatus {
     openadapter: { status: 'ok' | 'unconfigured'; configured: boolean };
     anthropic: { status: 'ok' | 'unconfigured'; configured: boolean };
     openai: { status: 'ok' | 'unconfigured'; configured: boolean };
+    google: { status: 'ok' | 'unconfigured'; configured: boolean };
     sandbox: {
       status: 'ok' | 'unconfigured' | 'misconfigured';
       configured: boolean;
@@ -352,6 +353,7 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
   const openAdapterConfigured = Boolean(env.OPENADAPTER_API_KEY);
   const anthropicConfigured = Boolean(env.ANTHROPIC_API_KEY);
   const openaiConfigured = Boolean(env.OPENAI_API_KEY);
+  const googleConfigured = Boolean(env.GOOGLE_API_KEY);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
 
   let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';
@@ -377,7 +379,8 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
     kiloCodeConfigured ||
     openAdapterConfigured ||
     anthropicConfigured ||
-    openaiConfigured;
+    openaiConfigured ||
+    googleConfigured;
   const overallStatus: 'healthy' | 'degraded' | 'unhealthy' =
     hasAnyLlm && sandboxStatus === 'ok'
       ? 'healthy'
@@ -420,6 +423,10 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
       openai: {
         status: openaiConfigured ? 'ok' : 'unconfigured',
         configured: openaiConfigured,
+      },
+      google: {
+        status: googleConfigured ? 'ok' : 'unconfigured',
+        configured: googleConfigured,
       },
       sandbox: { status: sandboxStatus, configured: Boolean(sandboxUrl), error: sandboxError },
       github_app: {

@@ -41,6 +41,7 @@ export interface Env {
   OPENADAPTER_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
+  GOOGLE_API_KEY?: string;
   AI?: Ai;
   MODAL_SANDBOX_BASE_URL?: string;
   ALLOWED_ORIGINS?: string;

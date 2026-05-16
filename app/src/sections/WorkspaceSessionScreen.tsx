@@ -282,6 +282,7 @@ export function WorkspaceSessionScreen({
     handleSelectVertexModelFromChat,
     handleSelectAnthropicModelFromChat,
     handleSelectOpenAIModelFromChat,
+    handleSelectGoogleModelFromChat,
   } = useWorkspaceComposerState({
     catalog,
     conversations,
@@ -500,6 +501,7 @@ export function WorkspaceSessionScreen({
     handleSelectVertexModelFromChat,
     handleSelectAnthropicModelFromChat,
     handleSelectOpenAIModelFromChat,
+    handleSelectGoogleModelFromChat,
   };
 
   const workspaceDataDomain = { snapshots, instructions, scratchpad, todo, protectMain };

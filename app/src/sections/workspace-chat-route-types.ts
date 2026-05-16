@@ -158,6 +158,7 @@ export interface ChatRouteCatalogProps {
   handleSelectVertexModelFromChat: (model: string) => void;
   handleSelectAnthropicModelFromChat: (model: string) => void;
   handleSelectOpenAIModelFromChat: (model: string) => void;
+  handleSelectGoogleModelFromChat: (model: string) => void;
 }
 
 export interface ChatRouteWorkspaceDataProps {
