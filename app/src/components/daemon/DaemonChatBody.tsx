@@ -34,6 +34,7 @@ import type React from 'react';
 
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
+import { cancelPendingApprovals } from '@/lib/daemon-cancel-pending-approvals';
 import { DaemonHubSheet } from '@/components/daemon/DaemonHubSheet';
 import { DaemonModelPicker } from '@/components/daemon/DaemonModelPicker';
 import { ModelPicker } from '@/components/ui/model-picker';
@@ -341,6 +342,24 @@ export function DaemonChatBody({
     await onUnpair();
   };
 
+  /**
+   * Stop button handler. Beyond `abortStream()`, also cancel any
+   * pending daemon-side approval prompts the parent round had
+   * spawned — see `lib/daemon-cancel-pending-approvals.ts` for the
+   * rationale (daemon's Coder agent stays paused waiting on the
+   * approval if we don't, local prompt persists, a confused click
+   * still executes the tool).
+   */
+  // Plain function — the React compiler memoizes referentially equal
+  // bodies, and useCallback here trips
+  // react-hooks/preserve-manual-memoization because the compiler
+  // can't statically analyze the `approvals.headRef.current` access.
+  // Stop is a low-frequency click; a per-render closure is fine.
+  const handleAbort = () => {
+    cancelPendingApprovals(approvals.headRef.current, request, approvals.popMatching);
+    abortStream();
+  };
+
   return (
     <div className="flex h-dvh flex-col bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] safe-area-top safe-area-bottom">
       <header className="flex items-center justify-between gap-2 border-b border-push-edge/40 px-3 py-3">
@@ -360,7 +379,7 @@ export function DaemonChatBody({
           {isStreaming ? (
             <button
               type="button"
-              onClick={() => abortStream()}
+              onClick={handleAbort}
               aria-label="Stop"
               title="Stop the in-flight turn"
               className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/40 px-3 py-1.5 text-xs text-rose-200 transition hover:border-rose-400/60 hover:bg-rose-400/10"
