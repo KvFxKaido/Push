@@ -3,11 +3,25 @@
  *
  * A skill is a .md file: filename = skill name, first # heading = description, body = prompt template.
  * {{args}} in the template is replaced with user input at invocation time.
+ *
+ * Skills may optionally declare YAML frontmatter to constrain visibility:
+ *   ---
+ *   description: Optional override for the # heading text
+ *   requires_capabilities: [repo:write, sandbox:exec]
+ *   platforms: [linux, macos]
+ *   ---
+ *   # Heading still acts as fallback description
+ *   …body…
+ *
+ * Frontmatter is optional and additive — skills without it behave exactly as before.
+ * Malformed frontmatter is treated as no constraints (fail-open) so a typo never silently
+ * loses a skill from the listing.
  */
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ALL_CAPABILITIES, type Capability } from '../lib/capabilities.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -41,6 +55,11 @@ export const RESERVED_COMMANDS: Set<string> = new Set([
 
 type SkillSource = 'builtin' | 'workspace' | 'claude';
 
+/** Operating-system platforms a skill may target. */
+export type SkillPlatform = 'linux' | 'macos' | 'windows';
+
+const ALL_PLATFORMS: readonly SkillPlatform[] = ['linux', 'macos', 'windows'];
+
 export interface Skill {
   name: string;
   description: string;
@@ -48,6 +67,10 @@ export interface Skill {
   promptTemplateLoaded?: boolean;
   source: SkillSource;
   filePath: string;
+  /** Capabilities the skill's workflow expects; if any is missing from the runtime, hide it. */
+  requiresCapabilities?: Capability[];
+  /** OS platforms this skill is valid on; if the current platform isn't listed, hide it. */
+  platforms?: SkillPlatform[];
 }
 
 interface ParseOptions {
@@ -57,6 +80,126 @@ interface ParseOptions {
 interface ScanOptions {
   recursive?: boolean;
   eagerPromptTemplate?: boolean;
+}
+
+interface SkillFrontmatter {
+  description?: string;
+  requiresCapabilities?: Capability[];
+  platforms?: SkillPlatform[];
+}
+
+/**
+ * Strip a leading YAML frontmatter block (`---\n…---\n`) from raw skill text.
+ *
+ * Returns `{ frontmatter, remainder }`. Malformed frontmatter (unclosed fence, unparseable
+ * lines) is treated as no frontmatter: `frontmatter` is `null` and `remainder` is the
+ * original input — the body parser then runs on the whole file. Fail-open by design.
+ *
+ * Supported value shapes:
+ *   key: value              → scalar string
+ *   key: [a, b, c]          → inline array (quoted or bare entries)
+ *
+ * Comment lines (`# …` outside quoted values) and blank lines are tolerated.
+ */
+function parseFrontmatter(raw: string): {
+  frontmatter: SkillFrontmatter | null;
+  remainder: string;
+} {
+  if (!raw.startsWith('---\n') && !raw.startsWith('---\r\n')) {
+    return { frontmatter: null, remainder: raw };
+  }
+  const lines = raw.split('\n');
+  // Line 0 is the opening fence; find the closing fence.
+  let closeIdx = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      closeIdx = i;
+      break;
+    }
+  }
+  if (closeIdx === -1) {
+    return { frontmatter: null, remainder: raw };
+  }
+
+  const fm: SkillFrontmatter = {};
+  for (let i = 1; i < closeIdx; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    const value = line.slice(colonIdx + 1).trim();
+    if (!key || !value) continue;
+
+    if (key === 'description') {
+      fm.description = unquote(value);
+    } else if (key === 'requires_capabilities' || key === 'requires-capabilities') {
+      const arr = parseInlineArray(value);
+      if (arr) {
+        // Validate against the known capability set; unknown entries are dropped so
+        // a typo (`git:pus`) doesn't become an unmeetable constraint that silently hides
+        // the skill. Mirrors how `platforms` filters to known values — fail-open by design.
+        const valid = arr.filter((v): v is Capability =>
+          (ALL_CAPABILITIES as readonly string[]).includes(v),
+        );
+        if (valid.length > 0) fm.requiresCapabilities = valid;
+      }
+    } else if (key === 'platforms') {
+      const arr = parseInlineArray(value);
+      if (arr) {
+        const valid = arr.filter((v): v is SkillPlatform =>
+          (ALL_PLATFORMS as readonly string[]).includes(v),
+        );
+        if (valid.length > 0) fm.platforms = valid;
+      }
+    }
+    // Unknown keys silently ignored — forward compatibility for skills authored against
+    // richer frontmatter shapes (e.g. agentskills.io standard).
+  }
+
+  const remainder = lines.slice(closeIdx + 1).join('\n');
+  return { frontmatter: fm, remainder };
+}
+
+function unquote(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function parseInlineArray(value: string): string[] | null {
+  if (!value.startsWith('[') || !value.endsWith(']')) return null;
+  const inner = value.slice(1, -1).trim();
+  if (!inner) return [];
+  // Split on commas at depth 0 only — commas inside "…" or '…' stay attached to their entry.
+  const parts: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+  for (const ch of inner) {
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === ',') {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current);
+  return parts.map((s) => unquote(s.trim())).filter((s) => s.length > 0);
 }
 
 /**
@@ -70,26 +213,34 @@ function parseSkillFile(
   options: ParseOptions = {},
 ): Skill | null {
   const includePromptTemplate = options.includePromptTemplate !== false;
-  const lines = raw.split('\n');
+  const { frontmatter, remainder } = parseFrontmatter(raw);
+  const lines = remainder.split('\n');
 
-  // First # heading = description
-  let description = '';
+  // First # heading = description (frontmatter `description` overrides if present)
+  let headingDescription = '';
   let bodyStart = 0;
   for (let i = 0; i < lines.length; i++) {
     const match = lines[i].match(/^# (.+)$/);
     if (match) {
-      description = match[1].trim();
+      headingDescription = match[1].trim();
       bodyStart = i + 1;
       break;
     }
   }
 
+  const description = (frontmatter?.description ?? '').trim() || headingDescription;
   if (!description) return null;
 
   const promptTemplate = lines.slice(bodyStart).join('\n').trim();
   if (!promptTemplate) return null;
 
   const skill: Skill = { name, description, source, filePath };
+  if (frontmatter?.requiresCapabilities && frontmatter.requiresCapabilities.length > 0) {
+    skill.requiresCapabilities = frontmatter.requiresCapabilities;
+  }
+  if (frontmatter?.platforms && frontmatter.platforms.length > 0) {
+    skill.platforms = frontmatter.platforms;
+  }
   if (includePromptTemplate) {
     skill.promptTemplate = promptTemplate;
     skill.promptTemplateLoaded = true;
@@ -211,4 +362,61 @@ export async function getSkillPromptTemplate(skill: Skill): Promise<string> {
  */
 export function interpolateSkill(template: string, args: string): string {
   return template.replace(/\{\{args\}\}/g, args || '').trim();
+}
+
+/**
+ * Map `process.platform` to the skill-frontmatter platform vocabulary.
+ * Unrecognized platforms (e.g. `aix`, `sunos`) map to undefined — callers should treat
+ * those as "no platform filtering" (every skill visible) since the user is on an
+ * unsupported OS regardless of what skills declare.
+ */
+export function getCurrentSkillPlatform(): SkillPlatform | undefined {
+  switch (process.platform) {
+    case 'linux':
+      return 'linux';
+    case 'darwin':
+      return 'macos';
+    case 'win32':
+      return 'windows';
+    default:
+      return undefined;
+  }
+}
+
+export interface SkillFilterEnv {
+  /** Current OS; if undefined, platform filtering is disabled. */
+  platform?: SkillPlatform;
+  /** Capabilities available in the current runtime context; if undefined, capability filtering is disabled. */
+  availableCapabilities?: ReadonlySet<Capability>;
+}
+
+/**
+ * Return only the skills whose declared constraints are satisfied by `env`.
+ *
+ * A skill is **visible** iff:
+ *   • it declares no `platforms`, or `env.platform` is one of them; AND
+ *   • it declares no `requiresCapabilities`, or every required capability is in
+ *     `env.availableCapabilities`.
+ *
+ * Filtering is additive and skipped per-axis when `env` doesn't provide the axis —
+ * passing `{}` returns every skill unchanged, matching pre-frontmatter behavior.
+ */
+export function filterSkillsForEnvironment(
+  skills: Map<string, Skill>,
+  env: SkillFilterEnv,
+): Map<string, Skill> {
+  const result: Map<string, Skill> = new Map();
+  for (const [name, skill] of skills) {
+    if (skill.platforms && env.platform !== undefined) {
+      if (!skill.platforms.includes(env.platform)) continue;
+    }
+    if (skill.requiresCapabilities && env.availableCapabilities !== undefined) {
+      const missing = skill.requiresCapabilities.some(
+        (cap) => !env.availableCapabilities!.has(cap),
+      );
+      if (missing) continue;
+    }
+    result.set(name, skill);
+  }
+  return result;
 }

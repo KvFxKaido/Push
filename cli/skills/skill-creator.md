@@ -10,9 +10,24 @@ Process:
    - first `# Heading` = short description shown in `/skills`
    - body = prompt template/instructions
    - include `{{args}}` where user-provided arguments should be inserted
-5. Keep the skill narrow and executable. Prefer concrete steps and tool usage guidance over general advice.
-6. If updating an existing skill, preserve useful behavior and call out what changed.
-7. Suggest running `/skills reload` after creating/updating the file.
+5. (Optional) Add YAML frontmatter to constrain when the skill appears in `/skills`:
+
+   ```
+   ---
+   requires_capabilities: [git:push, pr:write]
+   platforms: [linux, macos]
+   ---
+   # Heading still acts as fallback description
+   …body…
+   ```
+
+   - `requires_capabilities` — skill hidden when the active role lacks any listed capability
+   - `platforms` — skill hidden when the current OS isn't listed (values: `linux`, `macos`, `windows`)
+   - `description` — overrides the `# Heading` when present
+   - Omit frontmatter entirely if the skill is universally applicable.
+6. Keep the skill narrow and executable. Prefer concrete steps and tool usage guidance over general advice.
+7. If updating an existing skill, preserve useful behavior and call out what changed.
+8. Suggest running `/skills reload` after creating/updating the file.
 
 Quality bar:
 - One job per skill
