@@ -119,8 +119,21 @@ async function startSequencedProviderServer(plans) {
           })}\n\n`,
         );
       }
-      res.write('data: [DONE]\n\n');
-      res.end();
+      // `holdMs` keeps the stream open AFTER tokens are sent and BEFORE
+      // [DONE]. Used by the mid-stream abort test to fire
+      // controller.abort() while the client is still consuming the
+      // response. Writes during/after a client-side abort may throw on
+      // a closed socket — same shape the `hang: true` cleanup already
+      // tolerates.
+      if (typeof plan.holdMs === 'number' && plan.holdMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, plan.holdMs));
+      }
+      try {
+        res.write('data: [DONE]\n\n');
+        res.end();
+      } catch {
+        // socket already closed (client aborted)
+      }
     });
   });
 
@@ -463,6 +476,171 @@ describe('runAssistantLoop flow characterization — aborted outcome', needsLoop
           },
         ],
       );
+    });
+  });
+
+  it('does not persist a partial assistant message when abort fires mid-stream', async () => {
+    // Cancellation invariant follow-up (Hermes #6) — CLI / TUI surface.
+    // The pre-aborted-signal case above pins the trivial path
+    // (signal.aborted === true at entry). This test pins the realistic
+    // shape: tokens are streaming, the user hits Ctrl+C (which fires
+    // controller.abort()), and the engine drops the partial without
+    // persisting it as an assistant turn in state.messages or the
+    // session journal.
+    //
+    // Engine wiring relied on: the assistant message push at
+    // cli/engine.ts:1311 runs AFTER `streamCompletion` resolves
+    // successfully. If streamCompletion throws AbortError mid-stream
+    // (catch at line 1264), the push is skipped — only the
+    // assistant.turn_end + run_complete events with outcome 'aborted'
+    // land in the journal.
+    await withTempSessionDir(async (sessionDir) => {
+      // `holdMs` keeps the SSE stream open after the tokens are sent,
+      // so the client is still reading when the test fires abort.
+      // 500ms is generous — typical CI sees the test resolve in
+      // ~100ms of the abort call.
+      const server = await startSequencedProviderServer([
+        { tokens: ['Looking', ' at the', ' code'], holdMs: 500 },
+      ]);
+      try {
+        const controller = new AbortController();
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(sessionDir);
+        const emitted = [];
+
+        // Start the loop without awaiting — gives us a handle to fire
+        // abort mid-stream.
+        const loopPromise = runAssistantLoop(state, providerConfig, 'mock-key', 5, {
+          signal: controller.signal,
+          emit: (event) => emitted.push(event),
+        });
+
+        // Wait long enough for the first SSE tokens to arrive at the
+        // client. 100ms is comfortably more than the provider stream
+        // round-trip on loopback; less than `holdMs` so we abort
+        // before [DONE].
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        controller.abort();
+
+        const result = await loopPromise;
+
+        // The invariant: outcome is 'aborted' and no rounds completed.
+        assert.equal(result.outcome, 'aborted');
+        assert.equal(result.finalAssistantText, 'Aborted.');
+        assert.equal(result.rounds, 0);
+        assert.equal(state.rounds, 0);
+
+        // Load-bearing: state.messages stays [system, user]. No
+        // partial assistant entry, no matter how many tokens streamed
+        // before the abort. If this fails, cli/engine.ts somehow
+        // pushed an assistant message in the abort path — a real
+        // bug.
+        assert.deepEqual(state.messages, [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: 'Summarize the current state.' },
+        ]);
+
+        // Journal contains the structural lifecycle events for the
+        // aborted turn — no assistant_token persistence, no replay-
+        // worthy assistant content. The dispatched assistant_token
+        // events fire to the emit callback (for live UI), but
+        // persisted events stay structural. Pre-aborted-signal case
+        // above skips `turn_start` because the early-exit fires
+        // before the round body opens; mid-stream abort comes after
+        // `turn_start` already landed, so the journal has the full
+        // pair plus run_complete.
+        const events = await loadSessionEvents(state.sessionId);
+        const persistedTypes = events.map((event) => event.type);
+        assert.deepEqual(persistedTypes, [
+          'assistant.turn_start',
+          'assistant.turn_end',
+          'run_complete',
+        ]);
+        const turnEnd = events.find((event) => event.type === 'assistant.turn_end');
+        assert.equal(turnEnd?.payload?.outcome, 'aborted');
+        const runComplete = events.find((event) => event.type === 'run_complete');
+        assert.equal(runComplete?.payload?.outcome, 'aborted');
+        assert.equal(runComplete?.payload?.summary, 'Aborted by user.');
+
+        // Emitted (live) events match the persisted journal for the
+        // structural lifecycle events. Token events may also have
+        // emitted before the abort — that's fine; they're not
+        // persisted and won't affect a resend.
+        const emittedStructural = emitted
+          .map((event) => event.type)
+          .filter(
+            (type) =>
+              type === 'assistant.turn_start' ||
+              type === 'assistant.turn_end' ||
+              type === 'run_complete',
+          );
+        assert.deepEqual(emittedStructural, [
+          'assistant.turn_start',
+          'assistant.turn_end',
+          'run_complete',
+        ]);
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('starts the next runAssistantLoop cleanly after a mid-stream abort', async () => {
+    // Producer-side continuation of the test above: after an aborted
+    // turn, a second runAssistantLoop call must complete normally
+    // and not inherit any partial state from the cancelled turn. The
+    // engine's invariant (only-push-on-success at cli/engine.ts:1311)
+    // makes this trivially true today, but a regression that started
+    // pushing a placeholder on abort would surface here as a wrong
+    // round count or stale prefix in the next request body.
+    await withTempSessionDir(async (sessionDir) => {
+      const server = await startSequencedProviderServer([
+        { tokens: ['First, partial'], holdMs: 500 },
+        { tokens: ['Done.'] },
+      ]);
+      try {
+        const controller = new AbortController();
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(sessionDir);
+
+        // Turn 1: abort mid-stream.
+        const firstPromise = runAssistantLoop(state, providerConfig, 'mock-key', 5, {
+          signal: controller.signal,
+          emit: () => {},
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        controller.abort();
+        const firstResult = await firstPromise;
+        assert.equal(firstResult.outcome, 'aborted');
+
+        // Turn 2: fresh controller, clean run. The state still has
+        // only [system, user] from turn 1's invariant.
+        const freshController = new AbortController();
+        const secondResult = await runAssistantLoop(state, providerConfig, 'mock-key', 5, {
+          signal: freshController.signal,
+          emit: () => {},
+        });
+
+        assert.equal(secondResult.outcome, 'success');
+        assert.equal(state.rounds, 1);
+        // After the successful round, state.messages includes the
+        // assistant turn with content 'Done.' — and the aborted
+        // partial 'First, partial' is nowhere in it.
+        const assistantMessages = state.messages.filter((m) => m.role === 'assistant');
+        assert.equal(assistantMessages.length, 1);
+        assert.equal(assistantMessages[0].content, 'Done.');
+        assert.ok(!assistantMessages[0].content.includes('First, partial'));
+
+        // The provider received exactly one user message in the second
+        // request body — the original one. No leaked assistant prefix
+        // from the aborted turn.
+        assert.equal(server.requests.length, 2);
+        const secondRequestMessages = server.requests[1]?.messages ?? [];
+        const secondRequestAssistants = secondRequestMessages.filter((m) => m.role === 'assistant');
+        assert.equal(secondRequestAssistants.length, 0);
+      } finally {
+        await server.stop();
+      }
     });
   });
 });
