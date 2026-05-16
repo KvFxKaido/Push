@@ -29,6 +29,7 @@ import {
   NVIDIA_DEFAULT_MODEL,
   BLACKBOX_DEFAULT_MODEL,
   ANTHROPIC_DEFAULT_MODEL,
+  OPENAI_DEFAULT_MODEL,
   AZURE_DEFAULT_MODEL,
   BEDROCK_DEFAULT_MODEL,
   VERTEX_DEFAULT_MODEL,
@@ -121,6 +122,7 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   bedrock: 'push:review:model:bedrock',
   vertex: 'push:review:model:vertex',
   anthropic: 'push:review:model:anthropic',
+  openai: 'push:review:model:openai',
   kilocode: 'push:review:model:kilocode',
   openadapter: 'push:review:model:openadapter',
 };
@@ -136,6 +138,7 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   bedrock: BEDROCK_DEFAULT_MODEL,
   vertex: VERTEX_DEFAULT_MODEL,
   anthropic: ANTHROPIC_DEFAULT_MODEL,
+  openai: OPENAI_DEFAULT_MODEL,
   kilocode: KILOCODE_DEFAULT_MODEL,
   openadapter: OPENADAPTER_DEFAULT_MODEL,
 };
@@ -153,6 +156,7 @@ function readStoredReviewProvider(): PreferredProvider | null {
     stored === 'bedrock' ||
     stored === 'vertex' ||
     stored === 'anthropic' ||
+    stored === 'openai' ||
     stored === 'kilocode' ||
     stored === 'openadapter'
   ) {
@@ -173,6 +177,7 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     value === 'bedrock' ||
     value === 'vertex' ||
     value === 'anthropic' ||
+    value === 'openai' ||
     value === 'kilocode' ||
     value === 'openadapter'
   );
@@ -192,6 +197,7 @@ function readStoredReviewModels(): Record<PreferredProvider, string> {
     bedrock: safeStorageGet(REVIEW_MODEL_KEYS.bedrock) || REVIEW_DEFAULT_MODELS.bedrock,
     vertex: safeStorageGet(REVIEW_MODEL_KEYS.vertex) || REVIEW_DEFAULT_MODELS.vertex,
     anthropic: safeStorageGet(REVIEW_MODEL_KEYS.anthropic) || REVIEW_DEFAULT_MODELS.anthropic,
+    openai: safeStorageGet(REVIEW_MODEL_KEYS.openai) || REVIEW_DEFAULT_MODELS.openai,
   };
 }
 

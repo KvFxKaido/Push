@@ -72,6 +72,7 @@
     "import.meta.env.VITE_NVIDIA_API_KEY": "\"\"",
     "import.meta.env.VITE_OLLAMA_API_KEY": "\"\"",
     "import.meta.env.VITE_OPENADAPTER_API_KEY": "\"\"",
+    "import.meta.env.VITE_OPENAI_API_KEY": "\"\"",
     "import.meta.env.VITE_OPENROUTER_API_KEY": "\"\"",
     "import.meta.env.VITE_RELAY_MODE": "\"\"",
     "import.meta.env.VITE_TAVILY_API_KEY": "\"\"",

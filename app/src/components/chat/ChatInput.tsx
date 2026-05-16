@@ -153,6 +153,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   openadapter: 'OpenAdapter',
   vertex: 'Google Vertex',
   anthropic: 'Anthropic',
+  openai: 'OpenAI',
   demo: 'Demo',
 };
 

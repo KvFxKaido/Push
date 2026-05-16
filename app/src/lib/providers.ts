@@ -20,6 +20,8 @@ export {
   OLLAMA_DEFAULT_MODEL,
   OPENADAPTER_DEFAULT_MODEL,
   OPENADAPTER_MODELS,
+  OPENAI_DEFAULT_MODEL,
+  OPENAI_MODELS,
   OPENROUTER_DEFAULT_MODEL,
   OPENROUTER_MODELS,
   ZEN_DEFAULT_MODEL,
@@ -33,6 +35,7 @@ import {
   NVIDIA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_MODEL,
   OPENADAPTER_DEFAULT_MODEL,
+  OPENAI_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
 } from '@push/lib/provider-models';
@@ -100,6 +103,10 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
     // list seeds the dropdown; a Worker `/api/anthropic/models` proxy can land
     // alongside live fetching in a follow-up.
     models: providerUrl('/api/anthropic/models', '/api/anthropic/models'),
+  },
+  openai: {
+    chat: providerUrl('/api/openai/chat', '/api/openai/chat'),
+    models: providerUrl('/api/openai/models', '/api/openai/models'),
   },
 };
 
@@ -352,6 +359,14 @@ export const PROVIDERS: AIProviderConfig[] = [
     envUrl: 'https://api.anthropic.com',
     models: makeRoleModels(ANTHROPIC_DEFAULT_MODEL, 'Anthropic', 'anthropic', 200_000),
   },
+  {
+    type: 'openai',
+    name: 'OpenAI',
+    description: 'OpenAI direct — GPT models with automatic prefix-based prompt caching',
+    envKey: 'VITE_OPENAI_API_KEY',
+    envUrl: 'https://api.openai.com',
+    models: makeRoleModels(OPENAI_DEFAULT_MODEL, 'OpenAI', 'openai', 200_000),
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
@@ -464,6 +479,10 @@ const anthropicModel = createModelNameStorage('anthropic_model', ANTHROPIC_DEFAU
 export const getAnthropicModelName = anthropicModel.get;
 export const setAnthropicModelName = anthropicModel.set;
 
+const openaiModel = createModelNameStorage('openai_model', OPENAI_DEFAULT_MODEL);
+export const getOpenAIModelName = openaiModel.get;
+export const setOpenAIModelName = openaiModel.set;
+
 /** Runtime model-name getters for providers where the user can override the default. */
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
@@ -478,6 +497,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   kilocode: getKiloCodeModelName,
   openadapter: getOpenAdapterModelName,
   anthropic: getAnthropicModelName,
+  openai: getOpenAIModelName,
 };
 
 /** Return the current runtime model name for a provider, or undefined if unknown. */
@@ -519,7 +539,8 @@ export type PreferredProvider =
   | 'vertex'
   | 'kilocode'
   | 'openadapter'
-  | 'anthropic';
+  | 'anthropic'
+  | 'openai';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
@@ -535,7 +556,8 @@ export function getPreferredProvider(): PreferredProvider | null {
     stored === 'vertex' ||
     stored === 'kilocode' ||
     stored === 'openadapter' ||
-    stored === 'anthropic'
+    stored === 'anthropic' ||
+    stored === 'openai'
   )
     return stored;
   return null;
@@ -570,7 +592,8 @@ export function getLastUsedProvider(): PreferredProvider | null {
     stored === 'vertex' ||
     stored === 'kilocode' ||
     stored === 'openadapter' ||
-    stored === 'anthropic'
+    stored === 'anthropic' ||
+    stored === 'openai'
   )
     return stored;
   return null;

@@ -139,6 +139,42 @@ describe('anthropic cross-registry wiring', () => {
   });
 });
 
+describe('openai cross-registry wiring', () => {
+  it('appears in AIProviderType', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../lib/provider-contract.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /\|\s*'openai'/);
+  });
+
+  it('has worker proxy routes declared in app/worker.ts', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/worker.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /handler:\s*handleOpenAIChat/);
+    assert.match(source, /'\/api\/openai\/chat'/);
+    assert.match(source, /handler:\s*handleOpenAIModels/);
+    assert.match(source, /'\/api\/openai\/models'/);
+  });
+
+  it('has a stream-adapter dispatch case in orchestrator-provider-routing.ts', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/src/lib/orchestrator-provider-routing.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(
+      source,
+      /case 'openai':\s*\n\s*stream = \(req\) => normalizeReasoning\(openaiStream/,
+    );
+  });
+
+  it('has a coder-job dispatch case for background runs', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/src/worker/coder-job-stream-adapter.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /case 'openai':\s*\n\s*return handleOpenAIChat/);
+  });
+});
+
 describe('ProviderDefinition lookup helpers', () => {
   it('getProviderDefinition returns each registered entry', () => {
     for (const def of PROVIDER_DEFINITIONS) {

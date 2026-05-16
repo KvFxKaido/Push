@@ -37,6 +37,7 @@ export type AIProviderType =
   | 'bedrock'
   | 'vertex'
   | 'anthropic'
+  | 'openai'
   | 'demo';
 
 // ---------------------------------------------------------------------------

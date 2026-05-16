@@ -15,6 +15,7 @@ export const PROVIDER_LABELS: Record<AIProviderType, string> = {
   bedrock: 'AWS Bedrock',
   vertex: 'Google Vertex',
   anthropic: 'Anthropic',
+  openai: 'OpenAI',
   demo: 'Demo',
   kilocode: 'Kilo Code',
   openadapter: 'OpenAdapter',
@@ -22,7 +23,15 @@ export const PROVIDER_LABELS: Record<AIProviderType, string> = {
 
 export type BuiltInSettingsProviderId = Extract<
   PreferredProvider,
-  'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'openadapter' | 'anthropic'
+  | 'ollama'
+  | 'openrouter'
+  | 'zen'
+  | 'nvidia'
+  | 'blackbox'
+  | 'kilocode'
+  | 'openadapter'
+  | 'anthropic'
+  | 'openai'
 >;
 
 export type ExperimentalSettingsProviderId = Extract<ExperimentalProviderType, 'azure' | 'bedrock'>;
@@ -39,6 +48,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] = [
   'ollama',
   'openrouter',
   'anthropic',
+  'openai',
   'nvidia',
   'zen',
   'blackbox',
@@ -102,6 +112,12 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     saveLabel: 'Save Anthropic key',
     hint: 'Anthropic API key from console.anthropic.com. Direct /v1/messages with prompt caching and extended thinking.',
     labelTransform: (model) => formatModelDisplayName('anthropic', model),
+  },
+  openai: {
+    placeholder: 'OpenAI API key (sk-…)',
+    saveLabel: 'Save OpenAI key',
+    hint: 'OpenAI API key from platform.openai.com. Direct /v1/chat/completions with automatic prefix-based prompt caching.',
+    labelTransform: (model) => formatModelDisplayName('openai', model),
   },
 };
 

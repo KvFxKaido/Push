@@ -16,6 +16,8 @@ import {
   handleCloudflareModels,
   handleOllamaChat,
   handleOllamaModels,
+  handleOpenAIChat,
+  handleOpenAIModels,
   handleOpenRouterChat,
   handleOpenRouterModels,
 } from './worker-providers';
@@ -716,5 +718,99 @@ describe('handleAnthropicModels', () => {
     expect(body.data.length).toBeGreaterThan(0);
     expect(body.data.every((m) => typeof m.id === 'string')).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OpenAI direct — chat (streaming) + models (JSON)
+// ---------------------------------------------------------------------------
+
+describe('handleOpenAIChat', () => {
+  it('posts to api.openai.com/v1/chat/completions with OPENAI_API_KEY', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    await handleOpenAIChat(makeChatRequest(), makeEnv({ OPENAI_API_KEY: 'sk-server' }));
+    expect(captured?.url).toBe('https://api.openai.com/v1/chat/completions');
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer sk-server');
+  });
+
+  it('returns 401 when OPENAI_API_KEY is not configured and the client supplies no Authorization', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleOpenAIChat(makeChatRequest(), makeEnv());
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toMatch(/OpenAI API key not configured/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('formats upstream errors with an OpenAI ${status} prefix and extracts the upstream reason', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'Invalid API key' } }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+    const response = await handleOpenAIChat(
+      makeChatRequest(),
+      makeEnv({ OPENAI_API_KEY: 'sk-server' }),
+    );
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toBe('OpenAI 401: Invalid API key');
+  });
+
+  it('tags rate-limit responses with UPSTREAM_QUOTA_OR_RATE_LIMIT for the client to detect', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+    const response = await handleOpenAIChat(
+      makeChatRequest(),
+      makeEnv({ OPENAI_API_KEY: 'sk-server' }),
+    );
+    expect(response.status).toBe(429);
+    const body = await response.json();
+    expect(body.code).toBe('UPSTREAM_QUOTA_OR_RATE_LIMIT');
+  });
+});
+
+describe('handleOpenAIModels', () => {
+  it('proxies GET https://api.openai.com/v1/models with the server key', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response(JSON.stringify({ object: 'list', data: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }),
+    );
+    await handleOpenAIModels(makeModelsRequest(), makeEnv({ OPENAI_API_KEY: 'sk-server' }));
+    expect(captured?.url).toBe('https://api.openai.com/v1/models');
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer sk-server');
   });
 });
