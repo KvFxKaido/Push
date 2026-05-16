@@ -22,7 +22,7 @@ export const PROVIDER_LABELS: Record<AIProviderType, string> = {
 
 export type BuiltInSettingsProviderId = Extract<
   PreferredProvider,
-  'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'openadapter'
+  'ollama' | 'openrouter' | 'zen' | 'nvidia' | 'blackbox' | 'kilocode' | 'openadapter' | 'anthropic'
 >;
 
 export type ExperimentalSettingsProviderId = Extract<ExperimentalProviderType, 'azure' | 'bedrock'>;
@@ -38,6 +38,7 @@ export const SETTINGS_SECTION_ICONS: Record<'you' | 'workspace' | 'ai', Settings
 export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] = [
   'ollama',
   'openrouter',
+  'anthropic',
   'nvidia',
   'zen',
   'blackbox',
@@ -95,6 +96,12 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     saveLabel: 'Save OpenAdapter key',
     hint: 'OpenAdapter API key from openadapter.dev. 69+ open-source models through one gateway.',
     labelTransform: (model) => formatModelDisplayName('openadapter', model),
+  },
+  anthropic: {
+    placeholder: 'Anthropic API key (sk-ant-…)',
+    saveLabel: 'Save Anthropic key',
+    hint: 'Anthropic API key from console.anthropic.com. Direct /v1/messages with prompt caching and extended thinking.',
+    labelTransform: (model) => formatModelDisplayName('anthropic', model),
   },
 };
 

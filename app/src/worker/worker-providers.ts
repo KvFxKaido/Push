@@ -20,6 +20,7 @@ import {
   createAnthropicTranslatedStream,
 } from '../lib/openai-anthropic-bridge';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
+import { ANTHROPIC_MODELS } from '@push/lib/provider-models';
 import {
   buildVertexAnthropicEndpoint,
   buildVertexOpenApiBaseUrl,
@@ -1011,6 +1012,11 @@ export async function handleVertexModels(request: Request, env: Env): Promise<Re
 
 // --- Anthropic Claude (direct /v1/messages) ---
 //
+// Models: serve the curated `ANTHROPIC_MODELS` list. Anthropic does have a
+// live `/v1/models` endpoint, but proxying it would add another auth path +
+// rate-limit class without changing the dropdown content materially; the
+// curated list is the source of truth until the live proxy lands later.
+//
 // Modeled on handleVertexChat's native-Anthropic transport path. Difference:
 // auth is a flat `x-api-key` header instead of OAuth, no project/region path
 // segments, and no `anthropic_version` in the body — the version goes in the
@@ -1057,12 +1063,22 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
   }
   const parsedRequest = normalizedRequest.value.parsed;
   const model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
+  if (!model) {
+    return Response.json({ error: 'Anthropic request is missing a model id' }, { status: 400 });
+  }
 
   // Anthropic API requires the version header. We deliberately do NOT pass
   // `anthropicVersion` into the body — that field is for Vertex's
   // `vertex-2023-10-16` shape; the direct Anthropic API ignores any
   // `anthropic_version` field and reads it from the header instead.
-  const upstreamBody = JSON.stringify(buildAnthropicMessagesRequest(parsedRequest));
+  //
+  // `buildAnthropicMessagesRequest` does not include `model` in the body
+  // because Vertex carries the model in the URL path. Direct `/v1/messages`
+  // requires `model` in the JSON, so re-attach it here.
+  const upstreamBody = JSON.stringify({
+    ...buildAnthropicMessagesRequest(parsedRequest),
+    model,
+  });
 
   wlog('info', 'request', {
     requestId,
@@ -1131,6 +1147,21 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
       { status: isTimeout ? 504 : 502 },
     );
   }
+}
+
+export async function handleAnthropicModels(request: Request, env: Env): Promise<Response> {
+  // Run preamble for origin check + rate limit even though we serve a static
+  // curated list — keeps the route shape consistent with the other /models
+  // proxies and pins the call within the same rate-limit bucket.
+  const preamble = await runPreamble(request, env, {
+    buildAuth: () => 'AnthropicCuratedList',
+    needsBody: false,
+  });
+  if (preamble instanceof Response) return preamble;
+  return Response.json({
+    object: 'list',
+    data: ANTHROPIC_MODELS.map((id) => ({ id, name: id })),
+  });
 }
 
 // --- Ollama Web Search proxy ---

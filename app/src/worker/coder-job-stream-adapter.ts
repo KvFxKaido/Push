@@ -97,7 +97,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       if (!handler) {
         throw new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
-            `Supported in Phase 1 PR #3a: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, openadapter.`,
+            `Supported: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, openadapter, anthropic.`,
         );
       }
 

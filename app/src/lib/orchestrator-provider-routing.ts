@@ -141,6 +141,7 @@ const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
   'blackbox',
   'kilocode',
   'openadapter',
+  'anthropic',
 ];
 
 /**

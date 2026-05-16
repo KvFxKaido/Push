@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
-import {
-  ANTHROPIC_DEFAULT_MODEL,
-  normalizeKilocodeModelName,
-  type PreferredProvider,
-} from '@/lib/providers';
+import { normalizeKilocodeModelName, type PreferredProvider } from '@/lib/providers';
 import { safeStorageGet, safeStorageSet } from '@/lib/safe-storage';
 import type { AttachmentData, ChatSendOptions, Conversation } from '@/types';
 
@@ -102,13 +98,10 @@ export function useWorkspaceComposerState({
       azure: catalog.azure.model,
       bedrock: catalog.bedrock.model,
       vertex: catalog.vertex.model,
-      // Anthropic catalog slot lands in a follow-up PR alongside the
-      // Settings UI picker. For now the composer falls back to the curated
-      // default; user customization flows through the Settings sheet once
-      // the catalog wiring + sheet entry land.
-      anthropic: ANTHROPIC_DEFAULT_MODEL,
+      anthropic: catalog.anthropic.model,
     }),
     [
+      catalog.anthropic.model,
       catalog.azure.model,
       catalog.bedrock.model,
       catalog.blackbox.model,

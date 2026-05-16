@@ -88,7 +88,15 @@ export async function* anthropicStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new Error(`Anthropic ${response.status}: ${detail}`);
+    // Worker's handleAnthropicChat already prefixes its JSON error with
+    // `Anthropic ${status}: …`, so don't re-prefix here — that produces
+    // `Anthropic 401: Anthropic 401: …`. Fall back to a tagged prefix only
+    // when the response came from somewhere other than our Worker (network
+    // failure, dev proxy quirk) and didn't include the marker.
+    const message = detail.startsWith('Anthropic ')
+      ? detail
+      : `Anthropic ${response.status}: ${detail}`;
+    throw new Error(message);
   }
 
   if (!response.body) {
