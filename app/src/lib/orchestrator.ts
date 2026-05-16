@@ -562,24 +562,29 @@ export function toLLMMessages(
     }
   }
 
-  // Prompt Caching: cache the entire prefix up to the last user message.
-  // Active for providers that support cache_control (OpenRouter, Mistral).
+  // Prompt Caching: Hermes `system_and_3` strategy. The system message at
+  // llmMessages[0] already got its marker above; here we tag up to 3 more
+  // non-system messages from the tail. Anthropic caps a request at 4 cache
+  // breakpoints, so `system + 3` stays at the limit. Walking backward catches
+  // the rolling tail (typically last-user / last-assistant / last-tool-result)
+  // where intermediate states from prior rounds become cache-hit candidates
+  // on the next turn. Mirrors `cli/openai-stream.ts` (wire-side loop) which
+  // applies the same shape from `cacheBreakpointIndices`.
   if (cacheable && llmMessages.length > 0) {
-    for (let i = llmMessages.length - 1; i >= 0; i--) {
-      if (llmMessages[i].role === 'user') {
-        const lastMsg = llmMessages[i];
-        if (typeof lastMsg.content === 'string') {
-          lastMsg.content = [
-            { type: 'text', text: lastMsg.content, cache_control: { type: 'ephemeral' } },
-          ];
-        } else if (Array.isArray(lastMsg.content)) {
-          // Already an array (e.g. from attachments), tag the last part
-          const lastPart = lastMsg.content[lastMsg.content.length - 1];
-          if (lastPart.type === 'text') {
-            lastPart.cache_control = { type: 'ephemeral' };
-          }
+    let tagged = 0;
+    for (let i = llmMessages.length - 1; i >= 0 && tagged < 3; i--) {
+      const msg = llmMessages[i];
+      if (msg.role === 'system') continue;
+      if (typeof msg.content === 'string') {
+        msg.content = [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }];
+        tagged++;
+      } else if (Array.isArray(msg.content)) {
+        // Already an array (e.g. from attachments) — tag the last text part.
+        const lastPart = msg.content[msg.content.length - 1];
+        if (lastPart.type === 'text') {
+          lastPart.cache_control = { type: 'ephemeral' };
+          tagged++;
         }
-        break;
       }
     }
   }

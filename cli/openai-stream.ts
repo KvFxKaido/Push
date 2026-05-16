@@ -105,18 +105,21 @@ async function* cliProviderStream(
     messages.push({ role: m.role, content: m.content });
   }
 
-  // Prompt caching: tag the system message at index 0 (if present) and the
-  // last user message (`cacheBreakpointIndex`) with Anthropic-style
-  // `cache_control: ephemeral`. Mirrors `app/src/lib/orchestrator.ts:285-298`
-  // and 367-387. OpenRouter forwards this to Claude models; non-Anthropic
-  // routes harmlessly ignore the marker. We gate on `config.id === 'openrouter'`
-  // because that's the only CLI provider known to route to Anthropic. Other
-  // gateway-style providers (zen / kilocode / openadapter) are conservative
-  // pass-throughs until parity is verified.
+  // Prompt caching: Hermes `system_and_3` strategy. Tag the system message
+  // plus up to 3 rolling-tail messages (`cacheBreakpointIndices`) with
+  // Anthropic-style `cache_control: ephemeral`. Anthropic caps a request at
+  // 4 cache breakpoints; the transformer caps its tail emission at 3, so
+  // `system + indices` stays within the limit.
+  //
+  // OpenRouter forwards the marker to Claude models; non-Anthropic routes
+  // ignore it harmlessly. We gate on `config.id === 'openrouter'` because
+  // that's the only CLI provider known to route to Anthropic — other gateway
+  // providers (zen / kilocode / openadapter) are conservative pass-throughs
+  // until parity is verified. Mirrors `app/src/lib/orchestrator.ts` (wire-side
+  // rolling-tail loop near the end of `buildLLMMessages`).
+  const breakpoints = req.cacheBreakpointIndices;
   const cacheable =
-    config.id === 'openrouter' &&
-    typeof req.cacheBreakpointIndex === 'number' &&
-    req.cacheBreakpointIndex >= 0;
+    config.id === 'openrouter' && Array.isArray(breakpoints) && breakpoints.length > 0;
   if (cacheable) {
     if (messages[0]?.role === 'system' && typeof messages[0].content === 'string') {
       messages[0] = {
@@ -126,11 +129,17 @@ async function* cliProviderStream(
         ],
       };
     }
-    const wireBreakpoint = (req.cacheBreakpointIndex as number) + systemPrependOffset;
-    const target = messages[wireBreakpoint];
-    if (target && target.role === 'user' && typeof target.content === 'string') {
-      messages[wireBreakpoint] = {
-        role: 'user',
+    for (const reqIndex of breakpoints!) {
+      const wireIndex = reqIndex + systemPrependOffset;
+      const target = messages[wireIndex];
+      if (!target || typeof target.content !== 'string') continue;
+      // The system at wire index 0 already got its own marker above; skip
+      // duplicate tagging if a transformer ever emits 0 in the rolling tail
+      // (it shouldn't — system is filtered out — but a defensive check
+      // here keeps the cap at 4 even if the contract is violated upstream).
+      if (wireIndex === 0) continue;
+      messages[wireIndex] = {
+        role: target.role,
         content: [{ type: 'text', text: target.content, cache_control: { type: 'ephemeral' } }],
       };
     }

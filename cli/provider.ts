@@ -42,13 +42,14 @@ export interface StreamCompletionOptions {
   /** OpenRouter session_id for grouping related requests. */
   sessionId?: string;
   /**
-   * Index into `messages` of the last user-role message (from
-   * `transformContextBeforeLLM`'s `cacheBreakpointIndex`). When set and
-   * the provider supports it, the adapter applies prompt-caching
-   * markers at this boundary. -1 / undefined disables caching for the
-   * call.
+   * Indices into `messages` to tag with `cache_control: ephemeral` (from
+   * `transformContextBeforeLLM`'s `cacheBreakpointIndices`). The wire adapter
+   * pairs these with a system-message marker for the Hermes `system_and_3`
+   * shape — up to 4 cached prefixes per request. An empty array or `undefined`
+   * disables tail caching for the call (the system message may still be cached
+   * separately depending on provider gating).
    */
-  cacheBreakpointIndex?: number;
+  cacheBreakpointIndices?: number[];
 }
 
 function isRetryableError(err: unknown): boolean {
@@ -236,7 +237,7 @@ export async function streamCompletion(
           model,
           messages: llmMessages,
           signal: compositeSignal,
-          cacheBreakpointIndex: options?.cacheBreakpointIndex,
+          cacheBreakpointIndices: options?.cacheBreakpointIndices,
         }),
       );
 
