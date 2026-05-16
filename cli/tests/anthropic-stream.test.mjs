@@ -125,7 +125,13 @@ describe('createCliAnthropicStream', () => {
     );
 
     const body = JSON.parse(calls[0].init.body);
-    // Wire shape is Anthropic Messages API (not OpenAI Chat Completions):
+    // Wire shape is Anthropic Messages API (not OpenAI Chat Completions).
+    // Both shapes have top-level `messages` and `model`, so those alone
+    // don't prove translation ran. The real translation markers:
+    //   - `system` is hoisted to a top-level field (OpenAI keeps it as a
+    //     `role: 'system'` entry inside messages[]).
+    //   - String content is wrapped into `[{ type: 'text', text: ... }]`
+    //     (OpenAI keeps it as a bare string).
     assert.equal(body.model, 'claude-opus-4-7');
     assert.equal(body.system, 'Be terse.');
     assert.ok(Array.isArray(body.messages));
@@ -133,10 +139,13 @@ describe('createCliAnthropicStream', () => {
     assert.equal(body.messages[0].role, 'user');
     assert.equal(body.messages[1].role, 'assistant');
     assert.equal(body.messages[2].role, 'user');
-    assert.ok(!('messages' in body) || body.messages !== undefined);
-    // The OpenAI `messages` field MUST NOT appear at the top level — that
-    // would indicate the translation didn't run.
-    assert.equal('temperature' in body, true);
+    // No `role: 'system'` entry inside messages — it MUST have been hoisted.
+    assert.equal(
+      body.messages.some((m) => m.role === 'system'),
+      false,
+    );
+    // First user turn's content is the Anthropic block array, not a bare string.
+    assert.deepEqual(body.messages[0].content, [{ type: 'text', text: 'Hi' }]);
   });
 
   it('falls back to config.defaultModel when req.model is empty', async () => {

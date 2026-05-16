@@ -222,7 +222,7 @@ Usage:
   push spinner unpin            Unpin: revert to static status dot
 
 Options:
-  --provider <name>             ollama | openrouter | zen | nvidia (default: ollama)
+  --provider <name>             ollama | openrouter | zen | nvidia | kilocode | blackbox | openadapter | openai | anthropic | google (default: ollama)
   --model <name>                Override model
   --url <endpoint>              Override provider endpoint URL
   --api-key <secret>            Set provider API key (for push config set/init)

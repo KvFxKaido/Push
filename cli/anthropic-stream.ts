@@ -14,12 +14,13 @@
  * preflight, and the API key is read from `process.env` (or passed in)
  * rather than from a Worker secret.
  *
- * Reasoning blocks ride through unchanged when `LlmMessage.reasoningBlocks`
- * is populated — the bridge prepends them to the assistant `content[]` so
- * signed thinking round-trips across chained turns. The CLI's lib-side
- * agent roles populate this field; the legacy `cli/engine.ts` path that
- * doesn't carry reasoning sees identical behavior to the OpenAI-compat
- * adapter.
+ * Reasoning blocks are NOT forwarded here today — `LlmMessage` in
+ * `lib/provider-contract.ts` doesn't carry the `reasoning_blocks` sidecar,
+ * so the bridge re-emits an empty reasoning prefix on every turn. Chained
+ * extended-thinking + tool-use round trips therefore degrade to the same
+ * (lossy) behavior the OpenRouter-Anthropic CLI path has today; persistence
+ * on `Message` still survives so a follow-up can opt in by extending the
+ * mapper plus the contract.
  */
 
 import type {
