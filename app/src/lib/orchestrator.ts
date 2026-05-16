@@ -568,8 +568,18 @@ export function toLLMMessages(
   // breakpoints, so `system + 3` stays at the limit. Walking backward catches
   // the rolling tail (typically last-user / last-assistant / last-tool-result)
   // where intermediate states from prior rounds become cache-hit candidates
-  // on the next turn. Mirrors `cli/openai-stream.ts` (wire-side loop) which
-  // applies the same shape from `cacheBreakpointIndices`.
+  // on the next turn.
+  //
+  // Why this re-walks the wire array instead of consuming
+  // `transformed.cacheBreakpointIndices` directly: the web wire-build loop
+  // above drops empty-content assistant turns mid-iteration (the
+  // `msg.role === 'assistant' && !msg.content.trim() && !reasoningBlocks`
+  // continue), so the wire `llmMessages` array is NOT 1:1 with
+  // `windowedMessages`. The transformer's indices are into `windowedMessages`
+  // and can't be safely translated into wire indices without re-running the
+  // same drop predicate. A backward walk on the already-built wire array
+  // sidesteps that translation. CLI's wire builder doesn't have the same
+  // drop behavior, so it consumes the indices directly.
   if (cacheable && llmMessages.length > 0) {
     let tagged = 0;
     for (let i = llmMessages.length - 1; i >= 0 && tagged < 3; i--) {

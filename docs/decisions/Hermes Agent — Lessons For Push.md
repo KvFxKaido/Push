@@ -2,7 +2,10 @@
 
 Date: 2026-05-16
 Author: Claude (via Claude Code)
-Status: Draft — three borrow items proposed; item 3 (skill frontmatter + auto-hide) in flight on `claude/research-hermes-agent-5scJu`.
+Status: Partly shipped — items 1 and 3 landed; item 2 remains Draft.
+  - **Item 1** (cache breakpoint audit — `system + rolling 3`): shipping in PR #573 (2026-05-16). Includes `cache_control` preservation through `chat-request-guardrails` so the web side actually benefits in production.
+  - **Item 2** (typed `SessionDigest` for compaction output + 85% gateway safety net): Draft — not yet started.
+  - **Item 3** (skill frontmatter + auto-hide): shipped via PR #572 (2026-05-16).
 
 ---
 

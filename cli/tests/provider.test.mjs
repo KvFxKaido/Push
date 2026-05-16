@@ -960,6 +960,88 @@ describe('streamCompletion', () => {
     // directly with a `systemPromptOverride`. The indices in `cacheBreakpointIndices`
     // are into `req.messages` (which excludes the synthesized system), so the
     // wire-side adapter must add `systemPrependOffset = 1` before tagging each.
+    it('clamps to the last 3 indices when more than 3 are provided (defense in depth)', async () => {
+      // The transformer caps emission at 3, but the provider contract is
+      // exported and `createCliProviderStream` can be called directly by
+      // future consumers. The wire layer must enforce the cap independently
+      // so Anthropic's per-request limit of 4 markers (system + 3 tail) is
+      // never exceeded even when the contract is violated upstream.
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const messages = [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'u1' },
+        { role: 'assistant', content: 'a1' },
+        { role: 'user', content: 'u2' },
+        { role: 'assistant', content: 'a2' },
+        { role: 'user', content: 'u3' },
+      ];
+      await streamCompletion(orConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
+        // Caller passes 5 indices — the slice should keep only the last 3.
+        cacheBreakpointIndices: [1, 2, 3, 4, 5],
+      });
+
+      const markerCount = capturedBody.messages.filter(
+        (m) => Array.isArray(m.content) && m.content.some((p) => p.cache_control),
+      ).length;
+      assert.equal(
+        markerCount,
+        4,
+        `expected 4 cache markers (system + 3 tail), got ${markerCount}`,
+      );
+      // The earlier indices (1, 2) must NOT be tagged — confirming the slice
+      // kept the last 3, not the first 3.
+      assert.equal(typeof capturedBody.messages[1].content, 'string');
+      assert.equal(typeof capturedBody.messages[2].content, 'string');
+      assert.ok(Array.isArray(capturedBody.messages[3].content));
+      assert.ok(Array.isArray(capturedBody.messages[4].content));
+      assert.ok(Array.isArray(capturedBody.messages[5].content));
+    });
+
+    it('tags wire-index 0 when no system message is present (user-first transcript)', async () => {
+      // The defensive `wireIndex === 0` skip must only fire when index 0 is
+      // actually a system message. A user-first transcript legitimately
+      // includes index 0 in the rolling tail and would otherwise lose its
+      // cache slot.
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const messages = [
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'reply' },
+      ];
+      await streamCompletion(orConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
+        cacheBreakpointIndices: [0, 1],
+      });
+
+      // Both indices tagged — no system at index 0 to skip.
+      assert.ok(Array.isArray(capturedBody.messages[0].content));
+      assert.deepEqual(capturedBody.messages[0].content[0].cache_control, { type: 'ephemeral' });
+      assert.ok(Array.isArray(capturedBody.messages[1].content));
+      assert.deepEqual(capturedBody.messages[1].content[0].cache_control, { type: 'ephemeral' });
+    });
+
     it('applies systemPrependOffset to every breakpoint when systemPromptOverride is set', async () => {
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
