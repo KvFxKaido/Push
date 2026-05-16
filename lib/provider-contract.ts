@@ -18,6 +18,18 @@ export interface LlmMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: number;
+  /** Signed reasoning blocks captured on prior assistant turns.
+   *  Forwarded verbatim to providers that consume them (currently Anthropic
+   *  via `lib/openai-anthropic-bridge`); other adapters ignore the field
+   *  because their upstreams would reject the Push-private parameter.
+   *
+   *  The OpenAI-compat CLI adapter (`cli/openai-stream.ts`) deliberately
+   *  does NOT forward this on the wire — only the Anthropic-via-bridge
+   *  paths do, and the bridge re-emits these as the FIRST entries of the
+   *  upstream assistant `content[]` so signed thinking round-trips across
+   *  chained turns. Without this, Anthropic + extended-thinking + tool-use
+   *  combinations break with `invalid_request_error` on the second turn. */
+  reasoningBlocks?: ReasoningBlock[];
 }
 
 // ---------------------------------------------------------------------------

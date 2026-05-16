@@ -95,13 +95,15 @@ async function* cliProviderStream(
   if (systemPrependOffset === 1) {
     messages.push({ role: 'system', content: req.systemPromptOverride as string });
   }
-  // `reasoningBlocks` on `LlmMessage` is intentionally NOT forwarded on the
-  // wire here. Every CLI provider in `PROVIDER_CONFIGS` is a strict
-  // OpenAI-compatible endpoint (Ollama, OpenRouter, Zen, NVIDIA, etc.); a
-  // Push-private `reasoning_blocks` field would be an unknown message
-  // parameter and the upstream may reject it. Persistence on `Message`
-  // still survives so a future CLI provider that fronts the Anthropic
-  // bridge can opt in here.
+  // `reasoningBlocks` on `LlmMessage` is intentionally NOT forwarded on
+  // the wire here even though the contract now carries it. Every provider
+  // wired through this path (Ollama, OpenRouter, Zen, NVIDIA, Blackbox,
+  // Kilocode, OpenAdapter, plus direct OpenAI) is a strict OpenAI-compat
+  // endpoint, and the Push-private `reasoning_blocks` field would be an
+  // unknown message parameter the upstream may reject. The Anthropic-via-
+  // bridge surface (`cli/anthropic-stream.ts`) is where the field flows
+  // onto the wire — it goes through the bridge, which re-emits the blocks
+  // as the FIRST entries of the upstream assistant `content[]`.
   for (const m of req.messages) {
     messages.push({ role: m.role, content: m.content });
   }
