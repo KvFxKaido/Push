@@ -454,9 +454,16 @@ export function toLLMMessages(
   // Anchor the user's goal near the recent tail whenever compaction has
   // happened. v1 seeds the anchor from the first non-tool-result user turn;
   // null when there's no usable seed (e.g., empty transcript on first send).
-  // See `lib/user-goal-anchor.ts` for the format pin.
-  const firstUserTurn = messages.find((m) => m.role === 'user' && !m.isToolResult)?.content;
-  const userGoalAnchor = deriveUserGoalAnchor({ firstUserTurn }) ?? undefined;
+  // Passing the full ordered user-turn list lets the anchor populate
+  // `currentWorkingGoal` from an explicit redirect so the seed doesn't
+  // over-pin the original ask. See `lib/user-goal-anchor.ts` for the
+  // format pin.
+  const userTurnContents = messages
+    .filter((m) => m.role === 'user' && !m.isToolResult)
+    .map((m) => (typeof m.content === 'string' ? m.content : ''));
+  const firstUserTurn = userTurnContents[0];
+  const userGoalAnchor =
+    deriveUserGoalAnchor({ firstUserTurn, recentUserTurns: userTurnContents }) ?? undefined;
   const transformed = transformContextBeforeLLM<ChatMessage>(messages, {
     surface: 'web',
     manageContext: (msgs) => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deriveCurrentWorkingGoal,
   deriveUserGoalAnchor,
   formatUserGoalBlock,
   formatUserGoalMarkdown,
@@ -71,6 +72,140 @@ describe('deriveUserGoalAnchor', () => {
       branch: { repoFullName: '', name: null },
     });
     expect(anchor).toEqual({ initialAsk: 'x' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deriveCurrentWorkingGoal + redirect detection
+//
+// Reduces the over-pinning of the original first-user-turn: when the user
+// has clearly redirected mid-conversation, the latest matching turn lands
+// in `currentWorkingGoal` so the rendered anchor reflects where the chat
+// actually is. Detection is conservative — false negatives leave the goal
+// stale, false positives shift it away from the seed, and we prefer the
+// former.
+// ---------------------------------------------------------------------------
+
+describe('deriveCurrentWorkingGoal — redirect detection', () => {
+  it('returns null when there are no recent turns', () => {
+    expect(deriveCurrentWorkingGoal([], 'seed')).toBeNull();
+  });
+
+  it('returns null when no recent turn looks like a redirect', () => {
+    const turns = ['seed', 'ok lets go', 'looks good', 'yes', 'what about Y?'];
+    expect(deriveCurrentWorkingGoal(turns, 'seed')).toBeNull();
+  });
+
+  it('skips the seed turn even when it contains a redirect phrase', () => {
+    // The seed is the initialAsk slot; it should never double-populate the
+    // working goal. Only later turns count as redirects.
+    const turns = ['actually, lets do X', 'ok', 'sounds good'];
+    expect(deriveCurrentWorkingGoal(turns, 'actually, lets do X')).toBeNull();
+  });
+
+  it('picks the most recent redirect when multiple are present', () => {
+    const turns = ['help with X', 'actually, lets focus on Y instead', 'ok', 'wait, pivot to Z'];
+    expect(deriveCurrentWorkingGoal(turns, 'help with X')).toBe('wait, pivot to Z');
+  });
+
+  it('ignores redirects older than the scan window', () => {
+    // Scan window is 6 turns from the tail. A redirect at position 0 of a
+    // 10-turn list should not be returned.
+    const turns = [
+      'help with X',
+      'actually, lets do Y',
+      ...Array.from({ length: 8 }, (_, i) => `follow-up ${i}`),
+    ];
+    expect(deriveCurrentWorkingGoal(turns, 'help with X')).toBeNull();
+  });
+
+  it('truncates an overlong redirect to the same cap as initialAsk', () => {
+    const long = `actually, ${'x'.repeat(USER_GOAL_MAX_INITIAL_ASK_CHARS + 100)}`;
+    const result = deriveCurrentWorkingGoal(['seed', long], 'seed');
+    expect(result).not.toBeNull();
+    expect(result?.length).toBe(USER_GOAL_MAX_INITIAL_ASK_CHARS);
+    expect(result?.endsWith('...')).toBe(true);
+  });
+
+  it('detects the canonical redirect phrasings', () => {
+    const cases: ReadonlyArray<string> = [
+      'Actually, lets do X instead',
+      'instead, focus on Y',
+      'Wait, I think we should pivot',
+      "let's reset",
+      'let me reset',
+      'forget that, focus on Z',
+      'scrap that idea',
+      'nevermind, switch to Y',
+      'Hold on, the actual goal is X',
+      'hold up — wrong file',
+      'hang on a sec',
+      'change of plans',
+      'switch focus to the auditor',
+      'switch to Y',
+      'we should pivot here',
+      'on second thought, lets do Y',
+      'we were supposed to be doing a doc sweep',
+      'we should be doing the audit',
+      'we got off-track',
+      'we got pulled off the doc sweep',
+      'uh oh, context problem',
+      "let's pivot to the audit",
+    ];
+    for (const turn of cases) {
+      expect(deriveCurrentWorkingGoal(['seed', turn], 'seed')).toBe(turn);
+    }
+  });
+
+  it('does not false-positive on common affirmations or short replies', () => {
+    const cases: ReadonlyArray<string> = [
+      'yes',
+      "yeah let's do it",
+      'ok',
+      'sure go ahead',
+      'sounds good',
+      'continue',
+      'thanks',
+      'good',
+      'what do you think we should tackle next?',
+      'what about Y instead of X?', // contains "instead" mid-phrase only
+    ];
+    for (const turn of cases) {
+      expect(
+        deriveCurrentWorkingGoal(['seed', turn], 'seed'),
+        `should not flag: ${turn}`,
+      ).toBeNull();
+    }
+  });
+});
+
+describe('deriveUserGoalAnchor — recentUserTurns wiring', () => {
+  it('populates currentWorkingGoal from a recent redirect', () => {
+    const anchor = deriveUserGoalAnchor({
+      firstUserTurn: 'help with the TS7 question',
+      recentUserTurns: [
+        'help with the TS7 question',
+        'what should we tackle next?',
+        'uh oh, we got pulled off-track. We were supposed to be doing a doc sweep.',
+      ],
+    });
+    expect(anchor?.initialAsk).toBe('help with the TS7 question');
+    expect(anchor?.currentWorkingGoal).toBe(
+      'uh oh, we got pulled off-track. We were supposed to be doing a doc sweep.',
+    );
+  });
+
+  it('leaves currentWorkingGoal unset when no redirect is present', () => {
+    const anchor = deriveUserGoalAnchor({
+      firstUserTurn: 'help with X',
+      recentUserTurns: ['help with X', 'thanks', 'ok continue'],
+    });
+    expect(anchor).toEqual({ initialAsk: 'help with X' });
+  });
+
+  it('preserves v1 behaviour when recentUserTurns is omitted', () => {
+    const anchor = deriveUserGoalAnchor({ firstUserTurn: 'ship X' });
+    expect(anchor).toEqual({ initialAsk: 'ship X' });
   });
 });
 

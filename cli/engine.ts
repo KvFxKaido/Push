@@ -1015,21 +1015,32 @@ export async function runAssistantLoop(
     let capturedTrim: TrimResult | null = null;
     // First non-tool-result, non-parse-error user turn — the seed for the
     // `[USER_GOAL]` anchor that gets injected near the tail after
-    // compaction. See `lib/user-goal-anchor.ts` for the format pin.
-    const firstUserTurn = (state.messages as Message[]).find(
-      (m) =>
-        m.role === 'user' &&
-        !isToolResultMessage(m as { role: string; content: string }) &&
-        !isParseErrorMessage(m as { role: string; content: string }),
-    )?.content;
-    const firstUserTurnStr = typeof firstUserTurn === 'string' ? firstUserTurn : null;
+    // compaction. The ordered list of all such turns also feeds the
+    // anchor's redirect-detection so `currentWorkingGoal` tracks where
+    // the conversation has moved. See `lib/user-goal-anchor.ts` for the
+    // format pin.
+    const userTurnContents = (state.messages as Message[])
+      .filter(
+        (m) =>
+          m.role === 'user' &&
+          !isToolResultMessage(m as { role: string; content: string }) &&
+          !isParseErrorMessage(m as { role: string; content: string }),
+      )
+      .map((m) => (typeof m.content === 'string' ? m.content : ''));
+    const firstUserTurnStr = userTurnContents[0] ?? null;
     // v2: prefer a user-owned `.push/goal.md` when present. Falls back to
     // verbatim derivation when the file is absent or unparseable so the
     // anchor still injects on first compaction (auto-seed below catches
-    // up on the next turn).
+    // up on the next turn). Redirect-detection only runs on the fallback —
+    // a user-authored goal.md is the source of truth.
     const goalFileAnchor = await loadUserGoalFile(state.cwd);
     const userGoalAnchor =
-      goalFileAnchor ?? deriveUserGoalAnchor({ firstUserTurn: firstUserTurnStr }) ?? undefined;
+      goalFileAnchor ??
+      deriveUserGoalAnchor({
+        firstUserTurn: firstUserTurnStr,
+        recentUserTurns: userTurnContents,
+      }) ??
+      undefined;
     const transformed = transformContextBeforeLLM<Message>(state.messages as Message[], {
       surface: 'cli',
       enableFilterVisible: false,
