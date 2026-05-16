@@ -20,7 +20,11 @@ import {
   createAnthropicTranslatedStream,
 } from '../lib/openai-anthropic-bridge';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
-import { ANTHROPIC_MODELS } from '@push/lib/provider-models';
+import { ANTHROPIC_MODELS, GOOGLE_MODELS } from '@push/lib/provider-models';
+import {
+  buildGeminiGenerateContentRequest,
+  createGeminiTranslatedStream,
+} from '../lib/openai-gemini-bridge';
 import {
   buildVertexAnthropicEndpoint,
   buildVertexOpenApiBaseUrl,
@@ -1195,6 +1199,157 @@ export async function handleAnthropicModels(request: Request, env: Env): Promise
   return Response.json({
     object: 'list',
     data: ANTHROPIC_MODELS.map((id) => ({ id, name: id })),
+  });
+}
+
+// --- Google Gemini (direct /v1beta/models/{model}:streamGenerateContent) ---
+//
+// Modeled on handleAnthropicChat: the Worker accepts OpenAI-shaped JSON,
+// translates the body via `buildGeminiGenerateContentRequest`, sends to
+// Google's Generative Language API with `x-goog-api-key`, then pipes the
+// upstream SSE through `createGeminiTranslatedStream` so the client sees the
+// familiar OpenAI SSE shape.
+//
+// Gemini's API is distinct from Vertex's Gemini OpenAPI endpoint: this is the
+// public `generativelanguage.googleapis.com` host that takes a plain API key
+// (no service-account OAuth, no project/region path segments).
+//
+// Models: serve the curated `GOOGLE_MODELS` list. Gemini does have a live
+// `/v1beta/models` endpoint, but proxying it would also require filtering for
+// chat-capable models (the upstream list includes embeddings and image-only
+// models); the curated list is the source of truth until the live proxy lands
+// later.
+
+const GOOGLE_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+
+function buildGoogleAuth(env: Env, request: Request): string | null {
+  const serverKey = env.GOOGLE_API_KEY;
+  if (serverKey) return serverKey;
+  // Accept a client-side `Authorization: Bearer <key>` for dev / unconfigured
+  // Worker paths, matching the standardAuth fallback shape used by the other
+  // direct providers.
+  const clientAuth = request.headers.get('Authorization');
+  if (clientAuth?.startsWith('Bearer ')) return clientAuth.slice(7);
+  return clientAuth;
+}
+
+export async function handleGoogleChat(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: buildGoogleAuth,
+    keyMissingError:
+      'Google Gemini API key not configured. Add it in Settings or set GOOGLE_API_KEY on the Worker.',
+    needsBody: true,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { authHeader: apiKey, bodyText, requestId } = preamble;
+
+  const normalizedRequest = validateAndNormalizeChatRequest(bodyText, {
+    routeLabel: 'Google Gemini',
+    maxOutputTokens: 12_288,
+  });
+  if (!normalizedRequest.ok) {
+    return Response.json({ error: normalizedRequest.error }, { status: normalizedRequest.status });
+  }
+  if (normalizedRequest.value.adjustments.length > 0) {
+    wlog('warn', 'chat_request_adjusted', {
+      requestId,
+      route: 'api/google/chat',
+      adjustments: normalizedRequest.value.adjustments,
+    });
+  }
+
+  const parsedRequest = normalizedRequest.value.parsed;
+  const model = typeof parsedRequest.model === 'string' ? parsedRequest.model.trim() : '';
+  if (!model) {
+    return Response.json({ error: 'Google request is missing a model id' }, { status: 400 });
+  }
+
+  // Gemini puts the model in the URL path and selects SSE framing via
+  // `?alt=sse`. The body is the OpenAI→Gemini translation; auth is the API
+  // key in the `x-goog-api-key` header (preferred over the legacy `?key=`
+  // query-param so the secret stays out of access logs).
+  const upstreamUrl = `${GOOGLE_API_BASE}/models/${encodeURIComponent(
+    model,
+  )}:streamGenerateContent?alt=sse`;
+  const upstreamBody = JSON.stringify(buildGeminiGenerateContentRequest(parsedRequest));
+
+  wlog('info', 'request', {
+    requestId,
+    route: 'api/google/chat',
+    model,
+  });
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180_000);
+    let upstream: Response;
+
+    try {
+      upstream = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers: {
+          'x-goog-api-key': apiKey,
+          'Content-Type': 'application/json',
+          [REQUEST_ID_HEADER]: requestId,
+        },
+        body: upstreamBody,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      wlog('error', 'upstream_error', {
+        requestId,
+        route: 'api/google/chat',
+        status: upstream.status,
+        body: errBody.slice(0, 500),
+      });
+      return Response.json(
+        {
+          error: `Google ${upstream.status}: ${extractProviderHttpErrorDetail(upstream.status, errBody)}`,
+          code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+        },
+        { status: upstream.status },
+      );
+    }
+
+    return new Response(createGeminiTranslatedStream(upstream, model), {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        [REQUEST_ID_HEADER]: requestId,
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    wlog('error', 'unhandled', {
+      requestId,
+      route: 'api/google/chat',
+      message,
+      timeout: isTimeout,
+    });
+    return Response.json(
+      { error: isTimeout ? 'Google request timed out after 180 seconds' : message },
+      { status: isTimeout ? 504 : 502 },
+    );
+  }
+}
+
+export async function handleGoogleModels(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: () => 'GoogleCuratedList',
+    needsBody: false,
+  });
+  if (preamble instanceof Response) return preamble;
+  return Response.json({
+    object: 'list',
+    data: GOOGLE_MODELS.map((id) => ({ id, name: id })),
   });
 }
 

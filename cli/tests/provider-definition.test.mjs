@@ -175,6 +175,42 @@ describe('openai cross-registry wiring', () => {
   });
 });
 
+describe('google cross-registry wiring', () => {
+  it('appears in AIProviderType', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../lib/provider-contract.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /\|\s*'google'/);
+  });
+
+  it('has worker proxy routes declared in app/worker.ts', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/worker.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /handler:\s*handleGoogleChat/);
+    assert.match(source, /'\/api\/google\/chat'/);
+    assert.match(source, /handler:\s*handleGoogleModels/);
+    assert.match(source, /'\/api\/google\/models'/);
+  });
+
+  it('has a stream-adapter dispatch case in orchestrator-provider-routing.ts', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/src/lib/orchestrator-provider-routing.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(
+      source,
+      /case 'google':\s*\n\s*stream = \(req\) => normalizeReasoning\(geminiStream/,
+    );
+  });
+
+  it('has a coder-job dispatch case for background runs', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/src/worker/coder-job-stream-adapter.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /case 'google':\s*\n\s*return handleGoogleChat/);
+  });
+});
+
 describe('ProviderDefinition lookup helpers', () => {
   it('getProviderDefinition returns each registered entry', () => {
     for (const def of PROVIDER_DEFINITIONS) {

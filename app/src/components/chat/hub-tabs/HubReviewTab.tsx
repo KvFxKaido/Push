@@ -30,6 +30,7 @@ import {
   BLACKBOX_DEFAULT_MODEL,
   ANTHROPIC_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
+  GOOGLE_DEFAULT_MODEL,
   AZURE_DEFAULT_MODEL,
   BEDROCK_DEFAULT_MODEL,
   VERTEX_DEFAULT_MODEL,
@@ -123,6 +124,7 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   vertex: 'push:review:model:vertex',
   anthropic: 'push:review:model:anthropic',
   openai: 'push:review:model:openai',
+  google: 'push:review:model:google',
   kilocode: 'push:review:model:kilocode',
   openadapter: 'push:review:model:openadapter',
 };
@@ -139,6 +141,7 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   vertex: VERTEX_DEFAULT_MODEL,
   anthropic: ANTHROPIC_DEFAULT_MODEL,
   openai: OPENAI_DEFAULT_MODEL,
+  google: GOOGLE_DEFAULT_MODEL,
   kilocode: KILOCODE_DEFAULT_MODEL,
   openadapter: OPENADAPTER_DEFAULT_MODEL,
 };
@@ -157,6 +160,7 @@ function readStoredReviewProvider(): PreferredProvider | null {
     stored === 'vertex' ||
     stored === 'anthropic' ||
     stored === 'openai' ||
+    stored === 'google' ||
     stored === 'kilocode' ||
     stored === 'openadapter'
   ) {
@@ -178,6 +182,7 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     value === 'vertex' ||
     value === 'anthropic' ||
     value === 'openai' ||
+    value === 'google' ||
     value === 'kilocode' ||
     value === 'openadapter'
   );
@@ -198,6 +203,7 @@ function readStoredReviewModels(): Record<PreferredProvider, string> {
     vertex: safeStorageGet(REVIEW_MODEL_KEYS.vertex) || REVIEW_DEFAULT_MODELS.vertex,
     anthropic: safeStorageGet(REVIEW_MODEL_KEYS.anthropic) || REVIEW_DEFAULT_MODELS.anthropic,
     openai: safeStorageGet(REVIEW_MODEL_KEYS.openai) || REVIEW_DEFAULT_MODELS.openai,
+    google: safeStorageGet(REVIEW_MODEL_KEYS.google) || REVIEW_DEFAULT_MODELS.google,
   };
 }
 

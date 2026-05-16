@@ -19,6 +19,7 @@ import { bedrockStream } from './bedrock-stream';
 import { vertexStream } from './vertex-stream';
 import { anthropicStream } from './anthropic-stream';
 import { openaiStream } from './openai-stream';
+import { geminiStream } from './gemini-stream';
 import { iterateChatStream, type IterateChatStreamTimeouts } from './iterate-chat-stream';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
@@ -29,6 +30,7 @@ import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import { getAnthropicKey } from '@/hooks/useAnthropicConfig';
 import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
+import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import {
   getAzureBaseUrl,
   getAzureKey,
@@ -58,6 +60,7 @@ import {
   getOpenAdapterModelName,
   getAnthropicModelName,
   getOpenAIModelName,
+  getGoogleModelName,
 } from './providers';
 import type { PreferredProvider } from './providers';
 import { normalizeExperimentalBaseUrl } from './experimental-providers';
@@ -93,6 +96,7 @@ export type ActiveProvider =
   | 'vertex'
   | 'anthropic'
   | 'openai'
+  | 'google'
   | 'demo';
 
 const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
@@ -131,6 +135,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   },
   anthropic: () => Boolean(getAnthropicKey() && getAnthropicModelName()),
   openai: () => Boolean(getOpenAIKey() && getOpenAIModelName()),
+  google: () => Boolean(getGoogleKey() && getGoogleModelName()),
 };
 
 /**
@@ -148,6 +153,7 @@ const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
   'openadapter',
   'anthropic',
   'openai',
+  'google',
 ];
 
 /**
@@ -255,6 +261,9 @@ export function getProviderPushStream(provider: ActiveProvider): PushStream<Chat
     case 'openai':
       stream = (req) => normalizeReasoning(openaiStream(req));
       break;
+    case 'google':
+      stream = (req) => normalizeReasoning(geminiStream(req));
+      break;
     case 'demo': {
       // Callers should guard demo before reaching here. If one slips through,
       // surface an explicit error rather than falling back to ollama and
@@ -322,6 +331,7 @@ const PROVIDER_DISPLAY_NAMES: Record<ActiveProvider, string> = {
   vertex: 'Google Vertex',
   anthropic: 'Anthropic',
   openai: 'OpenAI',
+  google: 'Google Gemini',
   demo: 'Demo',
 };
 
@@ -346,6 +356,7 @@ const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProv
   'vertex',
   'anthropic',
   'openai',
+  'google',
 ]);
 
 function buildChatTimeouts(provider: ActiveProvider): IterateChatStreamTimeouts | undefined {
@@ -394,6 +405,8 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getAnthropicModelName();
     case 'openai':
       return getOpenAIModelName();
+    case 'google':
+      return getGoogleModelName();
     case 'demo':
       return '';
   }

@@ -13,6 +13,8 @@ export {
   BLACKBOX_MODELS,
   CLOUDFLARE_DEFAULT_MODEL,
   CLOUDFLARE_MODELS,
+  GOOGLE_DEFAULT_MODEL,
+  GOOGLE_MODELS,
   KILOCODE_DEFAULT_MODEL,
   KILOCODE_MODELS,
   NVIDIA_DEFAULT_MODEL,
@@ -31,6 +33,7 @@ import {
   ANTHROPIC_DEFAULT_MODEL,
   BLACKBOX_DEFAULT_MODEL,
   CLOUDFLARE_DEFAULT_MODEL,
+  GOOGLE_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
   NVIDIA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_MODEL,
@@ -107,6 +110,13 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   openai: {
     chat: providerUrl('/api/openai/chat', '/api/openai/chat'),
     models: providerUrl('/api/openai/models', '/api/openai/models'),
+  },
+  google: {
+    chat: providerUrl('/api/google/chat', '/api/google/chat'),
+    // Curated GOOGLE_MODELS seeds the dropdown for MVP. A Worker
+    // `/api/google/models` proxy could land alongside live fetching once we
+    // filter the upstream list to chat-capable models.
+    models: providerUrl('/api/google/models', '/api/google/models'),
   },
 };
 
@@ -367,6 +377,15 @@ export const PROVIDERS: AIProviderConfig[] = [
     envUrl: 'https://api.openai.com',
     models: makeRoleModels(OPENAI_DEFAULT_MODEL, 'OpenAI', 'openai', 200_000),
   },
+  {
+    type: 'google',
+    name: 'Google Gemini',
+    description:
+      'Google Gemini direct — native generativelanguage.googleapis.com API with a plain API key (distinct from Vertex)',
+    envKey: 'VITE_GOOGLE_API_KEY',
+    envUrl: 'https://generativelanguage.googleapis.com',
+    models: makeRoleModels(GOOGLE_DEFAULT_MODEL, 'Google Gemini', 'google', 1_000_000),
+  },
 ];
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
@@ -483,6 +502,10 @@ const openaiModel = createModelNameStorage('openai_model', OPENAI_DEFAULT_MODEL)
 export const getOpenAIModelName = openaiModel.get;
 export const setOpenAIModelName = openaiModel.set;
 
+const googleModel = createModelNameStorage('google_model', GOOGLE_DEFAULT_MODEL);
+export const getGoogleModelName = googleModel.get;
+export const setGoogleModelName = googleModel.set;
+
 /** Runtime model-name getters for providers where the user can override the default. */
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
@@ -498,6 +521,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   openadapter: getOpenAdapterModelName,
   anthropic: getAnthropicModelName,
   openai: getOpenAIModelName,
+  google: getGoogleModelName,
 };
 
 /** Return the current runtime model name for a provider, or undefined if unknown. */
@@ -540,7 +564,8 @@ export type PreferredProvider =
   | 'kilocode'
   | 'openadapter'
   | 'anthropic'
-  | 'openai';
+  | 'openai'
+  | 'google';
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
@@ -557,7 +582,8 @@ export function getPreferredProvider(): PreferredProvider | null {
     stored === 'kilocode' ||
     stored === 'openadapter' ||
     stored === 'anthropic' ||
-    stored === 'openai'
+    stored === 'openai' ||
+    stored === 'google'
   )
     return stored;
   return null;
@@ -593,7 +619,8 @@ export function getLastUsedProvider(): PreferredProvider | null {
     stored === 'kilocode' ||
     stored === 'openadapter' ||
     stored === 'anthropic' ||
-    stored === 'openai'
+    stored === 'openai' ||
+    stored === 'google'
   )
     return stored;
   return null;

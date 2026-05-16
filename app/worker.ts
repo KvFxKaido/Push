@@ -49,6 +49,8 @@ import {
   handleAnthropicModels,
   handleOpenAIChat,
   handleOpenAIModels,
+  handleGoogleChat,
+  handleGoogleModels,
   handleTavilySearch,
   handleFreeSearch,
 } from './src/worker/worker-providers';
@@ -392,6 +394,8 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   { path: '/api/anthropic/models', method: 'GET', handler: handleAnthropicModels },
   { path: '/api/openai/chat', method: 'POST', handler: handleOpenAIChat },
   { path: '/api/openai/models', method: 'GET', handler: handleOpenAIModels },
+  { path: '/api/google/chat', method: 'POST', handler: handleGoogleChat },
+  { path: '/api/google/models', method: 'GET', handler: handleGoogleModels },
   { path: '/api/ollama/search', method: 'POST', handler: handleOllamaSearch },
   { path: '/api/search/tavily', method: 'POST', handler: handleTavilySearch },
   { path: '/api/search', method: 'POST', handler: handleFreeSearch },

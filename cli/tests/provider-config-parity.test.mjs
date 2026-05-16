@@ -74,6 +74,9 @@ describe('provider config parity', () => {
   // `openai` is deferred to a sibling CLI follow-up — the CLI's OpenAI-compatible
   // path already covers the wire shape; the deferral is about a curated default
   // model + env-key plumbing landing alongside the CLI Anthropic adapter.
+  // `google` is deferred for the same reason as `anthropic`: the
+  // openai-gemini-bridge lives in `app/src/lib/` for the web PR and the CLI
+  // would need its own non-OpenAI-compat adapter to consume it.
   const CLI_DEFERRED_PROVIDERS = new Set([
     'azure',
     'bedrock',
@@ -81,6 +84,7 @@ describe('provider config parity', () => {
     'cloudflare',
     'anthropic',
     'openai',
+    'google',
   ]);
   const providerIds = allWebProviderIds.filter((id) => !CLI_DEFERRED_PROVIDERS.has(id));
   const defaultConstByProvider = {

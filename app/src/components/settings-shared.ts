@@ -16,6 +16,7 @@ export const PROVIDER_LABELS: Record<AIProviderType, string> = {
   vertex: 'Google Vertex',
   anthropic: 'Anthropic',
   openai: 'OpenAI',
+  google: 'Google Gemini',
   demo: 'Demo',
   kilocode: 'Kilo Code',
   openadapter: 'OpenAdapter',
@@ -32,6 +33,7 @@ export type BuiltInSettingsProviderId = Extract<
   | 'openadapter'
   | 'anthropic'
   | 'openai'
+  | 'google'
 >;
 
 export type ExperimentalSettingsProviderId = Extract<ExperimentalProviderType, 'azure' | 'bedrock'>;
@@ -49,6 +51,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] = [
   'openrouter',
   'anthropic',
   'openai',
+  'google',
   'nvidia',
   'zen',
   'blackbox',
@@ -118,6 +121,12 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     saveLabel: 'Save OpenAI key',
     hint: 'OpenAI API key from platform.openai.com. Direct /v1/chat/completions with automatic prefix-based prompt caching.',
     labelTransform: (model) => formatModelDisplayName('openai', model),
+  },
+  google: {
+    placeholder: 'Google Gemini API key',
+    saveLabel: 'Save Google key',
+    hint: 'Google Gemini API key from aistudio.google.com. Direct generativelanguage.googleapis.com — distinct from Vertex.',
+    labelTransform: (model) => formatModelDisplayName('google', model),
   },
 };
 

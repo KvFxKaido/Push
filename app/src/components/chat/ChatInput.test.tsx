@@ -97,6 +97,10 @@ function buildProps(
     openaiModelOptions: ['gpt-5.4'],
     isOpenAIModelLocked: false,
     onSelectOpenAIModel: vi.fn(),
+    googleModel: 'gemini-3.1-pro-preview',
+    googleModelOptions: ['gemini-3.1-pro-preview'],
+    isGoogleModelLocked: false,
+    onSelectGoogleModel: vi.fn(),
   };
 
   return {

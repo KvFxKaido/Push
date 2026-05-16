@@ -18,6 +18,8 @@ import {
   handleOllamaModels,
   handleOpenAIChat,
   handleOpenAIModels,
+  handleGoogleChat,
+  handleGoogleModels,
   handleOpenRouterChat,
   handleOpenRouterModels,
 } from './worker-providers';
@@ -812,5 +814,110 @@ describe('handleOpenAIModels', () => {
     expect(captured?.url).toBe('https://api.openai.com/v1/models');
     const headers = captured?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer sk-server');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Google Gemini direct — chat (streaming) + models (curated list)
+// ---------------------------------------------------------------------------
+
+describe('handleGoogleChat', () => {
+  it('posts to generativelanguage.googleapis.com :streamGenerateContent with x-goog-api-key', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    await handleGoogleChat(makeChatRequest(), makeEnv({ GOOGLE_API_KEY: 'AIza-server' }));
+    // Gemini puts the model in the URL path and selects SSE framing via
+    // `?alt=sse` — both must round-trip exactly.
+    expect(captured?.url).toMatch(
+      /^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\/test-model:streamGenerateContent\?alt=sse$/,
+    );
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers['x-goog-api-key']).toBe('AIza-server');
+    // The OpenAI bridge format that arrives in `body` must be translated into
+    // Gemini's `contents[]` + `systemInstruction` shape upstream.
+    const body = JSON.parse(String(captured?.init.body));
+    expect(body.contents).toEqual([{ role: 'user', parts: [{ text: 'hello' }] }]);
+    expect(body).not.toHaveProperty('messages');
+  });
+
+  it('returns 401 when GOOGLE_API_KEY is not configured and the client supplies no Authorization', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleGoogleChat(makeChatRequest(), makeEnv());
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toMatch(/Google Gemini API key not configured/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when the request omits a model id', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const req = new Request('https://push.example.test/api/google/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      // No `model` field — guardrails should pass the body through, then the
+      // handler enforces a non-empty model id before constructing the URL.
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    const response = await handleGoogleChat(req, makeEnv({ GOOGLE_API_KEY: 'AIza' }));
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('formats upstream errors with a Google ${status} prefix', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'API key not valid' } }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+    const response = await handleGoogleChat(makeChatRequest(), makeEnv({ GOOGLE_API_KEY: 'AIza' }));
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toBe('Google 400: API key not valid');
+  });
+
+  it('tags rate-limit responses with UPSTREAM_QUOTA_OR_RATE_LIMIT', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
+            status: 429,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+    const response = await handleGoogleChat(makeChatRequest(), makeEnv({ GOOGLE_API_KEY: 'AIza' }));
+    expect(response.status).toBe(429);
+    const body = await response.json();
+    expect(body.code).toBe('UPSTREAM_QUOTA_OR_RATE_LIMIT');
+  });
+});
+
+describe('handleGoogleModels', () => {
+  it('returns the curated GOOGLE_MODELS list (no upstream fetch)', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleGoogleModels(makeModelsRequest(), makeEnv());
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data.length).toBeGreaterThan(0);
+    expect(body.data.every((m) => typeof m.id === 'string')).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

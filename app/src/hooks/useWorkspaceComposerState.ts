@@ -18,6 +18,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   vertex: '',
   anthropic: '',
   openai: '',
+  google: '',
   kilocode: '',
   openadapter: '',
 };
@@ -40,6 +41,7 @@ function readStoredChatModelMemory(): Record<PreferredProvider, string> {
       vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
       anthropic: typeof parsed.anthropic === 'string' ? parsed.anthropic.trim() : '',
       openai: typeof parsed.openai === 'string' ? parsed.openai.trim() : '',
+      google: typeof parsed.google === 'string' ? parsed.google.trim() : '',
       kilocode:
         typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
       openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
@@ -102,10 +104,12 @@ export function useWorkspaceComposerState({
       vertex: catalog.vertex.model,
       anthropic: catalog.anthropic.model,
       openai: catalog.openai.model,
+      google: catalog.google.model,
     }),
     [
       catalog.anthropic.model,
       catalog.openai.model,
+      catalog.google.model,
       catalog.azure.model,
       catalog.bedrock.model,
       catalog.blackbox.model,
@@ -201,6 +205,8 @@ export function useWorkspaceComposerState({
           defaultChatModels.anthropic,
         openai:
           draft?.models?.openai?.trim() || rememberedChatModels.openai || defaultChatModels.openai,
+        google:
+          draft?.models?.google?.trim() || rememberedChatModels.google || defaultChatModels.google,
         kilocode: normalizeKilocodeModelName(
           draft?.models?.kilocode?.trim() ||
             rememberedChatModels.kilocode ||
@@ -446,6 +452,15 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
+  const handleSelectGoogleModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('google', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { google: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
   return {
     selectedChatProvider: activeChatDraft.provider,
     selectedChatModels: activeChatDraft.models,
@@ -465,5 +480,6 @@ export function useWorkspaceComposerState({
     handleSelectVertexModelFromChat,
     handleSelectAnthropicModelFromChat,
     handleSelectOpenAIModelFromChat,
+    handleSelectGoogleModelFromChat,
   };
 }
