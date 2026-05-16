@@ -278,6 +278,90 @@ describe('runRoundLoop', () => {
     expect(turnEnd?.outcome).toBe('aborted');
   });
 
+  it('does not dispatch a partial tool call when abort fires mid-emission', async () => {
+    // Cancellation invariant: "nothing partial reaches history."
+    // Specifically: when streamAssistantRound returns with `accumulated`
+    // containing a half-emitted fenced JSON tool-call block (no closing
+    // braces, no fence terminator) AND abortRef is set, the loop must
+    // NOT proceed to processAssistantTurn. The existing
+    // "breaks early when abort is set" test pinned the empty-accumulator
+    // case; this pins the more realistic shape where the model started
+    // emitting a tool call and the user hit Stop before it finished.
+    //
+    // Without this pin, a future change that gates dispatch on
+    // "accumulator has tool-shaped content" rather than "abort is false"
+    // could regress the invariant silently — detectAllToolCalls would
+    // happily return zero matches on the malformed JSON, but any
+    // downstream code that tried to parse fenced blocks loosely could
+    // still trigger a tool execution.
+    const h = makeHarness();
+    const partialToolCall =
+      'Looking up the file.\n\n```json\n{"tool": "sandbox_write_file", "args": {';
+
+    mockStreamAssistantRound.mockImplementationOnce(async () => {
+      h.loopCtx.abortRef.current = true;
+      return {
+        accumulated: partialToolCall,
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      };
+    });
+
+    const result = await runRoundLoop(
+      h.loopCtx,
+      { apiMessages: [], recoveryState: emptyRecovery },
+      {
+        runJournalEntryRef: h.runJournalEntryRef,
+        persistRunJournal: h.persistRunJournal,
+        dequeuePendingSteer: h.dequeuePendingSteer,
+        pendingSteersByChatRef: h.pendingSteersByChatRef,
+      },
+    );
+
+    expect(result.loopCompletedNormally).toBe(false);
+    // The load-bearing assertion: even with tool-shaped content in the
+    // accumulator, no dispatch path was reached.
+    expect(mockProcessAssistantTurn).not.toHaveBeenCalled();
+    // Turn finalizes as aborted, not completed or errored — the
+    // run-engine state machine consumes this outcome.
+    const turnEnd = h.appendRunEvent.mock.calls
+      .map(([, event]) => event as { type: string; outcome?: string })
+      .find((e) => e.type === 'assistant.turn_end');
+    expect(turnEnd?.outcome).toBe('aborted');
+    // No tool-call-malformed event either — that path runs inside
+    // processAssistantTurn for the multiple-mutations case, and the
+    // invariant is "no tool side-effects of any shape after abort."
+    // The canonical execution-start event is `tool.execution_start`
+    // (per `RunEventInput` in `lib/runtime-contract.ts`); use the
+    // exact name so a regression that adds a real tool-start after
+    // abort breaks the test.
+    const toolEvents = h.appendRunEvent.mock.calls
+      .map(([, event]) => event as { type: string })
+      .filter((e) => e.type === 'tool.call_malformed' || e.type === 'tool.execution_start');
+    expect(toolEvents).toEqual([]);
+  });
+
+  // The originally-scoped "abort + resend" test was dropped before
+  // merge: it asserted that the second runRoundLoop's
+  // processAssistantTurn received only the new accumulator, but
+  // `mockStreamAssistantRound` controls what the second call returns,
+  // so the assertion was tautological — it tested the mock chain, not
+  // the leak path the Hermes #6 brief actually cared about.
+  //
+  // The real leak path lives upstream: when streaming aborts, the
+  // partial content is already in `conversationsRef.current[chatId].messages`
+  // (with `status: 'streaming'`); on the next send,
+  // `toLLMMessages` (`app/src/lib/orchestrator.ts:269`) rebuilds the
+  // wire history from `conversation.messages` and does NOT filter on
+  // status, so the partial tool-call shape could ride forward as
+  // assistant history. Whether this matters depends on what providers
+  // do with malformed/partial assistant turns in history.
+  //
+  // That's a higher-level integration test (or possibly a fix, not a
+  // test) than runRoundLoop can host. Tracked in the cancellation
+  // follow-up scope; not pinned here.
+
   it('drains a pending steer that arrives during streaming and continues', async () => {
     const h = makeHarness();
     const steer: PendingSteerRequest = {
