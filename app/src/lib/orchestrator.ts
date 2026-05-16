@@ -460,7 +460,7 @@ export function toLLMMessages(
   // format pin.
   const userTurnContents = messages
     .filter((m) => m.role === 'user' && !m.isToolResult)
-    .map((m) => m.content);
+    .map((m) => (typeof m.content === 'string' ? m.content : ''));
   const firstUserTurn = userTurnContents[0];
   const userGoalAnchor =
     deriveUserGoalAnchor({ firstUserTurn, recentUserTurns: userTurnContents }) ?? undefined;

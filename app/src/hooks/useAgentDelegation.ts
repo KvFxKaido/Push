@@ -635,13 +635,17 @@ export function useAgentDelegation({
           });
         }
       } else if (toolCall.call.tool === 'plan_tasks') {
-        // Derive the user-goal anchor from the conversation's first
-        // non-tool-result user turn. Matches `orchestrator.ts:toLLMMessages`
-        // so the gate uses the same seed the orchestrator was shown.
-        const firstUserTurn = apiMessages.find(
-          (m) => m.role === 'user' && !m.isToolResult,
-        )?.content;
-        const userGoalAnchor = deriveUserGoalAnchor({ firstUserTurn }) ?? undefined;
+        // Derive the user-goal anchor from the conversation's user turns.
+        // Matches `orchestrator.ts:toLLMMessages` so the gate sees the same
+        // seed + redirect-detected currentWorkingGoal the orchestrator was
+        // shown. Same string guard as the orchestrator — multi-modal
+        // content parts collapse to '' rather than crashing `.trim()`.
+        const userTurnContents = apiMessages
+          .filter((m) => m.role === 'user' && !m.isToolResult)
+          .map((m) => (typeof m.content === 'string' ? m.content : ''));
+        const firstUserTurn = userTurnContents[0];
+        const userGoalAnchor =
+          deriveUserGoalAnchor({ firstUserTurn, recentUserTurns: userTurnContents }) ?? undefined;
         toolExecResult = await handleTaskGraphDelegation(buildTaskGraphContext(), {
           chatId,
           toolCall: toolCall as TaskGraphToolCall,

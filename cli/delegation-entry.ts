@@ -152,35 +152,40 @@ function planToTaskGraph(plan: PlannerFeatureList): TaskGraphNode[] {
  * `addresses` against the wrong goal — Codex P2 + Copilot review on
  * PR #551.
  */
-function resolveFirstUserTurn(
+function resolveUserTurns(
   state: { messages?: ReadonlyArray<{ role: string; content: string }> },
   fallbackTurn: string,
-): string {
+): string[] {
   const messages = state.messages ?? [];
+  const turns: string[] = [];
   for (const msg of messages) {
     if (msg.role !== 'user') continue;
     if (isToolResultMessage(msg)) continue;
     if (isParseErrorMessage(msg)) continue;
-    return msg.content;
+    if (typeof msg.content === 'string') turns.push(msg.content);
   }
-  return fallbackTurn;
+  if (turns.length === 0) turns.push(fallbackTurn);
+  return turns;
 }
 
 /**
  * Best-effort load of the user-goal anchor for delegation. Tries the
- * persisted `goal.md` first, then falls back to the verbatim-first-turn
- * derivation. Symmetrical with the web orchestrator's `toLLMMessages`
- * derivation and the CLI engine's per-round anchor load. Returns null
- * when neither yields a usable seed — callers treat null as "skip the
- * goal-alignment gate" rather than failing.
+ * persisted `goal.md` first, then falls back to runtime derivation using
+ * the ordered user-turn list — that way the goal-alignment gate sees the
+ * same redirect-detected `currentWorkingGoal` the interactive loop does.
+ * Symmetrical with the web orchestrator's `toLLMMessages` derivation and
+ * the CLI engine's per-round anchor load. Returns null when neither
+ * yields a usable seed — callers treat null as "skip the goal-alignment
+ * gate" rather than failing.
  */
 async function loadDelegationGoalAnchor(
   cwd: string,
-  firstUserTurn: string | null,
+  userTurns: ReadonlyArray<string>,
 ): Promise<UserGoalAnchor | null> {
   const fileAnchor = await loadUserGoalFile(cwd);
   if (fileAnchor) return fileAnchor;
-  return deriveUserGoalAnchor({ firstUserTurn });
+  const firstUserTurn = userTurns[0] ?? null;
+  return deriveUserGoalAnchor({ firstUserTurn, recentUserTurns: userTurns });
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +225,7 @@ export async function runDelegatedHeadless(
   // no goal exists, which short-circuits the alignment gate. Seed is
   // resolved from state.messages first so resumed sessions anchor on
   // their original goal, not on the current `--task` argument.
-  const goalAnchor = await loadDelegationGoalAnchor(state.cwd, resolveFirstUserTurn(state, task));
+  const goalAnchor = await loadDelegationGoalAnchor(state.cwd, resolveUserTurns(state, task));
 
   try {
     // 1. Plan
@@ -765,10 +770,7 @@ export async function runUserTurnWithDelegation(
   // falling back to the just-arrived `userText`. In multi-turn TUI /
   // daemon sessions this preserves the original goal across turns
   // rather than re-anchoring on each new user message.
-  const goalAnchor = await loadDelegationGoalAnchor(
-    state.cwd,
-    resolveFirstUserTurn(state, userText),
-  );
+  const goalAnchor = await loadDelegationGoalAnchor(state.cwd, resolveUserTurns(state, userText));
 
   let plan: PlannerFeatureList | null = null;
   try {
