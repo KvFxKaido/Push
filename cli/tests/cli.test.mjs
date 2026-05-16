@@ -1069,7 +1069,10 @@ async function spawnBarePushPty(input, extraEnv) {
 // ─── deprecated provider migration ─────────────────────────────
 
 describe('deprecated provider migration', needsChildStdout, () => {
-  for (const deprecated of ['mistral', 'zai', 'google', 'minimax']) {
+  // `google` was previously a deprecated alias for openrouter; it now
+  // resolves natively to the direct Google Gemini provider, so it's no
+  // longer in this iteration.
+  for (const deprecated of ['mistral', 'zai', 'minimax']) {
     it(`warns and falls back for --provider ${deprecated}`, async () => {
       // run --task will parse the provider, emit a warning, then proceed.
       // It will eventually fail (no API key / no server), but the warning
@@ -1085,9 +1088,9 @@ describe('deprecated provider migration', needsChildStdout, () => {
 
   it('accepts PUSH_PROVIDER env for deprecated provider', async () => {
     const { stderr } = await runCli(['run', '--task', 'hi'], {
-      env: { PUSH_PROVIDER: 'google' },
+      env: { PUSH_PROVIDER: 'mistral' },
     });
-    assert.ok(stderr.includes('provider "google" has been removed'));
+    assert.ok(stderr.includes('provider "mistral" has been removed'));
     assert.ok(stderr.includes('openrouter'));
   });
 

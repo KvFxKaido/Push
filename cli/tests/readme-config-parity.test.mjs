@@ -134,6 +134,9 @@ function extractReadmeProviderRows(source) {
         '`kilocode`',
         '`blackbox`',
         '`openadapter`',
+        '`openai`',
+        '`anthropic`',
+        '`google`',
       ].includes(provider),
     )
     .map(([provider, model, requiresKey]) => ({

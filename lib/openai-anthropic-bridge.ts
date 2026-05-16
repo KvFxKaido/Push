@@ -2,7 +2,7 @@ import type {
   OpenAIChatRequest,
   OpenAIContentPart,
   OpenAIReasoningBlock,
-} from './chat-request-guardrails';
+} from './openai-chat-types.ts';
 
 function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> | null {
   const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);

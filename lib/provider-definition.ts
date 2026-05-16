@@ -34,7 +34,7 @@ import {
  *   `lib/openai-sse-pump.ts`. Used by OpenAI proper plus the existing
  *   OpenAI-compatible providers (OpenRouter, NVIDIA, Zen, etc.).
  * - `anthropic`: Anthropic Messages API (`/v1/messages`); translate via
- *   `app/src/lib/openai-anthropic-bridge.ts` (already exists for Bedrock).
+ *   `lib/openai-anthropic-bridge.ts` (shared across web Worker and CLI).
  *   Reasoning blocks must round-trip with signatures intact when extended
  *   thinking is used.
  * - `gemini`: Google Generative Language API

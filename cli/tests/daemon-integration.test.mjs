@@ -1841,7 +1841,7 @@ describe('delegate_explorer', needsLoopback, () => {
       assert.ok(entry);
       entry.state.roleRouting = {
         explorer: {
-          provider: 'google',
+          provider: 'not-a-real-provider',
           model: 'stale-model',
         },
       };
@@ -1857,7 +1857,7 @@ describe('delegate_explorer', needsLoopback, () => {
 
       assert.equal(response.ok, false);
       assert.equal(response.error.code, 'PROVIDER_NOT_CONFIGURED');
-      assert.ok(response.error.message.includes('google'));
+      assert.ok(response.error.message.includes('not-a-real-provider'));
       assert.equal(entry.activeDelegations?.size ?? 0, 0);
 
       const events = await loadSessionEvents(sessionId);
@@ -2287,7 +2287,7 @@ describe('delegate_coder', needsLoopback, () => {
       assert.ok(entry);
       entry.state.roleRouting = {
         coder: {
-          provider: 'google',
+          provider: 'not-a-real-provider',
           model: 'stale-model',
         },
       };
@@ -2303,7 +2303,7 @@ describe('delegate_coder', needsLoopback, () => {
 
       assert.equal(response.ok, false);
       assert.equal(response.error.code, 'PROVIDER_NOT_CONFIGURED');
-      assert.ok(response.error.message.includes('google'));
+      assert.ok(response.error.message.includes('not-a-real-provider'));
       assert.equal(entry.activeDelegations?.size ?? 0, 0);
 
       const events = await loadSessionEvents(sessionId);
@@ -3189,7 +3189,7 @@ describe('delegate_reviewer', needsLoopback, () => {
       assert.ok(entry);
       entry.state.roleRouting = {
         reviewer: {
-          provider: 'google',
+          provider: 'not-a-real-provider',
           model: 'stale-model',
         },
       };
@@ -3205,7 +3205,7 @@ describe('delegate_reviewer', needsLoopback, () => {
 
       assert.equal(response.ok, false);
       assert.equal(response.error.code, 'PROVIDER_NOT_CONFIGURED');
-      assert.ok(response.error.message.includes('google'));
+      assert.ok(response.error.message.includes('not-a-real-provider'));
       assert.equal(entry.activeDelegations?.size ?? 0, 0);
     } finally {
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
