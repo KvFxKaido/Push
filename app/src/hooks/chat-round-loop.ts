@@ -224,6 +224,53 @@ function applyStreamErrorToConversation(loopCtx: SendLoopContext, errorMessage: 
   });
 }
 
+/**
+ * Finalize a partial assistant message after abort.
+ *
+ * `chat-stream-round.ts` writes accumulator tokens into the last
+ * assistant message as they arrive. When abort fires mid-stream, the
+ * function just returns — the message stays with whatever partial
+ * content + `status: 'streaming'` it had at the cancel point. Without
+ * finalization, two things go wrong:
+ *
+ *   1. The UI shows a "still streaming" spinner forever for that
+ *      message because status never transitions to a terminal value.
+ *   2. On the next send, `toLLMMessages` rebuilds the wire history
+ *      from `conversation.messages` and the partial assistant turn
+ *      (possibly a half-emitted tool call) rides forward as
+ *      assistant context. Cancellation invariant: "nothing partial
+ *      reaches history" — see Hermes #6 follow-up.
+ *
+ * Fix: flip `status` to 'done' so the UI treats it terminal, and
+ * set `visibleToModel: false` so the existing `filterVisibleStage`
+ * in `lib/context-transformer.ts` drops it from the wire prefix.
+ * The message stays in the UI (the user can see what the model was
+ * starting to say before they hit Stop), but it never crosses the
+ * LLM boundary again.
+ *
+ * Idempotent on conversation shape: bails when the last message
+ * isn't a streaming assistant turn, so spurious post-abort calls or
+ * already-finalized messages are safe.
+ */
+function markPartialAssistantInvisibleOnAbort(loopCtx: SendLoopContext): void {
+  const { chatId } = loopCtx;
+  loopCtx.setConversations((prev) => {
+    const conv = prev[chatId];
+    if (!conv) return prev;
+    const msgs = [...conv.messages];
+    const lastIdx = msgs.length - 1;
+    const last = msgs[lastIdx];
+    if (!last || last.role !== 'assistant' || last.status !== 'streaming') return prev;
+    msgs[lastIdx] = {
+      ...last,
+      status: 'done',
+      visibleToModel: false,
+    };
+    loopCtx.dirtyConversationIdsRef.current.add(chatId);
+    return { ...prev, [chatId]: { ...conv, messages: msgs } };
+  });
+}
+
 function markJournalCheckpointIfPresent(
   runJournalEntryRef: MutableRefObject<RunJournalEntry | null>,
   persistRunJournal: RunRoundLoopDeps['persistRunJournal'],
@@ -269,6 +316,7 @@ export async function runRoundLoop(
     );
 
     if (abortRef.current) {
+      markPartialAssistantInvisibleOnAbort(loopCtx);
       loopCtx.appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'aborted' });
       break;
     }

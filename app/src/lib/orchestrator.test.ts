@@ -234,3 +234,105 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
     expect(assistant?.reasoning_blocks).toBeUndefined();
   });
 });
+
+describe('toLLMMessages — aborted assistant message leakage', () => {
+  // Cancellation invariant pin (Hermes #6 follow-up).
+  //
+  // When streaming aborts, `chat-stream-round.ts` has already written
+  // the partial accumulator into the last assistant message. Before
+  // the fix in `chat-round-loop.ts:markPartialAssistantInvisibleOnAbort`,
+  // nothing on the abort path finalized that message — the partial
+  // (potentially a half-emitted tool call) would ride forward as
+  // assistant history on the next send because the wire-rebuild path
+  // (`toLLMMessages`) doesn't filter on `status`. The fix flips
+  // `visibleToModel: false` on the partial so `filterVisibleStage`
+  // in `lib/context-transformer.ts` drops it from the LLM prefix.
+  //
+  // This test pins that contract end-to-end: a streaming-status
+  // assistant message marked `visibleToModel: false` does not reach
+  // wire history. The "control" test below pins that a fully-
+  // finalized message (`status: 'done'` with default visibility)
+  // still rides forward — guarding against an over-eager filter.
+
+  function makeMessage(partial: Partial<ChatMessage>): ChatMessage {
+    return {
+      id: partial.id ?? 'm',
+      role: partial.role ?? 'user',
+      content: partial.content ?? '',
+      timestamp: partial.timestamp ?? 0,
+      ...partial,
+    };
+  }
+
+  const PARTIAL_TOOL_CALL =
+    'Working on it…\n\n```json\n{"tool": "sandbox_exec", "args": {"command": "';
+
+  it('does not forward partial tool-call content from an aborted streaming assistant turn', () => {
+    // History: user asks, model starts emitting a tool call, user
+    // aborts. The abort path (markPartialAssistantInvisibleOnAbort)
+    // flips the partial assistant message to `status: 'done'` +
+    // `visibleToModel: false`. The user then sends a new message.
+    // toLLMMessages must drop the partial via filterVisibleStage.
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'Run a command.' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: PARTIAL_TOOL_CALL,
+        status: 'done',
+        visibleToModel: false,
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'Actually nevermind, summarize instead.' }),
+    ];
+
+    const llm = toLLMMessages(
+      messages,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'zen',
+      'minimax-m2.7',
+    );
+
+    // Concatenate every assistant message's text content and assert
+    // the partial tool-call signature didn't survive. The
+    // filterVisibleStage in lib/context-transformer.ts drops the
+    // partial because of visibleToModel:false set by the abort
+    // helper in chat-round-loop.ts.
+    const assistantContent = llm
+      .filter((m) => m.role === 'assistant')
+      .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+      .join('\n');
+    expect(assistantContent).not.toContain('sandbox_exec');
+    expect(assistantContent).not.toContain('```json');
+  });
+
+  it('forwards a fully-finalized assistant turn unchanged (control)', () => {
+    // Counterpart to the failing test above — a completed assistant
+    // turn (`status: 'done'`) SHOULD ride forward as history. Pins
+    // that any future status-based filter doesn't over-filter and
+    // drop legitimate assistant context.
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'What is 2+2?' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: 'Four.',
+        status: 'done',
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'Add another.' }),
+    ];
+    const llm = toLLMMessages(
+      messages,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'zen',
+      'minimax-m2.7',
+    );
+    const assistant = llm.find((m) => m.role === 'assistant');
+    expect(assistant?.content).toContain('Four');
+  });
+});
