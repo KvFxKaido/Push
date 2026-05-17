@@ -77,6 +77,7 @@ export interface IterateChatStreamRequest<M extends LlmMessage> {
   todoContent?: string;
   workspaceContext?: unknown;
   hasSandbox?: boolean;
+  googleSearchGrounding?: boolean;
   onPreCompact?: (event: PreCompactEvent) => void;
   /** External cancellation signal (e.g. user hit cancel). Composed with internal timer aborts. */
   signal?: AbortSignal;
@@ -220,6 +221,7 @@ export async function iterateChatStream<M extends LlmMessage>(
         todoContent: request.todoContent,
         workspaceContext: request.workspaceContext,
         hasSandbox: request.hasSandbox,
+        googleSearchGrounding: request.googleSearchGrounding,
         onPreCompact: request.onPreCompact,
         sessionDigestRecords: request.sessionDigestRecords,
         priorSessionDigest: request.priorSessionDigest,
