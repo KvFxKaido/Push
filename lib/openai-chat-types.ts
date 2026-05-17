@@ -13,6 +13,8 @@
  *     marker; Gemini's bridge ignores it).
  *   - `reasoning_blocks` on messages (signed thinking sidecar consumed by
  *     the Anthropic bridge; other bridges ignore it).
+ *   - `google_search_grounding` on the request root (consumed by the
+ *     Gemini bridge; other bridges ignore it).
  *
  * Validation lives where the request actually enters Push (the Worker
  * guardrails). Library consumers — adapters, bridges, and the CLI —
