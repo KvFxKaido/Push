@@ -24,6 +24,11 @@ vi.mock('./tool-dispatch', () => ({
   KNOWN_TOOL_NAMES: new Set(['sandbox_write_file', 'sandbox_read_file']),
 }));
 
+let groundingPref = false;
+vi.mock('./model-catalog', () => ({
+  getGoogleSearchGrounding: () => groundingPref,
+}));
+
 interface ControllableStream {
   response: Response;
   push(frame: string): void;
@@ -191,5 +196,38 @@ describe('geminiStream', () => {
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
     expect(body.google_search_grounding).toBe(true);
+  });
+
+  it('falls back to the composer toggle when the request omits the flag', async () => {
+    installStreamFetch(fetchMock);
+    groundingPref = true;
+    try {
+      const { geminiStream } = await import('./gemini-stream');
+      const iter = geminiStream(baseRequest);
+      void iter[Symbol.asyncIterator]()
+        .next()
+        .catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+
+      const init = fetchMock.mock.calls[0][1] as RequestInit;
+      const body = JSON.parse(init.body as string);
+      expect(body.google_search_grounding).toBe(true);
+    } finally {
+      groundingPref = false;
+    }
+  });
+
+  it('omits the flag when neither request nor localStorage opts in', async () => {
+    installStreamFetch(fetchMock);
+    const { geminiStream } = await import('./gemini-stream');
+    const iter = geminiStream(baseRequest);
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.google_search_grounding).toBeUndefined();
   });
 });

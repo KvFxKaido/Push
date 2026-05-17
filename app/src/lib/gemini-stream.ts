@@ -27,6 +27,7 @@ import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { getGoogleSearchGrounding } from './model-catalog';
 
 export async function* geminiStream(
   req: PushStreamRequest<ChatMessage>,
@@ -50,6 +51,10 @@ export async function* geminiStream(
     },
   );
 
+  // Per-request flag wins; otherwise the composer's sticky toggle
+  // (`push:google-search-grounding` in localStorage) decides.
+  const grounding = req.googleSearchGrounding ?? getGoogleSearchGrounding();
+
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -57,9 +62,7 @@ export async function* geminiStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    ...(req.googleSearchGrounding !== undefined
-      ? { google_search_grounding: req.googleSearchGrounding }
-      : {}),
+    ...(grounding ? { google_search_grounding: true } : {}),
   };
 
   // The Worker prefers its own server-side GOOGLE_API_KEY when set and ignores
