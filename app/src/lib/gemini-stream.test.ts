@@ -178,4 +178,19 @@ describe('geminiStream', () => {
     }
     expect(caught!.message).toBe('Google 401: bad key');
   });
+
+  it('sends google_search_grounding: true when requested', async () => {
+    installStreamFetch(fetchMock);
+    const { geminiStream } = await import('./gemini-stream');
+    const iter = geminiStream({ ...baseRequest, googleSearchGrounding: true });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.google_search_grounding).toBe(true);
+  });
+
 });
