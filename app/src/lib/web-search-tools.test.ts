@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getOllamaKeyMock = vi.fn<() => string | null>();
 const getTavilyKeyMock = vi.fn<() => string | null>();
+const getGoogleKeyMock = vi.fn<() => string | null>();
 
 vi.mock('@/hooks/useOllamaConfig', () => ({
   getOllamaKey: () => getOllamaKeyMock(),
@@ -15,9 +16,14 @@ vi.mock('@/hooks/useTavilyConfig', () => ({
   getTavilyKey: () => getTavilyKeyMock(),
 }));
 
+vi.mock('@/hooks/useGoogleConfig', () => ({
+  getGoogleKey: () => getGoogleKeyMock(),
+}));
+
 import {
   detectWebSearchToolCall,
   executeFreeWebSearch,
+  executeGoogleGroundedSearch,
   executeOllamaWebSearch,
   executeTavilySearch,
   executeWebSearch,
@@ -56,6 +62,7 @@ beforeEach(() => {
   vi.unstubAllGlobals();
   getOllamaKeyMock.mockReset();
   getTavilyKeyMock.mockReset();
+  getGoogleKeyMock.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -225,10 +232,74 @@ describe('executeWebSearch — backend selection', () => {
     expect(calls[0][0]).toMatch(/\/ollama\/api\/web_search|\/api\/ollama\/search/);
   });
 
+  it('routes Google provider with a key through Gemini-grounded search', async () => {
+    getTavilyKeyMock.mockReturnValue(null);
+    getGoogleKeyMock.mockReturnValue('AIza-key');
+    const { calls } = queueFetchResponses([jsonResponse({ answer: '', results: [] })]);
+    await executeWebSearch('q', 'google');
+    expect(calls[0][0]).toBe('/api/google/search');
+    const init = calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer AIza-key');
+  });
+
+  it('falls through to DDG when Google provider has no key', async () => {
+    getTavilyKeyMock.mockReturnValue(null);
+    getGoogleKeyMock.mockReturnValue(null);
+    const { calls } = queueFetchResponses([jsonResponse({ results: [] })]);
+    await executeWebSearch('q', 'google');
+    expect(calls[0][0]).toBe('/api/search');
+  });
+
   it('falls back to the free DuckDuckGo search when nothing else applies', async () => {
     getTavilyKeyMock.mockReturnValue(null);
     const { calls } = queueFetchResponses([jsonResponse({ results: [] })]);
     await executeWebSearch('q', 'anthropic');
     expect(calls[0][0]).toBe('/api/search');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// executeGoogleGroundedSearch — response shaping
+// ---------------------------------------------------------------------------
+
+describe('executeGoogleGroundedSearch', () => {
+  it('formats the synthesized answer + cited sources into a tool-result envelope', async () => {
+    getGoogleKeyMock.mockReturnValue('AIza-key');
+    queueFetchResponses([
+      jsonResponse({
+        answer: 'Gemini 3 was announced on May 1, 2026.',
+        results: [
+          { title: 'Google Blog', url: 'https://blog.google/gemini-3', content: '' },
+          { title: 'TechCrunch', url: 'https://techcrunch.com/gemini-3', content: '' },
+        ],
+      }),
+    ]);
+
+    const result = await executeGoogleGroundedSearch('gemini 3 release');
+    expect(result.text).toContain('Grounded answer:');
+    expect(result.text).toContain('Gemini 3 was announced on May 1, 2026.');
+    expect(result.text).toContain('1. **Google Blog**');
+    expect(result.text).toContain('https://techcrunch.com/gemini-3');
+    expect(result.card?.type).toBe('web-search');
+  });
+
+  it('returns "No results found" when the upstream returns an empty answer + no sources', async () => {
+    getGoogleKeyMock.mockReturnValue('AIza-key');
+    queueFetchResponses([jsonResponse({ answer: '', results: [] })]);
+    const result = await executeGoogleGroundedSearch('q');
+    expect(result.text).toContain('No results found');
+  });
+
+  it('surfaces an upstream error with its status', async () => {
+    getGoogleKeyMock.mockReturnValue('AIza-key');
+    queueFetchResponses([
+      new Response(JSON.stringify({ error: 'Google 401: bad key' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      }),
+    ]);
+    const result = await executeGoogleGroundedSearch('q');
+    expect(result.text).toMatch(/Grounded search failed \(401\)/);
+    expect(result.text).toContain('Google 401: bad key');
   });
 });

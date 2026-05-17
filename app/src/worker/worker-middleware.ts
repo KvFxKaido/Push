@@ -42,6 +42,7 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
   GOOGLE_API_KEY?: string;
+  PUSH_GOOGLE_GROUNDING_MODEL?: string;
   AI?: Ai;
   MODAL_SANDBOX_BASE_URL?: string;
   ALLOWED_ORIGINS?: string;

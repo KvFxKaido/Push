@@ -18,6 +18,7 @@ import { resolveApiUrl } from './api-url';
 import { detectToolFromText } from './utils';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getTavilyKey } from '@/hooks/useTavilyConfig';
+import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getToolArgHint, getToolPublicName, resolveToolName } from './tool-registry';
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 
@@ -108,6 +109,11 @@ const FREE_SEARCH_URL = resolveApiUrl('/api/search');
 // the Worker in an Authorization header. Not required — DuckDuckGo works fine
 // as the default. Add a Tavily key in Settings for higher-quality results.
 const TAVILY_SEARCH_URL = resolveApiUrl('/api/search/tavily');
+
+// Gemini-grounded search. The Worker holds the Google API key by default;
+// when the user has stored a key in Settings, we forward it as a Bearer
+// (mirrors gemini-stream.ts).
+const GOOGLE_GROUNDED_SEARCH_URL = resolveApiUrl('/api/google/search');
 
 const MAX_RESULT_SNIPPET_LENGTH = 500;
 const MAX_RESULTS = 5;
@@ -228,13 +234,92 @@ export async function executeTavilySearch(query: string): Promise<ToolExecutionR
 }
 
 // ---------------------------------------------------------------------------
+// Execution — Gemini-grounded search (one-shot generateContent + googleSearch)
+// ---------------------------------------------------------------------------
+
+interface GeminiGroundedSearchPayload {
+  answer?: string;
+  results?: WebSearchResult[];
+  error?: string;
+}
+
+/**
+ * Execute a web search via Gemini's native `googleSearch` tool. The Worker
+ * issues a one-shot non-streaming `:generateContent` call; the response is a
+ * synthesized answer plus a list of cited sources (title + URL only — Gemini
+ * does not return per-chunk snippets, the answer carries the content).
+ */
+export async function executeGoogleGroundedSearch(query: string): Promise<ToolExecutionResult> {
+  const apiKey = (getGoogleKey() ?? '').trim();
+  try {
+    const response = await fetch(GOOGLE_GROUNDED_SEARCH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({ query }),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      let detail = errBody;
+      try {
+        const parsed = JSON.parse(errBody) as { error?: string };
+        if (typeof parsed.error === 'string') detail = parsed.error;
+      } catch {
+        // fall through with raw body
+      }
+      return {
+        text: `[Tool Error — web_search] Grounded search failed (${response.status}): ${detail.slice(0, 200)}`,
+      };
+    }
+
+    const data = (await response.json()) as GeminiGroundedSearchPayload;
+    const answer = (data.answer ?? '').trim();
+    const results = (data.results ?? []).slice(0, MAX_RESULTS);
+
+    if (!answer && results.length === 0) {
+      return { text: `[Tool Result — web_search]\nNo results found for "${query}".` };
+    }
+
+    const sanitizedQuery = sanitizeUntrustedSource(query);
+    const sanitizedAnswer = sanitizeUntrustedSource(answer);
+    const sources =
+      results.length > 0
+        ? results
+            .map(
+              (r, i) =>
+                `${i + 1}. **${sanitizeUntrustedSource(r.title)}**\n   ${sanitizeUntrustedSource(r.url)}`,
+            )
+            .join('\n')
+        : '(no source citations returned)';
+
+    const cardData: WebSearchCardData = { query, results };
+
+    return {
+      text:
+        `[Tool Result — web_search]\nQuery: "${sanitizedQuery}"\n` +
+        (sanitizedAnswer ? `Grounded answer:\n${sanitizedAnswer}\n\n` : '') +
+        `Sources:\n${sources}`,
+      card: { type: 'web-search', data: cardData },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { text: `[Tool Error — web_search] ${message}` };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Unified search routing — picks the best available backend
 // ---------------------------------------------------------------------------
 
 /**
  * Execute a web search using the best available backend:
  *  1. Tavily (if key is configured) — highest quality, LLM-optimized
- *  2. Ollama native search (if active provider is 'ollama') — bundled with Ollama subscription
+ *  2. Provider-native:
+ *       - Ollama (active provider is 'ollama' + key) — bundled with Ollama subscription
+ *       - Google (active provider is 'google' + key) — Gemini grounding
  *  3. DuckDuckGo free scraping — always available, no key needed
  *
  * Callers don't need to know which backend is used.
@@ -248,9 +333,12 @@ export async function executeWebSearch(
     return executeTavilySearch(query);
   }
 
-  // Priority 2: Ollama native search
+  // Priority 2: Provider-native search
   if (activeProvider === 'ollama') {
     return executeOllamaWebSearch(query);
+  }
+  if (activeProvider === 'google' && getGoogleKey()) {
+    return executeGoogleGroundedSearch(query);
   }
 
   // Priority 3: DuckDuckGo free search
