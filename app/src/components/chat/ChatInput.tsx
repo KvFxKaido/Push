@@ -15,8 +15,6 @@ import {
   cycleReasoningEffort,
   REASONING_EFFORT_LABELS,
   type ReasoningEffort,
-  getGoogleSearchGrounding,
-  toggleGoogleSearchGrounding,
 } from '@/lib/model-catalog';
 import type { AIProviderType, AttachmentData, ChatSendOptions } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
@@ -495,18 +493,6 @@ export function ChatInput({
     [selectedProvider],
   );
 
-  // Google Search grounding (only for the `google` provider)
-  const [googleSearchOn, setGoogleSearchOn] = useState<boolean>(() => getGoogleSearchGrounding());
-
-  useEffect(() => {
-    if (selectedProvider === 'google') setGoogleSearchOn(getGoogleSearchGrounding());
-  }, [selectedProvider]);
-
-  const handleToggleGoogleSearch = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation(); // Don't open the popover
-    setGoogleSearchOn(toggleGoogleSearchGrounding());
-  }, []);
-
   // Display model name: strip provider prefix for OpenRouter, use as-is for others
   const displayModelName = selectedModel.replace(/^[^/]+\//, '');
 
@@ -738,21 +724,6 @@ export function ChatInput({
                         title={`Reasoning: ${reasoningEffort} (tap to change)`}
                       >
                         {REASONING_EFFORT_LABELS[reasoningEffort]}
-                      </button>
-                    )}
-                    {selectedProvider === 'google' && (
-                      <button
-                        type="button"
-                        onClick={handleToggleGoogleSearch}
-                        className={`relative z-10 shrink-0 rounded border px-1 py-px text-push-2xs font-medium active:scale-95 transition-all ${
-                          googleSearchOn
-                            ? 'border-push-accent/60 bg-push-accent/15 text-push-accent'
-                            : 'border-push-edge bg-push-surface/60 text-push-fg-dim hover:text-push-fg-secondary'
-                        }`}
-                        title={`Google Search grounding: ${googleSearchOn ? 'on' : 'off'} (tap to toggle)`}
-                        aria-pressed={googleSearchOn}
-                      >
-                        Web
                       </button>
                     )}
                     <span className="relative z-10 truncate">{displayModelName}</span>

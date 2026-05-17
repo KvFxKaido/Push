@@ -24,9 +24,9 @@ vi.mock('./tool-dispatch', () => ({
   KNOWN_TOOL_NAMES: new Set(['sandbox_write_file', 'sandbox_read_file']),
 }));
 
-let groundingPref = false;
-vi.mock('./model-catalog', () => ({
-  getGoogleSearchGrounding: () => groundingPref,
+let webSearchMode: 'auto' | 'google-grounding' | 'off' = 'auto';
+vi.mock('./web-search-mode', () => ({
+  getWebSearchMode: () => webSearchMode,
 }));
 
 interface ControllableStream {
@@ -198,9 +198,9 @@ describe('geminiStream', () => {
     expect(body.google_search_grounding).toBe(true);
   });
 
-  it('falls back to the composer toggle when the request omits the flag', async () => {
+  it('falls back to the web-search-mode pref when the request omits the flag', async () => {
     installStreamFetch(fetchMock);
-    groundingPref = true;
+    webSearchMode = 'google-grounding';
     try {
       const { geminiStream } = await import('./gemini-stream');
       const iter = geminiStream(baseRequest);
@@ -213,11 +213,11 @@ describe('geminiStream', () => {
       const body = JSON.parse(init.body as string);
       expect(body.google_search_grounding).toBe(true);
     } finally {
-      groundingPref = false;
+      webSearchMode = 'auto';
     }
   });
 
-  it('omits the flag when neither request nor localStorage opts in', async () => {
+  it('omits the flag when neither request nor mode opts in', async () => {
     installStreamFetch(fetchMock);
     const { geminiStream } = await import('./gemini-stream');
     const iter = geminiStream(baseRequest);

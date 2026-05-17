@@ -6,6 +6,7 @@ import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
+import { WebSearchMenu } from '@/components/chat/WebSearchMenu';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { SandboxStatusBanner } from '@/components/chat/SandboxStatusBanner';
 import { usePerfMark } from '@/hooks/usePerfMark';
@@ -245,6 +246,7 @@ export function ChatScreen({
           )}
 
           <div className="relative z-20 flex min-w-0 items-center justify-end gap-2">
+            <WebSearchMenu triggerClassName={HEADER_ROUND_BUTTON_CLASS} />
             {approvalMode &&
               onCycleApprovalMode &&
               (() => {

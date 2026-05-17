@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const getOllamaKeyMock = vi.fn<() => string | null>();
 const getTavilyKeyMock = vi.fn<() => string | null>();
 const getGoogleKeyMock = vi.fn<() => string | null>();
+const getWebSearchModeMock =
+  vi.fn<() => 'off' | 'auto' | 'tavily' | 'google-grounding' | 'duckduckgo' | 'ollama'>();
 
 vi.mock('@/hooks/useOllamaConfig', () => ({
   getOllamaKey: () => getOllamaKeyMock(),
@@ -18,6 +20,10 @@ vi.mock('@/hooks/useTavilyConfig', () => ({
 
 vi.mock('@/hooks/useGoogleConfig', () => ({
   getGoogleKey: () => getGoogleKeyMock(),
+}));
+
+vi.mock('./web-search-mode', () => ({
+  getWebSearchMode: () => getWebSearchModeMock(),
 }));
 
 import {
@@ -63,6 +69,8 @@ beforeEach(() => {
   getOllamaKeyMock.mockReset();
   getTavilyKeyMock.mockReset();
   getGoogleKeyMock.mockReset();
+  getWebSearchModeMock.mockReset();
+  getWebSearchModeMock.mockReturnValue('auto'); // default; individual tests override
 });
 
 // ---------------------------------------------------------------------------
@@ -255,6 +263,46 @@ describe('executeWebSearch — backend selection', () => {
     const { calls } = queueFetchResponses([jsonResponse({ results: [] })]);
     await executeWebSearch('q', 'anthropic');
     expect(calls[0][0]).toBe('/api/search');
+  });
+
+  it('returns a "turned off" error and skips fetch when mode is off', async () => {
+    getWebSearchModeMock.mockReturnValue('off');
+    const { fetchMock } = queueFetchResponses([]);
+    const result = await executeWebSearch('q', 'anthropic');
+    expect(result.text).toMatch(/Web search is turned off/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('forces Tavily when mode=tavily regardless of active provider', async () => {
+    getWebSearchModeMock.mockReturnValue('tavily');
+    getTavilyKeyMock.mockReturnValue('TAV_KEY');
+    const { calls } = queueFetchResponses([jsonResponse({ results: [] })]);
+    await executeWebSearch('q', 'anthropic');
+    expect(calls[0][0]).toBe('/api/search/tavily');
+  });
+
+  it('forces Google grounded when mode=google-grounding regardless of active provider', async () => {
+    getWebSearchModeMock.mockReturnValue('google-grounding');
+    getGoogleKeyMock.mockReturnValue('AIza');
+    const { calls } = queueFetchResponses([jsonResponse({ answer: '', results: [] })]);
+    await executeWebSearch('q', 'anthropic');
+    expect(calls[0][0]).toBe('/api/google/search');
+  });
+
+  it('forces DuckDuckGo when mode=duckduckgo regardless of keys', async () => {
+    getWebSearchModeMock.mockReturnValue('duckduckgo');
+    getTavilyKeyMock.mockReturnValue('TAV_KEY'); // should be ignored
+    const { calls } = queueFetchResponses([jsonResponse({ results: [] })]);
+    await executeWebSearch('q', 'anthropic');
+    expect(calls[0][0]).toBe('/api/search');
+  });
+
+  it('forces Ollama when mode=ollama', async () => {
+    getWebSearchModeMock.mockReturnValue('ollama');
+    getOllamaKeyMock.mockReturnValue('OLLAMA_KEY');
+    const { calls } = queueFetchResponses([jsonResponse({ results: [] })]);
+    await executeWebSearch('q', 'anthropic');
+    expect(calls[0][0]).toMatch(/\/ollama\/api\/web_search|\/api\/ollama\/search/);
   });
 });
 

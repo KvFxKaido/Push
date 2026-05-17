@@ -19,6 +19,7 @@ import { detectToolFromText } from './utils';
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getTavilyKey } from '@/hooks/useTavilyConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
+import { getWebSearchMode } from './web-search-mode';
 import { getToolArgHint, getToolPublicName, resolveToolName } from './tool-registry';
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 
@@ -315,12 +316,14 @@ export async function executeGoogleGroundedSearch(query: string): Promise<ToolEx
 // ---------------------------------------------------------------------------
 
 /**
- * Execute a web search using the best available backend:
- *  1. Tavily (if key is configured) — highest quality, LLM-optimized
- *  2. Provider-native:
- *       - Ollama (active provider is 'ollama' + key) — bundled with Ollama subscription
- *       - Google (active provider is 'google' + key) — Gemini grounding
- *  3. DuckDuckGo free scraping — always available, no key needed
+ * Execute a web search. Honors the user-selected `WebSearchMode`:
+ *  - `off`: defensive error (orchestrator should have removed the tool
+ *    from the prompt already; this catches stale tool calls).
+ *  - `auto`: routes through Tavily → Ollama → Google grounded → DDG
+ *    based on configured keys + the active provider.
+ *  - explicit backend (`tavily`/`google-grounding`/`ollama`/`duckduckgo`):
+ *    forces that backend; the backend itself returns a config error if
+ *    its required key/provider is missing.
  *
  * Callers don't need to know which backend is used.
  */
@@ -328,19 +331,28 @@ export async function executeWebSearch(
   query: string,
   activeProvider: string,
 ): Promise<ToolExecutionResult> {
-  // Priority 1: Tavily (optional premium upgrade)
+  const mode = getWebSearchMode();
+
+  if (mode === 'off') {
+    return {
+      text: '[Tool Error — web_search] Web search is turned off. Enable it from the Web menu.',
+    };
+  }
+
+  if (mode === 'tavily') return executeTavilySearch(query);
+  if (mode === 'ollama') return executeOllamaWebSearch(query);
+  if (mode === 'google-grounding') return executeGoogleGroundedSearch(query);
+  if (mode === 'duckduckgo') return executeFreeWebSearch(query);
+
+  // mode === 'auto': existing key + active-provider routing.
   if (getTavilyKey()) {
     return executeTavilySearch(query);
   }
-
-  // Priority 2: Provider-native search
   if (activeProvider === 'ollama') {
     return executeOllamaWebSearch(query);
   }
   if (activeProvider === 'google' && getGoogleKey()) {
     return executeGoogleGroundedSearch(query);
   }
-
-  // Priority 3: DuckDuckGo free search
   return executeFreeWebSearch(query);
 }
