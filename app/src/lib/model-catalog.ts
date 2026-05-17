@@ -202,11 +202,11 @@ export const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
 const GOOGLE_SEARCH_GROUNDING_KEY = 'push:google-search-grounding';
 
 export function getGoogleSearchGrounding(): boolean {
-  return safeStorageGet(GOOGLE_SEARCH_GROUNDING_KEY) === '1';
+  return safeStorageGet(GOOGLE_SEARCH_GROUNDING_KEY) === 'true';
 }
 
 export function setGoogleSearchGrounding(enabled: boolean): void {
-  safeStorageSet(GOOGLE_SEARCH_GROUNDING_KEY, enabled ? '1' : '0');
+  safeStorageSet(GOOGLE_SEARCH_GROUNDING_KEY, enabled ? 'true' : 'false');
 }
 
 export function toggleGoogleSearchGrounding(): boolean {
