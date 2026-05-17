@@ -350,6 +350,9 @@ export async function iterateChatStream<M extends LlmMessage>(
           ...(typeof request.hasSandbox === 'boolean'
             ? { 'push.has_sandbox': request.hasSandbox }
             : {}),
+          ...(typeof request.googleSearchGrounding === 'boolean'
+            ? { 'push.google_search_grounding': request.googleSearchGrounding }
+            : {}),
           ...(workspaceMode ? { 'push.workspace_mode': workspaceMode } : {}),
         },
       },
