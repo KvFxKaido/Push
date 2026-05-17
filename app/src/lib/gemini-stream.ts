@@ -27,7 +27,7 @@ import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
-import { getGoogleSearchGrounding } from './model-catalog';
+import { getWebSearchMode } from './web-search-mode';
 
 export async function* geminiStream(
   req: PushStreamRequest<ChatMessage>,
@@ -51,9 +51,9 @@ export async function* geminiStream(
     },
   );
 
-  // Per-request flag wins; otherwise the composer's sticky toggle
-  // (`push:google-search-grounding` in localStorage) decides.
-  const grounding = req.googleSearchGrounding ?? getGoogleSearchGrounding();
+  // Per-request flag wins; otherwise the Web Search menu's mode decides
+  // (grounding flips on when the user picks `google-grounding`).
+  const grounding = req.googleSearchGrounding ?? getWebSearchMode() === 'google-grounding';
 
   const body: Record<string, unknown> = {
     model: req.model,

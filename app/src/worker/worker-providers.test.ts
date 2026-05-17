@@ -20,8 +20,10 @@ import {
   handleOpenAIModels,
   handleGoogleChat,
   handleGoogleModels,
+  handleGoogleSearch,
   handleOpenRouterChat,
   handleOpenRouterModels,
+  parseGeminiGroundingResponse,
 } from './worker-providers';
 import type { Env } from './worker-middleware';
 
@@ -1182,5 +1184,214 @@ describe('handleGoogleModels', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { data: Array<{ id: string }> };
     expect(body.data.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Google grounded search — one-shot generateContent + googleSearch tool
+// ---------------------------------------------------------------------------
+
+function makeGroundedSearchRequest(query = 'gemini 3 release'): Request {
+  return new Request('https://push.example.test/api/google/search', {
+    method: 'POST',
+    headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+  });
+}
+
+describe('parseGeminiGroundingResponse', () => {
+  it('pulls answer text + cited web sources out of a Gemini :generateContent payload', () => {
+    const { answer, results } = parseGeminiGroundingResponse({
+      candidates: [
+        {
+          content: { parts: [{ text: 'Gemini 3 was announced ' }, { text: 'on May 1, 2026.' }] },
+          groundingMetadata: {
+            groundingChunks: [
+              { web: { uri: 'https://blog.google/gemini-3', title: 'Google Blog' } },
+              { web: { uri: 'https://techcrunch.com/gemini-3', title: 'TechCrunch' } },
+              { web: { uri: '' } }, // empty uri — must be filtered
+              { somethingElse: {} }, // non-web chunk — must be filtered
+            ],
+          },
+        },
+      ],
+    });
+    expect(answer).toBe('Gemini 3 was announced on May 1, 2026.');
+    expect(results).toEqual([
+      { title: 'Google Blog', url: 'https://blog.google/gemini-3', content: '' },
+      { title: 'TechCrunch', url: 'https://techcrunch.com/gemini-3', content: '' },
+    ]);
+  });
+
+  it('falls back to the URI as title when the chunk omits a title', () => {
+    const { results } = parseGeminiGroundingResponse({
+      candidates: [
+        {
+          content: { parts: [] },
+          groundingMetadata: { groundingChunks: [{ web: { uri: 'https://example.com' } }] },
+        },
+      ],
+    });
+    expect(results[0].title).toBe('https://example.com');
+  });
+
+  it('returns empty answer + results on malformed shapes', () => {
+    expect(parseGeminiGroundingResponse(null)).toEqual({ answer: '', results: [] });
+    expect(parseGeminiGroundingResponse({})).toEqual({ answer: '', results: [] });
+    expect(parseGeminiGroundingResponse({ candidates: [] })).toEqual({ answer: '', results: [] });
+  });
+
+  it('skips chunks with non-string title (no throw) and falls back to the URI', () => {
+    const { results } = parseGeminiGroundingResponse({
+      candidates: [
+        {
+          content: { parts: [] },
+          groundingMetadata: {
+            groundingChunks: [
+              { web: { uri: 'https://example.com', title: 123 as unknown as string } },
+            ],
+          },
+        },
+      ],
+    });
+    expect(results).toEqual([
+      { title: 'https://example.com', url: 'https://example.com', content: '' },
+    ]);
+  });
+
+  it('rejects non-http(s) URIs (javascript:, data:, ftp:)', () => {
+    const { results } = parseGeminiGroundingResponse({
+      candidates: [
+        {
+          content: { parts: [] },
+          groundingMetadata: {
+            groundingChunks: [
+              { web: { uri: 'javascript:alert(1)', title: 'XSS' } },
+              { web: { uri: 'data:text/html,<script>', title: 'Data' } },
+              { web: { uri: 'ftp://example.com', title: 'FTP' } },
+              { web: { uri: 'not a url at all', title: 'Bad' } },
+              { web: { uri: 'https://safe.example/', title: 'Safe' } },
+            ],
+          },
+        },
+      ],
+    });
+    expect(results).toEqual([{ title: 'Safe', url: 'https://safe.example/', content: '' }]);
+  });
+});
+
+describe('handleGoogleSearch', () => {
+  it('posts a one-shot :generateContent with the googleSearch tool enabled', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: { parts: [{ text: 'answer' }] },
+                groundingMetadata: {
+                  groundingChunks: [{ web: { uri: 'https://example.com', title: 'Example' } }],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }),
+    );
+
+    const response = await handleGoogleSearch(
+      makeGroundedSearchRequest(),
+      makeEnv({ GOOGLE_API_KEY: 'AIza' }),
+    );
+
+    expect(captured?.url).toMatch(
+      /^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-3-flash-preview:generateContent$/,
+    );
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers['x-goog-api-key']).toBe('AIza');
+    const body = JSON.parse(String(captured?.init.body));
+    expect(body.tools).toEqual([{ googleSearch: {} }]);
+    expect(body.contents).toEqual([{ role: 'user', parts: [{ text: 'gemini 3 release' }] }]);
+
+    expect(response.status).toBe(200);
+    const json = (await response.json()) as { answer: string; results: Array<{ url: string }> };
+    expect(json.answer).toBe('answer');
+    expect(json.results).toEqual([{ title: 'Example', url: 'https://example.com', content: '' }]);
+  });
+
+  it('honors PUSH_GOOGLE_GROUNDING_MODEL to override the search model', async () => {
+    let captured: { url: string } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        captured = { url };
+        return new Response(JSON.stringify({ candidates: [] }), { status: 200 });
+      }),
+    );
+    await handleGoogleSearch(
+      makeGroundedSearchRequest(),
+      makeEnv({ GOOGLE_API_KEY: 'AIza', PUSH_GOOGLE_GROUNDING_MODEL: 'gemini-3.1-pro-preview' }),
+    );
+    expect(captured?.url).toMatch(/\/models\/gemini-3\.1-pro-preview:generateContent$/);
+  });
+
+  it('returns 400 when the body is missing the query field', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const req = new Request('https://push.example.test/api/google/search', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const response = await handleGoogleSearch(req, makeEnv({ GOOGLE_API_KEY: 'AIza' }));
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 for a whitespace-only query and skips the upstream call', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const req = new Request('https://push.example.test/api/google/search', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: '   \t\n  ' }),
+    });
+    const response = await handleGoogleSearch(req, makeEnv({ GOOGLE_API_KEY: 'AIza' }));
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/Empty/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 when no key is configured and the client supplies no Authorization', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleGoogleSearch(makeGroundedSearchRequest(), makeEnv());
+    expect(response.status).toBe(401);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('formats upstream errors with a Google ${status} prefix', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'API key not valid' } }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+    const response = await handleGoogleSearch(
+      makeGroundedSearchRequest(),
+      makeEnv({ GOOGLE_API_KEY: 'AIza' }),
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/^Google 400/);
   });
 });

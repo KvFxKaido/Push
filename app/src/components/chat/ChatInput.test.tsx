@@ -133,22 +133,4 @@ describe('ChatInput', () => {
 
     expect(html).toContain('Steering update captured. It will apply after the current step.');
   });
-
-  it('renders the Google Search grounding chip only when the google provider is selected', () => {
-    const props = buildProps();
-    const baseHtml = renderToStaticMarkup(<ChatInput {...props} />);
-    expect(baseHtml).not.toContain('Google Search grounding');
-
-    const googleHtml = renderToStaticMarkup(
-      <ChatInput
-        {...buildProps({
-          providerControls: {
-            ...props.providerControls!,
-            selectedProvider: 'google',
-          },
-        })}
-      />,
-    );
-    expect(googleHtml).toContain('Google Search grounding');
-  });
 });

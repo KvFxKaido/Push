@@ -1,5 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '@/types';
+
+// Web-search mode controls whether the chat-mode environment description
+// still advertises `web_search` (Codex #591 P2: the description is set
+// once at workspace setup, so the orchestrator has to override it when
+// the user later flips the menu to off).
+let webSearchModeForTest: 'auto' | 'off' = 'auto';
+vi.mock('./web-search-mode', () => ({
+  getWebSearchMode: () => webSearchModeForTest,
+}));
+
 import { getContextBudget, ORCHESTRATOR_SYSTEM_PROMPT, toLLMMessages } from './orchestrator';
 
 describe('ORCHESTRATOR_SYSTEM_PROMPT', () => {
@@ -334,5 +344,44 @@ describe('toLLMMessages — aborted assistant message leakage', () => {
     );
     const assistant = llm.find((m) => m.role === 'assistant');
     expect(assistant?.content).toContain('Four');
+  });
+});
+
+describe('chat-mode web-search gating', () => {
+  function buildChatMessages(): ChatMessage[] {
+    return [{ id: 'u1', role: 'user', content: 'hi', timestamp: 0 } as unknown as ChatMessage];
+  }
+
+  it('keeps the "You have one tool: web_search" hint in the environment when mode is auto', () => {
+    webSearchModeForTest = 'auto';
+    const llm = toLLMMessages(buildChatMessages(), {
+      description:
+        'You are in chat mode — a plain conversation with no repository context and no sandbox.' +
+        ' You have one tool: web_search, for looking up current information when the user asks about fresh topics, recent releases, or real-time facts.' +
+        ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.',
+      includeGitHubTools: false,
+      mode: 'chat',
+    });
+    const system = llm.find((m) => m.role === 'system');
+    expect(system?.content).toContain('You have one tool: web_search');
+  });
+
+  it('overrides the chat-mode description to drop the web_search hint when mode is off', () => {
+    webSearchModeForTest = 'off';
+    try {
+      const llm = toLLMMessages(buildChatMessages(), {
+        description:
+          'You are in chat mode — a plain conversation with no repository context and no sandbox.' +
+          ' You have one tool: web_search, for looking up current information when the user asks about fresh topics, recent releases, or real-time facts.' +
+          ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.',
+        includeGitHubTools: false,
+        mode: 'chat',
+      });
+      const system = llm.find((m) => m.role === 'system');
+      expect(system?.content).not.toContain('You have one tool: web_search');
+      expect(system?.content).toContain('Web search is turned off; no tools are available');
+    } finally {
+      webSearchModeForTest = 'auto';
+    }
   });
 });

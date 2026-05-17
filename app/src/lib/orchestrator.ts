@@ -5,6 +5,7 @@ import { LOCAL_PC_TOOL_PROTOCOL, getSandboxToolProtocol } from './sandbox-tools'
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { TODO_TOOL_PROTOCOL } from './todo-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import { getWebSearchMode } from './web-search-mode';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import type { UserProfile } from '@/types';
@@ -350,9 +351,22 @@ export function toLLMMessages(
       );
     }
 
+    // The user's web-search mode pref gates whether `web_search` is in
+    // the model's vocabulary at all. Hoisted above the environment block
+    // so we can also strip the matching tool hint from the chat-mode
+    // description (set once at session setup by `useProjectInstructions`
+    // and otherwise stale when the user later flips the menu to off).
+    const webSearchEnabled = getWebSearchMode() !== 'off';
+
     // Workspace description + GitHub tool protocol
     if (workspaceContext) {
       let envContent = workspaceContext.description;
+      if (workspaceContext.mode === 'chat' && !webSearchEnabled) {
+        envContent =
+          'You are in chat mode — a plain conversation with no repository context and no sandbox.' +
+          ' Web search is turned off; no tools are available for this conversation.' +
+          ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.';
+      }
       const capabilityBlock = buildSessionCapabilityBlock(workspaceContext, hasSandbox);
       if (capabilityBlock) {
         envContent += '\n\n' + capabilityBlock;
@@ -381,8 +395,11 @@ export function toLLMMessages(
     // still look things up on the web when the user asks.
     // Use set() to replace the base tool_instructions with the full set,
     // avoiding duplication if this code path runs more than once.
+    //
+    // `webSearchEnabled` (hoisted above) drops the protocol from the
+    // prompt so the model can't call a tool it doesn't know about.
     if (workspaceContext?.mode === 'chat') {
-      builder.set('tool_instructions', WEB_SEARCH_TOOL_PROTOCOL);
+      builder.set('tool_instructions', webSearchEnabled ? WEB_SEARCH_TOOL_PROTOCOL : '');
     } else {
       const baseToolInstructions = builder.get('tool_instructions') ?? '';
       const toolProtocols: string[] = [];
@@ -404,7 +421,7 @@ export function toLLMMessages(
       }
       toolProtocols.push(SCRATCHPAD_TOOL_PROTOCOL);
       toolProtocols.push(TODO_TOOL_PROTOCOL);
-      toolProtocols.push(WEB_SEARCH_TOOL_PROTOCOL);
+      if (webSearchEnabled) toolProtocols.push(WEB_SEARCH_TOOL_PROTOCOL);
       toolProtocols.push(ASK_USER_TOOL_PROTOCOL);
       builder.set('tool_instructions', baseToolInstructions + '\n' + toolProtocols.join('\n'));
 

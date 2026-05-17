@@ -1797,3 +1797,146 @@ export async function handleFreeSearch(request: Request, env: Env): Promise<Resp
     return Response.json({ error }, { status });
   }
 }
+
+// --- Gemini-grounded web search (one-shot generateContent + googleSearch tool) ---
+
+const GROUNDING_DEFAULT_MODEL = 'gemini-3-flash-preview';
+const GROUNDING_TIMEOUT_MS = 30_000;
+
+interface GeminiGroundingChunk {
+  web?: { uri?: string; title?: string };
+}
+
+/**
+ * Pulls grounded answer text + cited sources out of a Gemini `:generateContent`
+ * response. Each `groundingChunks[i].web` carries `{uri, title}` for one cited
+ * source; Gemini does not return per-chunk snippets, so the synthesized
+ * `answer` text is what carries the actual search content.
+ */
+export function parseGeminiGroundingResponse(json: unknown): {
+  answer: string;
+  results: { title: string; url: string; content: string }[];
+} {
+  const candidate = (json as { candidates?: unknown[] } | null)?.candidates?.[0] as
+    | {
+        content?: { parts?: { text?: unknown }[] };
+        groundingMetadata?: { groundingChunks?: unknown[] };
+      }
+    | undefined;
+  const parts = candidate?.content?.parts ?? [];
+  const answer = parts
+    .map((p) => (typeof p?.text === 'string' ? p.text : ''))
+    .join('')
+    .trim();
+  const chunks = (candidate?.groundingMetadata?.groundingChunks ?? []) as GeminiGroundingChunk[];
+  const results: { title: string; url: string; content: string }[] = [];
+  for (const chunk of chunks) {
+    const web = chunk?.web;
+    if (!web || typeof web.uri !== 'string') continue;
+    // Allowlist http(s) only — Gemini has returned non-web schemes (e.g.
+    // `javascript:`, `data:`) before, and the URL flows straight into
+    // `<a href>` in the chat card.
+    let parsed: URL;
+    try {
+      parsed = new URL(web.uri);
+    } catch {
+      continue;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
+    const title =
+      typeof web.title === 'string' && web.title.trim().length > 0 ? web.title.trim() : web.uri;
+    results.push({ title, url: web.uri, content: '' });
+  }
+  return { answer, results };
+}
+
+export async function handleGoogleSearch(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: buildGoogleAuth,
+    keyMissingError:
+      'Google Gemini API key not configured. Add it in Settings or set GOOGLE_API_KEY on the Worker.',
+    needsBody: true,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { authHeader: apiKey, bodyText, requestId } = preamble;
+
+  let query: string;
+  try {
+    const parsed = JSON.parse(bodyText) as { query?: string };
+    if (!parsed.query || typeof parsed.query !== 'string') {
+      return Response.json({ error: 'Missing "query" field' }, { status: 400 });
+    }
+    query = parsed.query.trim();
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  // Reject whitespace-only queries that would survive the missing-field
+  // check but produce a useless upstream call.
+  if (!query) {
+    return Response.json({ error: 'Empty "query" field' }, { status: 400 });
+  }
+
+  const model = (env.PUSH_GOOGLE_GROUNDING_MODEL ?? '').trim() || GROUNDING_DEFAULT_MODEL;
+  const upstreamUrl = `${GOOGLE_API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
+  const upstreamBody = JSON.stringify({
+    contents: [{ role: 'user', parts: [{ text: query }] }],
+    tools: [{ googleSearch: {} }],
+  });
+
+  wlog('info', 'search', { provider: 'google-grounded', query, model, requestId });
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), GROUNDING_TIMEOUT_MS);
+    let upstream: Response;
+    try {
+      upstream = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers: {
+          'x-goog-api-key': apiKey,
+          'Content-Type': 'application/json',
+          [REQUEST_ID_HEADER]: requestId,
+        },
+        body: upstreamBody,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      wlog('error', 'upstream_error', {
+        requestId,
+        route: 'api/google/search',
+        status: upstream.status,
+        body: errBody.slice(0, 500),
+      });
+      return Response.json(
+        {
+          error: `Google ${upstream.status}: ${extractProviderHttpErrorDetail(upstream.status, errBody)}`,
+          code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+        },
+        { status: upstream.status },
+      );
+    }
+
+    const json = (await upstream.json().catch(() => null)) as unknown;
+    const { answer, results } = parseGeminiGroundingResponse(json);
+    wlog('info', 'search_results', {
+      provider: 'google-grounded',
+      query,
+      count: results.length,
+      hasAnswer: answer.length > 0,
+    });
+    return Response.json({ answer, results });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    wlog('error', 'search_error', { provider: 'google-grounded', message, timeout: isTimeout });
+    return Response.json(
+      { error: isTimeout ? 'Grounded search timed out' : message },
+      { status: isTimeout ? 504 : 502 },
+    );
+  }
+}
