@@ -101,6 +101,7 @@ describe('iterateChatStream — basic event dispatch', () => {
         todoContent: 'todo',
         workspaceContext: { mode: 'workspace' },
         hasSandbox: true,
+        googleSearchGrounding: true,
       },
       callbacks(),
       { telemetry: 'disabled' },
@@ -114,6 +115,7 @@ describe('iterateChatStream — basic event dispatch', () => {
       todoContent?: string;
       workspaceContext?: unknown;
       hasSandbox?: boolean;
+      googleSearchGrounding?: boolean;
       signal?: AbortSignal;
     };
     expect(req.provider).toBe('openrouter');
@@ -123,6 +125,7 @@ describe('iterateChatStream — basic event dispatch', () => {
     expect(req.todoContent).toBe('todo');
     expect(req.workspaceContext).toEqual({ mode: 'workspace' });
     expect(req.hasSandbox).toBe(true);
+    expect(req.googleSearchGrounding).toBe(true);
     expect(req.signal).toBeInstanceOf(AbortSignal);
   });
 
