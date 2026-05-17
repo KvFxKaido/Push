@@ -192,5 +192,4 @@ describe('geminiStream', () => {
     const body = JSON.parse(init.body as string);
     expect(body.google_search_grounding).toBe(true);
   });
-
 });
