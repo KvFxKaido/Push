@@ -134,6 +134,14 @@ export function buildGeminiGenerateContentRequest(
     body.generationConfig = generationConfig;
   }
 
+  if (request.google_search_grounding) {
+    body.tools = [
+      {
+        googleSearch: {},
+      },
+    ];
+  }
+
   return body;
 }
 
