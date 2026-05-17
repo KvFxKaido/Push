@@ -189,6 +189,8 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
    *  wiring this callback — without it the session digest cannot accumulate
    *  across turns. */
   onSessionDigestEmitted?: (digest: import('./session-digest.js').SessionDigest | null) => void;
+  /** Google-specific flag to enable search grounding */
+  googleSearchGrounding?: boolean;
 }
 
 export type PushStream<M extends LlmMessage = LlmMessage> = (
