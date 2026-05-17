@@ -1240,6 +1240,44 @@ describe('parseGeminiGroundingResponse', () => {
     expect(parseGeminiGroundingResponse({})).toEqual({ answer: '', results: [] });
     expect(parseGeminiGroundingResponse({ candidates: [] })).toEqual({ answer: '', results: [] });
   });
+
+  it('skips chunks with non-string title (no throw) and falls back to the URI', () => {
+    const { results } = parseGeminiGroundingResponse({
+      candidates: [
+        {
+          content: { parts: [] },
+          groundingMetadata: {
+            groundingChunks: [
+              { web: { uri: 'https://example.com', title: 123 as unknown as string } },
+            ],
+          },
+        },
+      ],
+    });
+    expect(results).toEqual([
+      { title: 'https://example.com', url: 'https://example.com', content: '' },
+    ]);
+  });
+
+  it('rejects non-http(s) URIs (javascript:, data:, ftp:)', () => {
+    const { results } = parseGeminiGroundingResponse({
+      candidates: [
+        {
+          content: { parts: [] },
+          groundingMetadata: {
+            groundingChunks: [
+              { web: { uri: 'javascript:alert(1)', title: 'XSS' } },
+              { web: { uri: 'data:text/html,<script>', title: 'Data' } },
+              { web: { uri: 'ftp://example.com', title: 'FTP' } },
+              { web: { uri: 'not a url at all', title: 'Bad' } },
+              { web: { uri: 'https://safe.example/', title: 'Safe' } },
+            ],
+          },
+        },
+      ],
+    });
+    expect(results).toEqual([{ title: 'Safe', url: 'https://safe.example/', content: '' }]);
+  });
 });
 
 describe('handleGoogleSearch', () => {
@@ -1311,6 +1349,21 @@ describe('handleGoogleSearch', () => {
     });
     const response = await handleGoogleSearch(req, makeEnv({ GOOGLE_API_KEY: 'AIza' }));
     expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 for a whitespace-only query and skips the upstream call', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const req = new Request('https://push.example.test/api/google/search', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: '   \t\n  ' }),
+    });
+    const response = await handleGoogleSearch(req, makeEnv({ GOOGLE_API_KEY: 'AIza' }));
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/Empty/i);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

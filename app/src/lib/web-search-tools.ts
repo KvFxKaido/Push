@@ -271,8 +271,12 @@ export async function executeGoogleGroundedSearch(query: string): Promise<ToolEx
       } catch {
         // fall through with raw body
       }
+      // Untrusted upstream/Worker text — sanitize before embedding in the
+      // tool envelope so it can't smuggle tool markers or prompt-injection
+      // back into the model's input.
+      const safeDetail = sanitizeUntrustedSource(detail).slice(0, 200);
       return {
-        text: `[Tool Error — web_search] Grounded search failed (${response.status}): ${detail.slice(0, 200)}`,
+        text: `[Tool Error — web_search] Grounded search failed (${response.status}): ${safeDetail}`,
       };
     }
 

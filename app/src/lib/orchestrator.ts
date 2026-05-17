@@ -351,9 +351,22 @@ export function toLLMMessages(
       );
     }
 
+    // The user's web-search mode pref gates whether `web_search` is in
+    // the model's vocabulary at all. Hoisted above the environment block
+    // so we can also strip the matching tool hint from the chat-mode
+    // description (set once at session setup by `useProjectInstructions`
+    // and otherwise stale when the user later flips the menu to off).
+    const webSearchEnabled = getWebSearchMode() !== 'off';
+
     // Workspace description + GitHub tool protocol
     if (workspaceContext) {
       let envContent = workspaceContext.description;
+      if (workspaceContext.mode === 'chat' && !webSearchEnabled) {
+        envContent =
+          'You are in chat mode — a plain conversation with no repository context and no sandbox.' +
+          ' Web search is turned off; no tools are available for this conversation.' +
+          ' Focus on being a helpful conversational partner: answer questions, brainstorm ideas, explain concepts, and think through problems together.';
+      }
       const capabilityBlock = buildSessionCapabilityBlock(workspaceContext, hasSandbox);
       if (capabilityBlock) {
         envContent += '\n\n' + capabilityBlock;
@@ -383,10 +396,8 @@ export function toLLMMessages(
     // Use set() to replace the base tool_instructions with the full set,
     // avoiding duplication if this code path runs more than once.
     //
-    // The user's web-search mode pref gates whether `web_search` is in
-    // the model's vocabulary at all. `'off'` drops the protocol from the
+    // `webSearchEnabled` (hoisted above) drops the protocol from the
     // prompt so the model can't call a tool it doesn't know about.
-    const webSearchEnabled = getWebSearchMode() !== 'off';
     if (workspaceContext?.mode === 'chat') {
       builder.set('tool_instructions', webSearchEnabled ? WEB_SEARCH_TOOL_PROTOCOL : '');
     } else {

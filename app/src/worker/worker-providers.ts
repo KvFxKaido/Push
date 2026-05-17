@@ -1829,14 +1829,24 @@ export function parseGeminiGroundingResponse(json: unknown): {
     .join('')
     .trim();
   const chunks = (candidate?.groundingMetadata?.groundingChunks ?? []) as GeminiGroundingChunk[];
-  const results = chunks
-    .map((c) => c?.web)
-    .filter((w): w is { uri?: string; title?: string } => Boolean(w?.uri))
-    .map((w) => ({
-      title: w.title?.trim() || w.uri!,
-      url: w.uri!,
-      content: '',
-    }));
+  const results: { title: string; url: string; content: string }[] = [];
+  for (const chunk of chunks) {
+    const web = chunk?.web;
+    if (!web || typeof web.uri !== 'string') continue;
+    // Allowlist http(s) only — Gemini has returned non-web schemes (e.g.
+    // `javascript:`, `data:`) before, and the URL flows straight into
+    // `<a href>` in the chat card.
+    let parsed: URL;
+    try {
+      parsed = new URL(web.uri);
+    } catch {
+      continue;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
+    const title =
+      typeof web.title === 'string' && web.title.trim().length > 0 ? web.title.trim() : web.uri;
+    results.push({ title, url: web.uri, content: '' });
+  }
   return { answer, results };
 }
 
@@ -1859,6 +1869,11 @@ export async function handleGoogleSearch(request: Request, env: Env): Promise<Re
     query = parsed.query.trim();
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  // Reject whitespace-only queries that would survive the missing-field
+  // check but produce a useless upstream call.
+  if (!query) {
+    return Response.json({ error: 'Empty "query" field' }, { status: 400 });
   }
 
   const model = (env.PUSH_GOOGLE_GROUNDING_MODEL ?? '').trim() || GROUNDING_DEFAULT_MODEL;
