@@ -40,7 +40,12 @@ export type OpenAIMessage = {
   reasoning_blocks?: OpenAIReasoningBlock[];
 };
 
-export interface OpenAIChatRequest {
+/** Push-private google search grounding extension */
+export interface OpenAIChatRequestGoogleSearchGrounding {
+  google_search_grounding?: boolean;
+}
+
+export interface OpenAIChatRequest extends OpenAIChatRequestGoogleSearchGrounding {
   model?: string;
   messages?: OpenAIMessage[];
   temperature?: number;

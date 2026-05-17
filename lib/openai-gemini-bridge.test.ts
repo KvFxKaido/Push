@@ -137,6 +137,18 @@ describe('buildGeminiGenerateContentRequest', () => {
     });
   });
 
+  it('adds googleSearch tool when google_search_grounding is true', () => {
+    const body = buildGeminiGenerateContentRequest({
+      model: 'gemini-3.1-pro-preview',
+      messages: [{ role: 'user', content: 'What is the weather today?' }],
+      google_search_grounding: true,
+    } as OpenAIChatRequest);
+
+    expect(body).toMatchObject({
+      tools: [{ googleSearch: {} }],
+    });
+  });
+
   it('omits generationConfig when no sampling params are set', () => {
     const body = buildGeminiGenerateContentRequest({
       model: 'gemini-3.1-pro-preview',
