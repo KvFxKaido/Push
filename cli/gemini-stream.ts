@@ -52,6 +52,14 @@ export function createCliGeminiStream(
     cliGeminiStream(config, apiKey, req);
 }
 
+/** Per-request flag wins; otherwise `PUSH_GOOGLE_SEARCH_GROUNDING=1` opts in.
+ *  Accepts the conventional truthy strings (`1`, `true`, `yes`, `on`). */
+function resolveGoogleSearchGrounding(req: PushStreamRequest<LlmMessage>): boolean {
+  if (typeof req.googleSearchGrounding === 'boolean') return req.googleSearchGrounding;
+  const env = process.env.PUSH_GOOGLE_SEARCH_GROUNDING?.trim().toLowerCase();
+  return env === '1' || env === 'true' || env === 'yes' || env === 'on';
+}
+
 async function* cliGeminiStream(
   config: ProviderConfig,
   apiKey: string,
@@ -74,6 +82,7 @@ async function* cliGeminiStream(
     temperature: req.temperature ?? 0.1,
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+    ...(resolveGoogleSearchGrounding(req) ? { google_search_grounding: true } : {}),
   };
 
   const upstreamBody = JSON.stringify(buildGeminiGenerateContentRequest(openAIRequest));

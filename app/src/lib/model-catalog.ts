@@ -191,6 +191,31 @@ export const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Google Search grounding preference (localStorage)
+//
+// Single boolean — only the `google` provider consumes it. `gemini-stream.ts`
+// reads this when the per-request `googleSearchGrounding` is undefined so the
+// composer toggle can flip grounding on without threading the flag through
+// every layer of the chat-send loop.
+// ---------------------------------------------------------------------------
+
+const GOOGLE_SEARCH_GROUNDING_KEY = 'push:google-search-grounding';
+
+export function getGoogleSearchGrounding(): boolean {
+  return safeStorageGet(GOOGLE_SEARCH_GROUNDING_KEY) === 'true';
+}
+
+export function setGoogleSearchGrounding(enabled: boolean): void {
+  safeStorageSet(GOOGLE_SEARCH_GROUNDING_KEY, enabled ? 'true' : 'false');
+}
+
+export function toggleGoogleSearchGrounding(): boolean {
+  const next = !getGoogleSearchGrounding();
+  setGoogleSearchGrounding(next);
+  return next;
+}
+
+// ---------------------------------------------------------------------------
 // Model capabilities
 // ---------------------------------------------------------------------------
 
