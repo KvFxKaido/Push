@@ -57,6 +57,7 @@ export async function* geminiStream(
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    ...(req.googleSearchGrounding !== undefined ? { google_search_grounding: req.googleSearchGrounding } : {}),
   };
 
   // The Worker prefers its own server-side GOOGLE_API_KEY when set and ignores
