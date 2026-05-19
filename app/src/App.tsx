@@ -575,17 +575,20 @@ function App() {
     // Local-pc / relay paths short-circuit auth: the daemon-paired
     // flow doesn't need GitHub creds, so a pairing interstitial or a
     // `kind: 'local-pc'` / `'relay'` workspace renders even when the
-    // user is signed out of GitHub.
+    // user is signed out of GitHub. Same goes for the accountless
+    // scratch / chat entry points wired on OnboardingScreen — the
+    // auth guard must stay below them so the "try without an account"
+    // tiles actually land the user in a workspace.
     if (localPcPairingActive) return 'local-pc-pairing';
     if (relayPairingActive) return 'relay-pairing';
-    if (!authToken) return 'onboarding';
-    // Pre-flight composer overlays both home and workspace surfaces — the
-    // user can pivot context without first backing out to the launcher.
-    if (draftComposerOpen) return 'draft-composer';
     if (workspaceSession?.kind === 'local-pc') return 'workspace';
     if (workspaceSession?.kind === 'relay') return 'workspace';
     if (workspaceSession?.kind === 'scratch') return 'workspace';
     if (workspaceSession?.kind === 'chat') return 'workspace';
+    if (!authToken) return 'onboarding';
+    // Pre-flight composer is GitHub-gated (it lists repos), so it
+    // belongs after the auth check.
+    if (draftComposerOpen) return 'draft-composer';
     if (workspaceSession?.kind === 'repo') return 'workspace';
     return 'home';
   }, [authToken, workspaceSession, localPcPairingActive, relayPairingActive, draftComposerOpen]);

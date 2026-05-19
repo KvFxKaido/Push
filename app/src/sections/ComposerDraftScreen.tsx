@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -142,9 +142,26 @@ export function ComposerDraftScreen({
   onCancel,
   onCommit,
 }: ComposerDraftScreenProps) {
-  const draftActiveRepo: ActiveRepo | null = useMemo(() => {
-    if (!seed?.repoFullName) return null;
-    const repo = repos.find((r) => r.full_name === seed.repoFullName);
+  // Composer state has to drive the branch manager so the branch picker
+  // tracks whatever repo the user picked in the sheet, not whatever the
+  // seed started with. But the draft hook needs `loadRepoBranches` from
+  // the manager and the manager needs an `activeRepo` from state — so
+  // we break the cycle with a ref. The hook calls into the ref-stable
+  // proxy; the effect below points the ref at the current loader as
+  // soon as the manager mounts.
+  const branchLoaderRef = useRef<((repoFullName: string) => Promise<void> | void) | null>(null);
+  const proxyLoadRepoBranches = useCallback((name: string) => branchLoaderRef.current?.(name), []);
+
+  const { state, setMode, setRepo, setBranch, setText, setProvider, setModel } =
+    useDraftChatComposer({
+      seed,
+      repos,
+      loadRepoBranches: proxyLoadRepoBranches,
+    });
+
+  const stateActiveRepo: ActiveRepo | null = useMemo(() => {
+    if (!state.repoFullName) return null;
+    const repo = repos.find((r) => r.full_name === state.repoFullName);
     if (!repo) return null;
     return {
       id: repo.id,
@@ -152,22 +169,19 @@ export function ComposerDraftScreen({
       full_name: repo.full_name,
       owner: repo.owner,
       default_branch: repo.default_branch,
-      current_branch: seed.branch || repo.default_branch,
+      current_branch: state.branch || repo.default_branch,
       private: repo.private,
     };
-  }, [repos, seed]);
+  }, [repos, state.branch, state.repoFullName]);
 
   const branchManager = useBranchManager(
-    draftActiveRepo,
-    draftActiveRepo ? { id: 'draft', kind: 'repo', repo: draftActiveRepo, sandboxId: null } : null,
+    stateActiveRepo,
+    stateActiveRepo ? { id: 'draft', kind: 'repo', repo: stateActiveRepo, sandboxId: null } : null,
   );
 
-  const { state, setMode, setRepo, setBranch, setText, setProvider, setModel } =
-    useDraftChatComposer({
-      seed,
-      repos,
-      loadRepoBranches: branchManager.loadRepoBranches,
-    });
+  useEffect(() => {
+    branchLoaderRef.current = branchManager.loadRepoBranches;
+  }, [branchManager.loadRepoBranches]);
 
   const [repoSheetOpen, setRepoSheetOpen] = useState(false);
   const [branchSheetOpen, setBranchSheetOpen] = useState(false);
@@ -223,6 +237,12 @@ export function ComposerDraftScreen({
     const resolvedModel = explicitProvider
       ? (state.model ?? defaultModelForProvider(catalog, explicitProvider))
       : null;
+    // Mirror the choice into Settings only at commit — picking a model
+    // in the sheet and then cancelling the composer must not move the
+    // workspace's persisted default.
+    if (explicitProvider) {
+      setPreferredProvider(explicitProvider);
+    }
     onCommit({
       mode: state.mode,
       repoFullName: state.mode === 'repo' ? state.repoFullName : null,
@@ -235,16 +255,11 @@ export function ComposerDraftScreen({
 
   const handlePickProvider = (provider: PreferredProvider) => {
     setProvider(provider, defaultModelForProvider(catalog, provider));
-    // Mirror the choice into Settings — `setPreferredProvider` updates
-    // localStorage AND nudges `catalog.activeBackend` next render, so
-    // the in-workspace ChatInput sees the same default after commit.
-    setPreferredProvider(provider);
     setModelSheetOpen(false);
   };
 
   const handlePickModel = (provider: PreferredProvider, model: string) => {
     setProvider(provider, model);
-    setPreferredProvider(provider);
     setModelSheetOpen(false);
   };
 
@@ -256,14 +271,28 @@ export function ComposerDraftScreen({
 
   useEffect(() => {
     if (!modelSheetOpen) return;
-    // Lazy-fetch model lists for configured providers when the picker
-    // opens. Skips already-loaded ones — catalog refresh handlers are
-    // idempotent and short-circuit if the list is fresh.
+    // Lazy-fetch model lists for every configured provider that has a
+    // dynamic catalog when the picker opens. Skips already-loaded ones
+    // — the refresh handlers are idempotent and short-circuit if the
+    // list is fresh. Anthropic / OpenAI / Google / Azure / Bedrock /
+    // Vertex ship static model lists, so nothing to refresh there.
     for (const [provider] of catalog.availableProviders) {
       if (provider === 'openrouter' && catalog.openRouterModelOptions.length === 0)
         void catalog.refreshOpenRouterModels();
       if (provider === 'ollama' && catalog.ollamaModelOptions.length === 0)
         void catalog.refreshOllamaModels();
+      if (provider === 'cloudflare' && catalog.cloudflareModelOptions.length === 0)
+        void catalog.refreshCloudflareModels();
+      if (provider === 'zen' && catalog.zenModelOptions.length === 0)
+        void catalog.refreshZenModels();
+      if (provider === 'nvidia' && catalog.nvidiaModelOptions.length === 0)
+        void catalog.refreshNvidiaModels();
+      if (provider === 'blackbox' && catalog.blackboxModelOptions.length === 0)
+        void catalog.refreshBlackboxModels();
+      if (provider === 'kilocode' && catalog.kilocodeModelOptions.length === 0)
+        void catalog.refreshKilocodeModels();
+      if (provider === 'openadapter' && catalog.openAdapterModelOptions.length === 0)
+        void catalog.refreshOpenAdapterModels();
     }
   }, [catalog, modelSheetOpen]);
 

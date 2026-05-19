@@ -47,14 +47,16 @@ export function useWorkspaceChatPanelsController({
   const [isWorkspaceHubOpen, setIsWorkspaceHubOpen] = useState(false);
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
   const [isChatsDrawerOpen, setIsChatsDrawerOpen] = useState(false);
-  const [hubTabRequest, setHubTabRequest] = useState<{
+  // `hubTabRequest` stays a controlled value (consumed by
+  // `WorkspaceHubSheet` as `externalTabRequest`) but no longer has a
+  // writer — the "review changes from new chat" deep-link that used
+  // to flip it was deleted with the new-chat sheet. A future
+  // pre-flight "review changes" path can re-add the setter when it
+  // needs one.
+  const [hubTabRequest] = useState<{
     tab: 'files' | 'diff';
     requestKey: number;
   } | null>(null);
-  // `setHubTabRequest` is preserved so a future "review changes from
-  // pre-flight" path can deep-link into the workspace hub. Touch it
-  // here to keep the linter quiet until that wiring exists.
-  void setHubTabRequest;
 
   const closePanels = useCallback(() => {
     setIsLauncherOpen(false);
