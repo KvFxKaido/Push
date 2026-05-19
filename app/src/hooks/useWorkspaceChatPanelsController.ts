@@ -11,8 +11,7 @@ type PanelsControllerArgs = Pick<
   | 'repos'
   | 'switchChat'
   | 'handleSelectRepoFromDrawer'
-  | 'handleCreateNewChat'
-  | 'inspectNewChatWorkspace'
+  | 'handleOpenDraftComposer'
   | 'handleStartWorkspace'
   | 'handleExitWorkspace'
   | 'handleDisconnect'
@@ -22,6 +21,7 @@ type PanelsControllerArgs = Pick<
   | 'isStreaming'
 > & {
   isScratch: boolean;
+  isChat?: boolean;
   markSnapshotActivity: () => void;
 };
 
@@ -32,8 +32,7 @@ export function useWorkspaceChatPanelsController({
   repos,
   switchChat,
   handleSelectRepoFromDrawer,
-  handleCreateNewChat,
-  inspectNewChatWorkspace,
+  handleOpenDraftComposer,
   handleStartWorkspace,
   handleExitWorkspace,
   handleDisconnect,
@@ -42,19 +41,19 @@ export function useWorkspaceChatPanelsController({
   saveExpiryCheckpoint,
   isStreaming,
   isScratch,
+  isChat,
   markSnapshotActivity,
 }: PanelsControllerArgs) {
   const [isWorkspaceHubOpen, setIsWorkspaceHubOpen] = useState(false);
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
   const [isChatsDrawerOpen, setIsChatsDrawerOpen] = useState(false);
-  const [newChatSheetOpen, setNewChatSheetOpen] = useState(false);
-  const [newChatWorkspaceState, setNewChatWorkspaceState] =
-    useState<ChatRouteProps['inspectNewChatWorkspace'] extends () => Promise<infer T> ? T : never>(
-      null,
-    );
-  const [checkingNewChatWorkspace, setCheckingNewChatWorkspace] = useState(false);
-  const [resettingWorkspaceForNewChat, setResettingWorkspaceForNewChat] = useState(false);
-  const [hubTabRequest, setHubTabRequest] = useState<{
+  // `hubTabRequest` stays a controlled value (consumed by
+  // `WorkspaceHubSheet` as `externalTabRequest`) but no longer has a
+  // writer — the "review changes from new chat" deep-link that used
+  // to flip it was deleted with the new-chat sheet. A future
+  // pre-flight "review changes" path can re-add the setter when it
+  // needs one.
+  const [hubTabRequest] = useState<{
     tab: 'files' | 'diff';
     requestKey: number;
   } | null>(null);
@@ -83,100 +82,17 @@ export function useWorkspaceChatPanelsController({
     setIsLauncherOpen(true);
   }, []);
 
-  const handleNewChatSheetOpenChange = useCallback(
-    (open: boolean) => {
-      setNewChatSheetOpen(open);
-      if (!open && !resettingWorkspaceForNewChat) {
-        setNewChatWorkspaceState(null);
-        setCheckingNewChatWorkspace(false);
-      }
-    },
-    [resettingWorkspaceForNewChat],
-  );
-
-  const handleCreateNewChatRequest = useCallback(async () => {
-    if (checkingNewChatWorkspace || resettingWorkspaceForNewChat) return;
-
-    if (sandbox.status !== 'ready' || !sandbox.sandboxId) {
-      handleCreateNewChat();
-      return;
-    }
-
-    setNewChatWorkspaceState(null);
-    setCheckingNewChatWorkspace(true);
-    setNewChatSheetOpen(true);
-
-    const workspaceState = await inspectNewChatWorkspace();
-    if (!workspaceState) {
-      setNewChatSheetOpen(false);
-      setCheckingNewChatWorkspace(false);
-      handleCreateNewChat();
-      return;
-    }
-
-    setNewChatWorkspaceState(workspaceState);
-    setCheckingNewChatWorkspace(false);
-  }, [
-    checkingNewChatWorkspace,
-    handleCreateNewChat,
-    inspectNewChatWorkspace,
-    resettingWorkspaceForNewChat,
-    sandbox.sandboxId,
-    sandbox.status,
-  ]);
-
-  const handleContinueCurrentWorkspace = useCallback(() => {
-    setNewChatSheetOpen(false);
-    setNewChatWorkspaceState(null);
-    setCheckingNewChatWorkspace(false);
-    handleCreateNewChat();
-  }, [handleCreateNewChat]);
-
-  const handleReviewNewChatWorkspace = useCallback(() => {
-    if (!newChatWorkspaceState) return;
-    setNewChatSheetOpen(false);
-    setCheckingNewChatWorkspace(false);
-    setHubTabRequest({
-      tab: newChatWorkspaceState.mode === 'scratch' ? 'files' : 'diff',
-      requestKey: Date.now(),
+  const handleCreateNewChatRequest = useCallback(() => {
+    // Route every new-chat intent through the pre-flight composer,
+    // seeded with the current workspace so the common "stay here, new
+    // chat" case is one tap away after the user types. The composer
+    // detects same-context commits and keeps the sandbox alive.
+    handleOpenDraftComposer({
+      mode: isChat ? 'chat' : isScratch ? 'scratch' : 'repo',
+      repoFullName: activeRepo?.full_name ?? null,
+      branch: activeRepo?.current_branch ?? activeRepo?.default_branch ?? null,
     });
-    setIsLauncherOpen(false);
-    setIsChatsDrawerOpen(false);
-    handleWorkspaceHubOpenChange(true);
-  }, [handleWorkspaceHubOpenChange, newChatWorkspaceState]);
-
-  const handleStartFreshWorkspaceForNewChat = useCallback(async () => {
-    if (resettingWorkspaceForNewChat) return;
-
-    setResettingWorkspaceForNewChat(true);
-    try {
-      await sandbox.stop();
-
-      let freshSandboxId: string | null = null;
-      if (isScratch) {
-        freshSandboxId = await sandbox.start('', 'main');
-      } else if (activeRepo) {
-        freshSandboxId = await sandbox.start(
-          activeRepo.full_name,
-          activeRepo.current_branch || activeRepo.default_branch,
-        );
-      }
-
-      if ((isScratch || activeRepo) && !freshSandboxId) {
-        toast.error('Failed to start a fresh workspace.');
-        return;
-      }
-
-      setNewChatSheetOpen(false);
-      setNewChatWorkspaceState(null);
-      setCheckingNewChatWorkspace(false);
-      handleCreateNewChat();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to start a fresh workspace.');
-    } finally {
-      setResettingWorkspaceForNewChat(false);
-    }
-  }, [activeRepo, handleCreateNewChat, isScratch, resettingWorkspaceForNewChat, sandbox]);
+  }, [activeRepo, handleOpenDraftComposer, isChat, isScratch]);
 
   const handleExpiryWarningReached = useCallback(async () => {
     if (!sandbox.sandboxId) return;
@@ -260,21 +176,13 @@ export function useWorkspaceChatPanelsController({
     isWorkspaceHubOpen,
     isLauncherOpen,
     isChatsDrawerOpen,
-    newChatSheetOpen,
-    newChatWorkspaceState,
-    checkingNewChatWorkspace,
-    resettingWorkspaceForNewChat,
     hubTabRequest,
     setIsChatsDrawerOpen,
     setIsLauncherOpen,
     handleWorkspaceHubOpenChange,
     openWorkspaceHub,
     openLauncher,
-    handleNewChatSheetOpenChange,
     handleCreateNewChatRequest,
-    handleContinueCurrentWorkspace,
-    handleReviewNewChatWorkspace,
-    handleStartFreshWorkspaceForNewChat,
     handleExpiryWarningReached,
     handleFixReviewFinding,
     handleResumeConversationFromLauncher,

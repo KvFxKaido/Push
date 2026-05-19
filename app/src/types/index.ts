@@ -797,18 +797,6 @@ export interface SandboxStateCardData {
   fetchedAt: string;
 }
 
-export interface NewChatWorkspaceState {
-  mode: 'repo' | 'scratch';
-  sandboxId: string;
-  branch: string;
-  changedFiles: number;
-  stagedFiles: number;
-  unstagedFiles: number;
-  untrackedFiles: number;
-  preview: string[];
-  fetchedAt: string;
-}
-
 export interface SandboxDownloadCardData {
   path: string;
   format: string;
@@ -1004,8 +992,36 @@ export type AppShellScreen =
   | 'onboarding'
   | 'home'
   | 'workspace'
+  | 'draft-composer'
   | 'local-pc-pairing'
   | 'relay-pairing';
+
+/**
+ * Pre-flight composer seed: optional context to prefill when opening the
+ * draft composer. Lets callers (drawer "+ New chat", launcher tiles, etc.)
+ * pre-populate the target repo/branch/mode so the user only changes what
+ * they need to.
+ */
+export interface DraftComposerSeed {
+  mode?: 'repo' | 'chat' | 'scratch';
+  repoFullName?: string | null;
+  branch?: string | null;
+}
+
+/**
+ * First-message envelope handed off from the pre-flight composer to the
+ * workspace screen. The workspace's drain effect creates (or reuses) an
+ * empty chat and sends `text` once the screen has mounted. `key` lets the
+ * drain effect dedupe across re-renders. When `provider` and/or `model`
+ * are set, the drain effect dispatches via raw `sendMessage` with those
+ * options so the chat's lock applies them from the very first turn.
+ */
+export interface PendingFirstMessage {
+  key: string;
+  text: string;
+  provider?: import('@/lib/providers').PreferredProvider | null;
+  model?: string | null;
+}
 
 // File browser types (re-exported from sandbox-client for convenience)
 export interface FileEntry {
@@ -1534,11 +1550,19 @@ export interface WorkspaceScreenNavigationProps {
    * VITE_RELAY_MODE doesn't need to plumb a no-op handler. */
   onStartRelay?: () => void;
   onEndWorkspace: () => void;
+  /** Opens the pre-flight composer overlay. Callers can pass a seed
+   * to prefill the target repo/branch/mode (e.g. "new chat in this repo"). */
+  onOpenDraftComposer: (seed?: DraftComposerSeed | null) => void;
 }
 
 export interface WorkspaceScreenHomeBridgeProps {
   pendingResumeChatId: string | null;
   onConversationIndexChange: (index: ConversationIndex) => void;
+  /** Set by the pre-flight composer when the user hits send. The workspace
+   * drain effect creates (or reuses) an empty chat and dispatches the text,
+   * then calls `onPendingFirstMessageConsumed` to clear it. */
+  pendingFirstMessage: PendingFirstMessage | null;
+  onPendingFirstMessageConsumed: () => void;
 }
 
 /**
@@ -1552,4 +1576,8 @@ export interface WorkspaceScreenProps {
   auth: WorkspaceScreenAuthProps;
   navigation: WorkspaceScreenNavigationProps;
   homeBridge: WorkspaceScreenHomeBridgeProps;
+  /** Shared model catalog instance. Lifted to App so the pre-flight
+   * composer can show the same configured-provider list as the
+   * in-workspace ChatInput without double-mounting `useModelCatalog`. */
+  catalog: import('@/hooks/useModelCatalog').ModelCatalog;
 }

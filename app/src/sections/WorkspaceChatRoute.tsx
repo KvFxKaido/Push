@@ -38,11 +38,6 @@ const BranchForkSheet = lazy(() =>
 const MergeFlowSheet = lazy(() =>
   import('@/components/chat/MergeFlowSheet').then((module) => ({ default: module.MergeFlowSheet })),
 );
-const NewChatWorkspaceSheet = lazy(() =>
-  import('@/components/chat/NewChatWorkspaceSheet').then((module) => ({
-    default: module.NewChatWorkspaceSheet,
-  })),
-);
 const WorkspaceHubSheet = lazy(() =>
   import('@/components/chat/WorkspaceHubSheet').then((module) => ({
     default: module.WorkspaceHubSheet,
@@ -107,8 +102,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleStartLocalPc,
     handleStartRelay,
     handleExitWorkspace,
-    handleCreateNewChat,
-    inspectNewChatWorkspace,
+    handleOpenDraftComposer,
     handleDisconnect,
     handleSandboxRestart,
     handleSandboxDownload,
@@ -200,7 +194,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleDeleteBranch,
   } = branches;
   const [workspaceHubMounted, setWorkspaceHubMounted] = useState(false);
-  const [newChatSheetMounted, setNewChatSheetMounted] = useState(false);
   const [launcherSheetMounted, setLauncherSheetMounted] = useState(false);
   const [branchCreateMounted, setBranchCreateMounted] = useState(false);
   const [branchForkMounted, setBranchForkMounted] = useState(false);
@@ -279,21 +272,13 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     isWorkspaceHubOpen,
     isLauncherOpen,
     isChatsDrawerOpen,
-    newChatSheetOpen,
-    newChatWorkspaceState,
-    checkingNewChatWorkspace,
-    resettingWorkspaceForNewChat,
     hubTabRequest,
     setIsChatsDrawerOpen,
     setIsLauncherOpen,
     handleWorkspaceHubOpenChange,
     openWorkspaceHub,
     openLauncher,
-    handleNewChatSheetOpenChange,
     handleCreateNewChatRequest,
-    handleContinueCurrentWorkspace,
-    handleReviewNewChatWorkspace,
-    handleStartFreshWorkspaceForNewChat,
     handleExpiryWarningReached,
     handleFixReviewFinding,
     handleResumeConversationFromLauncher,
@@ -307,8 +292,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     repos,
     switchChat,
     handleSelectRepoFromDrawer,
-    handleCreateNewChat,
-    inspectNewChatWorkspace,
+    handleOpenDraftComposer,
     handleStartWorkspace,
     handleExitWorkspace,
     handleDisconnect,
@@ -317,6 +301,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     saveExpiryCheckpoint,
     isStreaming,
     isScratch,
+    isChat: false,
     markSnapshotActivity,
   });
 
@@ -349,26 +334,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     },
     [setIsLauncherOpen],
   );
-
-  const handleNewChatSheetOpenChangeWithMount = useCallback(
-    (open: boolean) => {
-      if (open) {
-        setNewChatSheetMounted(true);
-      }
-      handleNewChatSheetOpenChange(open);
-    },
-    [handleNewChatSheetOpenChange],
-  );
-
-  const handleCreateNewChatRequestWithMount = useCallback(() => {
-    setNewChatSheetMounted(true);
-    return handleCreateNewChatRequest();
-  }, [handleCreateNewChatRequest]);
-
-  const handleReviewNewChatWorkspaceWithMount = useCallback(() => {
-    setWorkspaceHubMounted(true);
-    handleReviewNewChatWorkspace();
-  }, [handleReviewNewChatWorkspace]);
 
   const setShowBranchCreateWithMount = useCallback(
     (open: boolean) => {
@@ -515,7 +480,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     clearRepoAppearance,
     handleSelectRepoFromDrawer,
     switchChat,
-    handleCreateNewChatRequest: handleCreateNewChatRequestWithMount,
+    handleCreateNewChatRequest,
     deleteChat,
     renameChat,
     currentBranch: activeRepo?.current_branch || activeRepo?.default_branch,
@@ -699,21 +664,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             pinnedArtifacts={pinnedArtifacts.artifacts}
             onUnpinArtifact={pinnedArtifacts.unpin}
             onUpdateArtifactLabel={pinnedArtifacts.updateLabel}
-          />
-        </Suspense>
-      )}
-
-      {newChatSheetMounted && (
-        <Suspense fallback={null}>
-          <NewChatWorkspaceSheet
-            open={newChatSheetOpen}
-            onOpenChange={handleNewChatSheetOpenChangeWithMount}
-            workspace={newChatWorkspaceState}
-            checking={checkingNewChatWorkspace}
-            resetting={resettingWorkspaceForNewChat}
-            onContinueCurrentWorkspace={handleContinueCurrentWorkspace}
-            onStartFresh={handleStartFreshWorkspaceForNewChat}
-            onReviewChanges={handleReviewNewChatWorkspaceWithMount}
           />
         </Suspense>
       )}
