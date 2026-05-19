@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Check,
   ChevronDown,
   Cloud,
+  Cpu,
   FolderGit2,
   MessageSquare,
   Plus,
@@ -22,6 +23,9 @@ import { SendLiftIcon } from '@/components/icons/push-custom-icons';
 import { useDraftChatComposer, type DraftChatSeed } from '@/hooks/useDraftChatComposer';
 import { useBranchManager } from '@/hooks/useBranchManager';
 import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
+import { setPreferredProvider, type PreferredProvider } from '@/lib/providers';
+import { formatModelDisplayName } from '@/lib/providers';
+import type { ModelCatalog } from '@/hooks/useModelCatalog';
 import type { ActiveRepo, RepoWithActivity } from '@/types';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 
@@ -30,12 +34,15 @@ export interface ComposerDraftCommit {
   repoFullName: string | null;
   branch: string | null;
   text: string;
+  provider: PreferredProvider | null;
+  model: string | null;
 }
 
 interface ComposerDraftScreenProps {
   seed: DraftChatSeed | null;
   repos: RepoWithActivity[];
   resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
+  catalog: ModelCatalog;
   onCancel: () => void;
   onCommit: (commit: ComposerDraftCommit) => void;
 }
@@ -53,10 +60,85 @@ const MODE_OPTIONS: {
   { mode: 'scratch', label: 'Scratch', icon: Sparkles },
 ];
 
+function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvider): string[] {
+  switch (provider) {
+    case 'ollama':
+      return catalog.ollamaModelOptions;
+    case 'openrouter':
+      return catalog.openRouterModelOptions;
+    case 'cloudflare':
+      return catalog.cloudflareModelOptions;
+    case 'zen':
+      return catalog.zenModelOptions;
+    case 'nvidia':
+      return catalog.nvidiaModelOptions;
+    case 'blackbox':
+      return catalog.blackboxModelOptions;
+    case 'kilocode':
+      return catalog.kilocodeModelOptions;
+    case 'openadapter':
+      return catalog.openAdapterModelOptions;
+    case 'anthropic':
+      return catalog.anthropicModelOptions;
+    case 'openai':
+      return catalog.openaiModelOptions;
+    case 'google':
+      return catalog.googleModelOptions;
+    // Experimental providers expose only the configured model.
+    case 'azure':
+    case 'bedrock':
+    case 'vertex': {
+      const single = defaultModelForProvider(catalog, provider);
+      return single ? [single] : [];
+    }
+    default:
+      return [];
+  }
+}
+
+function defaultModelForProvider(
+  catalog: ModelCatalog,
+  provider: PreferredProvider,
+): string | null {
+  switch (provider) {
+    case 'ollama':
+      return catalog.ollama.model || null;
+    case 'openrouter':
+      return catalog.openRouter.model || null;
+    case 'cloudflare':
+      return catalog.cloudflare.model || null;
+    case 'zen':
+      return catalog.zen.model || null;
+    case 'nvidia':
+      return catalog.nvidia.model || null;
+    case 'blackbox':
+      return catalog.blackbox.model || null;
+    case 'kilocode':
+      return catalog.kilocode.model || null;
+    case 'openadapter':
+      return catalog.openadapter.model || null;
+    case 'azure':
+      return catalog.azure.model || null;
+    case 'bedrock':
+      return catalog.bedrock.model || null;
+    case 'vertex':
+      return catalog.vertex.model || null;
+    case 'anthropic':
+      return catalog.anthropic.model || null;
+    case 'openai':
+      return catalog.openai.model || null;
+    case 'google':
+      return catalog.google.model || null;
+    default:
+      return null;
+  }
+}
+
 export function ComposerDraftScreen({
   seed,
   repos,
   resolveRepoAppearance,
+  catalog,
   onCancel,
   onCommit,
 }: ComposerDraftScreenProps) {
@@ -80,16 +162,36 @@ export function ComposerDraftScreen({
     draftActiveRepo ? { id: 'draft', kind: 'repo', repo: draftActiveRepo, sandboxId: null } : null,
   );
 
-  const { state, setMode, setRepo, setBranch, setText } = useDraftChatComposer({
-    seed,
-    repos,
-    loadRepoBranches: branchManager.loadRepoBranches,
-  });
+  const { state, setMode, setRepo, setBranch, setText, setProvider, setModel } =
+    useDraftChatComposer({
+      seed,
+      repos,
+      loadRepoBranches: branchManager.loadRepoBranches,
+    });
 
   const [repoSheetOpen, setRepoSheetOpen] = useState(false);
   const [branchSheetOpen, setBranchSheetOpen] = useState(false);
   const [modeSheetOpen, setModeSheetOpen] = useState(false);
+  const [modelSheetOpen, setModelSheetOpen] = useState(false);
   const [repoQuery, setRepoQuery] = useState('');
+
+  // Effective provider used for display + commit. If the user hasn't
+  // explicitly picked, fall back to the workspace-wide default
+  // (`catalog.activeBackend`) so the pill reflects what would actually
+  // run. State stays null until override so "Default" remains Default.
+  const effectiveProvider: PreferredProvider | null = state.provider ?? catalog.activeBackend;
+  const effectiveModel: string | null = useMemo(() => {
+    if (!effectiveProvider) return null;
+    return state.model ?? defaultModelForProvider(catalog, effectiveProvider);
+  }, [catalog, effectiveProvider, state.model]);
+
+  const providerLabelMap = useMemo(() => {
+    const map = new Map<PreferredProvider, string>();
+    for (const [provider, label] of catalog.availableProviders) {
+      map.set(provider, label);
+    }
+    return map;
+  }, [catalog.availableProviders]);
 
   const selectedRepo = useMemo(
     () => repos.find((r) => r.full_name === state.repoFullName) ?? null,
@@ -113,13 +215,57 @@ export function ComposerDraftScreen({
 
   const handleSend = () => {
     if (!isReadyToSend) return;
+    // Only emit provider/model when the user explicitly picked one in
+    // pre-flight. Implicit picks let the workspace stick to its default
+    // and respect any existing per-chat lock — we don't want every
+    // commit to re-anchor the chat to whatever Settings currently shows.
+    const explicitProvider = state.provider;
+    const resolvedModel = explicitProvider
+      ? (state.model ?? defaultModelForProvider(catalog, explicitProvider))
+      : null;
     onCommit({
       mode: state.mode,
       repoFullName: state.mode === 'repo' ? state.repoFullName : null,
       branch: state.mode === 'repo' ? state.branch : null,
       text: trimmedText,
+      provider: explicitProvider,
+      model: resolvedModel,
     });
   };
+
+  const handlePickProvider = (provider: PreferredProvider) => {
+    setProvider(provider, defaultModelForProvider(catalog, provider));
+    // Mirror the choice into Settings — `setPreferredProvider` updates
+    // localStorage AND nudges `catalog.activeBackend` next render, so
+    // the in-workspace ChatInput sees the same default after commit.
+    setPreferredProvider(provider);
+    setModelSheetOpen(false);
+  };
+
+  const handlePickModel = (provider: PreferredProvider, model: string) => {
+    setProvider(provider, model);
+    setPreferredProvider(provider);
+    setModelSheetOpen(false);
+  };
+
+  const handleClearProviderOverride = () => {
+    setProvider(null);
+    setModel(null);
+    setModelSheetOpen(false);
+  };
+
+  useEffect(() => {
+    if (!modelSheetOpen) return;
+    // Lazy-fetch model lists for configured providers when the picker
+    // opens. Skips already-loaded ones — catalog refresh handlers are
+    // idempotent and short-circuit if the list is fresh.
+    for (const [provider] of catalog.availableProviders) {
+      if (provider === 'openrouter' && catalog.openRouterModelOptions.length === 0)
+        void catalog.refreshOpenRouterModels();
+      if (provider === 'ollama' && catalog.ollamaModelOptions.length === 0)
+        void catalog.refreshOllamaModels();
+    }
+  }, [catalog, modelSheetOpen]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -149,11 +295,36 @@ export function ComposerDraftScreen({
 
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-6">
         <div className="mx-auto flex w-full max-w-md flex-col gap-3">
-          <button onClick={() => setModeSheetOpen(true)} className={PILL_CLASS} aria-label="Mode">
-            <ModeIcon className="h-3.5 w-3.5 text-push-fg-dim" />
-            <span>{modeLabel}</span>
-            <ChevronDown className="h-3 w-3 text-push-fg-dim" />
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => setModeSheetOpen(true)} className={PILL_CLASS} aria-label="Mode">
+              <ModeIcon className="h-3.5 w-3.5 text-push-fg-dim" />
+              <span>{modeLabel}</span>
+              <ChevronDown className="h-3 w-3 text-push-fg-dim" />
+            </button>
+            <button
+              onClick={() => setModelSheetOpen(true)}
+              className={PILL_CLASS}
+              aria-label="Select model"
+            >
+              <Cpu className="h-3.5 w-3.5 text-push-fg-dim" />
+              {effectiveProvider ? (
+                <span className="flex items-center gap-1">
+                  <span className="text-push-fg-dim">
+                    {providerLabelMap.get(effectiveProvider) ?? effectiveProvider}
+                  </span>
+                  {effectiveModel && (
+                    <span className="max-w-[160px] truncate">
+                      · {formatModelDisplayName(effectiveProvider, effectiveModel)}
+                    </span>
+                  )}
+                  {state.provider == null && <span className="text-push-fg-dim">(default)</span>}
+                </span>
+              ) : (
+                <span>Default</span>
+              )}
+              <ChevronDown className="h-3 w-3 text-push-fg-dim" />
+            </button>
+          </div>
 
           {state.mode === 'repo' && (
             <div className="flex flex-wrap items-center gap-2">
@@ -398,6 +569,105 @@ export function ComposerDraftScreen({
                     )}
                     {active && <Check className="h-4 w-4 text-push-link" />}
                   </button>
+                );
+              })
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={modelSheetOpen} onOpenChange={setModelSheetOpen}>
+        <SheetContent
+          side="bottom"
+          className="h-[80dvh] border-t border-push-edge bg-push-grad-panel px-0 pb-0 pt-0 text-push-fg"
+        >
+          <SheetHeader className="px-5 pb-2 pt-5">
+            <SheetTitle className="flex items-center gap-2 text-push-fg">
+              <Cpu className="h-4 w-4 text-push-fg-dim" />
+              Select model
+            </SheetTitle>
+            <SheetDescription className="text-push-fg-muted">
+              Overrides the default backend for this chat's first message.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="max-h-[64dvh] overflow-y-auto px-3 pb-5 pt-2">
+            <button
+              onClick={handleClearProviderOverride}
+              className={`mb-2 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors ${
+                state.provider == null
+                  ? 'bg-push-surface-raised/80'
+                  : 'hover:bg-push-surface-hover/60'
+              }`}
+            >
+              <div className="flex-1">
+                <p className="text-push-sm text-push-fg">Default</p>
+                <p className="text-push-2xs text-push-fg-muted">
+                  Use the workspace's configured backend
+                </p>
+              </div>
+              {state.provider == null && <Check className="h-4 w-4 text-push-link" />}
+            </button>
+
+            {catalog.availableProviders.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-push-edge/70 bg-push-surface/15 px-3 py-4 text-center text-push-sm text-push-fg-muted">
+                No providers configured. Add an API key in Settings.
+              </div>
+            ) : (
+              catalog.availableProviders.map(([provider, label]) => {
+                const options = modelOptionsForProvider(catalog, provider);
+                const defaultModel = defaultModelForProvider(catalog, provider);
+                const providerActive = state.provider === provider;
+                return (
+                  <div key={provider} className="mb-3">
+                    <button
+                      onClick={() => handlePickProvider(provider)}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left"
+                    >
+                      <span className="text-push-2xs font-medium uppercase tracking-wide text-push-fg-dim">
+                        {label}
+                      </span>
+                      {providerActive && state.model == null && (
+                        <Check className="h-3 w-3 text-push-link" />
+                      )}
+                    </button>
+                    {options.length === 0 && defaultModel ? (
+                      <button
+                        onClick={() => handlePickModel(provider, defaultModel)}
+                        className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors ${
+                          providerActive && state.model === defaultModel
+                            ? 'bg-push-surface-raised/80'
+                            : 'hover:bg-push-surface-hover/60'
+                        }`}
+                      >
+                        <span className="min-w-0 flex-1 truncate text-push-sm text-push-fg-secondary">
+                          {formatModelDisplayName(provider, defaultModel)}
+                        </span>
+                        {providerActive && state.model === defaultModel && (
+                          <Check className="h-4 w-4 text-push-link" />
+                        )}
+                      </button>
+                    ) : (
+                      options.map((model) => {
+                        const isActive = providerActive && state.model === model;
+                        return (
+                          <button
+                            key={`${provider}::${model}`}
+                            onClick={() => handlePickModel(provider, model)}
+                            className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors ${
+                              isActive
+                                ? 'bg-push-surface-raised/80'
+                                : 'hover:bg-push-surface-hover/60'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1 truncate text-push-sm text-push-fg-secondary">
+                              {formatModelDisplayName(provider, model)}
+                            </span>
+                            {isActive && <Check className="h-4 w-4 text-push-link" />}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
                 );
               })
             )}

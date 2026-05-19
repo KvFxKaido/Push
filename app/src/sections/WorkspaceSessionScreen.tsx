@@ -6,7 +6,6 @@ import { conversationBelongsToWorkspace } from '@/hooks/chat-management';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { useTodo } from '@/hooks/useTodo';
-import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { useSnapshotManager } from '@/hooks/useSnapshotManager';
 import { useBranchManager } from '@/hooks/useBranchManager';
 import { useProjectInstructions } from '@/hooks/useProjectInstructions';
@@ -36,6 +35,7 @@ export function WorkspaceSessionScreen({
   auth,
   navigation,
   homeBridge,
+  catalog,
 }: WorkspaceScreenProps) {
   const { workspaceSession, onWorkspaceSessionChange } = workspace;
   const {
@@ -90,7 +90,6 @@ export function WorkspaceSessionScreen({
         ? 'main'
         : workspaceRepo?.current_branch || workspaceRepo?.default_branch || null,
   );
-  const catalog = useModelCatalog();
 
   const handleWorkspacePromotion = useCallback(
     (repo: ActiveRepo, branch?: string, sandboxIdOverride?: string | null) => {
@@ -301,12 +300,18 @@ export function WorkspaceSessionScreen({
   });
 
   // Drain pending first message handed in by the pre-flight composer.
-  // On commit, App stashes `{ key, text }` and either keeps the current
-  // workspace (same-context commit) or swaps to a new session id. Either
-  // way, we land here with the conversation map settling. If the active
-  // chat has no history we send into it; otherwise we mint a fresh chat
-  // and let this effect re-fire once the new id propagates. `drainedKeyRef`
-  // dedupes across re-renders.
+  // On commit, App stashes `{ key, text, provider?, model? }` and either
+  // keeps the current workspace (same-context commit) or swaps to a new
+  // session id. Either way, we land here with the conversation map
+  // settling. If the active chat has no history we send into it;
+  // otherwise we mint a fresh chat and let this effect re-fire once the
+  // new id propagates. `drainedKeyRef` dedupes across re-renders.
+  //
+  // When the composer set an explicit provider/model, we dispatch via
+  // raw `sendMessage` with those options so the chat's first-turn lock
+  // anchors to the user's pre-flight pick. Otherwise we fall through to
+  // `sendMessageWithChatDraft`, which respects the chat's own draft +
+  // the workspace default.
   const drainedFirstMessageKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!pendingFirstMessage) return;
@@ -321,7 +326,14 @@ export function WorkspaceSessionScreen({
     }
 
     drainedFirstMessageKeyRef.current = pendingFirstMessage.key;
-    void sendMessageWithChatDraft(pendingFirstMessage.text);
+    if (pendingFirstMessage.provider) {
+      void sendMessage(pendingFirstMessage.text, undefined, {
+        provider: pendingFirstMessage.provider,
+        model: pendingFirstMessage.model ?? null,
+      });
+    } else {
+      void sendMessageWithChatDraft(pendingFirstMessage.text);
+    }
     onPendingFirstMessageConsumed();
   }, [
     activeChatId,
@@ -329,6 +341,7 @@ export function WorkspaceSessionScreen({
     createNewChat,
     onPendingFirstMessageConsumed,
     pendingFirstMessage,
+    sendMessage,
     sendMessageWithChatDraft,
   ]);
 

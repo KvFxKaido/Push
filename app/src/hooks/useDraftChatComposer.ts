@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { PreferredProvider } from '@/lib/providers';
 import type { RepoWithActivity } from '@/types';
 
 export type DraftChatMode = 'repo' | 'chat' | 'scratch';
@@ -8,12 +9,21 @@ export interface DraftChatState {
   repoFullName: string | null;
   branch: string | null;
   text: string;
+  /** When null, the workspace falls back to its default provider (the
+   * one Settings selects). The pre-flight only overrides on explicit
+   * pick — "Default" stays Default. */
+  provider: PreferredProvider | null;
+  /** Model id within `provider`. Null lets the workspace pick the
+   * remembered or catalog default for the provider. */
+  model: string | null;
 }
 
 export interface DraftChatSeed {
   mode?: DraftChatMode;
   repoFullName?: string | null;
   branch?: string | null;
+  provider?: PreferredProvider | null;
+  model?: string | null;
 }
 
 const EMPTY_STATE: DraftChatState = {
@@ -21,6 +31,8 @@ const EMPTY_STATE: DraftChatState = {
   repoFullName: null,
   branch: null,
   text: '',
+  provider: null,
+  model: null,
 };
 
 function seedToState(seed: DraftChatSeed | null | undefined): DraftChatState {
@@ -30,6 +42,8 @@ function seedToState(seed: DraftChatSeed | null | undefined): DraftChatState {
     repoFullName: seed.repoFullName ?? null,
     branch: seed.branch ?? null,
     text: '',
+    provider: seed.provider ?? null,
+    model: seed.model ?? null,
   };
 }
 
@@ -91,11 +105,28 @@ export function useDraftChatComposer({ seed, repos, loadRepoBranches }: UseDraft
     setState((prev) => ({ ...prev, text }));
   }, []);
 
+  const setProvider = useCallback((provider: PreferredProvider | null, model?: string | null) => {
+    setState((prev) => ({
+      ...prev,
+      provider,
+      // When provider changes, default the model unless the caller
+      // supplied a specific one. `null` keeps the workspace's own
+      // resolution (remembered or catalog default).
+      model: model === undefined ? null : model,
+    }));
+  }, []);
+
+  const setModel = useCallback((model: string | null) => {
+    setState((prev) => ({ ...prev, model }));
+  }, []);
+
   return {
     state,
     setMode,
     setRepo,
     setBranch,
     setText,
+    setProvider,
+    setModel,
   };
 }

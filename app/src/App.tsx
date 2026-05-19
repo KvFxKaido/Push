@@ -3,6 +3,7 @@ import { useAuthSession } from '@/hooks/useAuthSession';
 import { useRepos } from '@/hooks/useRepos';
 import { useActiveRepo } from '@/hooks/useActiveRepo';
 import { useRepoAppearance } from '@/hooks/useRepoAppearance';
+import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { replaceAllConversations, migrateConversationsToIndexedDB } from '@/lib/conversation-store';
 import { toConversationIndex } from '@/lib/conversation-index';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
@@ -203,6 +204,11 @@ function App() {
   const [pendingFirstMessage, setPendingFirstMessage] = useState<PendingFirstMessage | null>(null);
 
   const { resolveRepoAppearance, setRepoAppearance, clearRepoAppearance } = useRepoAppearance();
+  // Catalog is lifted to App so both the pre-flight composer and the
+  // in-workspace ChatInput consume the same instance. Previously hooked
+  // inside WorkspaceSessionScreen; mounting it twice would duplicate
+  // every model-list fetch and split the configured-provider truth.
+  const catalog = useModelCatalog();
 
   useEffect(() => {
     perfMark('app:first-render');
@@ -419,7 +425,12 @@ function App() {
   // fresh sandbox the same way the launcher tiles do.
   const handleCommitDraft = useCallback(
     (commit: ComposerDraftCommit) => {
-      setPendingFirstMessage({ key: crypto.randomUUID(), text: commit.text });
+      setPendingFirstMessage({
+        key: crypto.randomUUID(),
+        text: commit.text,
+        provider: commit.provider,
+        model: commit.model,
+      });
       setDraftComposerOpen(false);
       setDraftSeed(null);
       setPendingResumeChatId(null);
@@ -660,6 +671,7 @@ function App() {
           seed={draftSeed}
           repos={repos}
           resolveRepoAppearance={resolveRepoAppearance}
+          catalog={catalog}
           onCancel={handleCancelDraftComposer}
           onCommit={handleCommitDraft}
         />
@@ -716,6 +728,7 @@ function App() {
           pendingFirstMessage,
           onPendingFirstMessageConsumed: handlePendingFirstMessageConsumed,
         }}
+        catalog={catalog}
       />
     </Suspense>
   );
