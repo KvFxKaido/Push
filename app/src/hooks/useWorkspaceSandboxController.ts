@@ -4,7 +4,6 @@ import type { SandboxStatus } from '@/hooks/useSandbox';
 import { downloadFromSandbox, execInSandbox } from '@/lib/sandbox-client';
 import type {
   ActiveRepo,
-  NewChatWorkspaceState,
   SandboxStateCardData,
   WorkspaceCapabilities,
   WorkspaceScratchActions,
@@ -125,57 +124,6 @@ export function useWorkspaceSandboxController({
     },
     [],
   );
-
-  const inspectNewChatWorkspace = useCallback(async (): Promise<NewChatWorkspaceState | null> => {
-    if (sandboxStatus !== 'ready' || !sandboxId) return null;
-
-    if (isScratch) {
-      try {
-        const result = await execInSandbox(
-          sandboxId,
-          "cd /workspace && total=$(find . -path './.git' -prune -o -type f -print | sed 's#^\\./##' | sort | wc -l | tr -d ' '); printf '__COUNT__%s\\n' \"$total\"; find . -path './.git' -prune -o -type f -print | sed 's#^\\./##' | sort | head -6",
-        );
-        if (result.exitCode !== 0) return null;
-
-        const lines = result.stdout
-          .split('\n')
-          .map((line) => line.trim())
-          .filter(Boolean);
-        const countLine = lines.find((line) => line.startsWith('__COUNT__'));
-        const fileCount = Number.parseInt(countLine?.slice('__COUNT__'.length) || '0', 10);
-        if (!Number.isFinite(fileCount) || fileCount <= 0) return null;
-
-        return {
-          mode: 'scratch',
-          sandboxId,
-          branch: 'scratch',
-          changedFiles: fileCount,
-          stagedFiles: 0,
-          unstagedFiles: fileCount,
-          untrackedFiles: fileCount,
-          preview: lines.filter((line) => !line.startsWith('__COUNT__')).slice(0, 6),
-          fetchedAt: new Date().toISOString(),
-        };
-      } catch {
-        return null;
-      }
-    }
-
-    const nextState = await fetchSandboxState(sandboxId);
-    if (!nextState || nextState.changedFiles <= 0) return null;
-
-    return {
-      mode: 'repo',
-      sandboxId: nextState.sandboxId,
-      branch: nextState.branch,
-      changedFiles: nextState.changedFiles,
-      stagedFiles: nextState.stagedFiles,
-      unstagedFiles: nextState.unstagedFiles,
-      untrackedFiles: nextState.untrackedFiles,
-      preview: nextState.preview,
-      fetchedAt: nextState.fetchedAt,
-    };
-  }, [fetchSandboxState, isScratch, sandboxId, sandboxStatus]);
 
   useEffect(() => {
     if (sandboxStatus !== 'ready' || !sandboxId) {
@@ -369,7 +317,6 @@ export function useWorkspaceSandboxController({
     sandboxStateLoading,
     sandboxDownloading,
     fetchSandboxState,
-    inspectNewChatWorkspace,
     ensureSandbox,
     handleSandboxRestart,
     handleSandboxDownload,

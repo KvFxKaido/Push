@@ -24,7 +24,6 @@ import type {
   Conversation,
   DraftComposerSeed,
   GitHubUser,
-  NewChatWorkspaceState,
   RepoWithActivity,
   RunEvent,
   RunCheckpoint,
@@ -68,7 +67,6 @@ export interface ChatRouteWorkspaceProps {
    * different repo / branch / mode before committing. Wired through
    * `WorkspaceScreenNavigationProps.onOpenDraftComposer` at App level. */
   handleOpenDraftComposer: (seed?: DraftComposerSeed | null) => void;
-  inspectNewChatWorkspace: () => Promise<NewChatWorkspaceState | null>;
   handleSandboxRestart: () => Promise<void>;
   handleSandboxDownload: () => Promise<void>;
   sandboxDownloading: boolean;
