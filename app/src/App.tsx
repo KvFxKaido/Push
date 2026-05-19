@@ -414,6 +414,33 @@ function App() {
     setDraftSeed(null);
   }, []);
 
+  // HomeScreen launcher tile wrappers — every "new chat" entry routes
+  // through pre-flight so the user picks (or confirms) context + types
+  // a first message in one surface. Local-pc / relay tiles stay direct
+  // because they need pairing and don't have a "first message" UX.
+  // OnboardingScreen keeps the direct handlers since pre-flight is
+  // auth-gated (needs the repo list).
+  const handleStartScratchFromHome = useCallback(
+    () => handleOpenDraftComposer({ mode: 'scratch' }),
+    [handleOpenDraftComposer],
+  );
+
+  const handleStartChatFromHome = useCallback(
+    () => handleOpenDraftComposer({ mode: 'chat' }),
+    [handleOpenDraftComposer],
+  );
+
+  const handleSelectRepoFromHome = useCallback(
+    (repo: RepoWithActivity, branch?: string) => {
+      handleOpenDraftComposer({
+        mode: 'repo',
+        repoFullName: repo.full_name,
+        branch: branch ?? null,
+      });
+    },
+    [handleOpenDraftComposer],
+  );
+
   const handlePendingFirstMessageConsumed = useCallback(() => {
     setPendingFirstMessage(null);
   }, []);
@@ -637,11 +664,11 @@ function App() {
             resolveRepoAppearance={resolveRepoAppearance}
             setRepoAppearance={setRepoAppearance}
             clearRepoAppearance={clearRepoAppearance}
-            onSelectRepo={handleSelectRepo}
+            onSelectRepo={handleSelectRepoFromHome}
             onResumeConversation={handleResumeConversationFromHome}
             onDisconnect={handleDisconnect}
-            onStartWorkspace={handleStartScratchWorkspace}
-            onStartChat={handleStartChatMode}
+            onStartWorkspace={handleStartScratchFromHome}
+            onStartChat={handleStartChatFromHome}
             onStartLocalPc={isLocalPcModeEnabled() ? handleStartLocalPc : undefined}
             onStartRelay={isRelayModeEnabled() ? handleStartRelay : undefined}
             user={validatedUser}
