@@ -108,7 +108,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleStartRelay,
     handleExitWorkspace,
     handleCreateNewChat,
-    inspectNewChatWorkspace,
+    handleOpenDraftComposer,
     handleDisconnect,
     handleSandboxRestart,
     handleSandboxDownload,
@@ -308,7 +308,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     switchChat,
     handleSelectRepoFromDrawer,
     handleCreateNewChat,
-    inspectNewChatWorkspace,
+    handleOpenDraftComposer,
     handleStartWorkspace,
     handleExitWorkspace,
     handleDisconnect,
@@ -317,6 +317,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     saveExpiryCheckpoint,
     isStreaming,
     isScratch,
+    isChat: false,
     markSnapshotActivity,
   });
 

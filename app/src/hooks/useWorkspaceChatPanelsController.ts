@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
 import { fetchSandboxDiff } from '@/lib/sandbox-client';
 import type { ChatRouteProps } from '@/sections/workspace-chat-route-types';
+import type { NewChatWorkspaceState } from '@/types';
 
 type PanelsControllerArgs = Pick<
   ChatRouteProps,
@@ -12,7 +13,7 @@ type PanelsControllerArgs = Pick<
   | 'switchChat'
   | 'handleSelectRepoFromDrawer'
   | 'handleCreateNewChat'
-  | 'inspectNewChatWorkspace'
+  | 'handleOpenDraftComposer'
   | 'handleStartWorkspace'
   | 'handleExitWorkspace'
   | 'handleDisconnect'
@@ -22,6 +23,7 @@ type PanelsControllerArgs = Pick<
   | 'isStreaming'
 > & {
   isScratch: boolean;
+  isChat?: boolean;
   markSnapshotActivity: () => void;
 };
 
@@ -33,7 +35,7 @@ export function useWorkspaceChatPanelsController({
   switchChat,
   handleSelectRepoFromDrawer,
   handleCreateNewChat,
-  inspectNewChatWorkspace,
+  handleOpenDraftComposer,
   handleStartWorkspace,
   handleExitWorkspace,
   handleDisconnect,
@@ -42,16 +44,20 @@ export function useWorkspaceChatPanelsController({
   saveExpiryCheckpoint,
   isStreaming,
   isScratch,
+  isChat,
   markSnapshotActivity,
 }: PanelsControllerArgs) {
   const [isWorkspaceHubOpen, setIsWorkspaceHubOpen] = useState(false);
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
   const [isChatsDrawerOpen, setIsChatsDrawerOpen] = useState(false);
+  // Pre-flight composer subsumes the "review or continue" sheet path —
+  // these states stay defined so consumers wiring the sheet keep compiling,
+  // but `handleCreateNewChatRequest` no longer flips them. Slated for
+  // removal in the Phase 3 cleanup once the sheet is unrendered.
   const [newChatSheetOpen, setNewChatSheetOpen] = useState(false);
-  const [newChatWorkspaceState, setNewChatWorkspaceState] =
-    useState<ChatRouteProps['inspectNewChatWorkspace'] extends () => Promise<infer T> ? T : never>(
-      null,
-    );
+  const [newChatWorkspaceState, setNewChatWorkspaceState] = useState<NewChatWorkspaceState | null>(
+    null,
+  );
   const [checkingNewChatWorkspace, setCheckingNewChatWorkspace] = useState(false);
   const [resettingWorkspaceForNewChat, setResettingWorkspaceForNewChat] = useState(false);
   const [hubTabRequest, setHubTabRequest] = useState<{
@@ -94,35 +100,24 @@ export function useWorkspaceChatPanelsController({
     [resettingWorkspaceForNewChat],
   );
 
-  const handleCreateNewChatRequest = useCallback(async () => {
+  const handleCreateNewChatRequest = useCallback(() => {
     if (checkingNewChatWorkspace || resettingWorkspaceForNewChat) return;
-
-    if (sandbox.status !== 'ready' || !sandbox.sandboxId) {
-      handleCreateNewChat();
-      return;
-    }
-
-    setNewChatWorkspaceState(null);
-    setCheckingNewChatWorkspace(true);
-    setNewChatSheetOpen(true);
-
-    const workspaceState = await inspectNewChatWorkspace();
-    if (!workspaceState) {
-      setNewChatSheetOpen(false);
-      setCheckingNewChatWorkspace(false);
-      handleCreateNewChat();
-      return;
-    }
-
-    setNewChatWorkspaceState(workspaceState);
-    setCheckingNewChatWorkspace(false);
+    // Route through the pre-flight composer so the user can pivot
+    // repo / branch / mode before committing. Seed with the current
+    // workspace so the common "stay here, new chat" case is one tap
+    // away after the user types.
+    handleOpenDraftComposer({
+      mode: isChat ? 'chat' : isScratch ? 'scratch' : 'repo',
+      repoFullName: activeRepo?.full_name ?? null,
+      branch: activeRepo?.current_branch ?? activeRepo?.default_branch ?? null,
+    });
   }, [
+    activeRepo,
     checkingNewChatWorkspace,
-    handleCreateNewChat,
-    inspectNewChatWorkspace,
+    handleOpenDraftComposer,
+    isChat,
+    isScratch,
     resettingWorkspaceForNewChat,
-    sandbox.sandboxId,
-    sandbox.status,
   ]);
 
   const handleContinueCurrentWorkspace = useCallback(() => {

@@ -16,11 +16,14 @@ import type {
   ActiveRepo,
   AppShellScreen,
   ConversationIndex,
+  DraftComposerSeed,
   LocalPcBinding,
+  PendingFirstMessage,
   RelayBinding,
   RepoWithActivity,
   WorkspaceSession,
 } from '@/types';
+import type { ComposerDraftCommit } from '@/sections/ComposerDraftScreen';
 import './App.css';
 import {
   createIndexedDbStore,
@@ -157,6 +160,12 @@ const RelayPairing = lazyWithRecovery(
     (module) => module.RelayPairing,
   ),
 );
+const ComposerDraftScreen = lazyWithRecovery(
+  toDefaultExport(
+    () => import('@/sections/ComposerDraftScreen'),
+    (module) => module.ComposerDraftScreen,
+  ),
+);
 
 function App() {
   const { activeRepo, setActiveRepo, clearActiveRepo, setCurrentBranch } = useActiveRepo();
@@ -182,6 +191,16 @@ function App() {
   // the user into a relay session after they've moved on.
   const [relayPairingActive, setRelayPairingActive] = useState(false);
   const relayGenRef = useRef(0);
+
+  // Pre-flight composer overlay. `draftComposerOpen` controls visibility;
+  // `draftSeed` lets callers prefill the target repo/branch/mode so the
+  // user only changes what they need to. Commits go through
+  // `handleCommitDraft`, which materializes (or reuses) a WorkspaceSession
+  // and hands the first message off to the workspace via
+  // `pendingFirstMessage` — drained by `useWorkspaceSessionBridge`.
+  const [draftComposerOpen, setDraftComposerOpen] = useState(false);
+  const [draftSeed, setDraftSeed] = useState<DraftComposerSeed | null>(null);
+  const [pendingFirstMessage, setPendingFirstMessage] = useState<PendingFirstMessage | null>(null);
 
   const { resolveRepoAppearance, setRepoAppearance, clearRepoAppearance } = useRepoAppearance();
 
@@ -379,6 +398,83 @@ function App() {
     [setActiveRepo],
   );
 
+  const handleOpenDraftComposer = useCallback((seed?: DraftComposerSeed | null) => {
+    setDraftSeed(seed ?? null);
+    setDraftComposerOpen(true);
+  }, []);
+
+  const handleCancelDraftComposer = useCallback(() => {
+    setDraftComposerOpen(false);
+    setDraftSeed(null);
+  }, []);
+
+  const handlePendingFirstMessageConsumed = useCallback(() => {
+    setPendingFirstMessage(null);
+  }, []);
+
+  // Commits the pre-flight composer into a real workspace session +
+  // a queued first message. Same-context commits keep the existing
+  // session (no sandbox restart); cross-context commits swap to a new
+  // session id, which remounts WorkspaceSessionScreen and starts a
+  // fresh sandbox the same way the launcher tiles do.
+  const handleCommitDraft = useCallback(
+    (commit: ComposerDraftCommit) => {
+      setPendingFirstMessage({ key: crypto.randomUUID(), text: commit.text });
+      setDraftComposerOpen(false);
+      setDraftSeed(null);
+      setPendingResumeChatId(null);
+
+      if (commit.mode === 'chat') {
+        clearActiveRepo();
+        setWorkspaceSession((prev) =>
+          prev?.kind === 'chat' ? prev : { id: crypto.randomUUID(), kind: 'chat', sandboxId: null },
+        );
+        return;
+      }
+
+      if (commit.mode === 'scratch') {
+        clearActiveRepo();
+        setWorkspaceSession((prev) =>
+          prev?.kind === 'scratch'
+            ? prev
+            : { id: crypto.randomUUID(), kind: 'scratch', sandboxId: null },
+        );
+        return;
+      }
+
+      if (!commit.repoFullName) return;
+      const repo = repos.find((r) => r.full_name === commit.repoFullName);
+      if (!repo) return;
+      const desiredBranch = commit.branch || repo.default_branch;
+      const repoData = {
+        id: repo.id,
+        name: repo.name,
+        full_name: repo.full_name,
+        owner: repo.owner,
+        default_branch: repo.default_branch,
+        current_branch: desiredBranch,
+        private: repo.private,
+      };
+      setActiveRepo(repoData);
+      setWorkspaceSession((prev) => {
+        if (
+          prev?.kind === 'repo' &&
+          prev.repo.full_name === repo.full_name &&
+          prev.repo.current_branch === desiredBranch
+        ) {
+          return prev;
+        }
+        return {
+          id: crypto.randomUUID(),
+          kind: 'repo',
+          repo: repoData,
+          sandboxId: null,
+        };
+      });
+    },
+    [clearActiveRepo, repos, setActiveRepo],
+  );
+
   const handleResumeConversationFromHome = useCallback(
     (chatId: string) => {
       const conversation = conversationIndex[chatId];
@@ -471,14 +567,17 @@ function App() {
     // user is signed out of GitHub.
     if (localPcPairingActive) return 'local-pc-pairing';
     if (relayPairingActive) return 'relay-pairing';
+    if (!authToken) return 'onboarding';
+    // Pre-flight composer overlays both home and workspace surfaces — the
+    // user can pivot context without first backing out to the launcher.
+    if (draftComposerOpen) return 'draft-composer';
     if (workspaceSession?.kind === 'local-pc') return 'workspace';
     if (workspaceSession?.kind === 'relay') return 'workspace';
     if (workspaceSession?.kind === 'scratch') return 'workspace';
     if (workspaceSession?.kind === 'chat') return 'workspace';
-    if (!authToken) return 'onboarding';
     if (workspaceSession?.kind === 'repo') return 'workspace';
     return 'home';
-  }, [authToken, workspaceSession, localPcPairingActive, relayPairingActive]);
+  }, [authToken, workspaceSession, localPcPairingActive, relayPairingActive, draftComposerOpen]);
 
   const suspenseFallback = <div className="h-dvh bg-[#000]" />;
 
@@ -554,6 +653,20 @@ function App() {
     );
   }
 
+  if (screen === 'draft-composer') {
+    return (
+      <Suspense fallback={suspenseFallback}>
+        <ComposerDraftScreen
+          seed={draftSeed}
+          repos={repos}
+          resolveRepoAppearance={resolveRepoAppearance}
+          onCancel={handleCancelDraftComposer}
+          onCommit={handleCommitDraft}
+        />
+      </Suspense>
+    );
+  }
+
   if (!workspaceSession) {
     return suspenseFallback;
   }
@@ -595,10 +708,13 @@ function App() {
           onStartLocalPc: isLocalPcModeEnabled() ? handleStartLocalPc : undefined,
           onStartRelay: isRelayModeEnabled() ? handleStartRelay : undefined,
           onEndWorkspace: handleEndWorkspace,
+          onOpenDraftComposer: handleOpenDraftComposer,
         }}
         homeBridge={{
           pendingResumeChatId,
           onConversationIndexChange: setConversationIndex,
+          pendingFirstMessage,
+          onPendingFirstMessageConsumed: handlePendingFirstMessageConsumed,
         }}
       />
     </Suspense>

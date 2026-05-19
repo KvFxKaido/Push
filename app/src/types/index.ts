@@ -1004,8 +1004,32 @@ export type AppShellScreen =
   | 'onboarding'
   | 'home'
   | 'workspace'
+  | 'draft-composer'
   | 'local-pc-pairing'
   | 'relay-pairing';
+
+/**
+ * Pre-flight composer seed: optional context to prefill when opening the
+ * draft composer. Lets callers (drawer "+ New chat", launcher tiles, etc.)
+ * pre-populate the target repo/branch/mode so the user only changes what
+ * they need to.
+ */
+export interface DraftComposerSeed {
+  mode?: 'repo' | 'chat' | 'scratch';
+  repoFullName?: string | null;
+  branch?: string | null;
+}
+
+/**
+ * First-message envelope handed off from the pre-flight composer to the
+ * workspace screen. The workspace's drain effect creates (or reuses) an
+ * empty chat and sends `text` once the screen has mounted. `key` lets the
+ * drain effect dedupe across re-renders.
+ */
+export interface PendingFirstMessage {
+  key: string;
+  text: string;
+}
 
 // File browser types (re-exported from sandbox-client for convenience)
 export interface FileEntry {
@@ -1534,11 +1558,19 @@ export interface WorkspaceScreenNavigationProps {
    * VITE_RELAY_MODE doesn't need to plumb a no-op handler. */
   onStartRelay?: () => void;
   onEndWorkspace: () => void;
+  /** Opens the pre-flight composer overlay. Callers can pass a seed
+   * to prefill the target repo/branch/mode (e.g. "new chat in this repo"). */
+  onOpenDraftComposer: (seed?: DraftComposerSeed | null) => void;
 }
 
 export interface WorkspaceScreenHomeBridgeProps {
   pendingResumeChatId: string | null;
   onConversationIndexChange: (index: ConversationIndex) => void;
+  /** Set by the pre-flight composer when the user hits send. The workspace
+   * drain effect creates (or reuses) an empty chat and dispatches the text,
+   * then calls `onPendingFirstMessageConsumed` to clear it. */
+  pendingFirstMessage: PendingFirstMessage | null;
+  onPendingFirstMessageConsumed: () => void;
 }
 
 /**

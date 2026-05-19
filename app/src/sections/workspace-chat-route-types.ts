@@ -22,6 +22,7 @@ import type {
   ChatSendOptions,
   CIStatus,
   Conversation,
+  DraftComposerSeed,
   GitHubUser,
   NewChatWorkspaceState,
   RepoWithActivity,
@@ -63,6 +64,10 @@ export interface ChatRouteWorkspaceProps {
   handleExitWorkspace: () => void;
   handleDisconnect: () => void;
   handleCreateNewChat: () => void;
+  /** Opens the pre-flight composer overlay so the user can pick a
+   * different repo / branch / mode before committing. Wired through
+   * `WorkspaceScreenNavigationProps.onOpenDraftComposer` at App level. */
+  handleOpenDraftComposer: (seed?: DraftComposerSeed | null) => void;
   inspectNewChatWorkspace: () => Promise<NewChatWorkspaceState | null>;
   handleSandboxRestart: () => Promise<void>;
   handleSandboxDownload: () => Promise<void>;

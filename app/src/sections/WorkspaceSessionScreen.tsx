@@ -68,8 +68,14 @@ export function WorkspaceSessionScreen({
     onStartLocalPc,
     onStartRelay,
     onEndWorkspace,
+    onOpenDraftComposer,
   } = navigation;
-  const { pendingResumeChatId, onConversationIndexChange } = homeBridge;
+  const {
+    pendingResumeChatId,
+    onConversationIndexChange,
+    pendingFirstMessage,
+    onPendingFirstMessageConsumed,
+  } = homeBridge;
 
   const isScratch = workspaceSession.kind === 'scratch';
   const isChat = workspaceSession.kind === 'chat';
@@ -294,6 +300,38 @@ export function WorkspaceSessionScreen({
     sendMessage,
   });
 
+  // Drain pending first message handed in by the pre-flight composer.
+  // On commit, App stashes `{ key, text }` and either keeps the current
+  // workspace (same-context commit) or swaps to a new session id. Either
+  // way, we land here with the conversation map settling. If the active
+  // chat has no history we send into it; otherwise we mint a fresh chat
+  // and let this effect re-fire once the new id propagates. `drainedKeyRef`
+  // dedupes across re-renders.
+  const drainedFirstMessageKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pendingFirstMessage) return;
+    if (drainedFirstMessageKeyRef.current === pendingFirstMessage.key) return;
+
+    const activeConv = conversations[activeChatId];
+    if (!activeConv) return; // wait for chat-management auto-create to settle
+
+    if (activeConv.messages.length > 0) {
+      createNewChat();
+      return;
+    }
+
+    drainedFirstMessageKeyRef.current = pendingFirstMessage.key;
+    void sendMessageWithChatDraft(pendingFirstMessage.text);
+    onPendingFirstMessageConsumed();
+  }, [
+    activeChatId,
+    conversations,
+    createNewChat,
+    onPendingFirstMessageConsumed,
+    pendingFirstMessage,
+    sendMessageWithChatDraft,
+  ]);
+
   const snapshots = useSnapshotManager(workspaceSession, sandbox, workspaceRepo, isStreaming);
   const branches = useBranchManager(workspaceRepo, workspaceSession);
   const {
@@ -428,6 +466,7 @@ export function WorkspaceSessionScreen({
     handleExitWorkspace,
     handleDisconnect: handleDisconnectFromWorkspace,
     handleCreateNewChat,
+    handleOpenDraftComposer: onOpenDraftComposer,
     inspectNewChatWorkspace,
     handleSandboxRestart,
     handleSandboxDownload,
