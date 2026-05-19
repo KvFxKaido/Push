@@ -1309,7 +1309,7 @@ describe('handleGoogleSearch', () => {
     );
 
     expect(captured?.url).toMatch(
-      /^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-3-flash-preview:generateContent$/,
+      /^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-3\.5-flash:generateContent$/,
     );
     const headers = captured?.init.headers as Record<string, string>;
     expect(headers['x-goog-api-key']).toBe('AIza');

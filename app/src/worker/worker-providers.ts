@@ -1800,7 +1800,7 @@ export async function handleFreeSearch(request: Request, env: Env): Promise<Resp
 
 // --- Gemini-grounded web search (one-shot generateContent + googleSearch tool) ---
 
-const GROUNDING_DEFAULT_MODEL = 'gemini-3-flash-preview';
+const GROUNDING_DEFAULT_MODEL = 'gemini-3.5-flash';
 const GROUNDING_TIMEOUT_MS = 30_000;
 
 interface GeminiGroundingChunk {

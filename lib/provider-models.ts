@@ -40,7 +40,7 @@ export const OPENADAPTER_DEFAULT_MODEL = 'deepseek/deepseek-v3';
 // the matching entry in `lib/provider-definition.ts`.
 export const OPENAI_DEFAULT_MODEL = 'gpt-5.4';
 export const ANTHROPIC_DEFAULT_MODEL = 'claude-sonnet-4-6';
-export const GOOGLE_DEFAULT_MODEL = 'gemini-3.1-pro-preview';
+export const GOOGLE_DEFAULT_MODEL = 'gemini-3.5-flash';
 
 export const OLLAMA_MODELS: string[] = [
   // Cloud-first curated fallback. Live `/models` fetch and free-text entry
@@ -59,9 +59,10 @@ export const OPENROUTER_MODELS: string[] = [
   'google/gemini-2.5-flash:nitro',
   'google/gemini-2.5-pro:nitro',
   'google/gemini-3-flash-preview:nitro',
-  'google/gemini-3.1-flash-lite-preview:nitro',
+  'google/gemini-3.1-flash-lite:nitro',
   'google/gemini-3.1-pro-preview:nitro',
   'google/gemini-3.1-pro-preview-customtools:nitro',
+  'google/gemini-3.5-flash:nitro',
   'google/gemma-4-31b-it:nitro',
   'inception/mercury-2',
   'inception/mercury-coder',
@@ -175,7 +176,8 @@ export const ANTHROPIC_MODELS: string[] = [
 
 export const GOOGLE_MODELS: string[] = [
   GOOGLE_DEFAULT_MODEL,
-  'gemini-3.1-flash-lite-preview',
+  'gemini-3.1-pro-preview',
+  'gemini-3.1-flash-lite',
   'gemini-3-flash-preview',
   'gemini-2.5-pro',
   'gemini-2.5-flash',

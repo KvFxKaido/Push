@@ -202,7 +202,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_ANTHROPIC_MODEL` | Anthropic model (default: `claude-sonnet-4-6`) |
 | `PUSH_GOOGLE_URL` | Google Gemini base URL (default: `https://generativelanguage.googleapis.com/v1beta`) |
 | `PUSH_GOOGLE_API_KEY` | Google Gemini API key (also accepted as `GEMINI_API_KEY`) |
-| `PUSH_GOOGLE_MODEL` | Google Gemini model (default: `gemini-3.1-pro-preview`) |
+| `PUSH_GOOGLE_MODEL` | Google Gemini model (default: `gemini-3.5-flash`) |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
@@ -227,7 +227,7 @@ The CLI ships ten providers. Seven (`ollama`, `openrouter`, `zen`, `nvidia`, `ki
 | `openadapter` | `deepseek/deepseek-v3` | Yes |
 | `openai` | `gpt-5.4` | Yes |
 | `anthropic` | `claude-sonnet-4-6` | Yes |
-| `google` | `gemini-3.1-pro-preview` | Yes |
+| `google` | `gemini-3.5-flash` | Yes |
 
 Removed providers (`mistral`, `zai`, `minimax`) are gracefully redirected to `openrouter` with a warning.
 
