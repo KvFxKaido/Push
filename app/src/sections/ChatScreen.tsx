@@ -120,9 +120,15 @@ export function ChatScreen({
   const { containerProps: chatContainerProps, inputProps: chatInputProps } = chat;
   const { sandboxStatusBannerProps, sandboxExpiryBannerProps } = banners;
 
-  const messageCount = chatContainerProps.messages.length;
+  // Count real user prompts only — synthetic tool-result messages also have
+  // role: 'user' and would inflate the count mid-first-turn whenever the
+  // orchestrator calls a tool, prematurely deactivating the glow.
+  const userPromptCount = chatContainerProps.messages.reduce(
+    (n, m) => (m.role === 'user' && !m.isToolResult ? n + 1 : n),
+    0,
+  );
   const agentActive = chatContainerProps.agentStatus.active;
-  const isFirstTurn = messageCount === 0 || (messageCount <= 2 && agentActive);
+  const isFirstTurn = userPromptCount === 0 || (userPromptCount === 1 && agentActive);
   const glowColor = getRepoAppearanceColorHex(
     (activeRepoAppearance ?? DEFAULT_REPO_APPEARANCE).color,
   );
