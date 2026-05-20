@@ -187,11 +187,24 @@ export function getVerificationPresetNames(): string[] {
 /**
  * Format a verification policy into a structured block for injection into
  * agent system prompts. Returns null if the policy has no rules.
+ *
+ * `excludeGate` filters out gate-kind rules whose `gate` matches the given
+ * value — used by the Auditor to drop its own `auditor-gate` rule from the
+ * policy block. Showing an agent a gate that targets itself is a runtime
+ * invariant (the harness already invokes that gate), and the LLM tends to
+ * interpret it as "the gate must have run earlier" and fail the verdict.
  */
 export function formatVerificationPolicyBlock(
   policy: VerificationPolicy | undefined,
+  options?: { excludeGate?: string },
 ): string | null {
-  if (!policy || policy.rules.length === 0) return null;
+  if (!policy) return null;
+
+  const excludeGate = options?.excludeGate;
+  const rules = excludeGate
+    ? policy.rules.filter((r) => !(r.kind === 'gate' && r.gate === excludeGate))
+    : policy.rules;
+  if (rules.length === 0) return null;
 
   const lines = [
     `[VERIFICATION_POLICY] ${policy.name}`,
@@ -201,7 +214,7 @@ export function formatVerificationPolicyBlock(
     '',
   ];
 
-  for (const rule of policy.rules) {
+  for (const rule of rules) {
     const scopeLabel = rule.scope === 'always' ? '' : ` (${rule.scope} only)`;
     const kindDetail =
       rule.kind === 'command' && rule.command

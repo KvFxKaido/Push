@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { runAuditor, runAuditorEvaluation } from './auditor-agent.js';
 import type { PushStream, PushStreamEvent } from './provider-contract.js';
+import { VERIFICATION_PRESET_STANDARD } from './verification-policy.js';
 
 function makeAddedFileDiff(path: string, addedContent: string): string {
   return [
@@ -311,6 +312,39 @@ describe('runAuditorEvaluation (PushStream consumer)', () => {
 
     expect(result.verdict).toBe('incomplete');
     expect(result.summary).toContain('eval upstream failed');
+  });
+
+  it('drops the self-referential auditor-gate rule from the verification policy block', async () => {
+    const { stream, capturedRequest } = makePushStream([
+      {
+        type: 'text_delta',
+        text: '{"verdict":"complete","summary":"ok","gaps":[],"confidence":"high"}',
+      },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    await runAuditorEvaluation(
+      'finish the auth fix',
+      'Updated the auth guard.',
+      null,
+      makeAddedFileDiff('src/auth.ts', 'const auth = true;'),
+      {
+        provider: 'openrouter',
+        modelId: 'test-model',
+        stream,
+        verificationPolicy: VERIFICATION_PRESET_STANDARD,
+      },
+      () => {},
+    );
+
+    const req = capturedRequest.current as {
+      messages: { content: string }[];
+    };
+    const userContent = req.messages.map((m) => m.content).join('\n');
+    expect(userContent).toContain('[VERIFICATION_POLICY]');
+    expect(userContent).toContain('[diff-evidence]');
+    expect(userContent).not.toContain('[auditor-gate]');
+    expect(userContent).not.toContain('require: auditor');
   });
 
   it('returns INCOMPLETE without invoking the stream when modelId is missing', async () => {
