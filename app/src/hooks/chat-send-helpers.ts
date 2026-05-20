@@ -435,8 +435,14 @@ export function createTurnRunContext(
   };
 
   const recordToolFailure = (call: AnyToolCall, isError: boolean) => {
+    // Every call feeds the consecutive-repetition tracker — that's how
+    // the "model keeps re-running the same read" loop gets caught even
+    // though no individual call errored. The persistent failure count
+    // only ticks on real errors.
+    const key = getToolInvocationKey(getToolName(call), call.call);
+    tracker.recordCall(key);
     if (!isError) return;
-    tracker.recordFailure(getToolInvocationKey(getToolName(call), call.call));
+    tracker.recordFailure(key);
   };
 
   return {

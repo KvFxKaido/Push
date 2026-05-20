@@ -77,6 +77,8 @@ export async function processAssistantTurn(
   tracker: MutationFailureTracker = {
     recordFailure: () => {},
     isRepeatedFailure: () => false,
+    recordCall: () => {},
+    isRepeatedCall: () => false,
     clear: () => {},
   },
 ): Promise<AssistantTurnResult> {
@@ -87,9 +89,12 @@ export async function processAssistantTurn(
   const parallelToolCalls = detected.readOnly;
 
   // --- Circuit breaker: short-circuit if any incoming call has already
-  // failed repeatedly with identical arguments. We only record failures
-  // after execution, so legitimate repeated operations (re-reading a file,
-  // incremental edits) are not affected.
+  // failed repeatedly with identical arguments OR has been repeated
+  // consecutively with the same args. We only record failures after
+  // execution, so legitimate repeated operations (re-reading a file
+  // after edits, incremental edits) are not affected — the consecutive
+  // counter resets the moment a different tool/args lands between
+  // repetitions.
   const MAX_REPEATED_TOOL_CALLS = 3;
   const allIncomingCalls = [
     ...detected.readOnly,
@@ -97,7 +102,8 @@ export async function processAssistantTurn(
     ...(detected.mutating ? [detected.mutating] : []),
   ];
 
-  for (const call of allIncomingCalls) {
+  for (let i = 0; i < allIncomingCalls.length; i++) {
+    const call = allIncomingCalls[i];
     // Some AnyToolCall variants (scratchpad, todo) carry their payload
     // inline rather than under `args`. Pass the whole `call` so the key
     // is well-defined for every variant.
@@ -105,6 +111,23 @@ export async function processAssistantTurn(
     if (tracker.isRepeatedFailure(key, MAX_REPEATED_TOOL_CALLS)) {
       console.warn(
         `[Push] Turn ${round}: loop circuit breaker tripped for ${getToolName(call)}. Breaking loop.`,
+      );
+      return {
+        nextApiMessages: apiMessages,
+        nextRecoveryState: recoveryState,
+        loopAction: 'break',
+        loopCompletedNormally: false,
+      };
+    }
+    // Consecutive-call check only fires against the first executable
+    // call in the batch. A `[read_file, ls]` turn following an `ls`
+    // streak must not trip on `ls`: read_file lands first and resets
+    // the streak via recordCall, so by the time ls records it's
+    // count=1 again. Earlier versions pre-scanned every call and
+    // false-positived on that shape (Copilot review on PR #602).
+    if (i === 0 && tracker.isRepeatedCall(key, MAX_REPEATED_TOOL_CALLS)) {
+      console.warn(
+        `[Push] Turn ${round}: repeated-call breaker tripped for ${getToolName(call)} (same args ${MAX_REPEATED_TOOL_CALLS}+ rounds in a row). Breaking loop.`,
       );
       return {
         nextApiMessages: apiMessages,
