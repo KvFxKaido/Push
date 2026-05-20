@@ -926,16 +926,30 @@ export type WorkspacePatchRefusalReason = (typeof WORKSPACE_PATCH_REFUSAL_REASON
  */
 export type WorkspacePatchApplyState =
   | { kind: 'pending' }
-  | { kind: 'applied'; appliedAt: number }
+  | {
+      kind: 'applied';
+      appliedAt: number;
+      /** Optional free-form note. Today carries `'already-applied'` when
+       *  the replay pass detected the patch had already landed
+       *  (`git apply --check --reverse` succeeded), so we can mark the
+       *  card terminal without double-applying. */
+      note?: string;
+    }
   | { kind: 'refused'; reason: WorkspacePatchRefusalReason }
   | { kind: 'conflict'; detail: string };
 
 /**
- * Per-variant required keys. The validator uses this table to detect
- * keys from one variant bleeding into another (e.g. a `refused` card
- * that still has the `appliedAt` it inherited from when it was
- * `applied`). Adding a new variant or a new per-variant field means
- * updating this table — the CLI drift test pins both sides.
+ * Per-variant *known* keys (some required, some optional — e.g.
+ * `applied.appliedAt` is required while `applied.note` is optional).
+ * The validator uses this table only to detect keys bleeding across
+ * variants (e.g. a `refused` card carrying `appliedAt` left over from
+ * when it was `applied`). It is **not** a required-fields table —
+ * the per-variant required-field checks live inline in
+ * {@link validateWorkspacePatchCard} below.
+ *
+ * Adding a new variant or a new per-variant field — required *or*
+ * optional — means updating this table. The CLI drift test pins
+ * both sides.
  *
  * Truly unknown forward-compat keys (not listed here) are still
  * accepted, matching the module's convention of permitting unknown
@@ -943,7 +957,7 @@ export type WorkspacePatchApplyState =
  */
 export const APPLY_STATE_VARIANT_KEYS = {
   pending: [] as readonly string[],
-  applied: ['appliedAt'] as readonly string[],
+  applied: ['appliedAt', 'note'] as readonly string[],
   refused: ['reason'] as readonly string[],
   conflict: ['detail'] as readonly string[],
 } as const satisfies Record<WorkspacePatchApplyKind, readonly string[]>;
@@ -1049,6 +1063,12 @@ export function validateWorkspacePatchCard(data: unknown): ValidationIssue[] {
       issues.push({
         path: 'applyState.appliedAt',
         message: `expected non-negative integer, got ${JSON.stringify(apply.appliedAt)}`,
+      });
+    }
+    if ('note' in apply && apply.note !== undefined && typeof apply.note !== 'string') {
+      issues.push({
+        path: 'applyState.note',
+        message: `expected string or omitted, got ${JSON.stringify(apply.note)}`,
       });
     }
   } else if (kind === 'refused') {

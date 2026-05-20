@@ -158,6 +158,7 @@ export function WorkspaceSessionScreen({
     diagnoseCIFailure,
     forkBranchFromUI,
     mergeBranchInUI,
+    replayOnFreshSandbox,
   } = useChat(
     workspaceRepo?.full_name ?? null,
     {
@@ -203,6 +204,34 @@ export function WorkspaceSessionScreen({
   useEffect(() => {
     perfMark(workspaceSession.kind === 'chat' ? 'surface:chat' : 'surface:workspace');
   }, [workspaceSession.id, workspaceSession.kind]);
+
+  // Workspace-patch replay (persist-diffs PR 3). Two signals must
+  // align before replay fires:
+  //
+  //  1. `creating → ready` status transition. Snapshot restore takes
+  //     the `reconnecting → ready` path and brings the working tree
+  //     back as-is; replay would double-apply.
+  //
+  //  2. The sandbox id must also have *changed* since the last replay.
+  //     `useSandbox.refresh()` re-enters `creating` as a transient
+  //     "checking" state on the *same* container (see useSandbox.ts:532)
+  //     — a non-silent refresh on a live container would otherwise
+  //     trigger replay against the already-applied working tree and
+  //     drag the card to `applied('already-applied')` prematurely,
+  //     leaving nothing to replay when a *real* new container later
+  //     replaces this one.
+  const prevSandboxStatusRef = useRef(sandbox.status);
+  const lastReplayedSandboxIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prevStatus = prevSandboxStatusRef.current;
+    const currStatus = sandbox.status;
+    prevSandboxStatusRef.current = currStatus;
+    if (prevStatus !== 'creating' || currStatus !== 'ready') return;
+    if (!sandbox.sandboxId) return;
+    if (sandbox.sandboxId === lastReplayedSandboxIdRef.current) return;
+    lastReplayedSandboxIdRef.current = sandbox.sandboxId;
+    void replayOnFreshSandbox(sandbox.sandboxId, activeChatId, conversations);
+  }, [sandbox.status, sandbox.sandboxId, replayOnFreshSandbox, activeChatId, conversations]);
 
   useEffect(() => {
     if (pendingResumeChatId) return;

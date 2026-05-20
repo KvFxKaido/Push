@@ -45,7 +45,7 @@ import { mergeRunEventStreams } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
 import { updateJournalVerificationState } from '@/lib/run-journal';
 import { useRunEventStream } from './useRunEventStream';
-import { useWorkspacePatchCapture } from './useWorkspacePatchCapture';
+import { useWorkspacePatchCapture, useWorkspacePatchReplay } from './useWorkspacePatchCapture';
 import { useRunEngine } from './useRunEngine';
 import { useVerificationState } from './useVerificationState';
 import { usePendingSteer } from './usePendingSteer';
@@ -549,11 +549,14 @@ export function useChat(
     updateAgentStatus,
   });
 
-  // --- Workspace patch capture (persist-diffs PR 2) ---
   const { captureWorkspacePatchAtRoundEnd } = useWorkspacePatchCapture({
     sandboxIdRef,
     repoRef,
     branchInfoRef,
+    setConversations: updateConversations,
+    dirtyConversationIdsRef,
+  });
+  const { replayOnFreshSandbox } = useWorkspacePatchReplay({
     setConversations: updateConversations,
     dirtyConversationIdsRef,
   });
@@ -940,11 +943,8 @@ export function useChat(
     ciStatus,
     diagnoseCIFailure,
 
-    // Slice 2.1 UI-initiated fork
+    replayOnFreshSandbox,
     forkBranchFromUI,
-    // UI-initiated post-merge chat migration — keeps the active chat
-    // anchored to the default branch after a PR merge, instead of being
-    // bumped to a different chat by the auto-switch effect.
     mergeBranchInUI,
   };
 }

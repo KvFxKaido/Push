@@ -32,9 +32,11 @@ import { useCallback } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
 import { execInSandbox, fetchSandboxDiffWithMeta } from '@/lib/sandbox-client';
+import { replayWorkspacePatch } from '@/lib/sandbox-patch';
 import type { ChatCard, Conversation, RunEventInput } from '@/types';
 import {
   WORKSPACE_PATCH_CARD_SCHEMA_VERSION,
+  type WorkspacePatchApplyState,
   type WorkspacePatchCardData,
 } from '@push/lib/protocol-schema';
 
@@ -198,4 +200,153 @@ function buildWorkspacePatchCard(input: {
     capturedAt: Date.now(),
     applyState: { kind: 'pending' },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Replay (PR 3 of persist-diffs)
+// ---------------------------------------------------------------------------
+
+export interface UseWorkspacePatchReplayArgs {
+  setConversations: Dispatch<SetStateAction<Record<string, Conversation>>>;
+  dirtyConversationIdsRef: MutableRefObject<Set<string>>;
+}
+
+export interface UseWorkspacePatchReplayResult {
+  /** Triggered by the workspace screen when a fresh sandbox has just
+   *  become ready (status transitioned from 'creating' → 'ready', not
+   *  from 'reconnecting' → 'ready'). Finds the latest pending
+   *  workspace-patch card in the active conversation, runs replay,
+   *  and atomically mutates the card's `applyState`. No-op if there's
+   *  no pending card. Failures are logged via `console.debug` —
+   *  silent transitions for V1 per the persist-diffs PR 3 spec. */
+  replayOnFreshSandbox: (
+    sandboxId: string,
+    chatId: string | null,
+    conversations: Record<string, Conversation>,
+  ) => Promise<void>;
+}
+
+/**
+ * Find the latest `workspace-patch` card whose `applyState.kind` is
+ * `'pending'` in a conversation. Walks messages in reverse so the most
+ * recently captured patch wins, and within a message walks cards in
+ * reverse so the latest pending card on that message wins.
+ *
+ * Returns both `messageId` and `cardIndex` so the read and commit
+ * paths can target the *same* card by index — a forward `find` for
+ * `kind: 'pending'` at commit time would otherwise hit the *first*
+ * pending card on the message, not the latest, if multiple pending
+ * cards exist on one message.
+ */
+function findLatestPendingWorkspacePatch(conversation: Conversation): {
+  messageId: string;
+  cardIndex: number;
+} | null {
+  for (let i = conversation.messages.length - 1; i >= 0; i--) {
+    const msg = conversation.messages[i];
+    const cards = msg.cards;
+    if (!cards) continue;
+    for (let j = cards.length - 1; j >= 0; j--) {
+      const card = cards[j];
+      if (card.type === 'workspace-patch' && card.data.applyState.kind === 'pending') {
+        return { messageId: msg.id, cardIndex: j };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Atomically transition a specific workspace-patch card to `nextState`,
+ * targeting by `(messageId, cardIndex)`. Verifies the card is still
+ * pending at commit time so a parallel write that already mutated it
+ * (e.g. another replay won the race) is a no-op rather than a
+ * double-apply. Capture only appends new cards to the end of a
+ * message's `cards` array, so the index is stable between the lookup
+ * and the commit.
+ */
+function commitReplayTransition(
+  setConversations: Dispatch<SetStateAction<Record<string, Conversation>>>,
+  dirtyConversationIdsRef: MutableRefObject<Set<string>>,
+  chatId: string,
+  messageId: string,
+  cardIndex: number,
+  nextState: WorkspacePatchApplyState,
+): void {
+  setConversations((prev) => {
+    const conv = prev[chatId];
+    if (!conv) return prev;
+    const msgIdx = conv.messages.findIndex((m) => m.id === messageId);
+    if (msgIdx < 0) return prev;
+    const cards = conv.messages[msgIdx].cards;
+    if (!cards || cardIndex < 0 || cardIndex >= cards.length) return prev;
+    const target = cards[cardIndex];
+    if (target.type !== 'workspace-patch') return prev;
+    if (target.data.applyState.kind !== 'pending') return prev; // race guard
+    const nextCards = [...cards];
+    nextCards[cardIndex] = {
+      ...target,
+      data: { ...target.data, applyState: nextState },
+    };
+    const nextMessages = [...conv.messages];
+    nextMessages[msgIdx] = { ...conv.messages[msgIdx], cards: nextCards };
+    dirtyConversationIdsRef.current.add(chatId);
+    return { ...prev, [chatId]: { ...conv, messages: nextMessages } };
+  });
+}
+
+export function useWorkspacePatchReplay(
+  args: UseWorkspacePatchReplayArgs,
+): UseWorkspacePatchReplayResult {
+  const { setConversations, dirtyConversationIdsRef } = args;
+
+  const replayOnFreshSandbox = useCallback(
+    async (
+      sandboxId: string,
+      chatId: string | null,
+      conversations: Record<string, Conversation>,
+    ): Promise<void> => {
+      if (!chatId) return;
+      const conv = conversations[chatId];
+      if (!conv) return;
+
+      const target = findLatestPendingWorkspacePatch(conv);
+      if (!target) return; // No pending card — nothing to replay.
+
+      // Read the exact card the reverse-scan picked. The forward-find
+      // at commit time would otherwise mismatch when a message carries
+      // multiple pending cards (Copilot review on #597).
+      const targetMsg = conv.messages.find((m) => m.id === target.messageId);
+      const candidateCard = targetMsg?.cards?.[target.cardIndex];
+      if (!candidateCard || candidateCard.type !== 'workspace-patch') return;
+      if (candidateCard.data.applyState.kind !== 'pending') return;
+
+      try {
+        const nextState = await replayWorkspacePatch(sandboxId, candidateCard.data);
+        commitReplayTransition(
+          setConversations,
+          dirtyConversationIdsRef,
+          chatId,
+          target.messageId,
+          target.cardIndex,
+          nextState,
+        );
+        console.debug('[WorkspacePatchReplay] applied', {
+          chatId,
+          messageId: target.messageId,
+          cardIndex: target.cardIndex,
+          applyState: nextState,
+        });
+      } catch (err) {
+        console.debug('[WorkspacePatchReplay] replay failed:', err, {
+          chatId,
+          messageId: target.messageId,
+          cardIndex: target.cardIndex,
+        });
+      }
+    },
+    [setConversations, dirtyConversationIdsRef],
+  );
+
+  return { replayOnFreshSandbox };
 }
