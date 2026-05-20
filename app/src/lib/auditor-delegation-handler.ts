@@ -166,11 +166,48 @@ export async function handleCoderAuditor(
     );
 
     let evalDiff: string | null = null;
+    let diffFetchSucceeded = false;
     try {
       const diffResult = await getSandboxDiff(auditorInput.currentSandboxId);
       evalDiff = diffResult.diff || null;
+      // `getSandboxDiff` can resolve with HTTP 200 and a populated `error`
+      // field (git failure inside the sandbox, see `routeDiff` in
+      // worker-cf-sandbox.ts). In that case `diff` is empty but the data
+      // is unreliable — flagging this as a successful fetch would let the
+      // deterministic short-circuit fire and misclassify a sandbox/git
+      // failure as a coder no-op. Both Codex and Copilot caught this on
+      // PR #601 review.
+      diffFetchSucceeded = !diffResult.error;
     } catch {
       /* no diff available — evaluation proceeds without it */
+    }
+
+    // Short-circuit when there's verifiably nothing to audit. Cuts an LLM
+    // round-trip on the common Coder-loop case where the model claims
+    // completion without actually editing (parser drops malformed edits,
+    // model hallucinates completion, etc.) and gives the Orchestrator a
+    // crisp deterministic verdict instead of a vague "no diff evidence"
+    // phrasing the LLM has to compose. See `deterministicEmptyDiffVerdict`
+    // for the eligibility predicate.
+    const deterministicResult = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded,
+      evalDiff,
+      criteriaResults: auditorInput.allCriteriaResults,
+    });
+    if (deterministicResult) {
+      ctx.updateVerificationStateForChat(chatId, (state) =>
+        recordVerificationGateResult(state, 'auditor', 'failed', deterministicResult.summary),
+      );
+      ctx.appendRunEvent(chatId, {
+        type: 'subagent.completed',
+        executionId: auditorExecutionId,
+        agent: 'auditor',
+        summary: summarizeToolResultPreview(deterministicResult.summary),
+      });
+      return {
+        evalResult: deterministicResult,
+        auditorSummaryLine: formatAuditorSummaryLine(deterministicResult),
+      };
     }
 
     const combinedTask = auditorInput.taskList.join('\n\n');
@@ -297,4 +334,44 @@ function formatAuditorSummaryLine(evalResult: EvaluationResult): string {
   const gapLines =
     evalResult.gaps.length > 0 ? evalResult.gaps.map((g) => `  - ${g}`).join('\n') : '';
   return evalLine + (gapLines ? `\n${gapLines}` : '');
+}
+
+/**
+ * Decide whether the Auditor can short-circuit to a deterministic verdict
+ * without spinning up an LLM call. Returns the canned `EvaluationResult`
+ * when the empty-diff case is unambiguous, or `null` to let the caller
+ * fall through to the LLM evaluator.
+ *
+ * Three conditions must hold:
+ *   1. The diff fetch succeeded — a thrown sandbox call leaves us blind to
+ *      what actually happened, so we trust the LLM evaluator instead of
+ *      asserting "no changes".
+ *   2. The diff body is empty (null or whitespace-only) — the sandbox
+ *      confirms no files moved.
+ *   3. No acceptance criterion passed — if the user wired up tests or
+ *      typechecks that came back green, an empty diff is legitimate
+ *      "done with no edits required" (verification-against-already-green
+ *      state) and the LLM should make the final call.
+ *
+ * Exported for unit testing; the handler above is the only production
+ * caller.
+ */
+export function deterministicEmptyDiffVerdict(input: {
+  diffFetchSucceeded: boolean;
+  evalDiff: string | null;
+  criteriaResults: readonly { passed: boolean }[];
+}): EvaluationResult | null {
+  if (!input.diffFetchSucceeded) return null;
+  const diffIsEmpty = !input.evalDiff || input.evalDiff.trim().length === 0;
+  if (!diffIsEmpty) return null;
+  if (input.criteriaResults.some((r) => r.passed)) return null;
+  return {
+    verdict: 'incomplete',
+    summary:
+      'No workspace changes detected. The Coder produced no diff and no acceptance criteria passed.',
+    gaps: [
+      'Sandbox diff is empty after the Coder run — verify the Coder actually attempted edits. An empty diff typically means a malformed tool call was dropped or the Coder ended without invoking a write tool.',
+    ],
+    confidence: 'high',
+  };
 }

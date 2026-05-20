@@ -571,6 +571,13 @@ describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () =>
       summary: 'implemented the change',
       criteriaResults: [],
     });
+    // Non-empty diff for every call (coder-delegation verification +
+    // auditor) so the deterministic empty-diff short-circuit in
+    // handleCoderAuditor does NOT fire — this test asserts on the LLM
+    // evaluation path.
+    sandboxClient.getSandboxDiff.mockResolvedValue({
+      diff: 'diff --git a/src/x b/src/x\n+1\n',
+    });
     // The auditor branch fires when harnessSettings.evaluateAfterCoder is
     // truthy AND summaries.length > 0. The default resolveHarnessSettings
     // mock omits both fields; override to enable the branch.
@@ -993,6 +1000,12 @@ describe('useAgentDelegation.executeDelegateCall — Sequential Auditor', () => 
       summary: 'done',
       criteriaResults: [],
     });
+    // Non-empty diff for every call (coder-delegation verification +
+    // auditor) so the deterministic short-circuit doesn't fire — this
+    // test asserts on the LLM evaluator's throw-handling.
+    sandboxClient.getSandboxDiff.mockResolvedValue({
+      diff: 'diff --git a/src/x b/src/x\n+1\n',
+    });
     modelCapabilities.resolveHarnessSettings.mockReturnValueOnce({
       evaluateAfterCoder: true,
       maxCoderRounds: 30,
@@ -1126,6 +1139,12 @@ describe('useAgentDelegation.executeDelegateCall — Sequential Auditor', () => 
 
     // --- Single-task scenario ---
     coderAgent.runCoderAgent.mockImplementationOnce((...args: unknown[]) => populateState(args));
+    // Non-empty diff for both delegations so the deterministic empty-diff
+    // short-circuit doesn't pre-empt the LLM auditor call this test
+    // asserts on.
+    sandboxClient.getSandboxDiff.mockResolvedValue({
+      diff: 'diff --git a/src/x b/src/x\n+1\n',
+    });
     modelCapabilities.resolveHarnessSettings.mockReturnValueOnce({
       evaluateAfterCoder: true,
       maxCoderRounds: 30,
