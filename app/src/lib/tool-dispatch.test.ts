@@ -1162,6 +1162,44 @@ describe('detectAllToolCalls — XML-wrapper recovery', () => {
     expect(result.readOnly).toHaveLength(1);
     expect(result.readOnly[0].call.tool).toBe('sandbox_read_file');
   });
+
+  it('recognizes Anthropic `<function_calls>` wrappers and dispatches the invoke as a real read', () => {
+    // End-to-end: the Explorer in the original bug log emitted a
+    // `<function_calls>` wrapper that the regex-based detector did not
+    // recognize, so the round terminated with zero tool execution. With
+    // Shape C recovery the inner `<invoke name="read">` resolves to
+    // `sandbox_read_file` and runs.
+    const text = [
+      '<function_calls>',
+      '<invoke name="read">',
+      '<parameter name="path">/workspace/README.md</parameter>',
+      '</invoke>',
+      '</function_calls>',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    expect(result.readOnly).toHaveLength(1);
+    expect(result.readOnly[0].call.tool).toBe('sandbox_read_file');
+    if (result.readOnly[0].source === 'sandbox') {
+      expect(result.readOnly[0].call).toMatchObject({
+        tool: 'sandbox_read_file',
+        args: { path: '/workspace/README.md' },
+      });
+    }
+  });
+
+  it('emits one call per `<invoke>` child when a `<function_calls>` block contains multiple invokes', () => {
+    const text = [
+      '<function_calls>',
+      '<invoke name="read"><parameter name="path">/a</parameter></invoke>',
+      '<invoke name="diff"></invoke>',
+      '</function_calls>',
+    ].join('\n');
+    const result = detectAllToolCalls(text);
+    // read is a parallel-read; diff is also a read-only tool, so both
+    // land in readOnly and execute together.
+    expect(result.readOnly).toHaveLength(2);
+    expect(result.readOnly.map((c) => c.call.tool)).toEqual(['sandbox_read_file', 'sandbox_diff']);
+  });
 });
 
 // ---------------------------------------------------------------------------

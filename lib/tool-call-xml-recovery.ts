@@ -45,6 +45,28 @@ export interface RecoveredXmlCall {
 // resolve to their own tag pair instead of one giant match.
 const TOOL_CALL_TAG_REGEX = /<tool_call\b[^>]*>([\s\S]*?)<\/tool_call\s*>/gi;
 
+// Anthropic's documented tool-use wrapper. Models trained on the public
+// Claude API protocol (and copies of it) emit
+//   <function_calls>
+//     <invoke name="read">
+//       <parameter name="path">/foo</parameter>
+//     </invoke>
+//   </function_calls>
+// for each tool call. Distinct from `<tool_call>` (singular, used by
+// Hermes / Qwen / Nous finetunes) — captured separately so the per-shape
+// inner parser stays focused. A single `<function_calls>` can contain
+// multiple `<invoke>` children: each becomes its own recovered call.
+const FUNCTION_CALLS_TAG_REGEX = /<function_calls\b[^>]*>([\s\S]*?)<\/function_calls\s*>/gi;
+
+// Inner-block patterns for the Anthropic shape. `name` may use either
+// quote style or no quotes; everything inside the attribute set up to
+// the closing `>` is ignored so models that add stray attributes
+// (`<invoke name="x" id="0">`) still match.
+const INVOKE_TAG_REGEX =
+  /<invoke\b[^>]*?\bname\s*=\s*["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/invoke\s*>/gi;
+const PARAMETER_TAG_REGEX =
+  /<parameter\b[^>]*?\bname\s*=\s*["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/parameter\s*>/gi;
+
 // `<arg_key>K</arg_key>` followed by `<arg_value>V</arg_value>`. Both
 // child tags are required and must appear in order — a stray key
 // without a matching value (or vice versa) is dropped, mirroring the
@@ -104,16 +126,41 @@ function stripSiblingToolCallShapes(text: string): string {
  * `git_status` that take no arguments.
  */
 export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
-  const matches: Array<{ blockStart: number; blockEnd: number; inner: string }> = [];
-  const regex = new RegExp(TOOL_CALL_TAG_REGEX.source, TOOL_CALL_TAG_REGEX.flags);
+  // Collect blocks from both wrapper shapes — `<tool_call>` (Hermes
+  // family) and `<function_calls>` (Anthropic format) — into one
+  // sorted array so the eligibility gate considers all of them as
+  // siblings. A model that mixes shapes in one message still passes
+  // the gate; gaps between blocks need to be whitespace regardless of
+  // which wrapper sits on either side.
+  const matches: Array<{
+    kind: 'tool_call' | 'function_calls';
+    blockStart: number;
+    blockEnd: number;
+    inner: string;
+  }> = [];
+  const toolCallRegex = new RegExp(TOOL_CALL_TAG_REGEX.source, TOOL_CALL_TAG_REGEX.flags);
   let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
+  while ((match = toolCallRegex.exec(text)) !== null) {
     matches.push({
+      kind: 'tool_call',
       blockStart: match.index,
       blockEnd: match.index + match[0].length,
       inner: match[1],
     });
   }
+  const functionCallsRegex = new RegExp(
+    FUNCTION_CALLS_TAG_REGEX.source,
+    FUNCTION_CALLS_TAG_REGEX.flags,
+  );
+  while ((match = functionCallsRegex.exec(text)) !== null) {
+    matches.push({
+      kind: 'function_calls',
+      blockStart: match.index,
+      blockEnd: match.index + match[0].length,
+      inner: match[1],
+    });
+  }
+  matches.sort((a, b) => a.blockStart - b.blockStart);
   if (matches.length === 0) return [];
 
   // Whole-message eligibility gate — see `XML_GAP_REGEX`. Reject the
@@ -135,9 +182,22 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
 
   const out: RecoveredXmlCall[] = [];
   for (const m of matches) {
-    const parsed = parseToolCallInner(m.inner);
-    if (!parsed) continue;
-    out.push({ ...parsed, offset: m.blockStart });
+    if (m.kind === 'tool_call') {
+      const parsed = parseToolCallInner(m.inner);
+      if (!parsed) continue;
+      out.push({ ...parsed, offset: m.blockStart });
+      continue;
+    }
+    // `<function_calls>` wrapper — expand each `<invoke>` child into its
+    // own recovered call. The wrapper itself only contributes the offset
+    // anchor; the inner content is the structured payload.
+    for (const invoke of parseFunctionCallsInner(m.inner)) {
+      out.push({
+        tool: invoke.tool,
+        args: invoke.args,
+        offset: m.blockStart + invoke.innerOffset,
+      });
+    }
   }
   return out;
 }
@@ -224,4 +284,40 @@ function coerceArgValue(raw: string): unknown {
   } catch {
     return raw;
   }
+}
+
+/**
+ * Expand the inner content of a `<function_calls>` wrapper into one
+ * recovered call per `<invoke>` child. Returns `innerOffset` so the
+ * caller can re-anchor to the outer text.
+ *
+ * The hybrid case (a `<function_calls>` wrapper containing bare JSON
+ * like `{"tool": "...", "args": {...}}` instead of `<invoke>` children)
+ * is intentionally NOT handled here — the dispatcher's bare-JSON scan
+ * already finds those candidates via `extractBareToolJsonObjects` and
+ * the dropped-candidates surface (PR #599) reports them as parse
+ * errors when no source claims the inner `tool` value. Letting this
+ * helper also emit them would either duplicate the call or pre-empt
+ * the diagnosis.
+ */
+function parseFunctionCallsInner(
+  inner: string,
+): Array<{ tool: string; args: Record<string, unknown>; innerOffset: number }> {
+  const out: Array<{ tool: string; args: Record<string, unknown>; innerOffset: number }> = [];
+  const invokeRegex = new RegExp(INVOKE_TAG_REGEX.source, INVOKE_TAG_REGEX.flags);
+  let invoke: RegExpExecArray | null;
+  while ((invoke = invokeRegex.exec(inner)) !== null) {
+    const toolName = invoke[1].trim();
+    if (!toolName || !TOOL_NAME_REGEX.test(toolName)) continue;
+    const args: Record<string, unknown> = {};
+    const paramRegex = new RegExp(PARAMETER_TAG_REGEX.source, PARAMETER_TAG_REGEX.flags);
+    let param: RegExpExecArray | null;
+    while ((param = paramRegex.exec(invoke[2])) !== null) {
+      const key = param[1].trim();
+      if (!key || !ARG_KEY_REGEX.test(key)) continue;
+      args[key] = coerceArgValue(param[2].trim());
+    }
+    out.push({ tool: toolName, args, innerOffset: invoke.index });
+  }
+  return out;
 }
