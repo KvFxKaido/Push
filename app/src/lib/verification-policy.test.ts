@@ -160,6 +160,37 @@ describe('formatVerificationPolicyBlock', () => {
     expect(block).toContain('[diff-evidence]');
     expect(block).toContain('[auditor-gate]');
   });
+
+  it('excludeGate drops matching gate rules but keeps other kinds', () => {
+    const block = formatVerificationPolicyBlock(VERIFICATION_PRESET_STANDARD, {
+      excludeGate: 'auditor',
+    })!;
+    expect(block).not.toContain('[auditor-gate]');
+    expect(block).not.toContain('require: auditor');
+    expect(block).toContain('[diff-evidence]');
+  });
+
+  it('excludeGate leaves non-matching gate rules in place', () => {
+    const policy: VerificationPolicy = {
+      name: 'Multi-gate',
+      rules: [
+        { id: 'auditor-gate', label: 'A', scope: 'always', kind: 'gate', gate: 'auditor' },
+        { id: 'reviewer-gate', label: 'R', scope: 'always', kind: 'gate', gate: 'reviewer' },
+      ],
+    };
+    const block = formatVerificationPolicyBlock(policy, { excludeGate: 'auditor' })!;
+    expect(block).not.toContain('[auditor-gate]');
+    expect(block).toContain('[reviewer-gate]');
+    expect(block).toContain('require: reviewer');
+  });
+
+  it('excludeGate returns null when filtering removes every rule', () => {
+    const policy: VerificationPolicy = {
+      name: 'Auditor only',
+      rules: [{ id: 'auditor-gate', label: 'A', scope: 'always', kind: 'gate', gate: 'auditor' }],
+    };
+    expect(formatVerificationPolicyBlock(policy, { excludeGate: 'auditor' })).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

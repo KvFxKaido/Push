@@ -544,7 +544,12 @@ export async function runAuditorEvaluation(
 
   // Session-level verification policy — gives the auditor awareness of
   // what verification rules the session expects so it can flag gaps.
-  const policyBlock = formatVerificationPolicyBlock(options?.verificationPolicy);
+  // The `auditor-gate` rule is dropped because this IS the auditor run; the
+  // LLM otherwise reads its own gate as an unmet precondition and returns
+  // an incomplete verdict.
+  const policyBlock = formatVerificationPolicyBlock(options?.verificationPolicy, {
+    excludeGate: 'auditor',
+  });
   if (policyBlock) {
     sections.push(policyBlock);
   }
