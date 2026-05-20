@@ -1809,15 +1809,38 @@ const SANDBOX_DIFF_CAPTURE_COMMAND = [
 ].join('\n');
 
 /**
+ * Capture metadata returned from {@link fetchSandboxDiffWithMeta}.
+ * `truncated` lets callers reject patches that can't be safely replayed
+ * (see `useCommitPush.ts:unreplayableDiffReason`) without re-checking
+ * for the suffix sentinel.
+ */
+export interface SandboxDiffCapture {
+  diff: string;
+  truncated: boolean;
+}
+
+/**
+ * Fetch the uncommitted diff plus the truncation flag in one round trip.
+ * Same capture command as {@link fetchSandboxDiff}; the wrapper just
+ * surfaces whether the 30KB cap was hit so callers don't have to
+ * inspect the suffix sentinel themselves.
+ */
+export async function fetchSandboxDiffWithMeta(sandboxId: string): Promise<SandboxDiffCapture> {
+  const result = await execInSandbox(sandboxId, SANDBOX_DIFF_CAPTURE_COMMAND);
+  const raw = result.stdout || '';
+  if (raw.length <= DIFF_MAX_BYTES) return { diff: raw, truncated: false };
+  return {
+    diff:
+      raw.slice(0, Math.max(0, DIFF_MAX_BYTES - DIFF_TRUNCATION_SUFFIX.length)) +
+      DIFF_TRUNCATION_SUFFIX,
+    truncated: true,
+  };
+}
+
+/**
  * Fetch the full uncommitted diff from the sandbox for cold-resume checkpointing.
  * Truncated to 30KB if the diff is large.
  */
 export async function fetchSandboxDiff(sandboxId: string): Promise<string> {
-  const result = await execInSandbox(sandboxId, SANDBOX_DIFF_CAPTURE_COMMAND);
-  const diff = result.stdout || '';
-  if (diff.length <= DIFF_MAX_BYTES) return diff;
-  return (
-    diff.slice(0, Math.max(0, DIFF_MAX_BYTES - DIFF_TRUNCATION_SUFFIX.length)) +
-    DIFF_TRUNCATION_SUFFIX
-  );
+  return (await fetchSandboxDiffWithMeta(sandboxId)).diff;
 }

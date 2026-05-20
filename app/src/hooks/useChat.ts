@@ -1,4 +1,3 @@
-// Verified
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import type {
   AgentStatus,
@@ -46,6 +45,7 @@ import { mergeRunEventStreams } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
 import { updateJournalVerificationState } from '@/lib/run-journal';
 import { useRunEventStream } from './useRunEventStream';
+import { useWorkspacePatchCapture } from './useWorkspacePatchCapture';
 import { useRunEngine } from './useRunEngine';
 import { useVerificationState } from './useVerificationState';
 import { usePendingSteer } from './usePendingSteer';
@@ -60,11 +60,7 @@ import { useChatAutoSwitch } from './useChatAutoSwitch';
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, UsageHandler, ChatRuntimeHandlers } from './chat-send';
 
-// Re-export checkpoint utilities for consumers who import them from useChat
-export {
-  detectInterruptedRun,
-  getResumeEvents,
-} from '@/lib/checkpoint-manager';
+export { detectInterruptedRun, getResumeEvents } from '@/lib/checkpoint-manager';
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -553,6 +549,14 @@ export function useChat(
     updateAgentStatus,
   });
 
+  // --- Workspace patch capture (persist-diffs PR 2) ---
+  const { captureWorkspacePatchAtRoundEnd } = useWorkspacePatchCapture({
+    sandboxIdRef,
+    repoRef,
+    branchInfoRef,
+    setConversations: updateConversations,
+  });
+
   // --- Agent delegation ---
   const { executeDelegateCall } = useAgentDelegation({
     setConversations: updateConversations,
@@ -691,12 +695,9 @@ export function useChat(
         updateVerificationState: updateVerificationStateForChat,
         executeDelegateCall,
         emitRunEngineEvent,
-        // Slice 2: chat-send sets this when a 'forked' branchSwitch arrives,
-        // suppressing useChat's auto-switch effect during migration.
+        captureWorkspacePatchAtRoundEnd,
         skipAutoCreateRef,
         activeChatIdRef,
-        // applyBranchSwitchPayload reads this to verify the target conversation
-        // exists BEFORE setting guards (Codex P1 review feedback).
         conversationsRef,
       };
 
@@ -771,6 +772,7 @@ export function useChat(
       updateVerificationStateForChat,
       skipAutoCreateRef,
       backgroundCoderJob,
+      captureWorkspacePatchAtRoundEnd,
     ],
   );
 

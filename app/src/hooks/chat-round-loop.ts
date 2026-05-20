@@ -37,7 +37,7 @@ import {
 } from '@push/lib/agent-loop-utils';
 import { createId } from '@push/lib/id-utils';
 import { type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
-import type { ChatMessage, ReasoningBlock } from '@/types';
+import type { ChatMessage, ReasoningBlock, RunEventInput } from '@/types';
 import { processAssistantTurn, streamAssistantRound, type SendLoopContext } from './chat-send';
 import { buildRuntimeUserMessage } from './chat-prepare-send';
 import type { PendingSteersByChat } from './usePendingSteer';
@@ -282,11 +282,11 @@ function markJournalCheckpointIfPresent(
 }
 
 export async function runRoundLoop(
-  loopCtx: SendLoopContext,
+  outerLoopCtx: SendLoopContext,
   initial: RunRoundLoopInitial,
   deps: RunRoundLoopDeps,
 ): Promise<RunRoundLoopResult> {
-  const { chatId, abortRef } = loopCtx;
+  const { chatId, abortRef } = outerLoopCtx;
   const { runJournalEntryRef, persistRunJournal, dequeuePendingSteer, pendingSteersByChatRef } =
     deps;
 
@@ -295,7 +295,33 @@ export async function runRoundLoop(
   const tracker: MutationFailureTracker = createMutationFailureTracker();
   let loopCompletedNormally = false;
 
+  // Track events fired during the current round so the workspace-patch
+  // capture seam can read them (looking for `subagent.completed` with
+  // `agent: 'coder'` today; future tools can switch to a precise
+  // mutation flag). Resets at the top of each iteration.
+  let roundEvents: RunEventInput[] = [];
+  const loopCtx: SendLoopContext = {
+    ...outerLoopCtx,
+    appendRunEvent: (cid, event) => {
+      roundEvents.push(event);
+      outerLoopCtx.appendRunEvent(cid, event);
+    },
+  };
+
+  const fireWorkspacePatchCapture = (
+    round: number,
+    outcome: 'continued' | 'completed' | 'aborted' | 'error' | 'steered',
+  ): void => {
+    const capture = outerLoopCtx.captureWorkspacePatchAtRoundEnd;
+    if (!capture) return;
+    void capture({ chatId, round, outcome, roundEvents: [...roundEvents] }).catch(() => {
+      // Hook owns its own error logging (console.debug). Swallow here
+      // so a throwing capture never breaks the round loop.
+    });
+  };
+
   for (let round = 0; ; round++) {
+    roundEvents = [];
     if (abortRef.current) break;
     fileLedger.advanceRound();
 
@@ -318,6 +344,7 @@ export async function runRoundLoop(
     if (abortRef.current) {
       markPartialAssistantInvisibleOnAbort(loopCtx);
       loopCtx.appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'aborted' });
+      fireWorkspacePatchCapture(round, 'aborted');
       break;
     }
 
@@ -328,6 +355,7 @@ export async function runRoundLoop(
         reason: error.message,
       });
       loopCtx.appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: 'error' });
+      fireWorkspacePatchCapture(round, 'error');
       applyStreamErrorToConversation(loopCtx, error.message);
       break;
     }
@@ -349,6 +377,7 @@ export async function runRoundLoop(
     );
     if (beforeToolsDrain.drained) {
       apiMessages = beforeToolsDrain.nextApiMessages;
+      fireWorkspacePatchCapture(round, 'steered');
       continue;
     }
 
@@ -377,6 +406,7 @@ export async function runRoundLoop(
     );
     if (afterTurnDrain.drained) {
       apiMessages = afterTurnDrain.nextApiMessages;
+      fireWorkspacePatchCapture(round, 'steered');
       continue;
     }
 
@@ -388,6 +418,7 @@ export async function runRoundLoop(
           : 'aborted';
     if (turnResult.loopCompletedNormally) loopCompletedNormally = true;
     loopCtx.appendRunEvent(chatId, { type: 'assistant.turn_end', round, outcome: turnOutcome });
+    fireWorkspacePatchCapture(round, turnOutcome);
     if (turnResult.loopAction === 'break') break;
     loopCtx.emitRunEngineEvent({ type: 'TURN_CONTINUED', timestamp: Date.now() });
   }
