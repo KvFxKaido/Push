@@ -69,9 +69,11 @@ describe('createMutationFailureTracker — consecutive-call detection', () => {
 
   it('reproduces the `ls /workspace` ×5 loop from the 2026-05-20 failure log', () => {
     // The original session had the Orchestrator call ls /workspace
-    // identically across 5 consecutive rounds. With limit=3 the breaker
-    // should trip on the 3rd call's pre-execution check, before the 4th
-    // round ever starts executing.
+    // identically across 5 consecutive rounds. With limit=3 the
+    // pre-execution check trips starting on round 4 — three calls
+    // have already been recorded, so the 4th round's check sees
+    // count >= limit and aborts before executing. Rounds 4 and 5
+    // each see the breaker tripped; rounds 1-3 do not.
     const t = createMutationFailureTracker();
     const key = getToolInvocationKey('sandbox_list_dir', { path: '/workspace' });
     // The breaker check fires BEFORE the recording step on each round.
@@ -93,5 +95,31 @@ describe('createMutationFailureTracker — consecutive-call detection', () => {
     t.recordFailure('k');
     t.recordFailure('k');
     expect(t.isRepeatedCall('k', 1)).toBe(false);
+  });
+
+  it('chat-send only checks the first batch call — a preceding different-key call in the same batch resets the streak by execution time', () => {
+    // Regression for the Copilot P1 on PR #602: an earlier draft of
+    // the breaker pre-scanned every incoming call, which false-
+    // positived on `[read_file, ls]` arriving after an `ls` streak —
+    // `read_file` would land first at execution time, reset the
+    // counter, and `ls` should NOT trip. The chat-send check now
+    // applies only to index 0 of the batch. This test pins the
+    // tracker behavior the chat-send guard depends on: the prior
+    // streak is correctly detected against the first call, and
+    // any subsequent same-key calls in the same batch are
+    // intentionally not re-checked here.
+    const t = createMutationFailureTracker();
+    // Prior rounds: three `ls`.
+    t.recordCall('ls:/workspace');
+    t.recordCall('ls:/workspace');
+    t.recordCall('ls:/workspace');
+    // Next batch arrives: [read_file, ls]. chat-send only checks
+    // index 0 (read_file) against isRepeatedCall.
+    expect(t.isRepeatedCall('read:/foo', 3)).toBe(false);
+    // ls at index 1 would otherwise still trip from the prior streak,
+    // but chat-send skips the check for non-first calls so this is
+    // not asked. Documented here so a future refactor that walks the
+    // whole batch knows the contract:
+    expect(t.isRepeatedCall('ls:/workspace', 3)).toBe(true);
   });
 });

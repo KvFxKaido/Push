@@ -102,7 +102,8 @@ export async function processAssistantTurn(
     ...(detected.mutating ? [detected.mutating] : []),
   ];
 
-  for (const call of allIncomingCalls) {
+  for (let i = 0; i < allIncomingCalls.length; i++) {
+    const call = allIncomingCalls[i];
     // Some AnyToolCall variants (scratchpad, todo) carry their payload
     // inline rather than under `args`. Pass the whole `call` so the key
     // is well-defined for every variant.
@@ -118,11 +119,13 @@ export async function processAssistantTurn(
         loopCompletedNormally: false,
       };
     }
-    if (tracker.isRepeatedCall(key, MAX_REPEATED_TOOL_CALLS)) {
-      // Caught the "model keeps re-running the same read with no
-      // progress" case (originally seen as `ls /workspace` ×5 in the
-      // 2026-05-20 failure log). The failure-only breaker missed it
-      // because none of the individual reads errored. PR #602.
+    // Consecutive-call check only fires against the first executable
+    // call in the batch. A `[read_file, ls]` turn following an `ls`
+    // streak must not trip on `ls`: read_file lands first and resets
+    // the streak via recordCall, so by the time ls records it's
+    // count=1 again. Earlier versions pre-scanned every call and
+    // false-positived on that shape (Copilot review on PR #602).
+    if (i === 0 && tracker.isRepeatedCall(key, MAX_REPEATED_TOOL_CALLS)) {
       console.warn(
         `[Push] Turn ${round}: repeated-call breaker tripped for ${getToolName(call)} (same args ${MAX_REPEATED_TOOL_CALLS}+ rounds in a row). Breaking loop.`,
       );
