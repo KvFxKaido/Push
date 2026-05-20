@@ -35,8 +35,12 @@ export interface ComposerDraftCommit {
    * the newly minted chat to this provider via its own per-chat draft
    * store; the catalog-wide default is left alone. */
   provider: PreferredProvider | null;
-  /** Model id paired with `provider`. Null means "default model for
-   * this provider" — resolved when the chat sends its first message. */
+  /** Model id paired with `provider`. Either the explicit pick from
+   * the model sheet, or — when the user only picked a provider — a
+   * snapshot of the catalog's current default model for that
+   * provider, taken at confirm time. The workspace anchors the new
+   * chat to exactly this model. Null only when `provider` is also
+   * null. */
   model: string | null;
 }
 
