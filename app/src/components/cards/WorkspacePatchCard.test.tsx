@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { WorkspacePatchCardData } from '@/types';
+import { DIFF_MAX_BYTES } from '@/lib/sandbox-client';
 import { WorkspacePatchCard } from './WorkspacePatchCard';
 
 const SAMPLE_DIFF = [
@@ -90,14 +91,17 @@ describe('WorkspacePatchCard', () => {
       expect(html.toLowerCase()).not.toContain('failed');
     });
 
-    it('renders calm truncated copy', () => {
+    it('renders calm truncated copy derived from the cap constant (no drift)', () => {
       const html = renderToStaticMarkup(
         <WorkspacePatchCard
           data={baseData({ applyState: { kind: 'refused', reason: 'truncated' } })}
         />,
       );
       expect(html).toContain('Replay refused');
-      expect(html).toContain('clipped at 30');
+      // The size is interpolated from DIFF_MAX_BYTES so a future bump
+      // of the capture cap doesn't strand stale copy here.
+      const expectedKB = `${Math.round(DIFF_MAX_BYTES / 1024)} KB`;
+      expect(html).toContain(`clipped at ${expectedKB}`);
     });
 
     it('renders calm binary-placeholder copy', () => {
@@ -109,6 +113,23 @@ describe('WorkspacePatchCard', () => {
       expect(html).toContain('Replay refused');
       expect(html).toContain('binary changes');
     });
+  });
+
+  it('falls back gracefully for an unknown future applyState kind', () => {
+    // A forward-compat card persisted by a newer client could reach
+    // the renderer with a `kind` we don't know yet. The exhaustiveness
+    // guard must keep the row renderable instead of throwing on
+    // `undefined.title`.
+    const html = renderToStaticMarkup(
+      <WorkspacePatchCard
+        data={baseData({
+          // Bypass the union type to simulate a future variant.
+          applyState: { kind: 'frobnicated' } as unknown as WorkspacePatchCardData['applyState'],
+        })}
+      />,
+    );
+    expect(html).toContain('Unknown replay state');
+    expect(html).toContain('newer version of Push');
   });
 
   describe('conflict state', () => {

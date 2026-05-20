@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { WorkspacePatchCardData, WorkspacePatchApplyState } from '@/types';
 import type { DiffPreviewCardData } from '@/types';
 import { parseDiffStats } from '@/lib/diff-utils';
+import { DIFF_MAX_BYTES } from '@/lib/sandbox-client';
 import { CARD_PANEL_CLASS } from '@/lib/utils';
 import { DiffPreviewCard } from './DiffPreviewCard';
 
@@ -97,18 +98,44 @@ function statusContent(applyState: WorkspacePatchApplyState): StatusContent {
         detail: 'Files in the new sandbox carry merge markers — resolve before continuing.',
         conflictDetail: applyState.detail,
       };
+    default: {
+      // Exhaustiveness check + runtime fallback. The validator in
+      // protocol-schema.ts rejects unknown `kind` values at load
+      // time, but a forward-compat card persisted by a newer client
+      // could reach us if validation is bypassed — render the safe
+      // thing instead of returning `undefined` and crashing the
+      // status row.
+      const _exhaustive: never = applyState;
+      void _exhaustive;
+      return {
+        tone: 'amber',
+        title: 'Unknown replay state',
+        detail: "This card was written by a newer version of Push and can't be rendered here.",
+      };
+    }
   }
 }
 
 function refusalCopy(reason: 'truncated' | 'binary-placeholder' | 'base-mismatch'): string {
   switch (reason) {
     case 'truncated':
-      return "The captured diff was clipped at 30 KB, so it isn't safe to replay verbatim.";
+      return `The captured diff was clipped at ${formatCapKB(DIFF_MAX_BYTES)}, so it isn't safe to replay verbatim.`;
     case 'binary-placeholder':
       return "The captured diff includes binary changes that can't be replayed.";
     case 'base-mismatch':
       return 'Replay refused because the sandbox HEAD no longer matches the captured base.';
+    default: {
+      const _exhaustive: never = reason;
+      void _exhaustive;
+      return 'Replay refused.';
+    }
   }
+}
+
+/** Format the diff cap as `"N KB"`. Sourced from {@link DIFF_MAX_BYTES}
+ *  so the user-facing copy can't drift from the actual capture limit. */
+function formatCapKB(bytes: number): string {
+  return `${Math.round(bytes / 1024)} KB`;
 }
 
 function WorkspacePatchStatusRow({ applyState }: { applyState: WorkspacePatchApplyState }) {
@@ -134,7 +161,7 @@ function ConflictDetailBlock({ detail }: { detail: string }) {
 
   return (
     <div className="mt-1.5 flex flex-col gap-1">
-      <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-push-edge-subtle bg-push-bg-elevated/40 px-2.5 py-1.5 font-mono text-push-xs text-push-fg-secondary">
+      <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-push-edge-subtle bg-push-bg-elevated/40 px-2.5 py-1.5 font-mono text-push-xs text-push-fg-secondary">
         {body}
       </pre>
       {isTruncated && (

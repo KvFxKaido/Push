@@ -1798,7 +1798,11 @@ export async function restoreFromSnapshot(
   };
 }
 
-const DIFF_MAX_BYTES = 30 * 1024; // 30KB cap — keeps checkpoint size bounded
+/** Capture cap for `fetchSandboxDiffWithMeta`. Exported so UI copy
+ *  ("clipped at N KB") and any future drift checks read the same
+ *  number — the WorkspacePatch refusal renderer imports this rather
+ *  than hard-coding "30 KB" in user-facing text. */
+export const DIFF_MAX_BYTES = 30 * 1024;
 const DIFF_TRUNCATION_SUFFIX = '\n...(diff truncated at 30KB)';
 const SANDBOX_DIFF_CAPTURE_COMMAND = [
   'cd /workspace || exit 1',
