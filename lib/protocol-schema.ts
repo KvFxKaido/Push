@@ -939,11 +939,17 @@ export type WorkspacePatchApplyState =
   | { kind: 'conflict'; detail: string };
 
 /**
- * Per-variant required keys. The validator uses this table to detect
- * keys from one variant bleeding into another (e.g. a `refused` card
- * that still has the `appliedAt` it inherited from when it was
- * `applied`). Adding a new variant or a new per-variant field means
- * updating this table — the CLI drift test pins both sides.
+ * Per-variant *known* keys (some required, some optional — e.g.
+ * `applied.appliedAt` is required while `applied.note` is optional).
+ * The validator uses this table only to detect keys bleeding across
+ * variants (e.g. a `refused` card carrying `appliedAt` left over from
+ * when it was `applied`). It is **not** a required-fields table —
+ * the per-variant required-field checks live inline in
+ * {@link validateWorkspacePatchCard} below.
+ *
+ * Adding a new variant or a new per-variant field — required *or*
+ * optional — means updating this table. The CLI drift test pins
+ * both sides.
  *
  * Truly unknown forward-compat keys (not listed here) are still
  * accepted, matching the module's convention of permitting unknown

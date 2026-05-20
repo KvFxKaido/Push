@@ -165,7 +165,7 @@ describe('workspace-patch card — apply-state variants', () => {
 });
 
 describe('workspace-patch card — applyState variant-key isolation', () => {
-  it('pins the per-variant required-key table', () => {
+  it('pins the per-variant known-key table (required + optional)', () => {
     assert.deepEqual(APPLY_STATE_VARIANT_KEYS, {
       pending: [],
       applied: ['appliedAt', 'note'],
