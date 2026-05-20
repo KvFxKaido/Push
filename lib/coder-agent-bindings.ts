@@ -253,7 +253,20 @@ export function buildCoderDetectors<
       fileMutations: sandboxFileMutations,
       mutating: sandboxMutating,
       extraMutations: raw.extraMutations,
-      droppedCandidates: raw.droppedCandidates,
+      // Filter Coder-internal tools out of droppedCandidates so the
+      // parse-error guard in lib/coder-agent.ts doesn't false-positive
+      // on them. `coder_update_state` and `coder_checkpoint` are
+      // recognized tool names handled outside the source-detector
+      // pipeline (detectCoderStateUpdate / detectCheckpointCall in the
+      // Coder loop), so the dispatcher's `extractBareToolJsonObjects`
+      // sees them as `tool: "<name>"` but the source detectors return
+      // null and they land in droppedCandidates with
+      // resolvedToolName=null. Without this filter, a model that emits
+      // a state-update alongside its real edit gets the whole batch
+      // bailed and wastes a round. PR #605.
+      droppedCandidates: raw.droppedCandidates.filter(
+        (c) => !isCoderInternalToolName(c.rawToolName),
+      ),
     };
   };
 
@@ -563,4 +576,27 @@ export function buildCoderToolExec<
       policyPost,
     };
   };
+}
+
+/**
+ * The set of "Coder-internal" tool names handled by the Coder loop's
+ * own pre-parse detectors (`detectCoderStateUpdate`,
+ * `detectCheckpointCall`) rather than by the source-detector pipeline.
+ * The dispatcher's `extractBareToolJsonObjects` still finds these in
+ * the model output and the source detectors correctly return null —
+ * but if we leave them in `droppedCandidates`, the Coder's parse-
+ * error guard bails on the whole batch. They are valid tool calls,
+ * just not routed through the dispatcher, so we filter them here at
+ * the bindings layer. The orchestrator's universe stays strict
+ * because nothing in this layer affects the orchestrator's
+ * `detectAllToolCalls` call site. Exported so tests can pin the
+ * exact list. See PR #605.
+ */
+export const CODER_INTERNAL_TOOL_NAMES = new Set<string>([
+  'coder_update_state',
+  'coder_checkpoint',
+]);
+
+export function isCoderInternalToolName(name: string): boolean {
+  return CODER_INTERNAL_TOOL_NAMES.has(name);
 }
