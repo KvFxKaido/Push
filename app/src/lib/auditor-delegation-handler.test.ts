@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { deterministicEmptyDiffVerdict } from './auditor-delegation-handler';
+import {
+  deterministicEmptyDiffVerdict,
+  findNewUntrackedFiles,
+  hasUntrackedFiles,
+  parseUntrackedFileSet,
+} from './auditor-delegation-handler';
 
 // Unit test for the pure short-circuit predicate that decides whether
 // the Auditor can return a canned "no workspace changes" verdict without
@@ -166,5 +171,130 @@ describe('deterministicEmptyDiffVerdict', () => {
       commitsMade: true,
     });
     expect(result).toBeNull();
+  });
+
+  it('falls through to LLM when untracked files were created — `git diff HEAD` misses them', () => {
+    // Reproduces the 2026-05-20 retry-session bug: Coder ran
+    // sandbox_write_file on a brand new path. The file exists on
+    // disk but `git diff HEAD` is empty (untracked, never staged,
+    // never committed) and HEAD didn't move. The deterministic
+    // short-circuit previously fired "no workspace changes" on a
+    // turn that did real work. With the porcelain-status signal
+    // wired in, the predicate now defers to the LLM Auditor.
+    const result = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded: true,
+      evalDiff: '',
+      criteriaResults: [],
+      commitsMade: false,
+      untrackedFilesPresent: true,
+    });
+    expect(result).toBeNull();
+  });
+
+  it('still short-circuits when nothing happened — diff empty, no commits, no untracked, no criteria', () => {
+    // The true no-op case: Coder claimed done but the workspace is
+    // untouched on every channel. Worth keeping a crisp deterministic
+    // verdict here instead of paying for an LLM call that reaches
+    // the same conclusion.
+    const result = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded: true,
+      evalDiff: '',
+      criteriaResults: [],
+      commitsMade: false,
+      untrackedFilesPresent: false,
+    });
+    expect(result).not.toBeNull();
+    expect(result?.verdict).toBe('incomplete');
+  });
+});
+
+describe('hasUntrackedFiles', () => {
+  it('returns false for null/undefined/empty input — the sandbox returns "" when git status is clean', () => {
+    expect(hasUntrackedFiles(undefined)).toBe(false);
+    expect(hasUntrackedFiles(null)).toBe(false);
+    expect(hasUntrackedFiles('')).toBe(false);
+  });
+
+  it('returns true on a `??` line (the porcelain prefix for untracked entries)', () => {
+    // The exact shape sandbox/worker emits from `git status --porcelain`.
+    expect(hasUntrackedFiles('?? hello.txt\n')).toBe(true);
+  });
+
+  it('returns true when an untracked entry is mixed with modified entries', () => {
+    // A turn that edits one tracked file AND creates one untracked
+    // file would have a non-empty diff already, but we still want
+    // the porcelain signal to honor untracked entries — they're
+    // independent evidence channels.
+    expect(hasUntrackedFiles(' M src/app.ts\n?? new.txt\n')).toBe(true);
+  });
+
+  it('returns false when only modified/staged entries are present (no untracked)', () => {
+    // Modified-but-not-untracked goes via `git diff HEAD`, not via
+    // the untracked-file signal. The predicate already has the diff
+    // body to drive its decision; we don't want to double-trip on
+    // the porcelain status.
+    expect(hasUntrackedFiles('M  src/a.ts\n M src/b.ts\n')).toBe(false);
+  });
+
+  it('tolerates CRLF line endings from the worker shell', () => {
+    expect(hasUntrackedFiles('?? a.txt\r\n')).toBe(true);
+  });
+});
+
+describe('parseUntrackedFileSet', () => {
+  it('returns an empty set for null/undefined/empty input', () => {
+    expect(parseUntrackedFileSet(undefined).size).toBe(0);
+    expect(parseUntrackedFileSet(null).size).toBe(0);
+    expect(parseUntrackedFileSet('').size).toBe(0);
+  });
+
+  it('captures only the path portion of `?? ` lines', () => {
+    const set = parseUntrackedFileSet('?? hello.txt\n?? src/new.ts\n');
+    expect(set.has('hello.txt')).toBe(true);
+    expect(set.has('src/new.ts')).toBe(true);
+    expect(set.size).toBe(2);
+  });
+
+  it('ignores tracked-modification entries (only collects ?? lines)', () => {
+    const set = parseUntrackedFileSet(' M tracked.ts\n?? new.ts\nM  staged.ts\n');
+    expect(Array.from(set)).toEqual(['new.ts']);
+  });
+
+  it('tolerates CRLF line endings', () => {
+    const set = parseUntrackedFileSet('?? a.txt\r\n?? b.txt\r\n');
+    expect(set.size).toBe(2);
+  });
+});
+
+describe('findNewUntrackedFiles — Codex P1 regression on PR #606', () => {
+  it('returns only post-set entries that are absent from the pre-set baseline', () => {
+    // Pre-existing untracked files (node_modules, build artifacts)
+    // must not be falsely credited to the Coder. Only genuinely-new
+    // entries count as evidence of work.
+    const pre = new Set(['node_modules/', 'dist/']);
+    const post = new Set(['node_modules/', 'dist/', 'hello.txt']);
+    expect(findNewUntrackedFiles(post, pre)).toEqual(['hello.txt']);
+  });
+
+  it('returns empty when the post set is a subset of pre (Coder deleted nothing new)', () => {
+    const pre = new Set(['existing.log']);
+    const post = new Set(['existing.log']);
+    expect(findNewUntrackedFiles(post, pre)).toEqual([]);
+  });
+
+  it('falls back to the full post set when pre is undefined (conservative)', () => {
+    // When the pre-Coder snapshot fails (sandbox unreachable, no git,
+    // etc.) we'd rather over-count untracked files (predicate defers
+    // to LLM Auditor, slight noise in evalDiff) than under-count and
+    // regress to the pre-#606 false-negative ("no workspace changes
+    // detected" when the Coder actually wrote a file).
+    const post = new Set(['hello.txt']);
+    expect(findNewUntrackedFiles(post, undefined)).toEqual(['hello.txt']);
+  });
+
+  it('correctly identifies multiple new entries against an empty pre baseline', () => {
+    const pre = new Set<string>();
+    const post = new Set(['a.txt', 'b.txt', 'src/c.ts']);
+    expect(findNewUntrackedFiles(post, pre).sort()).toEqual(['a.txt', 'b.txt', 'src/c.ts']);
   });
 });

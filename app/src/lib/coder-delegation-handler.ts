@@ -71,6 +71,7 @@
 import type React from 'react';
 import { getActiveProvider, type ActiveProvider } from '@/lib/orchestrator';
 import { getSandboxDiff } from '@/lib/sandbox-client';
+import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import {
   runCoderAgent,
   generateCheckpointAnswer,
@@ -228,6 +229,19 @@ export interface CoderAuditorInput {
    * working-tree-only behavior. See PR #604.
    */
   preCoderHead: string | undefined;
+  /**
+   * Untracked file paths captured BEFORE the Coder ran (parsed from
+   * `git status --porcelain`). The Auditor uses this baseline to
+   * determine which `??` entries in the post-Coder status are NEW
+   * (genuine work) vs pre-existing ambient gunk (node_modules, build
+   * artifacts, untracked configs). Without this baseline, PR #606's
+   * untracked-evidence signal false-positives on every workspace that
+   * already contains any untracked files. Codex P1 review on PR #606.
+   * Undefined when the pre-Coder fetch failed or omitted git_status —
+   * the Auditor falls back to "treat all post-Coder untracked entries
+   * as evidence" rather than regress to the pre-#606 false-negative.
+   */
+  preCoderUntrackedFiles: readonly string[] | undefined;
 }
 
 /**
@@ -343,10 +357,25 @@ export async function handleCoderDelegation(
   // the ranged-diff path. Best-effort: a fetch failure leaves it
   // undefined and the Auditor falls back to working-tree-only behavior.
   // See PR #604.
+  //
+  // Also snapshot the set of untracked file paths so the Auditor can
+  // tell which `??` entries in the post-Coder porcelain status are NEW
+  // (Coder created them) vs pre-existing (node_modules, build artifacts,
+  // ambient gunk that was already lying around). Without this baseline,
+  // PR #606's untracked-evidence signal false-positives on every
+  // workspace that already has any untracked files. Codex P1 review on
+  // PR #606. The snapshot is best-effort: if the pre-Coder fetch fails
+  // or omits git_status, `preCoderUntrackedFiles` stays undefined and
+  // the Auditor falls back to a more conservative path (defer to LLM
+  // rather than risk a false-negative short-circuit).
   let preCoderHead: string | undefined;
+  let preCoderUntrackedFiles: readonly string[] | undefined;
   try {
     const preDiff = await getSandboxDiff(currentSandboxId);
     preCoderHead = preDiff.head_sha;
+    preCoderUntrackedFiles = preDiff.git_status
+      ? Array.from(parseUntrackedFileSet(preDiff.git_status))
+      : undefined;
   } catch {
     /* snapshot is best-effort */
   }
@@ -677,6 +706,7 @@ export async function handleCoderDelegation(
         currentSandboxId,
         originBranch,
         preCoderHead,
+        preCoderUntrackedFiles,
       },
     };
   } catch (err) {
