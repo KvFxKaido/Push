@@ -28,6 +28,7 @@ import { detectArtifactToolCall, type ArtifactToolCall } from './artifact-tools'
 import { type ActiveProvider } from './orchestrator';
 import { ALL_CAPABILITIES, type Capability } from './capabilities';
 import type { AgentRole } from '@push/lib/runtime-contract';
+import type { DroppedToolCallCandidate } from '@push/lib/deep-reviewer-agent';
 import { asRecord, detectToolFromText, extractBareToolJsonObjects } from './utils';
 import {
   getToolCanonicalNames,
@@ -139,7 +140,18 @@ export interface DetectedToolCalls {
    * with a structured error so the model can correct on the next turn.
    */
   extraMutations: AnyToolCall[];
+  /**
+   * `{tool, args}`-shaped candidates that no source validated. Captured
+   * separately so callers can surface a parse error to the model instead
+   * of silently dropping them when other calls in the same turn happen to
+   * validate. Before this slot existed, a malformed `edit_range` paired
+   * with a valid `diff` would execute only the diff, biasing the model
+   * into "edit appears clean — try again" loops.
+   */
+  droppedCandidates: DroppedToolCallCandidate[];
 }
+
+export type { DroppedToolCallCandidate } from '@push/lib/deep-reviewer-agent';
 
 /**
  * Scan assistant output for ALL tool calls and group them into a single
@@ -166,11 +178,13 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     fileMutations: [],
     mutating: null,
     extraMutations: [],
+    droppedCandidates: [],
   };
 
   const explicitToolObjects = extractBareToolJsonObjects(text);
   const allCalls: AnyToolCall[] = [];
   const seen = new Set<string>();
+  const droppedCandidates: DroppedToolCallCandidate[] = [];
 
   // OpenAI-style namespaced fallback (`functions.<name>:<id>  <args>`)
   // and XML-wrapped fallback (`<tool_call>...</tool_call>`). Models
@@ -194,7 +208,7 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
       if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
     }
     if (allCalls.length === 0) return empty;
-    return classifyDetectedCalls(allCalls, empty);
+    return { ...classifyDetectedCalls(allCalls, empty), droppedCandidates };
   }
 
   // Preserve current safety behavior: only do broad bare-object scanning
@@ -205,7 +219,26 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
   for (const parsed of parsedObjects) {
     const serialized = JSON.stringify(parsed);
     const call = detectAnyToolCall(serialized);
-    if (!call) continue;
+    if (!call) {
+      // Track candidates that carried a `tool` key but no source claimed.
+      // Plain bare-args objects (no `tool` field, recoverable by inference)
+      // would have been promoted by `detectAnyToolCall`'s bare-args fallback,
+      // so anything that survives `extractAllBareJsonObjects` AND has a
+      // string `tool` field AND wasn't promoted is a real silent drop.
+      const candidateRecord = asRecord(parsed);
+      const rawToolName =
+        candidateRecord && typeof candidateRecord.tool === 'string'
+          ? candidateRecord.tool.trim()
+          : null;
+      if (rawToolName) {
+        droppedCandidates.push({
+          rawToolName,
+          resolvedToolName: resolveToolName(rawToolName),
+          sample: serialized.length > 200 ? `${serialized.slice(0, 200)}…` : serialized,
+        });
+      }
+      continue;
+    }
     const key = getCanonicalInvocationKey(call);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -216,8 +249,8 @@ export function detectAllToolCalls(text: string): DetectedToolCalls {
     if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
   }
 
-  if (allCalls.length === 0) return empty;
-  return classifyDetectedCalls(allCalls, empty);
+  if (allCalls.length === 0) return { ...empty, droppedCandidates };
+  return { ...classifyDetectedCalls(allCalls, empty), droppedCandidates };
 }
 
 /**
@@ -295,7 +328,7 @@ function classifyDetectedCalls(
     extraMutations.unshift(...overflow);
   }
 
-  return { readOnly, fileMutations, mutating, extraMutations };
+  return { readOnly, fileMutations, mutating, extraMutations, droppedCandidates: [] };
 }
 
 /** Extract the tool name from a unified tool call. */

@@ -493,6 +493,80 @@ export interface MultipleMutationsErrorAction {
 }
 
 /**
+ * Build the error response when the LLM emits one or more tool-call-shaped
+ * candidates that failed source validation in the same turn. Each candidate
+ * carries a `tool` key but supplied wrong/missing args (or an unrecognized
+ * tool name), so no source claimed them. Before this surface existed, those
+ * drops were silent whenever any other call in the turn validated — biasing
+ * detection toward whichever surviving tool had the loosest validator
+ * (notably `sandbox_diff`, which takes no args).
+ */
+export function handleDroppedCandidatesError(
+  detected: {
+    droppedCandidates: import('@push/lib/deep-reviewer-agent').DroppedToolCallCandidate[];
+  },
+  accumulated: string,
+  thinkingAccumulated: string,
+  reasoningBlocks: ReasoningBlock[],
+  apiMessages: readonly ChatMessage[],
+  provider: ActiveProvider,
+): MultipleMutationsErrorAction {
+  const dropped = detected.droppedCandidates;
+  const primary = dropped[0];
+  // Resolved canonical names where the alias table recognized the tool,
+  // raw names where it didn't. Surface both shapes so the model gets
+  // pinpointed feedback on the calls it just emitted.
+  const summarize = (d: (typeof dropped)[number]) =>
+    d.resolvedToolName ? `${d.rawToolName} (${d.resolvedToolName})` : `${d.rawToolName} (unknown)`;
+  const summary = dropped.map(summarize).join(', ');
+  const parseErrorHeader = buildToolCallParseErrorBlock({
+    errorType: 'validation_failed',
+    detectedTool: primary?.resolvedToolName || primary?.rawToolName || null,
+    problem: `Tool call${dropped.length === 1 ? '' : 's'} failed validation and ${dropped.length === 1 ? 'was' : 'were'} not executed: ${summary}. No other calls ran this turn so the surviving result would not mislead the next step.`,
+    hint: 'Each tool call must be `{"tool": "<name>", "args": {...}}` with the args object wrapping required fields. Re-emit only the calls you intend to run and confirm the args match the tool signature.',
+  });
+
+  const toolMeta = buildToolMeta({
+    toolName: primary?.resolvedToolName || primary?.rawToolName || 'unknown',
+    source: 'sandbox',
+    provider,
+    durationMs: 0,
+    isError: true,
+  });
+
+  const errorMessage: ChatMessage = {
+    id: createId(),
+    role: 'user',
+    content: formatToolResultEnvelope(parseErrorHeader),
+    timestamp: Date.now(),
+    status: 'done',
+    isToolResult: true,
+    toolMeta,
+  };
+
+  return {
+    errorMessage,
+    apiMessages: [
+      ...apiMessages,
+      {
+        id: createId(),
+        role: 'assistant' as const,
+        content: accumulated,
+        timestamp: Date.now(),
+        status: 'done' as const,
+        ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
+      },
+      errorMessage,
+    ],
+    assistantUpdate: {
+      content: accumulated,
+      thinking: thinkingAccumulated,
+      toolMeta,
+    },
+  };
+}
+
+/**
  * Build the error response when the LLM emits multiple mutating tool calls
  * in a single turn. Returns the messages and state updates needed — caller
  * applies them to React state.

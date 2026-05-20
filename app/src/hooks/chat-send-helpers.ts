@@ -21,12 +21,16 @@
  */
 
 import type { MutableRefObject } from 'react';
-import { isReadOnlyToolCall, type AnyToolCall } from '@/lib/tool-dispatch';
+import { isReadOnlyToolCall, type AnyToolCall, type DetectedToolCalls } from '@/lib/tool-dispatch';
 import {
   executeTool,
+  handleDroppedCandidatesError,
   type ToolExecRunContext,
   type ToolExecRawResult,
 } from '@/lib/chat-tool-execution';
+import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
+import { summarizeToolResultPreview } from '@/lib/chat-run-events';
+import type { ReasoningBlock } from '@/types';
 import { execInSandbox } from '@/lib/sandbox-client';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { executeTodoToolCall } from '@/lib/todo-tools';
@@ -585,4 +589,61 @@ export function applyPostExecutionSideEffects(
   if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
     runtimeHandlersRef.current?.onSandboxUnreachable?.(result.structuredError.message);
   }
+}
+
+/**
+ * Dispatch the parse-error branch when `detectAllToolCalls` reports
+ * `{tool, args}`-shaped candidates that no source validated. Builds the
+ * structured error via `handleDroppedCandidatesError`, emits the
+ * `tool.call_malformed` run event, marks the last assistant message as
+ * malformed in conversation state, and returns the assistant-turn result
+ * the loop expects. Extracted from `chat-send.ts` to keep that file
+ * within the `max-lines` ESLint cap.
+ */
+export function dispatchDroppedCandidatesError(
+  detected: DetectedToolCalls,
+  round: number,
+  accumulated: string,
+  thinkingAccumulated: string,
+  reasoningBlocks: ReasoningBlock[],
+  apiMessages: ChatMessage[],
+  recoveryState: ToolCallRecoveryState,
+  ctx: SendLoopContext,
+): AssistantTurnResult {
+  const { chatId, lockedProvider, setConversations, appendRunEvent } = ctx;
+  const errorAction = handleDroppedCandidatesError(
+    detected,
+    accumulated,
+    thinkingAccumulated,
+    reasoningBlocks,
+    apiMessages,
+    lockedProvider,
+  );
+
+  appendRunEvent(chatId, {
+    type: 'tool.call_malformed',
+    round,
+    reason: 'validation_failed',
+    toolName: errorAction.assistantUpdate.toolMeta.toolName,
+    preview: summarizeToolResultPreview(errorAction.errorMessage.content),
+  });
+
+  setConversations((prev) => {
+    const conv = prev[chatId];
+    if (!conv) return prev;
+    const msgs = markLastAssistantToolCall(conv.messages, {
+      content: errorAction.assistantUpdate.content,
+      thinking: errorAction.assistantUpdate.thinking,
+      malformed: true,
+      toolMeta: errorAction.assistantUpdate.toolMeta,
+    });
+    return { ...prev, [chatId]: { ...conv, messages: [...msgs, errorAction.errorMessage] } };
+  });
+
+  return {
+    nextApiMessages: errorAction.apiMessages,
+    nextRecoveryState: recoveryState,
+    loopAction: 'continue',
+    loopCompletedNormally: false,
+  };
 }

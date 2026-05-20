@@ -46,7 +46,13 @@ function baseOptions(overrides: {
       })),
     detectAllToolCalls:
       overrides.detectAllToolCalls ??
-      (() => ({ readOnly: [], mutating: null, fileMutations: [], extraMutations: [] })),
+      (() => ({
+        readOnly: [],
+        mutating: null,
+        fileMutations: [],
+        extraMutations: [],
+        droppedCandidates: [],
+      })),
     detectAnyToolCall: overrides.detectAnyToolCall ?? (() => null),
     webSearchToolProtocol: '',
     evaluateAfterModel: overrides.evaluateAfterModel ?? (async () => null),
@@ -82,8 +88,15 @@ describe('runExplorerAgent (PushStream consumer)', () => {
         mutating: { call: { tool: 'sandbox_read_file', args: {} } },
         fileMutations: [],
         extraMutations: [],
+        droppedCandidates: [],
       })
-      .mockReturnValueOnce({ readOnly: [], mutating: null, fileMutations: [], extraMutations: [] });
+      .mockReturnValueOnce({
+        readOnly: [],
+        mutating: null,
+        fileMutations: [],
+        extraMutations: [],
+        droppedCandidates: [],
+      });
 
     const { stream } = makePushStream([
       [

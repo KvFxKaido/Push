@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage, ReasoningBlock } from '@/types';
-import { handleMultipleMutationsError, handleRecoveryResult } from './chat-tool-execution';
+import {
+  handleDroppedCandidatesError,
+  handleMultipleMutationsError,
+  handleRecoveryResult,
+} from './chat-tool-execution';
 
 // These helpers cover the assistant-message stamping in `nextApiMessages`
 // for the tool-path branches. Without `reasoningBlocks` threaded through,
@@ -76,5 +80,59 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
     );
     expect(assistantEntry).toBeDefined();
     expect(assistantEntry?.reasoningBlocks).toBeUndefined();
+  });
+
+  it('handleDroppedCandidatesError surfaces the malformed tool name and arg-shape hint', () => {
+    const apiMessages: ChatMessage[] = [userMessage('edit it')];
+    const action = handleDroppedCandidatesError(
+      {
+        droppedCandidates: [
+          {
+            rawToolName: 'edit_range',
+            resolvedToolName: 'sandbox_edit_range',
+            sample: '{"tool":"edit_range","args":{"path":"/workspace/README.md"}}',
+          },
+        ],
+      },
+      'assistant text',
+      'thinking',
+      blocks,
+      apiMessages,
+      'zen',
+    );
+    // Assistant text is preserved.
+    const assistantEntry = action.apiMessages.find(
+      (m) => m.role === 'assistant' && m.content === 'assistant text',
+    );
+    expect(assistantEntry).toBeDefined();
+    expect(assistantEntry?.reasoningBlocks).toEqual(blocks);
+
+    // The error message names the dropped tool and gives the model
+    // actionable feedback about the args wrapper shape.
+    expect(action.errorMessage.content).toContain('edit_range');
+    expect(action.errorMessage.content).toContain('sandbox_edit_range');
+    expect(action.errorMessage.content).toContain('args');
+    expect(action.assistantUpdate.toolMeta.toolName).toBe('sandbox_edit_range');
+  });
+
+  it('handleDroppedCandidatesError flags unknown tool names without a resolved canonical', () => {
+    const apiMessages: ChatMessage[] = [userMessage('do something')];
+    const action = handleDroppedCandidatesError(
+      {
+        droppedCandidates: [
+          {
+            rawToolName: 'sandbox',
+            resolvedToolName: null,
+            sample: '{"tool":"sandbox","args":{"command":"read","path":"/workspace"}}',
+          },
+        ],
+      },
+      'assistant',
+      '',
+      [],
+      apiMessages,
+      'zen',
+    );
+    expect(action.errorMessage.content).toContain('sandbox (unknown)');
   });
 });

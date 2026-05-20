@@ -50,7 +50,13 @@ function baseOptions(overrides: {
     toolExec: async () => ({ resultText: 'ok' }),
     detectAllToolCalls:
       overrides.detectAllToolCalls ??
-      (() => ({ readOnly: [], mutating: null, fileMutations: [], extraMutations: [] })),
+      (() => ({
+        readOnly: [],
+        mutating: null,
+        fileMutations: [],
+        extraMutations: [],
+        droppedCandidates: [],
+      })),
     detectAnyToolCall: overrides.detectAnyToolCall ?? (() => null),
     webSearchToolProtocol: '',
   };

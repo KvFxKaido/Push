@@ -262,6 +262,7 @@ const stubDetectors: CoderJobDetectorAdapter = {
     fileMutations: [],
     mutating: null,
     extraMutations: [],
+    droppedCandidates: [],
   }),
   detectAnyToolCall: () => null,
   tagSandboxCall: (call) => ({ source: 'sandbox', call }),

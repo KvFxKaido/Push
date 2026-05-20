@@ -54,7 +54,7 @@ import {
   truncateAgentContent,
   MAX_TOOL_RESULT_SIZE as LIB_MAX_TOOL_RESULT_SIZE,
 } from './agent-loop-utils.js';
-import { formatToolResultEnvelope } from './tool-call-recovery.js';
+import { buildToolCallParseErrorBlock, formatToolResultEnvelope } from './tool-call-recovery.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import {
   SHARED_SAFETY_SECTION,
@@ -842,6 +842,41 @@ export async function runCoderAgent<TCall, TCard>(
 
     // Check for multiple tool calls (parallel reads + file-mutation batch + optional trailing side-effect)
     const detected = detectAllToolCalls(accumulated);
+
+    // --- Dropped-candidate guard: the model emitted one or more
+    // `{tool, args}` shapes that no source validated (wrong args,
+    // unrecognized tool name). Surface them as a parse error and skip
+    // execution of any surviving calls this round — running them would
+    // give the model misleading feedback ("the diff is clean, so my
+    // edit must have worked") when in fact its primary call was
+    // dropped. Symmetric with the chat-send.ts orchestrator path.
+    if (detected.droppedCandidates.length > 0) {
+      const dropped = detected.droppedCandidates;
+      const primary = dropped[0];
+      const summary = dropped
+        .map((d) =>
+          d.resolvedToolName
+            ? `${d.rawToolName} (${d.resolvedToolName})`
+            : `${d.rawToolName} (unknown)`,
+        )
+        .join(', ');
+      callbacks.onStatus('Coder parse error', summary);
+      const parseErrorBlock = buildToolCallParseErrorBlock({
+        errorType: 'validation_failed',
+        detectedTool: primary?.resolvedToolName || primary?.rawToolName || null,
+        problem: `Tool call${dropped.length === 1 ? '' : 's'} failed validation and ${dropped.length === 1 ? 'was' : 'were'} not executed: ${summary}. No other calls ran this turn so the next round can correct without partial state.`,
+        hint: 'Each tool call must be `{"tool": "<name>", "args": {...}}` with required fields nested under args. Re-emit only the calls you intend to run and confirm the args match the tool signature.',
+      });
+      messages.push({
+        id: `coder-parse-error-${round}`,
+        role: 'user',
+        content: formatToolResultEnvelope(parseErrorBlock),
+        timestamp: Date.now(),
+        isToolResult: true,
+      });
+      continue;
+    }
+
     const parallelCalls = detected.readOnly;
     const fileMutationBatch = detected.fileMutations;
     const trailingMutation = detected.mutating;
