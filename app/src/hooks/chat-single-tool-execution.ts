@@ -100,6 +100,7 @@ export async function executeSingleToolCall(
   const {
     applyPostToolPolicyEffects,
     recordToolFailure,
+    recordDelegationOutcome,
     getRoundSandboxStatus,
     invalidateSandboxStatus,
   } = turnCtx;
@@ -269,6 +270,12 @@ export async function executeSingleToolCall(
   } else {
     const isError = toolExecResult.text.includes('[Tool Error]');
     recordToolFailure(toolCall, isError);
+    // Delegations carry a structured outcome (`complete | incomplete |
+    // inconclusive`) that the args-keyed failure tracker can't see —
+    // the orchestrator varies task text between retries, so identical
+    // args never match. Per-agent outcome tracking catches that loop
+    // shape independently of the text variation. PR #603.
+    recordDelegationOutcome(toolCall, toolExecResult);
     toolResultMsg = buildToolResultMessage({
       id: createId(),
       timestamp: Date.now(),
