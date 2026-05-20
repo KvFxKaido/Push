@@ -306,9 +306,16 @@ export interface TurnRunContext {
    * so consecutive non-complete delegations of the same agent trip
    * the breaker even when the orchestrator varies the task text
    * between retries. No-op for tool calls that don't carry a
-   * `delegationOutcome` payload. See PR #603.
+   * `delegationOutcome` payload, AND for `plan_tasks` whose inner
+   * Coder/Explorer nodes already record their own outcomes — counting
+   * the wrapper's combined outcome again would double-count and could
+   * falsely break a later direct `delegate_coder` (Codex P1 review
+   * on PR #603). See PR #603.
    */
-  recordDelegationOutcome: (toolExecResult: { delegationOutcome?: DelegationOutcome }) => void;
+  recordDelegationOutcome: (
+    toolCall: AnyToolCall,
+    toolExecResult: { delegationOutcome?: DelegationOutcome },
+  ) => void;
   getRoundSandboxStatus: () => Promise<RoundSandboxStatus | null>;
   invalidateSandboxStatus: () => void;
 }
@@ -453,9 +460,13 @@ export function createTurnRunContext(
     tracker.recordFailure(key);
   };
 
-  const recordDelegationOutcome = (toolExecResult: { delegationOutcome?: DelegationOutcome }) => {
+  const recordDelegationOutcome = (
+    toolCall: AnyToolCall,
+    toolExecResult: { delegationOutcome?: DelegationOutcome },
+  ) => {
     const outcome = toolExecResult.delegationOutcome;
     if (!outcome) return;
+    if (shouldSkipDelegationOutcomeRecording(toolCall)) return;
     tracker.recordDelegationOutcome(outcome.agent, outcome.status);
   };
 
@@ -668,6 +679,19 @@ export function dispatchDroppedCandidatesError(
     loopAction: 'continue',
     loopCompletedNormally: false,
   };
+}
+
+/**
+ * `plan_tasks` aggregates per-node outcomes into one wrapper payload
+ * with `agent: 'coder' | 'explorer'`. The inner Coder/Explorer nodes
+ * record their own outcomes via the per-task delegation handler, so
+ * counting the wrapper here would double-count and could falsely
+ * break a later direct `delegate_coder` call. Codex P1 review on
+ * PR #603. Exported for unit testing; the runtime caller is the
+ * `recordDelegationOutcome` closure built by `createTurnRunContext`.
+ */
+export function shouldSkipDelegationOutcomeRecording(toolCall: AnyToolCall): boolean {
+  return toolCall.source === 'delegate' && toolCall.call.tool === 'plan_tasks';
 }
 
 /**

@@ -9,6 +9,7 @@
  */
 
 import { formatToolResultEnvelope } from './tool-call-recovery.js';
+import type { DelegationStatus } from './runtime-contract.js';
 
 /**
  * Mutation failure tracker — detects repeated failures on same tool+args.
@@ -23,13 +24,15 @@ import { formatToolResultEnvelope } from './tool-call-recovery.js';
  *
  * Tracks per-agent DELEGATION OUTCOMES too: a `delegate_coder` that
  * returns `incomplete` repeatedly across rounds with varying task text
- * dodges the `(tool, args)`-keyed failure path, because the task text
- * differs each retry. Outcome tracking is keyed only by agent — a
- * `complete` resets the counter; `incomplete`/`inconclusive` keep
- * incrementing it. Intervening reads or other tool calls don't reset;
- * only a successful delegation of the same agent does. See PR #603.
+ * dodges the `(tool, args)`-keyed failure path because the task text
+ * differs each retry. Outcome tracking is **cumulative per agent**:
+ * `incomplete`/`inconclusive` increments the agent's counter, and only
+ * a `complete` outcome for the SAME agent resets it. Intervening
+ * delegations to a different agent do NOT reset (an explorer delivering
+ * doesn't undo the coder's streak — they're working different angles).
+ * Intervening non-delegation tool calls also do NOT reset. See PR #603.
  */
-export type DelegationOutcomeStatus = 'complete' | 'incomplete' | 'inconclusive';
+export type DelegationOutcomeStatus = DelegationStatus;
 
 export interface MutationFailureTracker {
   /** Increment the persistent failure count for `key`. Used for the
@@ -49,19 +52,21 @@ export interface MutationFailureTracker {
    */
   isRepeatedCall(key: string, limit: number): boolean;
   /**
-   * Record a delegation result by agent. A 'complete' resets the
-   * agent's failure counter; non-complete outcomes increment it.
-   * Independent of `recordFailure` / `recordCall` — call this in
-   * addition to those when a delegation result is in hand, never
-   * instead of them.
+   * Record a delegation result by agent. `complete` resets the agent's
+   * counter; `incomplete`/`inconclusive` increments it. Cumulative per
+   * agent: outcomes for OTHER agents do not affect this agent's count
+   * (an `explorer complete` does not reset `coder`'s streak). Pair this
+   * with `recordFailure`/`recordCall` when a delegation result is in
+   * hand — the three surfaces are independent.
    */
   recordDelegationOutcome(agent: string, status: DelegationOutcomeStatus): void;
   /**
-   * Has the same agent returned a non-complete delegation `limit`
-   * times in a row? Use this BEFORE execution of an incoming
-   * `delegate_<agent>` call so the orchestrator can refuse to spin
-   * up another doomed delegation regardless of how the task text
-   * varied across retries.
+   * Has the same agent accumulated `limit` non-complete delegations
+   * since its last `complete` outcome? Use this BEFORE execution of an
+   * incoming `delegate_<agent>` call so the orchestrator can refuse to
+   * spin up another doomed delegation regardless of how the task text
+   * varied across retries. Cumulative (not strictly consecutive in
+   * time) — see the type-level docstring.
    */
   isRepeatedDelegationFailure(agent: string, limit: number): boolean;
   clear(): void;

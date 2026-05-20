@@ -507,7 +507,7 @@ export async function executeBatchedToolCalls(
     // Delegations carry a structured `complete | incomplete | inconclusive`
     // outcome that the args-keyed failure tracker can't see when the
     // orchestrator varies task text between retries. PR #603.
-    recordDelegationOutcome(mutOutcome.raw);
+    recordDelegationOutcome(mutCall, mutOutcome.raw);
     appendRunEvent(chatId, {
       type: 'tool.execution_complete',
       round,

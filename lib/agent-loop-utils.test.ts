@@ -200,4 +200,22 @@ describe('createMutationFailureTracker — delegation-outcome detection', () => 
     t.clear();
     expect(t.isRepeatedDelegationFailure('coder', 1)).toBe(false);
   });
+
+  it('intervening different-agent outcomes do NOT reset the streak — counters are per-agent cumulative', () => {
+    // Pins the cumulative-per-agent semantics documented on the
+    // type/method docstrings (Copilot review on PR #603). Explorer
+    // succeeding on a different file doesn't undo the Coder's failing
+    // streak — they're working different angles. The same is true
+    // for an explorer incomplete: it bumps explorer's counter but
+    // leaves coder's untouched.
+    const t = createMutationFailureTracker();
+    t.recordDelegationOutcome('coder', 'incomplete');
+    t.recordDelegationOutcome('explorer', 'complete');
+    t.recordDelegationOutcome('coder', 'incomplete');
+    t.recordDelegationOutcome('explorer', 'incomplete');
+    t.recordDelegationOutcome('coder', 'incomplete');
+    expect(t.isRepeatedDelegationFailure('coder', 3)).toBe(true);
+    expect(t.isRepeatedDelegationFailure('explorer', 1)).toBe(true);
+    expect(t.isRepeatedDelegationFailure('explorer', 2)).toBe(false);
+  });
 });

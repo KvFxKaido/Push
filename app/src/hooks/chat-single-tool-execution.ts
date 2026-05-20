@@ -275,7 +275,7 @@ export async function executeSingleToolCall(
     // the orchestrator varies task text between retries, so identical
     // args never match. Per-agent outcome tracking catches that loop
     // shape independently of the text variation. PR #603.
-    recordDelegationOutcome(toolExecResult);
+    recordDelegationOutcome(toolCall, toolExecResult);
     toolResultMsg = buildToolResultMessage({
       id: createId(),
       timestamp: Date.now(),
