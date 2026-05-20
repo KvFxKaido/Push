@@ -74,6 +74,23 @@ describe('deterministicEmptyDiffVerdict', () => {
     expect(result).toBeNull();
   });
 
+  it('falls through to LLM when an error-bearing diff response arrives — DiffResult.error means the fetch is unreliable', () => {
+    // Pins the Codex/Copilot P1 contract from PR #601: the handler must
+    // set `diffFetchSucceeded = false` whenever `DiffResult.error` is
+    // populated, even though no exception was thrown. This predicate
+    // test documents that the {diffFetchSucceeded: false, diff: ''}
+    // shape — which is exactly what the handler produces in the
+    // error case — must NOT short-circuit. A sandbox/git failure
+    // misclassified as "coder no-op" would mislead the Orchestrator
+    // into looping on a real infrastructure problem.
+    const result = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded: false,
+      evalDiff: '',
+      criteriaResults: [],
+    });
+    expect(result).toBeNull();
+  });
+
   it('returns a high-confidence verdict with an actionable gap line for the Orchestrator', () => {
     // The gap line is the message the Orchestrator's model reads.
     // It needs to point at the upstream cause (malformed tool call,

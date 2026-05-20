@@ -170,7 +170,14 @@ export async function handleCoderAuditor(
     try {
       const diffResult = await getSandboxDiff(auditorInput.currentSandboxId);
       evalDiff = diffResult.diff || null;
-      diffFetchSucceeded = true;
+      // `getSandboxDiff` can resolve with HTTP 200 and a populated `error`
+      // field (git failure inside the sandbox, see `routeDiff` in
+      // worker-cf-sandbox.ts). In that case `diff` is empty but the data
+      // is unreliable — flagging this as a successful fetch would let the
+      // deterministic short-circuit fire and misclassify a sandbox/git
+      // failure as a coder no-op. Both Codex and Copilot caught this on
+      // PR #601 review.
+      diffFetchSucceeded = !diffResult.error;
     } catch {
       /* no diff available — evaluation proceeds without it */
     }
