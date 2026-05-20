@@ -22,8 +22,7 @@ import {
 import { useDraftChatComposer, type DraftChatSeed } from '@/hooks/useDraftChatComposer';
 import { useBranchManager } from '@/hooks/useBranchManager';
 import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
-import { type PreferredProvider } from '@/lib/providers';
-import { formatModelDisplayName } from '@/lib/providers';
+import { formatModelDisplayName, type PreferredProvider } from '@/lib/providers';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
 import type { ActiveRepo, RepoWithActivity } from '@/types';
 import type { RepoAppearance } from '@/lib/repo-appearance';
@@ -32,6 +31,13 @@ export interface ComposerDraftCommit {
   mode: 'repo' | 'chat' | 'scratch';
   repoFullName: string | null;
   branch: string | null;
+  /** Optional provider override. When non-null, the workspace anchors
+   * the newly minted chat to this provider via its own per-chat draft
+   * store; the catalog-wide default is left alone. */
+  provider: PreferredProvider | null;
+  /** Model id paired with `provider`. Null means "default model for
+   * this provider" — resolved when the chat sends its first message. */
+  model: string | null;
 }
 
 interface ComposerDraftScreenProps {
@@ -89,62 +95,6 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
     }
     default:
       return [];
-  }
-}
-
-function applyProviderModel(
-  catalog: ModelCatalog,
-  provider: PreferredProvider,
-  model: string,
-): void {
-  // Each provider in `useModelCatalog` exposes its own `setModel`
-  // which both persists the choice and updates the catalog's state
-  // for that provider. Dispatching here keeps the switch in one place
-  // — adding a new provider forces an obvious update here when the
-  // exhaustiveness check (`default`) is hit.
-  switch (provider) {
-    case 'ollama':
-      catalog.ollama.setModel(model);
-      return;
-    case 'openrouter':
-      catalog.openRouter.setModel(model);
-      return;
-    case 'cloudflare':
-      catalog.cloudflare.setModel(model);
-      return;
-    case 'zen':
-      catalog.zen.setModel(model);
-      return;
-    case 'nvidia':
-      catalog.nvidia.setModel(model);
-      return;
-    case 'blackbox':
-      catalog.blackbox.setModel(model);
-      return;
-    case 'kilocode':
-      catalog.kilocode.setModel(model);
-      return;
-    case 'openadapter':
-      catalog.openadapter.setModel(model);
-      return;
-    case 'azure':
-      catalog.azure.setModel(model);
-      return;
-    case 'bedrock':
-      catalog.bedrock.setModel(model);
-      return;
-    case 'vertex':
-      catalog.vertex.setModel(model);
-      return;
-    case 'anthropic':
-      catalog.anthropic.setModel(model);
-      return;
-    case 'openai':
-      catalog.openai.setModel(model);
-      return;
-    case 'google':
-      catalog.google.setModel(model);
-      return;
   }
 }
 
@@ -292,26 +242,19 @@ export function ComposerDraftScreen({
 
   const handleConfirm = () => {
     if (!isReadyToConfirm) return;
-    // Mirror the provider/model choice into Settings + the live
-    // catalog at commit — picking and then cancelling must NOT move
-    // the workspace's default, so the writes are deferred to here.
-    // `setPreferredProvider` only persists to localStorage;
-    // `setActiveBackend` updates the React state inside
-    // `useModelCatalog` so the workspace's ChatInput sees the choice
-    // on the next render instead of waiting for a reload. The
-    // per-provider `setModel` persists + updates state for the model
-    // pick.
-    if (state.provider) {
-      catalog.setPreferredProvider(state.provider);
-      catalog.setActiveBackend(state.provider);
-      if (state.model) {
-        applyProviderModel(catalog, state.provider, state.model);
-      }
-    }
+    // Pass the provider/model pick through to the commit envelope —
+    // the workspace anchors the new chat to it via per-chat draft
+    // (the first-send-anchors-lock mechanism then locks the chat in
+    // place). Catalog-wide defaults are intentionally NOT touched
+    // here: picking Anthropic in the menu locks just this chat to
+    // Anthropic; the global default lives in Settings.
     onCommit({
       mode: state.mode,
       repoFullName: state.mode === 'repo' ? state.repoFullName : null,
       branch: state.mode === 'repo' ? state.branch : null,
+      provider: state.provider,
+      model:
+        state.model ?? (state.provider ? defaultModelForProvider(catalog, state.provider) : null),
     });
   };
 
