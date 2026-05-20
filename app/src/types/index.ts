@@ -48,6 +48,13 @@ export type {
   ReviewResult,
 } from '@push/lib/provider-contract';
 import type { AuditVerdictCardData } from '@push/lib/auditor-agent';
+import type { WorkspacePatchCardData } from '@push/lib/protocol-schema';
+export type {
+  WorkspacePatchApplyKind,
+  WorkspacePatchApplyState,
+  WorkspacePatchCardData,
+  WorkspacePatchRefusalReason,
+} from '@push/lib/protocol-schema';
 export type { AuditVerdictCardData } from '@push/lib/auditor-agent';
 
 // User profile — canonical shape lives in lib/user-identity.ts; re-exported
@@ -451,7 +458,8 @@ export type ChatCard =
   | { type: 'ask-user'; data: AskUserCardData }
   | { type: 'coder-progress'; data: CoderWorkingMemory }
   | { type: 'coder-job'; data: CoderJobCardData }
-  | { type: 'artifact'; data: ArtifactCardData };
+  | { type: 'artifact'; data: ArtifactCardData }
+  | { type: 'workspace-patch'; data: WorkspacePatchCardData };
 
 /** Inline artifact card — wraps a fully-formed `ArtifactRecord` so the renderer
  *  can dispatch on `record.kind` without a second fetch. */

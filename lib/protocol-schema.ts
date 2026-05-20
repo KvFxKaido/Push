@@ -864,3 +864,230 @@ export function validateRelayEnvelope(env: unknown): ValidationIssue[] {
 
   return issues;
 }
+
+// ---------------------------------------------------------------------------
+// Persisted chat-card schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * Workspace-patch card — a serialized snapshot of the uncommitted working
+ * tree, persisted next to the assistant turn that produced it so the diff
+ * can survive sandbox reclaim and be replayed against a fresh container on
+ * the next session.
+ *
+ * Lives in the protocol-schema module (instead of `app/src/types/index.ts`)
+ * because both the web app and the CLI need to round-trip the card without
+ * one surface importing the other's UI types. The web app re-exports the
+ * type from `app/src/types/index.ts` and wires it into the `ChatCard`
+ * union; the CLI consumes the validator for drift detection.
+ *
+ * **V1 scope** is intentionally narrow: the card is *shaped* for future
+ * `repoFullName + branch` lookups (so a fresh CLI run can find prior
+ * work), but PR 1 stores nothing — capture and replay land in later PRs.
+ * The schema itself is the contract.
+ */
+
+/** Schema-version tag. Bump when the on-disk shape changes; replay code
+ *  must refuse cards with an unrecognised version. */
+export const WORKSPACE_PATCH_CARD_SCHEMA_VERSION = 1 as const;
+
+/**
+ * Allowed values for `applyState.kind`. The tagged union below pairs
+ * each kind with the per-kind required fields; this list is the drift
+ * surface that the CLI test pins so a new variant added in one place
+ * without the other fails CI.
+ */
+export const WORKSPACE_PATCH_APPLY_KINDS = ['pending', 'applied', 'refused', 'conflict'] as const;
+
+export type WorkspacePatchApplyKind = (typeof WORKSPACE_PATCH_APPLY_KINDS)[number];
+
+/**
+ * Allowed reasons for `applyState.kind === 'refused'`. Mirrors the
+ * pre-flight refusal rules already encoded in
+ * `app/src/hooks/useCommitPush.ts:unreplayableDiffReason` (truncation
+ * and binary-placeholder), plus `base-mismatch` for the future replay
+ * pass when the captured `baseSha` no longer matches the live HEAD.
+ */
+export const WORKSPACE_PATCH_REFUSAL_REASONS = [
+  'truncated',
+  'binary-placeholder',
+  'base-mismatch',
+] as const;
+
+export type WorkspacePatchRefusalReason = (typeof WORKSPACE_PATCH_REFUSAL_REASONS)[number];
+
+/**
+ * Apply lifecycle. `pending` is the as-captured state; the replay pass
+ * (future PR) transitions to `applied`, `refused`, or `conflict`. The
+ * tagged shape forces variant-specific fields to live on the variant —
+ * the runtime validator rejects known-variant fields appearing on the
+ * wrong variant (e.g. `{ kind: 'pending', appliedAt: 123 }`), so the
+ * persisted contract matches what the TS type promises.
+ */
+export type WorkspacePatchApplyState =
+  | { kind: 'pending' }
+  | { kind: 'applied'; appliedAt: number }
+  | { kind: 'refused'; reason: WorkspacePatchRefusalReason }
+  | { kind: 'conflict'; detail: string };
+
+/**
+ * Per-variant required keys. The validator uses this table to detect
+ * keys from one variant bleeding into another (e.g. a `refused` card
+ * that still has the `appliedAt` it inherited from when it was
+ * `applied`). Adding a new variant or a new per-variant field means
+ * updating this table — the CLI drift test pins both sides.
+ *
+ * Truly unknown forward-compat keys (not listed here) are still
+ * accepted, matching the module's convention of permitting unknown
+ * fields for cross-version compatibility.
+ */
+export const APPLY_STATE_VARIANT_KEYS = {
+  pending: [] as readonly string[],
+  applied: ['appliedAt'] as readonly string[],
+  refused: ['reason'] as readonly string[],
+  conflict: ['detail'] as readonly string[],
+} as const satisfies Record<WorkspacePatchApplyKind, readonly string[]>;
+
+export interface WorkspacePatchCardData {
+  /** Must equal {@link WORKSPACE_PATCH_CARD_SCHEMA_VERSION}. */
+  schemaVersion: typeof WORKSPACE_PATCH_CARD_SCHEMA_VERSION;
+  /** `owner/repo` for the future cross-conversation lookup key. */
+  repoFullName: string;
+  /** Git branch this patch was captured against. */
+  branch: string;
+  /** `git rev-parse HEAD` at capture time. Replay refuses to apply when
+   *  the live HEAD has diverged and the base commit is unreachable. */
+  baseSha: string;
+  /** The unified-diff byte-stream, including binary blobs from
+   *  `git diff --binary`. Empty string is valid (workspace touched but
+   *  net-clean). */
+  diffBytes: string;
+  /** True when {@link diffBytes} was clipped by the capture cap. Replay
+   *  refuses truncated patches because `git apply` cannot replay them. */
+  truncated: boolean;
+  /** ms since epoch when the patch was captured. */
+  capturedAt: number;
+  /** Lifecycle slot — see {@link WorkspacePatchApplyState}. */
+  applyState: WorkspacePatchApplyState;
+}
+
+/**
+ * Validate an unknown value against the {@link WorkspacePatchCardData}
+ * contract. Returns an array of issues (empty on success). Permissive
+ * about extra fields — adding new optional metadata should not break
+ * existing consumers, matching the convention in this module.
+ */
+export function validateWorkspacePatchCard(data: unknown): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  if (!isPlainObject(data)) {
+    issues.push({ path: '', message: `expected plain object, got ${typeof data}` });
+    return issues;
+  }
+
+  if (data.schemaVersion !== WORKSPACE_PATCH_CARD_SCHEMA_VERSION) {
+    issues.push({
+      path: 'schemaVersion',
+      message: `expected ${WORKSPACE_PATCH_CARD_SCHEMA_VERSION}, got ${JSON.stringify(data.schemaVersion)}`,
+    });
+  }
+
+  for (const field of ['repoFullName', 'branch', 'baseSha'] as const) {
+    if (!isNonEmptyString(data[field])) {
+      issues.push({
+        path: field,
+        message: `expected non-empty string, got ${JSON.stringify(data[field])}`,
+      });
+    }
+  }
+
+  // diffBytes is allowed to be empty (mutation that nets to clean).
+  if (typeof data.diffBytes !== 'string') {
+    issues.push({
+      path: 'diffBytes',
+      message: `expected string, got ${JSON.stringify(data.diffBytes)}`,
+    });
+  }
+
+  if (typeof data.truncated !== 'boolean') {
+    issues.push({
+      path: 'truncated',
+      message: `expected boolean, got ${JSON.stringify(data.truncated)}`,
+    });
+  }
+
+  if (!isFiniteNonNegativeInt(data.capturedAt)) {
+    issues.push({
+      path: 'capturedAt',
+      message: `expected non-negative integer, got ${JSON.stringify(data.capturedAt)}`,
+    });
+  }
+
+  if (!isPlainObject(data.applyState)) {
+    issues.push({
+      path: 'applyState',
+      message: `expected plain object, got ${typeof data.applyState}`,
+    });
+    return issues;
+  }
+
+  const apply = data.applyState;
+  const kind = apply.kind;
+  if (
+    typeof kind !== 'string' ||
+    !(WORKSPACE_PATCH_APPLY_KINDS as readonly string[]).includes(kind)
+  ) {
+    issues.push({
+      path: 'applyState.kind',
+      message: `expected one of ${WORKSPACE_PATCH_APPLY_KINDS.join(' | ')}, got ${JSON.stringify(kind)}`,
+    });
+    return issues;
+  }
+
+  if (kind === 'applied') {
+    if (!isFiniteNonNegativeInt(apply.appliedAt)) {
+      issues.push({
+        path: 'applyState.appliedAt',
+        message: `expected non-negative integer, got ${JSON.stringify(apply.appliedAt)}`,
+      });
+    }
+  } else if (kind === 'refused') {
+    if (
+      typeof apply.reason !== 'string' ||
+      !(WORKSPACE_PATCH_REFUSAL_REASONS as readonly string[]).includes(apply.reason)
+    ) {
+      issues.push({
+        path: 'applyState.reason',
+        message: `expected one of ${WORKSPACE_PATCH_REFUSAL_REASONS.join(' | ')}, got ${JSON.stringify(apply.reason)}`,
+      });
+    }
+  } else if (kind === 'conflict') {
+    if (!isNonEmptyString(apply.detail)) {
+      issues.push({
+        path: 'applyState.detail',
+        message: `expected non-empty string, got ${JSON.stringify(apply.detail)}`,
+      });
+    }
+  }
+  // 'pending' has no per-variant required fields.
+
+  // Reject known-variant fields appearing on the wrong variant — this is
+  // what makes the tagged union meaningful at runtime. A persisted card
+  // with `{ kind: 'pending', appliedAt: 123 }` would let replay code
+  // read a stale `appliedAt` off a pending state and misinterpret it.
+  // Truly novel keys (e.g. a future `metadata` we haven't added yet)
+  // are still allowed — only the known cross-variant keys are policed.
+  for (const [otherKind, otherKeys] of Object.entries(APPLY_STATE_VARIANT_KEYS)) {
+    if (otherKind === kind) continue;
+    for (const otherKey of otherKeys) {
+      if (otherKey in apply && apply[otherKey] !== undefined) {
+        issues.push({
+          path: `applyState.${otherKey}`,
+          message: `field belongs to applyState.kind === '${otherKind}', not '${kind}'`,
+        });
+      }
+    }
+  }
+
+  return issues;
+}
