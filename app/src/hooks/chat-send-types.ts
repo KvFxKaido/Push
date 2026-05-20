@@ -128,6 +128,16 @@ export interface SendLoopContext {
     provider: ActiveProvider,
     resolvedModel?: string,
   ) => Promise<ToolExecutionResult>;
+  /**
+   * Fire-and-forget capture invoked at the end of every round by
+   * {@link runRoundLoop}. The default loop-side wiring snapshots the
+   * events emitted during the round and passes them via `roundEvents`
+   * so the capture seam can decide whether to fire. Optional so
+   * existing tests that build minimal contexts keep compiling.
+   */
+  captureWorkspacePatchAtRoundEnd?: (
+    ctx: import('./useWorkspacePatchCapture').WorkspacePatchRoundContext,
+  ) => Promise<void>;
 }
 
 export interface StreamRoundResult {
