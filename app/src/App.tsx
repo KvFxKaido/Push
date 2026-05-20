@@ -19,6 +19,7 @@ import type {
   ConversationIndex,
   DraftComposerSeed,
   LocalPcBinding,
+  PendingNewChat,
   RelayBinding,
   RepoWithActivity,
   WorkspaceSession,
@@ -200,13 +201,16 @@ function App() {
   // workspace's own ChatInput.
   const [draftComposerOpen, setDraftComposerOpen] = useState(false);
   const [draftSeed, setDraftSeed] = useState<DraftComposerSeed | null>(null);
-  // Signal to the workspace that it should mint a fresh chat. Required
+  // Signal to the workspace that it should mint a fresh chat — and,
+  // when the menu picked a provider/model override, anchor that fresh
+  // chat to those without moving the workspace-wide default. Required
   // for the same-context "+ New chat" path (drawer → menu → confirm
   // when target context matches current workspace): the workspace
   // isn't remounted so the chat-management auto-create effect never
   // fires. WorkspaceSessionScreen drains this by calling
-  // `createNewChat()` when the active chat has messages.
-  const [pendingNewChatKey, setPendingNewChatKey] = useState<string | null>(null);
+  // `createNewChat()` (when the active chat has messages) and then
+  // `upsertChatDraft` to apply the override.
+  const [pendingNewChat, setPendingNewChat] = useState<PendingNewChat | null>(null);
 
   const { resolveRepoAppearance, setRepoAppearance, clearRepoAppearance } = useRepoAppearance();
   // Catalog is lifted to App so both the pre-flight composer and the
@@ -446,7 +450,7 @@ function App() {
   );
 
   const handlePendingNewChatConsumed = useCallback(() => {
-    setPendingNewChatKey(null);
+    setPendingNewChat(null);
   }, []);
 
   // Commits the pre-flight menu into a real workspace session. Same-
@@ -454,13 +458,20 @@ function App() {
   // cross-context commits swap to a new session id, which remounts
   // WorkspaceSessionScreen and starts a fresh sandbox via the same
   // path the navigation handlers use to swap workspaces. Either way
-  // we stamp `pendingNewChatKey` so the workspace mints a fresh chat
+  // we stamp `pendingNewChat` so the workspace mints a fresh chat
   // even when the session is reused — confirming the menu always
   // means "open a new chat here", not "stay in the current one".
-  // Message entry happens later in the workspace's own ChatInput.
+  // When the menu picked a provider/model override the workspace
+  // anchors the new chat to that via its own draft store; the
+  // catalog-wide default is left alone. Message entry happens later
+  // in the workspace's own ChatInput.
   const handleCommitDraft = useCallback(
     (commit: ComposerDraftCommit) => {
-      setPendingNewChatKey(crypto.randomUUID());
+      setPendingNewChat({
+        key: crypto.randomUUID(),
+        provider: commit.provider,
+        model: commit.model,
+      });
       setDraftComposerOpen(false);
       setDraftSeed(null);
       setPendingResumeChatId(null);
@@ -758,7 +769,7 @@ function App() {
         homeBridge={{
           pendingResumeChatId,
           onConversationIndexChange: setConversationIndex,
-          pendingNewChatKey,
+          pendingNewChat,
           onPendingNewChatConsumed: handlePendingNewChatConsumed,
         }}
         catalog={catalog}

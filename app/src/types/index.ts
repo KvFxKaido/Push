@@ -1552,14 +1552,21 @@ export interface WorkspaceScreenHomeBridgeProps {
   pendingResumeChatId: string | null;
   onConversationIndexChange: (index: ConversationIndex) => void;
   /** Set by the pre-flight menu on confirm. The workspace drains it by
-   * calling `createNewChat` when the active chat already has messages
-   * — without this signal, confirming the menu in the current
-   * workspace (the drawer's "+ New chat" flow) is a no-op because no
-   * existing effect knows to mint a fresh chat. Cross-context commits
-   * already mint via the chat-management auto-create effect, so the
-   * drain is idempotent in that case. */
-  pendingNewChatKey: string | null;
+   * ensuring an empty chat exists, then — when `provider` is set —
+   * upserting that chat's draft so the first-send-anchors-lock
+   * mechanism pins the chat to the menu's pick without touching the
+   * catalog-wide default. Cross-context commits remount the workspace
+   * and rely on the chat-management auto-create effect to land on an
+   * empty chat; same-context commits keep the session and the drain
+   * has to mint the fresh chat itself. */
+  pendingNewChat: PendingNewChat | null;
   onPendingNewChatConsumed: () => void;
+}
+
+export interface PendingNewChat {
+  key: string;
+  provider: import('@/lib/providers').PreferredProvider | null;
+  model: string | null;
 }
 
 /**

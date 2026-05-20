@@ -466,6 +466,13 @@ export function useWorkspaceComposerState({
     selectedChatModels: activeChatDraft.models,
     sendMessageWithChatDraft,
     handleCreateNewChat,
+    // Exposed so the pre-flight menu's drain effect can anchor a
+    // newly minted chat to a user-picked provider/model without
+    // touching the workspace-wide catalog default — the
+    // first-send-anchors-lock mechanism then locks the chat to that
+    // pick. Internal callers (handleSelectBackend / handleSelect*Model)
+    // continue to wrap this with ensureDraftChatForComposerChange.
+    upsertChatDraft,
     handleSelectBackend,
     handleSelectOllamaModelFromChat,
     handleSelectOpenRouterModelFromChat,
