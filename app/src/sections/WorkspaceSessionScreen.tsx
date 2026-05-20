@@ -158,6 +158,7 @@ export function WorkspaceSessionScreen({
     diagnoseCIFailure,
     forkBranchFromUI,
     mergeBranchInUI,
+    replayOnFreshSandbox,
   } = useChat(
     workspaceRepo?.full_name ?? null,
     {
@@ -203,6 +204,20 @@ export function WorkspaceSessionScreen({
   useEffect(() => {
     perfMark(workspaceSession.kind === 'chat' ? 'surface:chat' : 'surface:workspace');
   }, [workspaceSession.id, workspaceSession.kind]);
+
+  // Workspace-patch replay (persist-diffs PR 3). The sandbox status
+  // transition we care about is `creating → ready` — the fresh-create
+  // path. `reconnecting → ready` is a snapshot restore that brings the
+  // working tree back as-is, so replay would double-apply.
+  const prevSandboxStatusRef = useRef(sandbox.status);
+  useEffect(() => {
+    const prev = prevSandboxStatusRef.current;
+    const curr = sandbox.status;
+    prevSandboxStatusRef.current = curr;
+    if (prev === 'creating' && curr === 'ready' && sandbox.sandboxId) {
+      void replayOnFreshSandbox(sandbox.sandboxId, activeChatId, conversations);
+    }
+  }, [sandbox.status, sandbox.sandboxId, replayOnFreshSandbox, activeChatId, conversations]);
 
   useEffect(() => {
     if (pendingResumeChatId) return;

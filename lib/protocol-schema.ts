@@ -926,7 +926,15 @@ export type WorkspacePatchRefusalReason = (typeof WORKSPACE_PATCH_REFUSAL_REASON
  */
 export type WorkspacePatchApplyState =
   | { kind: 'pending' }
-  | { kind: 'applied'; appliedAt: number }
+  | {
+      kind: 'applied';
+      appliedAt: number;
+      /** Optional free-form note. Today carries `'already-applied'` when
+       *  the replay pass detected the patch had already landed
+       *  (`git apply --check --reverse` succeeded), so we can mark the
+       *  card terminal without double-applying. */
+      note?: string;
+    }
   | { kind: 'refused'; reason: WorkspacePatchRefusalReason }
   | { kind: 'conflict'; detail: string };
 
@@ -943,7 +951,7 @@ export type WorkspacePatchApplyState =
  */
 export const APPLY_STATE_VARIANT_KEYS = {
   pending: [] as readonly string[],
-  applied: ['appliedAt'] as readonly string[],
+  applied: ['appliedAt', 'note'] as readonly string[],
   refused: ['reason'] as readonly string[],
   conflict: ['detail'] as readonly string[],
 } as const satisfies Record<WorkspacePatchApplyKind, readonly string[]>;
@@ -1049,6 +1057,12 @@ export function validateWorkspacePatchCard(data: unknown): ValidationIssue[] {
       issues.push({
         path: 'applyState.appliedAt',
         message: `expected non-negative integer, got ${JSON.stringify(apply.appliedAt)}`,
+      });
+    }
+    if ('note' in apply && apply.note !== undefined && typeof apply.note !== 'string') {
+      issues.push({
+        path: 'applyState.note',
+        message: `expected string or omitted, got ${JSON.stringify(apply.note)}`,
       });
     }
   } else if (kind === 'refused') {

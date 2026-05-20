@@ -168,15 +168,54 @@ describe('workspace-patch card — applyState variant-key isolation', () => {
   it('pins the per-variant required-key table', () => {
     assert.deepEqual(APPLY_STATE_VARIANT_KEYS, {
       pending: [],
-      applied: ['appliedAt'],
+      applied: ['appliedAt', 'note'],
       refused: ['reason'],
       conflict: ['detail'],
     });
   });
 
+  it("accepts 'applied' with an optional `note` string", () => {
+    assert.deepEqual(
+      validateWorkspacePatchCard(
+        baseCard({
+          applyState: { kind: 'applied', appliedAt: 1, note: 'already-applied' },
+        }),
+      ),
+      [],
+    );
+  });
+
+  it("rejects a non-string `note` on 'applied'", () => {
+    const issues = validateWorkspacePatchCard(
+      baseCard({ applyState: { kind: 'applied', appliedAt: 1, note: 42 } }),
+    );
+    assert.equal(
+      issues.some((i) => i.path === 'applyState.note'),
+      true,
+    );
+  });
+
+  it('rejects `note` on non-applied variants', () => {
+    for (const kind of /** @type {const} */ (['pending', 'refused', 'conflict'])) {
+      const apply =
+        kind === 'pending'
+          ? { kind, note: 'leak' }
+          : kind === 'refused'
+            ? { kind, reason: 'truncated', note: 'leak' }
+            : { kind, detail: 'd', note: 'leak' };
+      const issues = validateWorkspacePatchCard(baseCard({ applyState: apply }));
+      assert.equal(
+        issues.some((i) => i.path === 'applyState.note'),
+        true,
+        `${kind} + note should be rejected`,
+      );
+    }
+  });
+
   it("rejects 'pending' carrying any other variant's field", () => {
     for (const stray of [
       { appliedAt: 1_712_345_679_000 },
+      { note: 'leak' },
       { reason: 'truncated' },
       { detail: 'leftover' },
     ]) {
