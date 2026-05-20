@@ -376,6 +376,10 @@ export interface LocalDaemonDiffResult {
   diff: string;
   truncated: boolean;
   gitStatus?: string;
+  /** See `DiffResult.head_sha`. CLI daemon uses camelCase over the wire. */
+  headSha?: string;
+  /** See `DiffResult.diff_since_ref`. CLI daemon uses camelCase over the wire. */
+  diffSinceRef?: string;
   error?: string;
 }
 

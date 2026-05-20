@@ -218,6 +218,16 @@ export interface CoderAuditorInput {
    *  branch even if the foreground has since forked. See R11 in the slice
    *  2 design doc. */
   originBranch: string | undefined;
+  /**
+   * HEAD SHA captured BEFORE the Coder ran, when git was healthy. The
+   * Auditor uses this to ask for `git diff <preCoderHead>..HEAD`, which
+   * surfaces committed-but-no-longer-in-working-tree work and prevents
+   * the post-commit false-positive in PR #601's deterministic
+   * short-circuit. Undefined when the snapshot fetch failed (no commits
+   * yet, git error, sandbox unreachable) — the Auditor falls back to
+   * working-tree-only behavior. See PR #604.
+   */
+  preCoderHead: string | undefined;
 }
 
 /**
@@ -323,6 +333,22 @@ export async function handleCoderDelegation(
         originBranch,
       },
     };
+  }
+
+  // Snapshot HEAD BEFORE the Coder runs so the Auditor can see committed
+  // work after the working tree is clean. A successful `git commit`
+  // inside the Coder leaves `git diff HEAD` empty and used to fire PR
+  // #601's deterministic short-circuit as "no workspace changes" even
+  // though real work landed. Auditor uses this as the `since_ref` for
+  // the ranged-diff path. Best-effort: a fetch failure leaves it
+  // undefined and the Auditor falls back to working-tree-only behavior.
+  // See PR #604.
+  let preCoderHead: string | undefined;
+  try {
+    const preDiff = await getSandboxDiff(currentSandboxId);
+    preCoderHead = preDiff.head_sha;
+  } catch {
+    /* snapshot is best-effort */
   }
 
   try {
@@ -650,6 +676,7 @@ export async function handleCoderDelegation(
         harnessSettings,
         currentSandboxId,
         originBranch,
+        preCoderHead,
       },
     };
   } catch (err) {

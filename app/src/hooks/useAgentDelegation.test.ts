@@ -517,6 +517,14 @@ describe('useAgentDelegation.executeDelegateCall — delegation outcomes', () =>
       summary: 'edited auth module',
       criteriaResults: [],
     });
+    // PR #604 added a pre-Coder HEAD snapshot in coder-delegation-handler
+    // that also calls getSandboxDiff. Mock both calls (pre + post) so
+    // the post-Coder one — which this test asserts on — still surfaces
+    // a non-empty diff.
+    sandboxClient.getSandboxDiff.mockResolvedValueOnce({
+      diff: '',
+      head_sha: 'pre-coder-sha',
+    });
     sandboxClient.getSandboxDiff.mockResolvedValueOnce({
       diff: 'diff --git a/src/auth.ts b/src/auth.ts\n+const x = 1;\n',
     });

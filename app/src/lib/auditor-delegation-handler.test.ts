@@ -104,4 +104,50 @@ describe('deterministicEmptyDiffVerdict', () => {
     expect(result?.gaps).toHaveLength(1);
     expect(result?.gaps[0]).toContain('malformed tool call');
   });
+
+  it('falls through to LLM when commitsMade is true even with an empty diff — committed work is real work', () => {
+    // Reproduces the PR #601 false-positive surfaced in the 2026-05-20
+    // session: the Coder ran `git commit && git push` via sandbox_exec,
+    // `git diff HEAD` came back empty (working tree is clean post-
+    // commit), and the short-circuit fired "no workspace changes
+    // detected" even though the work landed on GitHub. With the pre/
+    // post-HEAD snapshot from PR #604 the handler now knows HEAD
+    // advanced and sets commitsMade=true, so the short-circuit defers
+    // to the LLM Auditor (which sees the ranged diff and can audit
+    // the committed changes).
+    const result = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded: true,
+      evalDiff: '',
+      criteriaResults: [],
+      commitsMade: true,
+    });
+    expect(result).toBeNull();
+  });
+
+  it('still short-circuits when commitsMade is false and the diff is empty (true no-op turn)', () => {
+    // The "Coder claimed done but did nothing" case — explicit absence
+    // of commits — must still trip the short-circuit so the
+    // orchestrator gets a crisp signal instead of paying for an LLM
+    // call that would reach the same conclusion.
+    const result = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded: true,
+      evalDiff: '',
+      criteriaResults: [],
+      commitsMade: false,
+    });
+    expect(result).not.toBeNull();
+    expect(result?.verdict).toBe('incomplete');
+  });
+
+  it('treats an undefined commitsMade as "no commits detected" (backward-compat)', () => {
+    // Pre-#604 callers don't pass commitsMade. The predicate must not
+    // start blocking the short-circuit on those — they should keep
+    // their pre-#604 behavior.
+    const result = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded: true,
+      evalDiff: '',
+      criteriaResults: [],
+    });
+    expect(result).not.toBeNull();
+  });
 });
