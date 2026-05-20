@@ -18,6 +18,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  APPLY_STATE_VARIANT_KEYS,
   WORKSPACE_PATCH_APPLY_KINDS,
   WORKSPACE_PATCH_CARD_SCHEMA_VERSION,
   WORKSPACE_PATCH_REFUSAL_REASONS,
@@ -159,6 +160,89 @@ describe('workspace-patch card — apply-state variants', () => {
     assert.equal(
       issues.some((i) => i.path === 'applyState.kind'),
       true,
+    );
+  });
+});
+
+describe('workspace-patch card — applyState variant-key isolation', () => {
+  it('pins the per-variant required-key table', () => {
+    assert.deepEqual(APPLY_STATE_VARIANT_KEYS, {
+      pending: [],
+      applied: ['appliedAt'],
+      refused: ['reason'],
+      conflict: ['detail'],
+    });
+  });
+
+  it("rejects 'pending' carrying any other variant's field", () => {
+    for (const stray of [
+      { appliedAt: 1_712_345_679_000 },
+      { reason: 'truncated' },
+      { detail: 'leftover' },
+    ]) {
+      const [strayKey] = Object.keys(stray);
+      const issues = validateWorkspacePatchCard(
+        baseCard({ applyState: { kind: 'pending', ...stray } }),
+      );
+      assert.equal(
+        issues.some((i) => i.path === `applyState.${strayKey}`),
+        true,
+        `pending + ${strayKey} should be rejected`,
+      );
+    }
+  });
+
+  it("rejects 'applied' carrying a refused/conflict field", () => {
+    for (const stray of [{ reason: 'truncated' }, { detail: 'leftover' }]) {
+      const [strayKey] = Object.keys(stray);
+      const issues = validateWorkspacePatchCard(
+        baseCard({ applyState: { kind: 'applied', appliedAt: 1, ...stray } }),
+      );
+      assert.equal(
+        issues.some((i) => i.path === `applyState.${strayKey}`),
+        true,
+        `applied + ${strayKey} should be rejected`,
+      );
+    }
+  });
+
+  it("rejects 'refused' carrying an applied/conflict field", () => {
+    for (const stray of [{ appliedAt: 1 }, { detail: 'leftover' }]) {
+      const [strayKey] = Object.keys(stray);
+      const issues = validateWorkspacePatchCard(
+        baseCard({ applyState: { kind: 'refused', reason: 'truncated', ...stray } }),
+      );
+      assert.equal(
+        issues.some((i) => i.path === `applyState.${strayKey}`),
+        true,
+        `refused + ${strayKey} should be rejected`,
+      );
+    }
+  });
+
+  it("rejects 'conflict' carrying an applied/refused field", () => {
+    for (const stray of [{ appliedAt: 1 }, { reason: 'truncated' }]) {
+      const [strayKey] = Object.keys(stray);
+      const issues = validateWorkspacePatchCard(
+        baseCard({ applyState: { kind: 'conflict', detail: 'd', ...stray } }),
+      );
+      assert.equal(
+        issues.some((i) => i.path === `applyState.${strayKey}`),
+        true,
+        `conflict + ${strayKey} should be rejected`,
+      );
+    }
+  });
+
+  it('still allows truly novel forward-compat keys inside applyState', () => {
+    // Only the *known* cross-variant keys are policed. A future
+    // optional field (e.g. an unrelated `metadata` blob) must keep
+    // round-tripping cleanly through old readers.
+    assert.deepEqual(
+      validateWorkspacePatchCard(
+        baseCard({ applyState: { kind: 'pending', futureMetadata: { foo: 'bar' } } }),
+      ),
+      [],
     );
   });
 });

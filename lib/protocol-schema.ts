@@ -919,14 +919,34 @@ export type WorkspacePatchRefusalReason = (typeof WORKSPACE_PATCH_REFUSAL_REASON
 /**
  * Apply lifecycle. `pending` is the as-captured state; the replay pass
  * (future PR) transitions to `applied`, `refused`, or `conflict`. The
- * tagged shape forces variant-specific fields to live on the variant
- * (no impossible states like "applied with a refusal reason").
+ * tagged shape forces variant-specific fields to live on the variant —
+ * the runtime validator rejects known-variant fields appearing on the
+ * wrong variant (e.g. `{ kind: 'pending', appliedAt: 123 }`), so the
+ * persisted contract matches what the TS type promises.
  */
 export type WorkspacePatchApplyState =
   | { kind: 'pending' }
   | { kind: 'applied'; appliedAt: number }
   | { kind: 'refused'; reason: WorkspacePatchRefusalReason }
   | { kind: 'conflict'; detail: string };
+
+/**
+ * Per-variant required keys. The validator uses this table to detect
+ * keys from one variant bleeding into another (e.g. a `refused` card
+ * that still has the `appliedAt` it inherited from when it was
+ * `applied`). Adding a new variant or a new per-variant field means
+ * updating this table — the CLI drift test pins both sides.
+ *
+ * Truly unknown forward-compat keys (not listed here) are still
+ * accepted, matching the module's convention of permitting unknown
+ * fields for cross-version compatibility.
+ */
+export const APPLY_STATE_VARIANT_KEYS = {
+  pending: [] as readonly string[],
+  applied: ['appliedAt'] as readonly string[],
+  refused: ['reason'] as readonly string[],
+  conflict: ['detail'] as readonly string[],
+} as const satisfies Record<WorkspacePatchApplyKind, readonly string[]>;
 
 export interface WorkspacePatchCardData {
   /** Must equal {@link WORKSPACE_PATCH_CARD_SCHEMA_VERSION}. */
@@ -1050,6 +1070,24 @@ export function validateWorkspacePatchCard(data: unknown): ValidationIssue[] {
     }
   }
   // 'pending' has no per-variant required fields.
+
+  // Reject known-variant fields appearing on the wrong variant — this is
+  // what makes the tagged union meaningful at runtime. A persisted card
+  // with `{ kind: 'pending', appliedAt: 123 }` would let replay code
+  // read a stale `appliedAt` off a pending state and misinterpret it.
+  // Truly novel keys (e.g. a future `metadata` we haven't added yet)
+  // are still allowed — only the known cross-variant keys are policed.
+  for (const [otherKind, otherKeys] of Object.entries(APPLY_STATE_VARIANT_KEYS)) {
+    if (otherKind === kind) continue;
+    for (const otherKey of otherKeys) {
+      if (otherKey in apply && apply[otherKey] !== undefined) {
+        issues.push({
+          path: `applyState.${otherKey}`,
+          message: `field belongs to applyState.kind === '${otherKind}', not '${kind}'`,
+        });
+      }
+    }
+  }
 
   return issues;
 }
