@@ -123,3 +123,81 @@ describe('createMutationFailureTracker — consecutive-call detection', () => {
     expect(t.isRepeatedCall('ls:/workspace', 3)).toBe(true);
   });
 });
+
+describe('createMutationFailureTracker — delegation-outcome detection', () => {
+  it('increments the per-agent counter on incomplete/inconclusive and resets on complete', () => {
+    const t = createMutationFailureTracker();
+    t.recordDelegationOutcome('coder', 'incomplete');
+    expect(t.isRepeatedDelegationFailure('coder', 1)).toBe(true);
+    t.recordDelegationOutcome('coder', 'inconclusive');
+    expect(t.isRepeatedDelegationFailure('coder', 2)).toBe(true);
+    t.recordDelegationOutcome('coder', 'complete');
+    // Complete resets the counter.
+    expect(t.isRepeatedDelegationFailure('coder', 1)).toBe(false);
+  });
+
+  it('keys by agent so unrelated agents do not interfere', () => {
+    const t = createMutationFailureTracker();
+    t.recordDelegationOutcome('coder', 'incomplete');
+    t.recordDelegationOutcome('coder', 'incomplete');
+    t.recordDelegationOutcome('coder', 'incomplete');
+    expect(t.isRepeatedDelegationFailure('coder', 3)).toBe(true);
+    expect(t.isRepeatedDelegationFailure('explorer', 1)).toBe(false);
+  });
+
+  it('reproduces the "re-delegate with reworded task" loop from the 2026-05-20 failure log', () => {
+    // Original session: Coder failed at turn 17, 20, and 22 with
+    // slightly different task wording each time. The args-keyed
+    // failure breaker dodged because each retry had different args
+    // (different `task` text). The delegation-outcome breaker keys
+    // only on agent — three consecutive incomplete coder outcomes
+    // trip it regardless of intervening tool calls or arg variation.
+    const t = createMutationFailureTracker();
+    // Intervening tool calls (reads etc.) happen, but they don't
+    // affect the delegation-outcome counter.
+    t.recordCall('read:/foo');
+    t.recordDelegationOutcome('coder', 'incomplete');
+    t.recordCall('read:/bar');
+    t.recordDelegationOutcome('coder', 'incomplete');
+    t.recordCall('ls:/workspace');
+    t.recordDelegationOutcome('coder', 'incomplete');
+    expect(t.isRepeatedDelegationFailure('coder', 3)).toBe(true);
+  });
+
+  it('does NOT trip when intervening Coder delegations succeed (a successful run resets)', () => {
+    // Two incompletes, then one complete, then another incomplete:
+    // the complete should reset, so only 1 incomplete is on record.
+    const t = createMutationFailureTracker();
+    t.recordDelegationOutcome('coder', 'incomplete');
+    t.recordDelegationOutcome('coder', 'incomplete');
+    t.recordDelegationOutcome('coder', 'complete');
+    t.recordDelegationOutcome('coder', 'incomplete');
+    expect(t.isRepeatedDelegationFailure('coder', 3)).toBe(false);
+    expect(t.isRepeatedDelegationFailure('coder', 2)).toBe(false);
+    expect(t.isRepeatedDelegationFailure('coder', 1)).toBe(true);
+  });
+
+  it('is independent of the failure and consecutive-call surfaces', () => {
+    // recordFailure / recordCall do NOT bump the delegation counter;
+    // recordDelegationOutcome does NOT bump the others. Callers wire
+    // each surface explicitly.
+    const t = createMutationFailureTracker();
+    t.recordFailure('k');
+    t.recordCall('k');
+    t.recordCall('k');
+    expect(t.isRepeatedDelegationFailure('coder', 1)).toBe(false);
+
+    t.recordDelegationOutcome('coder', 'incomplete');
+    expect(t.isRepeatedFailure('k', 2)).toBe(false);
+    expect(t.isRepeatedCall('k', 3)).toBe(false);
+  });
+
+  it('clear() resets the delegation counter alongside failures and consecutive calls', () => {
+    const t = createMutationFailureTracker();
+    t.recordDelegationOutcome('coder', 'incomplete');
+    t.recordDelegationOutcome('coder', 'incomplete');
+    t.recordDelegationOutcome('coder', 'incomplete');
+    t.clear();
+    expect(t.isRepeatedDelegationFailure('coder', 1)).toBe(false);
+  });
+});

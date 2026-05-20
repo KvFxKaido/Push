@@ -94,6 +94,7 @@ export async function executeBatchedToolCalls(
   const {
     applyPostToolPolicyEffects,
     recordToolFailure,
+    recordDelegationOutcome,
     getRoundSandboxStatus,
     invalidateSandboxStatus,
   } = turnCtx;
@@ -503,6 +504,10 @@ export async function executeBatchedToolCalls(
     const mutOutcome = buildToolOutcome(mutRawResult, mutMetaLine, lockedProvider);
     const isMutError = mutOutcome.raw.text.includes('[Tool Error]');
     recordToolFailure(mutCall, isMutError);
+    // Delegations carry a structured `complete | incomplete | inconclusive`
+    // outcome that the args-keyed failure tracker can't see when the
+    // orchestrator varies task text between retries. PR #603.
+    recordDelegationOutcome(mutOutcome.raw);
     appendRunEvent(chatId, {
       type: 'tool.execution_complete',
       round,

@@ -20,7 +20,17 @@ import { formatToolResultEnvelope } from './tool-call-recovery.js';
  * patterns alive: re-reading a file after an edit is fine because the
  * edit breaks the same-key streak; re-reading the same directory four
  * turns in a row with nothing between is a loop. See PR #602.
+ *
+ * Tracks per-agent DELEGATION OUTCOMES too: a `delegate_coder` that
+ * returns `incomplete` repeatedly across rounds with varying task text
+ * dodges the `(tool, args)`-keyed failure path, because the task text
+ * differs each retry. Outcome tracking is keyed only by agent — a
+ * `complete` resets the counter; `incomplete`/`inconclusive` keep
+ * incrementing it. Intervening reads or other tool calls don't reset;
+ * only a successful delegation of the same agent does. See PR #603.
  */
+export type DelegationOutcomeStatus = 'complete' | 'incomplete' | 'inconclusive';
+
 export interface MutationFailureTracker {
   /** Increment the persistent failure count for `key`. Used for the
    *  "this mutation has errored N times across the session" breaker. */
@@ -38,6 +48,22 @@ export interface MutationFailureTracker {
    * other tool between.
    */
   isRepeatedCall(key: string, limit: number): boolean;
+  /**
+   * Record a delegation result by agent. A 'complete' resets the
+   * agent's failure counter; non-complete outcomes increment it.
+   * Independent of `recordFailure` / `recordCall` — call this in
+   * addition to those when a delegation result is in hand, never
+   * instead of them.
+   */
+  recordDelegationOutcome(agent: string, status: DelegationOutcomeStatus): void;
+  /**
+   * Has the same agent returned a non-complete delegation `limit`
+   * times in a row? Use this BEFORE execution of an incoming
+   * `delegate_<agent>` call so the orchestrator can refuse to spin
+   * up another doomed delegation regardless of how the task text
+   * varied across retries.
+   */
+  isRepeatedDelegationFailure(agent: string, limit: number): boolean;
   clear(): void;
 }
 
@@ -45,6 +71,7 @@ export function createMutationFailureTracker(): MutationFailureTracker {
   const failures = new Map<string, number>();
   let lastCallKey: string | null = null;
   let consecutiveCallCount = 0;
+  const delegationFailures = new Map<string, number>();
   return {
     recordFailure(key: string) {
       failures.set(key, (failures.get(key) ?? 0) + 1);
@@ -63,10 +90,21 @@ export function createMutationFailureTracker(): MutationFailureTracker {
     isRepeatedCall(key: string, limit: number) {
       return key === lastCallKey && consecutiveCallCount >= limit;
     },
+    recordDelegationOutcome(agent: string, status: DelegationOutcomeStatus) {
+      if (status === 'complete') {
+        delegationFailures.set(agent, 0);
+      } else {
+        delegationFailures.set(agent, (delegationFailures.get(agent) ?? 0) + 1);
+      }
+    },
+    isRepeatedDelegationFailure(agent: string, limit: number) {
+      return (delegationFailures.get(agent) ?? 0) >= limit;
+    },
     clear() {
       failures.clear();
       lastCallKey = null;
       consecutiveCallCount = 0;
+      delegationFailures.clear();
     },
   };
 }

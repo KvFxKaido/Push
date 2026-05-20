@@ -30,7 +30,7 @@ import {
 } from '@/lib/chat-tool-execution';
 import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
-import type { ReasoningBlock } from '@/types';
+import type { DelegationOutcome, ReasoningBlock } from '@/types';
 import { execInSandbox } from '@/lib/sandbox-client';
 import { executeScratchpadToolCall } from '@/lib/scratchpad-tools';
 import { executeTodoToolCall } from '@/lib/todo-tools';
@@ -301,6 +301,14 @@ export interface TurnRunContext {
     results: readonly ToolExecutionResult[],
   ) => AssistantTurnResult | null;
   recordToolFailure: (call: AnyToolCall, isError: boolean) => void;
+  /**
+   * Record the structured outcome of a delegation against the tracker
+   * so consecutive non-complete delegations of the same agent trip
+   * the breaker even when the orchestrator varies the task text
+   * between retries. No-op for tool calls that don't carry a
+   * `delegationOutcome` payload. See PR #603.
+   */
+  recordDelegationOutcome: (toolExecResult: { delegationOutcome?: DelegationOutcome }) => void;
   getRoundSandboxStatus: () => Promise<RoundSandboxStatus | null>;
   invalidateSandboxStatus: () => void;
 }
@@ -445,9 +453,16 @@ export function createTurnRunContext(
     tracker.recordFailure(key);
   };
 
+  const recordDelegationOutcome = (toolExecResult: { delegationOutcome?: DelegationOutcome }) => {
+    const outcome = toolExecResult.delegationOutcome;
+    if (!outcome) return;
+    tracker.recordDelegationOutcome(outcome.agent, outcome.status);
+  };
+
   return {
     applyPostToolPolicyEffects,
     recordToolFailure,
+    recordDelegationOutcome,
     getRoundSandboxStatus,
     invalidateSandboxStatus,
   };
@@ -653,4 +668,91 @@ export function dispatchDroppedCandidatesError(
     loopAction: 'continue',
     loopCompletedNormally: false,
   };
+}
+
+/**
+ * Map a delegation tool name to the agent label the delegation-outcome
+ * tracker is keyed on. Returns null for non-delegation tools so the
+ * breaker silently skips them. `plan_tasks` orchestrates per-task
+ * Coder/Explorer delegations internally that each record their own
+ * outcomes, so the wrapper itself is not tracked here.
+ */
+function delegateAgentForToolName(toolName: string): 'coder' | 'explorer' | null {
+  if (toolName === 'delegate_coder') return 'coder';
+  if (toolName === 'delegate_explorer') return 'explorer';
+  return null;
+}
+
+/**
+ * Circuit-breaker pre-check for incoming tool calls. Returns true if
+ * the loop should break before any tool executes; false to proceed.
+ *
+ * Three independent trip rules, all applied against the same tracker:
+ *
+ *   1. **Per-args failure budget** — `(tool, args)` has errored
+ *      `>= MAX` times this session. Applies to every incoming call;
+ *      an exhausted-budget mutation key shouldn't be retried
+ *      regardless of execution order.
+ *
+ *   2. **Per-agent delegation-outcome streak** — the same delegation
+ *      agent (`coder` / `explorer`) has returned `incomplete` or
+ *      `inconclusive` for `MAX` consecutive delegations. Catches the
+ *      "model re-delegates the same task with reworded prompt" loop
+ *      the args-keyed path dodges because each retry's `task` text
+ *      differs. Applies to every incoming delegate_* call.
+ *
+ *   3. **Consecutive identical call** — `(tool, args)` has been the
+ *      previous N recorded calls in a row with nothing different
+ *      between. Only checked against the FIRST executable call in
+ *      the batch; subsequent calls inherit the correct streak-reset
+ *      semantics naturally (Copilot review on PR #602).
+ *
+ * Extracted from chat-send.ts to keep that module under the
+ * max-lines ESLint cap.
+ */
+const MAX_REPEATED_TOOL_CALLS = 3;
+
+export function checkLoopBreaker(
+  detected: DetectedToolCalls,
+  tracker: MutationFailureTracker,
+  round: number,
+): boolean {
+  const allIncomingCalls = [
+    ...detected.readOnly,
+    ...detected.fileMutations,
+    ...(detected.mutating ? [detected.mutating] : []),
+  ];
+
+  for (let i = 0; i < allIncomingCalls.length; i++) {
+    const call = allIncomingCalls[i];
+    const toolName = getToolName(call);
+    const key = getToolInvocationKey(toolName, call.call);
+
+    if (tracker.isRepeatedFailure(key, MAX_REPEATED_TOOL_CALLS)) {
+      console.warn(
+        `[Push] Turn ${round}: loop circuit breaker tripped for ${toolName}. Breaking loop.`,
+      );
+      return true;
+    }
+
+    const delegateAgent = delegateAgentForToolName(toolName);
+    if (
+      delegateAgent &&
+      tracker.isRepeatedDelegationFailure(delegateAgent, MAX_REPEATED_TOOL_CALLS)
+    ) {
+      console.warn(
+        `[Push] Turn ${round}: delegation-outcome breaker tripped for ${toolName} (${MAX_REPEATED_TOOL_CALLS}+ consecutive non-complete ${delegateAgent} delegations). Breaking loop.`,
+      );
+      return true;
+    }
+
+    if (i === 0 && tracker.isRepeatedCall(key, MAX_REPEATED_TOOL_CALLS)) {
+      console.warn(
+        `[Push] Turn ${round}: repeated-call breaker tripped for ${toolName} (same args ${MAX_REPEATED_TOOL_CALLS}+ rounds in a row). Breaking loop.`,
+      );
+      return true;
+    }
+  }
+
+  return false;
 }
