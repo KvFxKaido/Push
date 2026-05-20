@@ -10,15 +10,41 @@
 
 import { formatToolResultEnvelope } from './tool-call-recovery.js';
 
-/** Mutation failure tracker — detects repeated failures on same tool+args */
+/**
+ * Mutation failure tracker — detects repeated failures on same tool+args.
+ *
+ * Also tracks CONSECUTIVE repetitions of any tool call (success or error)
+ * so the orchestrator can break out of "model keeps re-running the same
+ * read with no progress" loops that the failure-only path misses. The
+ * consecutive semantics (not total-session) keep legitimate iterative
+ * patterns alive: re-reading a file after an edit is fine because the
+ * edit breaks the same-key streak; re-reading the same directory four
+ * turns in a row with nothing between is a loop. See PR #602.
+ */
 export interface MutationFailureTracker {
+  /** Increment the persistent failure count for `key`. Used for the
+   *  "this mutation has errored N times across the session" breaker. */
   recordFailure(key: string): void;
+  /** Was `key` the failure target at least `limit` times this session? */
   isRepeatedFailure(key: string, limit: number): boolean;
+  /** Track every tool invocation (success OR failure). Resets the
+   *  consecutive counter if `key` differs from the previous call. */
+  recordCall(key: string): void;
+  /**
+   * Was this the `limit`-th (or later) consecutive identical call?
+   * Returns true when `key` matches the last recorded key and the
+   * consecutive count is `>= limit`. Use BEFORE execution so the next
+   * round can refuse to run a call we've already seen repeat with no
+   * other tool between.
+   */
+  isRepeatedCall(key: string, limit: number): boolean;
   clear(): void;
 }
 
 export function createMutationFailureTracker(): MutationFailureTracker {
   const failures = new Map<string, number>();
+  let lastCallKey: string | null = null;
+  let consecutiveCallCount = 0;
   return {
     recordFailure(key: string) {
       failures.set(key, (failures.get(key) ?? 0) + 1);
@@ -26,8 +52,21 @@ export function createMutationFailureTracker(): MutationFailureTracker {
     isRepeatedFailure(key: string, limit: number) {
       return (failures.get(key) ?? 0) >= limit;
     },
+    recordCall(key: string) {
+      if (key === lastCallKey) {
+        consecutiveCallCount++;
+      } else {
+        lastCallKey = key;
+        consecutiveCallCount = 1;
+      }
+    },
+    isRepeatedCall(key: string, limit: number) {
+      return key === lastCallKey && consecutiveCallCount >= limit;
+    },
     clear() {
       failures.clear();
+      lastCallKey = null;
+      consecutiveCallCount = 0;
     },
   };
 }
