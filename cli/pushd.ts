@@ -4449,11 +4449,56 @@ async function handleSandboxDiff(req) {
     // Status is advisory; swallow.
   }
 
+  // Current HEAD SHA so callers can pre/post-snapshot a Coder run and
+  // detect committed-but-no-longer-in-working-tree work. See PR #604.
+  let headSha;
+  try {
+    const out = await runCommandInResolvedShell('git rev-parse HEAD', {
+      cwd,
+      timeout: SANDBOX_GIT_TIMEOUT_MS,
+      maxBuffer: 64_000,
+    });
+    const trimmed = (out.stdout || '').trim();
+    if (trimmed) headSha = trimmed;
+  } catch {
+    // HEAD may not exist in a fresh repo; leave headSha undefined.
+  }
+
+  // Optional ranged diff (`since_ref..HEAD`) so the Auditor can see
+  // committed work after the working tree is clean. Same shell-injection
+  // guard as the worker route: hex SHA shape only.
+  let diffSinceRef = '';
+  const sinceRefRaw =
+    typeof req.payload?.since_ref === 'string' ? req.payload.since_ref.trim() : '';
+  const sinceRef = /^[0-9a-f]{7,40}$/i.test(sinceRefRaw) ? sinceRefRaw : '';
+  if (sinceRef) {
+    try {
+      const out = await runCommandInResolvedShell(`git diff ${sinceRef}..HEAD`, {
+        cwd,
+        timeout: SANDBOX_GIT_TIMEOUT_MS,
+        maxBuffer: SANDBOX_DIFF_MAX_BYTES + 64_000,
+      });
+      diffSinceRef = out.stdout || '';
+    } catch {
+      // Ranged-diff failure (bad ref, etc.) is non-fatal — fall back
+      // to the working-tree diff path.
+    }
+  }
+
   const truncated = diffText.length > SANDBOX_DIFF_MAX_BYTES;
+  const truncatedSinceRef = diffSinceRef.length > SANDBOX_DIFF_MAX_BYTES;
   return makeResponse(req.requestId, 'sandbox_diff', null, true, {
     diff: truncated ? `${diffText.slice(0, SANDBOX_DIFF_MAX_BYTES)}\n…[truncated]` : diffText,
     truncated,
     gitStatus: statusText,
+    ...(headSha ? { headSha } : {}),
+    ...(diffSinceRef
+      ? {
+          diffSinceRef: truncatedSinceRef
+            ? `${diffSinceRef.slice(0, SANDBOX_DIFF_MAX_BYTES)}\n…[truncated]`
+            : diffSinceRef,
+        }
+      : {}),
     error: diffError,
   });
 }

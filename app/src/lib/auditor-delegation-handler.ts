@@ -167,9 +167,45 @@ export async function handleCoderAuditor(
 
     let evalDiff: string | null = null;
     let diffFetchSucceeded = false;
+    let commitsMade = false;
     try {
-      const diffResult = await getSandboxDiff(auditorInput.currentSandboxId);
-      evalDiff = diffResult.diff || null;
+      // Pass the pre-Coder HEAD captured by coder-delegation-handler so
+      // the sandbox also returns `diff_since_ref` (the committed-but-
+      // no-longer-in-working-tree work that the post-commit case in
+      // PR #601 was misclassifying). When preCoderHead is undefined
+      // the worker silently omits the ranged diff and behavior matches
+      // the pre-#604 path. See PR #604.
+      const diffResult = await getSandboxDiff(auditorInput.currentSandboxId, {
+        sinceRef: auditorInput.preCoderHead,
+      });
+      // Combine the working-tree diff (uncommitted edits) with the
+      // ranged diff (committed work since the Coder started). The LLM
+      // Auditor and the deterministic short-circuit both need to see
+      // either as evidence that the Coder actually did something.
+      const workingTreeDiff = diffResult.diff || '';
+      const rangedDiff = diffResult.diff_since_ref || '';
+      // Tri-state commitsMade. The handler is the only production
+      // caller of the predicate, so we collapse "unknown" to true here:
+      // when a legacy sandbox or mixed-version response omits head_sha,
+      // we can't establish that no commits happened, and the safer
+      // default is to fall through to the LLM Auditor rather than
+      // re-fire PR #601's false-positive. Copilot review on PR #604.
+      // True ⇒ we either confirmed HEAD advanced OR can't be sure; in
+      //         both cases the predicate refuses to short-circuit.
+      // False ⇒ both pre/post HEAD are known and equal — verifiably
+      //         no commits, predicate is free to short-circuit.
+      const canDetermineCommits =
+        Boolean(auditorInput.preCoderHead) && typeof diffResult.head_sha === 'string';
+      commitsMade = canDetermineCommits ? diffResult.head_sha !== auditorInput.preCoderHead : true;
+      // Concatenation preserves both halves for the LLM. The Auditor
+      // prompt's [SANDBOX DIFF] section will render whichever is
+      // present (or both, with a separator) so the model can audit
+      // the full set of changes.
+      if (workingTreeDiff && rangedDiff) {
+        evalDiff = `${workingTreeDiff}\n--- committed since coder started ---\n${rangedDiff}`;
+      } else {
+        evalDiff = workingTreeDiff || rangedDiff || null;
+      }
       // `getSandboxDiff` can resolve with HTTP 200 and a populated `error`
       // field (git failure inside the sandbox, see `routeDiff` in
       // worker-cf-sandbox.ts). In that case `diff` is empty but the data
@@ -193,6 +229,7 @@ export async function handleCoderAuditor(
       diffFetchSucceeded,
       evalDiff,
       criteriaResults: auditorInput.allCriteriaResults,
+      commitsMade,
     });
     if (deterministicResult) {
       ctx.updateVerificationStateForChat(chatId, (state) =>
@@ -342,7 +379,7 @@ function formatAuditorSummaryLine(evalResult: EvaluationResult): string {
  * when the empty-diff case is unambiguous, or `null` to let the caller
  * fall through to the LLM evaluator.
  *
- * Three conditions must hold:
+ * Four conditions must hold:
  *   1. The diff fetch succeeded — a thrown sandbox call leaves us blind to
  *      what actually happened, so we trust the LLM evaluator instead of
  *      asserting "no changes".
@@ -352,6 +389,17 @@ function formatAuditorSummaryLine(evalResult: EvaluationResult): string {
  *      typechecks that came back green, an empty diff is legitimate
  *      "done with no edits required" (verification-against-already-green
  *      state) and the LLM should make the final call.
+ *   4. **No commits were made during the Coder run.** A successful
+ *      `git commit` inside the Coder leaves `git diff HEAD` empty even
+ *      though real work landed; the pre/post-HEAD comparison in
+ *      `handleCoderAuditor` surfaces this as `commitsMade`. When true,
+ *      we fall through to the LLM with the ranged diff so it can
+ *      evaluate the committed changes. The handler collapses
+ *      "couldn't determine" (legacy sandbox without `head_sha`, missing
+ *      pre-Coder snapshot) into `commitsMade: true` so we err on the
+ *      side of running the LLM rather than firing a false-positive
+ *      short-circuit. PR #604 — fix for the post-commit Auditor
+ *      false-positive observed against #601.
  *
  * Exported for unit testing; the handler above is the only production
  * caller.
@@ -360,11 +408,13 @@ export function deterministicEmptyDiffVerdict(input: {
   diffFetchSucceeded: boolean;
   evalDiff: string | null;
   criteriaResults: readonly { passed: boolean }[];
+  commitsMade?: boolean;
 }): EvaluationResult | null {
   if (!input.diffFetchSucceeded) return null;
   const diffIsEmpty = !input.evalDiff || input.evalDiff.trim().length === 0;
   if (!diffIsEmpty) return null;
   if (input.criteriaResults.some((r) => r.passed)) return null;
+  if (input.commitsMade) return null;
   return {
     verdict: 'incomplete',
     summary:

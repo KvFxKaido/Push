@@ -96,6 +96,24 @@ export interface DiffResult {
   truncated: boolean;
   /** Raw `git status --porcelain` output for diagnostics */
   git_status?: string;
+  /**
+   * Current HEAD SHA at fetch time, or undefined when the diff fetch
+   * could not capture it (legacy sandbox builds, git failure). Lets
+   * callers pre/post-snapshot the Coder run to detect commits even
+   * when the working-tree diff is empty after a successful commit.
+   * See PR #604.
+   */
+  head_sha?: string;
+  /**
+   * Diff against an alternate base ref when callers pass `since_ref`
+   * to the diff endpoint. Captures committed-but-not-uncommitted work
+   * (the post-commit Auditor false-positive from PR #601). The field
+   * is **omitted from the response** (undefined here) when `since_ref`
+   * was not supplied, the ranged diff body was empty, or the ranged
+   * git command failed — callers cannot distinguish those cases from
+   * each other today. Combine with `head_sha` to determine intent.
+   */
+  diff_since_ref?: string;
   error?: string;
 }
 
@@ -1404,10 +1422,22 @@ export async function batchWriteToSandbox(
   return result;
 }
 
-export async function getSandboxDiff(sandboxId: string): Promise<DiffResult> {
+/**
+ * Fetch the sandbox diff. Pass `sinceRef` to also receive
+ * `diff_since_ref` (changes between `sinceRef` and current HEAD),
+ * which covers committed-but-no-longer-in-working-tree work — the
+ * post-commit case the working-tree diff alone misses. The response
+ * always includes `head_sha` when git is healthy so callers can
+ * pre/post-snapshot a Coder run.
+ */
+export async function getSandboxDiff(
+  sandboxId: string,
+  options?: { sinceRef?: string },
+): Promise<DiffResult> {
   return sandboxFetch<DiffResult>('diff', {
     ...withOwnerToken({}, sandboxId),
     sandbox_id: sandboxId,
+    ...(options?.sinceRef ? { since_ref: options.sinceRef } : {}),
   });
 }
 

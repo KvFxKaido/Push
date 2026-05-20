@@ -839,6 +839,13 @@ async function routeList(env: Env, body: Json): Promise<Response> {
 
 async function routeDiff(env: Env, body: Json): Promise<Response> {
   const sandboxId = requireStr(body, 'sandbox_id');
+  // Optional pre-Coder ref so the Auditor can see committed work even
+  // after the working tree is clean (PR #604 — fix for the post-commit
+  // empty-diff false-positive in #601). Only a 7-40 hex SHA shape is
+  // accepted to keep this off the shell-injection surface; anything
+  // else is silently ignored and the response omits diff_since_ref.
+  const sinceRefRaw = typeof body.since_ref === 'string' ? body.since_ref.trim() : '';
+  const sinceRef = /^[0-9a-f]{7,40}$/i.test(sinceRefRaw) ? sinceRefRaw : '';
   const sandbox = getSandbox(env.Sandbox!, sandboxId);
 
   const diffRes = (await withExecDeadline(sandbox.exec('git -C /workspace diff HEAD'))) as {
@@ -849,6 +856,11 @@ async function routeDiff(env: Env, body: Json): Promise<Response> {
   const statusRes = (await withExecDeadline(
     sandbox.exec('git -C /workspace status --porcelain'),
   )) as {
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number;
+  };
+  const headRes = (await withExecDeadline(sandbox.exec('git -C /workspace rev-parse HEAD'))) as {
     stdout?: string;
     stderr?: string;
     exitCode?: number;
@@ -868,10 +880,34 @@ async function routeDiff(env: Env, body: Json): Promise<Response> {
 
   const diff = diffRes.stdout ?? '';
   const MAX = 1_000_000;
+
+  let diffSinceRef = '';
+  if (sinceRef) {
+    const rangedRes = (await withExecDeadline(
+      sandbox.exec(`git -C /workspace diff ${sinceRef}..HEAD`),
+    )) as { stdout?: string; stderr?: string; exitCode?: number };
+    if ((rangedRes.exitCode ?? 0) === 0) {
+      diffSinceRef = rangedRes.stdout ?? '';
+    }
+    // Ranged-diff failure (bad ref, etc.) is non-fatal — the caller
+    // falls back to the working-tree diff and the LLM auditor.
+  }
+
+  const headSha = (headRes.exitCode ?? 0) === 0 ? (headRes.stdout ?? '').trim() : undefined;
+
   return Response.json({
     diff: diff.length > MAX ? `${diff.slice(0, MAX)}\n…[truncated]` : diff,
     truncated: diff.length > MAX,
     git_status: statusRes.stdout ?? '',
+    ...(headSha ? { head_sha: headSha } : {}),
+    ...(diffSinceRef
+      ? {
+          diff_since_ref:
+            diffSinceRef.length > MAX
+              ? `${diffSinceRef.slice(0, MAX)}\n…[truncated]`
+              : diffSinceRef,
+        }
+      : {}),
   });
 }
 

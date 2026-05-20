@@ -334,4 +334,90 @@ describe('sandbox_diff', () => {
     assert.match(res.payload.diff, /diff --git/);
     assert.match(res.payload.diff, /\+fresh content/);
   });
+
+  it('returns headSha alongside the diff so callers can pre/post-snapshot a Coder run (PR #604)', async () => {
+    // The post-commit Auditor false-positive from PR #601 needed a way
+    // to detect commits-made even when `git diff HEAD` is empty. Pin
+    // that headSha is populated whenever git is healthy.
+    const { runCommandInResolvedShell } = await import('../shell.js');
+    await runCommandInResolvedShell('git init --initial-branch=main', { cwd: tmpRoot });
+    await runCommandInResolvedShell(
+      'git config user.email test@test && git config user.name test',
+      { cwd: tmpRoot },
+    );
+    await fs.writeFile(path.join(tmpRoot, 'a.txt'), 'hello\n', 'utf8');
+    await runCommandInResolvedShell(
+      'git add a.txt && git -c commit.gpgsign=false commit -m initial',
+      { cwd: tmpRoot },
+    );
+
+    const res = await handleRequest(makeRequest('sandbox_diff', {}), NOOP_EMIT);
+    assert.equal(res.ok, true);
+    // Working tree clean post-commit, so diff is empty.
+    assert.equal(res.payload.diff, '');
+    // headSha is the SHA of the commit we just made. Forty hex chars.
+    assert.match(res.payload.headSha ?? '', /^[0-9a-f]{40}$/);
+  });
+
+  it('returns diffSinceRef when a hex-shaped since_ref is supplied (PR #604)', async () => {
+    // End-to-end: capture HEAD before a commit, make the commit,
+    // then request the diff with since_ref=<old HEAD>. diffSinceRef
+    // should surface the committed change even though `git diff HEAD`
+    // is empty. This is the path the Auditor uses to break out of
+    // PR #601's post-commit false-positive.
+    const { runCommandInResolvedShell } = await import('../shell.js');
+    await runCommandInResolvedShell('git init --initial-branch=main', { cwd: tmpRoot });
+    await runCommandInResolvedShell(
+      'git config user.email test@test && git config user.name test',
+      { cwd: tmpRoot },
+    );
+    await fs.writeFile(path.join(tmpRoot, 'a.txt'), 'one\n', 'utf8');
+    await runCommandInResolvedShell(
+      'git add a.txt && git -c commit.gpgsign=false commit -m first',
+      { cwd: tmpRoot },
+    );
+    const preHeadRes = await handleRequest(makeRequest('sandbox_diff', {}), NOOP_EMIT);
+    const preHeadSha = preHeadRes.payload.headSha;
+    assert.match(preHeadSha ?? '', /^[0-9a-f]{40}$/);
+
+    // Simulate a Coder commit happening between snapshots.
+    await fs.writeFile(path.join(tmpRoot, 'b.txt'), 'two\n', 'utf8');
+    await runCommandInResolvedShell(
+      'git add b.txt && git -c commit.gpgsign=false commit -m second',
+      { cwd: tmpRoot },
+    );
+
+    const res = await handleRequest(
+      makeRequest('sandbox_diff', { since_ref: preHeadSha }),
+      NOOP_EMIT,
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.payload.diff, '');
+    assert.match(res.payload.diffSinceRef ?? '', /\+two/);
+  });
+
+  it('silently drops non-hex since_ref values to keep the endpoint off the shell-injection surface', async () => {
+    const { runCommandInResolvedShell } = await import('../shell.js');
+    await runCommandInResolvedShell('git init --initial-branch=main', { cwd: tmpRoot });
+    await runCommandInResolvedShell(
+      'git config user.email test@test && git config user.name test',
+      { cwd: tmpRoot },
+    );
+    await fs.writeFile(path.join(tmpRoot, 'a.txt'), 'hi\n', 'utf8');
+    await runCommandInResolvedShell(
+      'git add a.txt && git -c commit.gpgsign=false commit -m initial',
+      { cwd: tmpRoot },
+    );
+
+    const res = await handleRequest(
+      makeRequest('sandbox_diff', { since_ref: 'HEAD; rm -rf /' }),
+      NOOP_EMIT,
+    );
+    assert.equal(res.ok, true);
+    // Bad ref is silently dropped — no diffSinceRef field in the
+    // response, and no shell injection occurred (we can still read
+    // the head_sha after, confirming the working tree is intact).
+    assert.equal(res.payload.diffSinceRef, undefined);
+    assert.match(res.payload.headSha ?? '', /^[0-9a-f]{40}$/);
+  });
 });
