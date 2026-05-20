@@ -142,12 +142,29 @@ describe('deterministicEmptyDiffVerdict', () => {
   it('treats an undefined commitsMade as "no commits detected" (backward-compat)', () => {
     // Pre-#604 callers don't pass commitsMade. The predicate must not
     // start blocking the short-circuit on those — they should keep
-    // their pre-#604 behavior.
+    // their pre-#604 behavior. The handler in this PR collapses
+    // unknown-commits into commitsMade=true at the caller site so the
+    // mixed-version safety net lives there, not here.
     const result = deterministicEmptyDiffVerdict({
       diffFetchSucceeded: true,
       evalDiff: '',
       criteriaResults: [],
     });
     expect(result).not.toBeNull();
+  });
+
+  it('falls through to LLM when commitsMade is true even from the handler-collapsed unknown case', () => {
+    // Locks in the Copilot P1 fix: when the sandbox omits head_sha
+    // (legacy / mixed-version response), the handler now passes
+    // commitsMade=true rather than relying on the falsy default. The
+    // predicate must keep treating a truthy commitsMade as "do not
+    // short-circuit" so the mixed-version safety net works end-to-end.
+    const result = deterministicEmptyDiffVerdict({
+      diffFetchSucceeded: true,
+      evalDiff: '',
+      criteriaResults: [],
+      commitsMade: true,
+    });
+    expect(result).toBeNull();
   });
 });

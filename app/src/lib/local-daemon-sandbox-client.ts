@@ -518,11 +518,17 @@ export async function listDirLocalDaemon(
  */
 export async function getDiffLocalDaemon(
   binding: ToolDispatchBinding,
+  options?: { sinceRef?: string },
 ): Promise<LocalDaemonDiffResult> {
+  // Pass `since_ref` straight through so the local daemon's ranged
+  // diff path is exercisable when this binding is the audit transport
+  // (local-PC / relay workspace sessions). The daemon validates the
+  // ref shape itself; we don't pre-filter here. Kilo review on PR #604.
+  const payload = options?.sinceRef ? { since_ref: options.sinceRef } : {};
   const response = await runWithBinding(binding, (request) =>
     request<LocalDaemonDiffResult>({
       type: 'sandbox_diff',
-      payload: {},
+      payload,
       timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
     }),
   );

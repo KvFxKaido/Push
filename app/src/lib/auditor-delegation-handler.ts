@@ -184,10 +184,19 @@ export async function handleCoderAuditor(
       // either as evidence that the Coder actually did something.
       const workingTreeDiff = diffResult.diff || '';
       const rangedDiff = diffResult.diff_since_ref || '';
-      commitsMade =
-        Boolean(auditorInput.preCoderHead) &&
-        typeof diffResult.head_sha === 'string' &&
-        diffResult.head_sha !== auditorInput.preCoderHead;
+      // Tri-state commitsMade. The handler is the only production
+      // caller of the predicate, so we collapse "unknown" to true here:
+      // when a legacy sandbox or mixed-version response omits head_sha,
+      // we can't establish that no commits happened, and the safer
+      // default is to fall through to the LLM Auditor rather than
+      // re-fire PR #601's false-positive. Copilot review on PR #604.
+      // True ⇒ we either confirmed HEAD advanced OR can't be sure; in
+      //         both cases the predicate refuses to short-circuit.
+      // False ⇒ both pre/post HEAD are known and equal — verifiably
+      //         no commits, predicate is free to short-circuit.
+      const canDetermineCommits =
+        Boolean(auditorInput.preCoderHead) && typeof diffResult.head_sha === 'string';
+      commitsMade = canDetermineCommits ? diffResult.head_sha !== auditorInput.preCoderHead : true;
       // Concatenation preserves both halves for the LLM. The Auditor
       // prompt's [SANDBOX DIFF] section will render whichever is
       // present (or both, with a separator) so the model can audit
@@ -385,8 +394,12 @@ function formatAuditorSummaryLine(evalResult: EvaluationResult): string {
  *      though real work landed; the pre/post-HEAD comparison in
  *      `handleCoderAuditor` surfaces this as `commitsMade`. When true,
  *      we fall through to the LLM with the ranged diff so it can
- *      evaluate the committed changes. PR #604 — fix for the post-
- *      commit Auditor false-positive observed against #601.
+ *      evaluate the committed changes. The handler collapses
+ *      "couldn't determine" (legacy sandbox without `head_sha`, missing
+ *      pre-Coder snapshot) into `commitsMade: true` so we err on the
+ *      side of running the LLM rather than firing a false-positive
+ *      short-circuit. PR #604 — fix for the post-commit Auditor
+ *      false-positive observed against #601.
  *
  * Exported for unit testing; the handler above is the only production
  * caller.

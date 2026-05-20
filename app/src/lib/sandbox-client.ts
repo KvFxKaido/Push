@@ -107,8 +107,11 @@ export interface DiffResult {
   /**
    * Diff against an alternate base ref when callers pass `since_ref`
    * to the diff endpoint. Captures committed-but-not-uncommitted work
-   * (the post-commit Auditor false-positive from PR #601). Empty when
-   * `since_ref` was not supplied or matched the current HEAD.
+   * (the post-commit Auditor false-positive from PR #601). The field
+   * is **omitted from the response** (undefined here) when `since_ref`
+   * was not supplied, the ranged diff body was empty, or the ranged
+   * git command failed — callers cannot distinguish those cases from
+   * each other today. Combine with `head_sha` to determine intent.
    */
   diff_since_ref?: string;
   error?: string;
