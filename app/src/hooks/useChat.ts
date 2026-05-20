@@ -463,19 +463,19 @@ export function useChat(
     [replaceAgentEvents, hydrateQueuedFollowUps],
   );
 
-  // --- IndexedDB migration ---
+  // IDB migration: `.finally` flips `conversationsLoaded` on reject too
+  // (pendingNewChat drain gates on it); isMountedRef skips late settles.
   useEffect(() => {
-    migrateConversationsToIndexedDB().then((convs) => {
-      hydratePersistedRunState(convs);
-      if (Object.keys(convs).length > 0) {
+    migrateConversationsToIndexedDB()
+      .then((convs) => {
+        if (!isMountedRef.current) return;
+        hydratePersistedRunState(convs);
+        if (Object.keys(convs).length === 0) return;
         updateConversations(convs);
-        setActiveChatId((prev) => {
-          if (prev && convs[prev]) return prev;
-          return loadActiveChatId(convs);
-        });
-      }
-      setConversationsLoaded(true);
-    });
+        setActiveChatId((prev) => (prev && convs[prev] ? prev : loadActiveChatId(convs)));
+      })
+      .catch((err) => console.warn('[useChat] Conversation hydration failed', err))
+      .finally(() => isMountedRef.current && setConversationsLoaded(true));
   }, [hydratePersistedRunState, updateConversations]);
 
   // --- Abort stream ---
