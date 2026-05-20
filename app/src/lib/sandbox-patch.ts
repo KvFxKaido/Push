@@ -54,10 +54,18 @@ const REPLAY_PATCH_PATH = '/workspace/.git/push-replay.patch';
  *  the existing recovery-path messages in `useCommitPush.ts`. */
 const CONFLICT_DETAIL_MAX = 1000;
 
+/** Sentinel appended by {@link clampConflictDetail} when the conflict
+ *  detail was clipped. Exported so the UI renderer
+ *  (`WorkspacePatchCard.tsx`) can lift the marker out of the
+ *  end-of-string text into a distinct visual line without duplicating
+ *  the string literal — drift between the producer and the consumer
+ *  would silently break the truncation indicator. */
+export const CONFLICT_DETAIL_TRUNCATION_SUFFIX = '\n…[truncated]';
+
 function clampConflictDetail(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.length <= CONFLICT_DETAIL_MAX) return trimmed;
-  return `${trimmed.slice(0, CONFLICT_DETAIL_MAX)}\n…[truncated]`;
+  return `${trimmed.slice(0, CONFLICT_DETAIL_MAX)}${CONFLICT_DETAIL_TRUNCATION_SUFFIX}`;
 }
 
 /**
