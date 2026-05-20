@@ -307,6 +307,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
           pendingSteerCount,
           placeholder: 'Message',
           contextUsage,
+          libraryEnabled: true,
           draftKey: activeChatId,
           prefillRequest: composerPrefillRequest,
           editState,

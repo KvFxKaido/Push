@@ -130,6 +130,14 @@
   //
   // Then insert into the kv_namespaces array below:
   //   { "binding": "ARTIFACTS", "id": "<returned id>" }
+  // Chat library — user-scoped persistent attachments. Same fail-closed
+  // contract: /api/library/* returns NOT_CONFIGURED 503 when the binding
+  // is missing. Add manually after running:
+  //
+  //   npx wrangler kv:namespace create CHAT_LIBRARY
+  //
+  // Then insert into the kv_namespaces array below:
+  //   { "binding": "CHAT_LIBRARY", "id": "<returned id>" }
   "kv_namespaces": [
     {
       "binding": "SNAPSHOT_INDEX",
