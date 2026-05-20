@@ -29,9 +29,9 @@ function makeConversation(messages: ChatMessage[]): Conversation {
   };
 }
 
-function makeAssistantToolCall(): ChatMessage {
+function makeAssistantToolCall(id = 'asst-1'): ChatMessage {
   return {
-    id: 'asst-1',
+    id,
     role: 'assistant',
     content: '',
     timestamp: 1,
@@ -50,6 +50,38 @@ function coderCompletedEvent(): RunEventInput {
   };
 }
 
+interface HarnessOptions {
+  initialMessages?: ChatMessage[];
+  sandboxId?: string | null;
+  repoFullName?: string | null;
+  branch?: string;
+}
+
+function makeHarness(opts: HarnessOptions = {}) {
+  let conversations: Record<string, Conversation> = {
+    'chat-1': makeConversation(opts.initialMessages ?? [makeAssistantToolCall()]),
+  };
+  const dirtyConversationIdsRef = { current: new Set<string>() };
+  // eslint-disable-next-line react-hooks/rules-of-hooks -- test harness invokes the hook outside React; the mocked `useCallback` makes this safe.
+  const { captureWorkspacePatchAtRoundEnd } = useWorkspacePatchCapture({
+    sandboxIdRef: { current: opts.sandboxId === undefined ? 'sb-1' : opts.sandboxId },
+    repoRef: { current: opts.repoFullName === undefined ? 'kvfxkaido/push' : opts.repoFullName },
+    branchInfoRef: {
+      current:
+        opts.branch === undefined ? { currentBranch: 'feature/x' } : { currentBranch: opts.branch },
+    },
+    setConversations: (updater) => {
+      conversations = typeof updater === 'function' ? updater(conversations) : updater;
+    },
+    dirtyConversationIdsRef,
+  });
+  return {
+    captureWorkspacePatchAtRoundEnd,
+    getConversations: () => conversations,
+    dirtyConversationIdsRef,
+  };
+}
+
 afterEach(() => {
   mockExecInSandbox.mockReset();
   mockFetchSandboxDiffWithMeta.mockReset();
@@ -63,6 +95,7 @@ describe('shouldCaptureWorkspacePatch', () => {
         round: 0,
         outcome: 'completed',
         roundEvents: [coderCompletedEvent()],
+        assistantToolCallMessageId: 'asst-1',
       }),
     ).toBe(true);
   });
@@ -77,6 +110,7 @@ describe('shouldCaptureWorkspacePatch', () => {
           { type: 'subagent.completed', executionId: 'x', agent: 'explorer', summary: 'done' },
           { type: 'assistant.turn_end', round: 0, outcome: 'completed' },
         ],
+        assistantToolCallMessageId: 'asst-1',
       }),
     ).toBe(false);
   });
@@ -88,6 +122,7 @@ describe('shouldCaptureWorkspacePatch', () => {
         round: 0,
         outcome: 'completed',
         roundEvents: [],
+        assistantToolCallMessageId: 'asst-1',
       }),
     ).toBe(false);
   });
@@ -104,26 +139,16 @@ describe('useWorkspacePatchCapture', () => {
       exitCode: 0,
     });
 
-    let conversations: Record<string, Conversation> = {
-      'chat-1': makeConversation([makeAssistantToolCall()]),
-    };
-    const { captureWorkspacePatchAtRoundEnd } = useWorkspacePatchCapture({
-      sandboxIdRef: { current: 'sb-1' },
-      repoRef: { current: 'kvfxkaido/push' },
-      branchInfoRef: { current: { currentBranch: 'feature/x' } },
-      setConversations: (updater) => {
-        conversations = typeof updater === 'function' ? updater(conversations) : updater;
-      },
-    });
-
-    await captureWorkspacePatchAtRoundEnd({
+    const harness = makeHarness();
+    await harness.captureWorkspacePatchAtRoundEnd({
       chatId: 'chat-1',
       round: 0,
       outcome: 'completed',
       roundEvents: [coderCompletedEvent()],
+      assistantToolCallMessageId: 'asst-1',
     });
 
-    const cards = conversations['chat-1'].messages[0].cards ?? [];
+    const cards = harness.getConversations()['chat-1'].messages[0].cards ?? [];
     expect(cards).toHaveLength(1);
     const card = cards[0] as Extract<ChatCard, { type: 'workspace-patch' }>;
     expect(card.type).toBe('workspace-patch');
@@ -139,99 +164,139 @@ describe('useWorkspacePatchCapture', () => {
     expect(card.data.capturedAt).toEqual(expect.any(Number));
   });
 
+  it('marks the conversation dirty so persistence flushes the new card', async () => {
+    mockFetchSandboxDiffWithMeta.mockResolvedValue({ diff: 'd', truncated: false });
+    mockExecInSandbox.mockResolvedValue({ stdout: 'sha\n', exitCode: 0 });
+
+    const harness = makeHarness();
+    await harness.captureWorkspacePatchAtRoundEnd({
+      chatId: 'chat-1',
+      round: 0,
+      outcome: 'completed',
+      roundEvents: [coderCompletedEvent()],
+      assistantToolCallMessageId: 'asst-1',
+    });
+
+    expect(harness.dirtyConversationIdsRef.current.has('chat-1')).toBe(true);
+  });
+
+  it('targets the snapshotted message id even when a newer tool-call has been added', async () => {
+    // The race Codex / Copilot flagged: capture is fire-and-forget. While
+    // it awaits the diff, a later round appends a newer assistant tool-call.
+    // The card must still land on the *original* round's message.
+    mockFetchSandboxDiffWithMeta.mockResolvedValue({ diff: 'd', truncated: false });
+    mockExecInSandbox.mockResolvedValue({ stdout: 'sha\n', exitCode: 0 });
+
+    const original = makeAssistantToolCall('asst-original');
+    const later = makeAssistantToolCall('asst-later');
+    const harness = makeHarness({ initialMessages: [original, later] });
+
+    await harness.captureWorkspacePatchAtRoundEnd({
+      chatId: 'chat-1',
+      round: 0,
+      outcome: 'completed',
+      roundEvents: [coderCompletedEvent()],
+      assistantToolCallMessageId: 'asst-original',
+    });
+
+    const messages = harness.getConversations()['chat-1'].messages;
+    expect(messages[0].cards).toHaveLength(1);
+    expect(messages[1].cards).toEqual([]);
+  });
+
+  it('skips silently when the target message has been deleted', async () => {
+    mockFetchSandboxDiffWithMeta.mockResolvedValue({ diff: 'd', truncated: false });
+    mockExecInSandbox.mockResolvedValue({ stdout: 'sha\n', exitCode: 0 });
+
+    const harness = makeHarness({ initialMessages: [makeAssistantToolCall('asst-still-here')] });
+
+    await harness.captureWorkspacePatchAtRoundEnd({
+      chatId: 'chat-1',
+      round: 0,
+      outcome: 'completed',
+      roundEvents: [coderCompletedEvent()],
+      assistantToolCallMessageId: 'asst-gone',
+    });
+
+    const messages = harness.getConversations()['chat-1'].messages;
+    expect(messages[0].cards).toEqual([]);
+    expect(harness.dirtyConversationIdsRef.current.has('chat-1')).toBe(false);
+  });
+
+  it('logs and skips when assistantToolCallMessageId is null', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const harness = makeHarness();
+
+    await harness.captureWorkspacePatchAtRoundEnd({
+      chatId: 'chat-1',
+      round: 0,
+      outcome: 'completed',
+      roundEvents: [coderCompletedEvent()],
+      assistantToolCallMessageId: null,
+    });
+
+    expect(debug).toHaveBeenCalledWith(
+      expect.stringContaining('no assistant tool-call message id'),
+      expect.objectContaining({ chatId: 'chat-1', round: 0 }),
+    );
+    expect(mockFetchSandboxDiffWithMeta).not.toHaveBeenCalled();
+    debug.mockRestore();
+  });
+
   it('does not attach a card when the diff is empty', async () => {
     mockFetchSandboxDiffWithMeta.mockResolvedValue({ diff: '', truncated: false });
     mockExecInSandbox.mockResolvedValue({ stdout: 'abc\n', exitCode: 0 });
 
-    let conversations: Record<string, Conversation> = {
-      'chat-1': makeConversation([makeAssistantToolCall()]),
-    };
-    const { captureWorkspacePatchAtRoundEnd } = useWorkspacePatchCapture({
-      sandboxIdRef: { current: 'sb-1' },
-      repoRef: { current: 'kvfxkaido/push' },
-      branchInfoRef: { current: { currentBranch: 'feature/x' } },
-      setConversations: (updater) => {
-        conversations = typeof updater === 'function' ? updater(conversations) : updater;
-      },
-    });
-
-    await captureWorkspacePatchAtRoundEnd({
+    const harness = makeHarness();
+    await harness.captureWorkspacePatchAtRoundEnd({
       chatId: 'chat-1',
       round: 0,
       outcome: 'completed',
       roundEvents: [coderCompletedEvent()],
+      assistantToolCallMessageId: 'asst-1',
     });
 
-    expect(conversations['chat-1'].messages[0].cards ?? []).toHaveLength(0);
+    expect(harness.getConversations()['chat-1'].messages[0].cards ?? []).toHaveLength(0);
+    expect(harness.dirtyConversationIdsRef.current.has('chat-1')).toBe(false);
   });
 
   it('skips capture entirely when shouldCapture is false (no Coder this round)', async () => {
-    let conversations: Record<string, Conversation> = {
-      'chat-1': makeConversation([makeAssistantToolCall()]),
-    };
-    const { captureWorkspacePatchAtRoundEnd } = useWorkspacePatchCapture({
-      sandboxIdRef: { current: 'sb-1' },
-      repoRef: { current: 'kvfxkaido/push' },
-      branchInfoRef: { current: { currentBranch: 'feature/x' } },
-      setConversations: (updater) => {
-        conversations = typeof updater === 'function' ? updater(conversations) : updater;
-      },
-    });
-
-    await captureWorkspacePatchAtRoundEnd({
+    const harness = makeHarness();
+    await harness.captureWorkspacePatchAtRoundEnd({
       chatId: 'chat-1',
       round: 0,
       outcome: 'completed',
       roundEvents: [],
+      assistantToolCallMessageId: 'asst-1',
     });
 
     expect(mockFetchSandboxDiffWithMeta).not.toHaveBeenCalled();
     expect(mockExecInSandbox).not.toHaveBeenCalled();
-    expect(conversations['chat-1'].messages[0].cards ?? []).toHaveLength(0);
+    expect(harness.getConversations()['chat-1'].messages[0].cards ?? []).toHaveLength(0);
   });
 
   it('skips capture when no sandbox is bound', async () => {
-    let conversations: Record<string, Conversation> = {
-      'chat-1': makeConversation([makeAssistantToolCall()]),
-    };
-    const { captureWorkspacePatchAtRoundEnd } = useWorkspacePatchCapture({
-      sandboxIdRef: { current: null },
-      repoRef: { current: 'kvfxkaido/push' },
-      branchInfoRef: { current: { currentBranch: 'feature/x' } },
-      setConversations: (updater) => {
-        conversations = typeof updater === 'function' ? updater(conversations) : updater;
-      },
-    });
-
-    await captureWorkspacePatchAtRoundEnd({
+    const harness = makeHarness({ sandboxId: null });
+    await harness.captureWorkspacePatchAtRoundEnd({
       chatId: 'chat-1',
       round: 0,
       outcome: 'completed',
       roundEvents: [coderCompletedEvent()],
+      assistantToolCallMessageId: 'asst-1',
     });
 
     expect(mockFetchSandboxDiffWithMeta).not.toHaveBeenCalled();
-    expect(conversations['chat-1'].messages[0].cards ?? []).toHaveLength(0);
+    expect(harness.getConversations()['chat-1'].messages[0].cards ?? []).toHaveLength(0);
   });
 
-  it('skips capture in scratch mode (no repo or no branch)', async () => {
-    let conversations: Record<string, Conversation> = {
-      'chat-1': makeConversation([makeAssistantToolCall()]),
-    };
-    const { captureWorkspacePatchAtRoundEnd } = useWorkspacePatchCapture({
-      sandboxIdRef: { current: 'sb-1' },
-      repoRef: { current: null },
-      branchInfoRef: { current: undefined },
-      setConversations: (updater) => {
-        conversations = typeof updater === 'function' ? updater(conversations) : updater;
-      },
-    });
-
-    await captureWorkspacePatchAtRoundEnd({
+  it('skips capture in scratch mode (no repo)', async () => {
+    const harness = makeHarness({ repoFullName: null });
+    await harness.captureWorkspacePatchAtRoundEnd({
       chatId: 'chat-1',
       round: 0,
       outcome: 'completed',
       roundEvents: [coderCompletedEvent()],
+      assistantToolCallMessageId: 'asst-1',
     });
 
     expect(mockFetchSandboxDiffWithMeta).not.toHaveBeenCalled();
@@ -242,23 +307,13 @@ describe('useWorkspacePatchCapture', () => {
     mockExecInSandbox.mockResolvedValue({ stdout: 'abc\n', exitCode: 0 });
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
 
-    let conversations: Record<string, Conversation> = {
-      'chat-1': makeConversation([makeAssistantToolCall()]),
-    };
-    const { captureWorkspacePatchAtRoundEnd } = useWorkspacePatchCapture({
-      sandboxIdRef: { current: 'sb-1' },
-      repoRef: { current: 'kvfxkaido/push' },
-      branchInfoRef: { current: { currentBranch: 'feature/x' } },
-      setConversations: (updater) => {
-        conversations = typeof updater === 'function' ? updater(conversations) : updater;
-      },
-    });
-
-    await captureWorkspacePatchAtRoundEnd({
+    const harness = makeHarness();
+    await harness.captureWorkspacePatchAtRoundEnd({
       chatId: 'chat-1',
       round: 0,
       outcome: 'completed',
       roundEvents: [coderCompletedEvent()],
+      assistantToolCallMessageId: 'asst-1',
     });
 
     expect(debug).toHaveBeenCalledWith(
@@ -266,7 +321,7 @@ describe('useWorkspacePatchCapture', () => {
       expect.any(Error),
       expect.objectContaining({ chatId: 'chat-1', round: 0 }),
     );
-    expect(conversations['chat-1'].messages[0].cards ?? []).toHaveLength(0);
+    expect(harness.getConversations()['chat-1'].messages[0].cards ?? []).toHaveLength(0);
 
     debug.mockRestore();
   });
@@ -279,30 +334,20 @@ describe('useWorkspacePatchCapture', () => {
     mockExecInSandbox.mockResolvedValue({ stdout: '', exitCode: 0 });
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
 
-    let conversations: Record<string, Conversation> = {
-      'chat-1': makeConversation([makeAssistantToolCall()]),
-    };
-    const { captureWorkspacePatchAtRoundEnd } = useWorkspacePatchCapture({
-      sandboxIdRef: { current: 'sb-1' },
-      repoRef: { current: 'kvfxkaido/push' },
-      branchInfoRef: { current: { currentBranch: 'feature/x' } },
-      setConversations: (updater) => {
-        conversations = typeof updater === 'function' ? updater(conversations) : updater;
-      },
-    });
-
-    await captureWorkspacePatchAtRoundEnd({
+    const harness = makeHarness();
+    await harness.captureWorkspacePatchAtRoundEnd({
       chatId: 'chat-1',
       round: 0,
       outcome: 'completed',
       roundEvents: [coderCompletedEvent()],
+      assistantToolCallMessageId: 'asst-1',
     });
 
     expect(debug).toHaveBeenCalledWith(
       expect.stringContaining('git rev-parse HEAD produced no output'),
       expect.objectContaining({ chatId: 'chat-1', round: 0 }),
     );
-    expect(conversations['chat-1'].messages[0].cards ?? []).toHaveLength(0);
+    expect(harness.getConversations()['chat-1'].messages[0].cards ?? []).toHaveLength(0);
 
     debug.mockRestore();
   });
@@ -314,26 +359,16 @@ describe('useWorkspacePatchCapture', () => {
     });
     mockExecInSandbox.mockResolvedValue({ stdout: 'sha\n', exitCode: 0 });
 
-    let conversations: Record<string, Conversation> = {
-      'chat-1': makeConversation([makeAssistantToolCall()]),
-    };
-    const { captureWorkspacePatchAtRoundEnd } = useWorkspacePatchCapture({
-      sandboxIdRef: { current: 'sb-1' },
-      repoRef: { current: 'kvfxkaido/push' },
-      branchInfoRef: { current: { currentBranch: 'feature/x' } },
-      setConversations: (updater) => {
-        conversations = typeof updater === 'function' ? updater(conversations) : updater;
-      },
-    });
-
-    await captureWorkspacePatchAtRoundEnd({
+    const harness = makeHarness();
+    await harness.captureWorkspacePatchAtRoundEnd({
       chatId: 'chat-1',
       round: 0,
       outcome: 'completed',
       roundEvents: [coderCompletedEvent()],
+      assistantToolCallMessageId: 'asst-1',
     });
 
-    const card = conversations['chat-1'].messages[0].cards?.[0] as Extract<
+    const card = harness.getConversations()['chat-1'].messages[0].cards?.[0] as Extract<
       ChatCard,
       { type: 'workspace-patch' }
     >;

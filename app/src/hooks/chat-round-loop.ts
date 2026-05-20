@@ -308,13 +308,32 @@ export async function runRoundLoop(
     },
   };
 
+  const findLatestToolCallMessageId = (): string | null => {
+    const messages = outerLoopCtx.conversationsRef.current[chatId]?.messages ?? [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role === 'assistant' && m.isToolCall) return m.id;
+    }
+    return null;
+  };
+
   const fireWorkspacePatchCapture = (
     round: number,
     outcome: 'continued' | 'completed' | 'aborted' | 'error' | 'steered',
   ): void => {
     const capture = outerLoopCtx.captureWorkspacePatchAtRoundEnd;
     if (!capture) return;
-    void capture({ chatId, round, outcome, roundEvents: [...roundEvents] }).catch(() => {
+    // Snapshot the target message id synchronously — capture itself is
+    // fire-and-forget, so re-scanning at resolve time would let a later
+    // round's tool-call message hijack attribution.
+    const assistantToolCallMessageId = findLatestToolCallMessageId();
+    void capture({
+      chatId,
+      round,
+      outcome,
+      roundEvents: [...roundEvents],
+      assistantToolCallMessageId,
+    }).catch(() => {
       // Hook owns its own error logging (console.debug). Swallow here
       // so a throwing capture never breaks the round loop.
     });

@@ -555,6 +555,7 @@ export function useChat(
     repoRef,
     branchInfoRef,
     setConversations: updateConversations,
+    dirtyConversationIdsRef,
   });
 
   // --- Agent delegation ---
