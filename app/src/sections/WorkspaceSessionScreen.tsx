@@ -131,6 +131,7 @@ export function WorkspaceSessionScreen({
     lockedModel,
     isModelLocked,
     conversations,
+    conversationsLoaded,
     activeChatId,
     switchChat,
     renameChat,
@@ -344,12 +345,20 @@ export function WorkspaceSessionScreen({
   // commits (the workspace would otherwise switch into an existing
   // matching chat before we mint).
   //
+  // Wait for `conversationsLoaded` before minting: the IDB hydration
+  // in useChat replaces the in-memory conversation map wholesale, so
+  // a chat created before hydration completes is wiped, and the
+  // post-hydration setActiveChatId fallback then routes the user back
+  // to the most recent existing chat in this workspace — which is the
+  // chat they came from when picking "same repo" in the composer.
+  //
   // When the menu picked a provider/model override, apply it to the
   // newly minted chat's draft. First-send-anchors-lock then pins
   // that chat — the catalog-wide default is left alone.
   const drainedNewChatKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!pendingNewChat) return;
+    if (!conversationsLoaded) return;
     if (drainedNewChatKeyRef.current === pendingNewChat.key) return;
     drainedNewChatKeyRef.current = pendingNewChat.key;
     const newChatId = createNewChat();
@@ -361,7 +370,13 @@ export function WorkspaceSessionScreen({
       });
     }
     onPendingNewChatConsumed();
-  }, [createNewChat, onPendingNewChatConsumed, pendingNewChat, upsertChatDraft]);
+  }, [
+    conversationsLoaded,
+    createNewChat,
+    onPendingNewChatConsumed,
+    pendingNewChat,
+    upsertChatDraft,
+  ]);
 
   const snapshots = useSnapshotManager(workspaceSession, sandbox, workspaceRepo, isStreaming);
   const branches = useBranchManager(workspaceRepo, workspaceSession);
