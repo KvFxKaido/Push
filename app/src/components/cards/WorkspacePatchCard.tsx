@@ -1,8 +1,13 @@
 import { useMemo } from 'react';
-import type { WorkspacePatchCardData, WorkspacePatchApplyState } from '@/types';
+import type {
+  WorkspacePatchCardData,
+  WorkspacePatchApplyState,
+  WorkspacePatchRefusalReason,
+} from '@/types';
 import type { DiffPreviewCardData } from '@/types';
 import { parseDiffStats } from '@/lib/diff-utils';
 import { DIFF_MAX_BYTES } from '@/lib/sandbox-client';
+import { CONFLICT_DETAIL_TRUNCATION_SUFFIX } from '@/lib/sandbox-patch';
 import { CARD_PANEL_CLASS } from '@/lib/utils';
 import { DiffPreviewCard } from './DiffPreviewCard';
 
@@ -15,12 +20,6 @@ import { DiffPreviewCard } from './DiffPreviewCard';
  * itself is the UI surface for state, and language is intentionally
  * calm: `refused` reads as "the safe thing", not "failure".
  */
-
-/** Suffix appended by {@link clampConflictDetail} when conflict detail
- *  was clipped at the storage cap. Mirrored here so the renderer can
- *  promote it from end-of-string text into a distinct visual marker
- *  rather than relying on the reader noticing trailing characters. */
-const CONFLICT_DETAIL_TRUNCATION_SUFFIX = '\n…[truncated]';
 
 export function WorkspacePatchCard({ data }: { data: WorkspacePatchCardData }) {
   // The persisted card has the raw diff but not the file/addition counts
@@ -116,7 +115,7 @@ function statusContent(applyState: WorkspacePatchApplyState): StatusContent {
   }
 }
 
-function refusalCopy(reason: 'truncated' | 'binary-placeholder' | 'base-mismatch'): string {
+function refusalCopy(reason: WorkspacePatchRefusalReason): string {
   switch (reason) {
     case 'truncated':
       return `The captured diff was clipped at ${formatCapKB(DIFF_MAX_BYTES)}, so it isn't safe to replay verbatim.`;

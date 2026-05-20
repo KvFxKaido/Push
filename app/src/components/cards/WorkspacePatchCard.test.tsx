@@ -1,7 +1,9 @@
 /**
- * WorkspacePatchCard.test — render coverage for the four `applyState`
- * variants. Snapshot via `renderToStaticMarkup` matches the existing
- * card-test convention (see JobCard.test.tsx).
+ * WorkspacePatchCard.test — render coverage for every `applyState`
+ * variant via `renderToStaticMarkup` + targeted `toContain` checks
+ * (matches the JobCard.test.tsx convention — not a vitest snapshot
+ * test, the assertions pin the visible copy explicitly so changes to
+ * surrounding markup don't need re-snapshotted).
  */
 
 import { describe, expect, it } from 'vitest';
