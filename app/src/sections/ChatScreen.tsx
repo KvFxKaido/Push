@@ -3,6 +3,7 @@ import { Loader2, Download, Save, RotateCcw, Shield, ShieldOff, Zap } from 'luci
 import type { ApprovalMode } from '@/lib/approval-mode';
 import { LauncherGridIcon, WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
 import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
+import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
@@ -17,7 +18,11 @@ import {
 } from '@/components/chat/hub-styles';
 import type { ProjectInstructionsManager } from '@/hooks/useProjectInstructions';
 import { snapshotStagePercent, type SnapshotManager } from '@/hooks/useSnapshotManager';
-import type { RepoAppearance } from '@/lib/repo-appearance';
+import {
+  DEFAULT_REPO_APPEARANCE,
+  getRepoAppearanceColorHex,
+  type RepoAppearance,
+} from '@/lib/repo-appearance';
 import type { ActiveRepo } from '@/types';
 
 type RepoChatDrawerProps = ComponentProps<typeof RepoChatDrawer>;
@@ -115,12 +120,20 @@ export function ChatScreen({
   const { containerProps: chatContainerProps, inputProps: chatInputProps } = chat;
   const { sandboxStatusBannerProps, sandboxExpiryBannerProps } = banners;
 
+  const messageCount = chatContainerProps.messages.length;
+  const agentActive = chatContainerProps.agentStatus.active;
+  const isFirstTurn = messageCount === 0 || (messageCount <= 2 && agentActive);
+  const glowColor = getRepoAppearanceColorHex(
+    (activeRepoAppearance ?? DEFAULT_REPO_APPEARANCE).color,
+  );
+
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden bg-[#000] safe-area-top safe-area-bottom">
       <div
-        className={`relative z-10 flex min-h-0 flex-1 flex-col bg-[#000] transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
+        className={`relative z-10 isolate flex min-h-0 flex-1 flex-col bg-[#000] transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
         style={{ transform: chatShellTransform }}
       >
+        <ChatBackgroundGlow active={isFirstTurn} color={glowColor} />
         <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
           <div className="relative z-20 flex min-w-0 items-center gap-2">
             <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">

@@ -173,6 +173,45 @@
 .stagger-in > *:nth-child(7) { animation-delay: 240ms; }
 .stagger-in > *:nth-child(8) { animation-delay: 280ms; }
 
+/* Chat background glow — ambient gradient for welcome / first-turn streaming.
+   Two blurred blobs drift slowly; a black fade at the bottom keeps the
+   message area legible. Anchored to the top half of the chat shell. */
+.push-glow-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  will-change: transform;
+}
+
+.push-glow-blob-primary {
+  top: -18%;
+  left: -12%;
+  width: 75%;
+  height: 65%;
+  background: radial-gradient(circle, var(--push-glow-strong) 0%, transparent 70%);
+  animation: push-glow-drift-primary 26s ease-in-out infinite;
+}
+
+.push-glow-blob-secondary {
+  top: -8%;
+  right: -18%;
+  width: 85%;
+  height: 70%;
+  background: radial-gradient(circle, var(--push-glow-soft) 0%, transparent 70%);
+  animation: push-glow-drift-secondary 34s ease-in-out infinite;
+}
+
+@keyframes push-glow-drift-primary {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33% { transform: translate3d(12%, 6%, 0) scale(1.08); }
+  66% { transform: translate3d(-8%, 10%, 0) scale(0.95); }
+}
+
+@keyframes push-glow-drift-secondary {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-16%, 12%, 0) scale(1.12); }
+}
+
 /* Expand/collapse content */
 @keyframes expand-in {
   from {
