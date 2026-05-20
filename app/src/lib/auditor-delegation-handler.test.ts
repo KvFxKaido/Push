@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { deterministicEmptyDiffVerdict, hasUntrackedFiles } from './auditor-delegation-handler';
+import {
+  deterministicEmptyDiffVerdict,
+  findNewUntrackedFiles,
+  hasUntrackedFiles,
+  parseUntrackedFileSet,
+} from './auditor-delegation-handler';
 
 // Unit test for the pure short-circuit predicate that decides whether
 // the Auditor can return a canned "no workspace changes" verdict without
@@ -233,5 +238,63 @@ describe('hasUntrackedFiles', () => {
 
   it('tolerates CRLF line endings from the worker shell', () => {
     expect(hasUntrackedFiles('?? a.txt\r\n')).toBe(true);
+  });
+});
+
+describe('parseUntrackedFileSet', () => {
+  it('returns an empty set for null/undefined/empty input', () => {
+    expect(parseUntrackedFileSet(undefined).size).toBe(0);
+    expect(parseUntrackedFileSet(null).size).toBe(0);
+    expect(parseUntrackedFileSet('').size).toBe(0);
+  });
+
+  it('captures only the path portion of `?? ` lines', () => {
+    const set = parseUntrackedFileSet('?? hello.txt\n?? src/new.ts\n');
+    expect(set.has('hello.txt')).toBe(true);
+    expect(set.has('src/new.ts')).toBe(true);
+    expect(set.size).toBe(2);
+  });
+
+  it('ignores tracked-modification entries (only collects ?? lines)', () => {
+    const set = parseUntrackedFileSet(' M tracked.ts\n?? new.ts\nM  staged.ts\n');
+    expect(Array.from(set)).toEqual(['new.ts']);
+  });
+
+  it('tolerates CRLF line endings', () => {
+    const set = parseUntrackedFileSet('?? a.txt\r\n?? b.txt\r\n');
+    expect(set.size).toBe(2);
+  });
+});
+
+describe('findNewUntrackedFiles — Codex P1 regression on PR #606', () => {
+  it('returns only post-set entries that are absent from the pre-set baseline', () => {
+    // Pre-existing untracked files (node_modules, build artifacts)
+    // must not be falsely credited to the Coder. Only genuinely-new
+    // entries count as evidence of work.
+    const pre = new Set(['node_modules/', 'dist/']);
+    const post = new Set(['node_modules/', 'dist/', 'hello.txt']);
+    expect(findNewUntrackedFiles(post, pre)).toEqual(['hello.txt']);
+  });
+
+  it('returns empty when the post set is a subset of pre (Coder deleted nothing new)', () => {
+    const pre = new Set(['existing.log']);
+    const post = new Set(['existing.log']);
+    expect(findNewUntrackedFiles(post, pre)).toEqual([]);
+  });
+
+  it('falls back to the full post set when pre is undefined (conservative)', () => {
+    // When the pre-Coder snapshot fails (sandbox unreachable, no git,
+    // etc.) we'd rather over-count untracked files (predicate defers
+    // to LLM Auditor, slight noise in evalDiff) than under-count and
+    // regress to the pre-#606 false-negative ("no workspace changes
+    // detected" when the Coder actually wrote a file).
+    const post = new Set(['hello.txt']);
+    expect(findNewUntrackedFiles(post, undefined)).toEqual(['hello.txt']);
+  });
+
+  it('correctly identifies multiple new entries against an empty pre baseline', () => {
+    const pre = new Set<string>();
+    const post = new Set(['a.txt', 'b.txt', 'src/c.ts']);
+    expect(findNewUntrackedFiles(post, pre).sort()).toEqual(['a.txt', 'b.txt', 'src/c.ts']);
   });
 });
